@@ -65,22 +65,17 @@
  * `CoreInputError` naming why, as there — a pose with a block missing is not
  * a pose whose values can be judged finite.
  *
- * ⛔ **And one construct this walk refuses that the raw entry does not**
- * (`sliderPhysicsWhy`): a slider whose animation keys a physics timeline.
- * Issue #1049. Of the selftest's builds of that class (a dial, or two
- * sliders, keying a physics constraint's `wind` or `gravity`), five walked off spine-core from the third
- * step on — `tip` at worldX 14.87 against 12.09 on the first, at 0.025 s —
- * while others of the same class walked exact. The raw entry's own non-looping walk reads the same
- * gap (and with the slider made non-additive, 14.78 against 12.09), so it is
- * the stepped walk's reading of a slider's physics keys, not the loop's.
- * Which of the class it reaches is not measured, so the walk refuses the
- * class by name rather than return a pose it cannot vouch for. On the same
- * five inputs, `./additive.ts` and spine-core's probe agree that each slider's
- * `wind` or `gravity` timeline accumulates when applied twice with `add` — so
- * the gap is downstream of that rule, in the stepped bones, not in it.
+ * 🔁 **A slider whose animation keys a physics timeline** was refused here
+ * by name until issue #1049 (`sliderPhysicsWhy`): six of the path-slider
+ * suite's distinct builds walked off spine-core from the third step, and the
+ * raw entry read the same gap. The core had not applied a slider's physics keys at all;
+ * it now does, under the step, by the rule `./constraints_slider.ts` *Its
+ * physics timelines* states and the core suite's `CO31` holds — so this walk
+ * poses the class as the raw entry does, and refuses nothing the raw entry
+ * does not.
  */
 import { setupPoseIn, walkIn, type RawBone, type RawDrawn, type WalkMode } from './raw.ts';
-import { activeBones, CoreInputError, constraintRecords, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
+import { activeBones, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
 import { historyTaint } from './constraints.ts';
 import type { TimelinePlant } from './animation.ts';
 
@@ -98,20 +93,6 @@ export interface WalkPose {
   drawOrder: string[];
   /** Every region and mesh a slot shows, in draw order, its world vertices as computed, finite or not. */
   drawn: RawDrawn[];
-}
-
-/**
- * Why the looping walk refuses this document, or `null` (the header's last
- * ⛔, issue #1049): every slider whose animation keys a physics timeline,
- * named with it.
- */
-export function sliderPhysicsWhy(doc: CompiledDocument): string | null {
-  const keyed = constraintRecords(doc).flatMap((r) => {
-    if (r.kind !== 'slider') return [];
-    const anim = doc.animations.find((a) => a.name === r.animation);
-    return anim !== undefined && anim.constraints.physics > 0 ? [`slider "${r.name}" applies animation "${r.animation}", which keys physics timelines`] : [];
-  });
-  return keyed.length === 0 ? null : `${keyed.join('; ')} — under the stepped walk spine-core's bones leave the core's from the third step, on the raw entry's walk as on this one, and that reading is not measured (issue #1049)`;
 }
 
 /**
@@ -140,12 +121,6 @@ export function walkHistory(view: CompiledDocument): { bones: Map<string, string
   const bones = new Map<string, string>();
   for (const [bone, w] of historyTaint(view).tainted) if (unposed.has(bone)) bones.set(bone, `${w.kind}/${w.name} on inactive ${w.inactive}`);
   return { bones, slots: new Map(view.slots.filter((s) => bones.has(s.bone)).map((s) => [s.name, s.bone])) };
-}
-
-/** Refuse, by name, a document the looping walk cannot vouch for (`sliderPhysicsWhy`). */
-function refuseUnmeasured(doc: CompiledDocument): void {
-  const why = sliderPhysicsWhy(doc);
-  if (why !== null) throw new CoreInputError(`the looping walk leaves the bones out: ${why}`);
 }
 
 /** The looping walk's mode: the track loops, and a non-finite value stays in the pose. */
@@ -184,7 +159,6 @@ function narrow(p: { trackTime: number; animationTime: number; bones: RawBone[];
  * what A10 reads before any animation is set.
  */
 export function poseWalkSetup(doc: CompiledDocument, plant: CorePlant = {}, walkPlant: WalkPlant = {}): WalkPose {
-  refuseUnmeasured(doc);
   return narrow(setupPoseIn(doc, plant, LOOPING), walkPlant.number);
 }
 
@@ -196,7 +170,6 @@ export function poseWalkSetup(doc: CompiledDocument, plant: CorePlant = {}, walk
  * refuses the call by name; a value that is not finite does not.
  */
 export function poseLoopingWalk(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant = {}, walkPlant: WalkPlant = {}): WalkPose[] {
-  refuseUnmeasured(doc);
   const mode: WalkMode = { ...LOOPING, ...(walkPlant.time === undefined ? {} : { time: walkPlant.time }), ...(walkPlant.clock === undefined ? {} : { clock: walkPlant.clock }), ...(walkPlant.wrapResets === undefined ? {} : { wrapResets: walkPlant.wrapResets }) };
   return walkIn(doc, animation, steps, plant, 'setup', mode).map((p) => narrow(p, walkPlant.number));
 }

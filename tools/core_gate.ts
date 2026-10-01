@@ -234,7 +234,7 @@ import { slotBonePlan, type CorePathRecord } from '../src/core/constraints_path.
 import { EVERY_GLOBAL_PHYSICS, PHYSICS_DEFAULTS, stepSchedule, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { CORE_CONSTRAINT_KINDS, type CompiledDocument } from '../src/core/index.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../src/model.ts';
-import { compile } from '../src/compile.ts';
+import { compile, editorAnimationOrder } from '../src/compile.ts';
 import { ingest } from '../src/ingest.ts';
 import { CORE_DEFAULT_SKIN } from '../src/core/skins.ts';
 import { encodePng } from './plate.ts';
@@ -1956,6 +1956,214 @@ export function noSkinWalkProbes(dir: string, walkPlant: WalkPlant = {}): WalkRo
   return walkBuilt(noSkinProbeBuilds(dir), walkPlant);
 }
 
+// --- #1049 slider physics: begin ---
+/**
+ * A slider whose animation keys physics timelines (issue #1049), spelled
+ * twice — the Spine file and the model document — over one bone tree: `block`
+ * under the root with `tip` and `tip2` hanging off it (the bones the physics
+ * constraints drive) and two dial bones `d0`, `d1`. Bones only: no slot, no
+ * atlas. Under the step a slider applies its animation's physics keys to the
+ * pass's physics records at its place in the update order, and a physics
+ * constraint after it steps with what it wrote (`./src/core/constraints_slider.ts`,
+ * *Its physics timelines*); the shape says which constraints stand where and
+ * what each animation keys, so a probe and a seeded rig are the same spelling.
+ */
+export interface SliderPhysicsShape {
+  /** `block`'s setup rotation and `tip2`'s. */
+  rotations: [number, number];
+  /** Each physics constraint: its name, its bone (`tip` or `tip2`) and every field it states. */
+  physics: Array<{ name: string; bone: 'tip' | 'tip2'; fields: Record<string, number | boolean> }>;
+  /** Each slider: its name, its animation and every field it states (`bone` among them, or `time` for the bone-less form). */
+  sliders: Array<{ name: string; animation: string; fields: Record<string, number | boolean | string> }>;
+  /** Every constraint's name, in the update order. */
+  order: string[];
+  /** Each animation: bone keys (`rotate` `{ time, value }`, `translate` `{ time, x, y }`), physics keys by constraint (`*` the one naming none) and kind, slider keys. */
+  animations: Array<{
+    name: string;
+    bones: Array<{ bone: string; timeline: 'rotate' | 'translate'; keys: Array<Record<string, number>> }>;
+    physics: Array<{ name: string; kind: string; keys: Array<Record<string, number>> }>;
+    sliders: Array<{ name: string; kind: 'time' | 'mix'; keys: Array<Record<string, number>> }>;
+  }>;
+}
+
+/** The two texts of a shape (`SliderPhysicsShape`). */
+export function sliderPhysicsPair(shape: SliderPhysicsShape): { spine: string; model: string } {
+  type Obj = Record<string, unknown>;
+  const bones: Obj[] = [
+    { name: 'root' }, { name: 'block', parent: 'root', length: 12, rotation: shape.rotations[0] }, { name: 'tip', parent: 'block', x: 12, length: 8 },
+    { name: 'tip2', parent: 'tip', x: 8, length: 6, rotation: shape.rotations[1] }, { name: 'd0', parent: 'root', y: 40 }, { name: 'd1', parent: 'root', x: 20, y: 40 },
+  ];
+  const byName = new Map<string, Obj>([
+    ...shape.physics.map((p): [string, Obj] => [p.name, { type: 'physics', name: p.name, bone: p.bone, ...p.fields }]),
+    ...shape.sliders.map((s): [string, Obj] => [s.name, { type: 'slider', name: s.name, animation: s.animation, ...s.fields }]),
+  ]);
+  const constraints = shape.order.map((n) => byName.get(n) as Obj);
+  const group = <K extends { keys: Array<Record<string, number>> }>(list: readonly K[], outer: (k: K) => string, inner: (k: K) => string): Record<string, Record<string, Array<Record<string, number>>>> => {
+    const out: Record<string, Record<string, Array<Record<string, number>>>> = {};
+    for (const k of list) (out[outer(k)] ??= {})[inner(k)] = k.keys;
+    return out;
+  };
+  const spineAnims: Obj = {};
+  // The file lists animations in the editor's order (`editorAnimationOrder`), which is the order spine-core walks them in and `fileAnimationOrder` reads back.
+  for (const a of editorAnimationOrder(shape.animations.map((x) => x.name)).map((n) => shape.animations.find((x) => x.name === n) as SliderPhysicsShape['animations'][number])) {
+    const anim: Obj = {};
+    if (a.bones.length > 0) anim.bones = group(a.bones, (k) => k.bone, (k) => k.timeline);
+    if (a.physics.length > 0) anim.physics = group(a.physics, (k) => (k.name === EVERY_GLOBAL_PHYSICS ? '' : k.name), (k) => k.kind);
+    if (a.sliders.length > 0) anim.slider = group(a.sliders, (k) => k.name, (k) => k.kind);
+    spineAnims[a.name] = anim;
+  }
+  const listed = <K extends { keys: Array<Record<string, number>> }>(list: readonly K[], outer: (k: K) => string, inner: (k: K) => string): Array<{ name: string; timelines: Array<{ name: string; keys: Array<Record<string, number>> }> }> => {
+    const out: Array<{ name: string; timelines: Array<{ name: string; keys: Array<Record<string, number>> }> }> = [];
+    for (const k of list) {
+      let entry = out.find((e) => e.name === outer(k));
+      if (entry === undefined) out.push((entry = { name: outer(k), timelines: [] }));
+      entry.timelines.push({ name: inner(k), keys: k.keys });
+    }
+    return out;
+  };
+  return {
+    spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
+    model: JSON.stringify({
+      spec: 'rigc-compiled/1', referenceScale: 100, bones, slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
+      constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })), events: [],
+      animations: shape.animations.map((a) => ({
+        name: a.name, duration: 0, bones: listed(a.bones, (k) => k.bone, (k) => k.timeline), slots: [],
+        constraints: { ik: [], transform: [], path: [], physics: listed(a.physics, (k) => k.name, (k) => k.kind), slider: listed(a.sliders, (k) => k.name, (k) => k.kind) },
+        attachments: [], drawOrder: [], events: [],
+      })),
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: '0'.repeat(64) },
+    }),
+  };
+}
+
+/** A physics constraint driving every component a probe reads, at its parameters' defaults but a stated mass and strength. */
+const PROBE_JIGGLE = { x: 1, y: 1, rotate: 1, inertia: 0.5, strength: 100, damping: 0.85, mass: 1 };
+/** A dial-driven slider reading `d0`'s local rotation: 0° is time 0.5. */
+const probeDial = (bone: string, additive: boolean, extra: Record<string, number | boolean> = {}): Record<string, number | boolean | string> => ({ bone, property: 'rotate', local: true, additive, from: -50, scale: 0.01, ...extra });
+/** The track that moves `block` — what a physics constraint integrates — and turns the dials. */
+const PROBE_SWAY = { name: 'sway', bones: [{ bone: 'block', timeline: 'rotate' as const, keys: [{ time: 0, value: 0 }, { time: 0.4, value: 40 }, { time: 1, value: 0 }] }, { bone: 'd0', timeline: 'rotate' as const, keys: [{ time: 0, value: 0 }, { time: 1, value: 60 }] }], physics: [], sliders: [] };
+const ramp = (from: number, to: number): Array<Record<string, number>> => [{ time: 0, value: from }, { time: 1, value: to }];
+
+/**
+ * The probe rows `core_gate` runs beside the corpus under the step and on
+ * A10's walk (issue #1049): each one rule of a slider's physics keys, and
+ * each its own row so a red one names the rule. No production rig is known
+ * to carry the construct, so these are what the gate holds it with.
+ */
+export const SLIDER_PHYSICS_PROBES: ReadonlyArray<readonly [string, SliderPhysicsShape]> = [
+  ['additive wind, the slider before the constraint', {
+    rotations: [0, 0], physics: [{ name: 'j', bone: 'tip', fields: PROBE_JIGGLE }], sliders: [{ name: 's', animation: 's-pose', fields: probeDial('d0', true) }], order: ['s', 'j'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: 'j', kind: 'wind', keys: ramp(0, 400) }], sliders: [] }, PROBE_SWAY],
+  }],
+  ['non-additive gravity at mix 0.5', {
+    rotations: [10, 0], physics: [{ name: 'j', bone: 'tip', fields: { ...PROBE_JIGGLE, gravity: 2 } }], sliders: [{ name: 's', animation: 's-pose', fields: probeDial('d0', false, { mix: 0.5 }) }], order: ['s', 'j'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: 'j', kind: 'gravity', keys: ramp(-200, 300) }], sliders: [] }, PROBE_SWAY],
+  }],
+  ['the six values a key writes, from an additive slider', {
+    rotations: [-20, 30], physics: [{ name: 'j', bone: 'tip', fields: { ...PROBE_JIGGLE, wind: 1 } }, { name: 'k', bone: 'tip2', fields: { ...PROBE_JIGGLE, scaleX: 0.5, shearX: 0.5 } }], sliders: [{ name: 's', animation: 's-pose', fields: probeDial('d0', true, { mix: 0.7 }) }], order: ['s', 'j', 'k'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: 'j', kind: 'mass', keys: ramp(0.5, 3) }, { name: 'j', kind: 'strength', keys: ramp(20, 300) }, { name: 'j', kind: 'damping', keys: ramp(0.4, 1) }, { name: 'k', kind: 'inertia', keys: ramp(0.1, 1) }, { name: 'k', kind: 'mix', keys: ramp(0.2, 1.2) }, { name: 'k', kind: 'wind', keys: ramp(-100, 100) }], sliders: [] }, PROBE_SWAY],
+  }],
+  ['the timeline naming no constraint, two sliders', {
+    rotations: [0, 15], physics: [{ name: 'j', bone: 'tip', fields: { ...PROBE_JIGGLE, windGlobal: true } }, { name: 'k', bone: 'tip2', fields: { ...PROBE_JIGGLE, windGlobal: true, gravityGlobal: true } }], sliders: [{ name: 's', animation: 's-pose', fields: probeDial('d0', true) }, { name: 't', animation: 't-pose', fields: probeDial('d1', false, { loop: true }) }], order: ['s', 'j', 't', 'k'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: EVERY_GLOBAL_PHYSICS, kind: 'wind', keys: ramp(0, 300) }], sliders: [] }, { name: 't-pose', bones: [], physics: [{ name: EVERY_GLOBAL_PHYSICS, kind: 'gravity', keys: ramp(150, -150) }], sliders: [] }, PROBE_SWAY],
+  }],
+  ['a constraint before the slider, and a reset key under it, write nothing', {
+    rotations: [0, 0], physics: [{ name: 'j', bone: 'tip', fields: PROBE_JIGGLE }, { name: 'k', bone: 'tip2', fields: PROBE_JIGGLE }], sliders: [{ name: 's', animation: 's-pose', fields: probeDial('d0', true) }], order: ['j', 's', 'k'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: 'j', kind: 'wind', keys: ramp(0, 400) }, { name: 'k', kind: 'reset', keys: [{ time: 0 }, { time: 0.3 }] }], sliders: [] }, PROBE_SWAY],
+  }],
+  ['a slider whose time and mix the track keys', {
+    rotations: [5, 0], physics: [{ name: 'j', bone: 'tip', fields: PROBE_JIGGLE }], sliders: [{ name: 's', animation: 's-pose', fields: { additive: true, time: 0.2 } }], order: ['s', 'j'],
+    animations: [{ name: 's-pose', bones: [], physics: [{ name: 'j', kind: 'wind', keys: ramp(-300, 300) }], sliders: [] }, { ...PROBE_SWAY, sliders: [{ name: 's', kind: 'time', keys: ramp(0, 1) }, { name: 's', kind: 'mix', keys: ramp(1, 0.3) }] }],
+  }],
+];
+
+/** The kinds a physics timeline keys, `reset` among them. */
+const SLIDER_PHYSICS_KINDS = ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix', 'reset'] as const;
+
+/**
+ * One seeded shape (`SliderPhysicsShape`) from `rnd`, a generator of numbers
+ * in [0, 1): one or two physics constraints on `tip` and `tip2` driving
+ * random components with random parameters and `…Global` flags; one or two
+ * sliders, dial-driven or bone-less, additive or not, looping or not, at a
+ * mix of 1 or another; every constraint in a random order; each slider's
+ * animation keying one to three physics timelines of any kind on a named
+ * constraint or the one naming none; and a track, `sway`, that moves `block`,
+ * turns the dials and may key physics, a slider's time and its mix itself.
+ * The core suite's `CO31` draws its population here.
+ */
+export function sliderPhysicsShape(rnd: () => number): SliderPhysicsShape {
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
+  const R = (a: number, b: number): number => Math.round((a + (b - a) * rnd()) * 1000) / 1000;
+  const physics: SliderPhysicsShape['physics'] = [];
+  for (let i = 0, n = 1 + Math.floor(rnd() * 2); i < n; i++) {
+    const fields: Record<string, number | boolean> = { x: pick([0, 0, 0.5, 1]), y: pick([0, 0, 0.5, 1]), rotate: pick([0, 0.5, 1, 1]), scaleX: pick([0, 0, 0.5]), shearX: pick([0, 0, 0.5]) };
+    if (Object.values(fields).every((v) => v === 0)) fields.x = 1;
+    Object.assign(fields, { inertia: R(0.1, 1), strength: R(20, 200), damping: R(0.5, 1), mass: R(0.5, 3), wind: pick([0, R(-3, 3)]), gravity: pick([0, R(-3, 3)]), mix: pick([1, R(0.3, 1)]) });
+    for (const k of ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix']) if (rnd() < 0.3) fields[`${k}Global`] = true;
+    physics.push({ name: `p${i}`, bone: i === 0 ? 'tip' : 'tip2', fields });
+  }
+  const value = (kind: string): number =>
+    kind === 'inertia' ? R(0, 1) : kind === 'strength' ? R(10, 300) : kind === 'damping' ? R(0.3, 1) : kind === 'mass' ? R(0.3, 4) : kind === 'mix' ? pick([0, R(0, 1.3), 1]) : R(-300, 300);
+  const physicsKeys = (n: number): SliderPhysicsShape['animations'][number]['physics'] => {
+    const out: SliderPhysicsShape['animations'][number]['physics'] = [];
+    for (let k = 0; k < n; k++) {
+      const kind = pick(SLIDER_PHYSICS_KINDS);
+      const global = kind === 'reset' || physics.some((p) => p.fields[`${kind}Global`] === true);
+      const name = global && rnd() < 0.25 ? EVERY_GLOBAL_PHYSICS : pick(physics).name;
+      if (out.some((x) => x.name === name && x.kind === kind)) continue;
+      const times = [...[0, R(0.2, 0.6)].filter(() => rnd() < 0.7), 1];
+      out.push({ name, kind, keys: times.map((time): Record<string, number> => (kind === 'reset' ? { time } : { time, value: value(kind) })) });
+    }
+    return out;
+  };
+  const sliders: SliderPhysicsShape['sliders'] = [];
+  const animations: SliderPhysicsShape['animations'] = [];
+  for (let i = 0, n = 1 + Math.floor(rnd() * 2); i < n; i++) {
+    const fields: Record<string, number | boolean | string> = rnd() < 0.8 ? { bone: `d${i}`, property: 'rotate', local: true, from: R(-90, 0), scale: 0.01 } : { time: R(0, 1) };
+    fields.additive = rnd() < 0.6;
+    if (rnd() < 0.2) fields.loop = true;
+    if (rnd() < 0.4) fields.mix = pick([0.5, 0.7, -0.3, 1.4, 0.25]);
+    sliders.push({ name: `s${i}`, animation: `s${i}-pose`, fields });
+    animations.push({ name: `s${i}-pose`, bones: rnd() < 0.3 ? [{ bone: 'block', timeline: 'rotate', keys: [{ time: 0, value: 0 }, { time: 1, value: R(-30, 30) }] }] : [], physics: physicsKeys(1 + Math.floor(rnd() * 3)), sliders: [] });
+  }
+  animations.push({
+    name: 'sway',
+    bones: [
+      { bone: 'block', timeline: 'rotate', keys: [{ time: 0, value: 0 }, { time: 0.4, value: R(-60, 60) }, { time: 1, value: 0 }] },
+      { bone: 'block', timeline: 'translate', keys: [{ time: 0, x: 0, y: 0 }, { time: 0.6, x: R(-20, 20), y: R(-20, 20) }, { time: 1, x: 0, y: 0 }] },
+      ...sliders.filter((x) => typeof x.fields.bone === 'string' && rnd() < 0.7).map((x) => ({ bone: x.fields.bone as string, timeline: 'rotate' as const, keys: [{ time: 0, value: 0 }, { time: 1, value: R(0, 90) }] })),
+    ],
+    physics: rnd() < 0.4 ? physicsKeys(1) : [],
+    sliders: sliders.filter(() => rnd() < 0.25).map((x) => ({ name: x.name, kind: pick(['time', 'mix'] as const), keys: [{ time: 0, value: R(0, 1) }, { time: 1, value: R(0, 1) }] })),
+  });
+  const order = [...physics.map((p) => p.name), ...sliders.map((x) => x.name)].map((n) => [rnd(), n] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+  return { rotations: [R(-40, 40), R(-30, 30)], physics, sliders, order, animations };
+}
+
+/** Each probe walked as A10 walks it (`--walk`), a row named `probe/slider physics: …`. */
+export function sliderPhysicsWalkRows(walkPlant: WalkPlant = {}): WalkRow[] {
+  return SLIDER_PHYSICS_PROBES.map(([label, shape]) => {
+    const pair = sliderPhysicsPair(shape);
+    return walkPair(`probe/slider physics: ${label}`, pair.spine, '', pair.model, walkPlant);
+  });
+}
+
+/** Each probe's stepped run (`steppedRun`) beside the corpus's, under `--raw` at tolerance 0 when `raw`. */
+export function sliderPhysicsSteppedLines(raw: boolean): { lines: string[]; ok: boolean } {
+  const lines: string[] = [];
+  let ok = true;
+  for (const [label, shape] of SLIDER_PHYSICS_PROBES) {
+    const pair = sliderPhysicsPair(shape);
+    const name = `probe/slider physics: ${label}`;
+    const st = steppedRun(pair.spine, '', name, pair.model, name, {}, raw ? RAW_TOLERANCE : { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL }, STEPPED_OPTIONS.skin, undefined, raw);
+    if (st.verdict !== 'IDENTICAL') ok = false;
+    lines.push(`  ${st.verdict.padEnd(9)} ${name}: stepped (--physics step, dt ${st.dt} in both documents), ${st.boneSamples} bone-sample(s)${st.why === null ? '' : ` — ${st.why}`}`);
+  }
+  lines.push(`SLIDER PHYSICS PROBES ${ok ? 'IDENTICAL' : 'DIFF'} — ${SLIDER_PHYSICS_PROBES.length} probe(s) stepped${raw ? ' at tolerance 0' : ''}, beside the corpus (issue #1049)`);
+  return { lines, ok };
+}
+// --- #1049 slider physics: end ---
+
 /** The command; returns the exit code. */
 export function gateMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
   try {
@@ -1980,7 +2188,10 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     if (walk) {
       const walked = walkLines([...walkBuilt(buildRecipes(recipes, work, root, warn)), ...walkProbes(), ...noSkinWalkProbes(join(work, 'noskin-probes'))]);
       for (const line of walked.lines) print(line);
-      return walked.ok ? 0 : 1;
+      // The slider-physics probes (issue #1049), their own block after the corpus's verdict, which they do not move.
+      const sliders = walkLines(sliderPhysicsWalkRows());
+      for (const line of sliders.lines) print(line.startsWith('WALK ') ? `SLIDER PHYSICS PROBES ${line} (issue #1049)` : line);
+      return walked.ok && sliders.ok ? 0 : 1;
     }
     const built = buildRecipes(recipes, work, root, warn);
     const rows = gateBuilt(built, {}, undefined, raw);
@@ -2040,7 +2251,10 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     for (const line of noSkin.lines) print(line);
     const verdict = gateVerdict(rows);
     print(raw ? `RAW (full doubles, tolerance 0, worst in ulps) ${verdict.line}` : verdict.line);
-    return verdict.ok && noSkin.ok ? 0 : 1;
+    // The slider-physics probes (issue #1049), their own block after the corpus's verdict, which they do not move.
+    const probes = sliderPhysicsSteppedLines(raw);
+    for (const line of probes.lines) print(line);
+    return verdict.ok && noSkin.ok && probes.ok ? 0 : 1;
   } catch (err) {
     if (err instanceof GateInputError || err instanceof HashesInputError) {
       warn(`core_gate: ${err.message}`);

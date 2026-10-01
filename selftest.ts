@@ -69004,6 +69004,8 @@ import { compareUnposed, oracleMain, signedText, unposedOf } from './tools/pose_
 // Cut 4c-5a of issue #1025: A10's looping walk on both sides (CO25, CO26).
 import { compareWalkDocuments, coreWalkDocument, spineWalkDocument, type WalkComparison } from './tools/pose_oracle.ts';
 import { inactiveHistoryProbe, walkBuilt, walkProbes as inactiveWalkProbes } from './tools/core_gate.ts';
+// Issue #1049: a slider's physics keys under the step (CO31, CO32), its own statement so the controls land as one hunk.
+import { SLIDER_PHYSICS_PROBES, sliderPhysicsPair, sliderPhysicsShape, type SliderPhysicsShape } from './tools/core_gate.ts';
 import { loopedTime } from './src/core/raw.ts';
 import type { WalkPlant } from './src/core/walk.ts';
 import { historyTaint, type SolverRules } from './src/core/constraints.ts';
@@ -80347,6 +80349,163 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
       'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
+    );
+  }
+
+  // --- CO31 and CO32: a slider's physics keys under the step (issue #1049) --
+  //
+  // Until issue #1049 the core applied none of a slider's physics keys, and on the selftest's own
+  // builds where a dial's animation keys `wind` or `gravity` of a constraint after it the bones left
+  // spine-core from the third step; a probe with a slot on the physics bone drew wrong frames through
+  // `render` with no refusal. The rule (`./src/core/constraints_slider.ts`, *Its physics timelines*)
+  // is held here on the core_gate probe rows and a seeded population, on all three stepped entries:
+  // A10's looping walk, `render`'s recipe on the raw entry (60 and 12 fps), and the oracle's stepped
+  // grid under `--raw`, every number at tolerance 0.
+  const SLIDER_PHYSICS_N = 150;
+  const sliderPhysicsRigs = (() => {
+    const rnd = seededRandom(104901);
+    return [
+      ...SLIDER_PHYSICS_PROBES.map(([label, shape]) => ({ where: `probe "${label}"`, shape })),
+      ...Array.from({ length: SLIDER_PHYSICS_N }, (_v, i) => ({ where: `slider-physics rig ${i}`, shape: sliderPhysicsShape(rnd) })),
+    ].map((r) => ({ ...r, pair: sliderPhysicsPair(r.shape) }));
+  })();
+  /** Every key a slider's animation holds on a physics timeline, with the slider's own flags. */
+  const sliderPhysicsKeys = (shape: SliderPhysicsShape): Array<{ slider: string; additive: boolean; kind: string; target: string; before: boolean }> =>
+    shape.sliders.flatMap((s) =>
+      (shape.animations.find((a) => a.name === s.animation)?.physics ?? []).map((k) => ({
+        slider: s.name,
+        additive: s.fields.additive === true,
+        kind: k.kind,
+        target: k.name,
+        // A named constraint updating before the slider: what the slider writes is not read this pass.
+        before: k.name !== '*' && shape.order.indexOf(k.name) < shape.order.indexOf(s.name),
+      })),
+    );
+  const STEPPED_RAW: OracleOptions = { ...STEPPED_OPTIONS, raw: true };
+  const PHYSICS_FIELDS = ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const;
+  /** spine-core's side of one rig on the three entries, taken once: the walk, each render frame's bones, the stepped grid. */
+  const sliderPhysicsSpine = sliderPhysicsRigs.map((r) => {
+    const data = loadOracleData(r.pair.spine, '', r.where);
+    const frames: Array<{ animation: string; fps: number; bones: number[][] }> = [];
+    for (const fps of [60, 12]) {
+      for (const anim of data.animations) {
+        const n = Math.round(anim.duration * fps) + 3;
+        const skeleton = new Skeleton(data);
+        const state = new AnimationState(new AnimationStateData(data));
+        state.setAnimation(0, anim.name, false);
+        skeleton.setupPose();
+        const bones: number[][] = [];
+        for (let i = 0; i <= n; i++) {
+          if (i > 0) {
+            state.update(1 / fps);
+            state.apply(skeleton);
+            skeleton.update(1 / fps);
+            skeleton.updateWorldTransform(Physics.update);
+          } else {
+            state.apply(skeleton);
+            skeleton.update(0);
+            skeleton.updateWorldTransform(Physics.reset);
+          }
+          bones.push(skeleton.bones.flatMap((b) => PHYSICS_FIELDS.map((f) => b.appliedPose[f])));
+        }
+        frames.push({ animation: anim.name, fps, bones });
+      }
+    }
+    return { walk: spineWalkDocument(data), frames, grid: dumpSkeleton(data, STEPPED_RAW) };
+  });
+  /** The core's side of rig `k` against spine-core's, under `plant`: the first difference on any entry, or null, with what was compared. */
+  const sliderPhysicsRun = (k: number, plant: TimelinePlant = {}): { first: string | null; walkPoses: number; frames: number; numbers: number } => {
+    const r = sliderPhysicsRigs[k];
+    const spine = sliderPhysicsSpine[k];
+    const model = readModel(r.pair.model, r.where);
+    const walk = compareWalkDocuments(spine.walk, coreWalkDocument(model, undefined, plant));
+    let first = walk.first === null ? null : `${r.where} walk: ${walk.first}`;
+    let numbers = walk.numbers;
+    const doc = underSkin(model, 'default');
+    for (const f of spine.frames) {
+      const poses = poseRawAnimation(doc, f.animation, new Array<number>(f.bones.length - 1).fill(1 / f.fps), plant);
+      poses.forEach((p, i) => {
+        const ours = p.bones.flatMap((b) => PHYSICS_FIELDS.map((x) => b[x]));
+        numbers += ours.length;
+        const at = ours.findIndex((v, j) => !Object.is(v, f.bones[i][j]));
+        if (at >= 0) first ??= `${r.where} render ${f.fps} fps "${f.animation}" frame ${i}: bone "${p.bones[Math.floor(at / 6)].name}" ${PHYSICS_FIELDS[at % 6]} ${f.bones[i][at]} in spine-core, ${ours[at]} in the core`;
+      });
+    }
+    const grid = compareDumps(spine.grid, coreDump(model, STEPPED_RAW, plant, uvSourceOf('', r.pair.model)), { xy: 0, m: 0 });
+    if (!grid.identical) first ??= `${r.where} stepped grid: ${grid.first}`;
+    return { first, walkPoses: walk.poses, frames: spine.frames.reduce((n, f) => n + f.bones.length, 0), numbers };
+  };
+  const sliderPhysicsClean = sliderPhysicsRigs.map((_r, k) => sliderPhysicsRun(k));
+  {
+    const probes: string[] = [];
+    let exact = 0;
+    const sum = { walkPoses: 0, frames: 0, numbers: 0 };
+    sliderPhysicsClean.forEach((c) => {
+      for (const key of Object.keys(sum) as Array<keyof typeof sum>) sum[key] += c[key];
+      if (c.first === null) exact++;
+      else if (probes.length < 12) probes.push(c.first);
+    });
+    const keys = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+    const rigsWith = (f: (k: ReturnType<typeof sliderPhysicsKeys>[number], shape: SliderPhysicsShape) => boolean): number => keys.filter((list, i) => list.some((k) => f(k, sliderPhysicsRigs[i].shape))).length;
+    const reach: Array<[number, string]> = [
+      [rigsWith((k) => k.kind !== 'reset' && !k.before), 'a slider keying a constraint that updates after it'],
+      [rigsWith((k) => k.kind !== 'reset' && k.before), 'a slider keying a constraint that updates before it'],
+      [rigsWith((k) => k.additive && (k.kind === 'wind' || k.kind === 'gravity')), 'an additive slider keying wind or gravity'],
+      [rigsWith((k) => k.additive && !['wind', 'gravity', 'reset'].includes(k.kind)), 'an additive slider keying a value that does not add'],
+      [rigsWith((k) => !k.additive && k.kind !== 'reset'), 'a slider that is not additive'],
+      [rigsWith((k) => k.kind === 'mass'), 'a mass key'],
+      [rigsWith((k) => k.kind === 'mix'), 'a mix key'],
+      [rigsWith((k) => k.kind === 'reset'), 'a reset key'],
+      [rigsWith((k) => k.target === '*'), 'the timeline naming no constraint'],
+      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.mix !== undefined)), 'a slider at a mix other than 1'],
+      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.loop === true)), 'a looping slider'],
+      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.bone === undefined)), 'a bone-less slider'],
+      [rigsWith((_k, s) => s.animations.some((a) => a.name === 'sway' && a.sliders.length > 0)), 'a track keying a slider\'s time or mix'],
+    ];
+    probes.push(...floorProbes(reach.map(([n, what]): [number, number, string] => [n, 1, `${n} rig(s) with ${what}`]), 'so the population does not reach every part of the rule'));
+    const ok = probes.length === 0;
+    say(
+      'CO31_A_SLIDERS_PHYSICS_KEYS_POSE_UNDER_THE_STEP_AS_SPINE_CORE_POSES_THEM_ON_THE_WALK_THE_RAW_ENTRY_AND_THE_STEPPED_GRID',
+      ok,
+      probeDetail(
+        ok,
+        probes.slice(0, 12),
+        `${exact} of ${sliderPhysicsRigs.length} rig(s) exact — the ${SLIDER_PHYSICS_PROBES.length} core_gate probe rows and ${SLIDER_PHYSICS_N} seeded — on A10's looping walk (${sum.walkPoses} pose(s)), render's recipe on the raw entry at 60 and 12 fps (${sum.frames} frame(s)) and the oracle's stepped grid under --raw: ${sum.numbers} walk and frame number(s) at tolerance 0; the population reaches ${reach.map(([n, what]) => `${what} (${n})`).join(', ')}`,
+      ),
+      'issue #1049: a slider applies its animation\'s physics keys to the pass\'s physics records at its place in the update order — the core applied none of them, and a constraint after the slider integrated without the wind or gravity it wrote: render drew a wrong frame with no refusal and A10\'s walk refused the class by name',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const keysOf = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+    const plants: Array<[string, Partial<SolverRules>, (keys: ReturnType<typeof sliderPhysicsKeys>) => boolean]> = [
+      ['a slider\'s physics keys write nothing (the core before issue #1049)', { sliderWritesPhysics: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before)],
+      ['a key that does not add blends from the setup value, not the current one', { sliderPhysicsFromCurrent: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before && !(k.additive && (k.kind === 'wind' || k.kind === 'gravity')))],
+      ['every value kind adds under an additive slider', { sliderPhysicsAddsWindGravityOnly: false }, (keys) => keys.some((k) => k.additive && !k.before && !['wind', 'gravity', 'reset'].includes(k.kind))],
+      ['a mass key blends the inverse mass', { sliderPhysicsBlendsMass: false }, (keys) => keys.some((k) => k.kind === 'mass' && !k.before)],
+      // A write that outlasts its pass reaches a constraint before the slider too, on the next step.
+      ['what a slider wrote stands on the next step', { sliderPhysicsLastsOnePass: false }, (keys) => keys.some((k) => k.kind !== 'reset')],
+      ['a reset key at or before the slider\'s time fires on every pass', { sliderPhysicsResetIsDead: false }, (keys) => keys.some((k) => k.kind === 'reset')],
+    ];
+    for (const [label, solver, reads] of plants) {
+      const red: string[] = [];
+      const outside: string[] = [];
+      sliderPhysicsRigs.forEach((r, k) => {
+        if (sliderPhysicsClean[k].first !== null || sliderPhysicsRun(k, { solver }).first === null) return;
+        red.push(r.where);
+        if (!reads(keysOf[k])) outside.push(r.where);
+      });
+      if (red.length === 0) probes.push(`${label}: no rig turned red`);
+      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which key nothing it reads`);
+      read.push(`${label} → ${red.length} rig(s) red${red.some((w) => w.startsWith('probe')) ? ` (${red.filter((w) => w.startsWith('probe')).length} probe row(s))` : ''}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'CO32_EACH_READING_A_SLIDERS_PHYSICS_KEYS_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_RIGS_KEYING_WHAT_IT_CHANGES_RED',
+      ok,
+      probeDetail(ok, probes, `over ${sliderPhysicsRigs.length} rig(s) — the probe rows and the seeded population of CO31: ${read.join('; ')}; each red only on a rig whose sliders key what the plant changes on a constraint that updates after them (a reset key, and a write that outlasts its pass, wherever the constraint stands)`),
+      'issue #1049: the rule held on a population is a measurement only while each reading it rejected is seen to differ there — that the keys write, from which value, which kinds add, how a mass blends, how long a write lasts and whether a reset key fires',
     );
   }
 

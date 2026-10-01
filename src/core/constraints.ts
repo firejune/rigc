@@ -470,7 +470,7 @@ import { activeBones, type CompiledDocument, type CoreConstraintKind } from './i
 import { fillingSkins } from './skins.ts';
 import { readPathTimelines, slotBonePlan, solvePath, type CorePathRecord, type CorePathTimelines, type SlotBoneEvent } from './constraints_path.ts';
 import { physicsTimelineCount, readPhysicsTimelines, stepPhysics, type CorePhysicsRecord, type CorePhysicsTimeline, type PhysicsStepContext } from './constraints_physics.ts';
-import { applySlider, posedSlider, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
+import { applySlider, posedSlider, sliderPhysicsTarget, readSliderTimelines, sliderBonesWhy, type CoreSliderRecord, type CoreSliderTimeline, type SliderApplication } from './constraints_slider.ts';
 
 const DEG = 180 / RUNTIME_PI;
 const RAD = RUNTIME_PI / 180;
@@ -917,6 +917,20 @@ export interface SolverRules {
   sliderAdditiveScaleProduct: boolean;
   /** A slider's scale key at mix exactly 1 writes `setup·v` itself (issue #989), not `from + (setup·v − from)·1`. */
   sliderScaleMixOneIsTarget: boolean;
+  /**
+   * Issue #1049, each the rule `./constraints_slider.ts` *Physics timelines* states — `false` (or the named reading)
+   * plants the reading it rejected: a slider's physics keys write the pass's physics records (`false`: write nothing);
+   * a non-additive one blends from the CURRENT value (`false`: from the setup value); only `wind` and `gravity` add
+   * (`false`: every value kind adds); a `mass` key blends the mass (`false`: the inverse); the write lasts one pass
+   * (`false`: what a slider wrote stands on the next step wherever the step's own animation does not key it); a
+   * `reset` key fires nothing (`false`: a key at or before the slider's time resets its constraints on every pass).
+   */
+  sliderWritesPhysics: boolean;
+  sliderPhysicsFromCurrent: boolean;
+  sliderPhysicsAddsWindGravityOnly: boolean;
+  sliderPhysicsBlendsMass: boolean;
+  sliderPhysicsLastsOnePass: boolean;
+  sliderPhysicsResetIsDead: boolean;
 }
 
 /** The runtime's rules, as measured. */
@@ -939,6 +953,12 @@ export const RUNTIME_SOLVER_RULES: Readonly<SolverRules> = {
   sliderReposesKeyedBones: true,
   sliderAdditiveScaleProduct: true,
   sliderScaleMixOneIsTarget: true,
+  sliderWritesPhysics: true,
+  sliderPhysicsFromCurrent: true,
+  sliderPhysicsAddsWindGravityOnly: true,
+  sliderPhysicsBlendsMass: true,
+  sliderPhysicsLastsOnePass: true,
+  sliderPhysicsResetIsDead: true,
 };
 
 /** The runtime's rules with a plant's over them. */
@@ -1508,6 +1528,8 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
   // An ik over an inactive bone reads the frame above it as the pass left it (issue #979).
   const updated = records.some((c) => c.kind === 'ik' && c.bones.some((b) => !active.has(b))) ? frameUpdatedBefore(bones, active, records, skipped) : new Map<number, boolean>();
   const snapshots = new Map<number, CoreWorld>();
+  // Issue #1049: under the step a slider's physics timelines write the pass's physics records, which a later physics constraint steps with.
+  const physicsPose = physics === undefined ? undefined : sliderPhysicsTarget(records, active, physics, rules);
   const snap = (i: number, when: 'before' | 'after'): void => {
     for (const [k, e] of plan) if (e !== null && e.at === i && e.when === when && !(k === i && when === 'before')) snapshots.set(k, { ...(state.world.get((records[k] as CorePathRecord).slotBone) as CoreWorld) });
   };
@@ -1521,14 +1543,15 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
       // Under Physics.none a physics constraint applies nothing; stepped, it moves its bone in world space (`./constraints_physics.ts`).
       if (physics !== undefined) {
         const w = { ...(state.world.get(c.bone) as CoreWorld) };
-        if ((physics.step ?? stepPhysics)(c, w, bone(state, c.bone).length ?? 0, physics)) {
+        const posed = physicsPose?.records.get(c.name) ?? c;
+        if ((physics.step ?? stepPhysics)(posed, w, bone(state, c.bone).length ?? 0, physics)) {
           state.world.set(c.bone, w);
           changed = [c.bone];
           inWorld = [c.bone];
         }
       }
     } else if (c.kind === 'slider') {
-      changed = applySlider(state, c, applied);
+      changed = applySlider(state, c, applied, physicsPose);
     } else if (c.kind === 'ik') {
       if (c.mix !== 0) {
         const frame = inactiveIkFrame(state, c, i, updated);
