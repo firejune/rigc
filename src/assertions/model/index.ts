@@ -10,7 +10,9 @@
  * (`./parse.ts`, `./skin_entries.ts`, `./atlas_pages.ts`, `./slot_colour.ts`;
  * cut 4c-2's `./mesh_attachments.ts`, `./vertex_polygons.ts`,
  * `./linked_meshes.ts`, `./constraints.ts`; cut 4c-4's
- * `./skeleton_roster.ts`, `./bone_timelines.ts`, `./event_keys.ts`)
+ * `./skeleton_roster.ts`, `./bone_timelines.ts`, `./event_keys.ts`; cut
+ * 4c-3's `./deform_survey.ts`, `./animation_durations.ts`, `./two_colour.ts`,
+ * `./sequences.ts`)
  * and calls the same body inside the same harness (`../harness.ts`). The
  * selftest holds the two to the same lines on every call it makes with a
  * model in hand, and `tools/verdict_gate.ts` on every recipe.
@@ -102,6 +104,18 @@ import { modelEventKeys } from './event_keys.ts';
 import type { SkeletonRosterFacts } from '../facts/skeleton_roster.ts';
 import type { BoneTimelineFacts } from '../facts/bone_timelines.ts';
 import type { EventKeyFacts } from '../facts/event_keys.ts';
+import { a39DeformKeepsTriangleWinding } from '../bodies/a39.ts';
+import { a09AnimationDurationMatchesSpec } from '../bodies/a09.ts';
+import { a43TwoColorTintLoadsAndPosesAsWritten } from '../bodies/a43.ts';
+import { a46SequenceAttachmentsShowTheFrameTheFileStates } from '../bodies/a46.ts';
+import { modelDeformSurvey } from './deform_survey.ts';
+import { modelAnimationDurations } from './animation_durations.ts';
+import { modelTwoColour } from './two_colour.ts';
+import { modelSequences } from './sequences.ts';
+import type { DeformSurveyFacts } from '../facts/deform_survey.ts';
+import type { AnimationDurationFacts } from '../facts/animation_durations.ts';
+import type { TwoColourFacts } from '../facts/two_colour.ts';
+import type { SequenceFacts } from '../facts/sequences.ts';
 
 /** What the model side is given. */
 export interface ModelValidateInput {
@@ -120,6 +134,8 @@ export interface ModelValidateInput {
    * `given` beside it is refused by name.
    */
   given?: ModelGiven;
+  /** The motion spec's declared durations, as `validate()` is handed them — A09 reads them (cut 4c-3); absent where the caller has no motion spec, on both sides. */
+  declaredDurations?: Record<string, number>;
 }
 
 /** The model side's report: `validate()`'s shape, over the moved assertions and the two parse rules. */
@@ -151,6 +167,10 @@ export interface ModelSupply {
   skeletonRoster: (read: ReadDocument) => SkeletonRosterFacts;
   boneTimelines: (read: ReadDocument) => BoneTimelineFacts;
   eventKeys: (read: ReadDocument) => EventKeyFacts;
+  deformSurvey: (read: ReadDocument) => DeformSurveyFacts;
+  animationDurations: (read: ReadDocument) => AnimationDurationFacts;
+  twoColour: (read: ReadDocument) => TwoColourFacts;
+  sequences: (read: ReadDocument) => SequenceFacts;
 }
 
 /** The suppliers the model side runs on. */
@@ -171,6 +191,10 @@ export const MODEL_SUPPLY: ModelSupply = {
   skeletonRoster: modelSkeletonRoster,
   boneTimelines: modelBoneTimelines,
   eventKeys: modelEventKeys,
+  deformSurvey: modelDeformSurvey,
+  animationDurations: modelAnimationDurations,
+  twoColour: modelTwoColour,
+  sequences: modelSequences,
 };
 
 /**
@@ -241,6 +265,10 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A39_DEFORM_KEEPS_TRIANGLE_WINDING', run: (v, read, input, supply) => a39DeformKeepsTriangleWinding(v, supply.deformSurvey(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A09_ANIMATION_DURATION_MATCHES_SPEC', run: (v, read, input, supply) => a09AnimationDurationMatchesSpec(v, supply.animationDurations(read), input.declaredDurations), unread: SKIP_NO_MODEL },
+  { code: 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', run: (v, read, _input, supply) => a43TwoColorTintLoadsAndPosesAsWritten(v, supply.twoColour(read)), unread: SKIP_NO_MODEL },
+  { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */
