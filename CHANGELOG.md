@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.8.0](https://github.com/firejune/rigc/compare/v1.7.0...v1.8.0) (2026-10-01)
+
+
+### Features
+
+* **explain:** a rigc build is explained without executing spine-core — the deform survey reads its structure from the model document, and --poser says which reader ([#1027](https://github.com/firejune/rigc/issues/1027)) ([53bfdb9](https://github.com/firejune/rigc/commit/53bfdb9a917ecbd2e42a16eebcecff9285361e78)), closes [#1019](https://github.com/firejune/rigc/issues/1019)
+
+
+### Bug Fixes
+
+* **compile:** meshes and regions are bound with the runtime's arithmetic — a bound point poses where it was authored, to the float32 floor ([#1031](https://github.com/firejune/rigc/issues/1031)) ([caee5ab](https://github.com/firejune/rigc/commit/caee5ab5e755ffcd7c1b1de2e0641ba6b0a3d4d8)), closes [#1021](https://github.com/firejune/rigc/issues/1021)
+* **render:** a rigc build is rendered and checked with its skeleton.atlas gone — page placement and page names are read from the model document ([#1029](https://github.com/firejune/rigc/issues/1029)) ([b2b83ed](https://github.com/firejune/rigc/commit/b2b83edd97d20db28511e98193b6e2c0c9c2ae17)), closes [#1020](https://github.com/firejune/rigc/issues/1020)
+
+
+### Instrument
+
+* **gate:** A03, A11, A17 and A45 written once against facts, supplied by spine-core and by the model with the core, held to the same lines ([#1030](https://github.com/firejune/rigc/issues/1030)) ([95ff3e8](https://github.com/firejune/rigc/commit/95ff3e87a5f8346883d52f82e69ac7406b141d3e))
+
 ## [1.7.0](https://github.com/firejune/rigc/compare/v1.6.2...v1.7.0) (2026-10-01)
 
 
