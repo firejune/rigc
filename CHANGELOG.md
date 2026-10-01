@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.7.0](https://github.com/firejune/rigc/compare/v1.6.2...v1.7.0) (2026-10-01)
+
+
+### Features
+
+* **model:** the model document carries each region's place on its page — the core draws a build without reading the atlas ([#1022](https://github.com/firejune/rigc/issues/1022)) ([a6db791](https://github.com/firejune/rigc/commit/a6db79170cc0cb3dabf86ba96e8dc1e2ec65fe7f))
+
+
+### Bug Fixes
+
+* **compile:** the routines that said they transcribed a runtime routine call the core's measured form — every emitted byte unchanged ([#1023](https://github.com/firejune/rigc/issues/1023)) ([94c8a35](https://github.com/firejune/rigc/commit/94c8a35a8cc5fb5865da6e00d1d337d45c8e9124)), closes [#1015](https://github.com/firejune/rigc/issues/1015)
+* **guide:** what spine-core does for a rigc command, as run — a build is posed by the core, an export and the round trip by spine-core ([#1017](https://github.com/firejune/rigc/issues/1017)) ([73037ba](https://github.com/firejune/rigc/commit/73037ba55bc36a5d85633b966093574e7611ac7d)), closes [#1013](https://github.com/firejune/rigc/issues/1013)
+* **render:** a rigc build is rendered and checked without executing spine-core — the runtime is used for an export, --poser spine and the round trip ([#1024](https://github.com/firejune/rigc/issues/1024)) ([8cbec66](https://github.com/firejune/rigc/commit/8cbec66ed64d105eda68269c43a5ad486b910ef6))
+
 ## [1.6.2](https://github.com/firejune/rigc/compare/v1.6.1...v1.6.2) (2026-09-30)
 
 
