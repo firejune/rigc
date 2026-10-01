@@ -77622,17 +77622,18 @@ function runCoreSuite(): number {
 // ---------------------------------------------------------------------------
 
 // Its own statements, so the suite lands as one hunk.
-import { deformPosers, surveyOfBuild, type DeformSurvey } from './src/deformmeasure.ts';
+import { deformPosers, surveyOfBuild, surveyOfModel, type DeformSurvey } from './src/deformmeasure.ts';
+import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyStructure } from './src/deformstructure.ts';
 import { deformReportBlock } from './src/deformreport.ts';
 import { DIAL_BONE_FIELDS, float32Rows, meshWorld, poseJump } from './src/core/hooks.ts';
 import { underSkin as dmUnderSkin } from './src/core/index.ts';
-import { canonicalJson, compareSurveyHashes, deformBlockOf, HOOKS, hookCensus, hookLines, surveyComparisonLines, SURVEY_HASHES_SPEC, type Hook, type HookCensus, type SurveyHashesDocument } from './tools/survey_hashes.ts';
+import { canonicalJson, compareSurveyHashes, deformBlockOf, HOOKS, hookCensus, hookLines, structureCensus, structureLines, surveyComparisonLines, SURVEY_HASHES_SPEC, type Hook, type HookCensus, type SurveyHashesDocument } from './tools/survey_hashes.ts';
 
 type DmObj = Record<string, unknown>;
 interface DmBinding { bone: string; x: number; y: number; w: number }
 type DmAtt =
   | { kind: 'mesh'; xy?: number[]; weighted?: DmBinding[][]; color?: string }
-  | { kind: 'linkedmesh'; source: string; timelines: boolean; color?: string }
+  | { kind: 'linkedmesh'; source: string; timelines: boolean; color?: string; from?: string }
   | { kind: 'region' };
 interface DmAnim { bones?: Record<string, Record<string, DmObj[]>>; slots?: Record<string, Record<string, DmObj[]>>; deform?: Array<{ skin?: string; slot: string; attachment: string; keys: DmObj[] }> }
 interface DmSpec { bones: DmObj[]; slots: Array<{ name: string; bone: string; attachment?: string; color?: string }>; skins: Record<string, Record<string, Record<string, DmAtt>>>; constraints?: DmObj[]; anims: Record<string, DmAnim> }
@@ -77653,14 +77654,15 @@ function dmPair(spec: DmSpec): DmTexts {
   const spineAtt = (name: string, a: DmAtt): DmObj => {
     regions.add(name);
     if (a.kind === 'region') return { width: 8, height: 8 };
-    if (a.kind === 'linkedmesh') return { type: 'linkedmesh', source: a.source, timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
+    // `from`: the source's slot when it is filed under another (issue #1019's DM12) — the Spine file names it, the model's link carries it.
+    if (a.kind === 'linkedmesh') return { type: 'linkedmesh', source: a.source, ...(a.from === undefined ? {} : { slot: a.from }), timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
     const n = count(a);
     const vertices = a.xy ?? (a.weighted ?? []).flatMap((v) => [v.length, ...v.flatMap((b) => [index.get(b.bone) as number, b.x, b.y, b.w])]);
     return { type: 'mesh', uvs: new Array<number>(2 * n).fill(0.5), triangles: fan(n), vertices, hull: n, width: 4, height: 4, ...colour(a.color) };
   };
   const modelAtt = (a: DmAtt, skin: string, slot: string): DmObj => {
     if (a.kind === 'region') return { kind: 'region', width: 8, height: 8, atlas: { width: 4, height: 4, offsetX: 0, offsetY: 0, originalWidth: 4, originalHeight: 4 } };
-    if (a.kind === 'linkedmesh') return { kind: 'linkedmesh', source: a.source, skin, slot, timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
+    if (a.kind === 'linkedmesh') return { kind: 'linkedmesh', source: a.source, skin, slot: a.from ?? slot, timelines: a.timelines, width: 4, height: 4, ...colour(a.color) };
     const n = count(a);
     const vertices = a.xy !== undefined ? { weighted: false, xy: a.xy } : { weighted: true, bindings: (a.weighted ?? []).map((v) => v.map((b) => ({ bone: b.bone, x: b.x, y: b.y, weight: b.w }))) };
     return { kind: 'mesh', uvs: new Array<number>(2 * n).fill(0.5), triangles: fan(n), vertices, hull: n, edges: [], width: 4, height: 4, ...colour(a.color) };
@@ -78021,13 +78023,13 @@ function runDeformCoreSuite(): number | null {
       return b[0];
     };
     for (const p of population.slice(0, 10)) {
-      const { data, core } = deformPosers(p.texts);
-      const skin = data.findSkin('default');
-      for (const anim of data.animations) {
-        for (const tl of anim.timelines) {
-          if (!(tl instanceof DeformTimeline) || !(tl.attachment instanceof MeshAttachment) || data.slots[tl.slotIndex].name !== 's0') continue;
+      const { structure, core } = deformPosers(p.texts);
+      const skin = structure.skins.find((k) => k.name === 'default') ?? null;
+      for (const anim of structure.animations) {
+        for (const tl of anim.deforms) {
+          if (tl.mesh === null || structure.slotName(tl.slotIndex) !== 's0') continue;
           const posed = core.track(skin, anim.name, tl.frames[tl.frames.length - 1]);
-          const exact = posed.rows(tl.slotIndex, tl.attachment, 'posed');
+          const exact = posed.rows(tl.slotIndex, tl.mesh, 'posed');
           const off = exact.map(nudge);
           rows++;
           if (exact.some((v, k) => !Object.is(v, off[k]))) seenDoubles++;
@@ -78270,6 +78272,194 @@ function runDeformCoreSuite(): number | null {
       held,
       probeDetail(held, probes, `documents over ${gallery.length} gallery rows hashed off the spine-core and the model survey compare IDENTICAL with ${switched.sources.length} SOURCE line(s); one row's survey hash planted is the one DIFF (${target})`),
       'issue #969: the instrument is the gate — a switch of poser is named rather than read as a difference, and a difference is named by its row',
+    );
+  }
+
+  // --- DM12: the survey's structure read off the model document is the runtime's, read for read, and the survey is one (issue #1019) --
+  const structureRows: Array<{ name: string; texts: DmTexts; spine: DeformSurvey }> = [];
+  {
+    const probes: string[] = [];
+    // A second population: DM01's generator, with a linked mesh of each of two meshes filed under a slot of its own — one playing its
+    // source's timelines, one doing so or not — so a deform reaches a slot besides the one it is filed under, which no corpus row carries.
+    const rnd = seededRandom(101901);
+    const linked: DmTexts[] = [];
+    for (let i = 0; i < 20; i++) {
+      const spec = dmRandomSpec(rnd, true);
+      spec.slots.push({ name: 's4', bone: 'b3', attachment: 'x0' }, { name: 's5', bone: 'b1', attachment: 'x1' });
+      spec.skins.default.s4 = { x0: { kind: 'linkedmesh', source: 'm0', from: 's0', timelines: true } };
+      spec.skins.default.s5 = { x1: { kind: 'linkedmesh', source: 'm1', from: 's1', timelines: rnd() < 0.5 } };
+      linked.push(dmPair(spec));
+    }
+    const rows = [
+      ...population.map((p, i) => ({ name: `population rig ${i}`, texts: p.texts })),
+      ...linked.map((texts, i) => ({ name: `linked rig ${i}`, texts })),
+      ...gallery.map((g) => ({ name: g.name, texts: g.texts })),
+    ];
+    const verdict = structureLines(rows.map((r) => ({ name: r.name, census: structureCensus(r.texts) })));
+    if (!verdict.exact) probes.push(...verdict.lines.filter((l) => l.startsWith('  OFF') || l.startsWith('  REFUSED')).slice(0, 4).map((l) => l.trim()));
+    // Not vacuous: the reads the corpus leaves empty are carried here.
+    let reaching = 0;
+    let sliding = 0;
+    let dressed = 0;
+    for (const r of rows) {
+      const { structure } = deformPosers(r.texts);
+      if (structure.animations.some((a) => a.deforms.some((d) => d.mesh !== null && d.mesh.timelineSlots.some((i) => i !== d.slotIndex)))) reaching++;
+      if (structure.sliders.length > 0) sliding++;
+      if (structure.skins.length > 1) dressed++;
+    }
+    if (reaching === 0) probes.push('no row carries a mesh whose deform reaches another slot, so timelineSlots was compared on nothing');
+    if (sliding === 0 || dressed === 0) probes.push(`${sliding} row(s) carry a slider and ${dressed} a second skin, so those reads were compared on nothing`);
+    // The survey itself, read and posed each way.
+    let same = 0;
+    let keys = 0;
+    for (const r of rows) {
+      let spine: DeformSurvey;
+      let model: DeformSurvey;
+      try {
+        spine = surveyOfBuild(r.texts, new Set(), 'spine-core');
+        model = surveyOfBuild(r.texts, new Set(), 'model');
+      } catch (err) {
+        probes.push(`${r.name}: the survey threw — ${(err as Error).message.slice(0, 200)}`);
+        continue;
+      }
+      structureRows.push({ name: r.name, texts: r.texts, spine });
+      if (canonicalJson(spine) === canonicalJson(model)) same++;
+      else if (probes.length < 6) probes.push(`${r.name}: the survey read off the model document is not spine-core's (${canonicalJson(model).length} and ${canonicalJson(spine).length} characters)`);
+      keys += spine.keys.length;
+    }
+    const stated = verdict.lines.filter((l) => l.startsWith('  STATED')).map((l) => l.trim().replace(/^STATED {2}/, '').replace("the model's stated value is the runtime's on ", ''));
+    const held = probes.length === 0;
+    say(
+      'DM12_THE_SURVEYS_STRUCTURE_READ_OFF_THE_MODEL_DOCUMENT_IS_SPINE_CORES_READ_FOR_READ_AND_THE_SURVEY_IS_ONE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${rows.length} rows — DM01's ${population.length} random rigs, ${linked.length} with linked meshes filed under slots of their own (${reaching} row(s) whose deform reaches another slot), the gallery's ${gallery.length}; ${sliding} carry a slider, ${dressed} a second skin: ` +
+          `${verdict.lines[verdict.lines.length - 1].replace(/^STRUCTURE \(tolerance 0\) /, '')}; the model's stated value already the runtime's — ${stated.join(', ')} — and the rest derived; ` +
+          `the DeformSurvey's canonical JSON identical read and posed through the model document and through spine-core on ${same} of ${rows.length} (${keys} keys)`,
+      ),
+      'issue #1019: the survey read the skeleton\'s structure through spine-core even when the core posed it; the model document states every source, and where its value is the one the runtime computed from (a key\'s run, a Bézier\'s handles, a float32 time, the file\'s animation order) the reader derives it — each derivation is held here read for read',
+    );
+  }
+
+  // --- DM13: a misread of each class reaches the survey — a plant in the model's reader goes red on the rows that read it --
+  {
+    const probes: string[] = [];
+    type Read = (doc: CompiledDocument) => SurveyStructure;
+    const deforms = (s: SurveyStructure, f: (d: SurveyDeformTimeline, a: SurveyAnimation, i: number) => SurveyDeformTimeline): SurveyStructure => ({
+      ...s,
+      animations: s.animations.map((a) => ({ ...a, deforms: a.deforms.map((d, i) => f(d, a, i)) })),
+    });
+    const statedKeys = (doc: CompiledDocument, animation: string, i: number): Array<{ stated: number }> =>
+      (doc.animations.find((a) => a.name === animation)?.timelines.attachments.filter((t) => t.deform !== null)[i]?.deform ?? []);
+    /** The rows a plant must turn red: `exact` — the plant changes a figure on every row reading it; otherwise only where a fold window was predicted, so red must be some of them and no other. */
+    const plants: Array<{ label: string; read: Read; exact: boolean; reads: (r: (typeof structureRows)[number]) => boolean }> = [
+      {
+        label: 'the animations in the model document\'s order rather than the file\'s',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          const order = doc.animations.map((a) => a.name);
+          return { ...s, animations: [...s.animations].sort((x, y) => order.indexOf(x.name) - order.indexOf(y.name)) };
+        },
+        exact: true,
+        reads: (r) => {
+          const seen = [...new Set(r.spine.keys.map((k) => k.animation))];
+          const order = readModel(r.texts.modelText).animations.map((a) => a.name);
+          return seen.join() !== [...seen].sort((x, y) => order.indexOf(x) - order.indexOf(y)).join();
+        },
+      },
+      {
+        label: 'a key\'s time as the document states it rather than its float32',
+        read: (doc) => deforms(modelStructure(doc), (d, a, i) => ({ ...d, frames: statedKeys(doc, a.name, i).map((k) => k.stated) })),
+        exact: true,
+        reads: (r) => {
+          const doc = readModel(r.texts.modelText);
+          return r.spine.keys.some((k) => {
+            const t = doc.animations.find((a) => a.name === k.animation)?.timelines.attachments.find((x) => x.skin === k.skin && x.slot === k.slot && x.attachment === k.placeholder);
+            return t?.deform?.[k.key] !== undefined && !Object.is(t.deform[k.key].stated, k.time);
+          });
+        },
+      },
+      {
+        label: 'every curve read as linear',
+        read: (doc) => deforms(modelStructure(doc), (d) => ({ ...d, curve: () => ({ kind: 'linear' }) })),
+        exact: true,
+        reads: (r) => r.spine.spans.some((s) => s.curve !== 'linear'),
+      },
+      {
+        label: 'the skin a timeline is keyed under read as the default skin',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          const fallback = s.skins.find((k) => k.name === 'default') ?? null;
+          return deforms(s, (d) => ({ ...d, placement: () => ({ ...d.placement(), skin: 'default', holder: fallback }) }));
+        },
+        exact: true,
+        reads: (r) => r.spine.keys.some((k) => k.skin !== 'default'),
+      },
+      {
+        label: 'a slider\'s from read as its to',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          return { ...s, sliders: s.sliders.map((x) => ({ ...x, from: x.to })) };
+        },
+        exact: true,
+        reads: (r) => {
+          const sliders = deformPosers({ ...r.texts }).model.sliders;
+          return r.spine.keys.some((k) => k.reach.kind === 'slider' && sliders.some((x) => x.name === k.reach.slider && x.from !== x.to));
+        },
+      },
+      {
+        label: 'a deform\'s reach to other slots dropped',
+        read: (doc) => deforms(modelStructure(doc), (d) => (d.mesh === null ? d : { ...d, mesh: { ...d.mesh, timelineSlots: [] } })),
+        exact: false,
+        // A key whose own slot draws nothing of the mesh and that is still gated: another slot the deform reaches draws it.
+        reads: (r) => r.spine.keys.some((k) => k.draw.blank === null && k.draw.alpha === 0),
+      },
+      {
+        label: 'a neighbouring key\'s vertex array',
+        read: (doc) => deforms(modelStructure(doc), (d) => ({ ...d, vertices: (frame) => d.vertices(frame + 1) ?? d.vertices(frame - 1) })),
+        exact: false,
+        reads: (r) => r.spine.spans.length > 0,
+      },
+      {
+        label: 'the visibility split reading no slot timeline',
+        read: (doc) => {
+          const s = modelStructure(doc);
+          return { ...s, animations: s.animations.map((a) => ({ ...a, slotKeyTimes: () => [] })) };
+        },
+        exact: false,
+        reads: (r) => r.spine.spanProbes > 0,
+      },
+    ];
+    const verdicts: string[] = [];
+    for (const plant of plants) {
+      const red: string[] = [];
+      const reading: string[] = [];
+      for (const r of structureRows) {
+        if (plant.reads(r)) reading.push(r.name);
+        let planted: string;
+        try {
+          planted = canonicalJson(surveyOfModel(readModel(r.texts.modelText), new Set(), plant.read));
+        } catch (err) {
+          planted = `refused: ${(err as Error).message}`;
+        }
+        if (planted !== canonicalJson(r.spine)) red.push(r.name);
+      }
+      const extra = red.filter((n) => !reading.includes(n));
+      const missed = reading.filter((n) => !red.includes(n));
+      if (reading.length === 0) probes.push(`${plant.label}: no row reads it`);
+      else if (red.length === 0) probes.push(`${plant.label}: green on every row, ${reading.length} of them reading it`);
+      else if (extra.length > 0) probes.push(`${plant.label}: red on ${extra.length} row(s) that do not read it (${extra.slice(0, 3).join(', ')})`);
+      else if (plant.exact && missed.length > 0) probes.push(`${plant.label}: green on ${missed.length} row(s) reading it (${missed.slice(0, 3).join(', ')})`);
+      verdicts.push(`${plant.label} red on ${red.length} of the ${reading.length} row(s) reading it${plant.exact ? '' : ' (a fold window decides whether it moves a figure)'}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'DM13_A_MISREAD_OF_EACH_STRUCTURE_READ_GOES_RED_ON_THE_ROWS_THAT_READ_IT_AND_NO_OTHER',
+      held,
+      probeDetail(held, probes, `over DM12's ${structureRows.length} rows, each plant in the model document's reader against the spine-core survey: ${verdicts.join('; ')}`),
+      'issue #1019: DM12\'s identity is worth something only if the reader is what the survey read — a misread of each class moves the survey on the rows that read it, and on no other',
     );
   }
 
@@ -80632,6 +80822,155 @@ function runRenderHashesSuite(): number | null {
       ),
       'RC11 reads green on a tree that never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
         'sees an access at load, a read on the core path and an export refused without its sentence',
+    );
+  }
+
+  // --- RC15–RC16: `explain` on a rigc build reads and poses its deform survey without spine-core (issue #1019) --
+  //
+  // The survey `explain`'s DEFORM block prints was posed through the core since
+  // #969 and still read the skeleton's structure through spine-core, so
+  // `explain` on a rigc build died under RC11's stub at the parse. RC15 runs
+  // `explain` on every gallery build under the same hook: exit 0 and the
+  // unstubbed run's stdout, line for line, and `--poser core` alike; `--poser
+  // spine` — the reader and poser the flag asks for — refused naming the
+  // runtime as what it needs, in the sentence RC11 holds `render` to. ⚠️ No
+  // `explain` input is an export: it compiles a rig spec, so what it surveys
+  // always carries the model document, and the runtime's reasons are the flag
+  // and a fallback the block names. RC16 plants three faults in copies of the
+  // tree and reads RC15's own probes red on each.
+  {
+    const probes: string[] = [];
+    type Step = 'rows' | 'core' | 'spine';
+    const dir = join(work, 'rc15');
+    mkdirSync(dir, { recursive: true });
+    const names = spineCoreImportNames(import.meta.dir);
+    const stub = writeSpineCoreStub(dir, names);
+    const rigs = galleryBuilds
+      .map((b) => ({ name: b.name, rig: join(import.meta.dir, b.name, 'rig.json'), motion: join(import.meta.dir, b.name, 'motion.json') }))
+      .filter((r) => existsSync(r.rig) && existsSync(r.motion));
+    const args = (r: (typeof rigs)[number], out: string, extra: readonly string[] = []): string[] => ['explain', '--rig', r.rig, '--motion', r.motion, '--out', out, ...extra];
+    const touched = (stderr: string): string =>
+      /SPINE_CORE_LOADED: [A-Za-z]\w*(?:\.\w+)*(?: \(new\)|\(\))?/.exec(stderr)?.[0] ?? JSON.stringify(stderr.trim().split('\n')[0]?.slice(0, 200) ?? '');
+    const NEEDS = 'a rigc build the core poses reads nothing through it';
+    /** The unstubbed twin of each row's run, its out directory written as `<out>`. */
+    const plain = new Map<string, { status: number | null; stdout: string }>();
+    let blocks = 0;
+    /** RC15's probes over the tree at `root`, for the steps asked: empty is the tree green. */
+    const readStubbed = (root: string, label: string, steps: ReadonlySet<Step>): string[] => {
+      const out: string[] = [];
+      if (rigs.length === 0) return ['no gallery rig to explain'];
+      const twinOf = (r: (typeof rigs)[number]): { status: number | null; stdout: string } => {
+        let twin = plain.get(r.name);
+        if (twin === undefined) {
+          const at = join(dir, `plain-${plain.size}`);
+          const run = runCli(args(r, at));
+          twin = { status: run.status, stdout: run.stdout.split(at).join('<out>') };
+          plain.set(r.name, twin);
+        }
+        return twin;
+      };
+      const held = (r: (typeof rigs)[number], step: string, extra: readonly string[]): void => {
+        const twin = twinOf(r);
+        const at = join(dir, `${label}-${step}-${r.name.replace(/\W/g, '-')}`);
+        const run = runCliStubbed(stub, root, args(r, at, extra));
+        if (twin.status !== 0) out.push(`${label}: the unstubbed explain of ${r.name} exited ${twin.status}`);
+        else if (run.status !== 0) out.push(`${label}: explain${extra.length > 0 ? ` ${extra.join(' ')}` : ''} of ${r.name} under the stub exited ${run.status} — ${touched(run.stderr)}`);
+        else if (run.stdout.split(at).join('<out>') !== twin.stdout) out.push(`${label}: explain${extra.length > 0 ? ` ${extra.join(' ')}` : ''} of ${r.name} under the stub printed other lines than the unstubbed run`);
+      };
+      if (steps.has('rows')) for (const r of rigs) held(r, 'rows', []);
+      // The flag's two readings, on the first row whose report carries a DEFORM block — measured off the unstubbed run.
+      const deforming = rigs.find((r) => deformBlockOf(twinOf(r).stdout).length > 0);
+      blocks = rigs.filter((r) => deformBlockOf(twinOf(r).stdout).length > 0).length;
+      if (deforming === undefined) out.push(`${label}: no gallery rig's explain prints a DEFORM block, so the survey was not read`);
+      else {
+        if (steps.has('core')) held(deforming, 'core', ['--poser', 'core']);
+        if (steps.has('spine')) {
+          const run = runCliStubbed(stub, root, args(deforming, join(dir, `${label}-spine`), ['--poser', 'spine']));
+          const said = run.stderr.trim().split('\n')[0] ?? '';
+          const want = `rigc explain: the deform survey of ${deforming.rig} is posed through spine-core (--poser spine), and the runtime could not be used: SPINE_CORE_LOADED`;
+          if (run.status !== 1 || !said.startsWith(want) || !said.includes(NEEDS)) out.push(`${label}: explain --poser spine under the stub exited ${run.status} saying ${JSON.stringify(said.slice(0, 200))}, not the runtime named as what --poser spine needs`);
+        }
+      }
+      return out;
+    };
+    probes.push(...readStubbed(import.meta.dir, 'tree', new Set<Step>(['rows', 'core', 'spine'])));
+    const held = probes.length === 0;
+    say(
+      'RC15_EXPLAIN_ON_A_RIGC_BUILD_SURVEYS_ITS_DEFORM_KEYS_WITH_SPINE_CORE_STUBBED_AND_POSER_SPINE_IS_REFUSED_NAMING_THE_RUNTIME',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `every gallery rig (${rigs.length}, ${blocks} printing a DEFORM block) explained under a preload hook stubbing all ${names.length} spine-core name(s) the tree imports: ` +
+          'exit 0 with the unstubbed run\'s lines, and --poser core alike on the first with a block; --poser spine there exits 1 naming the survey, the flag and the runtime as what it needs',
+      ),
+      'issue #1019: the deform survey was posed through the core and read the skeleton through spine-core, so `explain` of a rigc build still parsed the pair ' +
+        'through the runtime at the survey\'s parse (RC11\'s census); only a run with the runtime made unusable shows what the command reaches',
+    );
+
+    // RC16 — each plant in its own copy of the tree (src/, cli.ts, package.json, the two tools src/ imports; node_modules linked, never written).
+    const plantTree = (label: string, file: string, from: string, to: string): { root: string; occurrences: number } => {
+      const root = join(work, `rc16-${label}`);
+      mkdirSync(join(root, 'tools'), { recursive: true });
+      cpSync(join(import.meta.dir, 'src'), join(root, 'src'), { recursive: true });
+      for (const f of ['cli.ts', 'package.json', join('tools', 'plate.ts'), join('tools', 'font5x7.ts')]) cpSync(join(import.meta.dir, f), join(root, f));
+      symlinkSync(join(import.meta.dir, 'node_modules'), join(root, 'node_modules'), 'dir');
+      const text = readFileSync(join(root, file), 'utf8');
+      const occurrences = text.split(from).length - 1;
+      writeFileSync(join(root, file), text.split(from).join(to));
+      return { root, occurrences };
+    };
+    const plantProbes: string[] = [];
+    const reds: string[] = [];
+    const plants: Array<{ label: string; file: string; from: string; to: string; steps: Step[]; expect: string }> = [
+      {
+        label: 'slider-read',
+        file: join('src', 'deformmeasure.ts'),
+        from: '    return surveyOfModel(doc, exempt);\n',
+        to: '    return surveyOfModel(doc, exempt, (d) => ({ ...modelStructure(d), sliders: runtimeSide(skeletonDataFromText(input.skeletonText, input.atlasText)).structure.sliders }));\n',
+        steps: ['rows'],
+        expect: 'SPINE_CORE_LOADED',
+      },
+      {
+        label: 'default-spine',
+        file: 'cli.ts',
+        from: "poser === undefined ? 'auto' :",
+        to: "poser === undefined ? 'spine-core' :",
+        steps: ['rows'],
+        expect: 'SPINE_CORE_LOADED',
+      },
+      {
+        label: 'no-sentence',
+        file: join('src', 'deformmeasure.ts'),
+        from: '    void TextureAtlas.prototype;\n',
+        to: '',
+        steps: ['spine'],
+        expect: 'not the runtime named as what --poser spine needs',
+      },
+    ];
+    for (const plant of plants) {
+      const { root, occurrences } = plantTree(plant.label, plant.file, plant.from, plant.to);
+      if (occurrences !== 1) {
+        plantProbes.push(`the ${plant.label} plant found ${occurrences} occurrence(s) of its line in ${plant.file}, not 1`);
+        continue;
+      }
+      const read = readStubbed(root, plant.label, new Set(plant.steps));
+      if (read.length === 0) plantProbes.push(`the ${plant.label} plant (${plant.file}) left RC15's ${plant.steps.join(', ')} green`);
+      else if (!read.some((p) => p.includes(plant.expect))) plantProbes.push(`the ${plant.label} plant read red for another reason: ${read[0].slice(0, 200)}`);
+      else reds.push(`${plant.label} (${plant.steps.join(', ')}: ${read.length} probe(s))`);
+    }
+    const plantsHeld = plantProbes.length === 0 && reds.length === plants.length;
+    say(
+      'RC16_A_STRUCTURE_READ_ROUTED_THROUGH_SPINE_CORE_A_DEFAULT_THROUGH_IT_OR_A_MISSING_SENTENCE_TURNS_RC15_RED',
+      plantsHeld,
+      probeDetail(
+        plantsHeld,
+        plantProbes,
+        `in copies of the tree: the survey's slider read routed back through spine-core's parse in src/deformmeasure.ts, explain's survey defaulted to spine-core in cli.ts, ` +
+          `and the runtime probe that names what --poser spine needs removed — RC15's probes red on each: ${reds.join('; ')}`,
+      ),
+      'RC15 reads green on a tree whose explain never touches the runtime and on a stub that touches nothing alike; the plants are what show the stub ' +
+        'sees one structure read on the core path, a default that is not the core, and a refusal without its sentence',
     );
   }
 

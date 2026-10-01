@@ -82,7 +82,8 @@ import { writeCheckPictures } from './src/checkpics.ts';
 import { compile, CompileError, droppedStateReason, relativeImagesPath, type CompileOptions } from './src/compile.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from './src/model.ts';
 import { deformReportBlock } from './src/deformreport.ts';
-import { surveyOfBuild } from './src/deformmeasure.ts';
+import { surveyOfBuild, type DeformSurvey } from './src/deformmeasure.ts';
+import { CoreInputError } from './src/core/index.ts';
 import {
   diffLines,
   diffSkeletons,
@@ -863,11 +864,20 @@ function memberReportLines(result: CompileResult): string[] {
  * an author who came here asking whether their deform broke the coverage
  * deserves the answer rather than a silence. What does move is the stretch.
  */
-function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>): string[] {
-  // Through rigc's own core over the model document the build carries (issue #969), spine-core when the core
-  // refuses it; the survey's record says which (`source`), and `tools/survey_hashes.ts` holds the two to one block.
-  // The block itself is `deformReportBlock` (`src/deformreport.ts`), so a control renders it off either poser's survey.
-  const survey = surveyOfBuild({ skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText) }, new Set(), 'auto');
+function deformReportLines(result: CompileResult, exempt: ReadonlySet<string>, poser: PoserName | undefined, label: string): string[] {
+  // Read and posed through rigc's own core over the model document the build carries (issues #969, #1019) —
+  // spine-core is not touched — and through spine-core under `--poser spine` or when the core refuses the
+  // document, which the block then names; `tools/survey_hashes.ts` holds the two to one block. The block
+  // itself is `deformReportBlock` (`src/deformreport.ts`), so a control renders it off either reader's survey.
+  const input = { skeletonText: result.skeletonText, atlasText: result.atlasText, modelText: modelDocument(result.model, result.skeletonText, result.atlasText), label: `the deform survey of ${label}` };
+  let survey: DeformSurvey;
+  try {
+    survey = surveyOfBuild(input, new Set(), poser === undefined ? 'auto' : poser === 'core' ? 'model' : 'spine-core');
+  } catch (err) {
+    // `--poser core` on a build the core refuses: a refusal of the invocation, as `render` and `check` give it.
+    if (poser === 'core' && err instanceof CoreInputError) throw new ExplainError(`--poser core: the core refused to pose the deform survey's model document — ${err.message}`);
+    throw err;
+  }
   return deformReportBlock(survey, result.deformTransforms, exempt);
 }
 
@@ -2747,9 +2757,12 @@ function cmdBoneDist(flags: Record<string, string>): void {
 /**
  * Refuse a compiled pair whose art `explain` cannot pose through, by name.
  *
- * 🚨 `explain` poses the rig — `deformReportLines` loads the emitted pair through
- * `spine-core` to measure what each deform key did — and a pose resolves EVERY
- * attachment against the atlas, whether or not anything deforms it. On the specs
+ * 🚨 `explain` poses the rig — `deformReportLines` measures what each deform key
+ * did — and spine-core's reading of the pair resolves EVERY attachment against
+ * the atlas, whether or not anything deforms it. (Since issue #1019 a build's
+ * survey is read off its model document and posed by the core, which resolves
+ * nothing against the atlas; spine-core reads it under `--poser spine` and on a
+ * fallback, and this refusal is unchanged and comes before either.) On the specs
  * `ingest --art none` writes there is nothing to resolve against: the entries
  * state a size and name no `image`, so the compile atlases nothing, and the load
  * threw the runtime's own `Region not found in atlas: rear-upper-arm (attachment:
@@ -2820,6 +2833,8 @@ function refuseUnposableArt(result: CompileResult, opts: CompileOptions): void {
 }
 
 function cmdExplain(flags: Record<string, string>): void {
+  // `--poser` is refused by its spelling before anything compiles (issue #1019): it chooses the deform survey's reader and poser.
+  const poser = readPoserFlag(flags);
   const { label, opts } = resolveCut(flags);
   console.log(`rigc explain ${label}`);
   // See the identical pair of lines in `cmdBuild` for why both paths are named
@@ -3075,7 +3090,7 @@ function cmdExplain(flags: Record<string, string>): void {
   // The `DEFORM` block goes after the timelines and before the constraints,
   // because it is a measurement OF the deform timelines printed above — the keys
   // it names are the keys the reader has just read, by the same index.
-  for (const line of deformReportLines(result, new Set(result.rig.deformMayFold))) console.log(line);
+  for (const line of deformReportLines(result, new Set(result.rig.deformMayFold), poser, label)) console.log(line);
 
   if (result.physics.length) {
     console.log('\nphysics constraints (4.3 top-level `constraints` array, type per entry)');
@@ -3591,7 +3606,9 @@ const FLAG_MEANINGS: Record<string, string> = {
     "`render` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
     'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
     "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the `poser` " +
-    'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name',
+    'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name. ' +
+    "`explain`: which reads and poses the DEFORM block's survey — `core` (the model document the compile writes, spine-core untouched) or " +
+    '`spine` (the Spine skeleton parsed and posed by spine-core); default `core`, and `spine` where the core refuses the document, which the block names',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -3806,11 +3823,11 @@ const COMMANDS: CommandDoc[] = [
   {
     name: 'explain',
     usage: [
-      'rigc explain --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>]   (it never gates, and writes nothing)',
+      'rigc explain --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--poser core|spine]   (it never gates, and writes nothing)',
       'rigc explain … --atlas-in <skeleton.atlas>                  (resolve the parts against a pack somebody already made, as build does)',
       'rigc explain --cut <name> --cuts <cuts.json>',
     ],
-    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts'],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts', 'poser'],
     notes: [
       'this line said "the same arguments as build, minus --profile" and was false in both',
       'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
