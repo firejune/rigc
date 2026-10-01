@@ -891,10 +891,20 @@ function skeletonDurations(root: JsonObject): Array<{ name: string; duration: nu
   });
 }
 
-/** Every page named, read from `atlasDir` by that name — the images a candidate the core poses is drawn from. */
-function pagesNamed(names: readonly string[], atlasDir: string): Map<string, Plate> {
+/**
+ * Every page named, read from `atlasDir` by that name — the images a candidate
+ * is drawn from, whichever poser draws it. A page that is not there is
+ * `absent`'s refusal, handed the page's absolute path (issues #1033, #1042):
+ * left to `readPlate`, it surfaced as an ENOENT and a stack. A page that is
+ * there and is not a PNG says so itself (`readPlate`).
+ */
+function pagesAt(names: readonly string[], atlasDir: string, absent: (page: string) => Error): Map<string, Plate> {
   const pages = new Map<string, Plate>();
-  for (const name of names) pages.set(name, readPlate(join(atlasDir, name)));
+  for (const name of names) {
+    const path = join(atlasDir, name);
+    if (!existsSync(path)) throw absent(resolve(path));
+    pages.set(name, readPlate(path));
+  }
   return pages;
 }
 
@@ -959,6 +969,11 @@ function requireSpineRuntime(label: string, why: string): void {
  * `cli.ts` refuses it as an invocation (exit 2, nothing written), as it
  * refuses a missing atlas on an export: the files the command was pointed at
  * have to change, not the rig.
+ *
+ * Since issue #1042 it is also `bonedist`'s (and `bench --bones`'), on either
+ * side (`loadPosedSkeleton`), and the refusal for a page a candidate is drawn
+ * from that is not there on every poser's path — the core's included, where a
+ * build moved whole away from where it was built died on `readPlate`'s ENOENT.
  */
 export class CandidatePairError extends Error {}
 
@@ -976,24 +991,102 @@ function notOneBuild(dir: string): string {
   );
 }
 
-/** The refusal for a skeleton the runtime could not load against its atlas: `runtime` is the runtime's own message. */
-function pairRefusal(label: string, paths: { skeleton: string; atlas: string } | null, why: string, runtime: string): CandidatePairError {
+/**
+ * The refusal for a skeleton the runtime could not load against its atlas:
+ * `runtime` is the runtime's own message, and `does` what spine-core was
+ * loading it to do — `draws` for `render` and `check`, `poses` for a command
+ * that reads the posed bones and draws nothing (`bonedist`, issue #1042).
+ */
+function pairRefusal(
+  label: string,
+  paths: { skeleton: string; atlas: string } | null,
+  why: string,
+  runtime: string,
+  does: 'draws' | 'poses' = 'draws',
+): CandidatePairError {
   const { atlas, build } = pairPlace(paths);
-  const head = `${label} does not load against ${atlas}: spine-core draws this pair (${why}) and could not resolve it — ${JSON.stringify(runtime)}. `;
+  const head = `${label} does not load against ${atlas}: spine-core ${does} this pair (${why}) and could not resolve it — ${JSON.stringify(runtime)}. `;
   return new CandidatePairError(head + (build === null ? 'The skeleton and the atlas are not one pair: the atlas has to be the one the skeleton was exported or built with' : notOneBuild(build)));
 }
 
 /**
- * The refusal for a page the atlas spine-core draws through names and that is
- * not there (issue #1033) — on a rigc build, typically an atlas copied from
- * another build's directory, whose page paths are relative to that one.
+ * The refusal for a page a candidate is drawn from that is not there — the
+ * page's path is relative to the directory of the file that names it, so the
+ * file was written somewhere else. What the last clause may claim depends on
+ * what is known about the directory:
+ *
+ * - an export (no model document): only that the page has to be there;
+ * - a rigc build whose files the core REFUSED (issue #1033): an atlas copied
+ *   from another build's directory, and the directory is not one build — the
+ *   core's own reason, on the poser line's words, says so;
+ * - a rigc build the core ACCEPTED, or one `--poser spine` never asked the
+ *   core about (issue #1042): the build was moved or copied away from where it
+ *   was built. "Not one build" would be a guess there, and on a build moved
+ *   whole — measured — a false one.
+ *
+ * `by` is the file that names the page (`null`: the atlas), `draws` what is
+ * drawn from it.
  */
-function pageRefusal(page: string, paths: { skeleton: string; atlas: string } | null, why: string): CandidatePairError {
+function pageRefusal(
+  page: string,
+  paths: { skeleton: string; atlas: string } | null,
+  why: string,
+  reading: { by: string | null; draws: string; refusedBuild: boolean },
+): CandidatePairError {
   const { atlas, build } = pairPlace(paths);
-  const head = `nothing at ${page}: ${atlas} names it as a page, and spine-core draws this pair through that atlas (${why}). A page path is relative to the atlas's own directory`;
-  return new CandidatePairError(
-    head + (build === null ? ', and the page has to be there' : `, so an atlas copied from another build's directory names pages that are not here. ${notOneBuild(build)}`),
-  );
+  // The poser line's reason, unless it is only the document's path — which the sentence has just named.
+  const because = why === reading.by ? '' : ` (${why})`;
+  const head =
+    `nothing at ${page}: ${reading.by ?? atlas} names it as a page, and ${reading.draws}${because}. ` +
+    `A page path is relative to the ${reading.by === null ? "atlas's own" : "build's"} directory`;
+  const tail =
+    build === null
+      ? ', and the page has to be there'
+      : reading.refusedBuild
+        ? `, so an atlas copied from another build's directory names pages that are not here. ${notOneBuild(build)}`
+        : `, so a build moved or copied away from the directory it was built in names pages that are not here — ` +
+          'build it again where it is, or build it with --copy-images, which writes its pages beside it';
+  return new CandidatePairError(head + tail);
+}
+
+/**
+ * The one place a candidate's skeleton is handed to the runtime's parser
+ * against its atlas (issues #1033, #1042): a pair it cannot load is `refuse`'s
+ * refusal, given the runtime's own message, rather than the runtime's throw
+ * and a stack. The JSON is parsed outside the catch: a file that is not JSON
+ * is not something the runtime said, and the CLI refuses it by name before it
+ * gets here (`readSkeletonText`).
+ */
+function spineSkeletonData(skeletonText: string, atlasText: string, refuse: (runtime: string) => Error): SkeletonData {
+  const json = JSON.parse(skeletonText);
+  const reader = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(atlasText)));
+  try {
+    return reader.readSkeletonData(json);
+  } catch (err) {
+    throw refuse(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * A skeleton a user named, posed through spine-core for what its bones do —
+ * `bonedist`'s two sides (issue #1042). A pair that does not load is refused
+ * by name (`CandidatePairError`, `pairRefusal` with `poses`), `why` saying
+ * which side and what the pose is read for.
+ *
+ * ⭐ The skeleton data alone, and no page: `bonedist` reads bone world
+ * transforms and samples no pixel, and the atlas's regions — which the
+ * runtime resolves every attachment against — are in the atlas text. Reading
+ * the page PNGs as `loadPosable` does made a pair whose pages are elsewhere
+ * die on an ENOENT for images the command never looks at; the figures are the
+ * same with or without them (the PR of #1042 measures it).
+ *
+ * `loadPosable` and `posableFromText` stay the unguarded loaders, for pairs
+ * the caller wrote itself (the tools and the selftest), where the runtime's
+ * own message is what the caller reads.
+ */
+export function loadPosedSkeleton(skeletonPath: string, atlasPath: string, why: string): SkeletonData {
+  const paths = { skeleton: skeletonPath, atlas: atlasPath };
+  return spineSkeletonData(readFileSync(skeletonPath, 'utf8'), readFileSync(atlasPath, 'utf8'), (runtime) => pairRefusal(skeletonPath, paths, why, runtime, 'poses'));
 }
 
 /** A candidate as `render` and `check` read it: the posers, the facts and the pages (issue #1014). */
@@ -1034,23 +1127,15 @@ export function loadCandidate(
     if (input.atlasText === null) throw atlasAbsent(paths?.atlas ?? '(no atlas)', input.label, why);
     return input.atlasText;
   };
-  // The one place this function hands the pair to the runtime's parser. A pair it cannot load — a skeleton.json
-  // or an atlas from another build beside this one's document — is refused by name rather than surfacing the
-  // runtime's own throw and stack (issue #1033). The JSON is parsed outside the catch: a file that is not JSON is
-  // not something the runtime said.
+  // A pair the runtime cannot load — a skeleton.json or an atlas from another build beside this one's document — is
+  // refused by name rather than surfacing the runtime's own throw and stack (issue #1033); `spineSkeletonData` is
+  // where the catch is.
   // Under `--poser core` the runtime is loaded only for the facts the flags are checked against, and nothing would be
   // drawn through it: the refusal that is true there is the flag's, the one `refuseUnchosen` would have said next.
   const refusing = (refusal: CandidatePairError): Error =>
     forced === 'core' && choice !== null && choice.core === null ? new PoserChoiceError(`--poser core: ${choice.why}`) : refusal;
-  const spineLoad = (text: string, why: string): SkeletonData => {
-    const json = JSON.parse(input.skeletonText);
-    const reader = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(text)));
-    try {
-      return reader.readSkeletonData(json);
-    } catch (err) {
-      throw refusing(pairRefusal(input.label, paths, why, err instanceof Error ? err.message : String(err)));
-    }
-  };
+  const spineLoad = (text: string, why: string): SkeletonData =>
+    spineSkeletonData(input.skeletonText, text, (runtime) => refusing(pairRefusal(input.label, paths, why, runtime)));
   const spineData = (): SkeletonData => {
     if (data === null) {
       const why = choice === null || choice.core !== null ? 'a fallback from the core poser' : choice.why;
@@ -1067,20 +1152,29 @@ export function loadCandidate(
   choice = chosen.choice;
   if (choice.core !== null && chosen.document !== null) {
     // A rigc-compiled/2 document names its pages; a /1 document is posed only with its atlas beside it, which names them (`choosePosers`).
-    const names = chosen.document.pageNames ?? parseAtlasText(atlasText(choice.why)).pages.map((page) => page.name);
-    return { choice, facts: coreFacts(input.skeletonText, input.atlasText, choice.core, chosen.document), pages: pagesNamed(names, input.atlasDir) };
+    const named = chosen.document.pageNames;
+    const names = named ?? parseAtlasText(atlasText(choice.why)).pages.map((page) => page.name);
+    // A page the build names that is not here is a build moved away from where it was built (issue #1042): the
+    // core accepted these files as one build, so the refusal does not say they are not one.
+    const by = named === null || paths === null ? null : join(dirname(resolve(paths.skeleton)), MODEL_DOCUMENT_FILE);
+    const reading = { by, draws: 'the core draws this build from it', refusedBuild: false };
+    const accepted = choice.why;
+    const pages = pagesAt(names, input.atlasDir, (page) => pageRefusal(page, paths, accepted, reading));
+    return { choice, facts: coreFacts(input.skeletonText, input.atlasText, choice.core, chosen.document), pages };
   }
   const text = atlasText(choice.why);
   requireSpineRuntime(input.label, choice.why);
   // `posableFromText`'s two steps, in its order — every page the atlas declares, then the skeleton — each refusing
   // by name where the pair is not one: a page that is not there (`pageRefusal`), a skeleton the runtime cannot load
-  // against the atlas (`spineLoad`). A page that is there and is not a PNG says so itself (`readPlate`).
-  const pages = new Map<string, Plate>();
-  for (const page of new TextureAtlas(text).pages) {
-    const path = join(input.atlasDir, page.name);
-    if (!existsSync(path)) throw refusing(pageRefusal(resolve(path), paths, choice.why));
-    pages.set(page.name, readPlate(path));
-  }
+  // against the atlas (`spineLoad`). The directory is called "not one build" only where the core refused its files —
+  // `--poser spine` never asked the core, and a build moved whole is one build whose pages are elsewhere.
+  const reading = { by: null, draws: 'spine-core draws this pair through that atlas', refusedBuild: forced !== 'spine' };
+  const why = choice.why;
+  const pages = pagesAt(
+    new TextureAtlas(text).pages.map((page) => page.name),
+    input.atlasDir,
+    (page) => refusing(pageRefusal(page, paths, why, reading)),
+  );
   data = spineLoad(text, choice.why);
   return { choice, facts: spineFacts(data, text), pages };
 }

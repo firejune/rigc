@@ -338,11 +338,30 @@ function parseArgs(
  * unhandled `SyntaxError` with a stack trace instead of a usage error.
  */
 function readJsonFile(path: string): unknown {
+  return parseJsonNamed(readFileSync(path, 'utf8'), path);
+}
+
+/** `text`, read from `path`, parsed — and refused naming the file and where it broke when it is not JSON. */
+function parseJsonNamed(text: string, path: string): unknown {
   try {
-    return parseJsonWithPosition(readFileSync(path, 'utf8'));
+    return parseJsonWithPosition(text);
   } catch (err) {
     throw new UsageError(`cannot read ${path}: ${(err as Error).message}`);
   }
+}
+
+/**
+ * A skeleton a command was pointed at, as text — refused like every other JSON
+ * file on the command line (`parseJsonNamed`) when it is not JSON (issue
+ * #1042). `render`, `check`, `bench` and `bonedist` hand the text to a loader
+ * that parses it again, and on a file that is not JSON that parse surfaced as
+ * the runtime's `SyntaxError` and a stack, where `diff`, `preview`, `vote` and
+ * `ingest` already said `cannot read <path>`.
+ */
+function readSkeletonText(path: string): string {
+  const text = readFileSync(path, 'utf8');
+  parseJsonNamed(text, path);
+  return text;
 }
 
 /**
@@ -1480,7 +1499,7 @@ function runCheck(
   // paths are what `candidatePosers` looks beside for `skeleton.model.json`.
   const poser = readPoserFlag(flags);
   return checkAgainstFrames({
-    skeletonText: readFileSync(skeletonPath, 'utf8'),
+    skeletonText: readSkeletonText(skeletonPath),
     atlasText,
     atlasDir: dirname(atlasPath),
     framesDir,
@@ -1805,7 +1824,7 @@ function cmdRender(flags: Record<string, string>): void {
   // subset roster and its pages without loading spine-core at all, and with a
   // rigc-compiled/2 document without its atlas either (issue #1020).
   const { choice, facts, pages } = loadCandidate(
-    { skeletonText: readFileSync(skeletonPath, 'utf8'), atlasText, atlasDir, label: skeletonPath },
+    { skeletonText: readSkeletonText(skeletonPath), atlasText, atlasDir, label: skeletonPath },
     { skeleton: skeletonPath, atlas: atlasPath },
     posersAsked(flags),
   );
@@ -1941,12 +1960,7 @@ function cmdRender(flags: Record<string, string>): void {
 
 /** The animation names an emitted skeleton carries, in the order it lists them. */
 function skeletonAnimationNames(skeletonText: string, path: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = parseJsonWithPosition(skeletonText);
-  } catch (err) {
-    throw new UsageError(`cannot read ${path}: ${(err as Error).message}`);
-  }
+  const parsed = parseJsonNamed(skeletonText, path);
   if (typeof parsed !== 'object' || parsed === null) throw new UsageError(`${path} is not a skeleton object`);
   const animations = (parsed as { animations?: unknown }).animations;
   if (animations === undefined) return [];
@@ -2541,8 +2555,11 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
     throw new UsageError(`no example corpus at ${exportDir} — ${remedy} (examples/ is gitignored, not shipped)`);
   }
 
-  const { skeletonPath, atlasPath } = resolveArtifacts(flags.candidate, flags.atlas);
-  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  // Both files there and the skeleton JSON before the first line is printed, refused by name as `render` refuses
+  // them (issue #1042): a missing file and a skeleton that is not JSON surfaced as an ENOENT or a SyntaxError and a
+  // stack, the second only after the validate block had printed.
+  const { skeletonPath, atlasPath } = resolveViewable({ candidate: flags.candidate, ...(flags.atlas === undefined ? {} : { atlas: flags.atlas }) });
+  const skeletonText = readSkeletonText(skeletonPath);
   const atlasText = readFileSync(atlasPath, 'utf8');
 
   console.log(`rigc bench rung ${rung.id} — ${rung.example}`);
@@ -2586,10 +2603,8 @@ function cmdBench(flags: Record<string, string>, positional: string[]): void {
       const boneDist = boneDistance({
         candidateSkeleton: skeletonPath,
         candidateAtlas: atlasPath,
-        candidateAtlasDir: dirname(atlasPath),
         referenceSkeleton: referencePath,
         referenceAtlas: join(exportDir, skeleton.atlas),
-        referenceAtlasDir: exportDir,
         bones: flags.bones,
         // Deliberately NOT `flags.fps`. Inside `bench` that flag already means
         // "the rate this frame set was recorded at, for a set with no sidecar",
@@ -2781,15 +2796,20 @@ function cmdBoneDist(flags: Record<string, string>): void {
         'names, so the mapping is an input and never a guess; pass `identity` to state that the two use the same names',
     );
   }
-  const candidate = resolveArtifacts(flags.candidate, flags.atlas);
-  const reference = resolveArtifacts(flags.reference, flags['reference-atlas']);
+  // Each side's files there and its skeleton JSON, refused by name as `render` refuses them (issue #1042); a pair
+  // that does not load is `boneDistance`'s refusal (`CandidatePairError`, exit 2 below).
+  const sideOf = (target: string, atlas: string | undefined): { skeletonPath: string; atlasPath: string } => {
+    const side = resolveViewable({ candidate: target, ...(atlas === undefined ? {} : { atlas }) });
+    readSkeletonText(side.skeletonPath);
+    return side;
+  };
+  const candidate = sideOf(flags.candidate, flags.atlas);
+  const reference = sideOf(flags.reference, flags['reference-atlas']);
   const report = boneDistance({
     candidateSkeleton: candidate.skeletonPath,
     candidateAtlas: candidate.atlasPath,
-    candidateAtlasDir: dirname(candidate.atlasPath),
     referenceSkeleton: reference.skeletonPath,
     referenceAtlas: reference.atlasPath,
-    referenceAtlasDir: dirname(reference.atlasPath),
     bones: flags.bones,
     ...(flags.fps === undefined ? {} : { fps: Number(flags.fps) }),
   });
@@ -4388,6 +4408,8 @@ try {
   // skeleton.json or an atlas from another build beside this one's model document. The same class as the
   // missing atlas above: nothing was posed or written, and it is the directory the command was pointed at that
   // has to change. The message names both files, the reason the runtime drew them and the runtime's own words.
+  // Since issue #1042 also `bonedist` and `bench --bones` on either side, and a page a candidate is drawn from that
+  // is not there, whichever poser draws it.
   if (err instanceof CandidatePairError) {
     console.error(`rigc ${command}: ${err.message}`);
     process.exit(2);

@@ -77,7 +77,7 @@
  */
 import { readFileSync } from 'node:fs';
 import {
-  loadPosable,
+  loadPosedSkeleton,
   PROTOCOL_FPS,
   sampleAnimation,
   sampleSetupPose,
@@ -184,7 +184,7 @@ export interface SkeletonSize {
   degenerate: boolean;
 }
 
-function skeletonSize(posable: Posable): SkeletonSize {
+function skeletonSize(posable: Pick<Posable, 'data'>): SkeletonSize {
   const setup = sampleSetupPose(posable.data, { bones: true }).at(0);
   const bones = setup?.bones ?? [];
   const rootData = posable.data.bones.find((b) => b.parent === null) ?? posable.data.bones.at(0);
@@ -338,10 +338,17 @@ export interface BoneDistReport {
 export interface BoneDistOptions {
   candidateSkeleton: string;
   candidateAtlas: string;
-  candidateAtlasDir: string;
+  /**
+   * Where the candidate's atlas pages are. Not read since issue #1042: no
+   * figure here samples a pixel, so no page is opened, and a pair whose pages
+   * are elsewhere measures the same. Kept optional so a caller that passes it
+   * still compiles.
+   */
+  candidateAtlasDir?: string;
   referenceSkeleton: string;
   referenceAtlas: string;
-  referenceAtlasDir: string;
+  /** The reference's, as `candidateAtlasDir` — not read. */
+  referenceAtlasDir?: string;
   /** A correspondence file path, or `identity`. */
   bones: string;
   fps?: number;
@@ -398,8 +405,13 @@ function extremesOf(values: number[]): Extremes {
 export function boneDistance(options: BoneDistOptions): BoneDistReport {
   const fps = options.fps ?? PROTOCOL_FPS;
   if (!Number.isFinite(fps) || fps <= 0) throw new BoneDistError('fps must be a positive number');
-  const candidate = loadPosable(options.candidateSkeleton, options.candidateAtlas, options.candidateAtlasDir);
-  const reference = loadPosable(options.referenceSkeleton, options.referenceAtlas, options.referenceAtlasDir);
+  // Each side through spine-core, refused by name where its skeleton does not load against its atlas (issue #1042),
+  // and without its page images: nothing here samples a pixel (`loadPosedSkeleton`).
+  const posedFor = (side: 'candidate' | 'reference', skeleton: string, atlas: string): Pick<Posable, 'data'> => ({
+    data: loadPosedSkeleton(skeleton, atlas, `bonedist's ${side}: every bone's world transform is read off spine-core's pose of it`),
+  });
+  const candidate = posedFor('candidate', options.candidateSkeleton, options.candidateAtlas);
+  const reference = posedFor('reference', options.referenceSkeleton, options.referenceAtlas);
 
   const candidateBoneNames = candidate.data.bones.map((b) => b.name);
   const referenceBoneNames = new Set(reference.data.bones.map((b) => b.name));
