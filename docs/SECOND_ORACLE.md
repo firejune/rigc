@@ -1,7 +1,9 @@
 # The second oracle — rigc's own core, admitted construct by construct against spine-core
 
 **Status: started 2026-09-29 by the owner's call** (issue #380, the start gate of its
-2026-09-17 comment). This page is the design. #380 carries the history of the argument,
+2026-09-17 comment); steps 0a–3 landed by 2026-10-01 and shipped in 1.6.1 (1.6.0 was
+tagged and never served, #1003); step 4 is the owner's and has not started (§6). This
+page is the design. #380 carries the history of the argument,
 including the two shapes it rejected on 2026-09-04, which stay rejected;
 [ROADMAP.md](../ROADMAP.md) *What changes the frame* is the frame — *the milestone is
 not the second backend, it is the second oracle.*
@@ -20,7 +22,8 @@ how `compile` builds, in six cuts, each landing under byte identity of every Spi
 on every corpus (§6). `build` now writes `skeleton.model.json` (`rigc-compiled/1`)
 beside the Spine pair, the Spine emitter (`src/emit_spine.ts`) is the one writer of
 Spine data, and `compile.ts` names no Spine shape, held by `MD02`/`MD03`. The core
-poses that document: bones with their inherit modes, slots and colours, every attachment kind's
+poses that document — since step 2 a description of `src/core/` rather than a target,
+shipped in 1.6.1 (§5, §6): bones with their inherit modes, slots and colours, every attachment kind's
 world vertices, deform, draw order, clipping, events, and the five constraint kinds; such
 that for **every spec in every corpus**, the pose our core produces from the compiled
 model equals the pose spine-core produces from the Spine backend's emission of the same
@@ -83,13 +86,22 @@ written before this page; whether it stays as it is, is rewritten from the forma
 documentation and measurement under this page's rule, or is what this page's rule
 should say is fine, is the owner's call and is recorded on #380 when made.
 
+Since 2026-09-29 (#929): the part of this question the core depended on was closed by
+measurement — posed with `transform.ts`'s evaluator, the core read 1 of the 12
+unconstrained recipes identical to spine-core, so `src/core/` poses with an evaluator of
+its own, written from measurement, and imports nothing from `transform.ts` (`CO04`
+refuses it). #929 left `transform.ts` untouched, its comment included; whether that
+comment and the transcription it describes stay is still the owner's call.
+
 ## 4. The oracle — the equivalence gate
 
-The instrument exists in prototype: the 1.0 exam's pose oracle (private scratch,
-`pose43.mjs` 33 lines, `compare4.py` 134 lines, measured 2026-09-29), which posed
-rigc's builds and the editor's exports under `spine-core` 4.3.13 and read **IDENTICAL**
-on 14 of 14 graded production rigs after #803 and #804 landed. It is promoted into
-`tools/` as step 0b (§6) and extended with what its own README lists under *Not yet*.
+The instrument began as a prototype — the 1.0 exam's pose oracle in private scratch,
+which read **IDENTICAL** on 14 of 14 graded production rigs after #803 and #804 — and
+step 0b (#911) promoted it into `tools/pose_oracle.ts` with what its *Not yet* list
+named. That file holds both dumpers (`dump` through `spine-core` 4.3.13, `dump --core`
+through `src/core/`) and `compare`; `tools/core_gate.ts` runs the pair over a corpus,
+judges each block of each row on its own, and prints a census of what the corpus
+reaches.
 
 **Definition.** For a spec S, let B be the Spine backend's build of S and M the compiled
 model of S.
@@ -97,14 +109,24 @@ model of S.
 - P_spine(B): spine-core's pose dump of B — the setup pose and N samples per animation
   in the oracle's phases (`grid`, `off`, `irr`, `dense`): every bone's world
   `x y a b c d`, active flag and parent; every slot's attachment name, colour and region
-  path; **and, new:** every drawn attachment's world vertices, the draw order, clipping
-  output, events fired, and physics stepped from `Physics.reset` at a fixed `dt` on rigs
-  that have it.
+  path; **and, added at promotion and since:** the slot's blend mode (#947), every drawn
+  attachment's world vertices, the draw order, the clipping polygons and the triangles
+  drawn under them (#971), each drawn attachment's atlas page and page UVs (#974),
+  events fired, and physics stepped from `Physics.reset` at a fixed `dt` on rigs that
+  have it.
 - P_ours(M): the same dump, same JSON shape, from our core on M.
 
-**The gate: P_ours(M) ≡ P_spine(B).** Rosters and names exact; numbers equal at the
-oracle's rounding (six decimals); and the two renders through rigc's own rasteriser
-bit-identical, any differing pixel named by slot and frame. A sample where a bone's
+**The gate: P_ours(M) ≡ P_spine(B).** Rosters and names exact, and the numbers read
+two ways. **On the grid**, equal at the oracle's rounding (six decimals): the reading
+every construct of step 2 was admitted under (§5). **Under `--raw`** (#976), full
+doubles at tolerance 0 with the worst difference printed in ulps: the reading step 3
+switched the consumers under, because they read full doubles; it reads GREEN on every
+row of both corpora since #981, and the core suite holds it on every built row
+(`CR06`). The renders: `tools/render_hashes.ts` (#972) measured two runs on one machine
+byte-identical (19 rows, 2,827 files), and Linux CI's encoder wrote other PNG bytes for
+the same frames, so its tracked base holds decoded pixels and `RH05` holds those across
+platforms; posed through the core against through spine-core, the 19 rows read
+IDENTICAL on all 2,827 files, bytes and pixels (#980). A sample where a bone's
 |det| < ε in either runtime is ill-conditioned — reported, not compared, with its
 descendants (the rule the exam's calibration derived).
 
@@ -117,14 +139,37 @@ to, and that is the finding.
 (one wrong sign, one swapped mode) that must turn the gate red on the rows using it. A
 gate nobody has seen fail is not a gate.
 
+**Three classes the definition did not foresee**, each added when a measurement met it:
+
+- **Per skin** (#973). `--skin all` is the instrument's view, not a state a runtime is
+  ever in, so a row declaring several skins is also judged once per skin, both dumpers
+  under `--skin <name>`. No public row declares several (`core_gate` prints a
+  `per skin` HOLE); on the private corpus it is 48 skin runs over five rigs.
+- **History** (#983). Where a constraint writes into a bone the posed skin leaves
+  inactive, the runtime reads values its previous pass left, and its sequential and
+  fresh-skeleton readings disagree. `pose_oracle unposed` classes such a bone-sample
+  HISTORY by measurement — never IDENTICAL, never DIFF — and where such a value reaches a
+  posed bone the core refuses the pose by name (`CC15`) and `render` poses through
+  spine-core instead. 0 of 19 public rows are refused; one private rig carries HISTORY
+  rows on 18 of its 19 skins, and no refusal fires on any private skin.
+- **Unposed bones** (#980, #983). A bone the posed skin leaves unposed — inactive, or
+  below an inactive bone, which the runtime may still flag active — holds no pose in
+  either runtime: its zero matrix is ill-conditioned, so `compare` never reads it (and
+  JSON spells `-0` as `0`, which is why `unposed` exists), and the render seam snapshots
+  it as zero in both posers (`RC07`).
+
 **Populations**, every one read by machine and none by eye:
 
 | corpus | rows | how it enters |
 | --- | --- | --- |
-| the selftest's own fixtures | every spec the controls build | directly |
+| the selftest's core suite | hand-written probe documents and seeded random rigs, every population read `--raw` since #1001; not the four rigs `fixtures/public.ts` generates | directly |
 | the public example corpus (`examples/`, spine-runtimes branch `4.3`) | 12 exports | `ingest` |
-| this repository's gallery and bench builds | every build | directly |
-| a private production corpus | the 1.0 exam's 67 rigs' 4.3 exports and the 42 byte-round-trip rigs | `ingest`, under `--corpus`; figures only, no content, as the exam already runs |
+| this repository's gallery | 7 rigs (with the 12 exports, the 19 rows `core_gate` runs); the ladder's bench candidates are not among them | directly |
+| a private production corpus | 14 production rigs, 48 per-skin runs; steps 1, 2 and 3 were each read on it | `ingest`, under `core_gate --recipes`; figures only, no content |
+
+The larger private population this page first named — the 1.0 exam's 67 rigs' 4.3
+exports and the 42 byte-round-trip rigs — has not been run through the gate; it remains
+the intent, not a reading.
 
 ## 5. Admission, construct by construct
 
@@ -143,8 +188,11 @@ because a construct can only be measured once everything it depends on is admitt
    families), deform, draw order, events; linear, stepped and Bézier curves; the mixing
    `render` and `check` actually call — anything beyond that is a named absence, not
    an implementation
-5. constraints in update-cache order — ik, transform, path, physics (with `reset` and
-   the fixed-`dt` step), slider — and their timelines
+5. constraints in the file's declaration order — no sort; this item said "update-cache
+   order" until #951 measured that the runtime sorts nothing on these documents — ik,
+   transform, path, slider, and physics as two constructs: under `Physics.none` a
+   physics constraint applies nothing (#953), and the fixed-`dt` step from `reset` is
+   its own (#963) — and their timelines
 6. clipping applied to the draw
 
 A construct is **admitted** when all three hold: its planted difference turns the gate
@@ -152,19 +200,53 @@ red; the gate reads identical on every corpus row that uses it; and at least one
 uses it. Until every construct a consumer needs is admitted, that consumer keeps posing
 through spine-core (§6, step 3).
 
+**Where admission stands.** Every construct listed is admitted, and the core's own list
+of what it leaves out (`NOT_ADMITTED` in `src/core/index.ts`) is empty:
+
+| construct | PR | what decided it, as the PR states it |
+| --- | --- | --- |
+| 1 bones, five inherit modes | #929 | an evaluator of the core's own: exact on 12 of 12 unconstrained recipes; either measured difference alone, 0 of 12 |
+| 2 slots, colours, skins | #934, #947 (blend), #973 (per skin) | 18 of 19 rows, 1 SKIP by construct (#934); 36 corpus slots stating a blend (#947); 48 of 48 private skin runs (#973) |
+| 3 attachments' world vertices | #945 (on #939's atlas rectangle) | the region rule exact on 6,000 of 6,000 hand-written regions |
+| 4 timelines and curves | #943, #962 | the Bézier as a ten-piece recurrence, 0 misses on 18,430 corpus samples (#943); deform, sequence, draw order and events, the deform curve's far end fixed over 1,134 curve points (#962) |
+| 5 constraints | #951, #954, #953, #963 | the declaration order (#951); path, 32 hand-written and 400 random orders (#954); physics unstepped, 400 of 400, 462 of 462 and 240 of 240 (#953); stepped, 400 of 400 random rigs (#963) |
+| 6 clipping applied to the draw | #971, #982 | strictly convex clips, 2,641 of 2,641 (#971); concave and inverse clips through the core's own decomposition, 0 differing pixels on every probe (#982) |
+
+Two kinds in item 3 have no world-vertex reading: a bounding box, whose vertices the
+oracle's dump does not write, and a point, which rigc does not emit (#934).
+
+**What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
+a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
+saying what holds it instead, where anything does). Some are reached by the private
+corpus — a trimmed region, a linked mesh, rotate 180 and 270, several pages (#974):
+
+| family | HOLEs |
+| --- | --- |
+| bones | inherit `noScaleOrReflection`; `shearX`, `shearY`, `skinRequired`, `negativeScale`, `rotation360`, `reflectingParent` |
+| slots | `secondSkin`, `multiFilled`, `conflicting`, `unfilled`, `colour6`, `dark`, `dark8`, `blendNormal`, `blendScreen`, `nameDiffers`, `pathDiffers`, `linkedmesh`, `boundingbox`, `clipping`, `inactiveBone` |
+| attachments | `skewedBinding`, `linkedMesh`, `trimmedRegion`, `mirroredRegion`, `sequenceRegion`, `nullAtlas`, `clipping`, `clipEnd`, `boundingbox`, `path` |
+| uvs | `linkedmesh`, `rotate180`, `rotateOther`, `trimmed`, `sequence`, `pathDiffers` |
+| animations | `bone.shearx`, `bone.sheary`, `bone.inherit`, `slot.rgb`, `slot.alpha`, `slot.rgba2`, `slot.rgb2`, `slot.stepped`, `overlappingBoneChannels`, `deformPath`, `deformClipping`, `deformLinked`, `sequence`, `sequenceRegion`, `sequenceSlider`, `drawOrderEmpty`, `drawOrderSlider`, `eventPayload` |
+| constraints | `ik.mixPartial`, `ik.softness`, `ik.compress`, `ik.stretch`, `ik.scaleYUniform`, `ik.scaleYVolume`, `ik.nonNormal`, `ik.nonUniformParent`, `ik.timelineFlags`; `transform.crossMapping`, `transform.additive`, `transform.clamp`, `transform.fromOffset`, `transform.toOffset`, `transform.toScale`, `transform.timelineBezier`; `skin`; `slider.boneWorld`, `slider.boneless`, `slider.mixPartial`, `slider.loop`, `slider.timeline` |
+| paths | `severalBones`, `positionFixed`, `spacingLength`, `spacingFixed`, `spacingProportional`, `spacingNegative`, `chain`, `chainScale`, `offsetRotation`, `mixPartial`, `mixZero`, `closed`, `statedLengths`, `weighted`, `beyondEnds`, `slotBoneEarlier`, `slotBonePrevious`, `noPathShown`, `afterConstraint`, `timelineSpacing`, `timelineMix` |
+| stepped physics | `sameBone`, `skin`, `scaleX`, `shearX`, `componentNegative`, `mass`, `wind`, `gravity`, `mix`, `limit`, `fps`, `timeline.gravity`, `timeline.reset`, `timeline.global` |
+| per skin | no row declares several skins |
+
 ## 6. Steps, and what gates each
 
-| step | what | gate | tier |
-| --- | --- | --- | --- |
-| **0a** | a census of `src/compile.ts` (8,770 lines, measured 2026-09-29): every emission site classified *neutral* (a bone, a key, a mesh) or *Spine-shape* (a 4.3 spelling, a key order, an omitted default), and the compiled model's fields listed from the types that exist (`CompileResult`, `CompiledImage`, the contexts) | a table, and a draft of the model's type; nothing moves | squad |
-| **0b** | the oracle promoted from scratch into `tools/pose_oracle.ts`: dump, compare, phases, the ill-conditioned rule, and the *Not yet* list (mesh world vertices, deform, draw order, events, physics stepping, per-skin posing); the JSON shape written so a second dumper can produce it | the exam's 14/14 IDENTICAL reproduced on the public examples' rigc rebuilds; three rows held by the selftest the way `pose_floor` is; its own mutant | squad |
-| **1** | the split: `compile` builds the compiled model — a serialisable, deterministic document (`rigc-compiled/1`, fixed key order) written beside the Spine files — and the Spine emitter becomes its first consumer. 0a's census is the map: 144 neutral rows are the model's (the `f32`/`keyTime` quantisation included — spelling a fraction as its full double moved the pose on 19 of 19 builds, so which decimal is named is a value), 72 Spine-shape rows are the emitter's, and every one of the 24 read-back sites needs a model-side source, eleven of them a by-name form of the weighted run that nothing keeps today | **byte identity**: every build in every corpus emits the same bytes before and after — `A18`'s discipline applied across the refactor. #379's invariant becomes checkable: `compile.ts` names no Spine shape | judgement-heavy: the coupling is measured, not hidden, but the model-side source of each read-back site is a design choice per site; the commander briefs it from the census |
-| **2** | the core, one construct at a time in §5's order, each its own card and squad | §5's three conditions | squad per construct |
-| **3** | consumers switch: `render.ts` and `deformmeasure.ts` pose through our core once every construct they use is admitted. `validate.ts`'s round trip stays on spine-core | the same renders, bit-identical, on every corpus; the three link points in CLAUDE.md become two | squad |
-| **4** | the owner's three, in this order: whether the shipped package's round trip stays per-file (spine-core in the package, as today) or becomes population-proven (spine-core a dev dependency; the 🔒 invariant amended, and its per-file guarantee replaced by §4's per-population one — a weaker guarantee about any one file, stated as such); the packaging and the name if the licence line splits the package; the web player, which is a renderer over the core and lives where renderers live | — | owner |
+| step | what | gate | tier | landed |
+| --- | --- | --- | --- | --- |
+| **0a** | a census of `src/compile.ts` (8,770 lines, measured 2026-09-29): every emission site classified *neutral* (a bone, a key, a mesh) or *Spine-shape* (a 4.3 spelling, a key order, an omitted default), and the compiled model's fields listed from the types that exist (`CompileResult`, `CompiledImage`, the contexts) | a table, and a draft of the model's type; nothing moves | squad | #912 |
+| **0b** | the oracle promoted from scratch into `tools/pose_oracle.ts`: dump, compare, phases, the ill-conditioned rule, and the *Not yet* list (mesh world vertices, deform, draw order, events, physics stepping, per-skin posing); the JSON shape written so a second dumper can produce it | the exam's 14/14 IDENTICAL reproduced on the public examples' rigc rebuilds; three rows held by the selftest the way `pose_floor` is; its own mutant | squad | #911 — 12 of 12 public exports IDENTICAL (`POR08`); the PR notes their rebuilds are value-identical to the exports, so that population cannot fail it |
+| **1** | the split: `compile` builds the compiled model — a serialisable, deterministic document (`rigc-compiled/1`, fixed key order) written beside the Spine files — and the Spine emitter becomes its first consumer. 0a's census is the map: 144 neutral rows are the model's (the `f32`/`keyTime` quantisation included — spelling a fraction as its full double moved the pose on 19 of 19 builds, so which decimal is named is a value), 72 Spine-shape rows are the emitter's, and every one of the 24 read-back sites needs a model-side source, eleven of them a by-name form of the weighted run that nothing keeps today | **byte identity**: every build in every corpus emits the same bytes before and after — `A18`'s discipline applied across the refactor. #379's invariant becomes checkable: `compile.ts` names no Spine shape | judgement-heavy: the coupling is measured, not hidden, but the model-side source of each read-back site is a design choice per site; the commander briefs it from the census | #916 #918 #920 #923 #924 #927, + #939 (the atlas rectangle each region record carries) |
+| **2** | the core, one construct at a time in §5's order, each its own card and squad | §5's three conditions | squad per construct | the construct PRs in §5's table: #929 #934 #945 #943 #962 #951 #954 #953 #963 #971 #982, with #947 and #973 extending the oracle |
+| **3** | consumers switch: `render.ts` and `deformmeasure.ts` pose through our core once every construct they use is admitted. `validate.ts`'s round trip stays on spine-core | the same renders, bit-identical, on every corpus; the three link points in CLAUDE.md become two — they stayed three, as `CUR07` reads the tree: both consumers pose a rigc build through the core and keep spine-core for what is not one — a Spine export, a skeleton whose bytes no longer match its model's `spine.sha256` (#980), `validate`'s own A39 survey (#978) — and `render.ts` also links it for the atlas pages and texture substitution (CLAUDE.md *Conventions*) | squad | #972 #976 #974 #980 #978 #987, + #977 #981 #982 #983 #985 #986 #988 #992 #995 #1001 |
+| **4** | the owner's three, in this order: whether the shipped package's round trip stays per-file (spine-core in the package, as today) or becomes population-proven (spine-core a dev dependency; the 🔒 invariant amended, and its per-file guarantee replaced by §4's per-population one — a weaker guarantee about any one file, stated as such); the packaging and the name if the licence line splits the package; the web player, which is a renderer over the core and lives where renderers live | — | owner | not started |
 
-Estimates, carried from #380's 2026-09-04 text and not re-measured: a posing core of
-5–8k lines; the split 1–2 squad-days. 0a refines both.
+Estimates, carried from #380's 2026-09-04 text: a posing core of 5–8k lines; the split
+1–2 squad-days; 0a was to refine both. Measured instead, after step 3: `src/core/` is
+9,523 lines over 16 modules, 10,105 with the render's adapter `src/render_core.ts`
+(`wc -l`, 2026-10-01); the split took six cuts in one day (below).
 
 ### Step 1, cut by the census
 
@@ -196,8 +278,10 @@ a card of its own.
 ## 7. What this page does not change
 
 - **The Spine backend.** Spine data is emitted only through the spine-core round trip.
-  The 🔒 invariant in [CLAUDE.md](../CLAUDE.md) is not touched by this page; step 4 is
-  where the owner decides whether it is amended, and with what.
+  The 🔒 invariant in [CLAUDE.md](../CLAUDE.md) — what it requires is that everything
+  written to disk was read back by a parser rigc did not write, and spine-core is what
+  supplies that today — is not touched by this page; step 4 is where the owner decides
+  whether it is amended, and with what.
 - **The licence posture** in [README.md](../README.md), *Licensing, stated plainly*.
 - **The generation policy** ([GENERATIONS.md](GENERATIONS.md)): our core reads our
   model at 4.3 semantics; data from another generation reaches it the way it reaches
