@@ -517,13 +517,14 @@ import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
 import { modelLinkFacts } from './src/assertions/model/linked_meshes.ts';
 import { modelConstraintFacts, type AnimationFileOrder } from './src/assertions/model/constraints.ts';
 import type { ConstraintFacts } from './src/assertions/facts/constraints.ts';
-import { verdictLines, verdictMain, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
+import { verdictLines, verdictMain, verdictRow, walkSpelling, type VerdictRow } from './tools/verdict_gate.ts';
 import { compareFacts, modelGivenOf } from './tools/verdict_gate.ts';
 import { modelRegionJoinsWith, type SlotKeyWalk } from './src/assertions/model/region_joins.ts';
 import { modelSkeletonRoster } from './src/assertions/model/skeleton_roster.ts';
 import { modelBoneTimelines } from './src/assertions/model/bone_timelines.ts';
 import { modelEventKeys } from './src/assertions/model/event_keys.ts';
 import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIES, POSED_FACT_FAMILIES, type Cut4c5Family, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
+import { compareSteppedPoses, coreRefusalOf, documentedCoreRefusal, STEPPED_FACT_FAMILIES, type SteppedFactFamily } from './tools/verdict_gate.ts';
 import { compareRigFacts, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -1054,8 +1055,23 @@ class SupplierCheck {
   cut4c5Facts = { builds: 0, calls: 0 };
   cut4c5Tallies = new Map<Cut4c5Family, PosedFactTally>();
   private cut4c5Built = new Set<string>();
+  /**
+   * Cut 4c-5a's family compared question by question (`compareSteppedPoses`
+   * in `tools/verdict_gate.ts`): A10's stepped poses, once per distinct build
+   * over the own calls — how many builds, and the family's tally (`VF13`).
+   */
+  steppedFacts = { builds: 0, calls: 0 };
+  steppedTallies = new Map<SteppedFactFamily, PosedFactTally>();
+  private steppedBuilt = new Set<string>();
   /** Faults, each attributed to the case it was found in. */
   faults: Array<{ case: string; fault: string }> = [];
+  /**
+   * Lines that differ because the core refused the build by name — the body
+   * on the model side threw a `CoreInputError` (cut 4c-5a: A10's walk over a
+   * construct the core leaves out, or a document with no default skin) — each
+   * with the code and the core's sentence (`VF02`).
+   */
+  coreRefused: Array<{ case: string; code: string; why: string; route: string }> = [];
   twinOutcomes: TwinOutcome[] = [];
   /** Calls with no model in hand, and those of them that fired a moved assertion on a file rigc wrote. */
   withoutModel = 0;
@@ -1114,12 +1130,17 @@ class SupplierCheck {
         }
         this.compareFactFamilies(input, modelText);
         for (const d of compared.differing) {
-          this.keep(this.faults, { fault: `${d.code} differs — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
+          // A model-side line that is the core refusing the build by name (a `CoreInputError` its body threw) is that route's
+          // line, which cannot be made identical (cut 4c-5a): counted and named by VF02, never folded into the identical lines.
+          const refusal = this.coreRefusal(input, modelText, d.code, d.model);
+          if (refusal !== null) this.keep(this.coreRefused, { code: d.code, why: refusal.why, route: refusal.route });
+          else this.keep(this.faults, { fault: `${d.code} differs — spine-core: ${JSON.stringify(d.spine)}; model: ${JSON.stringify(d.model)}` });
         }
         this.compareWalks(input, modelText);
         this.compareRigFactsOf(input, modelText);
         this.comparePosedFactsOf(input, modelText);
         this.compareCut4c5FactsOf(input, modelText);
+        this.compareSteppedPosesOf(input, modelText);
       }
       return;
     }
@@ -1132,6 +1153,16 @@ class SupplierCheck {
     this.firing++;
     const outcomes = this.settleTwin(input, spine, modelText, firing, twin);
     for (const outcome of outcomes) this.keep(this.twinOutcomes, outcome);
+  }
+
+  /**
+   * The core's sentence where the model side's lines of `code` are one FAIL
+   * whose detail is a throw, and the body, run again over the same document,
+   * throws a `CoreInputError` — a refusal by name. `null` for anything else,
+   * so a plain error or a wrong value stays a fault.
+   */
+  private coreRefusal(input: ValidateInput, modelText: string, code: string, model: readonly string[]): { why: string; route: string } | null {
+    return coreRefusalOf(code, model, modelText, modelInputOf(input, modelText));
   }
 
   /** A file rigc wrote: one whose header carries no editor `hash` — every after-emit edit in this run is of one (census §4). */
@@ -1232,6 +1263,21 @@ class SupplierCheck {
     }
   }
 
+  /** Cut 4c-5a's facts over one build, asked question by question: once per distinct build, every call counted. */
+  private compareSteppedPosesOf(input: ValidateInput, modelText: string): void {
+    this.steppedFacts.calls++;
+    const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)} ${spineFileSha256(modelText)}`;
+    if (this.steppedBuilt.has(build)) return;
+    this.steppedBuilt.add(build);
+    const compared = compareSteppedPoses(input.skeletonText, input.atlasText, modelText, this.plant);
+    if (compared === null) return;
+    this.steppedFacts.builds++;
+    sumPosedTallies(this.steppedTallies, compared);
+    for (const t of compared) {
+      for (const d of t.differing) this.keep(this.faults, { fault: `the stepped poses "${t.family}" differ at ${d.question.slice(0, 160)} — spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
+    }
+  }
+
   private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], whole: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
     const out: Array<Omit<TwinOutcome, 'case'>> = [];
     for (const code of firing) {
@@ -1258,7 +1304,10 @@ class SupplierCheck {
         out.push({ code, outcome: 'identical', detail: spineLines.find((l) => l.startsWith('  FAIL')) ?? '' });
         continue;
       }
-      const object = firstQuoted(spine.failures.find((f) => f.assertion === code)?.detail ?? '');
+      // A line that is spine-core's own throw names no object — A10's `threw:` over an apply that crashed (cut 4c-5a) — so the object is the
+      // break's subject as the call's other failing lines name it, the first that names one; with none, nothing can be matched.
+      const own = spine.failures.find((f) => f.assertion === code)?.detail ?? '';
+      const object = firstQuoted(own) ?? (own.startsWith('threw: ') ? spine.failures.map((f) => firstQuoted(f.detail)).find((name) => name !== null) ?? null : null);
       const refusal = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
       if (refusal !== undefined && object !== null && refusal.detail.includes(`"${object}"`)) {
         out.push({ code, outcome: 'refused by name', detail: `"${object}" — ${refusal.assertion}: ${refusal.detail.slice(0, 200)}` });
@@ -1510,12 +1559,60 @@ function docEmptyAnimation(name: string): Record<string, unknown> {
 /**
  * The twin of a break that takes the Spine file's `animations` out (`M97`,
  * `M97b`, `M97c`): the document's animations taken out too. Those rows break
- * the setup pose as well — A10's subject, which has not moved — and the twin
- * forges the moved assertion's half alone, as cut 4c-2's twins of `M39` and
- * `T16` do: A09, which fires on these rows because the spec still declares its
- * animations, reads the roster and nothing of the pose.
+ * the setup pose as well — A10's subject — and this twin forges A09's half
+ * alone: A09, which fires on these rows because the spec still declares its
+ * animations, reads the roster and nothing of the pose. Since A10 moved (cut
+ * 4c-5a) each row names a twin per code (`byCode`), A10's being
+ * `SETUP_FROM_THE_BREAK`.
  */
-const NO_ANIMATIONS_TWIN: ModelTwin = { forge: (doc) => setDocAnimations(doc, []) };
+const NO_ANIMATIONS_TWIN: SingleTwin = { forge: (doc) => setDocAnimations(doc, []) };
+
+/** The setup numbers a bone states in the Spine file, under the document's field names — `inherit` is the document's `inheritMode`. */
+const BREAK_BONE_FIELDS: ReadonlyArray<readonly [string, string]> = [['x', 'x'], ['y', 'y'], ['rotation', 'rotation'], ['scaleX', 'scaleX'], ['scaleY', 'scaleY'], ['shearX', 'shearX'], ['shearY', 'shearY'], ['inherit', 'inheritMode']];
+
+/**
+ * The twin of a break that edits the SETUP pose (issue #1025, cut 4c-5a): every
+ * bone's setup number and every slot's colour as the broken Spine file states
+ * it, where it differs from the document's, written into the document — read
+ * off the break itself rather than restated beside it. A value JSON cannot
+ * carry (`rotation: 1e309`, read back as Infinity) goes into the document as
+ * the writer would write it, `null`, and the reader refuses it by the bone's
+ * name; a finite one the reader admits (a scale chain past the largest double
+ * in its product) is posed by the core, whose walk returns the non-finite
+ * value in place.
+ */
+const SETUP_FROM_THE_BREAK: SingleTwin = {
+  forge: (doc, call) => {
+    const broken = JSON.parse(call.skeletonText) as { bones?: Array<Record<string, unknown>>; slots?: Array<Record<string, unknown>> };
+    for (const bone of broken.bones ?? []) {
+      const target = (doc.bones as Array<Record<string, unknown>>).find((b) => b.name === bone.name);
+      if (target === undefined) continue;
+      for (const [spineField, docField] of BREAK_BONE_FIELDS) if (bone[spineField] !== undefined && bone[spineField] !== target[docField]) target[docField] = bone[spineField];
+    }
+    for (const slot of broken.slots ?? []) {
+      const target = (doc.slots as Array<Record<string, unknown>>).find((x) => x.name === slot.name);
+      if (target !== undefined && slot.color !== undefined && slot.color !== target.color) target.color = slot.color;
+    }
+  },
+};
+
+/**
+ * The twin of a break that sets one bone timeline of the Spine file's first
+ * animation (issue #1025, cut 4c-5a: `M70`'s `inherit`, `M95`'s `rotate`): that
+ * timeline's keys as the broken file states them, set on the same bone of the
+ * same animation in the document, whose bone keys are spelled as the file's.
+ */
+function boneTimelineFromTheBreak(timeline: string): ModelTwin {
+  return {
+    forge: (doc, call) => {
+      const animations = (JSON.parse(call.skeletonText) as { animations: Record<string, { bones?: Record<string, Record<string, Array<Record<string, unknown>>>> }> }).animations;
+      const animation = Object.keys(animations)[0];
+      const keyed = Object.entries(animations[animation].bones ?? {}).find(([, tls]) => tls[timeline] !== undefined);
+      if (keyed === undefined) throw new Error(`the break keys no "${timeline}" in animation "${animation}"`);
+      docSetTimeline(docBoneTimelineList(doc, animation, keyed[0], true), timeline, keyed[1][timeline].map((key) => ({ ...key })));
+    },
+  };
+}
 
 /** The run's supplier check. `validate` below feeds it; `main` attributes its findings to case lines; `runVerdictSuppliersSuite` reads it. */
 const SUPPLIERS = new SupplierCheck();
@@ -1803,6 +1900,11 @@ const MUTANTS: Mutant[] = [
     name: 'M04_short_curve_array',
     origin: '4 numbers where 16 are needed; a NaN curve, with no error',
     expect: 'A05_CURVE_ARRAY_LENGTH',
+    // The same short curve on the document's key, spelled as the file's (issue #1025, cut 4c-5a: A10 fires on it too).
+    twin: { forge: (doc) => {
+      const key = docKeys(docSlotTimelines(doc, 'shut_once', 'lens_l'), 'rgba')[0];
+      key.curve = (key.curve as number[]).slice(0, 4);
+    } },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2511,6 +2613,11 @@ const MUTANTS: Mutant[] = [
     name: 'M37_ik_timeline_short_curve',
     origin: 'SPEC_COVERAGE part 1-8 — an ik timeline is 2 channels (mix, softness), so its bezier is 8 numbers',
     expect: 'A05_CURVE_ARRAY_LENGTH',
+    // The constraint and its short curve, in the document (issue #1025, cut 4c-5a: A10 fires on it too).
+    twin: { forge: (doc) => {
+      (doc.constraints as Array<Record<string, unknown>>).push({ kind: 'ik', name: 'probe_ik', declaredIn: 'rig', bones: ['panel'], target: 'root' });
+      docAnimationConstraints(doc, 'shut_once').ik = [{ name: 'probe_ik', keys: [{ time: 0, mix: 1, curve: [0, 1, 0.1] }, { time: 0.1, mix: 0 }] }];
+    } },
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -2839,6 +2946,7 @@ const MUTANTS: Mutant[] = [
       'the file loads, `InheritTimeline` sets `pose.inherit` to NaN, `updateWorldTransform` matches no mode and the bone ' +
       'keeps the rotation and scale it had — measured on a two-bone chain, bit for bit the setup pose (issue #733)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
+    twin: boneTimelineFromTheBreak('inherit'),
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -3180,6 +3288,7 @@ const MUTANTS: Mutant[] = [
       'rotation 1e309 in the setup pose: cos and sin of Infinity are NaN, so a, b, c and d are NaN while worldX and ' +
       'worldY stay the parent\'s finite numbers — the file loads, the old A10 passed it, render refused it (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
+    twin: SETUP_FROM_THE_BREAK,
     mutate: (a) => ({ ...a, skeletonText: plantOverflow(a.skeletonText, (j, leaf) => { leaf.rotation = OVERFLOW_TOKEN; }) }),
     holds: (report, broken) => a10Is(report, `the setup pose: bone "${leafOf(broken)}" has a NaN; a world transform is finite`),
   },
@@ -3189,6 +3298,7 @@ const MUTANTS: Mutant[] = [
       'the same NaN matrix posed by a `rotate` key rather than the setup pose, which is a separate surface: a frame is ' +
       'posed after `state.apply`, so it is the key the frame shows (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
+    twin: boneTimelineFromTheBreak('rotate'),
     mutate: (a) => ({
       ...a,
       skeletonText: plantOverflow(a.skeletonText, (j, leaf) => {
@@ -3211,6 +3321,7 @@ const MUTANTS: Mutant[] = [
       'a parent and its leaf child each at a finite scaleX whose product passes the largest double: the child\'s a is ' +
       'Infinity and both positions stay finite, so the old A10 passed it (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
+    twin: SETUP_FROM_THE_BREAK,
     mutate: (a) => ({ ...a, skeletonText: plantScaleChain(a.skeletonText, 2 * Math.sqrt(Number.MAX_VALUE)) }),
     holds: (report, broken) =>
       a10Is(report, `the setup pose: bone "${leafOf(broken, true)}" has a Infinity; a world transform is finite`),
@@ -3225,6 +3336,7 @@ const MUTANTS: Mutant[] = [
       'the chain one step short of M95b: every bone term is finite, every corner of the leaf\'s region is not, and a ' +
       'bone-only read would pass the file the renderer refuses by its vertex (issue #882)',
     expect: 'A10_NO_NAN_AFTER_STEPPING',
+    twin: SETUP_FROM_THE_BREAK,
     mutate: (a) => ({ ...a, skeletonText: plantScaleChain(a.skeletonText, 0.9 * Math.sqrt(Number.MAX_VALUE)) }),
     holds: (report) => a10Names(report, 'the setup pose: slot ', ' vertex ', 'Infinity; a posed vertex is finite'),
   },
@@ -3272,7 +3384,8 @@ const MUTANTS: Mutant[] = [
         leaf.rotation = OVERFLOW_TOKEN;
       }),
     }),
-    twin: NO_ANIMATIONS_TWIN,
+    // A twin per code (issue #1025, cut 4c-5a): A09's, the animations gone; A10's, the setup value as the break states it.
+    twin: { byCode: { A09_ANIMATION_DURATION_MATCHES_SPEC: NO_ANIMATIONS_TWIN, A10_NO_NAN_AFTER_STEPPING: SETUP_FROM_THE_BREAK } },
     holds: (report, broken) =>
       a10SaysOnAStaticRig(report, `the setup pose: bone "${leafOf(broken)}" has a NaN; a world transform is finite`),
   },
@@ -3291,7 +3404,8 @@ const MUTANTS: Mutant[] = [
         leaf.inherit = 'NOSCALE';
       }),
     }),
-    twin: NO_ANIMATIONS_TWIN,
+    // A twin per code (issue #1025, cut 4c-5a): A09's, the animations gone; A10's, the setup value as the break states it.
+    twin: { byCode: { A09_ANIMATION_DURATION_MATCHES_SPEC: NO_ANIMATIONS_TWIN, A10_NO_NAN_AFTER_STEPPING: SETUP_FROM_THE_BREAK } },
     holds: (report, broken) =>
       a10SaysOnAStaticRig(
         report,
@@ -3312,7 +3426,8 @@ const MUTANTS: Mutant[] = [
         (j.slots as Array<Record<string, unknown>>)[0].color = 'zzzzzzzz';
       }),
     }),
-    twin: NO_ANIMATIONS_TWIN,
+    // A twin per code (issue #1025, cut 4c-5a): A09's, the animations gone; A10's, the setup value as the break states it.
+    twin: { byCode: { A09_ANIMATION_DURATION_MATCHES_SPEC: NO_ANIMATIONS_TWIN, A10_NO_NAN_AFTER_STEPPING: SETUP_FROM_THE_BREAK } },
     holds: (report, broken) =>
       a10SaysOnAStaticRig(
         report,
@@ -17757,9 +17872,16 @@ function runDrawOrderSuite(): number {
   }
 
   // --- the validator catches the same shapes in a foreign artifact ----------
-  const outOfRange = gateProbeArtifacts(dirs, LEGAL_SWAP, (skeleton) => {
-    firstOffsets(skeleton)[0].offset = 5;
-  });
+  const outOfRange = gateProbeArtifacts(
+    dirs,
+    LEGAL_SWAP,
+    (skeleton) => {
+      firstOffsets(skeleton)[0].offset = 5;
+    },
+    'spine',
+    // The same offset in the document (issue #1025, cut 4c-5a): A10 fires on the break too, where spine-core's apply throws.
+    { forge: (doc) => void (((doc.animations as Array<{ name: string; drawOrder: Array<{ offsets: Array<Record<string, unknown>> }> }>).find((a) => a.name === 'swap')?.drawOrder[1].offsets[0] ?? {}).offset = 5) },
+  );
   say(
     'O04_A31_catches_an_out_of_range_offset',
     outOfRange.failures.some((f) => f.assertion === 'A31_DRAW_ORDER_OFFSETS_RESOLVE'),
@@ -68879,6 +69001,11 @@ import { ORACLE_RAW_SPEC, ulpDistance } from './tools/pose_oracle.ts';
 import { rawCensusLines } from './tools/core_gate.ts';
 // Unposed bones and collapsed frames (issue #979), its own statements so the CC13, CC14, CC15 and CO20 controls land as one hunk.
 import { compareUnposed, oracleMain, signedText, unposedOf } from './tools/pose_oracle.ts';
+// Cut 4c-5a of issue #1025: A10's looping walk on both sides (CO25, CO26).
+import { compareWalkDocuments, coreWalkDocument, spineWalkDocument, type WalkComparison } from './tools/pose_oracle.ts';
+import { inactiveHistoryProbe, walkBuilt, walkProbes as inactiveWalkProbes } from './tools/core_gate.ts';
+import { loopedTime } from './src/core/raw.ts';
+import type { WalkPlant } from './src/core/walk.ts';
 import { historyTaint, type SolverRules } from './src/core/constraints.ts';
 import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.ts';
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
@@ -79653,6 +79780,351 @@ function runCoreSuite(): number {
       ok,
       probeDetail(ok, probes, `${asked} question(s) — ${names.length} name(s) (the ${PHYSICS_TIMELINE_KINDS.length} the parser's physics branch reads and one it skips) × ${flagSets.length} flag set(s) over three constraints: the core's reach is spine-core's on every one, ${reachedSome} reaching some constraint and ${reachedNone} none, and the runtime's facts answer as its probe; a value read off its neighbour's flag read ${plantOff.neighbour} off, a reset reading the mix flag ${plantOff.resetFlag}`),
       'issue #1025, cut 4c-5: A34 moves whole once its physics branch has the core\'s answer, and #1036 had held that answer on the three timelines its population reached; every row of physicsRuleFor, both the reaching and the empty case, is asked here',
+    );
+  }
+
+  // ===========================================================================
+  // A10's looping walk through the core (issue #1025, cut 4c-5a): the walk
+  // `A10_NO_NAN_AFTER_STEPPING` takes — the setup pose reset, then every
+  // animation on a LOOPING track stepped 120 times by max(duration, 1) / 120 —
+  // posed by `src/core/walk.ts` and by spine-core, every number compared at
+  // tolerance 0, a non-finite one included (`compareWalkDocuments`).
+  // ===========================================================================
+  type WalkObj = Record<string, unknown>;
+  /** A bones-only skeleton spelled twice — the Spine file and the model — for the walk's seeded population. */
+  const loopingWalkPair = (rnd: () => number, durations: readonly number[], kinds: { physics: boolean; ik: boolean; transform: boolean; resets: boolean }): { spine: string; model: string; resetsAt: number[] } => {
+    const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
+    const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+    const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+    const bones: WalkObj[] = [{ name: 'root' }];
+    for (let j = 1; j <= 6; j++) {
+      const b: WalkObj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+      if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+      if (rnd() < 0.3) b.inherit = pick(MODES);
+      bones.push(b);
+    }
+    bones.push({ name: 't', parent: 'root', x: R(-100, 100), y: R(-100, 100) });
+    const names = bones.slice(1, 7).map((b) => b.name as string);
+    const constraints: WalkObj[] = [];
+    if (kinds.ik) constraints.push({ type: 'ik', name: 'ik', bones: [pick(names)], target: 't', mix: pick([1, R(0, 1)]) });
+    if (kinds.transform) constraints.push({ type: 'transform', name: 'tr', bones: [names[5]], source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1) });
+    const physics: string[] = [];
+    if (kinds.physics) {
+      for (let k = 0, n = 1 + Math.floor(rnd() * 2); k < n; k++) {
+        const c: WalkObj = { type: 'physics', name: `p${k}`, bone: pick(names) };
+        for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
+        if (!['x', 'y', 'rotate', 'scaleX', 'shearX'].some((f) => f in c)) c.rotate = 1;
+        for (const [f, lo, hi] of [['inertia', 0, 1], ['strength', 1, 300], ['damping', 0, 1], ['mass', 0.2, 3]] as const) if (rnd() < 0.4) c[f] = R(lo, hi);
+        constraints.push(c);
+        physics.push(c.name as string);
+      }
+    }
+    const spineAnims: WalkObj = {};
+    const modelAnims: WalkObj[] = [];
+    const resetsAt: number[] = [];
+    durations.forEach((d, ai) => {
+      const keyed = pick(names);
+      const later = (keys: WalkObj[]): WalkObj[] => keys.filter((k, i, a) => i === 0 || (k.time as number) > (a[i - 1].time as number));
+      const group: WalkObj = { [keyed]: { rotate: later([{ time: 0, value: R(-90, 90) }, { time: Math.round(d * 500) / 1000, value: R(-90, 90) }, { time: d, value: R(-90, 90) }]) }, t: { translate: later([{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: d, x: R(-30, 30), y: R(-30, 30) }]) } };
+      const anim: WalkObj = { bones: group };
+      const physicsTimelines: WalkObj[] = [];
+      if (kinds.physics && kinds.resets) {
+        const keyedPhysics: WalkObj = {};
+        for (const name of physics) {
+          const times = [...new Set([pick([0, d, R(0, d)]), pick([0, d, R(0, d)])])].sort((x, y) => x - y);
+          resetsAt.push(...times);
+          const resets = times.map((time) => ({ time }));
+          const mix = [{ time: 0, value: R(0.2, 1) }, ...(d > 0 ? [{ time: d, value: R(0.2, 1) }] : [])];
+          keyedPhysics[name] = { reset: resets, mix };
+          physicsTimelines.push({ name, timelines: [{ name: 'reset', keys: resets }, { name: 'mix', keys: mix }] });
+        }
+        anim.physics = keyedPhysics;
+      }
+      const ikKeys: WalkObj[] = kinds.ik ? [{ time: 0, mix: R(0, 1) }, ...(d > 0 ? [{ time: d, mix: R(0, 1) }] : [])] : [];
+      if (kinds.ik) anim.ik = { ik: ikKeys };
+      spineAnims[`a${ai}`] = anim;
+      modelAnims.push({
+        name: `a${ai}`, duration: 0,
+        bones: Object.entries(group).map(([name, tls]) => ({ name, timelines: Object.entries(tls as WalkObj).map(([k, keys]) => ({ name: k, keys })) })),
+        slots: [], constraints: { ik: kinds.ik ? [{ name: 'ik', keys: ikKeys }] : [], transform: [], path: [], physics: physicsTimelines, slider: [] }, attachments: [], drawOrder: [], events: [],
+      });
+    });
+    return {
+      spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
+      model: JSON.stringify({
+        spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
+        bones: bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
+        slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
+        constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+        events: [], animations: modelAnims,
+        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+      }),
+      resetsAt,
+    };
+  };
+  /** The walk's seeded population: durations under, at and over a second (and 0), physics with reset keys anywhere in the animation, ik and transform. */
+  const WALK_DURATIONS = [0, 0.25, 0.4, 0.5, 0.77, 0.9, 1, 1.2, 2.5];
+  const walkPopulation = (n: number, seed: number): Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> => {
+    const rnd = seededRandom(seed);
+    const out: Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> = [];
+    for (let i = 0; i < n; i++) {
+      const durations = [WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)], WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)]];
+      const kinds = { physics: rnd() < 0.85, ik: rnd() < 0.4, transform: rnd() < 0.4, resets: rnd() < 0.8 };
+      const pair = loopingWalkPair(rnd, durations, kinds);
+      out.push({ i, spine: pair.spine, model: pair.model, physics: kinds.physics, resets: kinds.physics && kinds.resets && pair.resetsAt.length > 0, wraps: durations.some((d) => d < 1) });
+    }
+    return out;
+  };
+  const WALK_N = 60;
+  const walkProbes = walkPopulation(WALK_N, 102505);
+  /** A Spine file and its model document, both forged by `edit` — the walk's non-finite injections, on a built row. */
+  type WalkForge = (spine: WalkObj, model: WalkObj) => boolean;
+  const leafOfBones = (bones: WalkObj[]): WalkObj | undefined => {
+    const parents = new Set(bones.map((b) => b.parent));
+    return [...bones].reverse().find((b) => typeof b.parent === 'string' && !parents.has(b.name));
+  };
+  const firstAnimationOfBoth = (spine: WalkObj, model: WalkObj): { s: WalkObj; m: WalkObj; d: number } | null => {
+    const name = Object.keys((spine.animations ?? {}) as WalkObj)[0];
+    if (name === undefined) return null;
+    const s = (spine.animations as Record<string, WalkObj>)[name];
+    const m = (model.animations as WalkObj[]).find((a) => a.name === name);
+    if (m === undefined) return null;
+    let d = 0;
+    JSON.stringify(s, (k, v: unknown) => {
+      if (k === 'time' && typeof v === 'number') d = Math.max(d, v);
+      return v;
+    });
+    return { s, m, d: d > 0 ? d : 1 };
+  };
+  /** One bone timeline set on both sides: the Spine group's entry, and the document's `{ name, timelines }` list. */
+  const keyBoneOnBoth = (a: { s: WalkObj; m: WalkObj }, bone: string, timeline: string, keys: WalkObj[]): void => {
+    const group = (a.s.bones ??= {}) as Record<string, WalkObj>;
+    group[bone] = { ...(group[bone] ?? {}), [timeline]: keys };
+    const list = a.m.bones as Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }>;
+    let entry = list.find((b) => b.name === bone);
+    if (entry === undefined) {
+      entry = { name: bone, timelines: [] };
+      list.push(entry);
+    }
+    entry.timelines = [...entry.timelines.filter((t) => t.name !== timeline), { name: timeline, keys }];
+  };
+  const ROOT_OF_MAX = Math.sqrt(Number.MAX_VALUE);
+  const scaleChain = (factor: number): WalkForge => (spine, model) => {
+    const leaf = leafOfBones(spine.bones as WalkObj[]);
+    if (leaf === undefined) return false;
+    for (const name of [leaf.name, leaf.parent]) {
+      for (const bones of [spine.bones, model.bones] as WalkObj[][]) {
+        const b = bones.find((x) => x.name === name);
+        if (b !== undefined) b.scaleX = factor;
+      }
+    }
+    return true;
+  };
+  const WALK_FORGES: Array<[string, WalkForge]> = [
+    // M95b's shape: a parent and its leaf each at twice the square root of the largest double — the leaf's a past it.
+    ['a scale chain past the largest double at the bone', scaleChain(2 * ROOT_OF_MAX)],
+    // M96's shape: nine tenths of it — every bone finite, the leaf's vertices not.
+    ['a scale chain past the largest double at the vertices', scaleChain(0.9 * ROOT_OF_MAX)],
+    // A translate key on a leaf at 2^128, the first number past float32's largest: Infinity once the key is read as float32, from the key on.
+    ['a translate key past float32 halfway through the first animation', (spine, model) => {
+      const leaf = leafOfBones(spine.bones as WalkObj[]);
+      const a = firstAnimationOfBoth(spine, model);
+      if (leaf === undefined || a === null) return false;
+      keyBoneOnBoth(a, leaf.name as string, 'translate', [{ time: 0, x: 0, y: 0 }, { time: a.d / 2, x: 2 ** 128, y: 0 }]);
+      return true;
+    }],
+    // A physics constraint's mass keyed to 0: its inverse Infinity, every offset it integrates NaN.
+    ['a physics mass keyed to 0', (spine, model) => {
+      const c = ((spine.constraints ?? []) as WalkObj[]).find((x) => x.type === 'physics');
+      const a = firstAnimationOfBoth(spine, model);
+      if (c === undefined || a === null) return false;
+      const keys = [{ time: 0, value: 0 }];
+      const group = (a.s.physics ??= {}) as Record<string, WalkObj>;
+      group[c.name as string] = { ...(group[c.name as string] ?? {}), mass: keys };
+      const list = (a.m.constraints as { physics: Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }> }).physics;
+      let entry = list.find((e) => e.name === c.name);
+      if (entry === undefined) {
+        entry = { name: c.name as string, timelines: [] };
+        list.push(entry);
+      }
+      entry.timelines = [...entry.timelines.filter((t) => t.name !== 'mass'), { name: 'mass', keys }];
+      return true;
+    }],
+  ];
+  /** Every forge on every gallery row it applies to: the forged pair, both walks, the forge's label. */
+  const forgedWalks = (): Array<{ label: string; row: string; spine: string; atlas: string; model: string }> => {
+    const out: Array<{ label: string; row: string; spine: string; atlas: string; model: string }> = [];
+    for (const b of built.filter((r) => r.name.startsWith('gallery/') && r.exits.every((e) => e === 0))) {
+      const spineText = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
+      const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
+      const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
+      for (const [label, forge] of WALK_FORGES) {
+        const spine = JSON.parse(spineText) as WalkObj;
+        const model = JSON.parse(modelText) as WalkObj;
+        if (forge(spine, model)) out.push({ label, row: b.name, spine: JSON.stringify(spine), atlas, model: JSON.stringify(model) });
+      }
+    }
+    return out;
+  };
+  const forged = forgedWalks();
+  /** A seeded probe or a forged row, both walks, compared — `walkPlant` in the core's walk when a plant asks. */
+  const walkOf = (spine: string, atlas: string, model: string, where: string, walkPlant: WalkPlant = {}): WalkComparison | string => {
+    try {
+      return compareWalkDocuments(spineWalkDocument(loadOracleData(spine, atlas, where)), coreWalkDocument(readModel(model, where), undefined, {}, walkPlant));
+    } catch (err) {
+      if (err instanceof CoreInputError) return `${where}: the core refused it — ${err.message}`;
+      throw err;
+    }
+  };
+
+  // --- CO25: A10's looping walk through the core poses every built row, a seeded population and every non-finite injection as spine-core does --
+  {
+    const probes: string[] = [];
+    const sum = { poses: 0, numbers: 0, wrapped: 0, wrappedAnimations: 0, nonFinite: 0 };
+    const add = (c: WalkComparison): void => {
+      for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+    };
+    const rows = walkBuilt(built);
+    for (const r of rows) {
+      if (r.comparison !== null) add(r.comparison);
+      if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+    }
+    let seededExact = 0;
+    let seededResets = 0;
+    for (const p of walkProbes) {
+      const c = walkOf(p.spine, '', p.model, `walk probe ${p.i}`);
+      if (typeof c === 'string') probes.push(c);
+      else {
+        add(c);
+        if (c.first === null) seededExact++;
+        else if (probes.length < 12) probes.push(`walk probe ${p.i}: ${c.first}`);
+        if (p.resets && p.wraps) seededResets++;
+      }
+    }
+    let forgedExact = 0;
+    let forgedNonFinite = 0;
+    for (const f of forged) {
+      const c = walkOf(f.spine, f.atlas, f.model, `${f.row} with ${f.label}`);
+      if (typeof c === 'string') probes.push(c);
+      else {
+        add(c);
+        if (c.first === null) forgedExact++;
+        else if (probes.length < 12) probes.push(`${f.row} with ${f.label}: ${c.first}`);
+        if (c.nonFinite > 0) forgedNonFinite++;
+      }
+    }
+    // The inactive-bone probes (the production corpus's sign-of-zero rig, rebuilt in public): bones the view leaves inactive that a
+    // transform constraint writes into hold the runtime's previous step — HISTORY (issue #979), counted apart and compared with nothing.
+    const inactiveRows = inactiveWalkProbes();
+    let history = 0;
+    let historySign = 0;
+    for (const r of inactiveRows) {
+      if (r.verdict !== 'IDENTICAL' || r.comparison === null) probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      else {
+        add(r.comparison);
+        history += r.comparison.historyNumbers;
+        historySign += r.comparison.historySignOnly;
+      }
+    }
+    // Its plants, on the −150° probe (every applied step's four cells of four bones differ in sign alone, as on the production rig):
+    // the HISTORY class taken away, a value off on the inactive bone no constraint writes, and a value off on a HISTORY bone.
+    const pair = inactiveHistoryProbe(-150, 1, false);
+    const spineSide = spineWalkDocument(loadOracleData(pair.spine, '', 'the inactive-bone probe'));
+    const coreSide = (edit: (doc: ReturnType<typeof coreWalkDocument>) => void = () => {}): WalkComparison => {
+      const doc = coreWalkDocument(readModel(pair.model, 'the inactive-bone probe'));
+      edit(doc);
+      return compareWalkDocuments(spineSide, doc);
+    };
+    const offAt = (doc: ReturnType<typeof coreWalkDocument>, bone: string): void => {
+      const row = doc.animations[0].poses[0].bones.find((b) => b[0] === bone);
+      if (row !== undefined) row[5] += 1;
+    };
+    const clean = coreSide();
+    const noClass = coreSide((doc) => void delete doc.history);
+    const freeOff = coreSide((doc) => offAt(doc, 'free'));
+    const historyOff = coreSide((doc) => offAt(doc, 'k0'));
+    if (clean.first !== null || clean.historySignOnly === 0) probes.push(`the −150° probe unplanted: ${clean.first ?? `${clean.historySignOnly} sign-only number(s)`}`);
+    if (noClass.first === null) probes.push('with the HISTORY class taken away the −150° probe still read identical, so the class is not what holds it');
+    if (freeOff.first === null) probes.push('a value off on the inactive bone no constraint writes read identical — the class reaches past the bones a constraint writes');
+    if (historyOff.first !== null || historyOff.historyNumbers - historyOff.historySignOnly !== clean.historyNumbers - clean.historySignOnly + 1) probes.push(`a value off on a HISTORY bone read ${historyOff.first ?? `${historyOff.historyNumbers - historyOff.historySignOnly} value difference(s)`}, not one more value difference counted apart`);
+    probes.push(
+      ...floorProbes(
+        [
+          [sum.wrapped, 1, `${sum.wrapped} step(s) at or past the duration`],
+          [seededResets, 1, `${seededResets} seeded rig(s) keying a physics reset on an animation the walk wraps`],
+          [forgedNonFinite, WALK_FORGES.length, `${forgedNonFinite} forged walk(s) holding a non-finite value`],
+          [historySign, 1, `${historySign} HISTORY number(s) differing only in the sign of zero on the inactive-bone probes`],
+          [history - historySign, 1, `${history - historySign} HISTORY number(s) differing in value on the inactive-bone probes`],
+        ],
+        'so the walk was not held where it differs from the raw entry\'s',
+      ),
+    );
+    const ok = probes.length === 0;
+    say(
+      'CO25_A10S_LOOPING_WALK_THROUGH_THE_CORE_POSES_EVERY_ROW_A_SEEDED_POPULATION_AND_EVERY_NON_FINITE_INJECTION_AS_SPINE_CORE_DOES',
+      ok,
+      probeDetail(
+        ok,
+        probes.slice(0, 12),
+        `${rows.length} built row(s) walked identical (${rows.filter((r) => r.verdict === 'IDENTICAL').length}), ${seededExact} of ${walkProbes.length} seeded rig(s) (durations ${WALK_DURATIONS.join(', ')} s; physics, ik and transform; ${seededResets} keying a physics reset on a walk that wraps) and ${forgedExact} of ${forged.length} forged gallery walk(s) (${WALK_FORGES.map(([label]) => label).join('; ')}) exact: ` +
+          `${sum.poses} pose(s), ${sum.numbers} number(s) at tolerance 0, ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s), ${sum.nonFinite} pose(s) holding a non-finite value, kept in place on both sides; ` +
+          `${inactiveRows.length} inactive-bone probe(s) identical with ${history} HISTORY number(s) counted apart (${historySign} only in the sign of zero, ${history - historySign} in value) on bones a transform constraint writes while the view leaves them inactive; ` +
+          `the class taken away reads ${noClass.first === null ? 'identical' : 'DIFF'}, a value off on the inactive bone nothing writes ${freeOff.first === null ? 'identical' : 'DIFF'}, and one off on a HISTORY bone one more value counted apart`,
+      ),
+      'issue #1025, cut 4c-5a: A10 steps a LOOPING track past the duration and reads the value that is not finite — the two things the raw entry refuses on purpose — so the core walks it in its own entry, held to spine-core taking A10\'s own steps',
+    );
+    if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows, the seeded rigs and the forged walks alone`);
+  }
+
+  // --- CO26: each reading the looping walk rejected, planted in a copy, turns exactly the walks it reads red --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    // Every walk the plants run on: the seeded rigs, and the forged gallery walks — with what each reaches.
+    const population = [
+      ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, spine: p.spine, atlas: '', model: p.model, physics: p.physics, resets: p.resets, forged: false })),
+      ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, spine: f.spine, atlas: f.atlas, model: f.model, physics: readModel(f.model).constraints.some((c) => c.kind === 'physics'), resets: false, forged: true })),
+    ];
+    const clean = new Map(population.map((p) => [p.where, walkOf(p.spine, p.atlas, p.model, p.where)]));
+    const plants: Array<[string, WalkPlant, (p: (typeof population)[number], c: WalkComparison) => boolean]> = [
+      // The wrap a step late: the first step past each duration applied at the duration, as a holding track would.
+      ['the wrap one step late', { time: (t, d, before) => (d > 0 && Math.floor(before / d) < Math.floor(t / d) ? d : loopedTime(t, d)) }, (_p, c) => c.wrapped > 0],
+      // The physics clock moved by how far the animation time moved rather than by the step: the two differ at the wrap.
+      ['the physics clock moved by the animation time', { clock: (_dt, moved) => moved }, (p) => p.physics],
+      // A non-finite value swallowed as 0, the way a walk reading the raw entry's nulls as numbers would.
+      ['a non-finite value swallowed as 0', { number: (v) => (Number.isFinite(v) ? v : 0) }, (_p, c) => c.nonFinite > 0],
+      // No reset key fired across the wrap — the reading this cut's measurement rejected.
+      ['no physics reset fired across the wrap', { wrapResets: false }, (p) => p.resets],
+    ];
+    for (const [label, plant, reads] of plants) {
+      const red: string[] = [];
+      const outside: string[] = [];
+      for (const p of population) {
+        const base = clean.get(p.where);
+        if (base === undefined || typeof base === 'string') continue;
+        const c = walkOf(p.spine, p.atlas, p.model, p.where, plant);
+        if (typeof c === 'string' || c.first === null) continue;
+        red.push(p.where);
+        if (!reads(p, base)) outside.push(p.where);
+      }
+      if (red.length === 0) probes.push(`${label}: no walk turned red`);
+      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+      read.push(`${label} → ${red.length} walk(s) red`);
+    }
+    // The non-finite plant reaches the forged walks and nothing else: every forged walk holding one turns red.
+    const swallowed = population.filter((p) => p.forged).filter((p) => {
+      const base = clean.get(p.where);
+      if (base === undefined || typeof base === 'string' || base.nonFinite === 0) return false;
+      const c = walkOf(p.spine, p.atlas, p.model, p.where, { number: (v) => (Number.isFinite(v) ? v : 0) });
+      return typeof c !== 'string' && c.first === null;
+    });
+    if (swallowed.length > 0) probes.push(`a non-finite value swallowed left [${swallowed.map((p) => p.where).slice(0, 4).join(', ')}] green`);
+    const ok = probes.length === 0;
+    say(
+      'CO26_EACH_READING_THE_LOOPING_WALK_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_WALKS_READING_IT_RED',
+      ok,
+      probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
+      'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
     );
   }
 
@@ -99345,7 +99817,7 @@ function runVerdictSuppliersSuite(): number {
     }
     const c = SUPPLIERS;
     const probes = [
-      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts') && !f.fault.startsWith('the posed facts') && !f.fault.startsWith('the cut 4c-5 facts')).map((f) => `${f.case}: ${f.fault}`),
+      ...c.faults.filter((f) => !f.fault.startsWith('the skins walk') && !f.fault.startsWith('the facts "') && !f.fault.startsWith('the rig facts') && !f.fault.startsWith('the posed facts') && !f.fault.startsWith('the cut 4c-5 facts') && !f.fault.startsWith('the stepped poses')).map((f) => `${f.case}: ${f.fault}`),
       ...c.unwritable.map((why) => `a compile whose model document the writer refused, so its call carried no model: ${why}`),
       ...floorProbes(
         [
@@ -99361,6 +99833,13 @@ function runVerdictSuppliersSuite(): number {
       ...(ONLY === null ? codes.filter((code) => (c.measuredByCode.get(code) ?? 0) === 0).map((code) => `${code}: measured (PASS or FAIL on both sides) on 0 calls`) : []),
     ];
     const perCode = codes.map((code) => `${code.slice(0, 3)} ${c.linesByCode.get(code) ?? 0}/${c.measuredByCode.get(code) ?? 0} measured`).join(', ');
+    // The lines the core's refusal by name made differ (cut 4c-5a), grouped by the construct the sentence names.
+    const routes = new Map<string, Set<string>>();
+    for (const r of c.coreRefused) routes.set(r.route, (routes.get(r.route) ?? new Set<string>()).add(`${r.case} ${r.code.slice(0, 3)}`));
+    const refusedText = [...routes].map(([route, where]) => `${where.size} case(s) [${[...where].join(', ')}]: ${route}`).join(' | ');
+    const refusedCodes = [...new Set(c.coreRefused.map((r) => r.code))];
+    // The rule's own plant: a refusal no class documents is not one VF02 may count apart.
+    if (documentedCoreRefusal('a refusal no class documents') !== null) probes.push('a CoreInputError opening as no documented class was counted as a refusal by name');
     const held = probes.length === 0;
     say(
       'VF02_EVERY_CALL_ON_ITS_MODELS_OWN_BUILD_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES',
@@ -99371,7 +99850,8 @@ function runVerdictSuppliersSuite(): number {
         `this run: ${c.calls} validate call(s), ${c.withModel} with a model in hand, ${c.own} of them on the model's own pair — ` +
           `${c.compared} compared over ${c.lines} line(s) of [${codes.join(', ')}] and the stats they set, every one identical — lines per assertion [${perCode}]; ` +
           `${c.bothRefused} refused by both parses alike, on ${c.beforeParse} of which the rules that run before the parse were compared over ${c.beforeParseLines} line(s); ` +
-          `${c.afterEmit} after an edit (VF03's); ${c.withoutModel} with no model in hand`,
+          `${c.afterEmit} after an edit (VF03's); ${c.withoutModel} with no model in hand` +
+          `${c.coreRefused.length > 0 ? `; ${c.coreRefused.length} line set(s) of [${refusedCodes.join(', ')}] the core refused by name on the model side, each in a class the core documents refusing (DOCUMENTED_CORE_REFUSALS in tools/verdict_gate.ts), which cannot be identical — ${refusedText}` : ''}`,
         (count) => `${count} difference(s) between the suppliers, by case:`,
       ),
       'the card\'s second population: each existing mutant and control that has a compile behind it is a test of both ' +
@@ -99508,6 +99988,14 @@ function runVerdictSuppliersSuite(): number {
           return posed === null || posed.region === null ? posed : { ...posed, region: `${posed.region}x` };
         } };
       } }, 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES'],
+      // Cut 4c-5a's family (issue #1025), one neighbouring value.
+      ['the setup pose holding a NaN in the first bone\'s a', { steppedPoses: (read) => {
+        const facts = MODEL_SUPPLY.steppedPoses(read);
+        return { ...facts, setup: () => {
+          const frame = facts.setup();
+          return { ...frame, bones: frame.bones.map((b, i) => (i === 0 ? { ...b, a: Number.NaN } : b)) };
+        } };
+      } }, 'A10_NO_NAN_AFTER_STEPPING'],
     ];
     const named: string[] = [];
     for (const [label, supply, code] of plants) {
@@ -100159,6 +100647,133 @@ function runVerdictSuppliersSuite(): number {
       'issue #1025, cut 4c-5: what a timeline does when two sliders apply it additively, and whom a physics timeline naming no constraint ' +
         'reaches, are behaviour only the runtime had — A40 poses the first, A34 asks the second — so each body runs over spine-core\'s facts and ' +
         'every question it asks is put to the core\'s answer too, beside the sliders, the constraints and the groups compared whole',
+    );
+  }
+
+  // --- VF13: cut 4c-5a's stepped poses, question by question, at tolerance 0 ---
+  {
+    const probes: string[] = [];
+    const c = SUPPLIERS;
+    probes.push(...c.faults.filter((f) => f.fault.startsWith('the stepped poses')).map((f) => `${f.case}: ${f.fault}`));
+    const family: SteppedFactFamily = STEPPED_FACT_FAMILIES[0];
+    const ask = (label: string, skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): PosedFactTally | null => {
+      const asked = compareSteppedPoses(skeletonText, atlasText, modelText, supply);
+      if (asked === null) {
+        probes.push(`${label}: a side refused the build`);
+        return null;
+      }
+      return asked.find((t) => t.family === family) ?? null;
+    };
+    const unplanted = (label: string, t: PosedFactTally | null): void => {
+      if (t === null) return;
+      for (const d of t.differing) probes.push(`${label}: the stepped poses differ at ${d.question.slice(0, 120)} — spine-core ${d.spine.slice(0, 160)}; model ${d.model.slice(0, 160)}`);
+      for (const r of t.refused) probes.push(`${label}: the core refused ${r.question.slice(0, 80)}: ${r.why.slice(0, 160)}`);
+    };
+    // Issue #1034's probe — names a JSON object lists first — asked at each build's /3 document and its /2 one, as VF12 asks them.
+    const probeRows: string[] = [];
+    if (integerNamed === null) probes.push('gallery/nod or gallery/walk is not in the tree, so issue #1034\'s probe was not asked');
+    else {
+      for (const b of integerNamed.builds) {
+        for (const [spec, text] of [['/3', b.v3], ['/2', b.v2]] as const) {
+          const t = ask(`${b.name} ${spec}`, b.result.skeletonText, b.result.atlasText, text);
+          unplanted(`${b.name} ${spec}`, t);
+          if (t !== null) probeRows.push(`${b.name} ${spec} ${t.equal}/${t.questions} over ${t.values}`);
+        }
+      }
+      probes.push(...floorProbes([[probeRows.length, 6, `${probeRows.length} probe document(s) asked`]], "so the file's order on integer-like names was not put to the walk"));
+    }
+    // A pose that is not finite, on both sides: the overlay probe with M96's scale chain planted into its Spine file and its
+    // document alike (`SETUP_FROM_THE_BREAK`) — every vertex of the leaf's region past the largest double — whose walk wraps
+    // (its `shut_once` is shorter than a second) and steps its physics constraint.
+    const overlayModel = threadedModel(overlay.result, overlay.result.atlasText) ?? '';
+    const brokenSkeleton = plantScaleChain(overlay.result.skeletonText, 0.9 * Math.sqrt(Number.MAX_VALUE));
+    const brokenDoc = JSON.parse(overlayModel) as Record<string, unknown>;
+    if ('forge' in SETUP_FROM_THE_BREAK) SETUP_FROM_THE_BREAK.forge(brokenDoc, { skeletonText: brokenSkeleton, atlasText: overlay.result.atlasText });
+    const brokenModel = `${JSON.stringify(brokenDoc, null, 2)}\n`;
+    const nonFinite = ask('the overlay probe with a scale chain past the largest double', brokenSkeleton, overlay.result.atlasText, brokenModel);
+    unplanted('the overlay probe with a scale chain past the largest double', nonFinite);
+    const brokenInput = { skeletonText: brokenSkeleton, atlasText: overlay.result.atlasText, atlasDir: overlay.opts.outDir, declaredDurations: overlay.result.declaredDurations, rig: overlay.result.rig, profile: 'spine' as const };
+    const brokenSpine = linesOfCode(validateOverSpine(brokenInput), 'A10_NO_NAN_AFTER_STEPPING');
+    const brokenModelLines = linesOfCode(validateModel(modelInputOf(brokenInput, brokenModel)), 'A10_NO_NAN_AFTER_STEPPING');
+    if (!brokenSpine.some((l) => l.startsWith('  FAIL')) || brokenSpine.join('\n') !== brokenModelLines.join('\n')) probes.push(`the non-finite pair's A10 lines — spine-core ${JSON.stringify(brokenSpine)}; model ${JSON.stringify(brokenModelLines)}`);
+    const wrapping = new SkeletonJson(new AtlasAttachmentLoader(new TextureAtlas(overlay.result.atlasText))).readSkeletonData(overlay.result.skeletonText).animations.filter((a) => a.duration < 1).map((a) => a.name);
+    probes.push(
+      ...floorProbes(
+        [
+          [c.steppedTallies.get(family)?.values ?? 0, 1, `${c.steppedTallies.get(family)?.values ?? 0} number(s) in the stepped poses' answers over the run's own calls`],
+          [wrapping.length, 1, `${wrapping.length} animation(s) of the overlay probe shorter than a second`],
+        ],
+        'and a walk nothing asked about, or one that never wraps, is held by nothing here',
+      ),
+    );
+    // The plants: one value off moves this family's tally — on the overlay probe's own pair, and on the non-finite one.
+    const ulp = (v: number): number => (v === 0 ? Number.MIN_VALUE : v + Math.abs(v) * 2 ** -52);
+    const lastFrameOff: Partial<ModelSupply> = { steppedPoses: (read) => {
+      const facts = MODEL_SUPPLY.steppedPoses(read);
+      return { ...facts, walk: (animation, step, frames) => {
+        const walked = facts.walk(animation, step, frames);
+        return walked.map((f, i) => (i === walked.length - 1 && wrapping.includes(animation) ? { ...f, bones: f.bones.map((b, k) => (k === 0 ? { ...b, worldX: ulp(b.worldX) } : b)) } : f));
+      } };
+    } };
+    const swallowed: Partial<ModelSupply> = { steppedPoses: (read) => {
+      const facts = MODEL_SUPPLY.steppedPoses(read);
+      const finite = (v: number): number => (Number.isFinite(v) ? v : 0);
+      const clean = (f: ReturnType<typeof facts.setup>): ReturnType<typeof facts.setup> => ({ ...f, drawn: f.drawn.map((d) => ({ ...d, vertices: d.vertices.map(finite) })) });
+      return { ...facts, setup: () => clean(facts.setup()), walk: (animation, step, frames) => facts.walk(animation, step, frames).map(clean) };
+    } };
+    const plants: Array<[string, string, string, string, Partial<ModelSupply>]> = [
+      ['the last step of a wrapping walk one ulp off in the first bone\'s worldX', overlay.result.skeletonText, overlay.result.atlasText, overlayModel, lastFrameOff],
+      ['a non-finite vertex swallowed as 0', brokenSkeleton, overlay.result.atlasText, brokenModel, swallowed],
+    ];
+    const named: string[] = [];
+    for (const [label, skeletonText, atlasText, modelText, supply] of plants) {
+      const planted = compareSteppedPoses(skeletonText, atlasText, modelText, supply);
+      const moved = (planted ?? []).filter((t) => t.differing.length > 0);
+      if (moved.length !== 1 || moved[0].family !== family) probes.push(`${label}: the comparison moved [${moved.map((t) => t.family).join(', ')}], not "${family}" alone`);
+      else named.push(`${label} → ${moved[0].differing.length} question(s), the first ${moved[0].differing[0].question.slice(0, 60)}`);
+    }
+    // The production corpus's sign-of-zero rig, rebuilt in public: four bones the view leaves inactive that a transform constraint
+    // writes into hold the runtime's previous step — HISTORY (issue #979) — and their numbers are spelled by name, compared with nothing.
+    const inactive = inactiveHistoryProbe(-150, 1, false);
+    const inactiveAsked = ask('the inactive-bone probe', inactive.spine, '', inactive.model);
+    unplanted('the inactive-bone probe', inactiveAsked);
+    // Issue #1051's class through the instrument's own row function: a rig whose skins name no `default` — the model side's A10 is the
+    // core's refusal by name, which `verdictRow` counts apart as that documented class: neither IDENTICAL nor DIFFERING.
+    const noDefaultDirs = writeProbeRig({ skins: { base: { ...PROBE_BLOCK_ONLY_SKIN, marker: { marker: { image: 'marker.png' } } }, alt: { marker: { marker: { image: 'marker.png', x: 2 } } } } });
+    const noDefaultMotion = join(noDefaultDirs.dir, 'probe.motion.json');
+    writeFileSync(noDefaultMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const noDefault = compile({ rigPath: noDefaultDirs.rigPath, motionPath: noDefaultMotion, outDir: noDefaultDirs.outDir, imagesDir: noDefaultDirs.dir });
+    mkdirSync(noDefaultDirs.outDir, { recursive: true });
+    writeFileSync(join(noDefaultDirs.outDir, 'skeleton.json'), noDefault.skeletonText);
+    writeFileSync(join(noDefaultDirs.outDir, 'skeleton.atlas'), noDefault.atlasText);
+    writeFileSync(join(noDefaultDirs.outDir, MODEL_DOCUMENT_FILE), threadedModel(noDefault, noDefault.atlasText) ?? '');
+    const noDefaultRow = verdictRow('the no-default-skin probe', noDefaultDirs.outDir);
+    const a10Cells = noDefaultRow.cells.filter((cell) => cell.code === 'A10_NO_NAN_AFTER_STEPPING');
+    const otherDiffering = noDefaultRow.cells.filter((cell) => !cell.identical && cell.refused === undefined);
+    const noDefaultLines = verdictLines([noDefaultRow]);
+    const noDefaultLast = noDefaultLines.lines[noDefaultLines.lines.length - 1] ?? '';
+    if (a10Cells.length === 0 || a10Cells.some((cell) => cell.identical || cell.refused === undefined || !cell.refused.route.includes('#1051'))) probes.push(`the no-default-skin probe's A10 cells read ${JSON.stringify(a10Cells.map((cell) => ({ identical: cell.identical, refused: cell.refused?.route ?? null, model: cell.model })))}, not refused by name in issue #1051's class`);
+    if (otherDiffering.length > 0) probes.push(`the no-default-skin probe differs on [${otherDiffering.map((cell) => `${cell.code} [${cell.profile}]`).join(', ')}]`);
+    if (!noDefaultLines.ok || noDefaultLines.refusedByCore !== a10Cells.length || !noDefaultLast.startsWith('IDENTICAL BUT FOR REFUSALS BY NAME')) probes.push(`the no-default-skin probe's verdict line read ${JSON.stringify(noDefaultLast.slice(0, 200))} (ok ${noDefaultLines.ok}, ${noDefaultLines.refusedByCore} refused)`);
+    // Its plant: the same row with the refusal forgotten is DIFFERING, so the count is what keeps it apart.
+    const forgotten = verdictLines([{ ...noDefaultRow, cells: noDefaultRow.cells.map(({ refused: _refused, ...cell }) => cell) }]);
+    if (forgotten.ok) probes.push('the no-default-skin probe with its refusals forgotten still read ok');
+    rmSync(noDefaultDirs.dir, { recursive: true, force: true });
+    const t = c.steppedTallies.get(family);
+    const held = probes.length === 0;
+    say(
+      'VF13_CUT_4C5AS_STEPPED_POSES_ARE_THE_SAME_ON_BOTH_SIDES_AT_EVERY_POSE_A10_ASKS_FOR',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${c.steppedFacts.builds} distinct build(s) over ${c.steppedFacts.calls} own call(s): ${family} ${t?.equal ?? 0} of ${t?.questions ?? 0} question(s) alike over ${t?.values ?? 0} number(s), ${t?.refused.length ?? 0} refused by the core by name; ` +
+          `issue #1034's probe at /3 and /2, every answer alike: ${probeRows.join('; ')}; the overlay probe with a scale chain past the largest double, its walk wrapping [${wrapping.join(', ')}] and stepping its physics: ${nonFinite?.equal ?? 0} of ${nonFinite?.questions ?? 0} alike over ${nonFinite?.values ?? 0} number(s), A10 ${JSON.stringify(brokenSpine[0] ?? '').slice(0, 140)} on both sides; ` +
+          `one value off moves the family: ${named.join('; ')}; the inactive-bone probe (HISTORY bones spelled by name) ${inactiveAsked?.equal ?? 0} of ${inactiveAsked?.questions ?? 0} alike; ` +
+          `issue #1051's class through verdictRow: ${a10Cells.length} A10 line set(s) refused by name, the verdict ${JSON.stringify(noDefaultLast.split(' — ')[0])}, and with the refusals forgotten ${forgotten.ok ? 'ok' : 'DIFFERING'}`,
+        (count) => `${count} difference(s) between the suppliers' stepped poses:`,
+      ),
+      'issue #1025, cut 4c-5a: A10 reads every pose of a looping walk and the first number of one that is not finite, and no other gate held the core\'s walk at the poses A10 asks for — so A10 runs over spine-core\'s poses and every pose it asks for is asked of the model side too, NaN and Infinity spelled as what they are',
     );
   }
 

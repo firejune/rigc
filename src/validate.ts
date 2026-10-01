@@ -67,7 +67,7 @@ import {
   TOPLEVEL_CONSTRAINT_ARRAYS,
   type SpineGeneration,
 } from './generation.ts';
-import { nonFiniteOfPosed } from './render.ts';
+import { posedNumbersOf } from './render.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
@@ -151,6 +151,8 @@ import type { SliderCompositionFacts, SliderFact, SliderTimelineFact } from './a
 import type { ConstraintTargetFacts, TargetAnimation, TargetKeyArray } from './assertions/facts/constraint_targets.ts';
 import { a34ConstraintTimelineTargets } from './assertions/bodies/a34.ts';
 import { a40SlidersComposeOnASharedTarget } from './assertions/bodies/a40.ts';
+import { a10NoNanAfterStepping } from './assertions/bodies/a10.ts';
+import type { SteppedFrame, SteppedPoseFacts } from './assertions/facts/stepped_poses.ts';
 
 export type { Failure } from './assertions/harness.ts';
 
@@ -297,8 +299,6 @@ export interface ValidateReport {
 // The four sentences A39 prints a frame, a dial's reach, a dispute and a tie
 // with, and A09's one-frame slack, are `./assertions/bodies/a39.ts`'s and
 // `./assertions/bodies/a09.ts`'s since issue #1025 (cut 4c-3).
-
-const STEP_FRAMES = 120;
 
 /**
  * The constraint groups that spell `group.<constraint>.<timeline>` — a
@@ -1861,7 +1861,98 @@ export function runtimeRigFacts(skeletonText: string, atlasText: string): { mesh
  * `tools/verdict_gate.ts`, which hand them to the bodies and ask the model
  * side's suppliers the same questions, value by value.
  */
-export function runtimePosedFacts(skeletonText: string, atlasText: string): { deformSurvey: DeformSurveyFacts; animationDurations: AnimationDurationFacts; twoColour: TwoColourFacts; sequences: SequenceFacts } | null {
+/**
+ * The runtime's supply of A10's facts (issue #1025, cut 4c-5a): every pose A10
+ * reads, posed by spine-core exactly as A10 always posed it.
+ *
+ * - The setup pose: `setupPose()`, `update(0)`,
+ *   `updateWorldTransform(Physics.reset)`, no animation set.
+ * - Each animation's walk: `setAnimation(0, name, true)` — a LOOPING track —
+ *   over a fresh skeleton posed as above, then per step `AnimationState.update
+ *   (step)`, `apply`, `Skeleton.update(step)`, `updateWorldTransform
+ *   (Physics.update)`, one pose read after each.
+ * - A bone's mode at a key: a fresh, non-looping track, the setup pose reset,
+ *   the track stepped to the key's time and applied, then `update` and
+ *   `updateWorldTransform(Physics.update)` by the same time.
+ *
+ * A pose is read as `posedNumbersOf` reads it for `render` (every bone's world
+ * transform, every shown region's and mesh's world vertices), with each bone's
+ * `appliedPose.inherit` — `null` where it is a value `updateWorldTransform`'s
+ * switch has a case for, read off the runtime's own enum — and every slot's
+ * light and dark colour. The model side's supply is
+ * `./assertions/model/stepped_poses.ts`.
+ */
+export function spineSteppedPoses(raw: Json | null, data: ReturnType<SkeletonJson['readSkeletonData']>): SteppedPoseFacts {
+  /** Is this a mode `updateWorldTransform`'s switch has a case for? Read off the runtime's own enum. */
+  const isMode = (inherit: unknown): boolean => typeof inherit === 'number' && Inherit[inherit] !== undefined;
+  const frameOf = (skeleton: Skeleton): SteppedFrame => {
+    const { bones, drawn } = posedNumbersOf(skeleton);
+    return {
+      bones: bones.map((b, i) => {
+        const inherit = skeleton.bones[i].appliedPose.inherit;
+        return { ...b, inherit: isMode(inherit) ? null : String(inherit) };
+      }),
+      drawn,
+      slots: skeleton.slots.map((slot) => {
+        const c = slot.appliedPose.color;
+        const d = slot.appliedPose.darkColor;
+        return { name: slot.data.name, colour: [c.r, c.g, c.b, c.a] as const, dark: d === null ? null : ([d.r, d.g, d.b] as const) };
+      }),
+    };
+  };
+  return {
+    boneCount: data.bones.length,
+    steppedAnimations: data.animations.map((anim) => ({ name: anim.name, duration: anim.duration })),
+    hasAnimation: (name) => Boolean(data.findAnimation(name)),
+    hasBone: (name) => Boolean(data.findBone(name)),
+    posedInherit: (animName, boneName, time) => {
+      const skeleton = new Skeleton(data);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, animName, false);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      state.update(time);
+      state.apply(skeleton);
+      skeleton.update(time);
+      skeleton.updateWorldTransform(Physics.update);
+      const bone = skeleton.findBone(boneName);
+      if (bone === null) return undefined;
+      const posed = bone.appliedPose.inherit;
+      return isMode(posed) ? null : String(posed);
+    },
+    statedInherit: (name) => {
+      const rawBone = Array.isArray(raw?.bones) ? (raw.bones as unknown[]).find((b) => isObj(b) && b.name === name) : undefined;
+      return `${JSON.stringify(isObj(rawBone) ? rawBone.inherit : undefined)}`;
+    },
+    setup: () => {
+      const atRest = new Skeleton(data);
+      atRest.setupPose();
+      atRest.update(0);
+      atRest.updateWorldTransform(Physics.reset);
+      return frameOf(atRest);
+    },
+    walk: (animName, step, frames) => {
+      const skeleton = new Skeleton(data);
+      const state = new AnimationState(new AnimationStateData(data));
+      state.setAnimation(0, animName, true);
+      skeleton.setupPose();
+      skeleton.update(0);
+      skeleton.updateWorldTransform(Physics.reset);
+      const out: SteppedFrame[] = [];
+      for (let i = 0; i < frames; i++) {
+        state.update(step);
+        state.apply(skeleton);
+        skeleton.update(step);
+        skeleton.updateWorldTransform(Physics.update);
+        out.push(frameOf(skeleton));
+      }
+      return out;
+    },
+  };
+}
+
+export function runtimePosedFacts(skeletonText: string, atlasText: string): { deformSurvey: DeformSurveyFacts; animationDurations: AnimationDurationFacts; twoColour: TwoColourFacts; sequences: SequenceFacts; steppedPoses: SteppedPoseFacts; boneTimelines: BoneTimelineFacts } | null {
   let data: ReturnType<SkeletonJson['readSkeletonData']>;
   let raw: Json;
   try {
@@ -1870,7 +1961,7 @@ export function runtimePosedFacts(skeletonText: string, atlasText: string): { de
   } catch {
     return null;
   }
-  return { deformSurvey: spineDeformSurvey(data), animationDurations: spineAnimationDurations(data), twoColour: spineTwoColourFacts(raw, data), sequences: spineSequenceFacts(raw, data) };
+  return { deformSurvey: spineDeformSurvey(data), animationDurations: spineAnimationDurations(data), twoColour: spineTwoColourFacts(raw, data), sequences: spineSequenceFacts(raw, data), steppedPoses: spineSteppedPoses(raw, data), boneTimelines: rawBoneTimelines(raw) };
 }
 
 /**
@@ -2959,206 +3050,98 @@ export function validate(input: ValidateInput): ValidateReport {
     check('A09_ANIMATION_DURATION_MATCHES_SPEC', () => a09AnimationDurationMatchesSpec(verdicts, spineAnimationDurations(data), input.declaredDurations));
 
     // --- A10: step every animation and look for NaN ------------------------
-    check('A10_NO_NAN_AFTER_STEPPING', () => {
-      // Two clauses, and since issue #902 each is read on its own subject. The
-      // SETUP POSE is posed from the bones, so it has something to read on any
-      // skeleton that carries one; the STEPPED FRAMES are posed once per
-      // animation, so a skeleton with none has nothing to step. This used to
-      // skip the whole rule on the second fact alone, which was A15's pattern
-      // (#580) for a rule whose only clause was the stepping — and #882 gave it
-      // the setup clause without moving the skip. Measured on the static probe
-      // with a leaf bone at `rotation: 1e309` in its emitted file: `validate`
-      // printed this rule as SKIP and the run green under both profiles, and
-      // `render` refused the same file by the bone. A static rig's setup pose
-      // is the whole of what it shows, so that was the one pose nothing read.
-      //
-      // ⇒ The multi-clause rule of #580 now governs, the shape A09, A13, A33
-      // and A38 carry: the rule SKIPs only when neither clause has anything to
-      // measure, the clause that ran decides PASS or FAIL, and the clause that
-      // had nothing is named on the stats line (`nanStepping=skipped`, beside
-      // `animations=0`) the way A47 names a constraint it did not measure. A
-      // PASS row carries no detail, which is why the stats line is where.
-      //
-      // ⚠️ A09 does not follow, and that is its own name read at its word: a
-      // declared duration is a fact about an animation and nothing else, so a
-      // static rig still gives it nothing at all.
-      if (data.animations.length === 0 && data.bones.length === 0) {
-        return skip('A10_NO_NAN_AFTER_STEPPING', SKIP_NO_POSE);
-      }
-      /** Is this a mode `updateWorldTransform`'s switch has a case for? Read off the runtime's own enum. */
-      const isMode = (inherit: unknown): boolean => typeof inherit === 'number' && Inherit[inherit] !== undefined;
-
-      // -- the bone's inheritance mode, posed at every `inherit` key ---------
-      //
-      // 🚨 The one bone timeline whose value is a NAME, and the only one that
-      // can pose a NaN with a finite world: `SkeletonJson` resolves a key's mode
-      // through `Utils.enumValue`, which folds the first letter's case and
-      // nothing else, so `"NOSCALE"` resolves to `undefined` and the timeline's
-      // `Float32Array` frame stores NaN. `InheritTimeline.apply` then sets
-      // `pose.inherit = NaN`, `updateWorldTransform`'s switch matches no case,
-      // and the bone keeps whatever world matrix it had — measured on a forged
-      // two-bone chain: at the key the child's `a,b,c,d` equal the setup
-      // Normal-mode pose to the last digit while the file says `noScale`. The
-      // world position stays finite, so the loop below never saw it (#733).
-      //
-      // ⚠️ Posed AT each key rather than read off the stepping loop, because a
-      // stepped value lives from its key to the next one and a sampling grid
-      // can step over a short span entirely. What is judged is whether the
-      // posed value IS a mode — which is this assertion's name exactly — and
-      // not which mode: for any spelling the lookup resolves, the mode posed
-      // is the mode written by construction of the same lookup, so an equality
-      // here would be the parser agreeing with itself.
-      const rawAnimations = isObj(raw) && isObj(raw.animations) ? raw.animations : {};
-      let unresolved = 0;
-      for (const [animName, rawAnim] of Object.entries(rawAnimations)) {
-        if (!isObj(rawAnim) || !isObj(rawAnim.bones)) continue;
-        for (const [boneName, timelines] of Object.entries(rawAnim.bones)) {
-          if (!isObj(timelines) || !Array.isArray(timelines.inherit)) continue;
-          if (!data.findAnimation(animName) || !data.findBone(boneName)) continue;
-          for (const rawKey of timelines.inherit as unknown[]) {
-            if (!isObj(rawKey)) continue;
-            const time = typeof rawKey.time === 'number' ? rawKey.time : 0;
-            const skeleton = new Skeleton(data);
-            const state = new AnimationState(new AnimationStateData(data));
-            state.setAnimation(0, animName, false);
-            skeleton.setupPose();
-            skeleton.update(0);
-            skeleton.updateWorldTransform(Physics.reset);
-            state.update(time);
-            state.apply(skeleton);
-            skeleton.update(time);
-            skeleton.updateWorldTransform(Physics.update);
-            const posed = skeleton.findBone(boneName)?.appliedPose.inherit;
-            if (isMode(posed)) continue;
-            unresolved++;
-            fail(
-              'A10_NO_NAN_AFTER_STEPPING',
-              `animation "${animName}" bone "${boneName}" inherit (t=${time}): the bone poses inheritance mode ` +
-                `${String(posed)} — the key spells ${JSON.stringify(rawKey.inherit)}, which the runtime's mode lookup ` +
-                `does not resolve (${BONE_INHERIT_KNOWN}), so no mode applies until the next key and the bone keeps ` +
-                'the world rotation, scale and shear it had',
-            );
-          }
-        }
-      }
-      if (unresolved > 0) return;
-
-      // -- the whole world transform, at the setup pose and every stepped frame
-      //
-      // 🚨 Read through `nonFiniteOfPosed`, the scan `render` refuses on, and
-      // not a second opinion of it (issue #882). This loop read `worldX` and
-      // `worldY` alone until then, and a bone at `rotation: 1e309` — in its setup
-      // pose or as a `rotate` key — poses a finite position over a NaN `a`, `b`,
-      // `c` and `d` whenever it has no child offset from it: measured on every
-      // leaf bone of the three generated probes, 20 of 20 green through the whole
-      // gate, and `render` then refused the same file by the bone. So the gate
-      // said the skeleton was fine and the renderer said it was not, which is two
-      // definitions of one word. The scan reads the six terms of every bone, then
-      // the vertices of every region and mesh shown — because a bone can be
-      // finite over a vertex that is not (a `scaleX` chain whose product stays
-      // under the largest double while every corner of the child's region
-      // passes it) — and names the bone or the vertex, the term and the frame.
-      //
-      // ⚠️ The setup pose is its own surface and is read as such: every frame
-      // below is posed AFTER `state.apply`, so a bone the animation keys from
-      // t=0 never shows its setup value to the loop, and a runtime that shows
-      // the rig at rest does show it.
-      //
-      // 🔸 Posed once, before any animation is set, rather than once per
-      // animation as it was until #902: `setAnimation` does not touch the
-      // skeleton, so every animation's copy of this pose was the same pose, and
-      // the first of them was the only one ever read.
-      if (data.animations.length === 0) stats.nanStepping = 'skipped';
-      const atRest = new Skeleton(data);
-      atRest.setupPose();
-      atRest.update(0);
-      atRest.updateWorldTransform(Physics.reset);
-      const atSetup = nonFiniteOfPosed('the setup pose', atRest);
-      if (atSetup !== null) {
-        fail('A10_NO_NAN_AFTER_STEPPING', atSetup);
-        return;
-      }
-
-      /**
-       * What a posed frame shows that the world-transform scan does not read: a
-       * bone posing no inheritance mode, and a slot colour that is not finite.
-       * `where` leads the sentence — the animation's name at a stepped frame,
-       * as it always has, or `the setup pose` on a skeleton with no animation.
-       */
-      const poseDefect = (where: string, skeleton: Skeleton): string | null => {
-        for (const bone of skeleton.bones) {
-          const pose = bone.appliedPose;
-          // The setup half of the inherit-key clause above: a bone's own
-          // `inherit` goes through the same lookup, and a miss there loads
-          // `undefined` into the setup pose, which every frame copies. Only
-          // reachable on a file rigc did not write — `parseRigSpec` refuses the
-          // spelling.
-          if (!isMode(pose.inherit)) {
-            const rawBone = Array.isArray(raw?.bones)
-              ? (raw.bones as unknown[]).find((b) => isObj(b) && b.name === bone.data.name)
-              : undefined;
-            return (
-              `${where}: bone "${bone.data.name}" poses inheritance mode ${String(pose.inherit)} — its setup ` +
-              `spells inherit ${JSON.stringify(isObj(rawBone) ? rawBone.inherit : undefined)}, which the ` +
-              `runtime's mode lookup does not resolve (${BONE_INHERIT_KNOWN}), so its world rotation, scale and shear ` +
-              'are never computed — they stay 0 and everything the bone carries collapses to a point'
-            );
-          }
-        }
-        for (const slot of skeleton.slots) {
-          const c = slot.appliedPose.color;
-          if (![c.r, c.g, c.b, c.a].every(Number.isFinite)) return `${where}: slot "${slot.data.name}" colour is non-finite`;
-          // The other colour a slot poses, and it was outside this loop until
-          // issue #690 for the reason every gap here has: nothing emitted one.
-          // `null` is the ordinary case — a slot with no `dark` allocates no
-          // dark colour at all — and is not a reading to make, so it is
-          // skipped rather than treated as zero.
-          const d = slot.appliedPose.darkColor;
-          if (d !== null && ![d.r, d.g, d.b].every(Number.isFinite)) {
-            return `${where}: slot "${slot.data.name}" dark colour is non-finite`;
-          }
-        }
-        return null;
-      };
-
-      // The stepping half, and on a static rig there is nothing to step: the
-      // setup pose is then the only frame the skeleton has, and the two readings
-      // a stepped frame gets are made on it instead, so a colour or an
-      // inheritance mode the rig shows at rest is not left to `render`.
-      if (data.animations.length === 0) {
-        const atRestDefect = poseDefect('the setup pose', atRest);
-        if (atRestDefect !== null) fail('A10_NO_NAN_AFTER_STEPPING', atRestDefect);
-        return;
-      }
-      for (const anim of data.animations) {
-        const skeleton = new Skeleton(data);
-        const state = new AnimationState(new AnimationStateData(data));
-        state.setAnimation(0, anim.name, true);
-        skeleton.setupPose();
-        skeleton.update(0);
-        skeleton.updateWorldTransform(Physics.reset);
-        const step = Math.max(anim.duration, 1) / STEP_FRAMES;
-        for (let i = 0; i < STEP_FRAMES; i++) {
-          state.update(step);
-          state.apply(skeleton);
-          skeleton.update(step);
-          skeleton.updateWorldTransform(Physics.update);
-          const found = nonFiniteOfPosed(
-            `animation ${JSON.stringify(anim.name)} frame ${i + 1} of ${STEP_FRAMES} (t=${((i + 1) * step).toFixed(4)}s)`,
-            skeleton,
-          );
-          if (found !== null) {
-            fail('A10_NO_NAN_AFTER_STEPPING', found);
-            return;
-          }
-          const defect = poseDefect(anim.name, skeleton);
-          if (defect !== null) {
-            fail('A10_NO_NAN_AFTER_STEPPING', defect);
-            return;
-          }
-        }
-      }
-    });
+    // The body is `./assertions/bodies/a10.ts` since issue #1025 (cut 4c-5a); what it
+    // reads off the loaded skeleton is `spineSteppedPoses` (and the raw JSON's bone
+    // timelines, `rawBoneTimelines`). The argument for each clause, as it stood
+    // inside the body:
+    //
+    // Two clauses, and since issue #902 each is read on its own subject. The
+    // SETUP POSE is posed from the bones, so it has something to read on any
+    // skeleton that carries one; the STEPPED FRAMES are posed once per
+    // animation, so a skeleton with none has nothing to step. This used to
+    // skip the whole rule on the second fact alone, which was A15's pattern
+    // (#580) for a rule whose only clause was the stepping — and #882 gave it
+    // the setup clause without moving the skip. Measured on the static probe
+    // with a leaf bone at `rotation: 1e309` in its emitted file: `validate`
+    // printed this rule as SKIP and the run green under both profiles, and
+    // `render` refused the same file by the bone. A static rig's setup pose
+    // is the whole of what it shows, so that was the one pose nothing read.
+    //
+    // ⇒ The multi-clause rule of #580 now governs, the shape A09, A13, A33
+    // and A38 carry: the rule SKIPs only when neither clause has anything to
+    // measure, the clause that ran decides PASS or FAIL, and the clause that
+    // had nothing is named on the stats line (`nanStepping=skipped`, beside
+    // `animations=0`) the way A47 names a constraint it did not measure. A
+    // PASS row carries no detail, which is why the stats line is where.
+    //
+    // ⚠️ A09 does not follow, and that is its own name read at its word: a
+    // declared duration is a fact about an animation and nothing else, so a
+    // static rig still gives it nothing at all.
+    //
+    // -- the bone's inheritance mode, posed at every `inherit` key ---------
+    //
+    // 🚨 The one bone timeline whose value is a NAME, and the only one that
+    // can pose a NaN with a finite world: `SkeletonJson` resolves a key's mode
+    // through `Utils.enumValue`, which folds the first letter's case and
+    // nothing else, so `"NOSCALE"` resolves to `undefined` and the timeline's
+    // `Float32Array` frame stores NaN. `InheritTimeline.apply` then sets
+    // `pose.inherit = NaN`, `updateWorldTransform`'s switch matches no case,
+    // and the bone keeps whatever world matrix it had — measured on a forged
+    // two-bone chain: at the key the child's `a,b,c,d` equal the setup
+    // Normal-mode pose to the last digit while the file says `noScale`. The
+    // world position stays finite, so the loop below never saw it (#733).
+    //
+    // ⚠️ Posed AT each key rather than read off the stepping loop, because a
+    // stepped value lives from its key to the next one and a sampling grid
+    // can step over a short span entirely. What is judged is whether the
+    // posed value IS a mode — which is this assertion's name exactly — and
+    // not which mode: for any spelling the lookup resolves, the mode posed
+    // is the mode written by construction of the same lookup, so an equality
+    // here would be the parser agreeing with itself.
+    //
+    // -- the whole world transform, at the setup pose and every stepped frame
+    //
+    // 🚨 Read through `firstNonFinite` (`./nonfinite.ts`) over `posedNumbersOf`,
+    // the scan `render` refuses on, and not a second opinion of it (issue #882). This loop read `worldX` and
+    // `worldY` alone until then, and a bone at `rotation: 1e309` — in its setup
+    // pose or as a `rotate` key — poses a finite position over a NaN `a`, `b`,
+    // `c` and `d` whenever it has no child offset from it: measured on every
+    // leaf bone of the three generated probes, 20 of 20 green through the whole
+    // gate, and `render` then refused the same file by the bone. So the gate
+    // said the skeleton was fine and the renderer said it was not, which is two
+    // definitions of one word. The scan reads the six terms of every bone, then
+    // the vertices of every region and mesh shown — because a bone can be
+    // finite over a vertex that is not (a `scaleX` chain whose product stays
+    // under the largest double while every corner of the child's region
+    // passes it) — and names the bone or the vertex, the term and the frame.
+    //
+    // ⚠️ The setup pose is its own surface and is read as such: every frame
+    // below is posed AFTER `state.apply`, so a bone the animation keys from
+    // t=0 never shows its setup value to the loop, and a runtime that shows
+    // the rig at rest does show it.
+    //
+    // 🔸 Posed once, before any animation is set, rather than once per
+    // animation as it was until #902: `setAnimation` does not touch the
+    // skeleton, so every animation's copy of this pose was the same pose, and
+    // the first of them was the only one ever read.
+    //
+    // The setup half of the inherit-key clause above: a bone's own
+    // `inherit` goes through the same lookup, and a miss there loads
+    // `undefined` into the setup pose, which every frame copies. Only
+    // reachable on a file rigc did not write — `parseRigSpec` refuses the
+    // spelling.
+    //
+    // The other colour a slot poses, and it was outside this loop until
+    // issue #690 for the reason every gap here has: nothing emitted one.
+    // `null` is the ordinary case — a slot with no `dark` allocates no
+    // dark colour at all — and is not a reading to make, so it is
+    // skipped rather than treated as zero.
+    //
+    // The stepping half, and on a static rig there is nothing to step: the
+    // setup pose is then the only frame the skeleton has, and the two readings
+    // a stepped frame gets are made on it instead, so a colour or an
+    // inheritance mode the rig shows at rest is not left to `render`.
+    check('A10_NO_NAN_AFTER_STEPPING', () => a10NoNanAfterStepping(verdicts, rawBoneTimelines(raw), spineSteppedPoses(raw, data)));
 
     // --- A43: the two-colour tint, read back off the runtime ----------------
     //

@@ -72,6 +72,13 @@
  * nothing. A row one side reads and the other refuses is `DIFFERING` on "the
  * parse": that is the one disagreement the region rule exists to prevent.
  *
+ * Since cut 4c-5a, the stepped poses A10 reads — the setup pose, every
+ * animation's LOOPING walk at A10's step, a bone's mode at each `inherit` key —
+ * compared the same way (`compareSteppedPoses`, through `askFamilies`), every
+ * number of every pose at tolerance 0 with a non-finite value spelled as what
+ * it is: one `cut 4c-5a's facts` line per row and one `POSED` line for the
+ * family.
+ *
  * ## The verdict
  *
  * The last line counts what was compared, off the rows. Exit codes as
@@ -92,6 +99,11 @@ import { a39DeformKeepsTriangleWinding } from '../src/assertions/bodies/a39.ts';
 import { a09AnimationDurationMatchesSpec } from '../src/assertions/bodies/a09.ts';
 import { a43TwoColorTintLoadsAndPosesAsWritten } from '../src/assertions/bodies/a43.ts';
 import { a46SequenceAttachmentsShowTheFrameTheFileStates } from '../src/assertions/bodies/a46.ts';
+import { a10NoNanAfterStepping } from '../src/assertions/bodies/a10.ts';
+import type { SteppedFrame, SteppedPoseFacts } from '../src/assertions/facts/stepped_poses.ts';
+import { walkHistory } from '../src/core/walk.ts';
+import { noSkinView } from '../src/render_core.ts';
+import type { BoneTimelineFacts } from '../src/assertions/facts/bone_timelines.ts';
 import type { DeformSurveyFacts } from '../src/assertions/facts/deform_survey.ts';
 import type { AnimationDurationFacts } from '../src/assertions/facts/animation_durations.ts';
 import type { TwoColourFacts } from '../src/assertions/facts/two_colour.ts';
@@ -123,6 +135,53 @@ export interface VerdictCell {
   spine: string[];
   model: string[];
   identical: boolean;
+  /** Where the lines differ because the core refused the build by name in a documented class (`coreRefusalOf`): the class and the sentence. */
+  refused?: { why: string; route: string };
+}
+
+/**
+ * The classes of input the core documents refusing by name (issue #1025, cut
+ * 4c-5a), each a sentence's opening and the place that writes it and says why
+ * — with the issue that owns the gap where one does. A line set whose model
+ * side is one thrown refusal of one of these classes is counted apart — by
+ * this instrument (`verdictRow`) and by the selftest's supplier check (`VF02`),
+ * which call the one function below — and is neither IDENTICAL nor
+ * DIFFERING. A `CoreInputError` opening as none of them stays a difference,
+ * so a refusal cannot hide a wrong line by being new: a class joins this list
+ * by name, in a reviewed change.
+ */
+export const DOCUMENTED_CORE_REFUSALS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^the raw setup pose leaves setup\.bones out \(/, 'a block the oracle\'s core dump names absent at setup (`poseRawSetup` in src/core/raw.ts, `constraintsAbsentWhy`)'],
+  [/^the raw walk leaves the bones out: /, 'a block the core leaves out of a walk (`walkIn` in src/core/raw.ts)'],
+  [/^the looping walk leaves the bones out: slider "[^"]*" applies animation "[^"]*", which keys physics timelines/, 'a slider keying a physics timeline under the stepped walk (`sliderPhysicsWhy` in src/core/walk.ts, issue #1049)'],
+  [/^no skin was set, and this document declares skins \[/, 'a document whose skins name no default one, posed with no skin set (`noSkinView` in src/render_core.ts, issue #1051)'],
+];
+
+/** The documented class a core refusal's sentence belongs to, or `null` for one no class documents. */
+export function documentedCoreRefusal(sentence: string): string | null {
+  return DOCUMENTED_CORE_REFUSALS.find(([opening]) => opening.test(sentence))?.[1] ?? null;
+}
+
+/**
+ * The refusal behind a model-side line set, or `null`: only where `code`'s
+ * lines are exactly one `FAIL <code>: threw: …`, the body run again over the
+ * same document throws a `CoreInputError` (not any error), and its sentence
+ * opens as a `DOCUMENTED_CORE_REFUSALS` class. Anything else is `null`, and
+ * the caller keeps the line set a difference.
+ */
+export function coreRefusalOf(code: string, modelLines: readonly string[], modelText: string, input: ModelValidateInput): { why: string; route: string } | null {
+  if (modelLines.length !== 1 || !modelLines[0].startsWith(`  FAIL  ${code}: threw: `)) return null;
+  const moved = MOVED_ASSERTIONS.find((m) => m.code === code);
+  if (moved === undefined) return null;
+  try {
+    const read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
+    moved.run({ fail: () => {}, skip: () => {}, stats: {} }, read, input, MODEL_SUPPLY);
+  } catch (err) {
+    if (!(err instanceof CoreInputError)) return null;
+    const route = documentedCoreRefusal(err.message);
+    return route === null ? null : { why: err.message, route };
+  }
+  return null;
 }
 
 /** One recipe: refused with the reason, or every cell and the walk comparison. */
@@ -144,6 +203,8 @@ export interface VerdictRow {
   posedFacts?: PosedFactTally[] | null;
   /** Cut 4c-5's families compared the same way (`compareCut4c5Facts`) — absent on a refused row, or where a row was built by hand. */
   cut4c5Facts?: PosedFactTally[] | null;
+  /** Cut 4c-5a's family compared the same way (`compareSteppedPoses`) — absent on a refused row, or where a row was built by hand. */
+  steppedFacts?: PosedFactTally[] | null;
 }
 
 /** A report line's code. */
@@ -341,8 +402,16 @@ export type PosedFactFamily = (typeof POSED_FACT_FAMILIES)[number];
 export const CUT_4C5_FAMILIES = ['slider composition', 'constraint targets'] as const;
 export type Cut4c5Family = (typeof CUT_4C5_FAMILIES)[number];
 
+/**
+ * Cut 4c-5a's family (issue #1025): the stepped poses A10 reads — the setup
+ * pose, each animation's looping walk, a bone's mode at a key — compared the
+ * way the others are (`compareSteppedPoses`), and counted apart from them.
+ */
+export const STEPPED_FACT_FAMILIES = ['stepped poses'] as const;
+export type SteppedFactFamily = (typeof STEPPED_FACT_FAMILIES)[number];
+
 /** A family whose facts are compared question by question. */
-export type QuestionFamily = PosedFactFamily | Cut4c5Family;
+export type QuestionFamily = PosedFactFamily | Cut4c5Family | SteppedFactFamily;
 
 /** One family's comparison over one build: every question the body asked, how many numbers the answers held, and what differed or was refused. */
 export interface PosedFactTally {
@@ -404,17 +473,20 @@ interface AskedFamily {
   model: () => object;
   whole: string[];
   ask: (facts: object) => void;
+  /** How this build's answers to a method are spelled where the family's own reading differs from `answerOf`'s (cut 4c-5a: the stepped poses' HISTORY bones). */
+  spelling?: Readonly<Record<string, (value: unknown) => unknown>>;
 }
 
 /**
- * The comparison `comparePosedFacts` and `compareCut4c5Facts` share: each body
+ * The comparison `comparePosedFacts`, `compareCut4c5Facts` and `compareSteppedPoses` share: each body
  * runs over spine-core's facts with every method call recorded, the model
  * side's supplier is asked the same question with the same arguments, and
  * every value read whole is compared whole, spelled exactly.
  */
 function askFamilies(families: readonly AskedFamily[]): PosedFactTally[] {
   const out: PosedFactTally[] = [];
-  for (const { family, spine, model: modelFacts, whole, ask } of families) {
+  for (const { family, spine, model: modelFacts, whole, ask, spelling } of families) {
+    const spellAnswer = (name: string, value: unknown): unknown => (spelling?.[name] ?? ((v: unknown) => answerOf(name, v)))(value);
     const tally: PosedFactTally = { family, questions: 0, values: 0, equal: 0, refused: [], differing: [] };
     out.push(tally);
     const asked: Array<{ name: string; args: unknown[]; answer: unknown }> = [];
@@ -442,11 +514,11 @@ function askFamilies(families: readonly AskedFamily[]): PosedFactTally[] {
     }
     const compare = (question: string, name: string, spineAnswer: unknown, answer: () => unknown): void => {
       tally.questions++;
-      const a = answerOf(name, spineAnswer);
+      const a = spellAnswer(name, spineAnswer);
       tally.values += numbersIn(a);
       let b: unknown;
       try {
-        b = answerOf(name, answer());
+        b = spellAnswer(name, answer());
       } catch (err) {
         if (!(err instanceof CoreInputError)) throw err;
         tally.refused.push({ question, why: err.message });
@@ -539,6 +611,45 @@ export function compareCut4c5Facts(skeletonText: string, atlasText: string, mode
   ]);
 }
 
+/**
+ * Cut 4c-5a's facts over one build (issue #1025), compared through
+ * `askFamilies`: A10's body runs over spine-core's stepped poses — the setup
+ * pose, every animation's looping walk at A10's own step, a bone's mode at
+ * each `inherit` key — and every pose it asks for is asked of the model
+ * side's supplier (the core's looping walk, `src/core/walk.ts`) with the same
+ * arguments, the bone count and the animation roster compared whole. Every
+ * number of every pose is spelled exactly, so a NaN where the other side has
+ * an Infinity differs, as does one ulp. `supply` plants a model supplier
+ * (`VF13`).
+ */
+export function compareSteppedPoses(skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): PosedFactTally[] | null {
+  const runtime = runtimePosedFacts(skeletonText, atlasText);
+  if (runtime === null) return null;
+  let read: ReadDocument;
+  try {
+    read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
+  } catch {
+    return null;
+  }
+  const model: ModelSupply = { ...MODEL_SUPPLY, ...supply };
+  const timelines: BoneTimelineFacts = runtime.boneTimelines;
+  // A bone the view leaves inactive that a constraint writes into holds the runtime's previous step (HISTORY, issue #979;
+  // `walkHistory` in src/core/walk.ts): its numbers, and its slots' vertices, are spelled by name and compared with nothing.
+  let history: ReturnType<typeof walkHistory> = { bones: new Map(), slots: new Map() };
+  try {
+    history = walkHistory(noSkinView(read.doc));
+  } catch (err) {
+    if (!(err instanceof CoreInputError)) throw err;
+  }
+  const frame = (f: SteppedFrame): unknown => ({
+    ...f,
+    bones: f.bones.map((b) => (history.bones.has(b.name) ? { name: b.name, inherit: b.inherit, history: history.bones.get(b.name) } : b)),
+    drawn: f.drawn.map((d) => (history.slots.has(d.slot) ? { slot: d.slot, attachment: d.attachment, history: history.bones.get(history.slots.get(d.slot) ?? '') } : d)),
+  });
+  const spelling = history.bones.size === 0 ? undefined : { setup: (v: unknown) => frame(v as SteppedFrame), walk: (v: unknown) => (v as SteppedFrame[]).map(frame) };
+  return askFamilies([{ family: 'stepped poses', spine: runtime.steppedPoses, model: () => model.steppedPoses(read), whole: ['boneCount', 'steppedAnimations'], ask: (f) => a10NoNanAfterStepping(silentVerdicts(), timelines, f as SteppedPoseFacts), ...(spelling === undefined ? {} : { spelling }) }]);
+}
+
 /** Tallies of one family, summed across builds. */
 export function sumPosedTallies(into: Map<QuestionFamily, PosedFactTally>, more: readonly PosedFactTally[]): void {
   for (const t of more) {
@@ -565,7 +676,8 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   const inputs = { ...(rig === undefined ? {} : { rig }), ...(declaredDurations === undefined ? {} : { declaredDurations }) };
   for (const profile of VERDICT_PROFILES) {
     const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, ...inputs });
-    const model = validateModel({ modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText), ...inputs });
+    const modelInput: ModelValidateInput = { modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText), ...inputs };
+    const model = validateModel(modelInput);
     const spineParse = spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
     const modelParse = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
     if (spineParse !== undefined && modelParse !== undefined) {
@@ -581,7 +693,9 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
     for (const { code } of MOVED_ASSERTIONS) {
       const a = codeLines(spine, code);
       const b = codeLines(model, code);
-      cells.push({ code, profile, spine: a, model: b, identical: a.join('\n') === b.join('\n') });
+      const identical = a.join('\n') === b.join('\n');
+      const refused = identical ? null : coreRefusalOf(code, b, modelText, modelInput);
+      cells.push({ code, profile, spine: a, model: b, identical, ...(refused === null ? {} : { refused }) });
     }
   }
   // One side refused the parse: the cells above hold that as a difference, and there is no pair of walks to read.
@@ -599,6 +713,7 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
     rigFacts: compareRigFacts(skeletonText, atlasText, modelText),
     posedFacts: comparePosedFacts(skeletonText, atlasText, modelText, rig, declaredDurations),
     cut4c5Facts: compareCut4c5Facts(skeletonText, atlasText, modelText),
+    steppedFacts: compareSteppedPoses(skeletonText, atlasText, modelText),
   };
 }
 
@@ -608,10 +723,12 @@ export function verdictRows(built: readonly BuiltRow[]): VerdictRow[] {
 }
 
 /** Every row's lines, then the verdict line; `ok` is the exit-0 reading, `empty` the exit-2 one. */
-export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok: boolean; empty: boolean } {
+export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok: boolean; empty: boolean; refusedByCore: number } {
   const lines: string[] = [];
   let cells = 0;
   let differing = 0;
+  /** Line sets the core refused by name in a documented class, by class (`coreRefusalOf`). */
+  const refusedByCore = new Map<string, number>();
   let walks = 0;
   let walksDiffering = 0;
   let facts = 0;
@@ -624,6 +741,8 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
   let posedRowsDiffering = 0;
   let cut4c5Rows = 0;
   let cut4c5RowsDiffering = 0;
+  let steppedRows = 0;
+  let steppedRowsDiffering = 0;
   for (const row of rows) {
     if (row.refused !== null) {
       lines.push(`  REFUSED    ${row.name} — ${row.refused}`);
@@ -632,7 +751,11 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
     for (const cell of row.cells) {
       cells++;
       if (cell.identical) lines.push(`  IDENTICAL  ${row.name}  ${cell.code} [${cell.profile}]  ${cell.spine.length} line(s)`);
-      else {
+      else if (cell.refused !== undefined) {
+        refusedByCore.set(cell.refused.route, (refusedByCore.get(cell.refused.route) ?? 0) + 1);
+        lines.push(`  REFUSED    ${row.name}  ${cell.code} [${cell.profile}] — the core refused it by name, ${cell.refused.route}: ${cell.refused.why.slice(0, 300)}`);
+        lines.push(`               spine-core: ${JSON.stringify(cell.spine)}`);
+      } else {
         differing++;
         lines.push(`  DIFFERING  ${row.name}  ${cell.code} [${cell.profile}]`);
         lines.push(`               spine-core: ${JSON.stringify(cell.spine)}`);
@@ -704,10 +827,27 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
       }
       for (const t of row.cut4c5Facts) for (const r of t.refused) lines.push(`  REFUSED    ${row.name}  cut 4c-5's facts: ${t.family}: ${r.question.slice(0, 200)} — the core: ${r.why.slice(0, 300)}`);
     }
+    if (row.steppedFacts !== undefined && row.steppedFacts !== null) {
+      steppedRows++;
+      sumPosedTallies(posed, row.steppedFacts);
+      const differing = row.steppedFacts.filter((t) => t.differing.length > 0);
+      if (differing.length === 0) lines.push(`  IDENTICAL  ${row.name}  cut 4c-5a's facts: ${row.steppedFacts.map((t) => `${t.family} ${t.equal}/${t.questions}`).join(', ')}`);
+      else {
+        steppedRowsDiffering++;
+        for (const t of differing) {
+          const d = t.differing[0];
+          lines.push(`  DIFFERING  ${row.name}  cut 4c-5a's facts: ${t.family}: ${t.differing.length} question(s), the first ${d.question.slice(0, 200)}`);
+          lines.push(`               spine-core: ${d.spine.slice(0, 400)}`);
+          lines.push(`               model:      ${d.model.slice(0, 400)}`);
+        }
+      }
+      for (const t of row.steppedFacts) for (const r of t.refused) lines.push(`  REFUSED    ${row.name}  cut 4c-5a's facts: ${t.family}: ${r.question.slice(0, 200)} — the core: ${r.why.slice(0, 300)}`);
+    }
   }
   const refused = rows.filter((r) => r.refused !== null).length;
   const empty = cells === 0;
-  const ok = !empty && differing === 0 && walksDiffering === 0 && factsDiffering === 0 && factRowsDiffering === 0 && posedRowsDiffering === 0 && cut4c5RowsDiffering === 0;
+  const refusedCells = [...refusedByCore.values()].reduce((x, y) => x + y, 0);
+  const ok = !empty && differing === 0 && walksDiffering === 0 && factsDiffering === 0 && factRowsDiffering === 0 && posedRowsDiffering === 0 && cut4c5RowsDiffering === 0 && steppedRowsDiffering === 0;
   for (const row of derivations.values()) {
     lines.push(`  DERIVED    ${row.derivation} — ${row.equal} of ${row.values} equal the runtime's${row.statedAlone === null ? '' : `, the stated number alone ${row.statedAlone}`}`);
   }
@@ -715,15 +855,17 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
     lines.push(`  POSED      ${t.family} — ${t.equal} of ${t.questions} question(s) answered alike, ${t.values} number(s) in spine-core's answers, ${t.refused.length} refused by the core by name, ${t.differing.length} differing`);
   }
   lines.push(
-    `${empty ? 'NOTHING COMPARED' : ok ? 'IDENTICAL' : 'DIFFERING'} — ${rows.length} recipe(s), ${refused} refused; ` +
-      `${cells} line set(s) compared (${MOVED_ASSERTIONS.length} moved assertion(s) × ${VERDICT_PROFILES.length} profile(s)), ${cells - differing} identical, ${differing} differing; ` +
+    `${empty ? 'NOTHING COMPARED' : !ok ? 'DIFFERING' : refusedCells > 0 ? 'IDENTICAL BUT FOR REFUSALS BY NAME' : 'IDENTICAL'} — ${rows.length} recipe(s), ${refused} refused; ` +
+      `${cells} line set(s) compared (${MOVED_ASSERTIONS.length} moved assertion(s) × ${VERDICT_PROFILES.length} profile(s)), ${cells - differing - refusedCells} identical, ${differing} differing` +
+      `${refusedCells > 0 ? `, ${refusedCells} refused by the core by name (${[...refusedByCore].map(([route, n]) => `${n} × ${route}`).join('; ')})` : ''}; ` +
       `${walks} skins' walk(s) compared, ${walks - walksDiffering} identical, ${walksDiffering} differing; ` +
       `${facts} fact family reading(s) compared, ${facts - factsDiffering} identical, ${factsDiffering} differing; ` +
       `${factRows} build(s)' cut 4c-2 facts compared, ${factRows - factRowsDiffering} identical, ${factRowsDiffering} differing; ` +
       `${posedRows} build(s)' cut 4c-3 facts compared, ${posedRows - posedRowsDiffering} identical, ${posedRowsDiffering} differing; ` +
-      `${cut4c5Rows} build(s)' cut 4c-5 facts compared, ${cut4c5Rows - cut4c5RowsDiffering} identical, ${cut4c5RowsDiffering} differing`,
+      `${cut4c5Rows} build(s)' cut 4c-5 facts compared, ${cut4c5Rows - cut4c5RowsDiffering} identical, ${cut4c5RowsDiffering} differing; ` +
+      `${steppedRows} build(s)' cut 4c-5a facts compared, ${steppedRows - steppedRowsDiffering} identical, ${steppedRowsDiffering} differing`,
   );
-  return { lines, ok, empty };
+  return { lines, ok, empty, refusedByCore: refusedCells };
 }
 
 function parseFlags(args: readonly string[], known: readonly string[]): Map<string, string> {
@@ -760,7 +902,7 @@ export function verdictMain(argv: readonly string[], print: (line: string) => vo
     warn(`verdict_gate: ${recipes.length} recipe(s), work directory ${work}`);
     const verdict = verdictLines(verdictRows(buildRecipes(recipes, work, root, warn)));
     for (const line of verdict.lines) print(line);
-    return verdict.empty ? 2 : verdict.ok ? 0 : 1;
+    return verdict.empty ? 2 : !verdict.ok ? 1 : verdict.refusedByCore > 0 ? 3 : 0;
   } catch (err) {
     if (err instanceof VerdictInputError || err instanceof HashesInputError) {
       warn(`verdict_gate: ${err.message}`);

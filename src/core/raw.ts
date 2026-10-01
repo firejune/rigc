@@ -100,6 +100,12 @@
  *   `./clipping.ts`, issue #964), held to spine-core by the render's pixels.
  * - `events` — the oracle's event rows as doubles.
  *
+ * 🔁 **A second walk shares this one** (issue #1025, cut 4c-5a): A10's
+ * LOOPING walk, which keeps a non-finite value rather than refusing it, is
+ * `./walk.ts`; both are `walkIn` below in a `WalkMode`, and every difference
+ * is a branch on the mode — so this entry's walk is the one it was, and the
+ * raw gate's lines did not move.
+ *
  * ⛔ **Nothing is posed that the core would leave out.** Where the oracle's
  * core dump names a block absent — a constraint the core cannot pose
  * exactly, skins disagreeing over a placeholder under the merged view, a
@@ -189,8 +195,6 @@ export interface RawPose {
   // --- #968 render: end ---
 }
 
-const RAW_PLANT: CorePlant = { round: rawNumber };
-
 // --- #968 render: begin ---
 /** The shown records in `order`, the pose's draw order (a pose's `shown`). */
 function drawOrderOf(shown: readonly ShownGeometry[], order: readonly string[]): ShownGeometry[] {
@@ -203,6 +207,37 @@ function drawOrderOf(shown: readonly ShownGeometry[], order: readonly string[]):
 function finite(v: number | null, what: string): number {
   if (v === null) throw new CoreInputError(`the raw pose computed a non-finite ${what}`);
   return v;
+}
+
+/**
+ * How a walk treats the two things the raw entry and the looping walk
+ * (`./walk.ts`, issue #1025) read differently: whether the track loops, and
+ * whether a value that is not finite is kept in the pose or refuses the call.
+ * The raw entry is `{ loop: false, keep: false }`, and that is its contract.
+ */
+export interface WalkMode {
+  loop: boolean;
+  keep: boolean;
+  /** A plant only (the core suite's `CO26`): the animation time a looping step applies at, from its track time, the duration and the track time before it — `loopedTime` unless given. */
+  time?: (trackTime: number, duration: number, before: number) => number;
+  /** A plant only (`CO26`): what the physics clock moves by, from the step and how far the animation time moved — the step itself unless given. */
+  clock?: (dt: number, moved: number) => number;
+  /** A plant only (`CO26`): `false` fires no `reset` key across the wrap — the reading the walk was measured against and rejected. */
+  wrapResets?: boolean;
+}
+
+/** The raw entry's mode: a track that holds at its duration, and a non-finite value refused. */
+const RAW_MODE: WalkMode = { loop: false, keep: false };
+
+/** What a kept walk writes a number as: the double itself, finite or not — so a NaN and an Infinity stay what they are. */
+const keptNumber = (v: number): number => v;
+
+/** The plant a walk in `mode` poses with: the raw entry's unrounded double, or under `keep` the number whatever it is. */
+const roundPlant = (mode: WalkMode): CorePlant => ({ round: mode.keep ? keptNumber : rawNumber });
+
+/** A double a kept walk computed, as it is; a raw walk's, refused when it is not finite (`finite`). */
+function numberOf(v: number | null, what: string, mode: WalkMode): number {
+  return mode.keep ? (v === null ? Number.NaN : v) : finite(v, what);
 }
 
 /** The bones of a pose from the world transforms (the header's `bones`). */
@@ -230,8 +265,8 @@ function rawBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>):
 }
 
 /** Every region and mesh the shown records draw, with what the renderer reads past the vertices (the header's `drawn`). */
-function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
-  const geometry = poseGeometry(shown, world, sourceOfDoc(doc), rawNumber, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, order, plant));
+function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode = RAW_MODE): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
+  const geometry = poseGeometry(shown, world, sourceOfDoc(doc), mode.keep ? keptNumber : rawNumber, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, order, plant));
   if (geometry.attachments === null) throw new CoreInputError(`the raw pose leaves the attachments out: ${geometry.attachmentsWhy}`);
   // The drawn rows (issue #964): the oracle's `clipped` rows where it is posed, and a concave or inverse clip cut through the core's own decomposition.
   if (geometry.drawnClipped === null) throw new CoreInputError(`the raw pose leaves the clipped triangles out: ${geometry.drawnClippedWhy}`);
@@ -262,10 +297,10 @@ function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world:
       hull = source.hull ?? null;
     }
     const sequenceIndex = s.frame ?? record?.sequenceSetup ?? 0;
-    drawn.push({ slot: s.slot, attachment: row[1], kind: row[2], vertices: row[3].map((v) => finite(v, `vertex of slot "${s.slot}"`)), uvs, triangles, hull, sequenceIndex, colour });
+    drawn.push({ slot: s.slot, attachment: row[1], kind: row[2], vertices: row[3].map((v) => numberOf(v, `vertex of slot "${s.slot}"`, mode)), uvs, triangles, hull, sequenceIndex, colour });
   }
-  const clips = geometry.clips.map((c): RawClip => [c[0], c[1], c[2], c[3].map((v) => finite(v, `clip vertex of slot "${c[0]}"`))]);
-  const clipped = geometry.drawnClipped.map((c): RawClipped => [c[0], c[1], c[2], c[3].map((v) => finite(v, `clipped vertex of slot "${c[0]}"`)), c[4].map((v) => finite(v, `clipped uv of slot "${c[0]}"`)), c[5]]);
+  const clips = geometry.clips.map((c): RawClip => [c[0], c[1], c[2], c[3].map((v) => numberOf(v, `clip vertex of slot "${c[0]}"`, mode))]);
+  const clipped = geometry.drawnClipped.map((c): RawClipped => [c[0], c[1], c[2], c[3].map((v) => numberOf(v, `clipped vertex of slot "${c[0]}"`, mode)), c[4].map((v) => numberOf(v, `clipped uv of slot "${c[0]}"`, mode)), c[5]]);
   return { drawn, clips, clipped };
 }
 
@@ -275,13 +310,18 @@ function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world:
  * where the core leaves a block of it out.
  */
 export function poseRawSetup(doc: CompiledDocument, plant: CorePlant = {}): RawPose {
-  const posed = poseSetup(doc, { ...plant, ...RAW_PLANT }, freshStepContext(plant.physicsStep));
+  return setupPoseIn(doc, plant, RAW_MODE);
+}
+
+/** `poseRawSetup` in `mode` — under `keep`, a value that is not finite stays in the pose (`./walk.ts`). */
+export function setupPoseIn(doc: CompiledDocument, plant: CorePlant, mode: WalkMode): RawPose {
+  const posed = poseSetup(doc, { ...plant, ...roundPlant(mode) }, freshStepContext(plant.physicsStep));
   // `setup.clipped` is the oracle's block, left out under a concave or inverse clip whose triangle list is the runtime's own; what the core draws there is `rawDrawn`'s to refuse or pose (issue #964).
   const absent = posed.absent.filter(([block]) => block !== 'setup.clipped');
   if (absent.length > 0) throw new CoreInputError(`the raw setup pose leaves ${absent.map(([b, why]) => `${b} out (${why})`).join('; ')}`);
   const { setup, world, shown } = posed;
   if (world === null || shown === null || setup.slots === null || setup.drawOrder === null) throw new CoreInputError('the raw setup pose was not posed');
-  const drawn = rawDrawn(doc, shown, world, setup.drawOrder, plant);
+  const drawn = rawDrawn(doc, shown, world, setup.drawOrder, plant, mode);
   return { trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots: setup.slots, drawOrder: setup.drawOrder, ...drawn, events: [], shown: drawOrderOf(shown, setup.drawOrder) };
 }
 
@@ -296,34 +336,54 @@ export function poseRawSetup(doc: CompiledDocument, plant: CorePlant = {}): RawP
  * deformmeasure's one jump.
  */
 export function poseRawAnimation(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant = {}, reset: RawReset = 'animation'): RawPose[] {
+  return walkIn(doc, animation, steps, plant, reset, RAW_MODE);
+}
+
+/**
+ * The animation time a looping track applies its animation at (`./walk.ts`,
+ * *The time*): the track time wrapped by the duration, and 0 over a duration
+ * of 0.
+ */
+export function loopedTime(trackTime: number, duration: number): number {
+  return duration === 0 ? 0 : trackTime % duration;
+}
+
+/**
+ * `poseRawAnimation` in `mode`: the raw entry's walk, or the looping walk
+ * `./walk.ts` documents — the animation time the track time wrapped by the
+ * duration, every value kept whatever it is. Each difference is a branch on
+ * `mode` here, so the raw entry's walk is the one it was.
+ */
+export function walkIn(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode): RawPose[] {
   const anim = doc.animations.find((a) => a.name === animation);
   if (anim === undefined) throw new CoreInputError(`animation "${animation}" is not one of this document's [${doc.animations.map((a) => a.name).join(', ')}]`);
   const bad = steps.findIndex((s) => !Number.isFinite(s) || s < 0);
   if (bad >= 0) throw new CoreInputError(`step ${bad} is ${steps[bad]}, not a finite time at or above 0`);
   const why = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? steppedPreviousPassWhy(doc);
   if (why !== null) throw new CoreInputError(`the raw walk leaves the bones out: ${why}`);
-  const raw: TimelinePlant = { ...plant, ...RAW_PLANT };
+  const raw: TimelinePlant = { ...plant, ...roundPlant(mode) };
   const resolve = plant.shown ?? shownAttachment;
   const duration = anim.timelines.duration;
   const ctx = freshStepContext(plant.physicsStep);
+  if (mode.loop && mode.wrapResets !== false) ctx.loop = true;
   const poses: RawPose[] = [];
   let trackTime = 0;
   let last = -1;
   if (reset === 'setup') {
     // The reset taken at the setup pose, before the animation is applied (`src/deformmeasure.ts`'s `poseAt`): pose 0 is the setup pose.
-    const setup = poseSetup(doc, { ...plant, ...RAW_PLANT }, ctx);
+    const setup = poseSetup(doc, { ...plant, ...roundPlant(mode) }, ctx);
     const absent = setup.absent.filter(([block]) => block !== 'setup.clipped');
     if (absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
     if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
     ctx.phase = 'update';
-    poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) });
+    poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant, mode), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) });
   }
   for (let i = reset === 'setup' ? 1 : 0; i <= steps.length; i++) {
     const dt = i === 0 ? 0 : steps[i - 1];
     trackTime += dt;
-    const t = trackTime < duration ? trackTime : duration;
+    const t = mode.loop ? (mode.time ?? loopedTime)(trackTime, duration, trackTime - dt) : trackTime < duration ? trackTime : duration;
     const before = ctx.time;
-    ctx.time += dt;
+    ctx.time += mode.clock === undefined ? dt : mode.clock(dt, t - (i === 0 ? 0 : Math.max(last, 0)));
     const sliders: SliderApplication[] = [];
     const posed = posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before });
     if (i === 0) ctx.phase = 'update';
@@ -338,8 +398,9 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
     if (states.why.length > 0) throw new CoreInputError(`the raw walk leaves the attachments out: ${states.why.join('; ')}`);
     const rank = new Map(drawOrder.map((n, r) => [n, r]));
     const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-    const drawn = rawDrawn(doc, shown, posed.world, drawOrder, plant);
-    const events = (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
+    const drawn = rawDrawn(doc, shown, posed.world, drawOrder, plant, mode);
+    // A looping walk fires no event here: what fires across the wrap was not measured, and the walk's one reader (A10) reads none.
+    const events = mode.loop ? [] : (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
     last = t;
     poses.push({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown });
   }

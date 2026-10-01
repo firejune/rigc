@@ -5,7 +5,7 @@
  * what the corpus reaches (issue #925, step 2a; the slots, issue #928; the
  * attachments' world vertices and the clipping polygons, issue #931).
  *
- *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>] [--raw]
+ *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>] [--raw | --walk]
  *
  * `--raw` (issue #966) runs every dump below under `pose_oracle.ts dump
  * --raw` — full doubles, both dumpers — and every `compare` at tolerance 0
@@ -179,6 +179,28 @@
  * corpus, since the oracle's dump writes no vertices for either, and a trim
  * is reached only from a pack that trims, which the public examples do not.
  *
+ * ## `--walk` — A10's walk (issue #1025, cut 4c-5a)
+ *
+ * `bun tools/core_gate.ts --walk [--recipes …] [--root …] [--work …]` builds
+ * the same rows and runs, instead of everything above, A10's walk on both
+ * sides (`spineWalkDocument` and `coreWalkDocument` in `./pose_oracle.ts`):
+ * the setup pose with every physics state reset, then every animation on a
+ * LOOPING track stepped 120 times by `max(duration, 1) / 120`, every pose's
+ * times, bone terms, drawn vertices and slot colours compared at tolerance 0
+ * (`Object.is`: a NaN equals a NaN, −0 is not 0). One line per row —
+ * `IDENTICAL`, `DIFF` with the first difference, `SKIP` where the core refuses
+ * the document by name, `REFUSED` where the build chain failed — then a
+ * `WALK` verdict line counting rows (the corpus's, then the inactive-bone
+ * probes `walkProbes` builds in memory), poses, numbers, the steps past the
+ * duration (the wrap) and the poses holding a non-finite value — and, where
+ * any, the numbers on bones the view leaves inactive that a constraint writes
+ * into (HISTORY, issue #979: the runtime keeps such a bone's previous step,
+ * the core does not; `walkHistory` in src/core/walk.ts), counted apart with
+ * their writers and how many differ only in the sign of zero, compared with
+ * nothing. Exit 0 when
+ * no row is DIFF or REFUSED and some pose was compared, 1 otherwise. The
+ * default and `--raw` runs print what they printed before it.
+ *
  * Exit codes: 0 when every row is IDENTICAL or SKIP; 1 when any row is DIFF or
  * REFUSED, or its stepped run or any skin's run is DIFF; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
@@ -211,7 +233,12 @@ import {
   type OracleComparison,
   type OracleDocument,
   type OracleOptions,
+  compareWalkDocuments,
+  coreWalkDocument,
+  spineWalkDocument,
+  type WalkComparison,
 } from './pose_oracle.ts';
+import type { WalkPlant } from '../src/core/walk.ts';
 
 /** The options both dumps are taken under: the oracle's defaults. */
 export const GATE_OPTIONS: OracleOptions = { phase: 'grid', samples: ORACLE_DEFAULT_SAMPLES, skin: 'all', physics: 'none', dt: null };
@@ -1558,11 +1585,123 @@ function parseFlags(args: readonly string[], known: readonly string[], switches:
   return flags;
 }
 
+/** One built row's walk comparison (`--walk`): the comparison, or why there is none. */
+export interface WalkRow {
+  name: string;
+  verdict: 'IDENTICAL' | 'DIFF' | 'SKIP' | 'REFUSED';
+  why: string | null;
+  comparison: WalkComparison | null;
+}
+
+/** A10's walk on both sides of one built row (`--walk`); `walkPlant` replaces a part of the core's walk (`CO26`). */
+export function walkBuild(name: string, outDir: string, walkPlant: WalkPlant = {}): WalkRow {
+  const files = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => join(outDir, f));
+  const missing = files.filter((f) => !existsSync(f));
+  if (missing.length > 0) return { name, verdict: 'REFUSED', why: `the build wrote no ${missing.map((f) => f.slice(outDir.length + 1)).join(', ')}`, comparison: null };
+  const [skeletonText, atlasText, modelText] = files.map((f) => readFileSync(f, 'utf8'));
+  return walkPair(name, skeletonText, atlasText, modelText, walkPlant);
+}
+
+/** A10's walk on both sides of one pair of texts (`walkBuild`, and the probes below). */
+export function walkPair(name: string, skeletonText: string, atlasText: string, modelText: string, walkPlant: WalkPlant = {}): WalkRow {
+  const spine = spineWalkDocument(loadOracleData(skeletonText, atlasText, name));
+  let core;
+  try {
+    core = coreWalkDocument(readModel(modelText, name), undefined, {}, walkPlant);
+  } catch (err) {
+    if (err instanceof CoreInputError) return { name, verdict: 'SKIP', why: `the core refused it by name — ${err.message}`, comparison: null };
+    throw err;
+  }
+  const comparison = compareWalkDocuments(spine, core);
+  return { name, verdict: comparison.first === null ? 'IDENTICAL' : 'DIFF', why: comparison.first, comparison };
+}
+
+/**
+ * A skeleton spelled twice — the Spine file and the model — whose four
+ * skin-required bones (rotations 130.25, 69.09, 45.19 and 80.41 under a
+ * swung parent) no skin activates with no skin set, all four written by a
+ * transform constraint (rotate at mix 1, translate at `mix`) from a source
+ * at `targetRotation` degrees, an active child under the first when `child`,
+ * and a fifth skin-required bone `free` no constraint writes (the control's
+ * bone: inactive and not HISTORY, so a value there is compared)
+ * (issue #1025, cut 4c-5a: the production corpus's sign-of-zero rig, rebuilt
+ * in public). It is the HISTORY class of `walkHistory` in src/core/walk.ts:
+ * spine-core keeps each inactive bone's previous step, the core does not.
+ */
+export function inactiveHistoryProbe(targetRotation: number, mix: number, child: boolean): { spine: string; model: string } {
+  type Obj = Record<string, unknown>;
+  const kids = [130.25, 69.09, 45.19, 80.41].map((r, i) => ({ name: `k${i}`, parent: 'p', rotation: r, length: 12, x: 3 * i, skin: true }));
+  const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', x: 10, y: 5, rotation: 20, length: 30 }, ...kids, ...(child ? [{ name: 'gc', parent: 'k0', x: 4, y: 2 }] : []), { name: 'free', parent: 'p', rotation: 155, length: 9, skin: true }, { name: 't', parent: 'root', x: 40, y: -20, rotation: targetRotation }];
+  const { type, name, ...rest } = { type: 'transform', name: 'tc', bones: kids.map((k) => k.name), source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } }, y: { to: { y: {} } } }, mixRotate: 1, mixX: mix, mixY: mix };
+  const keys = [{ time: 0, value: 0 }, { time: 1, value: 90 }];
+  const listed = [...kids.map((k) => k.name), 'free'];
+  return {
+    spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints: [{ type, name, ...rest }], skins: [{ name: 'default', attachments: {} }, { name: 'extra', bones: listed, attachments: {} }], animations: { a: { bones: { p: { rotate: keys } } } } }),
+    model: JSON.stringify({
+      spec: 'rigc-compiled/1', referenceScale: 100,
+      bones: bones.map(({ skin, ...b }) => ({ ...b, ...(skin === undefined ? {} : { skinRequired: skin }) })),
+      slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }, { name: 'extra', bones: listed, constraints: {}, attachments: {} }],
+      constraints: [{ kind: type, name, declaredIn: 'rig', ...rest }], events: [],
+      animations: [{ name: 'a', duration: 0, bones: [{ name: 'p', timelines: [{ name: 'rotate', keys }] }], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [] }],
+      images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: '0'.repeat(64) },
+    }),
+  };
+}
+
+/** The inactive-bone probes `--walk` runs beside the corpus: the sign of zero alone (130° and −150°, mix 1), a value (mix 0.5), and each with an active child. */
+export const INACTIVE_HISTORY_PROBES: ReadonlyArray<readonly [number, number, boolean]> = [[130, 1, false], [-150, 1, false], [130, 0.5, false], [130, 1, true], [-150, 0.5, true]];
+
+/** The inactive-bone probes walked (`--walk`), each a row named `probe/…`. */
+export function walkProbes(walkPlant: WalkPlant = {}): WalkRow[] {
+  return INACTIVE_HISTORY_PROBES.map(([r, mix, child]) => {
+    const name = `probe/inactive ${r}° mix ${mix}${child ? ' child' : ''}`;
+    const pair = inactiveHistoryProbe(r, mix, child);
+    return walkPair(name, pair.spine, '', pair.model, walkPlant);
+  });
+}
+
+/** Every built row's walk (`--walk`), a refused build chain named. */
+export function walkBuilt(built: readonly BuiltRow[], walkPlant: WalkPlant = {}): WalkRow[] {
+  return built.map((r) => (r.exits.some((e) => e !== 0) ? { name: r.name, verdict: 'REFUSED', why: `the build chain exited ${JSON.stringify(r.exits)}`, comparison: null } : walkBuild(r.name, r.out, walkPlant)));
+}
+
+/** The walk's lines and its verdict (`--walk`). */
+export function walkLines(rows: readonly WalkRow[]): { lines: string[]; ok: boolean } {
+  const lines: string[] = [];
+  const sum = { poses: 0, numbers: 0, exact: 0, wrapped: 0, nonFinite: 0, wrappedAnimations: 0, historyNumbers: 0, historySignOnly: 0 };
+  let historyBones = 0;
+  for (const row of rows) {
+    const c = row.comparison;
+    if (c !== null) {
+      for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+      historyBones += c.historyBones.size;
+    }
+    const history = c === null || c.historyNumbers === 0
+      ? ''
+      : `; ${c.historyNumbers} number(s) on ${c.historyBones.size} bone(s) the view leaves inactive and a constraint writes, HISTORY compared with nothing (${c.historySignOnly} of them only in the sign of zero) — ${[...new Set(c.historyBones.values())].join(', ')}`;
+    lines.push(
+      `  ${row.verdict.padEnd(9)} ${row.name}` +
+        (c === null ? '' : `: ${c.exact} of ${c.poses} pose(s) exact over ${c.numbers} number(s), ${c.wrapped} step(s) at or past the duration in ${c.wrappedAnimations} animation(s), ${c.nonFinite} pose(s) holding a non-finite value${history}`) +
+        (row.why === null ? '' : ` — ${row.why}`),
+    );
+  }
+  const count = (v: WalkRow['verdict']): number => rows.filter((r) => r.verdict === v).length;
+  const ok = count('DIFF') === 0 && count('REFUSED') === 0 && sum.poses > 0;
+  lines.push(
+    `WALK ${ok ? 'IDENTICAL' : sum.poses === 0 ? 'NOTHING COMPARED' : 'DIFF'} — ${rows.length} row(s): ${count('IDENTICAL')} identical, ${count('DIFF')} differing, ${count('SKIP')} refused by the core by name, ${count('REFUSED')} refused; ` +
+      `${sum.exact} of ${sum.poses} pose(s) exact over ${sum.numbers} number(s); ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s); ${sum.nonFinite} pose(s) holding a non-finite value` +
+      `${sum.historyNumbers > 0 ? `; ${sum.historyNumbers} number(s) on ${historyBones} bone(s) the view leaves inactive and a constraint writes, HISTORY compared with nothing (${sum.historySignOnly} of them only in the sign of zero)` : ''}`,
+  );
+  return { lines, ok };
+}
+
 /** The command; returns the exit code. */
 export function gateMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--work'], ['--raw']);
+    const flags = parseFlags(argv, ['--recipes', '--root', '--work'], ['--raw', '--walk']);
     const raw = flags.has('--raw');
+    const walk = flags.has('--walk');
+    if (raw && walk) throw new GateInputError('--raw and --walk are two runs: --walk compares full doubles already, at tolerance 0');
     const root = resolve(flags.get('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new GateInputError(`--root ${root} is not a directory`);
     const named = flags.get('--recipes');
@@ -1577,6 +1716,11 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
       mkdirSync(work, { recursive: true });
     }
     warn(`core_gate: ${recipes.length} recipe(s), work directory ${work}`);
+    if (walk) {
+      const walked = walkLines([...walkBuilt(buildRecipes(recipes, work, root, warn)), ...walkProbes()]);
+      for (const line of walked.lines) print(line);
+      return walked.ok ? 0 : 1;
+    }
     const rows = gateRecipes(recipes, work, root, warn, {}, raw);
     for (const row of rows) {
       const blocks = row.blocks === null ? '' : ` [${GATE_BLOCKS.map((b) => `${b} ${row.blocks?.[b].verdict}`).join(', ')}]`;
