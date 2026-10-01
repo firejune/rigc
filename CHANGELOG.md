@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.1](https://github.com/firejune/rigc/compare/v1.9.0...v1.9.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **model:** every reader takes the file's order from one place — stated on a /3 document, derived on a /2 with integer-like names first — and the groups an animation keys by name are walked in the file's key order ([#1038](https://github.com/firejune/rigc/issues/1038)) ([4422ab6](https://github.com/firejune/rigc/commit/4422ab666c97f091a58dba45d2358ce12a5ad619)), closes [#1034](https://github.com/firejune/rigc/issues/1034)
+* **render:** a directory whose files are not one build is refused by name — another build's skeleton.json or atlas no longer dies in the runtime with a stack trace ([#1041](https://github.com/firejune/rigc/issues/1041)) ([f609f9e](https://github.com/firejune/rigc/commit/f609f9e8ce161b28884c0d60b7074c77d49e0359)), closes [#1033](https://github.com/firejune/rigc/issues/1033)
+
+
+### Instrument
+
+* **gate:** A09, A39, A43 and A46 written once against facts, supplied by spine-core and by the model with the core — each posed value asked of both suppliers at every time the bodies pose at ([#1045](https://github.com/firejune/rigc/issues/1045)) ([b47a113](https://github.com/firejune/rigc/commit/b47a113980af5e7180c2b82bf36ffdbe7818b7b1))
+* **gate:** A12, A24, A25, A26, A29, A30 and A32's audio clause written once against facts and supplied by either side — the clauses that read only the Spine encoding stay with the round trip ([#1044](https://github.com/firejune/rigc/issues/1044)) ([178a645](https://github.com/firejune/rigc/commit/178a6451b929fe1fba5033eaa200fedfc2906d3f))
+
 ## [1.9.0](https://github.com/firejune/rigc/compare/v1.8.0...v1.9.0) (2026-10-01)
 
 
