@@ -6,9 +6,11 @@
  * `./slot_colour.ts`), over the `bones` group: the animations put in the
  * file's order by `editorAnimationOrder` (`src/compile.ts`, the function the
  * emitter is handed), each animation's bones and their timelines laid out as
- * the file lays them (`animations.<name>.bones.<bone>.<timeline> = keys`, in
- * the document's order, which is the order `emitAnimation` writes the model's
- * map in), and the whole handed to the emitter's own `withoutParserDefaults`
+ * the file lays them (`animations.<name>.bones.<bone>.<timeline> = keys`,
+ * filled in the document's order, which is the order `emitAnimation` writes
+ * the model's map in — and read back out of that object, so an array-index
+ * bone name comes first as it does in the file: issue #1039 measured this
+ * reader already walking the file's order), and the whole handed to the emitter's own `withoutParserDefaults`
  * and `inEditorKeyOrder` (`src/keyorder.ts`) — so a key field the emitter
  * leaves out at the parser's default (`time: 0`, a translate key's `y: 0`) is
  * left out here too, and a body printing a key's `time` prints what it prints
