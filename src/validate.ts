@@ -88,7 +88,6 @@ import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
 import { attachmentRegionLookups, type AttachmentRegionJoin } from './assertions/region_lookups.ts';
 import { attachmentRegionJoins } from './region_joins.ts';
-import type { MeshEntry, SkinMeshFacts } from './assertions/facts/skin_meshes.ts';
 import type { AnimatedBoneFacts } from './assertions/facts/animated_bones.ts';
 import type { RegionJoinFacts } from './assertions/facts/region_joins.ts';
 import type { StageFacts } from './assertions/facts/stage.ts';
@@ -887,7 +886,6 @@ export function runtimeFacts(skeletonText: string, atlasText: string): {
   skinEntries: SkinEntryFacts;
   atlasPages: AtlasPageFacts;
   slotColour: SlotColourFacts;
-  skinMeshes: SkinMeshFacts;
   animatedBones: AnimatedBoneFacts;
   skinMembers: SkinMemberFacts;
   regionJoins: RegionJoinFacts;
@@ -910,7 +908,6 @@ export function runtimeFacts(skeletonText: string, atlasText: string): {
     skinEntries: spineSkinEntries(data),
     atlasPages: { atlas },
     slotColour: spineSlotColourFacts(raw, data),
-    skinMeshes: spineSkinMeshes(data),
     animatedBones: spineAnimatedBones(raw),
     skinMembers: data,
     regionJoins: spineRegionJoins(atlasText, raw),
@@ -1239,48 +1236,6 @@ export function spineSequenceFacts(raw: Json | null, data: ReturnType<SkeletonJs
 }
 
 /**
- * The runtime's supply of `SkinMeshFacts` (issue #1025, cut 4c-1): every
- * loaded `MeshAttachment` of every skin, linked meshes included, in the loaded
- * skins' order — the walk this file's prelude makes for `meshAttachments` —
- * with its slot and that slot's bone, and the bones its weights name decoded
- * off the loaded index run, a bone index the skeleton lacks left out as A15
- * always left it out. The model side's supply is
- * `./assertions/model/skin_meshes.ts`.
- */
-export function spineSkinMeshes(data: ReturnType<SkeletonJson['readSkeletonData']>): SkinMeshFacts {
-  const meshes: MeshEntry[] = [];
-  for (const skin of data.skins) {
-    for (const entry of skin.getAttachments()) {
-      const mesh = entry.attachment;
-      if (!(mesh instanceof MeshAttachment)) continue;
-      const weightBones: string[] = [];
-      if (mesh.bones) {
-        for (let i = 0; i < mesh.bones.length; ) {
-          const boneCount = mesh.bones[i++];
-          for (let n = 0; n < boneCount; n++, i++) {
-            const bone = data.bones[mesh.bones[i]];
-            if (bone) weightBones.push(bone.name);
-          }
-        }
-      }
-      const slot = data.slots[entry.slotIndex];
-      meshes.push({
-        name: mesh.name,
-        slot: slot.name,
-        slotBone: slot.boneData.name,
-        triangles: mesh.triangles,
-        width: mesh.width,
-        height: mesh.height,
-        regionUVs: mesh.regionUVs,
-        worldVerticesLength: mesh.worldVerticesLength,
-        weightBones,
-      });
-    }
-  }
-  return { meshes };
-}
-
-/**
  * The runtime's supply of `AnimatedBoneFacts` (issue #1025, cut 4c-1): read
  * off the skeleton JSON, as A15 always read the bones `idle` keys — an
  * animation that is not an object is no animation, a `bones` group that is not
@@ -1374,6 +1329,8 @@ export function spineMeshFacts(data: ReturnType<SkeletonJson['readSkeletonData']
         worldVerticesLength: att.worldVerticesLength,
         regionUVs: Array.from(att.regionUVs ?? []),
         hullLength: att.hullLength,
+        width: att.width,
+        height: att.height,
         weights,
         encoding,
       });
@@ -2598,8 +2555,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // the runtime's supply of `SkinEntryFacts`, in the loaded skins' own order
     // (issue #1025).
     const skinEntries = spineSkinEntries(data);
-    // What the mesh rules that moved read of the skins (issue #1025, cut 4c-1).
-    const skinMeshes = spineSkinMeshes(data);
+    // What the mesh rules that moved read of the skins (issue #1025, cut 4c-1) is the one family of the meshes since issue #1054, `loadedMeshFacts`.
 
     // --- A03: every region has finite width/height (case 6c) ---------------
     check('A03_REGION_WIDTH_HEIGHT_FINITE', () => a03RegionWidthHeightFinite(verdicts, skinEntries));
@@ -2621,8 +2577,8 @@ export function validate(input: ValidateInput): ValidateReport {
     // constant in the validator would fail correct foreign data in the name of
     // somebody else's canvas. A rig that declares no budget has nothing to be
     // measured against, and the assertion says so instead of inventing a wall.
-    check('A13_MESH_BUDGET', () => a13MeshBudget(verdicts, skinMeshes, input));
-    check('A14_NO_FULL_FRAME_MESH', () => a14NoFullFrameMesh(verdicts, skinMeshes, spineStage(data)));
+    check('A13_MESH_BUDGET', () => a13MeshBudget(verdicts, loadedMeshFacts(), input));
+    check('A14_NO_FULL_FRAME_MESH', () => a14NoFullFrameMesh(verdicts, loadedMeshFacts(), spineStage(data)));
 
     // --- A15: idle must not key a mesh-driving bone (dirty-skip lever) -----
     //
@@ -2633,7 +2589,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // of them weighted meshes, and an `idle` whose job is to move them — so the
     // rig can say so in `invariants.idleDrivesMeshes`, and the rule then reports
     // what the declaration costs instead of refusing each bone.
-    check('A15_IDLE_NO_MESH_BONE_KEYS', () => a15IdleNoMeshBoneKeys(verdicts, skinMeshes, spineAnimatedBones(raw), input));
+    check('A15_IDLE_NO_MESH_BONE_KEYS', () => a15IdleNoMeshBoneKeys(verdicts, loadedMeshFacts(), spineAnimatedBones(raw), input));
 
     // --- A20/A21/A22: the mesh checks the parser will never make ------------
     //
@@ -2648,7 +2604,7 @@ export function validate(input: ValidateInput): ValidateReport {
 
     check('A21_MESH_RIM_PINNED', () => a21MeshRimPinned(verdicts, loadedMeshFacts(), input.rig));
 
-    check('A22_MESH_UVS_IN_UNIT_RANGE', () => a22MeshUvsInUnitRange(verdicts, skinMeshes));
+    check('A22_MESH_UVS_IN_UNIT_RANGE', () => a22MeshUvsInUnitRange(verdicts, loadedMeshFacts()));
 
     // --- A39: a deform key that turns a triangle inside out ------------------
     //

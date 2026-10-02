@@ -3,7 +3,7 @@
  * drives a mesh, unless the rig declares that its idle deforms them.
  *
  * Moved out of `src/validate.ts` unchanged but for what it reads: the meshes
- * and the bones that drive them are a fact (`../facts/skin_meshes.ts`) rather
+ * and the bones that drive them are a fact (`../facts/mesh_attachments.ts`, the bones derived from the weights by `weightBonesOf`) rather
  * than spine-core's loaded skins and the weight run decoded here, the bones
  * `idle` keys are a fact (`../facts/animated_bones.ts`) rather than the raw
  * JSON, and the rig info is the caller's. Why the rule assumes meshes are
@@ -11,11 +11,11 @@
  * `check` call in `validate()`.
  */
 import type { Verdicts } from '../harness.ts';
-import type { MeshEntry, SkinMeshFacts } from '../facts/skin_meshes.ts';
+import { weightBonesOf, type MeshEntry, type MeshFacts } from '../facts/mesh_attachments.ts';
 import type { AnimatedBoneFacts } from '../facts/animated_bones.ts';
 import type { RigInfo } from '../../types.ts';
 
-export function a15IdleNoMeshBoneKeys({ fail, skip }: Verdicts, { meshes }: SkinMeshFacts, animated: AnimatedBoneFacts, input: { rig?: RigInfo }): void {
+export function a15IdleNoMeshBoneKeys({ fail, skip }: Verdicts, facts: MeshFacts, animated: AnimatedBoneFacts, input: { rig?: RigInfo }): void {
   const A15 = 'A15_IDLE_NO_MESH_BONE_KEYS';
   /**
    * Every mesh attachment, loaded, with the bones that drive it — its slot's
@@ -25,9 +25,9 @@ export function a15IdleNoMeshBoneKeys({ fail, skip }: Verdicts, { meshes }: Skin
    * actually dirties the canvas every frame.
    */
   const meshDrivers: Array<{ mesh: MeshEntry; bones: Set<string> }> = [];
-  for (const mesh of meshes) {
+  for (const mesh of facts.meshes) {
     const bones = new Set<string>([mesh.slotBone]);
-    for (const bone of mesh.weightBones) bones.add(bone);
+    for (const bone of weightBonesOf(facts, mesh)) bones.add(bone);
     meshDrivers.push({ mesh, bones });
   }
   const meshBoneNames = new Set<string>();

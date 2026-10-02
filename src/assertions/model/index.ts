@@ -21,11 +21,14 @@
  * 🔸 **What the entry is given.** The document's text, the directory its
  * pages resolve against, and the profile — and nothing read off a Spine file:
  * a model-side verdict that read `skeleton.json` would be a second reading of
- * the encoding, which is the round trip's subject and not the rig's. Since cut
- * 4c-1 it is also given the rig info (as `validate()` is) and, in `given`, the
- * two values a `rigc-compiled/2` or `/1` document does not hold — the stage and
- * each page's `pma` (`./given.ts`). A `/3` document states both (issue #1026)
- * and is read for them; `given` beside one is refused by name.
+ * the encoding, which is the round trip's subject and not the rig's. In
+ * `given`, the two values a `rigc-compiled/2` or `/1` document does not hold —
+ * the stage and each page's `pma` (`./given.ts`); a `/3` document states both
+ * (issue #1026) and is read for them, and `given` beside one is refused by
+ * name. The rig info and the declared durations are the document's on every
+ * spec (issue #1054, `./declared.ts`): cuts 4c-1 to 4c-3 took them from the
+ * caller, as `validate()` does, and the verdict moved with what the caller
+ * handed over — now either one given beside the document is refused by name.
  *
  * ⛔ **Not wired into any command.** `build` keeps the round trip and its
  * forty-nine lines; this entry is what the selftest and the instrument call
@@ -50,6 +53,7 @@ import type { AtlasPageFacts } from '../facts/atlas_pages.ts';
 import type { SlotColourFacts } from '../facts/slot_colour.ts';
 import type { RigInfo } from '../../types.ts';
 import type { ModelGiven } from './given.ts';
+import { modelDeclaredDurations, modelRigInfo, refuseDeclaredBeside } from './declared.ts';
 import { a08RegionNamesMatchAttachments } from '../bodies/a08.ts';
 import { a13MeshBudget } from '../bodies/a13.ts';
 import { a14NoFullFrameMesh } from '../bodies/a14.ts';
@@ -59,13 +63,11 @@ import { a38SkinMembersAreSkinRequired } from '../bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from '../bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from '../bodies/a19.ts';
 import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
-import { modelSkinMeshes } from './skin_meshes.ts';
 import { modelAnimatedBones } from './animated_bones.ts';
 import { modelSkinMembers } from './skin_members.ts';
 import { modelRegionJoins } from './region_joins.ts';
 import { modelAtlasRegions } from './atlas_regions.ts';
 import { modelStage } from './stage.ts';
-import type { SkinMeshFacts } from '../facts/skin_meshes.ts';
 import type { AnimatedBoneFacts } from '../facts/animated_bones.ts';
 import type { SkinMemberFacts } from '../facts/skin_members.ts';
 import type { RegionJoinFacts } from '../facts/region_joins.ts';
@@ -134,7 +136,14 @@ export interface ModelValidateInput {
   /** The directory the document's page names resolve against — the build's `--out`. */
   atlasDir: string;
   profile: AssertionProfile;
-  /** The rig info the build carries, as `validate()` is handed it — A13, A15, A19 (cut 4c-1) and A20, A21, A28, A41, A47, A48 (cut 4c-2) and A24, A25, A26, A29, A30 (cut 4c-4) read it; optional because `ValidateInput.rig` is: absent for a bare directory, on both sides. */
+  /**
+   * Refused (issue #1054): every document states the rig info in its `rig`
+   * section, and the model side reads it there (`./declared.ts`). A caller
+   * that gives it anyway is a second source for one fact, and each rule that
+   * reads the declarations refuses the call by name rather than reading
+   * either. Kept on the type so a caller still handing it over is named, not
+   * silently ignored.
+   */
   rig?: RigInfo;
   /**
    * The stage and the pages' `pma`, for a `rigc-compiled/2` or `/1` document,
@@ -144,7 +153,7 @@ export interface ModelValidateInput {
    * `given` beside it is refused by name.
    */
   given?: ModelGiven;
-  /** The motion spec's declared durations, as `validate()` is handed them — A09 reads them (cut 4c-3); absent where the caller has no motion spec, on both sides. */
+  /** Refused, as `rig` is (issue #1054): every document states each animation's declared duration, and A09 reads them there. */
   declaredDurations?: Record<string, number>;
 }
 
@@ -164,7 +173,6 @@ export interface ModelSupply {
   skinEntries: (read: ReadDocument) => SkinEntryFacts;
   atlasPages: (read: ReadDocument) => AtlasPageFacts;
   slotColour: (read: ReadDocument) => SlotColourFacts;
-  skinMeshes: (read: ReadDocument) => SkinMeshFacts;
   animatedBones: (read: ReadDocument) => AnimatedBoneFacts;
   skinMembers: (read: ReadDocument) => SkinMemberFacts;
   regionJoins: (read: ReadDocument) => RegionJoinFacts;
@@ -184,6 +192,10 @@ export interface ModelSupply {
   sliderComposition: (read: ReadDocument) => SliderCompositionFacts;
   constraintTargets: (read: ReadDocument) => ConstraintTargetFacts;
   steppedPoses: (read: ReadDocument) => SteppedPoseFacts;
+  /** The rig info the document declares (issue #1054, `./declared.ts`); a caller's `rig` beside it is refused by name. */
+  rigInfo: (read: ReadDocument, input: ModelValidateInput) => RigInfo;
+  /** Each animation's declared duration as the document states it (issue #1054); a caller's `declaredDurations` beside it is refused by name. */
+  declaredDurations: (read: ReadDocument, input: ModelValidateInput) => Record<string, number>;
 }
 
 /** The suppliers the model side runs on. */
@@ -191,7 +203,6 @@ export const MODEL_SUPPLY: ModelSupply = {
   skinEntries: modelSkinEntries,
   atlasPages: modelAtlasPages,
   slotColour: modelSlotColour,
-  skinMeshes: modelSkinMeshes,
   animatedBones: modelAnimatedBones,
   skinMembers: modelSkinMembers,
   regionJoins: modelRegionJoins,
@@ -211,12 +222,21 @@ export const MODEL_SUPPLY: ModelSupply = {
   sliderComposition: modelSliderComposition,
   constraintTargets: modelConstraintTargets,
   steppedPoses: modelSteppedPoses,
+  rigInfo: (read, input) => {
+    refuseDeclaredBeside(read, input, 'rig');
+    return modelRigInfo(read);
+  },
+  declaredDurations: (read, input) => {
+    refuseDeclaredBeside(read, input, 'declaredDurations');
+    return modelDeclaredDurations(read);
+  },
 };
 
 /**
  * One moved assertion: its code, and how the model side runs its body once the
- * document is read. The list is the registry of what has moved — each later
- * cut appends its rows — and the selftest reads it for the codes it compares.
+ * document is read. The list is the registry of what has moved — a later cut
+ * puts its rows where `validate()` runs those rules, not at the end — and the
+ * selftest reads it for the codes it compares.
  */
 export interface MovedAssertion {
   code: string;
@@ -241,53 +261,56 @@ export interface MovedAssertion {
 }
 
 /**
- * The moved assertions, in `validate()`'s report order (the order its `check`
- * calls stand in; the selftest and the instrument compare per code). `SKIP_NO_ATLAS` for
+ * The moved assertions, in `validate()`'s report order — the order its `check`
+ * calls stand in, so a model-side report lists its PASS, SKIP and FAIL lines in
+ * the order the round trip's does. The seven cuts of issue #1025 appended their
+ * rows in landing order; issue #1054 put them back, and the selftest's `VF16`
+ * names a row that stands out of that order. `SKIP_NO_ATLAS` for
  * A17 rather than `SKIP_NO_MODEL` because that is what A17 says over a missing
  * atlas on either side: its body reads only the pages, and on this side no
  * document means no pages.
  */
 export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A08_REGION_NAMES_MATCH_ATTACHMENTS', run: (v, read, _input, supply) => (read.doc.pages === null ? v.skip('A08_REGION_NAMES_MATCH_ATTACHMENTS', SKIP_NO_MODEL_PAGES) : a08RegionNamesMatchAttachments(v, supply.regionJoins(read), new Set<string>())), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A32_EVENT_KEYS_RESOLVE', run: (v, read, _input, supply) => a32EventKeysResolve(v, supply.eventKeys(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A34_CONSTRAINT_TIMELINE_TARGETS', run: (v, read, _input, supply) => a34ConstraintTimelineTargets(v, supply.constraintTargets(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A12_NO_DARK_COLOR', run: (v, read, _input, supply) => a12NoDarkColor(v, supply.skeletonRoster(read), supply.slotColour(read).slotTimelines), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A03_REGION_WIDTH_HEIGHT_FINITE', run: (v, read, _input, supply) => a03RegionWidthHeightFinite(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
   { code: 'A04_MESH_TRIANGLES_AND_ENCODING', run: (v, read, _input, supply) => a04MeshTrianglesAndEncoding(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
   { code: 'A33_VERTEX_ATTACHMENT_GEOMETRY', run: (v, read, _input, supply) => a33VertexAttachmentGeometry(v, supply.polygons(read)), unread: SKIP_NO_MODEL },
   { code: 'A11_NO_CLIPPING_ATTACHMENTS', run: (v, read, _input, supply) => a11NoClippingAttachments(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
-  { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.skinMeshes(read), input), unread: SKIP_NO_MODEL },
-  { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.skinMeshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
-  { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.skinMeshes(read), supply.animatedBones(read), input), unread: SKIP_NO_MODEL },
-  { code: 'A20_MESH_WEIGHTS_COHERENT', run: (v, read, input, supply) => a20MeshWeightsCoherent(v, supply.meshes(read), input.profile === 'spine-html', input.rig), unread: SKIP_NO_MODEL },
-  { code: 'A21_MESH_RIM_PINNED', run: (v, read, input, supply) => a21MeshRimPinned(v, supply.meshes(read), input.rig), unread: SKIP_NO_MODEL },
-  { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.skinMeshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.meshes(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
+  { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.meshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.meshes(read), supply.animatedBones(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
+  { code: 'A20_MESH_WEIGHTS_COHERENT', run: (v, read, input, supply) => a20MeshWeightsCoherent(v, supply.meshes(read), input.profile === 'spine-html', supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A21_MESH_RIM_PINNED', run: (v, read, input, supply) => a21MeshRimPinned(v, supply.meshes(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
+  { code: 'A39_DEFORM_KEEPS_TRIANGLE_WINDING', run: (v, read, input, supply) => a39DeformKeepsTriangleWinding(v, supply.deformSurvey(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a23PhysicsConstraintEffective(v, supply.constraints(read), supply.meshes(read)), unread: SKIP_NO_MODEL },
-  { code: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', run: (v, read, input, supply) => a41PhysicsSurvivesEditorRoundTrip(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', run: (v, read, input, supply) => a41PhysicsSurvivesEditorRoundTrip(v, supply.constraints(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A36_PATH_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a36PathConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A37_SLIDER_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a37SliderConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
-  { code: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a47IkConstraintNotMutedThroughout(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
-  { code: 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a48TransformConstraintNotMutedThroughout(v, supply.constraints(read), input.rig), unread: SKIP_NO_MODEL },
+  { code: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a47IkConstraintNotMutedThroughout(v, supply.constraints(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a48TransformConstraintNotMutedThroughout(v, supply.constraints(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', run: (v, read, _input, supply) => a40SlidersComposeOnASharedTarget(v, supply.sliderComposition(read), supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A42_DRIVEN_CONSTRAINTS_UPDATE_AFTER_THEIR_DRIVER', run: (v, read, _input, supply) => a42DrivenConstraintsUpdateAfterTheirDriver(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED', run: (v, read, _input, supply) => a38SkinMembersAreSkinRequired(v, supply.skinMembers(read)), unread: SKIP_NO_MODEL },
+  { code: 'A09_ANIMATION_DURATION_MATCHES_SPEC', run: (v, read, input, supply) => a09AnimationDurationMatchesSpec(v, supply.animationDurations(read), supply.declaredDurations(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A10_NO_NAN_AFTER_STEPPING', run: (v, read, _input, supply) => a10NoNanAfterStepping(v, supply.boneTimelines(read), supply.steppedPoses(read)), unread: SKIP_NO_MODEL },
+  { code: 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', run: (v, read, _input, supply) => a43TwoColorTintLoadsAndPosesAsWritten(v, supply.twoColour(read)), unread: SKIP_NO_MODEL },
   { code: 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', run: (v, read, _input, supply) => a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten(v, supply.slotColour(read)), unread: SKIP_NO_MODEL },
   { code: 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', run: (v, read, _input, supply) => a44LinkedMeshStatesNoGeometryOfItsOwn(v, supply.links(read)), unread: SKIP_NO_MODEL },
+  { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
   { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
-  { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), input), unread: SKIP_NO_ATLAS },
+  { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), { atlasDir: input.atlasDir, rig: supply.rigInfo(read, input) }), unread: SKIP_NO_ATLAS },
+  { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME', run: (v, read, input, supply) => a27RegionNameMatchesPageFilename(v, supply.atlasRegions(read, input)), unread: SKIP_NO_ATLAS },
-  { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), input.rig), unread: SKIP_NO_MODEL },
-  { code: 'A32_EVENT_KEYS_RESOLVE', run: (v, read, _input, supply) => a32EventKeysResolve(v, supply.eventKeys(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A12_NO_DARK_COLOR', run: (v, read, _input, supply) => a12NoDarkColor(v, supply.skeletonRoster(read), supply.slotColour(read).slotTimelines), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), input), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A39_DEFORM_KEEPS_TRIANGLE_WINDING', run: (v, read, input, supply) => a39DeformKeepsTriangleWinding(v, supply.deformSurvey(read), input.rig), unread: SKIP_NO_MODEL },
-  { code: 'A09_ANIMATION_DURATION_MATCHES_SPEC', run: (v, read, input, supply) => a09AnimationDurationMatchesSpec(v, supply.animationDurations(read), input.declaredDurations), unread: SKIP_NO_MODEL },
-  { code: 'A43_TWO_COLOR_TINT_LOADS_AND_POSES_AS_WRITTEN', run: (v, read, _input, supply) => a43TwoColorTintLoadsAndPosesAsWritten(v, supply.twoColour(read)), unread: SKIP_NO_MODEL },
-  { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
-  { code: 'A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET', run: (v, read, _input, supply) => a40SlidersComposeOnASharedTarget(v, supply.sliderComposition(read), supply.constraints(read)), unread: SKIP_NO_MODEL },
-  { code: 'A34_CONSTRAINT_TIMELINE_TARGETS', run: (v, read, _input, supply) => a34ConstraintTimelineTargets(v, supply.constraintTargets(read)), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A10_NO_NAN_AFTER_STEPPING', run: (v, read, _input, supply) => a10NoNanAfterStepping(v, supply.boneTimelines(read), supply.steppedPoses(read)), unread: SKIP_NO_MODEL },
+  { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */

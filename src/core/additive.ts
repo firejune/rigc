@@ -49,8 +49,9 @@
  *
  * So the class is a computation over the document, and the table below
  * carries only what the kind contributes — what its application does when it
- * writes, the runtime class the timeline loads as and the properties it
- * registers. The rest is computed per cell, as the probe reads it.
+ * writes. The rest is computed per cell, as the probe reads it. (What the
+ * runtime calls the timeline is the validator's table, `RUNTIME_TIMELINE`,
+ * since issue #1054.)
  *
  * ## The cells, per kind
  *
@@ -97,63 +98,52 @@ import { slotTimelinesApply } from './skins.ts';
 /** What a kind's application does when it writes (the header's *The cells, per kind*). */
 export type AdditiveMode = 'adds' | 'writes' | 'writes nothing';
 
-/** What a timeline's property ids are followed by: its target's index (and, for an attachment's, the attachment), or nothing. */
-export type AdditiveAddress = 'bone' | 'slot' | 'attachment' | 'constraint' | 'none';
-
-/** One timeline spelling: the runtime class it loads as, the properties it registers in order, what its ids carry, and its mode. */
-export interface AdditiveRow {
-  runtimeClass: string;
-  properties: readonly string[];
-  address: AdditiveAddress;
-  mode: AdditiveMode;
-}
-
-const row = (runtimeClass: string, properties: readonly string[], address: AdditiveAddress, mode: AdditiveMode): AdditiveRow => ({ runtimeClass, properties, address, mode });
-
 /**
- * Every timeline spelling a document's animation can hold, as measured (the
- * header): the class name each loads as and the property ids it registers were
- * read off the loaded timeline objects, and the mode off the probe's cells over
- * the seeded population.
+ * What each timeline spelling's application does when it writes, keyed by the
+ * document's own words (`additiveSpelling`) — measured off the probe's cells
+ * over the seeded population (the header). What the runtime calls each
+ * spelling — the class it loads as and the properties it registers, which A40's
+ * sentence prints — is the validator's to know and stands beside it
+ * (`RUNTIME_TIMELINE`, `src/assertions/model/runtime_timelines.ts`, issue
+ * #1054): this module speaks the document's words only.
  */
-export const ADDITIVE_APPLY: Readonly<Record<string, AdditiveRow>> = {
-  'bone rotate': row('RotateTimeline', ['rotate'], 'bone', 'adds'),
-  'bone translate': row('TranslateTimeline', ['x', 'y'], 'bone', 'adds'),
-  'bone translatex': row('TranslateXTimeline', ['x'], 'bone', 'adds'),
-  'bone translatey': row('TranslateYTimeline', ['y'], 'bone', 'adds'),
-  'bone scale': row('ScaleTimeline', ['scaleX', 'scaleY'], 'bone', 'adds'),
-  'bone scalex': row('ScaleXTimeline', ['scaleX'], 'bone', 'adds'),
-  'bone scaley': row('ScaleYTimeline', ['scaleY'], 'bone', 'adds'),
-  'bone shear': row('ShearTimeline', ['shearX', 'shearY'], 'bone', 'adds'),
-  'bone shearx': row('ShearXTimeline', ['shearX'], 'bone', 'adds'),
-  'bone sheary': row('ShearYTimeline', ['shearY'], 'bone', 'adds'),
-  'bone inherit': row('InheritTimeline', ['inherit'], 'bone', 'writes'),
-  'slot attachment': row('AttachmentTimeline', ['attachment'], 'slot', 'writes'),
-  'slot rgba': row('RGBATimeline', ['rgb', 'alpha'], 'slot', 'writes'),
-  'slot rgb': row('RGBTimeline', ['rgb'], 'slot', 'writes'),
-  'slot alpha': row('AlphaTimeline', ['alpha'], 'slot', 'writes'),
-  'slot rgba2': row('RGBA2Timeline', ['rgb', 'alpha', 'rgb2'], 'slot', 'writes'),
-  'slot rgb2': row('RGB2Timeline', ['rgb', 'rgb2'], 'slot', 'writes'),
-  'attachment deform': row('DeformTimeline', ['deform'], 'attachment', 'adds'),
-  'attachment sequence': row('SequenceTimeline', ['sequence'], 'attachment', 'writes'),
-  ik: row('IkConstraintTimeline', ['ikConstraint'], 'constraint', 'writes'),
-  transform: row('TransformConstraintTimeline', ['transformConstraint'], 'constraint', 'adds'),
-  'path position': row('PathConstraintPositionTimeline', ['pathConstraintPosition'], 'constraint', 'adds'),
-  'path spacing': row('PathConstraintSpacingTimeline', ['pathConstraintSpacing'], 'constraint', 'writes'),
-  'path mix': row('PathConstraintMixTimeline', ['pathConstraintMix'], 'constraint', 'adds'),
-  'physics inertia': row('PhysicsConstraintInertiaTimeline', ['physicsConstraintInertia'], 'constraint', 'writes'),
-  'physics strength': row('PhysicsConstraintStrengthTimeline', ['physicsConstraintStrength'], 'constraint', 'writes'),
-  'physics damping': row('PhysicsConstraintDampingTimeline', ['physicsConstraintDamping'], 'constraint', 'writes'),
-  'physics mass': row('PhysicsConstraintMassTimeline', ['physicsConstraintMass'], 'constraint', 'writes'),
-  'physics wind': row('PhysicsConstraintWindTimeline', ['physicsConstraintWind'], 'constraint', 'adds'),
-  'physics gravity': row('PhysicsConstraintGravityTimeline', ['physicsConstraintGravity'], 'constraint', 'adds'),
-  'physics mix': row('PhysicsConstraintMixTimeline', ['physicsConstraintMix'], 'constraint', 'writes'),
-  // A reset registers its property with no constraint index, named or not (measured: both read `physicsConstraintReset`).
-  'physics reset': row('PhysicsConstraintResetTimeline', ['physicsConstraintReset'], 'none', 'writes nothing'),
-  'slider time': row('SliderTimeline', ['sliderTime'], 'constraint', 'adds'),
-  'slider mix': row('SliderMixTimeline', ['sliderMix'], 'constraint', 'adds'),
-  drawOrder: row('DrawOrderTimeline', ['drawOrder'], 'none', 'writes'),
-  events: row('EventTimeline', ['event'], 'none', 'writes nothing'),
+export const ADDITIVE_MODE: Readonly<Record<string, AdditiveMode>> = {
+  'bone rotate': 'adds',
+  'bone translate': 'adds',
+  'bone translatex': 'adds',
+  'bone translatey': 'adds',
+  'bone scale': 'adds',
+  'bone scalex': 'adds',
+  'bone scaley': 'adds',
+  'bone shear': 'adds',
+  'bone shearx': 'adds',
+  'bone sheary': 'adds',
+  'bone inherit': 'writes',
+  'slot attachment': 'writes',
+  'slot rgba': 'writes',
+  'slot rgb': 'writes',
+  'slot alpha': 'writes',
+  'slot rgba2': 'writes',
+  'slot rgb2': 'writes',
+  'attachment deform': 'adds',
+  'attachment sequence': 'writes',
+  ik: 'writes',
+  transform: 'adds',
+  'path position': 'adds',
+  'path spacing': 'writes',
+  'path mix': 'adds',
+  'physics inertia': 'writes',
+  'physics strength': 'writes',
+  'physics damping': 'writes',
+  'physics mass': 'writes',
+  'physics wind': 'adds',
+  'physics gravity': 'adds',
+  'physics mix': 'writes',
+  'physics reset': 'writes nothing',
+  'slider time': 'adds',
+  'slider mix': 'adds',
+  drawOrder: 'writes',
+  events: 'writes nothing',
 };
 
 /** One timeline of a document's animation, as the core reads it — enough to pose the probe. */
@@ -208,7 +198,7 @@ export const ADDITIVE_DISPLACEMENT = 0.375;
 
 /** A plant: rows of the table read otherwise (the core suite's `CO27`). */
 export interface AdditivePlant {
-  rows?: Readonly<Record<string, AdditiveRow>>;
+  modes?: Readonly<Record<string, AdditiveMode>>;
 }
 
 /** Every time the probe applies a timeline at: its keys' own times, the midpoints between them, and one past the last. */
@@ -453,11 +443,11 @@ function cellOf(view: AdditiveView, state: 'setup' | 'displaced', t: AdditiveTim
 
 /** Every cell of the probe over `views` — each view under the setup state, then the displaced one. */
 export function additiveCells(views: readonly AdditiveView[], t: AdditiveTimeline, plant: AdditivePlant = {}): AdditiveCell[] {
-  const rows = plant.rows ?? ADDITIVE_APPLY;
+  const modes = plant.modes ?? ADDITIVE_MODE;
   const spelled = additiveSpelling(t);
-  const r = rows[spelled];
-  if (r === undefined) throw new Error(`internal: "${spelled}" is no row of the additive table`);
-  return views.flatMap((view) => [cellOf(view, 'setup', t, r.mode), cellOf(view, 'displaced', t, r.mode)]);
+  const mode = modes[spelled];
+  if (mode === undefined) throw new Error(`internal: "${spelled}" is no row of the additive table`);
+  return views.flatMap((view) => [cellOf(view, 'setup', t, mode), cellOf(view, 'displaced', t, mode)]);
 }
 
 /** The class the probe reads over its cells: `accumulates` where any cell does, `overwrites` where any cell only wrote, `inert` otherwise. */

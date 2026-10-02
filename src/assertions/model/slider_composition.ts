@@ -16,16 +16,17 @@
  *   timelines at their three levels in the order the file keys them
  *   (`keyedOrder` over the document's order, deform before sequence —
  *   `emitAttachmentTimelines`' order), then the draw order and the events.
- * - **The words.** Each timeline's class name and properties are the core's
- *   table (`ADDITIVE_APPLY`, `src/core/additive.ts`), the one value here that
- *   is not the document's, measured off the loaded timelines; an id's index is
+ * - **The words.** Each timeline's class name and properties are the
+ *   validator's table (`RUNTIME_TIMELINE`, `./runtime_timelines.ts`; the
+ *   core's until issue #1054), the one value here that is not the document's,
+ *   measured off the loaded timelines; an id's index is
  *   the target's position in the document's bones, slots or constraints —
  *   which the emitter writes in that order — `-1` for a physics timeline
  *   naming none; a deform's attachment is named as the runtime names it, the
  *   record's `name`, else its placeholder.
  * - **The behaviour** is the core's probe over the document under no skin set
- *   (`noSkinView`, which refuses by name a document whose skins it was not
- *   measured over) and under each skin (`underSkin`): `additiveCells`, and the
+ *   (`noSkinView`, the view measured in issue #1051) and under each skin
+ *   (`underSkin`): `additiveCells`, and the
  *   class `additiveBehaviour` reads off them. The core suite's `CO27` holds
  *   both to the runtime's probe; the selftest asks this supplier every
  *   question the body asks the runtime's (`VF14`).
@@ -33,7 +34,8 @@
  * Links nothing from the runtime.
  */
 import { fileSkinOrder, keyedOrder } from '../../compile.ts';
-import { ADDITIVE_APPLY, additiveBehaviour, additiveCells, additiveSpelling, type AdditiveTimeline, type AdditiveView } from '../../core/additive.ts';
+import { additiveBehaviour, additiveCells, additiveSpelling, type AdditiveTimeline, type AdditiveView } from '../../core/additive.ts';
+import { RUNTIME_TIMELINE } from './runtime_timelines.ts';
 import { EVERY_GLOBAL_PHYSICS, type PhysicsTimelineKind } from '../../core/constraints_physics.ts';
 import { underSkin, type CompiledDocument } from '../../core/index.ts';
 import type { BoneTimelineKind, SlotTimelineKind } from '../../core/animation.ts';
@@ -57,8 +59,8 @@ const keyedFirsts = (names: readonly string[]): string[] => keyedOrder(names.fil
 
 /** The words of one timeline: the table's class and properties, each id addressed by `index` (and `attachment`), and the sentence's naming. */
 function factOf(doc: CompiledDocument, core: AdditiveTimeline): SliderTimelineFact {
-  const row = ADDITIVE_APPLY[additiveSpelling(core)];
-  if (row === undefined) throw new Error(`internal: "${additiveSpelling(core)}" is no row of the additive table`);
+  const row = RUNTIME_TIMELINE[additiveSpelling(core)];
+  if (row === undefined) throw new Error(`internal: "${additiveSpelling(core)}" is no row of the runtime's timeline table`);
   const property = (p: string, index: number | null, attachment: string | null, names: string) => ({
     id: [p, ...(index === null ? [] : [String(index)]), ...(attachment === null ? [] : [attachment])].join('|'),
     property: p,

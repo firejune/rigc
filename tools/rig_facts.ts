@@ -28,7 +28,8 @@
  * derivation is needed and is the runtime's.
  *
  * Read by the selftest (`VF10`) on every build it validates with a model in
- * hand, and by `tools/verdict_gate.ts` on every recipe.
+ * hand, and by `tools/verdict_gate.ts` on every recipe — the families through
+ * the one walk (`compareFactFamilies`, issue #1054), the derivations here.
  */
 import { readModel, sourceOfDoc } from '../src/core/index.ts';
 import { runtimeRigFacts } from '../src/validate.ts';
@@ -106,7 +107,8 @@ export function rigFactsSpelling(f: RigFacts): Record<RigFactFamily, string> {
   return {
     meshes: spell({
       bones: f.meshes.bones,
-      meshes: f.meshes.meshes.map((m) => [m.name, m.skin, m.slot, m.slotBone, m.placeholder, m.link?.source ?? null, [...m.triangles], m.worldVerticesLength, [...m.regionUVs], m.hullLength, m.weights?.map((v) => v.map((b) => [b.bone, b.weight])) ?? null]),
+      // The size A14 reads joined this family with issue #1054 (cut 4c-1's `SkinMeshFacts` stated it apart); the bones A15 reads are the weights' (`weightBonesOf`), spelled with them.
+      meshes: f.meshes.meshes.map((m) => [m.name, m.skin, m.slot, m.slotBone, m.placeholder, m.link?.source ?? null, [...m.triangles], m.worldVerticesLength, [...m.regionUVs], m.hullLength, m.width, m.height, m.weights?.map((v) => v.map((b) => [b.bone, b.weight])) ?? null]),
     }),
     polygons: spell({
       polygons: f.polygons.polygons.map((p) => [p.what, p.worldVerticesLength, p.path === null ? null : [p.path.closed, [...p.path.lengths]]]),
@@ -340,13 +342,17 @@ export function rigFactsDerivations(read: ReadDocument, runtime: RigFacts, model
   return out;
 }
 
-/** The two sides' facts over one build, compared: the families that differ, with both spellings, and the derivations' tallies. */
-export function compareRigFacts(skeletonText: string, atlasText: string, modelText: string): { differing: Array<{ family: RigFactFamily; spine: string; model: string }>; derivations: DerivationTally[] } | null {
+/**
+ * Each derivation's tally over one build (`rigFactsDerivations`), the two
+ * sides' facts read here — `null` where spine-core refuses the pair or the
+ * reader refuses the document. The families themselves are compared on the
+ * one walk (`compareFactFamilies` in `tools/verdict_gate.ts`, issue #1054),
+ * which asks every family the moved bodies read the same way; this is the
+ * measurement beside it that says each derivation is the runtime's.
+ */
+export function rigFactsDerivationsOf(skeletonText: string, atlasText: string, modelText: string): DerivationTally[] | null {
   const runtime = spineRigFacts(skeletonText, atlasText);
   const model = modelRigFacts(modelText);
   if (runtime === null || model === null) return null;
-  const a = rigFactsSpelling(runtime);
-  const b = rigFactsSpelling(model.facts);
-  const differing = RIG_FACT_FAMILIES.filter((family) => a[family] !== b[family]).map((family) => ({ family, spine: a[family], model: b[family] }));
-  return { differing, derivations: rigFactsDerivations(model.read, runtime, model.facts) };
+  return rigFactsDerivations(model.read, runtime, model.facts);
 }

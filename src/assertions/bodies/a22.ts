@@ -3,14 +3,14 @@
  * in the unit square, one pair per vertex.
  *
  * Moved out of `src/validate.ts` unchanged but for what it reads: the meshes
- * are a fact (`../facts/skin_meshes.ts`). The `check` call stays in
+ * are a fact (`../facts/mesh_attachments.ts`). The `check` call stays in
  * `validate()`.
  */
 import type { Verdicts } from '../harness.ts';
-import type { SkinMeshFacts } from '../facts/skin_meshes.ts';
+import type { MeshFacts } from '../facts/mesh_attachments.ts';
 import { SKIP_NO_MESH_ATTACHMENT } from '../reasons.ts';
 
-export function a22MeshUvsInUnitRange({ fail, skip }: Verdicts, { meshes }: SkinMeshFacts): void {
+export function a22MeshUvsInUnitRange({ fail, skip }: Verdicts, { meshes }: Pick<MeshFacts, 'meshes'>): void {
   const meshAttachments = meshes;
   if (meshAttachments.length === 0) return skip('A22_MESH_UVS_IN_UNIT_RANGE', SKIP_NO_MESH_ATTACHMENT);
   for (const mesh of meshAttachments) {

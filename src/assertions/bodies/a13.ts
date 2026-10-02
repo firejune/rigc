@@ -3,17 +3,17 @@
  * triangles stay within the budget the rig declares.
  *
  * Moved out of `src/validate.ts` unchanged but for what it reads: the meshes
- * are a fact (`../facts/skin_meshes.ts`) rather than the lists `validate()`'s
+ * are a fact (`../facts/mesh_attachments.ts`) rather than the lists `validate()`'s
  * prelude filled from spine-core's loaded skins, and the rig info is the
  * caller's. Why the two budgets come from the rig and never from here stays
  * above the `check` call in `validate()`.
  */
 import type { Verdicts } from '../harness.ts';
-import type { SkinMeshFacts } from '../facts/skin_meshes.ts';
+import type { MeshFacts } from '../facts/mesh_attachments.ts';
 import { SKIP_NO_MESH_ATTACHMENT } from '../reasons.ts';
 import type { RigInfo } from '../../types.ts';
 
-export function a13MeshBudget({ fail, skip }: Verdicts, { meshes }: SkinMeshFacts, input: { rig?: RigInfo }): void {
+export function a13MeshBudget({ fail, skip }: Verdicts, { meshes }: Pick<MeshFacts, 'meshes'>, input: { rig?: RigInfo }): void {
   const meshAttachments = meshes;
   const meshSlots = new Set(meshes.map((mesh) => mesh.slot));
   const slotBudget = input.rig?.meshSlotBudget ?? null;

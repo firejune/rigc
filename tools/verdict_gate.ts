@@ -23,8 +23,8 @@
  * output directory and the rig info the document's own `rig` section states
  * (`documentRig`) and the declared durations it states (`documentDurations`,
  * since cut 4c-3: A09 reads them) — and the model side over the document with
- * the same directory, rig info and durations, under `spine` and again under
- * `spine-html` (A11 is a
+ * the same directory, reading the rig info and the durations off the document
+ * itself (issue #1054), under `spine` and again under `spine-html` (A11 is a
  * renderer rule, and `spine` never runs it; the archetype rules A21 and A28
  * likewise). For each moved assertion and
  * profile the row prints `IDENTICAL` or `DIFFERING` with both sides' lines.
@@ -49,9 +49,11 @@
  * document, which does not hold them (`src/assertions/model/given.ts`), they
  * are read off the build this row gates by `modelGivenOfBuild`: the stage the
  * skeleton header states and each page's `pma` as `parseAtlasText` reads the
- * atlas. The selftest's supplier check gives them the same way. The rig info is
- * the document's own `rig` section (`documentRig`), given to both sides alike
- * (cut 4c-2).
+ * atlas. The selftest's supplier check gives them the same way. The rig info
+ * and the declared durations are the document's own on every spec: the model
+ * side reads them there and refuses them given beside it (issue #1054), and
+ * `validate()` is handed the same statement, read by the model side's readers
+ * (`documentRig`, `documentDurations`).
  *
  * Since cut 4c-2, beside the walk: the four families that cut added, compared
  * fact by fact, and every derivation the model side makes counted against the
@@ -115,10 +117,11 @@ import type { ConstraintTargetFacts } from '../src/assertions/facts/constraint_t
 import type { ModelGiven } from '../src/assertions/model/given.ts';
 import type { ReadDocument } from '../src/assertions/model/parse.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from '../src/assertions/model/parse.ts';
+import { modelDeclaredDurations, rigSectionProblems } from '../src/assertions/model/declared.ts';
 import { modelSkinEntries } from '../src/assertions/model/skin_entries.ts';
 import type { SkinEntryFacts } from '../src/assertions/facts/skin_entries.ts';
 import type { RigInfo } from '../src/types.ts';
-import { compareRigFacts, sumTallies, type DerivationTally } from './rig_facts.ts';
+import { RIG_FACT_FAMILIES, rigFactsDerivationsOf, rigFactsSpelling, spineRigFacts, sumTallies, type DerivationTally, type RigFactFamily } from './rig_facts.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes, type BuiltRow } from './core_gate.ts';
 
@@ -262,7 +265,6 @@ export function modelGivenOf(modelText: string, skeletonText: string, atlasText:
 /** The fact families cut 4c-1 added, as one supplier states them — `runtimeFacts`'s, or the model side's (`modelFactSet`). */
 export interface FactSet {
   skinEntries: SkinEntryFacts;
-  skinMeshes: ReturnType<ModelSupplyOf<'skinMeshes'>>;
   animatedBones: ReturnType<ModelSupplyOf<'animatedBones'>>;
   skinMembers: ReturnType<ModelSupplyOf<'skinMembers'>>;
   regionJoins: ReturnType<ModelSupplyOf<'regionJoins'>>;
@@ -282,7 +284,6 @@ export function modelFactSet(modelText: string, given: ModelGiven | undefined, s
   const input: ModelValidateInput = { modelText, atlasDir: '', profile: 'spine', given };
   return {
     skinEntries: supply.skinEntries(read),
-    skinMeshes: supply.skinMeshes(read),
     animatedBones: supply.animatedBones(read),
     skinMembers: supply.skinMembers(read),
     regionJoins: supply.regionJoins(read),
@@ -307,7 +308,7 @@ export function factSpellings(f: FactSet, animations: readonly string[]): Record
   const names = atlas === null ? [] : [...new Set(atlas.regions.map((r) => r.name)), '\u0000no such region'];
   return {
     'region paths': JSON.stringify(f.skinEntries.regionAttachments.map((r) => [r.name, r.path ?? null])),
-    meshes: JSON.stringify(f.skinMeshes.meshes.map((m) => [m.name, m.slot, m.slotBone, Array.from(m.triangles), m.width, m.height, Array.from(m.regionUVs), m.worldVerticesLength, m.weightBones])),
+    // The meshes A13, A14, A15 and A22 read are cut 4c-2's family since issue #1054, spelled with it (`rigFactsSpelling`, tools/rig_facts.ts).
     'animated bones': JSON.stringify(animations.map((name) => [name, f.animatedBones.bonesKeyedBy(name) ?? (f.animatedBones.bonesKeyedBy(name) === null ? 'no bone timeline' : 'no such animation')])),
     'skin members': JSON.stringify([
       members.skins.map((s) => [s.name, s.bones.map((b) => members.bones.indexOf(b)), s.constraints.map((c) => members.constraints.indexOf(c))]),
@@ -342,28 +343,34 @@ export function askedAnimations(modelText: string): string[] {
   return [...new Set([...named, 'idle', '\u0000no such animation'])];
 }
 
-/** Both sides' `factSpellings` over one build, family by family. */
+/** Both sides' `factSpellings` over one build, family by family — cut 4c-1's part of the one walk (`compareFactFamilies`). */
 export function compareFacts(skeletonText: string, atlasText: string, modelText: string): Array<{ family: string; spine: string; model: string; identical: boolean }> | null {
-  const runtime = runtimeFacts(skeletonText, atlasText);
-  if (runtime === null) return null;
-  const animations = askedAnimations(modelText);
-  const spine = factSpellings(runtime, animations);
-  const model = factSpellings(modelFactSet(modelText, modelGivenOf(modelText, skeletonText, atlasText)), animations);
-  return Object.keys(spine).map((family) => ({ family, spine: spine[family], model: model[family], identical: spine[family] === model[family] }));
+  const walked = compareFactFamilies(skeletonText, atlasText, modelText, {}, {}, ['4c-1']);
+  return walked === null ? null : walked.map(wholeFamilyReading);
+}
+
+/** One family read whole (cuts 4c-1 and 4c-2): identical where its one question was answered alike, else both spellings — a refusal by name spelled as one. */
+export function wholeFamilyReading(t: FamilyTally): { family: string; spine: string; model: string; identical: boolean } {
+  const d = t.differing[0];
+  const r = t.refused[0];
+  if (d !== undefined) return { family: t.family, spine: d.spine, model: d.model, identical: false };
+  if (r !== undefined) return { family: t.family, spine: '(answered)', model: `refused by the core by name: ${r.why}`, identical: false };
+  return { family: t.family, spine: '', model: '', identical: true };
 }
 
 /**
  * The rig info the build's own document states (its `rig` section,
- * `CompileResult.rig` as `modelDocument` wrote it), handed to BOTH sides — the
- * declarations cut 4c-2's archetype and declaration rules read (issue #1025).
- * The same value on both sides, so a difference in a line is the suppliers'
- * and never the inputs'; `undefined` for a document that does not parse, which
- * the model side refuses by name anyway.
+ * `CompileResult.rig` as `modelDocument` wrote it), handed to `validate()` —
+ * read by the model side's own reader (`modelRigInfo`), which the model side
+ * reads its declarations through (issue #1054), so the two sides read one
+ * statement and a difference in a line is the suppliers' and never the
+ * inputs'. `undefined` for a document that does not parse or whose rig section
+ * does not read, which the model side refuses by name at its parse.
  */
 export function documentRig(modelText: string): RigInfo | undefined {
   try {
-    const doc = JSON.parse(modelText) as { rig?: unknown };
-    return typeof doc.rig === 'object' && doc.rig !== null ? (doc.rig as RigInfo) : undefined;
+    const json = JSON.parse(modelText) as Record<string, unknown>;
+    return rigSectionProblems(json).length === 0 ? (json.rig as RigInfo) : undefined;
   } catch {
     return undefined;
   }
@@ -372,23 +379,18 @@ export function documentRig(modelText: string): RigInfo | undefined {
 /**
  * The declared durations the build's own document states (each animation's
  * `duration`, the motion spec's, which `compile` verified and handed to the
- * gate as `CompileResult.declaredDurations`), handed to BOTH sides as the rig
- * info is (cut 4c-3: A09 reads them) — so A09 is measured on every row rather
- * than skipping as "no motion spec supplied" on both. In the document's order,
- * which is the motion spec's, as `declaredDurations` is keyed. `undefined` for
- * a document that does not parse.
+ * gate as `CompileResult.declaredDurations`), handed to `validate()` so A09 is
+ * measured on every row rather than skipping as "no motion spec supplied" — read
+ * as the model side reads them (`modelDeclaredDurations`, issue #1054). In the
+ * document's order, which is the motion spec's, as `declaredDurations` is
+ * keyed. `undefined` for a document the reader refuses.
  */
 export function documentDurations(modelText: string): Record<string, number> | undefined {
   try {
-    const doc = JSON.parse(modelText) as { animations?: unknown };
-    if (!Array.isArray(doc.animations)) return undefined;
-    const out: Record<string, number> = {};
-    for (const anim of doc.animations as Array<{ name?: unknown; duration?: unknown }>) {
-      if (typeof anim.name === 'string' && typeof anim.duration === 'number') out[anim.name] = anim.duration;
-    }
-    return out;
-  } catch {
-    return undefined;
+    return modelDeclaredDurations({ doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> });
+  } catch (err) {
+    if (err instanceof CoreInputError || err instanceof SyntaxError) return undefined;
+    throw err;
   }
 }
 
@@ -411,13 +413,37 @@ export type SteppedFactFamily = (typeof STEPPED_FACT_FAMILIES)[number];
 /** A family whose facts are compared question by question. */
 export type QuestionFamily = PosedFactFamily | Cut4c5Family | SteppedFactFamily;
 
+/**
+ * Cut 4c-1's families, as `factSpellings` names them — each read whole, one
+ * question per build. The meshes it added are cut 4c-2's family since issue
+ * #1054 (`RIG_FACT_FAMILIES`).
+ */
+export const CUT_4C1_FAMILIES = ['region paths', 'animated bones', 'skin members', 'region joins', 'atlas', 'stage', 'slot timelines', 'roster', 'bone timelines', 'event keys'] as const;
+export type Cut4c1Family = (typeof CUT_4C1_FAMILIES)[number];
+
+/** Every family the one walk asks (issue #1054), and the cut that added it — the figure each cut's control prints is read off its own. */
+export type FactFamily = Cut4c1Family | RigFactFamily | QuestionFamily;
+export const FACT_CUTS = ['4c-1', '4c-2', '4c-3', '4c-5', '4c-5a'] as const;
+export type FactCut = (typeof FACT_CUTS)[number];
+export const FAMILIES_BY_CUT: Readonly<Record<FactCut, readonly FactFamily[]>> = {
+  '4c-1': CUT_4C1_FAMILIES,
+  '4c-2': RIG_FACT_FAMILIES,
+  '4c-3': POSED_FACT_FAMILIES,
+  '4c-5': CUT_4C5_FAMILIES,
+  '4c-5a': STEPPED_FACT_FAMILIES,
+};
+
 /** One family's comparison over one build: every question the body asked, how many numbers the answers held, and what differed or was refused. */
 export interface PosedFactTally {
-  family: QuestionFamily;
+  family: FactFamily;
   /** Questions asked of both sides — a value a body reads whole, or one call it made. */
   questions: number;
   /** Of those, the calls a body made (cut 4c-5: a family whose every question is a whole value posed nothing). */
   calls?: number;
+  /** How many methods spine-core's facts of this family answer — a family that answers calls is asked one, or it is held by nothing (the one floor, issue #1054). */
+  methods?: number;
+  /** Leaf values in spine-core's answers — numbers, strings and booleans, at any depth: what a family whose facts hold no number is measured by. */
+  leaves?: number;
   /** Numbers in spine-core's answers, each compared at tolerance 0. */
   values: number;
   /** Questions both sides answered alike. */
@@ -426,6 +452,11 @@ export interface PosedFactTally {
   refused: Array<{ question: string; why: string }>;
   /** Questions answered differently. */
   differing: Array<{ question: string; spine: string; model: string }>;
+}
+
+/** One family's tally on the one walk, with the cut that added it. */
+export interface FamilyTally extends PosedFactTally {
+  cut: FactCut;
 }
 
 /** A number as JSON cannot lose it: NaN, the infinities and −0 spelled out (`tools/rig_facts.ts`' reading). */
@@ -437,6 +468,23 @@ const exactNumber = (_key: string, value: unknown): unknown => {
   return Number.isFinite(value) ? value : String(value);
 };
 const spellExact = (value: unknown): string => JSON.stringify(value, exactNumber) ?? 'undefined';
+
+/** How many leaf values — numbers, strings, booleans — a value holds, at any depth. */
+function leavesIn(value: unknown): number {
+  if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return 1;
+  if (value === null || typeof value !== 'object') return 0;
+  let n = 0;
+  for (const v of Object.values(value)) n += leavesIn(v);
+  return n;
+}
+
+/** How many methods an object of facts answers: its own function-valued properties and its prototype's. */
+function methodsOf(facts: object): number {
+  const own = Object.keys(facts).filter((k) => typeof Reflect.get(facts, k) === 'function');
+  const proto = Object.getPrototypeOf(facts) as object | null;
+  const inherited = proto === null || proto === Object.prototype ? [] : Object.getOwnPropertyNames(proto).filter((k) => k !== 'constructor' && typeof Reflect.get(proto, k) === 'function');
+  return new Set([...own, ...inherited]).size;
+}
 
 /** How many numbers a value holds, at any depth. */
 function numbersIn(value: unknown): number {
@@ -466,7 +514,7 @@ const silentVerdicts = (): Verdicts => ({ fail: () => {}, skip: () => {}, stats:
 
 /** One family to ask both sides: spine-core's facts, the model side's (supplied on demand), the values compared whole, and the body that asks the rest. */
 interface AskedFamily {
-  family: QuestionFamily;
+  family: FactFamily;
   spine: object;
   model: () => object;
   whole: string[];
@@ -476,7 +524,7 @@ interface AskedFamily {
 }
 
 /**
- * The comparison `comparePosedFacts`, `compareCut4c5Facts` and `compareSteppedPoses` share: each body
+ * The comparison every family is put through (`compareFactFamilies`, issue #1054): each body
  * runs over spine-core's facts with every method call recorded, the model
  * side's supplier is asked the same question with the same arguments, and
  * every value read whole is compared whole, spelled exactly.
@@ -485,7 +533,7 @@ function askFamilies(families: readonly AskedFamily[]): PosedFactTally[] {
   const out: PosedFactTally[] = [];
   for (const { family, spine, model: modelFacts, whole, ask, spelling } of families) {
     const spellAnswer = (name: string, value: unknown): unknown => (spelling?.[name] ?? ((v: unknown) => answerOf(name, v)))(value);
-    const tally: PosedFactTally = { family, questions: 0, values: 0, equal: 0, refused: [], differing: [] };
+    const tally: PosedFactTally = { family, questions: 0, methods: methodsOf(spine), leaves: 0, values: 0, equal: 0, refused: [], differing: [] };
     out.push(tally);
     const asked: Array<{ name: string; args: unknown[]; answer: unknown }> = [];
     // The body over spine-core's facts, every method call recorded with its answer.
@@ -514,6 +562,7 @@ function askFamilies(families: readonly AskedFamily[]): PosedFactTally[] {
       tally.questions++;
       const a = spellAnswer(name, spineAnswer);
       tally.values += numbersIn(a);
+      tally.leaves = (tally.leaves ?? 0) + leavesIn(a);
       let b: unknown;
       try {
         b = spellAnswer(name, answer());
@@ -541,32 +590,49 @@ function askFamilies(families: readonly AskedFamily[]): PosedFactTally[] {
 }
 
 /**
- * Cut 4c-3's facts over one build (issue #1025), compared value by value: each
- * body runs over spine-core's facts as `validate()` hands them, with every
- * call it makes recorded — a survey, a posed tint, a posed frame, a loaded
- * dark colour, an animation or slot asked for — and the model side's supplier
- * is asked the same question with the same arguments; every value a body
- * reads whole (the durations, the stated darks, the slot and sequence
- * timelines, the skin entries) is compared whole. Answers are spelled exactly
- * (`spellExact`), so two numbers one ulp apart differ. A model-side answer the
- * core refuses by name (`CoreInputError`) is counted as refused with its
- * sentence, never as an answer. `supply` plants a model supplier (`VF12`).
+ * The one walk (issue #1054): every fact family the moved bodies read, over one
+ * build, put through `askFamilies` — cut 4c-1's and 4c-2's families read whole
+ * (one question each, the family's spelling), cut 4c-3's, 4c-5's and 4c-5a's
+ * question by question as each body asks. Before this the seven cuts compared
+ * their families five ways — two spellings compared as strings, three walks
+ * through `askFamilies` — each with its own floor; now every family is asked
+ * the same way, and one floor (the selftest's `VF09`) reads every family's
+ * tally. `cuts` narrows the walk to the cuts a caller reads; `supply` plants a
+ * model supplier on every family that reads it.
  *
- * ⚠️ The questions are the ones spine-core's facts made the bodies ask — the
- * times A43 and A46 pose at, the exemptions A39 surveys with — because those
- * are the readings no gate samples: a time on a track the oracle's grid and
- * the raw entry's frames do not land on.
+ * - **Cut 4c-1** (`factSpellings`): the region paths, the bones an animation
+ *   keys, the skin members, the region joins, the atlas, the stage, and cut
+ *   4c-4's slot timelines, roster, bone timelines and event keys.
+ * - **Cut 4c-2** (`rigFactsSpelling`, tools/rig_facts.ts): the meshes — every
+ *   mesh rule's, A13, A14, A15 and A22 included since #1054 — the polygons,
+ *   the links, the constraints and their timelines.
+ * - **Cut 4c-3**: each body runs over spine-core's facts as `validate()` hands
+ *   them, with every call it makes recorded — a survey, a posed tint, a posed
+ *   frame, a loaded dark colour — and the model side's supplier is asked the
+ *   same question with the same arguments; the durations, the stated darks,
+ *   the slot and sequence timelines are compared whole. `declared` is what the
+ *   runtime's bodies are handed (A39 reads the rig info, A09 the durations).
+ * - **Cut 4c-5**: A40's body over spine-core's sliders, every timeline's
+ *   additive behaviour asked of the core's (`src/core/additive.ts`); A34's over
+ *   the raw JSON's constraint groups, every unnamed physics reach asked.
+ * - **Cut 4c-5a**: A10's body over spine-core's stepped poses, every pose asked
+ *   of the core's looping walk (`src/core/walk.ts`), a HISTORY bone (issue
+ *   #979, `walkHistory`) spelled by name and compared with nothing.
+ *
+ * Answers are spelled exactly (`spellExact`), so two numbers one ulp apart
+ * differ, and a NaN where the other side has an Infinity. A model-side answer
+ * the core refuses by name (`CoreInputError`) is counted as refused with its
+ * sentence, never as an answer. `null` where spine-core refuses the pair or the
+ * reader refuses the document.
  */
-export function comparePosedFacts(
+export function compareFactFamilies(
   skeletonText: string,
   atlasText: string,
   modelText: string,
-  rig: RigInfo | undefined,
-  declaredDurations: Record<string, number> | undefined,
+  declared: { rig?: RigInfo; declaredDurations?: Record<string, number> },
   supply: Partial<ModelSupply> = {},
-): PosedFactTally[] | null {
-  const runtime = runtimePosedFacts(skeletonText, atlasText);
-  if (runtime === null) return null;
+  cuts: readonly FactCut[] = FACT_CUTS,
+): FamilyTally[] | null {
   let read: ReadDocument;
   try {
     read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
@@ -574,92 +640,122 @@ export function comparePosedFacts(
     return null;
   }
   const model: ModelSupply = { ...MODEL_SUPPLY, ...supply };
-  const families: AskedFamily[] = [
-    { family: 'deform survey', spine: runtime.deformSurvey, model: () => model.deformSurvey(read), whole: [], ask: (f) => a39DeformKeepsTriangleWinding(silentVerdicts(), f as DeformSurveyFacts, rig) },
-    { family: 'animation durations', spine: runtime.animationDurations, model: () => model.animationDurations(read), whole: ['animations'], ask: (f) => a09AnimationDurationMatchesSpec(silentVerdicts(), f as AnimationDurationFacts, declaredDurations) },
-    { family: 'two-colour tint', spine: runtime.twoColour, model: () => model.twoColour(read), whole: ['slotDarks', 'slotTimelines'], ask: (f) => a43TwoColorTintLoadsAndPosesAsWritten(silentVerdicts(), f as TwoColourFacts) },
-    { family: 'sequences', spine: runtime.sequences, model: () => model.sequences(read), whole: ['entries', 'timelines'], ask: (f) => a46SequenceAttachmentsShowTheFrameTheFileStates(silentVerdicts(), f as SequenceFacts) },
-  ];
-  return askFamilies(families);
+  const asked: Array<{ cut: FactCut; family: AskedFamily }> = [];
+  /** A family read whole: its spelling parsed back, so its numbers and leaves are counted, one question per build. */
+  const whole = (cut: FactCut, family: FactFamily, spine: string, modelSpelling: () => string): void =>
+    void asked.push({ cut, family: { family, spine: { reading: JSON.parse(spine) as unknown }, model: () => ({ reading: JSON.parse(modelSpelling()) as unknown }), whole: ['reading'], ask: () => {} } });
+  if (cuts.includes('4c-1')) {
+    const runtime = runtimeFacts(skeletonText, atlasText);
+    if (runtime === null) return null;
+    const animations = askedAnimations(modelText);
+    const spine = factSpellings(runtime, animations);
+    let spelled: Record<string, string> | null = null;
+    const modelSpelling = (): Record<string, string> => (spelled ??= factSpellings(modelFactSet(modelText, modelGivenOf(modelText, skeletonText, atlasText), model), animations));
+    for (const family of CUT_4C1_FAMILIES) whole('4c-1', family, spine[family], () => modelSpelling()[family]);
+  }
+  if (cuts.includes('4c-2')) {
+    const runtime = spineRigFacts(skeletonText, atlasText);
+    if (runtime === null) return null;
+    const spine = rigFactsSpelling(runtime);
+    let spelled: Record<RigFactFamily, string> | null = null;
+    const modelSpelling = (): Record<RigFactFamily, string> => (spelled ??= rigFactsSpelling({ meshes: model.meshes(read), polygons: model.polygons(read), links: model.links(read), constraints: model.constraints(read) }));
+    for (const family of RIG_FACT_FAMILIES) whole('4c-2', family, spine[family], () => modelSpelling()[family]);
+  }
+  if (cuts.includes('4c-3') || cuts.includes('4c-5a')) {
+    const runtime = runtimePosedFacts(skeletonText, atlasText);
+    if (runtime === null) return null;
+    if (cuts.includes('4c-3')) {
+      const { rig, declaredDurations } = declared;
+      asked.push(
+        { cut: '4c-3', family: { family: 'deform survey', spine: runtime.deformSurvey, model: () => model.deformSurvey(read), whole: [], ask: (f) => a39DeformKeepsTriangleWinding(silentVerdicts(), f as DeformSurveyFacts, rig) } },
+        { cut: '4c-3', family: { family: 'animation durations', spine: runtime.animationDurations, model: () => model.animationDurations(read), whole: ['animations'], ask: (f) => a09AnimationDurationMatchesSpec(silentVerdicts(), f as AnimationDurationFacts, declaredDurations) } },
+        { cut: '4c-3', family: { family: 'two-colour tint', spine: runtime.twoColour, model: () => model.twoColour(read), whole: ['slotDarks', 'slotTimelines'], ask: (f) => a43TwoColorTintLoadsAndPosesAsWritten(silentVerdicts(), f as TwoColourFacts) } },
+        { cut: '4c-3', family: { family: 'sequences', spine: runtime.sequences, model: () => model.sequences(read), whole: ['entries', 'timelines'], ask: (f) => a46SequenceAttachmentsShowTheFrameTheFileStates(silentVerdicts(), f as SequenceFacts) } },
+      );
+    }
+    if (cuts.includes('4c-5a')) {
+      const timelines: BoneTimelineFacts = runtime.boneTimelines;
+      // A bone the view leaves inactive that a constraint writes into holds the runtime's previous step (HISTORY, issue #979;
+      // `walkHistory` in src/core/walk.ts): its numbers, and its slots' vertices, are spelled by name and compared with nothing.
+      let history: ReturnType<typeof walkHistory> = { bones: new Map(), slots: new Map() };
+      try {
+        history = walkHistory(noSkinView(read.doc));
+      } catch (err) {
+        if (!(err instanceof CoreInputError)) throw err;
+      }
+      const frame = (f: SteppedFrame): unknown => ({
+        ...f,
+        bones: f.bones.map((b) => (history.bones.has(b.name) ? { name: b.name, inherit: b.inherit, history: history.bones.get(b.name) } : b)),
+        drawn: f.drawn.map((d) => (history.slots.has(d.slot) ? { slot: d.slot, attachment: d.attachment, history: history.bones.get(history.slots.get(d.slot) ?? '') } : d)),
+      });
+      const spelling = history.bones.size === 0 ? undefined : { setup: (v: unknown) => frame(v as SteppedFrame), walk: (v: unknown) => (v as SteppedFrame[]).map(frame) };
+      asked.push({ cut: '4c-5a', family: { family: 'stepped poses', spine: runtime.steppedPoses, model: () => model.steppedPoses(read), whole: ['boneCount', 'steppedAnimations'], ask: (f) => a10NoNanAfterStepping(silentVerdicts(), timelines, f as SteppedPoseFacts), ...(spelling === undefined ? {} : { spelling }) } });
+    }
+  }
+  if (cuts.includes('4c-5')) {
+    const runtime = runtimeCut4c5Facts(skeletonText, atlasText);
+    if (runtime === null) return null;
+    asked.push(
+      { cut: '4c-5', family: { family: 'slider composition', spine: runtime.sliderComposition, model: () => model.sliderComposition(read), whole: ['sliders'], ask: (f) => a40SlidersComposeOnASharedTarget(silentVerdicts(), f as SliderCompositionFacts, runtime.constraints) } },
+      { cut: '4c-5', family: { family: 'constraint targets', spine: runtime.constraintTargets, model: () => model.constraintTargets(read), whole: ['constraints', 'groupsByAnimation'], ask: (f) => a34ConstraintTimelineTargets(silentVerdicts(), f as ConstraintTargetFacts) } },
+    );
+  }
+  // The walk's own order: the cuts as FACT_CUTS lists them, whatever order the runtime's facts were loaded in.
+  const ordered = FACT_CUTS.flatMap((cut) => asked.filter((a) => a.cut === cut));
+  const tallies = askFamilies(ordered.map((a) => a.family));
+  return tallies.map((t, i) => ({ ...t, cut: ordered[i].cut }));
 }
 
-/**
- * Cut 4c-5's facts over one build (issue #1025), compared question by question
- * as cut 4c-3's are (`askFamilies`): A40's body over spine-core's sliders, with
- * every timeline's additive behaviour it asks for — the runtime's probe on one
- * side, the core's (`src/core/additive.ts`) on the other — and the sliders and
- * their timelines' words compared whole; A34's body over the raw JSON's
- * constraint groups, with every unnamed physics reach it asks for, and the
- * constraints and the groups compared whole. `supply` plants a model supplier
- * (`VF14`).
- */
-export function compareCut4c5Facts(skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): PosedFactTally[] | null {
-  const runtime = runtimeCut4c5Facts(skeletonText, atlasText);
-  if (runtime === null) return null;
-  let read: ReadDocument;
-  try {
-    read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
-  } catch {
-    return null;
-  }
-  const model: ModelSupply = { ...MODEL_SUPPLY, ...supply };
-  return askFamilies([
-    { family: 'slider composition', spine: runtime.sliderComposition, model: () => model.sliderComposition(read), whole: ['sliders'], ask: (f) => a40SlidersComposeOnASharedTarget(silentVerdicts(), f as SliderCompositionFacts, runtime.constraints) },
-    { family: 'constraint targets', spine: runtime.constraintTargets, model: () => model.constraintTargets(read), whole: ['constraints', 'groupsByAnimation'], ask: (f) => a34ConstraintTimelineTargets(silentVerdicts(), f as ConstraintTargetFacts) },
-  ]);
+/** Cut 4c-3's part of the one walk (`compareFactFamilies`). `supply` plants a model supplier (`VF12`). */
+export function comparePosedFacts(skeletonText: string, atlasText: string, modelText: string, rig: RigInfo | undefined, declaredDurations: Record<string, number> | undefined, supply: Partial<ModelSupply> = {}): FamilyTally[] | null {
+  return compareFactFamilies(skeletonText, atlasText, modelText, { rig, declaredDurations }, supply, ['4c-3']);
 }
 
-/**
- * Cut 4c-5a's facts over one build (issue #1025), compared through
- * `askFamilies`: A10's body runs over spine-core's stepped poses — the setup
- * pose, every animation's looping walk at A10's own step, a bone's mode at
- * each `inherit` key — and every pose it asks for is asked of the model
- * side's supplier (the core's looping walk, `src/core/walk.ts`) with the same
- * arguments, the bone count and the animation roster compared whole. Every
- * number of every pose is spelled exactly, so a NaN where the other side has
- * an Infinity differs, as does one ulp. `supply` plants a model supplier
- * (`VF13`).
- */
-export function compareSteppedPoses(skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): PosedFactTally[] | null {
-  const runtime = runtimePosedFacts(skeletonText, atlasText);
-  if (runtime === null) return null;
-  let read: ReadDocument;
-  try {
-    read = { doc: readModel(modelText), json: JSON.parse(modelText) as Record<string, unknown> };
-  } catch {
-    return null;
-  }
-  const model: ModelSupply = { ...MODEL_SUPPLY, ...supply };
-  const timelines: BoneTimelineFacts = runtime.boneTimelines;
-  // A bone the view leaves inactive that a constraint writes into holds the runtime's previous step (HISTORY, issue #979;
-  // `walkHistory` in src/core/walk.ts): its numbers, and its slots' vertices, are spelled by name and compared with nothing.
-  let history: ReturnType<typeof walkHistory> = { bones: new Map(), slots: new Map() };
-  try {
-    history = walkHistory(noSkinView(read.doc));
-  } catch (err) {
-    if (!(err instanceof CoreInputError)) throw err;
-  }
-  const frame = (f: SteppedFrame): unknown => ({
-    ...f,
-    bones: f.bones.map((b) => (history.bones.has(b.name) ? { name: b.name, inherit: b.inherit, history: history.bones.get(b.name) } : b)),
-    drawn: f.drawn.map((d) => (history.slots.has(d.slot) ? { slot: d.slot, attachment: d.attachment, history: history.bones.get(history.slots.get(d.slot) ?? '') } : d)),
-  });
-  const spelling = history.bones.size === 0 ? undefined : { setup: (v: unknown) => frame(v as SteppedFrame), walk: (v: unknown) => (v as SteppedFrame[]).map(frame) };
-  return askFamilies([{ family: 'stepped poses', spine: runtime.steppedPoses, model: () => model.steppedPoses(read), whole: ['boneCount', 'steppedAnimations'], ask: (f) => a10NoNanAfterStepping(silentVerdicts(), timelines, f as SteppedPoseFacts), ...(spelling === undefined ? {} : { spelling }) }]);
+/** Cut 4c-5's part of the one walk (`compareFactFamilies`). `supply` plants a model supplier (`VF14`). */
+export function compareCut4c5Facts(skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): FamilyTally[] | null {
+  return compareFactFamilies(skeletonText, atlasText, modelText, {}, supply, ['4c-5']);
+}
+
+/** Cut 4c-5a's part of the one walk (`compareFactFamilies`). `supply` plants a model supplier (`VF13`). */
+export function compareSteppedPoses(skeletonText: string, atlasText: string, modelText: string, supply: Partial<ModelSupply> = {}): FamilyTally[] | null {
+  return compareFactFamilies(skeletonText, atlasText, modelText, {}, supply, ['4c-5a']);
 }
 
 /** Tallies of one family, summed across builds. */
-export function sumPosedTallies(into: Map<QuestionFamily, PosedFactTally>, more: readonly PosedFactTally[]): void {
+export function sumPosedTallies<T extends PosedFactTally>(into: Map<string, T>, more: readonly T[]): void {
   for (const t of more) {
-    const held = into.get(t.family) ?? { family: t.family, questions: 0, values: 0, equal: 0, refused: [], differing: [] };
+    const held: T = into.get(t.family) ?? { ...t, questions: 0, calls: 0, leaves: 0, values: 0, equal: 0, refused: [], differing: [] };
     held.questions += t.questions;
     held.calls = (held.calls ?? 0) + (t.calls ?? 0);
+    held.methods = Math.max(held.methods ?? 0, t.methods ?? 0);
+    held.leaves = (held.leaves ?? 0) + (t.leaves ?? 0);
     held.values += t.values;
     held.equal += t.equal;
     held.refused.push(...t.refused);
     held.differing.push(...t.differing);
     into.set(t.family, held);
   }
+}
+
+/**
+ * A row's facts, off the one walk (`compareFactFamilies`, issue #1054): every
+ * family asked once, then read back per cut into the fields the row has always
+ * printed — cut 4c-1's families one line each, cut 4c-2's as one line with the
+ * derivations beside it (`rigFactsDerivationsOf`), and the question families'
+ * tallies per cut.
+ */
+function walkedFacts(skeletonText: string, atlasText: string, modelText: string, rig: RigInfo | undefined, declaredDurations: Record<string, number> | undefined): Pick<VerdictRow, 'facts' | 'rigFacts' | 'posedFacts' | 'cut4c5Facts' | 'steppedFacts'> {
+  const walked = compareFactFamilies(skeletonText, atlasText, modelText, { rig, declaredDurations });
+  if (walked === null) return { facts: [], rigFacts: null, posedFacts: null, cut4c5Facts: null, steppedFacts: null };
+  const of = (cut: FactCut): FamilyTally[] => walked.filter((t) => t.cut === cut);
+  const derivations = rigFactsDerivationsOf(skeletonText, atlasText, modelText);
+  return {
+    facts: of('4c-1').map(wholeFamilyReading),
+    rigFacts: derivations === null ? null : { differing: of('4c-2').map(wholeFamilyReading).filter((r) => !r.identical), derivations },
+    posedFacts: of('4c-3'),
+    cut4c5Facts: of('4c-5'),
+    steppedFacts: of('4c-5a'),
+  };
 }
 
 /** One built output directory, gated both ways. */
@@ -674,7 +770,8 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   const inputs = { ...(rig === undefined ? {} : { rig }), ...(declaredDurations === undefined ? {} : { declaredDurations }) };
   for (const profile of VERDICT_PROFILES) {
     const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, ...inputs });
-    const modelInput: ModelValidateInput = { modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText), ...inputs };
+    // The model side reads the rig info and the durations off the document itself, and refuses either given beside it (issue #1054).
+    const modelInput: ModelValidateInput = { modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText) };
     const model = validateModel(modelInput);
     const spineParse = spine.failures.find((f) => f.assertion === 'A00_ROUNDTRIP_PARSE');
     const modelParse = model.failures.find((f) => f.assertion === A00_MODEL_READ || f.assertion === A00_MODEL_REGIONS_ON_PAGES);
@@ -707,11 +804,7 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
     refused: null,
     cells,
     walk: { spine: spineWalk, model: modelWalk, identical: spineWalk === modelWalk },
-    facts: compareFacts(skeletonText, atlasText, modelText) ?? [],
-    rigFacts: compareRigFacts(skeletonText, atlasText, modelText),
-    posedFacts: comparePosedFacts(skeletonText, atlasText, modelText, rig, declaredDurations),
-    cut4c5Facts: compareCut4c5Facts(skeletonText, atlasText, modelText),
-    steppedFacts: compareSteppedPoses(skeletonText, atlasText, modelText),
+    ...walkedFacts(skeletonText, atlasText, modelText, rig, declaredDurations),
   };
 }
 
@@ -734,7 +827,7 @@ export function verdictLines(rows: readonly VerdictRow[]): { lines: string[]; ok
   let factRows = 0;
   let factRowsDiffering = 0;
   const derivations = new Map<string, DerivationTally>();
-  const posed = new Map<QuestionFamily, PosedFactTally>();
+  const posed = new Map<string, PosedFactTally>();
   let posedRows = 0;
   let posedRowsDiffering = 0;
   let cut4c5Rows = 0;

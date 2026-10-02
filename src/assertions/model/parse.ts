@@ -40,6 +40,7 @@
 import { CORE_REGION_KINDS, CoreInputError, readModel, shownRow, type CompiledDocument } from '../../core/index.ts';
 import { documentPageLookup, frameRegionName, readUvSequences } from '../../core/uvs.ts';
 import type { AssertionKind } from '../kinds.ts';
+import { rigSectionProblems } from './declared.ts';
 import type { Verdicts } from '../harness.ts';
 
 /** The reader's refusal, as a line. */
@@ -76,7 +77,14 @@ export function modelRead({ fail }: Verdicts, modelText: string): ReadDocument |
     fail(A00_MODEL_READ, err.message);
     return null;
   }
-  return { doc, json: JSON.parse(modelText) as Record<string, unknown> };
+  const json = JSON.parse(modelText) as Record<string, unknown>;
+  // Issue #1054: the rig section is a source the model side reads (`./declared.ts`), so it is read here with the rest — refused by its paths, never cast.
+  const rigProblems = rigSectionProblems(json);
+  if (rigProblems.length > 0) {
+    fail(A00_MODEL_READ, `the model document: ${rigProblems.length} problem(s) in the rig section the model side reads its declarations from: ${rigProblems.join('; ')}`);
+    return null;
+  }
+  return { doc, json };
 }
 
 /**
