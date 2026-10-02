@@ -54723,6 +54723,184 @@ function runEditorRoundtripSuite(): number {
     );
   }
 
+  // --- ERT81-83: a build whose skeleton.json is not one JSON object — issue #1090
+  //
+  // 🚨 The images probe above was the first reader of the build's skeleton and
+  // read it with a bare `JSON.parse`: `not json` left the tool as a
+  // `SyntaxError` and its stack, `null` as a `TypeError`, a directory as
+  // `EISDIR` — and `[]` did not stop at all, but went on to start the editor on
+  // a file that is not a skeleton. All of that happens before the editor, so a
+  // stub with a sentinel answers it and no editor is needed.
+  //
+  // ⭐ ERT83 is what keeps ERT81 honest: it plants the bare parse back into a
+  // copy of the tool and requires ERT81's own reading to call each input red for
+  // the reason the plant causes — a stack, or the editor started — and the
+  // inputs the plant does not touch still refused. A "no stack" predicate nobody
+  // has seen read a stack is the gate nobody has seen fail.
+  {
+    const nj = join(root, 'notjson');
+    const njBundle = join(root, 'NotJsonEditor', 'Spine.app');
+    const njEditor = join(njBundle, 'Contents', 'MacOS', 'Spine');
+    writeBundlePlist(njBundle, 'Spine');
+    let sentinels = 0;
+    /** Run `tool` on `build` against a fresh stub whose sentinel says whether anything started it. */
+    const runAgainst = (tool: string, build: string): { status: number | null; stdout: string; stderr: string; ran: boolean } => {
+      const ran = join(root, `ert81-ran-${sentinels++}`);
+      writeStubEditor(njEditor, ran, ['Spine Launcher 4.3.06 (macOS Apple Silicon)']);
+      const r = spawnSync(process.execPath, [tool, '--build', build, '--out', join(root, `out-ert81-${sentinels}`), '--editor', njEditor], {
+        cwd: import.meta.dir,
+        encoding: 'utf8',
+      });
+      return { status: r.status, stdout: r.stdout, stderr: r.stderr, ran: existsSync(ran) };
+    };
+    const inputs: Array<{ label: string; write: (dir: string) => void; names: string; says: string; plantBreaks: 'stack' | 'editor' | null }> = [
+      { label: 'not json', write: (d) => writeFileSync(join(d, 'skeleton.json'), 'not json\n'), names: 'skeleton.json', says: 'is not JSON — the parser stopped with "', plantBreaks: 'stack' },
+      { label: '[]', write: (d) => writeFileSync(join(d, 'skeleton.json'), '[]\n'), names: 'skeleton.json', says: 'it holds an array rather than an object', plantBreaks: 'editor' },
+      { label: 'null', write: (d) => writeFileSync(join(d, 'skeleton.json'), 'null\n'), names: 'skeleton.json', says: 'it holds null rather than an object', plantBreaks: 'stack' },
+      { label: 'missing', write: () => undefined, names: '', says: 'no skeleton.json in the build directory', plantBreaks: null },
+      { label: 'empty', write: (d) => writeFileSync(join(d, 'skeleton.json'), ''), names: 'skeleton.json', says: 'is empty (0 byte(s)', plantBreaks: 'stack' },
+      { label: 'a directory', write: (d) => mkdirSync(join(d, 'skeleton.json')), names: 'skeleton.json', says: 'is a directory, not a file', plantBreaks: 'stack' },
+      {
+        label: 'images: 5',
+        write: (d) => writeFileSync(join(d, 'skeleton.json'), '{"skeleton":{"images":5}}\n'),
+        names: 'skeleton.json',
+        says: '`skeleton.images` holds a number, not a path string',
+        plantBreaks: null,
+      },
+      {
+        label: 'skins: [null]',
+        write: (d) => writeFileSync(join(d, 'skeleton.json'), '{"skeleton":{"images":"./"},"skins":[null]}\n'),
+        names: 'skeleton.json',
+        says: '`skins[0]` holds null, not an object',
+        plantBreaks: null,
+      },
+    ];
+    const builds = inputs.map((input, i) => {
+      const dir = join(nj, `b${i}`);
+      mkdirSync(dir, { recursive: true });
+      input.write(dir);
+      return { input, dir };
+    });
+    /**
+     * ERT81's reading of one run: null when it is a refusal by name — exit 1,
+     * nothing on stdout, ONE stderr line in the tool's refusal shape naming the
+     * file and what was found, the stub never started — else the first thing
+     * that is not. A stack is any stderr line that is not that one line.
+     */
+    const notARefusal = (
+      r: { status: number | null; stdout: string; stderr: string; ran: boolean },
+      dir: string,
+      input: (typeof inputs)[number],
+    ): string | null => {
+      const lines = r.stderr.trim().split('\n');
+      const stray = lines.find((l) => !l.startsWith('rigc editor_roundtrip: '));
+      if (stray !== undefined || lines.length !== 1) {
+        // Named by the error line the runtime printed under its source frame
+        // when there is one, so the detail says WHAT was thrown.
+        const thrown = lines.find((l) => /^(\w*Error|E[A-Z]+)\b[^\n]*:/.test(l.trim()));
+        return `stack: ${JSON.stringify((thrown ?? stray ?? lines[1] ?? '').trim().slice(0, 100))}`;
+      }
+      if (r.ran) return 'the editor was started';
+      if (r.status !== 1) return `exit=${String(r.status)}`;
+      if (r.stdout !== '') return `stdout printed ${JSON.stringify(r.stdout.trim().split('\n')[0])}`;
+      if (!lines[0].includes(input.names === '' ? dir : join(dir, input.names))) return 'the refusal does not name the file';
+      if (!lines[0].includes(input.says)) return `the refusal does not say ${JSON.stringify(input.says)}`;
+      return null;
+    };
+    const tool = join(import.meta.dir, 'tools', 'editor_roundtrip.ts');
+    const verdicts = builds.map(({ input, dir }) => ({ input, why: notARefusal(runAgainst(tool, dir), dir, input) }));
+    const red = verdicts.filter((v) => v.why !== null);
+    say(
+      'ERT81_A_BUILD_WHOSE_SKELETON_JSON_IS_NOT_ONE_JSON_OBJECT_IS_REFUSED_BY_NAME_BEFORE_THE_EDITOR_WITH_NO_STACK',
+      red.length === 0,
+      `${verdicts.length - red.length}/${verdicts.length} input(s) refused by name, exit 1, one stderr line, stub never ` +
+        `started` +
+        `${red.length === 0 ? ` (${inputs.map((i) => i.label).join(', ')})` : ` — not refused: ${red.map((v) => `${v.input.label}: ${v.why}`).join('; ')}`}`,
+      'the probe that reads `skeleton.images` was the first reader of this file and parsed it bare, so `not json` ' +
+        'left the tool as a SyntaxError stack and `[]` started the editor on a file that is not a skeleton — before ' +
+        'the editor, where the tool has every word it needs to refuse by name',
+    );
+
+    // ERT82 — the positive control: a skeleton `rigc build` wrote, with
+    // `skeleton.images` declared so the probe's walk runs over real records,
+    // gets past the new step, starts the stub and fails on the ordinary refusal.
+    const okRoot = join(root, 'readable');
+    mkdirSync(okRoot, { recursive: true });
+    writeProbePng(join(okRoot, 'block.png'), 12, 12, [40, 60, 90, 255]);
+    const okRig = join(okRoot, 'readable.rig.json');
+    const okMotion = join(okRoot, 'readable.motion.json');
+    writeFileSync(
+      okRig,
+      `${JSON.stringify(
+        {
+          spec: 'rigc-rig/1',
+          name: 'readable',
+          skeleton: { width: 64, height: 64 },
+          bones: [{ name: 'root' }],
+          slots: [{ name: 'block', bone: 'root', attachment: 'block' }],
+          skins: { default: { block: { block: { image: 'block.png' } } } },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(okMotion, `${JSON.stringify({ ...STATIC_MOTION, archetype: 'readable', cut: 'readable' }, null, 2)}\n`);
+    const okBuild = join(okRoot, 'build');
+    const built = runCli(['build', '--rig', okRig, '--motion', okMotion, '--images', okRoot, '--out', okBuild, '--copy-images']);
+    const okSkeleton = join(okBuild, 'skeleton.json');
+    const declaresImages =
+      built.status === 0 && existsSync(okSkeleton) && typeof (JSON.parse(readFileSync(okSkeleton, 'utf8')) as { skeleton?: { images?: unknown } }).skeleton?.images === 'string';
+    const readable = built.status === 0 ? runAgainst(tool, okBuild) : null;
+    const reached =
+      readable !== null &&
+      readable.ran &&
+      readable.status === 1 &&
+      readable.stdout.startsWith('## 0 versions') &&
+      readable.stderr.includes('the editor wrote no project file; the import did not happen') &&
+      !readable.stderr.includes("the build's skeleton.json at");
+    say(
+      'ERT82_A_SKELETON_RIGC_BUILD_WROTE_GETS_PAST_THE_READ_AND_REACHES_THE_EDITOR',
+      declaresImages && reached,
+      built.status !== 0
+        ? `the build was refused (exit ${String(built.status)}): ${(built.stderr || built.stdout).trim().split('\n').pop() ?? ''}`
+        : `declares skeleton.images = ${declaresImages}, stub started = ${readable?.ran}, exit=${String(readable?.status)}, ` +
+            `stderr=${JSON.stringify(readable?.stderr.trim().split('\n').pop()?.slice(0, 120) ?? '')}`,
+      'a read step that refused everything would turn ERT81 green and the tool useless — so a real build, whose ' +
+        '`skeleton.images` makes the probe walk every skin and attachment record, has to reach the editor and fail ' +
+        'there for the ordinary reason',
+    );
+
+    // ERT83 — the plant. The read step is replaced, in a copy, by the bare
+    // parse the probe used to do; ERT81's own reading must then call each input
+    // red for what the plant does to it, and the rest still refused.
+    const anchor = 'const read = readBuildSkeleton(source);';
+    const original = readFileSync(tool, 'utf8');
+    const anchors = original.split(anchor).length - 1;
+    const plantedTool = join(root, 'planted-tool', 'editor_roundtrip.ts');
+    mkdirSync(dirname(plantedTool), { recursive: true });
+    writeFileSync(
+      plantedTool,
+      original.replace(anchor, "const read = { skeleton: JSON.parse(readFileSync(source, 'utf8')) as Record<string, unknown> };"),
+    );
+    const plantedVerdicts = anchors === 1 ? builds.map(({ input, dir }) => ({ input, why: notARefusal(runAgainst(plantedTool, dir), dir, input) })) : [];
+    const misread = plantedVerdicts.filter(({ input, why }) => {
+      if (input.plantBreaks === 'stack') return why === null || !why.startsWith('stack: ');
+      if (input.plantBreaks === 'editor') return why !== 'the editor was started';
+      return why !== null;
+    });
+    say(
+      'ERT83_THE_BARE_PARSE_PLANTED_BACK_IS_READ_AS_A_STACK_OR_AN_EDITOR_STARTED_AND_NOTHING_ELSE_MOVES',
+      anchors === 1 && plantedVerdicts.length === inputs.length && misread.length === 0,
+      anchors !== 1
+        ? `the plant's anchor ${JSON.stringify(anchor)} occurs ${anchors} time(s) in tools/editor_roundtrip.ts, not once — nothing was planted`
+        : plantedVerdicts.map(({ input, why }) => `${input.label}: ${why ?? 'refused'}`).join('; ') +
+            `${misread.length === 0 ? '' : ` — misread: ${misread.map((m) => m.input.label).join(', ')}`}`,
+      "ERT81's \"no stack\" clause is a predicate over stderr, and one that has never read a stack could be " +
+        'reading nothing; the inputs the plant does not reach staying refused is the half that says the plant is ' +
+        'the bare parse and not a broken tool',
+    );
+  }
+
   // --- ERT18: step 5 renders and checks every skin — issue #571 --------------
   //
   // 🚨 Step 5 rendered and checked ONCE, with no skin, which draws the default
@@ -106336,7 +106514,10 @@ function main(): void {
     'with the absence of that line named rather than filled with the tail; and what a failed import or export ' +
     'quotes of the editor (issue #1082): every line it printed, in order, except the licence line — one line on ' +
     'the measured failure, three in `--version`\'s shape, and never the error lines straight after it — whose ' +
-    'place is named)';
+    'place is named; and a build whose `skeleton.json` is not one JSON object (issue #1090) — not JSON, empty, ' +
+    'a directory, `[]`, `null`, or a field the images check walks of the wrong kind — refused by its path and ' +
+    'what was found there before the editor starts and with no stack, held against the bare parse planted back ' +
+    'into a copy of the tool, and a skeleton `rigc build` wrote still reaching the editor)';
   const shippedDocs =
     ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +

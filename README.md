@@ -698,7 +698,8 @@ what it found — the executable, the bundle, the `CFBundleName` that bundle
 declares, or the banner the binary prints about itself — rather than starting it
 and failing downstream. Both refusals point at `--exported <file>`, which
 measures an export the editor already made and is the half of this tool that
-needs no editor at all.
+needs no editor at all. A build whose `skeleton.json` is missing, is not JSON, or
+holds JSON that is not one object is refused by name before the editor starts.
 
 ⛔ **Run the round trip by hand, on a machine that has the editor.** CI has no
 editor, so no automated check runs it.
