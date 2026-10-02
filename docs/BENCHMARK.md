@@ -1247,9 +1247,9 @@ bun run selftest     # the validator's own negative controls (next section)
 All three run on every push and pull request —
 [`.github/workflows/ci.yml`](https://github.com/firejune/rigc/blob/main/.github/workflows/ci.yml). Bun runs the sources
 directly, so the first two are not on the path of anything; they exist because a
-convention nothing checks is a convention. `tsconfig.json` is
-`strict: false` with `strictNullChecks: true` and says in place why the rest is
-not on yet; `eslint.config.js` says why it carries exactly one rule.
+convention nothing checks is a convention. `tsconfig.json` is full `strict`
+since 2026-10-02 and says in place what was measured before raising it;
+`eslint.config.js` says why it carries exactly one rule.
 
 ## Selftest
 

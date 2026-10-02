@@ -7482,7 +7482,10 @@ function buildMesh(
   );
 
   return {
-    kind: geometry.kind,
+    // `kind` is what chose the builder above, so it is the claim; `geometry.kind`
+    // is the wider `MeshKind`, which a strict tsc refuses here (and a dependant
+    // with `strict: true` reads this file through `src/render.ts`).
+    kind,
     attachment: {
       kind: 'mesh',
       uvs: geometry.uvs.map(f32),

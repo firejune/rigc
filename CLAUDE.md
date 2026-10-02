@@ -263,7 +263,7 @@ sincere about it. rigc exists to convert that silence into a named failure.
 
 | Command | Checks |
 | --- | --- |
-| `bun run typecheck` | `bunx tsc --noEmit` over the paths `tsconfig.json`'s `include` names — read it there rather than from a copy here, which is how this cell came to be missing two of them. `strict: false` with `strictNullChecks: true` — see the comment in that file before raising it |
+| `bun run typecheck` | `bunx tsc --noEmit` over the paths `tsconfig.json`'s `include` names — read it there rather than from a copy here, which is how this cell came to be missing two of them. `strict: true` since 2026-10-02 — the comment in that file carries the measurement that raised it |
 | `bun run lint` | one rule: `@typescript-eslint/no-explicit-any` as an **error**. `eslint.config.js` says why it is only one |
 | `bun run selftest` | the validator's own negative controls, on fixtures it generates. Add `--cuts <cuts.json>` to gate a project's real cuts as well — see *The selftest and its fixtures* |
 | `bun run selftest -- --only <suite>[,<suite>…]` | one squad's own suite while iterating — a partial run exits 2 when green (1 when red), prints `SKIP` for every suite it did not run and never the summary; the full run is the only verdict on the tree |
