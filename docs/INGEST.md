@@ -64,7 +64,7 @@ an upstream `license.txt` (Appendix, and [NOTICE.md](../NOTICE.md)).
 | **`preview --candidate <skeleton.json>`** | ✅ **yes** | one self-contained `.html` that plays it in the official Spine Web Player. Needs a network the first time it is opened ([NOTICE.md](../NOTICE.md)) |
 | **`vote --candidate <a> --candidate <b>`** | ✅ **yes, on either side** | a ballot page. Pairing a foreign export against your own transcription is a legitimate ballot, and the panes carry no paths |
 | **`check --candidate <skeleton.json> --frames <dir>`** | ✅ **yes** | ⭐ it reads **frames and never a reference skeleton**, so a foreign export enters this one *twice over*: as the candidate, or — via `render` — as the source of the frames. §1.4 |
-| **`diff <candidate.json> <reference.json>`** | ✅ **yes, both sides** | 49 structural measures over bones, slots, attachments, constraints, animations and events. ⛔ **Blind to every coordinate** — §1.3 |
+| **`diff <candidate.json> <reference.json>`** | ✅ **yes, both sides** | 54 structural measures over bones, slots, attachments, constraints, animations and events. ⛔ **Blind to every coordinate** — §1.3 |
 | **`ingest <skeleton.json> --out <dir>`** | ✅ **yes — and it is the only reader that WRITES specs** | the `.json` alone; no atlas, no art, no project file. Out come `rig.json`, `motion.json` and a findings report, such that `build`ing them reproduces the skeleton it read **byte for byte — for a skeleton rigc emitted**. ⚠️ For an editor export the claim is identity in canonical form apart from `hash` and `spine`, which §2.3 states in full. The seventh reader, and the one that ends §2's hand work — §2.0 and §5 |
 | **`pose --images <dir> --frame <png>`** | ⛔ **not the skeleton** | loose part PNGs and one picture. A packed atlas page is not loose parts, and pointing it at one produces a confident answer about nothing — §5 |
 | **`explain --rig … --motion … --out …`** | ⛔ **no** | rig spec + motion spec. It explains **what you wrote**, which makes it a transcription instrument rather than a reading one — §1.5 |
@@ -215,7 +215,7 @@ Spine runtime plays it, whatever rigc's own rasteriser or validator thinks.
 
 ### 1.3 `diff` — and the two things it cannot see
 
-`diff` takes two compiled skeletons and reports 49 measures in eight groups, plus two
+`diff` takes two compiled skeletons and reports 54 measures in eight groups, plus two
 blocks that report and gate nothing: the `(reported)` measures beside `attachments`
 and `animations`, and the `skeleton` header block at the top, which measures the stage.
 A ninth group of six joins them when something has paired the two sides'
@@ -250,7 +250,7 @@ rigc diff
 
   bones (name-agnostic) mean 1.000  over 5 measures  — the same two skeletons compared with names thrown away
   …
-  animations            mean 1.000  over 9 measures
+  animations            mean 1.000  over 11 measures
       1.000  count                        2/2         how many animations
       1.000  names                        2/2         the animation names
       1.000  duration                     2/2         each animation runs as long (last key time, within one frame)
@@ -267,7 +267,7 @@ it does not say *which* side has three. The `..` line above is where you read th
 ⛔ **`diff` is blind to every coordinate a bone, an attachment or a key carries.** No
 measure reads a bone's `x`/`y`/`rotation`, an attachment's offset, or a key's value —
 only *presence*, *names*, *counts*, *order* and *kinds*. §4.1 moves a pivot 236.5
-units and every one of the 49 measures still reads **1.000**. ⇒ Never take a green
+units and every one of the 54 measures still reads **1.000**. ⇒ Never take a green
 `diff` as evidence that a geometric edit did not land, and never take it as evidence
 that one did.
 
@@ -325,7 +325,7 @@ two sections, the second over the paired shots — `duration`, `timeline_kinds`,
 it used:
 
 ```
-  animations            mean 0.222  over 9 measures
+  animations            mean 0.182  over 11 measures
       1.000  count                        1/1         how many animations
       0.000  names                        0/2         the animation names
       …
@@ -475,8 +475,8 @@ no field of the file).
 📊 **For an editor export the claim is weaker, and measured.** Every
 `examples/*/export/*.json` ingested with `--art none`, rebuilt through the pack
 beside it, and `diff`ed against the file it was read from: **12 of 12 come back with 0
-blockers and 1.000 on all 49 ratio-bearing measures and all 5 reported ones** — and on
-all **nine value measures** too, over **193,927** compared values. Byte
+blockers and 1.000 on all 54 ratio-bearing measures and all 6 reported ones** — and on
+all **nine value measures** too, over **195,363** compared values. Byte
 identity is not the claim there and the reason is the input, not the round trip — §2.3
 has the pass line, and what the value measures do and do not reach. ⚠️ Which pack is "the one beside it" is
 resolved rather than guessed, for §0.2's reason: `spineboy/export` holds two, and
@@ -702,7 +702,7 @@ State the ambition in the right units, because three different things get called
 
 | Ambition | Reachable? | What it costs, and what it proves |
 | --- | --- | --- |
-| **Structural agreement** — same bones, slots, attachments, timelines, key counts, curve kinds | ✅ yes, and `diff` measures it | the 3-timing transcription reads **1.000 on all 49 measures**. Aim here first |
+| **Structural agreement** — same bones, slots, attachments, timelines, key counts, curve kinds | ✅ yes, and `diff` measures it | the 3-timing transcription reads **1.000 on all 54 measures**. Aim here first |
 | **Geometric agreement** — the same drawn pixels, allowing for the atlas | ✅ yes, and `check` measures it | see below |
 | **Byte-identical JSON** | ✅ **for a rebuild, in canonical form, apart from `hash` and `spine`** — the pass line below | a **rebuild** of an editor export (`ingest`, then `build`) is the export. A **transcription** by hand is not held to it: what differs there is what a person chose to write, not the emitter |
 
@@ -745,7 +745,7 @@ keys**, which is why a moved value is invisible to it.
 ⭐ **The values are measured by a second comparison rather than by `diff`.**
 Structure at 1.000 is silent about the numbers inside it: a decompiler that halved
 every rotation, dropped every bone's `length` or mirrored every vertex would read
-1.000 on all 49 measures and on every `(reported)` one. So the example round trip is
+1.000 on all 54 measures and on every `(reported)` one. So the example round trip is
 also compared **value by value**,
 with the format's defaults taken from the parser rather than from a table — both files
 are read through `spine-core` and the parsed forms are compared path by path, under a
@@ -755,12 +755,12 @@ storage. Nine measures — here is the `6-arcs` export's, wrapped to fit this
 page:
 
 ```
-values: 9/9 measure(s) at 1.000 over 13865 compared value(s); skeleton 1.000 ·
+values: 9/9 measure(s) at 1.000 over 13977 compared value(s); skeleton 1.000 ·
 bones 1.000 · slots 1.000 · attachments 1.000 · constraints 1.000 · events 1.000 ·
 key_times 1.000 · key_values 1.000 · curves 1.000
 ```
 
-Over the twelve exports that is **193,927 values** compared, and all twelve read
+Over the twelve exports that is **195,363 values** compared, and all twelve read
 1.000 on all nine.
 
 `docs/BENCHMARK.md`'s *The nine value measures* is the full statement. What it still
@@ -1082,7 +1082,7 @@ same displacement evaluated across the bone's own rotation:
 **What the instruments say about it** — and this pair is why §1.3 carries its warning:
 
 - **`diff` sees nothing.** `rigc diff work/t3b/skeleton.json <the export>` reads
-  **1.000 on all 49 measures**: same bones, names, parents, order, slots, draw order,
+  **1.000 on all 54 measures**: same bones, names, parents, order, slots, draw order,
   attachments, animations, timelines, key counts, curve kinds. All true, and all silent
   about a 236.5-unit move.
 - **`check` sees it loudly**, with the framing pinned so the comparison is of pictures
@@ -1192,28 +1192,35 @@ slots to `arm-art`/`block-art` and their attachments to match:
       1.000  bone_binding_shape           2/2         as many slots hang off a bone of each shape (`?` = no such bone is declared)
       1.000  order_shape                  2/2         the draw order is the same order of `<attachment type>@<bone shape>`
 
-  attachments           mean 0.889  over 9 measures
+  attachments           mean 0.818  over 11 measures
       1.000  skins                        1/1         the skin names
       1.000  count                        2/2         how many attachments
       0.000  names                        0/4         skin/slot/attachment keys
       1.000  type_counts                  2/2         as many of each attachment type
       …
-  animations            mean 1.000  over 9 measures
+      0.000  refs                         0/2         each attachment resolves the same region, clipping end and linked-mesh source  — 2 on one side only, which `attachments.names` names
+      1.000  skin_members                 1/1         each skin activates the same skin-required bones and constraints
+  …
+  animations            mean 0.909  over 11 measures
+      …
+      0.000  targets                      0/8         each timeline keys the same bone, slot, constraint or attachment  — …
 ```
 
 Three things to read out of that, in order:
 
 - **The name-keyed collapse is the task, not a defect.** `bones` 0.567, `slots` 0.143,
-  `attachments` 0.889. Note that several *non*-name measures fall with them —
+  `attachments` 0.818, `animations` 0.909. Note that several *non*-name measures fall with them —
   `slots.bone`, `slots.blend`, `bones.parent_by_name` — because they are keyed **by**
   the name that changed. They are not saying the binding changed.
 - 🚨 **`bones (name-agnostic)` and `slots (name-agnostic)` must stay 1.000.** They
   measure the rig with the vocabulary thrown away, so a rename that changed only names
   leaves them untouched. **A drop there is a structural mistake wearing a rename's
   clothes**, and it is the only assertion this recipe really has.
-- **`animations` stays 1.000** because animation *names* were not part of the ask.
-  Under the same edit `bones.names` reads `1/5` — `root` survived, and the total is the
-  union of both vocabularies.
+- **`animations` moves on one measure only, `targets`**, because animation *names*
+  were not part of the ask but every timeline keys a renamed bone — `targets` is keyed
+  by the name that changed, as `slots.bone` is. Every other `animations` measure stays
+  1.000. Under the same edit `bones.names` reads `1/5` — `root` survived, and the total
+  is the union of both vocabularies.
 
 ⛔ And remember §1.3: `diff` reads no coordinates either way. A rename that also moved
 something is invisible to every measure in that report. Pair it with a `check` against
@@ -1255,7 +1262,7 @@ that already round-trips.
 4. **Read `diff` knowing what it is about to say.**
 
    ```
-     animations            mean 0.793  over 9 measures
+     animations            mean 0.821  over 11 measures
          0.667  count                        2/3         how many animations
          0.667  names                        2/3         the animation names
          0.667  duration                     2/3         each animation runs as long (last key time, within one frame)
@@ -1265,10 +1272,12 @@ that already round-trips.
          1.000  event_keys                   0/0         as many event firings  — neither side has any
          0.667  draw_order                   2/3         a draw-order timeline is present or absent alike
          0.667  deform                       2/3         a deform timeline is present or absent alike
+         0.889  targets                      8/9         each timeline keys the same bone, slot, constraint or attachment  — …
+         1.000  keyed_names                  0/0         each key names the same attachment, draw-order slot or event  — neither side has any
    ```
 
    🚨 **Every one of those got worse, and that is the correct result.** The
-   `animations` section went 1.000 → 0.793 because the candidate now has something the
+   `animations` section went 1.000 → 0.821 because the candidate now has something the
    reference does not. `diff` measures agreement with a reference; you were asked to
    *disagree* with it, in one specific way. ⇒ **Check that the drop is confined to the
    `animations` section and is the size the addition explains** — one animation of

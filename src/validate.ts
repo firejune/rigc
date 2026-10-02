@@ -3466,9 +3466,69 @@ const NOT_A_VALUE_IN_THE_FILE: Record<string, string> = {
   index: 'the array position this walk already iterates by name',
   timelineIds: 'derived from the timelines',
   timelineSlots: 'derived from the skin',
-  properties: 'derived from the constraint',
   propertyIds: 'carries an attachment id, which is a counter (see above)',
 };
+
+/**
+ * The keys above that ARE a value the file carries on these owners, by the
+ * owner's class name (issue #1084).
+ *
+ * The skip list is keyed by field name alone, and four of its names are also
+ * the name of a field the parser reads off the file on a different class. Each
+ * owner below was found by walking the parsed form of the twelve editor exports
+ * and the seven gallery builds for every class carrying a key the list names,
+ * and each field was planted and posed before it was let back in:
+ *
+ * - `a`, `b` — a `Color`'s alpha and blue channels, which share their names with
+ *   two entries of a bone's world matrix. Every slot colour, dark colour, bone
+ *   colour and attachment colour lost half its channels to that: a slot's alpha
+ *   `ff` → `80` moved no value at all, and posed, it changes every slot row.
+ * - `local` — a slider's `local` flag, which shares its name with a bone pose's
+ *   derived `local`. Flipped on `gallery/look`'s `yaw`, it moves the posed bones.
+ * - `offsets` — a transform constraint's six offsets (`rotation`, `x`, `y`,
+ *   `scaleX`, `scaleY`, `shearY` in the file), which share their name with a
+ *   sequence's region offsets. A `y` offset moved on `6-arcs-pro`'s `tail`
+ *   moved no value and moves the posed bones.
+ *
+ * A fifth entry, `properties` (*derived from the constraint*), is gone rather
+ * than excepted: the one class measured carrying it is the transform constraint,
+ * where it is the file's from/to map, so the reason was not true of anything.
+ *
+ * ⚠️ An exception rather than a rewrite of the list: the list's design — a
+ * field the parser starts reading is compared the day it starts — is right,
+ * and what was wrong was that a name stood for every class carrying it.
+ */
+const VALUE_ON_THESE_OWNERS: Record<string, readonly string[]> = {
+  a: ['Color'],
+  b: ['Color'],
+  local: ['SliderData'],
+  offsets: ['TransformConstraintData'],
+};
+
+/** Whether the walk leaves `key` out on an object of class `owner`. */
+function notAValue(owner: string, key: string): boolean {
+  return key in NOT_A_VALUE_IN_THE_FILE && !(VALUE_ON_THESE_OWNERS[key] ?? []).includes(owner);
+}
+
+/**
+ * The class an object was parsed into when that class is one of several sharing
+ * a shape — it extends another class — or `null`.
+ *
+ * Reflection reads fields, and two classes with the same fields are the same
+ * object to it: a slider reading `rotate` holds a `FromRotate` and one reading
+ * `x` a `FromX`, both `{ offset, to }`, so moving a slider to another property
+ * moved no value (issue #1084). Measured over the parsed corpus, the only
+ * unnamed objects the walk expands whose class extends another are the
+ * transform and slider property classes (`From*`, `To*`); a pose, a colour and a
+ * sequence are classes of their own, so this adds nothing under them.
+ */
+function sharedShapeKind(obj: object): string | null {
+  const proto = Object.getPrototypeOf(obj) as object | null;
+  if (proto === null || proto === Object.prototype) return null;
+  const parent = Object.getPrototypeOf(proto) as object | null;
+  if (parent === null || parent === Object.prototype) return null;
+  return (obj.constructor as { name?: string } | undefined)?.name ?? null;
+}
 
 /** How deep a chain of unnamed objects may go before the walk says so and stops. */
 const VALUE_WALK_DEPTH = 10;
@@ -3501,7 +3561,24 @@ function pushValue(value: unknown, path: string, out: SkeletonValue[], depth: nu
   if (typeof value === 'function') return;
   if (ArrayBuffer.isView(value) || Array.isArray(value)) {
     const list = value as ArrayLike<unknown>;
-    for (let i = 0; i < list.length; i++) pushValue(list[i], `${path}/${i}`, out, depth + 1);
+    // A list whose every entry is an unnamed object of its own shared-shape
+    // class — a transform's `properties` and each one's `to` — is keyed by those
+    // classes rather than by position: the file writes them as an object keyed
+    // by property name, any writer may key it in its own order, and the
+    // parser's list follows that order. By position, the same map written
+    // backwards would read as every property moved (issue #1084).
+    const kinds: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i];
+      const kind =
+        typeof entry === 'object' && entry !== null && typeof (entry as Record<string, unknown>).name !== 'string'
+          ? sharedShapeKind(entry)
+          : null;
+      if (kind === null || kinds.includes(kind)) break;
+      kinds.push(kind);
+    }
+    const byKind = list.length > 0 && kinds.length === list.length;
+    for (let i = 0; i < list.length; i++) pushValue(list[i], `${path}/${byKind ? kinds[i] : i}`, out, depth + 1);
     return;
   }
   if (typeof value !== 'object') return;
@@ -3514,8 +3591,12 @@ function pushValue(value: unknown, path: string, out: SkeletonValue[], depth: nu
     out.push({ path, value: '(deeper than the walk goes)' });
     return;
   }
+  const owner = (obj.constructor as { name?: string } | undefined)?.name ?? '';
+  // The class, where it is the one thing the fields cannot say — see `sharedShapeKind`.
+  const kind = depth > 0 ? sharedShapeKind(obj) : null;
+  if (kind !== null) out.push({ path: `${path}/kind`, value: kind });
   for (const key of Object.keys(obj).sort()) {
-    if (key in NOT_A_VALUE_IN_THE_FILE) continue;
+    if (notAValue(owner, key)) continue;
     pushValue(obj[key], `${path}/${key}`, out, depth + 1);
   }
 }
@@ -3570,7 +3651,9 @@ function timelineKey(timeline: Timeline, data: ReturnType<SkeletonJson['readSkel
  * and setup attachment, every attachment in every skin (a region's offsets,
  * rotation, scale and size; a mesh's vertices, weights, `regionUVs`,
  * triangles, hull and edges; a bounding box's, path's and clipping shape's
- * vertices), every constraint's pose and flags, every event's payload, and for
+ * vertices), every constraint's pose, flags and modes — a transform's offsets
+ * and its property map, each entry by its class, and a slider's property by its
+ * class (issue #1084) — every event's payload, and for
  * every timeline every frame — time and values, from the runtime's own
  * `getFrameEntries()` — its curve type and Bezier samples, and its deform
  * vertices, attachment names, draw orders and event payloads.
@@ -3605,7 +3688,7 @@ export function skeletonValues(skeletonText: string, atlasText: string): Skeleto
     const at = `bones/${bone.name}`;
     const rec = bone as unknown as Record<string, unknown>;
     for (const key of Object.keys(rec).sort()) {
-      if (key in NOT_A_VALUE_IN_THE_FILE || key === 'name') continue;
+      if (notAValue('BoneData', key) || key === 'name') continue;
       pushValue(rec[key], `${at}/${key === 'setupPose' ? 'setup' : key}`, out, 1);
     }
   }
@@ -3613,7 +3696,7 @@ export function skeletonValues(skeletonText: string, atlasText: string): Skeleto
     const at = `slots/${slot.name}`;
     const rec = slot as unknown as Record<string, unknown>;
     for (const key of Object.keys(rec).sort()) {
-      if (key in NOT_A_VALUE_IN_THE_FILE || key === 'name') continue;
+      if (notAValue('SlotData', key) || key === 'name') continue;
       pushValue(rec[key], `${at}/${key === 'setupPose' ? 'setup' : key}`, out, 1);
     }
   }
@@ -3681,7 +3764,7 @@ export function skeletonValues(skeletonText: string, atlasText: string): Skeleto
         }
         const rec = timeline as unknown as Record<string, unknown>;
         for (const field of Object.keys(rec).sort()) {
-          if (field in NOT_A_VALUE_IN_THE_FILE || field === 'frames') continue;
+          if (notAValue(timeline.constructor?.name ?? '', field) || field === 'frames') continue;
           // The owner is in the path already; comparing the index as well would
           // report one reordering twice, in a measure that is not about order.
           if (field === 'boneIndex' || field === 'slotIndex' || field === 'constraintIndex') continue;

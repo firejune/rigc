@@ -4371,6 +4371,27 @@ const DIFF_MESH_FIXTURE = resolve(import.meta.dir, 'examples/6-arcs/export/6-arc
  * under the same names; neither reaches a slider's wiring, so neither is here.
  */
 const DIFF_SLIDER_SOURCE = { rig: 'gallery/look/rig.json', motion: 'gallery/look/motion.json' };
+
+/**
+ * The fourth fixture (issue #1085): `spineboy-pro`, the one export carrying every
+ * name the animations and attachments resolve that the three above do not — a
+ * clipping polygon with an `end`, attachment keys on many slots, ik and transform
+ * timelines, an event key, and fourteen constraints whose order poses
+ * differently (reversed, 98 of its 99 sampled poses move). Without it the cases
+ * about those names would mutate nothing.
+ */
+const DIFF_NAMES_FIXTURE = resolve(import.meta.dir, 'examples/spineboy/export/spineboy-pro.json');
+
+/**
+ * Each fixture's atlas, for the cases that read the VALUE walk as well as the
+ * structure (issue #1084): `skeletonValues` parses through spine-core, and a
+ * skeleton whose attachments need regions cannot be parsed without its pack.
+ */
+const DIFF_ATLASES = {
+  default: resolve(import.meta.dir, 'examples/3-timing-and-spacing/export/3-timing-and-spacing.atlas'),
+  mesh: resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs.atlas'),
+  names: resolve(import.meta.dir, 'examples/spineboy/export/spineboy.atlas'),
+} as const;
 /** `gallery/look`'s animations, renamed as #1040's probe named them, and the two copies it added. */
 const DIFF_SLIDER_RENAMES: ReadonlyArray<{ name: string; from: string }> = [
   { name: '5', from: 'turn' },
@@ -4381,8 +4402,8 @@ const DIFF_SLIDER_RENAMES: ReadonlyArray<{ name: string; from: string }> = [
 ];
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/** #1040's probe as a skeleton's JSON text — see `DIFF_SLIDER_SOURCE`. */
-function diffSliderProbeText(): string {
+/** #1040's probe as a skeleton's JSON text — see `DIFF_SLIDER_SOURCE` — and the atlas its build wrote. */
+function diffSliderProbe(): { text: string; atlasText: string } {
   const outDir = mkdtempSync(join(tmpdir(), 'rigc-diff-slider-probe-'));
   const built = compile({
     rigPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.rig),
@@ -4404,7 +4425,7 @@ function diffSliderProbeText(): string {
     if (to === undefined) throw new Error(`slider "${s.name}" applies "${s.animation}", which the probe does not rename`);
     s.animation = to.name;
   }
-  return JSON.stringify(j);
+  return { text: JSON.stringify(j), atlasText: built.atlasText };
 }
 
 /**
@@ -4424,8 +4445,11 @@ function editorRepointedSliders(j: any): Array<{ name: string; was: string; now:
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-/** Which fixture a case mutates. `mesh` is `DIFF_MESH_FIXTURE`, `sliders` is #1040's probe; the default is `DIFF_FIXTURE`. */
-type DiffFixture = 'default' | 'mesh' | 'sliders';
+/**
+ * Which fixture a case mutates. `mesh` is `DIFF_MESH_FIXTURE`, `sliders` is
+ * #1040's probe, `names` is `DIFF_NAMES_FIXTURE`; the default is `DIFF_FIXTURE`.
+ */
+type DiffFixture = 'default' | 'mesh' | 'sliders' | 'names';
 
 interface DiffCase {
   name: string;
@@ -4467,6 +4491,15 @@ interface DiffCase {
    * object and both values rather than a string typed beside it.
    */
   expectNote?: (candidate: Record<string, unknown>, reference: Record<string, unknown>) => { id: string; parts: string[] };
+  /**
+   * Every VALUE measure the edit must move, exactly (issue #1084), for a case
+   * about a field the value walk reads. Both sides are parsed through
+   * `skeletonValues` against the fixture's own atlas. Absent on a case that says
+   * nothing about the value level, which is then not computed.
+   */
+  expectValues?: string[];
+  /** What the moved value measure's note must say, as `expectNote` is for a structural one. */
+  expectValueNote?: (candidate: Record<string, unknown>, reference: Record<string, unknown>) => { id: string; parts: string[] };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -4540,7 +4573,9 @@ const DIFF_CASES: DiffCase[] = [
       'moves in either report. Both reported RATES move too, and that is correct rather than a smear: `light` is ' +
       "keyed harder than `heavy` per second, so deleting it changes the whole shot's keys-per-second and its " +
       'keys-per-timeline. This is the case that keeps the rates honest about being AGGREGATES over the shots that ' +
-      'exist — a per-animation figure would be unmoved here and would say the keying was unchanged',
+      'exist — a per-animation figure would be unmoved here and would say the keying was unchanged. ' +
+      '`animations.targets` moves with them since #1085: the deleted shot\'s timelines keyed bones, and those ' +
+      'targets are gone. `keyed_names` does not, because this fixture keys no attachment, draw order or event',
     expect: [
       'animations.count',
       'animations.names',
@@ -4550,6 +4585,7 @@ const DIFF_CASES: DiffCase[] = [
       'animations.curve_kinds',
       'animations.draw_order',
       'animations.deform',
+      'animations.targets',
     ],
     expectAgnostic: [],
     expectReported: ['animations.key_density', 'animations.keys_per_timeline'],
@@ -4572,8 +4608,10 @@ const DIFF_CASES: DiffCase[] = [
   },
   {
     name: 'D05_rename_every_bone_and_slot',
-    why: 'the case issue #21 was filed about: the same rig with its own vocabulary. Every name-keyed measure floors — including `attachments.names`, whose key embeds the slot name — and the name-agnostic reports stay at 1.000 throughout, because not one of their measures consults a name. A reader shown only the section mean would call this rig a total failure; shown the pair, they read "right shape, different words"',
+    why: 'the case issue #21 was filed about: the same rig with its own vocabulary. Every name-keyed measure floors — including `attachments.names`, whose key embeds the slot name — and the name-agnostic reports stay at 1.000 throughout, because not one of their measures consults a name. A reader shown only the section mean would call this rig a total failure; shown the pair, they read "right shape, different words". Since #1085 two more name-keyed figures floor with them, for the same reason: `animations.targets` (every timeline keys a renamed bone) and `attachments.refs` (keyed, like `attachments.names`, by the slot)',
     expect: [
+      'animations.targets',
+      'attachments.refs',
       'bones.names',
       'bones.parent_by_name',
       'bones.order',
@@ -5006,7 +5044,501 @@ const DIFF_CASES: DiffCase[] = [
       if (reversed === 0) throw new Error('fixture has no transform mapping two properties — the case would prove nothing');
     },
   },
+  // ── issue #1084: the value walk's blind spots, one plant per field let back in ──
+  {
+    name: 'D51_move_a_transform_constraint_offset',
+    fixture: 'mesh',
+    why:
+      'issue #1084: a transform\'s six offsets are the parser\'s `offsets` list, and the value walk skipped that key ' +
+      'by name because a sequence\'s region offsets share it. Measured before this case, `tail`\'s `y` offset moved ' +
+      'by 7 moved no value and moved the posed bones of every sample. Structure is untouched, so the value ' +
+      'measure for constraints is the only one that may move, and its note names the offset',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const tail = ((j as any).constraints as any[]).find((c) => c.type === 'transform' && c.name === 'tail');
+      if (tail === undefined) throw new Error('fixture has no transform `tail` — the case would prove nothing');
+      tail.y = (tail.y ?? 0) + 7;
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: () => ({ id: 'values.constraints', parts: ['constraints/TransformConstraintData:tail/offsets/'] }),
+  },
+  {
+    name: 'D52_move_what_a_transform_property_adds_on_the_way_out',
+    fixture: 'mesh',
+    why:
+      'issue #1084: everything inside `properties` was skipped by name (`derived from the constraint`, which it is ' +
+      'not — it is the file\'s from/to map). The `to` entry\'s `offset` is added to what the transform writes; set ' +
+      'from 0 to 5 on `tail`\'s `x>x`, it moved no value and moved every sampled pose',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const to = ((j as any).constraints as any[]).find((c) => c.name === 'tail')?.properties?.x?.to?.x;
+      if (to === undefined) throw new Error('fixture has no `tail` mapping x onto x — the case would prove nothing');
+      to.offset = 5;
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: () => ({ id: 'values.constraints', parts: ['constraints/TransformConstraintData:tail/properties/FromX/to/ToX/offset'] }),
+  },
+  {
+    name: 'D53_move_a_transform_property_s_ceiling',
+    fixture: 'mesh',
+    why:
+      'the `to` entry\'s `max`, which reaches a pose only where the transform clamps — measured on spineboy-pro\'s ' +
+      '`front-foot-board-transform`: `max` 100 → 1 alone moved nothing, and with `clamp` on both sides moved 97 of the ' +
+      '99 sampled poses. It is a value the file carries either way, so the walk reads it either way',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const to = ((j as any).constraints as any[]).find((c) => c.name === 'tail')?.properties?.x?.to?.x;
+      if (to === undefined) throw new Error('fixture has no `tail` mapping x onto x — the case would prove nothing');
+      to.max = 50;
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: () => ({ id: 'values.constraints', parts: ['constraints/TransformConstraintData:tail/properties/FromX/to/ToX/max 50 vs 100'] }),
+  },
+  {
+    name: 'D54_move_what_a_transform_property_subtracts_on_the_way_in',
+    fixture: 'mesh',
+    why:
+      'the `from` entry\'s own `offset`, read off the source before it is mapped: 0 → 5 on `tail` moved no value and ' +
+      'moved every sampled pose',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const from = ((j as any).constraints as any[]).find((c) => c.name === 'tail')?.properties?.x;
+      if (from === undefined) throw new Error('fixture has no `tail` reading x — the case would prove nothing');
+      from.offset = 5;
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: () => ({ id: 'values.constraints', parts: ['constraints/TransformConstraintData:tail/properties/FromX/offset'] }),
+  },
+  {
+    name: 'D55_remap_a_transform_property_and_see_it_in_the_values_too',
+    fixture: 'mesh',
+    why:
+      'D49\'s plant read at the value level. The pair is now keyed by its classes (`FromX`, `ToY`) rather than by ' +
+      'position, so the walk names the property written rather than moving `mixX` by a side effect, which is all ' +
+      'it saw before. `constraints.refs` moves as it does in D49',
+    expect: ['constraints.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const tail = ((j as any).constraints as any[]).find((c) => c.name === 'tail');
+      if (tail?.properties?.x?.to?.x === undefined) throw new Error('fixture has no `tail` mapping x onto x — the case would prove nothing');
+      tail.properties = { x: { ...tail.properties.x, to: { y: tail.properties.x.to.x } } };
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: () => ({ id: 'values.constraints', parts: ['properties/FromX/to/ToY', '(candidate only)'] }),
+  },
+  {
+    name: 'D56_write_a_transform_properties_map_backwards_and_move_no_value',
+    fixture: 'mesh',
+    why:
+      'the tolerance half of D52–D55 at the value level, as D50 is at the structural one: the parser\'s list ' +
+      'follows the order a writer keyed the map in, and posed, that order changes nothing (measured on spineboy-pro\'s ' +
+      'six-property transform). Keyed by position, the walk would have called the reversed map every property moved',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      let reversed = 0;
+      for (const c of ((j as any).constraints as any[]).filter((k) => k.type === 'transform')) {
+        const from = Object.entries(c.properties ?? {}) as Array<[string, any]>;
+        if (from.length < 2) continue;
+        c.properties = Object.fromEntries(from.reverse());
+        reversed++;
+      }
+      if (reversed === 0) throw new Error('fixture has no transform mapping two properties — the case would prove nothing');
+    },
+    expectValues: [],
+  },
+  {
+    name: 'D57_move_a_slider_to_another_property_and_see_it_in_the_values',
+    fixture: 'sliders',
+    why:
+      'D48\'s plant at the value level: a slider reading `rotate` holds a `FromRotate`, one reading `x` a `FromX`, ' +
+      'and the two have the same fields, so the walk — which reads fields — saw nothing. The class is now a value ' +
+      'of its own wherever it is one of several sharing a shape',
+    expect: ['constraints.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slider = ((j as any).constraints as any[]).find((c) => c.type === 'slider' && c.property === 'rotate');
+      if (slider === undefined) throw new Error('the probe has no slider reading `rotate` — the case would prove nothing');
+      slider.property = 'x';
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: (candidate) => {
+      const moved = ((candidate as any).constraints as any[]).find((c) => c.type === 'slider' && c.property === 'x');
+      return { id: 'values.constraints', parts: [`constraints/SliderData:${moved?.name}/property/kind "FromX" vs "FromRotate"`] };
+    },
+  },
+  {
+    name: 'D58_flip_a_slider_s_local_flag',
+    fixture: 'sliders',
+    why:
+      'issue #1084: a slider\'s `local` shares its name with a bone pose\'s derived `local`, and the skip list ' +
+      'dropped both. Flipped on `yaw`, it moved no value and moved the posed bones of 5 of `gallery/look`\'s 27 ' +
+      'samples. `local` is a flag, so no structural measure may move',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slider = ((j as any).constraints as any[]).find((c) => c.type === 'slider');
+      if (slider === undefined) throw new Error('the probe has no slider — the case would prove nothing');
+      slider.local = !(slider.local ?? false);
+    },
+    expectValues: ['values.constraints'],
+    expectValueNote: (candidate) => {
+      const s = ((candidate as any).constraints as any[]).find((c) => c.type === 'slider');
+      return { id: 'values.constraints', parts: [`constraints/SliderData:${s?.name}/local`] };
+    },
+  },
+  {
+    name: 'D59_make_a_tinted_slot_translucent',
+    fixture: 'names',
+    why:
+      'issue #1084, and the widest of the walk\'s blind spots: a `Color`\'s `a` and `b` share their names with two ' +
+      'entries of a bone\'s world matrix, so every slot, dark, bone and attachment colour lost its alpha and its ' +
+      'blue. A slot\'s alpha `ff` → `80` moved no value and changes every posed slot row. The slot already states a ' +
+      'tint, so `color_present` agrees and the value measure for slots is the only one that may move',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slot = ((j as any).slots as any[]).find((s) => typeof s.color === 'string' && s.color.length === 8 && s.color.slice(6) !== '80');
+      if (slot === undefined) throw new Error('fixture has no tinted slot — the case would prove nothing');
+      slot.color = `${slot.color.slice(0, 6)}80`;
+    },
+    expectValues: ['values.slots'],
+    expectValueNote: (candidate, reference) => {
+      const at = ((candidate as any).slots as any[]).findIndex((s: any, i: number) => s.color !== ((reference as any).slots as any[])[i].color);
+      return { id: 'values.slots', parts: [`slots/${((candidate as any).slots as any[])[at]?.name}/setup/color/a`] };
+    },
+  },
+  {
+    name: 'D60_take_the_blue_out_of_a_tinted_slot',
+    fixture: 'names',
+    why: 'the other channel the matrix entries hid: a tinted slot\'s blue byte to 00, invisible to the walk before, and every posed slot row changes',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slot = ((j as any).slots as any[]).find((s) => typeof s.color === 'string' && s.color.length === 8 && s.color.slice(4, 6) !== '00');
+      if (slot === undefined) throw new Error('fixture has no tinted slot with blue in it — the case would prove nothing');
+      slot.color = `${slot.color.slice(0, 4)}00${slot.color.slice(6)}`;
+    },
+    expectValues: ['values.slots'],
+    expectValueNote: (candidate, reference) => {
+      const at = ((candidate as any).slots as any[]).findIndex((s: any, i: number) => s.color !== ((reference as any).slots as any[])[i].color);
+      return { id: 'values.slots', parts: [`slots/${((candidate as any).slots as any[])[at]?.name}/setup/color/b`] };
+    },
+  },
+  {
+    name: 'D61_make_a_region_attachment_translucent',
+    fixture: 'names',
+    why:
+      'the same blind spot on an attachment\'s own colour, which the pose oracle does not read and the frame does: ' +
+      'rendered, 1 of spineboy-pro\'s 190 frames changes. No structural measure reads an attachment\'s colour, so ' +
+      'the value measure for attachments is the only one that may move',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const att of Object.values(table) as any[]) {
+            if ((att.type ?? 'region') !== 'region' || att.color !== undefined) continue;
+            att.color = 'ffffff80';
+            return;
+          }
+        }
+      }
+      throw new Error('fixture has no untinted region — the case would prove nothing');
+    },
+    expectValues: ['values.attachments'],
+    expectValueNote: () => ({ id: 'values.attachments', parts: ['/color/a 0.5019607843137255 vs 1'] }),
+  },
+  // ── issue #1085: the names `diff` could not see ──────────────────────────────
+  {
+    name: 'D62_declare_the_constraints_in_another_order',
+    fixture: 'names',
+    why:
+      'issue #1085: 4.3 applies its one constraint array in order, and reversed, spineboy-pro moves 98 of its 99 ' +
+      'sampled poses — while every measure here read 1.000 and the value walk, which keys constraints by name, ' +
+      'could not see it by construction. `constraints.order` alone moves, and its note lists both orders',
+    expect: ['constraints.order'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const list = (j as any).constraints as any[];
+      if ((list ?? []).length < 2) throw new Error('fixture has fewer than two constraints — the case would prove nothing');
+      list.reverse();
+    },
+    expectNote: (candidate) => {
+      const first = ((candidate as any).constraints as any[])[0];
+      return { id: 'constraints.order', parts: ['out of order', `candidate ${first.type} constraint "${first.name}"`] };
+    },
+    expectValues: [],
+  },
+  {
+    name: 'D63_move_a_bone_timeline_onto_another_bone',
+    why:
+      'issue #1085: `timeline_kinds` keeps a timeline\'s kind and drops its target, so a rotate timeline moved from ' +
+      'one bone to another read 1.000 everywhere — and posed, it is another animation. `animations.targets` is the ' +
+      'measure that names the bone, and the note names both sides\' timeline',
+    expect: ['animations.targets'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const bones = ((j as any).bones as any[]).map((b) => b.name as string);
+      for (const anim of Object.values((j as any).animations ?? {}) as any[]) {
+        const keyed = Object.keys(anim.bones ?? {});
+        const free = bones.find((b) => !keyed.includes(b));
+        if (keyed.length === 0 || free === undefined) continue;
+        anim.bones[free] = anim.bones[keyed[0]];
+        delete anim.bones[keyed[0]];
+        return;
+      }
+      throw new Error('fixture has no bone timeline with an unkeyed bone to move it to — the case would prove nothing');
+    },
+    expectNote: () => ({ id: 'animations.targets', parts: ['candidate only:', 'reference only:', '|bones|'] }),
+  },
+  {
+    name: 'D64_swap_two_slots_attachment_keys',
+    fixture: 'names',
+    why:
+      'issue #1085: an attachment key names what a slot shows from that key on, and two slots\' keys swapped ' +
+      'between them keep every timeline, every key count and every kind — measured, 9 of spineboy-pro\'s 99 ' +
+      'sampled draws change. `animations.keyed_names` is the measure for a key\'s names',
+    expect: ['animations.keyed_names'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      for (const anim of Object.values((j as any).animations ?? {}) as any[]) {
+        const firsts = Object.entries(anim.slots ?? {})
+          .filter(([, t]: [string, any]) => typeof t.attachment?.[0]?.name === 'string')
+          .map(([, t]: [string, any]) => t.attachment[0]);
+        const pair = firsts.find((k) => k.name !== firsts[0].name);
+        if (pair === undefined) continue;
+        [firsts[0].name, pair.name] = [pair.name, firsts[0].name];
+        return;
+      }
+      throw new Error('fixture has no animation keying two slots to different attachments — the case would prove nothing');
+    },
+    expectNote: () => ({ id: 'animations.keyed_names', parts: ['candidate only:', '|attachment key 0|'] }),
+  },
+  {
+    name: 'D65_move_a_draw_order_offset_onto_the_next_slot',
+    fixture: 'names',
+    why:
+      'a draw-order key names the slot it moves: measured on spineboy-ess, an offset moved onto the next slot ' +
+      'changes 9 of its 72 sampled draw orders. spineboy-pro keys no draw order, so both sides are given the same ' +
+      'key and the candidate\'s names the slot after it',
+    expect: ['animations.keyed_names'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutateReference: (j) => {
+      const slots = (j as any).slots as any[];
+      theFirstAnimationOf(j).drawOrder = [{ time: 0.2, offsets: [{ slot: slots[1].name, offset: 1 }] }];
+    },
+    mutate: (j) => {
+      const slots = (j as any).slots as any[];
+      theFirstAnimationOf(j).drawOrder = [{ time: 0.2, offsets: [{ slot: slots[2].name, offset: 1 }] }];
+    },
+    expectNote: (_c, reference) => ({
+      id: 'animations.keyed_names',
+      parts: [`|drawOrder key 0|${((reference as any).slots as any[])[2].name}`, `|drawOrder key 0|${((reference as any).slots as any[])[1].name}`],
+    }),
+  },
+  {
+    name: 'D66_fire_another_event_from_a_key',
+    fixture: 'names',
+    why:
+      'an event key names the event it fires, and `event_keys` counts firings: a key that fires a second, identical ' +
+      'event read 1.000 — measured, it changes the event block of the sample it falls in. The second event is ' +
+      'declared on both sides, so `events` agrees and `keyed_names` alone moves',
+    expect: ['animations.keyed_names'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutateReference: (j) => {
+      const events = (j as any).events as Record<string, unknown>;
+      const first = Object.keys(events)[0];
+      events[`${first}-2`] = structuredClone(events[first]);
+    },
+    mutate: (j) => {
+      const events = (j as any).events as Record<string, unknown>;
+      const first = Object.keys(events)[0];
+      events[`${first}-2`] = structuredClone(events[first]);
+      for (const anim of Object.values((j as any).animations ?? {}) as any[]) {
+        if (!Array.isArray(anim.events) || anim.events.length === 0) continue;
+        anim.events[0].name = `${first}-2`;
+        return;
+      }
+      throw new Error('fixture has no event key — the case would prove nothing');
+    },
+    expectNote: () => ({ id: 'animations.keyed_names', parts: ['|event key 0|'] }),
+  },
+  {
+    name: 'D67_point_a_region_at_another_atlas_region',
+    fixture: 'names',
+    why:
+      'issue #1085: a region\'s `path` is the atlas region it draws, and moved to the other eye of spineboy-pro it ' +
+      'changes 94 of the 99 sampled draws — under every key, name and type agreeing. `attachments.refs` reads the ' +
+      'region the runtime resolves',
+    expect: ['attachments.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          const regions = Object.entries(table).filter(([, a]: [string, any]) => (a.type ?? 'region') === 'region' && a.sequence === undefined);
+          if (regions.length < 2) continue;
+          (regions[0][1] as any).path = (regions[1][1] as any).path ?? (regions[1][1] as any).name ?? regions[1][0];
+          return;
+        }
+      }
+      throw new Error('fixture has no slot holding two regions — the case would prove nothing');
+    },
+    expectNote: () => ({ id: 'attachments.refs', parts: ['1 differ: attachment', ': path '] }),
+  },
+  {
+    name: 'D68_end_a_clipping_polygon_at_another_slot',
+    fixture: 'names',
+    why:
+      'a clipping attachment\'s `end` is the slot its clipping stops at; moved six slots on in spineboy-pro, the ' +
+      'clipping of 9 of its 99 sampled poses changes. One of the twelve editor exports carries a clipping polygon, ' +
+      'and nothing compared its end',
+    expect: ['attachments.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slots = ((j as any).slots as any[]).map((s) => s.name as string);
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const att of Object.values(table) as any[]) {
+            if (att.type !== 'clipping' || typeof att.end !== 'string') continue;
+            att.end = slots[Math.min(slots.length - 1, slots.indexOf(att.end) + 6)];
+            return;
+          }
+        }
+      }
+      throw new Error('fixture has no clipping attachment with an end — the case would prove nothing');
+    },
+    expectNote: (candidate) => {
+      let end = '';
+      for (const skin of (candidate as any).skins ?? []) for (const table of Object.values(skin.attachments ?? {}) as any[]) for (const att of Object.values(table) as any[]) if (att.type === 'clipping') end = att.end;
+      return { id: 'attachments.refs', parts: [`end "${end}" vs "head-bb"`] };
+    },
+  },
+  {
+    name: 'D69_link_a_mesh_to_another_source',
+    fixture: 'mesh',
+    why:
+      'a linked mesh takes its vertices and triangles from its `source`, and none of the twelve editor exports ' +
+      'carries one, so both sides are given one beside the first mesh: the reference\'s links to it, the ' +
+      'candidate\'s to the second mesh, named with its slot. Measured on gallery/nod, a linked mesh taking `ear_r` ' +
+      'instead of `ear_l` changes every sampled draw',
+    expect: ['attachments.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutateReference: (j) => linkMeshTo(j, 0),
+    mutate: (j) => linkMeshTo(j, 1),
+    expectNote: () => ({ id: 'attachments.refs', parts: ['1 differ:', 'source '] }),
+  },
+  {
+    name: 'D70_leave_a_skin_required_bone_out_of_its_skin',
+    why:
+      'issue #1085: a bone marked `skin: true` is active only under a skin that lists it, and a skin\'s `bones` were ' +
+      'compared by nothing. Measured on gallery/look, a dial bone left out of the skin\'s list moves every one of the ' +
+      '27 sampled poses. Both sides mark the bone; only the reference lists it',
+    expect: ['attachments.skin_members'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutateReference: (j) => {
+      const bone = ((j as any).bones as any[])[1];
+      bone.skin = true;
+      ((j as any).skins as any[])[0].bones = [bone.name];
+    },
+    mutate: (j) => {
+      ((j as any).bones as any[])[1].skin = true;
+    },
+    expectNote: (_c, reference) => ({ id: 'attachments.skin_members', parts: [`bones none vs "${((reference as any).bones as any[])[1].name}"`] }),
+  },
+  {
+    name: 'D71_state_every_region_s_path_as_the_region_it_already_resolves',
+    fixture: 'names',
+    why:
+      'the tolerance half of D67, as D46 is of D45: a stated `path` equal to the region the runtime would have ' +
+      'resolved anyway is the same region, so `attachments.refs` reads the resolved one and not the field',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      let stated = 0;
+      for (const skin of (j as any).skins ?? []) {
+        for (const table of Object.values(skin.attachments ?? {}) as any[]) {
+          for (const [key, att] of Object.entries(table) as Array<[string, any]>) {
+            if (!['region', 'mesh'].includes(att.type ?? 'region') || att.path !== undefined) continue;
+            att.path = att.name ?? key;
+            stated++;
+          }
+        }
+      }
+      if (stated === 0) throw new Error('fixture has no region or mesh leaving its path to the parser — the case would prove nothing');
+    },
+  },
+  {
+    name: 'D72_write_every_timeline_group_in_another_key_order',
+    fixture: 'names',
+    why:
+      'the tolerance half of D63–D66: an animation\'s groups are JSON objects any writer may key in its own order, ' +
+      'so the targets are a multiset and the same timelines written backwards move nothing',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      for (const anim of Object.values((j as any).animations ?? {}) as any[]) {
+        for (const group of ['bones', 'slots', 'ik', 'transform']) {
+          if (anim[group] !== undefined) anim[group] = Object.fromEntries(Object.entries(anim[group]).reverse());
+        }
+      }
+    },
+  },
 ];
+
+/** The first animation a fixture declares, refusing a fixture with none. */
+function theFirstAnimationOf(j: any): any {
+  const names = Object.keys(j.animations ?? {});
+  if (names.length === 0) throw new Error('fixture carries no animation — the case would prove nothing');
+  return j.animations[names[0]];
+}
+
+/**
+ * A linked mesh beside the fixture's first mesh, linked to its `n`th mesh (D69):
+ * in the first mesh's slot, keyed `linked`, drawing the first mesh's own region
+ * whatever its source, and naming the source's slot when that is another one.
+ */
+function linkMeshTo(j: any, n: number): void {
+  const meshes: Array<{ slot: string; key: string; att: any }> = [];
+  for (const [slot, table] of Object.entries(j.skins[0].attachments) as Array<[string, any]>) {
+    for (const [key, att] of Object.entries(table) as Array<[string, any]>) if (att.type === 'mesh') meshes.push({ slot, key, att });
+  }
+  if (meshes.length < 2) throw new Error(`fixture has ${meshes.length} mesh(es) where linking one to another needs two`);
+  const [first] = meshes;
+  const source = meshes[n];
+  j.skins[0].attachments[first.slot].linked = {
+    type: 'linkedmesh',
+    source: source.key,
+    path: first.att.path ?? first.key,
+    ...(source.slot === first.slot ? {} : { slot: source.slot }),
+  };
+}
 
 /**
  * The single animation of a one-shot fixture, refusing anything else.
@@ -5399,7 +5931,7 @@ function runDiffPairingControls(texts: Record<DiffFixture, string>): number {
 }
 
 /** The mutant cases, over whichever fixture each one names. Returns the failure count. */
-function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
+function runDiffMeasureControls(texts: Record<DiffFixture, string>, atlases: Record<DiffFixture, string>): number {
   let bad = 0;
   for (const c of DIFF_CASES) {
     const text = texts[c.fixture ?? 'default'];
@@ -5428,13 +5960,41 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
             ...report.header.measures,
           ].find((m) => m.id === noteWanted.id);
     const noteMissing = noteWanted === undefined ? [] : noteWanted.parts.filter((p) => !(noteMeasure?.note ?? '').includes(p));
-    if (want === got && wantAgnostic === gotAgnostic && wantReported === gotReported && noteMissing.length === 0) {
+    // The value level, for a case that states it: both sides through the
+    // parser, against the fixture's own pack (issue #1084).
+    const atlas = atlases[c.fixture ?? 'default'];
+    const values =
+      c.expectValues === undefined
+        ? []
+        : diffSkeletonValues(skeletonValues(JSON.stringify(candidate), atlas), skeletonValues(JSON.stringify(reference), atlas));
+    const movedValues = movedValueMeasures(values);
+    const wantValues = [...(c.expectValues ?? [])].sort().join(', ');
+    const gotValues = [...movedValues].sort().join(', ');
+    const valueNoteWanted = c.expectValueNote?.(candidate, reference);
+    const valueNoteMeasure = valueNoteWanted === undefined ? undefined : values.find((m) => m.id === valueNoteWanted.id);
+    const valueNoteMissing =
+      valueNoteWanted === undefined ? [] : valueNoteWanted.parts.filter((p) => !(valueNoteMeasure?.note ?? '').includes(p));
+    if (
+      want === got &&
+      wantAgnostic === gotAgnostic &&
+      wantReported === gotReported &&
+      noteMissing.length === 0 &&
+      wantValues === gotValues &&
+      valueNoteMissing.length === 0
+    ) {
       console.log(
         `  PASS  ${c.name}  (moved exactly ${moved.length} name-matched, ${movedAgnostic.length} name-agnostic, ` +
-          `${movedReported.length} reported measure(s))`,
+          `${movedReported.length} reported measure(s)` +
+          (c.expectValues === undefined ? '' : `, ${movedValues.length} value measure(s)`) +
+          ')',
       );
       if (noteMeasure !== undefined) {
         console.log(`          ${noteMeasure.id} ${noteMeasure.matched}/${noteMeasure.total} — ${noteMeasure.note ?? 'no note'}`);
+      }
+      if (valueNoteMeasure !== undefined) {
+        console.log(
+          `          ${valueNoteMeasure.id} ${valueNoteMeasure.matched}/${valueNoteMeasure.total} — ${valueNoteMeasure.note ?? 'no note'}`,
+        );
       }
       console.log(`          ${c.why}`);
     } else {
@@ -5458,6 +6018,17 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
             `does not say: ${noteMissing.map((p) => JSON.stringify(p)).join(', ')}`,
         );
       }
+      if (wantValues !== gotValues) {
+        console.log(`          values expected to move: [${wantValues}]`);
+        console.log(`          values actually moved:   [${gotValues}]`);
+        for (const m of values.filter((v) => v.ratio < 1)) console.log(`            ${m.id} ${m.matched}/${m.total} — ${m.note ?? 'no note'}`);
+      }
+      if (valueNoteMissing.length > 0) {
+        console.log(
+          `          ${valueNoteWanted?.id} note ${valueNoteMeasure === undefined ? '(no such measure)' : JSON.stringify(valueNoteMeasure.note ?? '')} ` +
+            `does not say: ${valueNoteMissing.map((p) => JSON.stringify(p)).join(', ')}`,
+        );
+      }
     }
   }
   return bad;
@@ -5473,7 +6044,7 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
  * bracketed is named rather than quietly dropped out of one of the two halves.
  */
 function runDiffSuite(tally: RunTally): number | null {
-  const missing = [DIFF_FIXTURE, DIFF_MESH_FIXTURE].filter((f) => !existsSync(f));
+  const missing = [DIFF_FIXTURE, DIFF_MESH_FIXTURE, DIFF_NAMES_FIXTURE, ...Object.values(DIFF_ATLASES)].filter((f) => !existsSync(f));
   if (missing.length > 0) {
     console.log('\n── rigc diff ──');
     console.log('  SKIP  the diff self-checks did not run: no example corpus on disk.');
@@ -5482,11 +6053,19 @@ function runDiffSuite(tally: RunTally): number | null {
     console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
     return null;
   }
-  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro, #1040\'s slider probe from gallery/look) ──');
+  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro, #1040\'s slider probe from gallery/look, spineboy-pro) ──');
+  const probe = diffSliderProbe();
   const texts: Record<DiffFixture, string> = {
     default: readFileSync(DIFF_FIXTURE, 'utf8'),
     mesh: readFileSync(DIFF_MESH_FIXTURE, 'utf8'),
-    sliders: diffSliderProbeText(),
+    sliders: probe.text,
+    names: readFileSync(DIFF_NAMES_FIXTURE, 'utf8'),
+  };
+  const atlases: Record<DiffFixture, string> = {
+    default: readFileSync(DIFF_ATLASES.default, 'utf8'),
+    mesh: readFileSync(DIFF_ATLASES.mesh, 'utf8'),
+    sliders: probe.atlasText,
+    names: readFileSync(DIFF_ATLASES.names, 'utf8'),
   };
   let bad = 0;
 
@@ -5504,6 +6083,8 @@ function runDiffSuite(tally: RunTally): number | null {
       // itself, so the slider wiring those two move reads 1.000 on an
       // identical pair before either case is allowed to say it moved.
       runDiffIdentityControls('gallery/look slider probe', texts.sliders) +
+      // The positive control for the name cases over spineboy-pro (issue #1085).
+      runDiffIdentityControls('spineboy-pro', texts.names) +
       // In this phase and not a third one: a renamed copy against its original
       // is an identity comparison whose vocabulary moved, which is the question
       // this phase already asks. A third bracket would also need the summary to
@@ -5511,7 +6092,7 @@ function runDiffSuite(tally: RunTally): number | null {
       // they are name-agnostic controls over both fixtures.
       runDiffPairingControls(texts),
   );
-  bad += tally.partOf('diff', 'measure', () => runDiffMeasureControls(texts));
+  bad += tally.partOf('diff', 'measure', () => runDiffMeasureControls(texts, atlases));
   return bad;
 }
 
@@ -104212,7 +104793,7 @@ function main(): void {
           .join(', ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
       : `, + ${n('diff/identity')} diff identity controls (name-matched, name-agnostic and reported, over a ` +
-        'mesh-free fixture, a mesh-carrying one and a slider probe built from gallery/look)' +
+        'mesh-free fixture, a mesh-carrying one, a slider probe built from gallery/look and spineboy-pro)' +
         `, + ${n('diff/measure')} diff measure controls, ` +
         '+ ' + n('check') + ' check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
