@@ -17,8 +17,8 @@ import type { SkinEntryFacts } from '../facts/skin_entries.ts';
 import type { StageFacts } from '../facts/stage.ts';
 import { SKIP_NO_ATLAS, SKIP_NO_ATLAS_PAGE } from '../reasons.ts';
 import { pageFootprint } from '../../atlas.ts';
-import { colourTypeName, readPngHeader } from '../../png.ts';
-import { readPlate } from '../../../tools/plate.ts';
+import { colourTypeName, NotAPngError, readPngHeader } from '../../png.ts';
+import { type Plate, readPlate } from '../../../tools/plate.ts';
 import type { RigInfo } from '../../types.ts';
 
 export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atlas }: AtlasRegionFacts, stage: StageFacts, { regionAttachments }: Pick<SkinEntryFacts, 'regionAttachments'>, input: { atlasDir: string; rig?: RigInfo }): void {
@@ -160,16 +160,32 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
     // holding nothing but the base plate had nothing for this rule to read
     // either way and moves nothing, exactly as a missing one does.
     //
-    // ⚠️ Only what `pngProblem` refuses comes here. A page whose header it
-    // accepts and whose texels the decoder then refuses (a broken zlib stream
-    // in an intact chunk walk) reaches `readPlate` below, which A06 never
-    // calls — this rule is the one reader that finds that file unreadable,
-    // and its line is unchanged by this.
+    // 🔒 **So does a page whose header reads and whose image data does not
+    // decode** (issue #1074). It used to reach `readPlate` below and come out
+    // as this rule's `threw: cannot decode PNG …` — a stack message as the
+    // detail, on 12 of the 19 recipes with a stream broken — because `A06`
+    // read the header only. `A06` now asks the decoder's refusing half too
+    // (`imageDataProblem`) and fails naming the file under both profiles, so
+    // the page is its, by #1064's rule, and joins the same list — at the two
+    // places below where this rule decodes (`decoded`), and not before them:
+    // the header's fast negative (#215) still refuses a file that has nowhere
+    // to keep a clear texel without opening it, which is a verdict about the
+    // header and not about the pixels A06 found unreadable (PT13).
     const header = readPngHeader(abs);
-    if (header.problem !== null) {
+    if (header.info === null) {
       if (carriesPart) unreadable.push(page.name); // A06 names the file; this body says only that it did not read it
       continue;
     }
+    const decoded = (): Plate | null => {
+      try {
+        return readPlate(abs);
+      } catch (err) {
+        // `pngProblem` has accepted the file, so this is the decoder's refusal (`readPlate`'s, #1074): A06 names it.
+        if (!(err instanceof NotAPngError)) throw err;
+        if (carriesPart) unreadable.push(page.name);
+        return null;
+      }
+    };
     if (on.length > 1) {
       // 🚨 A rotated region is refused by A06 under this profile, so this
       // reading was assumed to be cosmetic — a rectangle printed beside a
@@ -203,7 +219,8 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
       // what was not measured, which is also what "green means measured"
       // requires: a part this rule could not read must not be certified by
       // it.
-      const plate = readPlate(abs);
+      const plate = decoded();
+      if (plate === null) continue;
       // 🚨 **The scan's coordinates are the atlas's, so a file that is not the
       // declared grid is a non-measurement for every region on it** (issue
       // #715), and #705's clause above does not cover it. That one fires when
@@ -315,7 +332,8 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
     // loose page the file IS the part, so no atlas coordinate is read and
     // #705's and #715's non-measurements cannot arise here — and the scan
     // stops at the first clear texel, as the shared page's does.
-    const plate = readPlate(abs);
+    const plate = decoded();
+    if (plate === null) continue;
     let transparent = false;
     for (let y = 0; y < plate.height && !transparent; y++) {
       for (let x = 0; x < plate.width; x++) {

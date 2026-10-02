@@ -15,7 +15,7 @@
 import { deflateSync, inflateSync } from 'node:zlib';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { drawText, textWidth } from './font5x7.ts';
-import { assertPng } from '../src/png.ts';
+import { assertPng, NotAPngError } from '../src/png.ts';
 
 export type RGBA = [number, number, number, number];
 
@@ -266,33 +266,27 @@ function toByte(sample: number, bitDepth: number): number {
   return Math.round((sample * 255) / ((1 << bitDepth) - 1));
 }
 
+/** What `decodePng` has once the stream is inflated and before a scanline is unfiltered. */
+interface InflatedPng {
+  width: number;
+  height: number;
+  bitDepth: number;
+  colourType: number;
+  channels: number;
+  pal: Uint8Array;
+  alphaTable: Uint8Array | null;
+  raw: Uint8Array;
+}
+
 /**
- * Read a PNG back into a `Plate`, expanding whatever it is to straight RGBA.
- *
- * `src/png.ts` parses 26 bytes because that is all the COMPILER needs, and it
- * stays that way: the compiler never re-measures art. This
- * decoder is for the measuring tools, which is where art measurement belongs -
- * the same division that puts `mesh.center` in the manifest as a measured number
- * rather than as something the compiler derives at build time.
- *
- * ⭐ **Every colour type the gate accepts is decodable here** (issue #226). It
- * used to read colour types 2 and 6 only, which was the compiler's own old blind
- * spot rebuilt one step later: `A19` learned in #215 that indexed and greyscale
- * art carrying a `tRNS` chunk is ordinary transparent art — ImageMagick, PNG-8
- * export, GIMP indexed, aseprite and pngquant all write it — so such a part
- * builds and validates green, and would then have been refused by the one command
- * whose whole job is to show the author what they built. A wall removed at the
- * gate and rebuilt at the picture is not a wall removed.
- *
- * So the expansion happens here, at decode: a palette index becomes its `PLTE`
- * entry with its `tRNS` alpha, a greyscale sample becomes three equal channels,
- * and a `tRNS` colour on a type 0 or 2 file becomes alpha 0 on the pixels that
- * match it. Every caller above this line keeps seeing exactly one thing, RGBA.
- *
- * Interlaced files are still refused: Adam7 is a second sample layout rather than
- * a second sample format, and no tool in the corpus writes one.
+ * The half of `decodePng` that can fail: the chunk walk, the header's own
+ * checks, the inflate of every `IDAT` concatenated, and whether what came out
+ * is as long as the header says the image is (issue #1074). Everything after
+ * it — unfiltering, expanding to RGBA — reads bytes that are there and cannot
+ * refuse, so `imageDataProblem` runs exactly this and nothing else, and is the
+ * decoder's own answer rather than a second opinion beside it.
  */
-export function decodePng(buf: Uint8Array): Plate {
+function inflatePng(buf: Uint8Array): InflatedPng {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   let at = 8;
   let width = 0;
@@ -329,6 +323,47 @@ export function decodePng(buf: Uint8Array): Plate {
   const alphaTable = trns;
 
   const raw = new Uint8Array(inflateSync(Buffer.concat(idat.map((c) => Buffer.from(c)))));
+  // A stream that inflates clean and short is as undecodable as one that does
+  // not inflate: the rows past its end would be read as zeros, a picture the
+  // file never held. Longer is accepted — the spec's decoders ignore the excess.
+  const needed = height * (Math.ceil((width * channels * bitDepth) / 8) + 1);
+  if (raw.length < needed) {
+    throw new Error(
+      `its image data inflates to ${raw.length} byte(s), where a ${width}x${height} image of colour type ` +
+        `${colourType} at bit depth ${bitDepth} needs ${needed}`,
+    );
+  }
+  return { width, height, bitDepth, colourType, channels, pal, alphaTable, raw };
+}
+
+/**
+ * Read a PNG back into a `Plate`, expanding whatever it is to straight RGBA.
+ *
+ * `src/png.ts` parses 26 bytes because that is all the COMPILER needs, and it
+ * stays that way: the compiler never re-measures art. This
+ * decoder is for the measuring tools, which is where art measurement belongs -
+ * the same division that puts `mesh.center` in the manifest as a measured number
+ * rather than as something the compiler derives at build time.
+ *
+ * ⭐ **Every colour type the gate accepts is decodable here** (issue #226). It
+ * used to read colour types 2 and 6 only, which was the compiler's own old blind
+ * spot rebuilt one step later: `A19` learned in #215 that indexed and greyscale
+ * art carrying a `tRNS` chunk is ordinary transparent art — ImageMagick, PNG-8
+ * export, GIMP indexed, aseprite and pngquant all write it — so such a part
+ * builds and validates green, and would then have been refused by the one command
+ * whose whole job is to show the author what they built. A wall removed at the
+ * gate and rebuilt at the picture is not a wall removed.
+ *
+ * So the expansion happens here, at decode: a palette index becomes its `PLTE`
+ * entry with its `tRNS` alpha, a greyscale sample becomes three equal channels,
+ * and a `tRNS` colour on a type 0 or 2 file becomes alpha 0 on the pixels that
+ * match it. Every caller above this line keeps seeing exactly one thing, RGBA.
+ *
+ * Interlaced files are still refused: Adam7 is a second sample layout rather than
+ * a second sample format, and no tool in the corpus writes one.
+ */
+export function decodePng(buf: Uint8Array): Plate {
+  const { width, height, bitDepth, colourType, channels, pal, alphaTable, raw } = inflatePng(buf);
   // The filter operates on BYTES, and its "left neighbour" is one whole pixel
   // back — rounded up to a byte, so sub-byte depths compare against the byte
   // immediately to the left.
@@ -430,6 +465,44 @@ export function readPlate(path: string): Plate {
   try {
     return decodePng(buf);
   } catch (err) {
-    throw new Error(`cannot decode PNG ${path}: ${(err as Error).message}`);
+    // The decoder's refusal as the same sentence the gate prints (issue
+    // #1074), and as the class every command already refuses by name: it was
+    // a bare Error, which `render` and `build` (through a mesh part's trace)
+    // let through as a stack.
+    throw new NotAPngError(path, undecodableSentence(path, (err as Error).message));
+  }
+}
+
+/** What a PNG whose header reads and whose image data does not decode is, as one sentence. */
+function undecodableSentence(path: string, decoder: string): string {
+  return (
+    `${path} is a PNG whose header and chunks read and whose image data cannot be decoded: the decoder stops ` +
+    `with "${decoder}", so no texel of it can be read. Re-export the file, or re-copy it whole`
+  );
+}
+
+/**
+ * Why the image data of a PNG that `pngProblem` accepts cannot be decoded, as
+ * one sentence — or `null` when it can (issue #1074).
+ *
+ * 🔒 **It is the decoder, not a check beside it**: it runs `inflatePng`, the
+ * half of `decodePng` that can refuse, and reports that refusal in the
+ * decoder's own words. `pngProblem` reads chunk headers and never inflates, so
+ * a page with an intact chunk walk over a broken compressed stream passed it,
+ * passed `A06`, and was found only by whichever reader decoded first — `A19`
+ * as `threw: cannot decode PNG …`, `render` and a mesh part's trace as a stack,
+ * and on a page `A19` does not scan (the base plate, or any page under the
+ * default profile) by nobody: such a build was written green.
+ *
+ * ⚠️ Inflate only, deliberately: measured over the 19 recipes' pages it is
+ * 68.9 ms against `validate()`'s 286.2 ms under `spine`, where a whole decode
+ * (`decodePng`, which unfilters and expands every texel) is 459.6 ms.
+ */
+export function imageDataProblem(buf: Uint8Array, path: string): string | null {
+  try {
+    inflatePng(buf);
+    return null;
+  } catch (err) {
+    return undecodableSentence(path, (err as Error).message);
   }
 }

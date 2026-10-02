@@ -154,11 +154,14 @@ function whatItIs(buf: Uint8Array): string {
  * decode PNG …: unexpected end of file`, and reached `build --atlas-in` as a
  * stack trace — three sentences about one file, and none said what it was.
  *
- * It says three things and decodes nothing: what the file is instead (by the
+ * It says four things and decodes nothing: what the file is instead (by the
  * signature it does carry, with its first bytes in hex either way), whether a
- * file that begins as a PNG ends before its chunks do, and whether IHDR comes
- * first. The chunk walk reads only the eight-byte chunk headers, so it costs a
- * skip through the file and no inflate.
+ * file that begins as a PNG ends before its chunks do, whether IHDR comes
+ * first, and whether IHDR states a size of at least 1x1 (issue #1073). The
+ * chunk walk reads only the eight-byte chunk headers, so it costs a skip
+ * through the file and no inflate — which is also why it cannot say whether
+ * the image data decodes: that is `imageDataProblem` in
+ * [`tools/plate.ts`](../tools/plate.ts), beside the decoder (issue #1074).
  *
  * ⚠️ **"Truncated" is judged by the chunk walk, not by a length floor.** The
  * floor that stood here (`buf.length < 26`, "too short") never said truncated,
@@ -208,6 +211,28 @@ export function pngProblem(buf: Uint8Array, path: string): string | null {
         `its ${type} chunk at byte ${at} declares ${length} byte(s) of data, which with its CRC runs to byte ${next}`,
       );
     }
+    if (type === 'IHDR') {
+      // 🔒 **A dimension of 0 is a file that describes no texel** (issue
+      // #1073), and the format says so: IHDR's width and height are each at
+      // least 1. Accepted here, such a page was read as a valid PNG of the
+      // wrong size — A06 printed its grid sentence over a ratio of 0.0000, A19
+      // a "not measured" line once per region on the page (13 on one export),
+      // the compiler took the 0 as a loose part's size and was refused by A03
+      // and A10 (`non-positive size`, `x NaN`) or by the mesher (`bad part
+      // size 0x150`) without the file named, and `render` drew it in silence.
+      // Refused here, it is one fact about one file, said by the one reader
+      // every other reader asks first.
+      const width = view.getUint32(at + 8);
+      const height = view.getUint32(at + 12);
+      if (width === 0 || height === 0) {
+        const zero = width === 0 && height === 0 ? 'its width and its height are' : width === 0 ? 'its width is' : 'its height is';
+        return (
+          `${path} is a PNG whose IHDR chunk states its size as ${width}x${height}: ${zero} 0, where the format ` +
+          'requires each dimension to be at least 1, so the file describes no texel and nothing in it can be ' +
+          'measured or drawn. Re-export it'
+        );
+      }
+    }
     if (type === 'IEND') return null;
     previous = `its ${type} chunk at byte ${at}`;
     at = next;
@@ -216,9 +241,11 @@ export function pngProblem(buf: Uint8Array, path: string): string | null {
 
 /**
  * A file that is not a PNG rigc can read, thrown by the readers that return a
- * value or nothing (`readPngInfo`, `readPlate`). The message is `pngProblem`'s,
- * whole; a caller that owns a named failure — the gate, a `CompileError` —
- * reads the sentence instead of catching the throw (`readPngHeader`).
+ * value or nothing (`readPngInfo`, `readPlate`). The message is `pngProblem`'s
+ * — or, from `readPlate`, `imageDataProblem`'s for a file whose header reads
+ * and whose image data does not decode (issue #1074) — whole; a caller that
+ * owns a named failure — the gate, a `CompileError` — reads the sentence
+ * instead of catching the throw (`readPngHeader`).
  */
 export class NotAPngError extends Error {
   readonly path: string;
