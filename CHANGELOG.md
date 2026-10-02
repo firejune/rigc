@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0](https://github.com/firejune/rigc/compare/v1.9.4...v2.0.0) (2026-10-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* **package:** an install of this package no longer carries `@esotericsoftware/spine-core`. The installed `rigc` runs the entry that links nothing of the runtime: `render`, `check`, `explain`, `pose`, `chainfit`, `ingest`, `diff` and `skills` as before, and — once #1060 lands — `build`, gated by rigc's own validator rather than the spine-core round trip, which runs in this repository's CI over the corpus. `validate`, `bench`, `bonedist`, `preview` and `vote` need the runtime installed beside the package. A clone is unchanged.
+
+### Features
+
+* **cli:** one statement of a build on every command, and cli_core.ts build writes what cli.ts build writes, gated without spine-core ([#1069](https://github.com/firejune/rigc/issues/1069)) ([5f08bd8](https://github.com/firejune/rigc/commit/5f08bd8c550528f28e6a4f509d67bbd037b99a0e)), closes [#1060](https://github.com/firejune/rigc/issues/1060) [#1046](https://github.com/firejune/rigc/issues/1046)
+* **package:** spine-core becomes a devDependency — an install runs cli_core.ts, the launcher chooses the entry by whether the runtime resolves, and the shipped closure is held over `files` ([#1066](https://github.com/firejune/rigc/issues/1066)) ([a709310](https://github.com/firejune/rigc/commit/a709310d2ed8d5d03835e9d6ae56c8661d03d527))
+
+
+### Bug Fixes
+
+* **docs:** the documents say what the package links — spine-core is a development dependency, the published rigc links no Spine runtime, and the gate it runs is named ([#1070](https://github.com/firejune/rigc/issues/1070)) ([16bf9fa](https://github.com/firejune/rigc/commit/16bf9fae11662924a4eece9ef555652111631c1d))
+
 ## [1.9.4](https://github.com/firejune/rigc/compare/v1.9.3...v1.9.4) (2026-10-02)
 
 
