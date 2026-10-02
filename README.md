@@ -680,7 +680,9 @@ none of it; a skin only one side declares is a FAIL naming it as **lost** (or
 **added**) **by the export**, with `diff`'s `attachments.skins` beside it, and is
 rendered on neither side — and a
 field-by-field list of what the editor rewrote. Every step quotes what its child
-said when that child did not do what it was for, the renderers included; a skin
+said when that child did not do what it was for, the renderers included — the
+editor's words in full and in order, except its `Licensed to:` line, which names
+the licence holder and is replaced by a line saying it was withheld; a skin
 **neither** side can draw — a hit-box rig, say — is a **SKIP** naming that, not a
 red, because `check` had nothing to compare and `diff` and `validate` have
 already measured the rig. One side drawing where the other does not is the

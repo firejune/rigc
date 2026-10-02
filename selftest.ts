@@ -52592,12 +52592,35 @@ function runEditorRoundtripSuite(): number {
   // ⭐ All three cases use a stub, so none of them needs an editor. What they
   // separate is the three ways this can be got wrong: not printing it, printing
   // it where the reader is not looking, and printing it for a step that was fine.
+  //
+  // 🔒 Since issue #1082 the loud stub prints the SHAPE a licensed editor was
+  // measured printing on a failing import (2026-10-02): the launcher's three
+  // lines, `Starting: Spine …`, the editor's version, ONE `Licensed to: <name>
+  // <<e-mail>>` line, and then the failure. Placeholder values throughout. The
+  // licence line is the one line the quotation withholds, so ERT07 asserts the
+  // quotation is every OTHER line in order — the half that keeps a filter from
+  // eating the error lines that follow the licence line.
+  const failPrefix = [
+    'Spine Launcher 4.3.98 (macOS Apple Silicon)',
+    'Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com',
+    'Mac OS X aarch64 99.9.9',
+    'Starting: Spine 4.3.99 Professional',
+    'Spine 4.3.99 Professional',
+  ];
+  const licensee = 'Placeholder Licensee';
+  const licenseeMail = 'licensee@example.invalid';
+  const licenceLine = `Licensed to: ${licensee} <${licenseeMail}>`;
+  const importNote = 'Project import: skeleton.json into build';
+  const withheldNote = (n: number): string =>
+    `    ~ ${n} line(s) withheld here: the editor's licence block names the licence holder (issue #1082)`;
+  const logOf = (dir: string): string =>
+    existsSync(join(dir, 'roundtrip.log')) ? readFileSync(join(dir, 'roundtrip.log'), 'utf8') : '';
   {
     const marker = 'ERROR: Unable to import skeleton. Multiple attachments have the same name: patch patch';
     const onStderr = '[error] Error reading skeleton: skins';
     const bundle = join(root, 'Loud', 'Spine.app');
     const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
-    writeStubEditor(editor, join(root, 'ert07-ran'), ['Spine Launcher 4.3.06 (macOS Apple Silicon)'], [
+    writeStubEditor(editor, join(root, 'ert07-ran'), [...failPrefix, licenceLine, importNote], [
       `echo '${marker}'`,
       `echo '${onStderr}' >&2`,
     ]);
@@ -52605,22 +52628,110 @@ function runEditorRoundtripSuite(): number {
     const out = join(root, 'out-loud');
     const loud = runRoundtrip(['--build', build, '--out', out, '--editor', editor]);
     const quoted = quotedChildOutput(loud.stdout, '## 1 import');
-    const logged = existsSync(join(out, 'roundtrip.log')) ? readFileSync(join(out, 'roundtrip.log'), 'utf8') : '';
+    const logged = logOf(out);
+    const expected = [...failPrefix, importNote, marker, onStderr];
+    const inOrder = JSON.stringify(quoted) === JSON.stringify(expected);
     say(
       'ERT07_A_FAILED_STEP_QUOTES_THE_EDITOR_UNDER_THAT_STEP_AND_KEEPS_THE_REFUSAL',
-      quoted.includes(marker) &&
-        quoted.includes(onStderr) &&
+      inOrder &&
         loud.status === 1 &&
         loud.stderr.includes('the editor wrote no project file; the import did not happen') &&
         logged.includes(marker) &&
-        logged.includes(onStderr),
-      `exit=${String(loud.status)}, ${quoted.length} line(s) quoted under "## 1 import" ` +
-        `(stdout marker = ${quoted.includes(marker)}, stderr marker = ${quoted.includes(onStderr)}), ` +
+        logged.includes(onStderr) &&
+        logged.includes(importNote),
+      `exit=${String(loud.status)}, ${quoted.length} line(s) quoted under "## 1 import", every line but the ` +
+        `licence line and in order = ${inOrder}` +
+        `${inOrder ? '' : ` (missing ${JSON.stringify(expected.filter((l) => !quoted.includes(l)))}, extra ${JSON.stringify(quoted.filter((l) => !expected.includes(l)))})`}, ` +
         `refusal unchanged = ${loud.stderr.includes('the editor wrote no project file')}, ` +
-        `in roundtrip.log = ${logged.includes(marker) && logged.includes(onStderr)}`,
+        `in roundtrip.log = ${logged.includes(marker) && logged.includes(onStderr) && logged.includes(importNote)}`,
       'the refusal was correct and discarding the reason was not, so this asserts BOTH — and it asserts the log, ' +
         "because #541's card cites roundtrip.log as where to read the editor's output and a refusing run used to " +
-        'write none at all',
+        'write none at all; and since #1082 it asserts the lines straight after the licence line, which on the ' +
+        'measured editor are the failure itself',
+    );
+
+    // ERT78 — the licence line reaches nothing the run writes, on a failing
+    // import (the run above) and on a failing export (a stub that writes the
+    // project on the import call and prints the measured shape on the export
+    // call), and its place in the quotation is stated rather than silent.
+    const exportBundle = join(root, 'LoudExport', 'Spine.app');
+    const exportEditor = join(exportBundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(exportEditor, join(root, 'ert78-ran'), [], [
+      'if [ "$1" = "--version" ]; then exit 0; fi',
+      'if [ "$5" = "-r" ]; then : > "$4"; exit 0; fi',
+      ...[...failPrefix, licenceLine, 'ERROR: Unable to export.'].map((l) => `echo '${l}'`),
+    ]);
+    writeBundlePlist(exportBundle, 'Spine');
+    const exportOut = join(root, 'out-loud-export');
+    const loudExport = runRoundtrip(['--build', build, '--out', exportOut, '--editor', exportEditor]);
+    const traces = (r: { stdout: string; stderr: string }, log: string): string[] =>
+      [licensee, licenseeMail, 'Licensed to'].filter((t) => `${r.stdout}\n${r.stderr}\n${log}`.includes(t));
+    const importTraces = traces(loud, logged);
+    const exportTraces = traces(loudExport, logOf(exportOut));
+    const notedImport = reportBlock(loud.stdout, '## 1 import').includes(withheldNote(1));
+    const notedExport = reportBlock(loudExport.stdout, '## 2 export').includes(withheldNote(1));
+    const exportQuoted = quotedChildOutput(loudExport.stdout, '## 2 export');
+    say(
+      'ERT78_THE_LICENCE_LINE_OF_A_FAILED_IMPORT_OR_EXPORT_REACHES_NO_REPORT_REFUSAL_OR_LOG_AND_ITS_PLACE_IS_NAMED',
+      importTraces.length === 0 &&
+        exportTraces.length === 0 &&
+        notedImport &&
+        notedExport &&
+        exportQuoted.includes('ERROR: Unable to export.') &&
+        loudExport.stderr.includes('the editor wrote no json'),
+      `licence traces in stdout, stderr or roundtrip.log: import ${JSON.stringify(importTraces)}, export ` +
+        `${JSON.stringify(exportTraces)}; the withheld line is named under "## 1 import" = ${notedImport}, under ` +
+        `"## 2 export" = ${notedExport}; the export's error quoted = ${exportQuoted.includes('ERROR: Unable to export.')}, ` +
+        `exit=${String(loudExport.status)}`,
+      'a failing import or export on the licensed editor prints `Licensed to: <name> <<e-mail>>` before its error ' +
+        '(measured 2026-10-02), and the quotation ERT07 requires is what carried it into the log people paste — ' +
+        'withholding it silently would make the quotation read as an editor that said less',
+    );
+
+    // ERT79 — the other measured shape of the block, `--version`'s (#1077):
+    // a bare header, the name, the e-mail. On a failing step it is the three
+    // lines that are withheld, and the line after them is quoted.
+    const bareBundle = join(root, 'LoudBare', 'Spine.app');
+    const bareEditor = join(bareBundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(bareEditor, join(root, 'ert79-ran'), [...failPrefix, 'Licensed to:', licensee, licenseeMail, marker]);
+    writeBundlePlist(bareBundle, 'Spine');
+    const bareOut = join(root, 'out-loud-bare');
+    const bare = runRoundtrip(['--build', build, '--out', bareOut, '--editor', bareEditor]);
+    const bareQuoted = quotedChildOutput(bare.stdout, '## 1 import');
+    const bareTraces = traces(bare, logOf(bareOut));
+    const bareExpected = [...failPrefix, marker];
+    say(
+      'ERT79_A_BARE_LICENCE_HEADER_FOLLOWED_BY_A_NAME_AND_AN_E_MAIL_IS_WITHHELD_AS_THREE_LINES',
+      bareTraces.length === 0 &&
+        JSON.stringify(bareQuoted) === JSON.stringify(bareExpected) &&
+        reportBlock(bare.stdout, '## 1 import').includes(withheldNote(3)),
+      `licence traces: ${JSON.stringify(bareTraces)}; quoted ${JSON.stringify(bareQuoted.slice(failPrefix.length))} ` +
+        `after the launcher and version lines; "3 line(s) withheld" named = ` +
+        `${reportBlock(bare.stdout, '## 1 import').includes(withheldNote(3))}`,
+      "`--version` prints the block on three lines (#1077), and a rule that knew only the failure's one-line form " +
+        'would withhold the header and quote the name and the e-mail under it',
+    );
+
+    // ERT80 — the bound. A bare header whose second following line is not an
+    // e-mail is not the measured three-line block, so only the header goes and
+    // the two lines after it are the editor's and are quoted. "The header and
+    // the two lines after it", applied blindly, is this case's failure.
+    const boundBundle = join(root, 'LoudBound', 'Spine.app');
+    const boundEditor = join(boundBundle, 'Contents', 'MacOS', 'Spine');
+    writeStubEditor(boundEditor, join(root, 'ert80-ran'), [...failPrefix, 'Licensed to:', importNote, marker]);
+    writeBundlePlist(boundBundle, 'Spine');
+    const bound = runRoundtrip(['--build', build, '--out', join(root, 'out-loud-bound'), '--editor', boundEditor]);
+    const boundQuoted = quotedChildOutput(bound.stdout, '## 1 import');
+    const boundExpected = [...failPrefix, importNote, marker];
+    say(
+      'ERT80_A_BARE_LICENCE_HEADER_WITHHOLDS_NO_LINE_AFTER_IT_THAT_IS_NOT_THE_MEASURED_NAME_AND_E_MAIL',
+      JSON.stringify(boundQuoted) === JSON.stringify(boundExpected) &&
+        reportBlock(bound.stdout, '## 1 import').includes(withheldNote(1)),
+      `quoted ${JSON.stringify(boundQuoted.slice(failPrefix.length))} after the launcher and version lines ` +
+        `(required ${JSON.stringify(boundExpected.slice(failPrefix.length))}); "1 line(s) withheld" named = ` +
+        `${reportBlock(bound.stdout, '## 1 import').includes(withheldNote(1))}`,
+      'on the measured editor the lines straight after the licence line are the error, so a filter bounded by ' +
+        'position rather than by what the lines are drops the one sentence the quotation exists for (#541)',
     );
 
     // ERT08 — the silent editor. A step that goes wrong while the editor says
@@ -104246,7 +104357,10 @@ function main(): void {
     'of its words, so the code alone can never be the signal. And what step 0 keeps of the editor\'s ' +
     '`--version` (issue #1077): the one `Spine <x.y.z>` line, in the report and the log, and none of the lines ' +
     'around it — the measured shape puts the licensee\'s name and e-mail in the tail the tool used to print — ' +
-    'with the absence of that line named rather than filled with the tail)';
+    'with the absence of that line named rather than filled with the tail; and what a failed import or export ' +
+    'quotes of the editor (issue #1082): every line it printed, in order, except the licence line — one line on ' +
+    'the measured failure, three in `--version`\'s shape, and never the error lines straight after it — whose ' +
+    'place is named)';
   const shippedDocs =
     ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +

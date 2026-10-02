@@ -309,6 +309,61 @@ interface Ran {
 }
 
 /**
+ * The indices of the lines in one stream of editor output that carry the
+ * licence holder, and nothing else (issue #1082).
+ *
+ * Measured on a licensed 4.3 editor on macOS 2026-10-02, through this tool, on
+ * four failing calls. Every one exited 1, wrote everything to stdout and nothing
+ * to stderr, and printed one of two shapes:
+ *
+ *   an input path that does not exist (import, and export) — refused by the
+ *   LAUNCHER before the editor starts, and no licence line at all:
+ *
+ *     the launcher's banner, the copyright line, the operating system
+ *     (blank)  `Parameter: --input <path>`  (blank)
+ *     `ERROR: Input path does not exist:`
+ *     the path
+ *
+ *   a file the editor cannot read (a skeleton JSON naming a parent bone it does
+ *   not declare; a `.spine` that is not a project) — the editor starts, names
+ *   itself and its licence holder, and then the failure:
+ *
+ *     the launcher's banner, the copyright line, the operating system
+ *     `Starting: Spine <x.y.z> Professional`
+ *     `Spine <x.y.z> Professional`
+ *     `Licensed to: <name> <<e-mail>>`         <- ONE line, withheld
+ *     import: `Project import: …`, `ERROR: Unable to import skeleton.`, then
+ *     export: `ERROR: Unable to export.`, then
+ *     `[error] …` lines, a stack, and `Cause: …` lines
+ *
+ * 🚨 So on a failure the block is one line, not the three `--version` prints
+ * (`Licensed to:` alone, then the name, then the e-mail — issue #1077), and
+ * the lines straight after it are the editor's own error: a rule that took
+ * "the header and the two lines after it" would have quoted the licence holder
+ * not at all and the reason for the failure not at all either.
+ *
+ * ⚠️ Both shapes are held, each by what bounds it. A header with a value on the
+ * same line is that one line. A bare header takes the two lines after it only
+ * when the second of them is an e-mail (`@`), which is the `--version` shape;
+ * anything else after a bare header is the editor talking and is quoted.
+ */
+function licenceLines(lines: readonly string[]): Set<number> {
+  const withheld = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    const header = /^[ \t]*Licensed to:(.*)$/.exec(lines[i]);
+    if (header === null) continue;
+    withheld.add(i);
+    if (header[1].trim() !== '') continue;
+    if (i + 2 < lines.length && lines[i + 2].includes('@')) {
+      withheld.add(i + 1);
+      withheld.add(i + 2);
+      i += 2;
+    }
+  }
+  return withheld;
+}
+
+/**
  * Everything the editor printed on a step that did not do what it was for.
  *
  * 🚨 This is the defect issue #541 is half about, and it was this tool's. A
@@ -336,6 +391,11 @@ interface Ran {
  * softening the verdict. What it prints is the editor's own words, quoted and
  * attributed to the stream they came off, and never rewritten — a harness that
  * summarised them would be the same defect with a smaller radius.
+ *
+ * 🚨 With one exception, which is not the editor's words but the licence
+ * holder's (issue #1082): the licence line, which `licenceLines` names and
+ * which is replaced by one line saying it was withheld. Every other line is
+ * quoted as printed, in order.
  */
 function editorSaid(ran: Ran): string[] {
   const lines: string[] = [];
@@ -346,7 +406,21 @@ function editorSaid(ran: Ran): string[] {
     const body = text.replace(/\s+$/, '');
     if (body === '') continue;
     lines.push(`  the editor's ${stream}:`);
-    for (const line of body.split('\n')) lines.push(`    | ${line}`);
+    const printed = body.split('\n');
+    const withheld = licenceLines(printed);
+    for (let i = 0; i < printed.length; i++) {
+      if (!withheld.has(i)) {
+        lines.push(`    | ${printed[i]}`);
+        continue;
+      }
+      // One note per run of withheld lines, in the place they were printed, so
+      // the quotation still reads in the editor's order and the omission is
+      // stated rather than left to look like an editor that said less.
+      let span = 1;
+      while (withheld.has(i + span)) span++;
+      lines.push(`    ~ ${span} line(s) withheld here: the editor's licence block names the licence holder (issue #1082)`);
+      i += span - 1;
+    }
   }
   // Silence is a finding too, and it has to be stated rather than left to look
   // like a harness that forgot to print. The card above is what an unstated one
