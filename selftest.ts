@@ -44014,6 +44014,249 @@ function losslessReport(
   return { regions, wrong };
 }
 
+import { FOOTPRINT_SLACK, footprintCell, packFootprints } from './src/atlas.ts';
+
+// ---------------------------------------------------------------------------
+// polygon packing — the footprints a pack keeps apart (issue #1099)
+// ---------------------------------------------------------------------------
+//
+// ⭐ Read here from the two files a build writes, by a reader of its own and not
+// by `packFootprints`: the packer and this check must not share the reading
+// they are held to agree on. What a region's attachments draw is its hull loop
+// — the mesh's first `hull` UVs over the region's own size — or, for any
+// region a region attachment names, its whole rectangle.
+
+/** A point in texels. */
+type Texel2 = [number, number];
+
+const isRecordValue = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * What each region of a build draws, in the region's own texels (x right, y
+ * down from the drawing's top-left): `'rect'`, or the hull loops of the meshes
+ * that sample it. The region an attachment samples is its `path`, else its
+ * `name`, else its key; a linked mesh draws its `source`'s hull over its own
+ * region; a sequence samples `name + (start + frame)` padded to `digits`.
+ */
+function drawnLoops(skeletonText: string, sizeOf: (region: string) => { width: number; height: number } | undefined): Map<string, 'rect' | Texel2[][]> {
+  const doc: unknown = JSON.parse(skeletonText);
+  const skins = isRecordValue(doc) && Array.isArray(doc.skins) ? doc.skins.filter(isRecordValue) : [];
+  const out = new Map<string, 'rect' | Texel2[][]>();
+  const mark = (region: string, loop: number[] | null): void => {
+    const held = out.get(region);
+    if (held === 'rect') return;
+    const size = sizeOf(region);
+    if (loop === null || size === undefined) {
+      out.set(region, 'rect');
+      return;
+    }
+    const points: Texel2[] = [];
+    for (let i = 0; i + 1 < loop.length; i += 2) points.push([loop[i] * size.width, loop[i + 1] * size.height]);
+    if (held === undefined) out.set(region, [points]);
+    else held.push(points);
+  };
+  for (const skin of skins) {
+    if (!isRecordValue(skin.attachments)) continue;
+    for (const [slot, table] of Object.entries(skin.attachments)) {
+      if (!isRecordValue(table)) continue;
+      for (const [key, att] of Object.entries(table)) {
+        if (!isRecordValue(att)) continue;
+        const type = att.type ?? 'region';
+        if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
+        const base = typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : key;
+        const seq = att.sequence;
+        const regions = isRecordValue(seq) && typeof seq.count === 'number'
+          ? Array.from({ length: seq.count }, (_, f) => base + String((typeof seq.start === 'number' ? seq.start : 1) + f).padStart(typeof seq.digits === 'number' ? seq.digits : 0, '0'))
+          : [base];
+        let geometry: Record<string, unknown> | undefined;
+        if (type === 'mesh') geometry = att;
+        if (type === 'linkedmesh') {
+          const host = skins.find((s) => s.name === (typeof att.skin === 'string' ? att.skin : 'default'));
+          const hostTable = host !== undefined && isRecordValue(host.attachments) ? host.attachments[typeof att.slot === 'string' ? att.slot : slot] : undefined;
+          const source = isRecordValue(hostTable) ? hostTable[typeof att.source === 'string' ? att.source : String(att.parent)] : undefined;
+          geometry = isRecordValue(source) ? source : undefined;
+        }
+        const uvs = geometry?.uvs;
+        const hull = geometry?.hull;
+        const loop = Array.isArray(uvs) && typeof hull === 'number' ? uvs.slice(0, 2 * hull).map(Number) : null;
+        for (const region of regions) mark(region, loop);
+      }
+    }
+  }
+  return out;
+}
+
+const cross2 = (o: Texel2, a: Texel2, b: Texel2): number => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+const between = (a: number, x: number, b: number): boolean => Math.min(a, b) <= x && x <= Math.max(a, b);
+
+/** Whether two closed segments share a point. */
+function segmentsMeet(p1: Texel2, p2: Texel2, p3: Texel2, p4: Texel2): boolean {
+  const d1 = cross2(p3, p4, p1);
+  const d2 = cross2(p3, p4, p2);
+  const d3 = cross2(p1, p2, p3);
+  const d4 = cross2(p1, p2, p4);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  const on = (a: Texel2, q: Texel2, b: Texel2): boolean => between(a[0], q[0], b[0]) && between(a[1], q[1], b[1]);
+  return (d1 === 0 && on(p3, p1, p4)) || (d2 === 0 && on(p3, p2, p4)) || (d3 === 0 && on(p1, p3, p2)) || (d4 === 0 && on(p1, p4, p2));
+}
+
+function pointSegmentDistance(p: Texel2, a: Texel2, b: Texel2): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = dx * dx + dy * dy;
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len));
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+/** Even-odd: whether `p` is inside the closed loop's interior. */
+function insideLoop(p: Texel2, loop: readonly Texel2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const [xi, yi] = loop[i];
+    const [xj, yj] = loop[j];
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The Euclidean distance between two closed polygons, 0 when they meet (an edge in common, or one inside the other). */
+function loopDistance(a: readonly Texel2[], b: readonly Texel2[]): number {
+  let best = Infinity;
+  for (let i = 0; i < a.length; i++) {
+    const a0 = a[i];
+    const a1 = a[(i + 1) % a.length];
+    for (let j = 0; j < b.length; j++) {
+      const b0 = b[j];
+      const b1 = b[(j + 1) % b.length];
+      if (segmentsMeet(a0, a1, b0, b1)) return 0;
+      best = Math.min(best, pointSegmentDistance(a0, b0, b1), pointSegmentDistance(a1, b0, b1), pointSegmentDistance(b0, a0, a1), pointSegmentDistance(b1, a0, a1));
+    }
+  }
+  if (insideLoop(a[0], b) || insideLoop(b[0], a)) return 0;
+  return best;
+}
+
+/** What `packedFootprintFindings` measured. */
+interface FootprintReading {
+  /** Regions read, and how many of them are hulls. */
+  regions: number;
+  hulls: number;
+  /** Pairs of regions on one page, and how many of those pairs' RECTANGLES overlap — what the mode is for. */
+  pairs: number;
+  rectanglesOverlapping: number;
+  /** The least distance between two footprints on one page, in texels. */
+  closest: number;
+  findings: string[];
+}
+
+/**
+ * The geometric check the gate of issue #1099 will make (`A49`, a second
+ * landing), written here first so that landing reuses it: on every page of a
+ * packed atlas, no two regions' drawn footprints — a mesh region's hull in page
+ * texels, read from its UVs and the region's bounds; a region attachment's
+ * rectangle — meet, and none comes closer to another than `padding`. A finding
+ * names the page, both regions and the distance.
+ *
+ * Exact where it can be: whether two footprints meet is decided by orientation
+ * tests on the coordinates as given, and the distance is the least
+ * point-to-segment distance in doubles, read against `padding` with no margin.
+ */
+function packedFootprintFindings(atlasText: string, skeletonText: string, padding: number): FootprintReading {
+  const parsed = parseAtlasText(atlasText);
+  const sizes = new Map(parsed.regions.map((r) => [r.name.trim(), { width: r.originalWidth, height: r.originalHeight }]));
+  const drawn = drawnLoops(skeletonText, (region) => sizes.get(region));
+  const out: FootprintReading = { regions: 0, hulls: 0, pairs: 0, rectanglesOverlapping: 0, closest: Infinity, findings: [] };
+  for (const page of parsed.pages) {
+    const feet = page.regions.map((region) => {
+      const name = region.name.trim();
+      const top = region.originalHeight - region.offsetY - region.height;
+      const rect: Texel2[] = [
+        [region.x, region.y],
+        [region.x + region.width, region.y],
+        [region.x + region.width, region.y + region.height],
+        [region.x, region.y + region.height],
+      ];
+      const loops = drawn.get(name);
+      out.regions++;
+      if (loops === undefined || loops === 'rect' || region.degrees !== 0) return { name, rect, loops: [rect] };
+      out.hulls++;
+      return { name, rect, loops: loops.map((loop) => loop.map(([x, y]): Texel2 => [region.x + x - region.offsetX, region.y + y - top])) };
+    });
+    for (let i = 0; i < feet.length; i++) {
+      for (let j = i + 1; j < feet.length; j++) {
+        const a = feet[i];
+        const b = feet[j];
+        out.pairs++;
+        const [ax0, ay0] = a.rect[0];
+        const [ax1, ay1] = a.rect[2];
+        const [bx0, by0] = b.rect[0];
+        const [bx1, by1] = b.rect[2];
+        if (ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1) out.rectanglesOverlapping++;
+        let d = Infinity;
+        for (const la of a.loops) for (const lb of b.loops) d = Math.min(d, loopDistance(la, lb));
+        out.closest = Math.min(out.closest, d);
+        if (d === 0) out.findings.push(`page "${page.name}": the footprints of "${a.name}" and "${b.name}" meet`);
+        else if (d < padding) out.findings.push(`page "${page.name}": the footprints of "${a.name}" and "${b.name}" are ${d.toFixed(4)} texels apart, closer than the padding ${padding}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Every region whose page texels within one texel of what it draws are not
+ * its own — the values `extrudeCell` gives its cell: the plate's texel, the
+ * edge extended into the gutter. One texel is where a bilinear tap anywhere
+ * inside a footprint can reach, so a region that passes draws on the page what
+ * it drew loose. Brute force over every cell texel, and independent of the
+ * packer's own protected sets: a texel's square grown by one texel on every
+ * side is tested against each hull loop (a loop vertex inside it, its centre
+ * inside the loop, or an edge crossing it); a rectangle region is held to its
+ * whole cell.
+ */
+function footprintTexelsWrong(pages: readonly Plate[], atlasText: string, skeletonText: string, inputs: readonly PackInput[], padding: number): { checked: number; texels: number; wrong: string[] } {
+  const parsed = parseAtlasText(atlasText);
+  const sizes = new Map(parsed.regions.map((r) => [r.name.trim(), { width: r.originalWidth, height: r.originalHeight }]));
+  const drawn = drawnLoops(skeletonText, (region) => sizes.get(region));
+  const wrong: string[] = [];
+  let checked = 0;
+  let texels = 0;
+  parsed.pages.forEach((page, p) => {
+    const plate = pages[p];
+    for (const region of page.regions) {
+      const name = region.name.trim();
+      const input = inputs.find((i) => i.region === name);
+      if (input === undefined) {
+        wrong.push(`${name} (no such part)`);
+        continue;
+      }
+      checked++;
+      const source = readPlate(input.absPath);
+      const loops = drawn.get(name);
+      const hulls = loops === undefined || loops === 'rect' ? null : loops.map((loop) => loop.map(([x, y]): Texel2 => [x + padding, y + padding]));
+      const reaches = (cx: number, cy: number): boolean => {
+        if (hulls === null) return true;
+        const box: Texel2[] = [[cx - 1, cy - 1], [cx + 2, cy - 1], [cx + 2, cy + 2], [cx - 1, cy + 2]];
+        return hulls.some((loop) => loopDistance(box, loop) === 0);
+      };
+      let first: string | null = null;
+      for (let cy = 0; cy < source.height + 2 * padding && first === null; cy++) {
+        for (let cx = 0; cx < source.width + 2 * padding && first === null; cx++) {
+          if (!reaches(cx, cy)) continue;
+          texels++;
+          const sx = Math.max(0, Math.min(source.width - 1, cx - padding));
+          const sy = Math.max(0, Math.min(source.height - 1, cy - padding));
+          const want = source.get(sx, sy);
+          const got = plate.get(region.x - padding + cx, region.y - padding + cy);
+          if (want.some((v, c) => v !== got[c])) first = `${name} (cell texel ${cx},${cy}: page ${got.join(',')} where its own is ${want.join(',')})`;
+        }
+      }
+      if (first !== null) wrong.push(first);
+    }
+  });
+  return { checked, texels, wrong };
+}
+
 /** What `compile()` throws, as a string, or null when it did not throw. */
 function refusalOf(fn: () => unknown): string | null {
   try {
@@ -46756,6 +46999,372 @@ function runPackerSuite(): number {
     'A18 compares two independent compiles byte for byte, and the packed gate is the only place it sees the atlas ' +
       'a free search chose',
   );
+
+  // --- PK78..PK85: `--pack-shape polygon` (issue #1099) ---------------------
+  {
+    // The default is untouched — every control above packs `rect`, and EH06 holds
+    // the gallery's bytes — so these hold the opt-in. A set is built here whose
+    // two answers are far apart: a 200x200 wedge whose mesh draws its upper-left
+    // half, four 50x50 tiles, and a 40x40 gem whose mesh draws a diamond in its
+    // middle (so its cell reaches past what it owns, over its neighbours). The
+    // skeleton beside it is a minimal Spine file naming each part, so the
+    // footprints come out of `packFootprints` exactly as a build's do, and the
+    // checks read them back with their own reader (`drawnLoops`).
+    const polyDir = mkdtempSync(join(tmpdir(), 'rigc-polygon-pack-'));
+    const polyPart = (region: string, width: number, height: number, draws: (x: number, y: number) => boolean, n: number): PackInput => {
+      const plate = new Plate(width, height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) plate.set(x, y, draws(x, y) ? [(x * 7 + n * 40) % 256, (y * 5 + n * 70) % 256, (x ^ y) % 256, 255] : [0, 0, 0, 0]);
+      }
+      const absPath = join(polyDir, `${region}.png`);
+      plate.writePng(absPath);
+      return { region, absPath, width, height };
+    };
+    const polyParts = [
+      polyPart('wedge', 200, 200, (x, y) => x + y < 200, 0),
+      ...['a', 'b', 'c', 'd'].map((s, i) => polyPart(`tile_${s}`, 50, 50, () => true, i + 1)),
+      polyPart('gem', 40, 40, (x, y) => Math.abs(x - 20) + Math.abs(y - 20) < 10, 6),
+    ];
+    const polySkeleton = (wedgeUvs: number[]): string =>
+      JSON.stringify({
+        skins: [
+          {
+            name: 'default',
+            attachments: {
+              w: { wedge: { type: 'mesh', uvs: wedgeUvs, hull: wedgeUvs.length / 2, triangles: [0, 1, 2], vertices: wedgeUvs } },
+              g: { gem: { type: 'mesh', uvs: [0.5, 0.25, 0.75, 0.5, 0.5, 0.75, 0.25, 0.5], hull: 4, triangles: [0, 1, 2, 0, 2, 3], vertices: [0, 0, 0, 0, 0, 0, 0, 0] } },
+              ta: { tile_a: {} },
+              tb: { tile_b: {} },
+              tc: { tile_c: {} },
+              td: { tile_d: {} },
+            },
+          },
+        ],
+      });
+    const WEDGE = [0, 0, 1, 0, 0, 1];
+    const honestSkeleton = polySkeleton(WEDGE);
+    const withFootprints = (inputs: readonly PackInput[], skeletonText: string): PackInput[] => {
+      const sizes = new Map(inputs.map((p) => [p.region, { width: p.width, height: p.height }]));
+      const feet = packFootprints(skeletonText, (region) => sizes.get(region));
+      return inputs.map((p) => {
+        const f = feet.get(p.region) ?? undefined;
+        return f === undefined ? { ...p } : { ...p, footprint: f };
+      });
+    };
+    const polyInputs = withFootprints(polyParts, honestSkeleton);
+    const shapeOfPack = (r: ReturnType<typeof packAtlas>): string => r.pages.map((p) => `${p.width}x${p.height}`).join('+');
+    const areaOfPack = (r: ReturnType<typeof packAtlas>): number => r.pages.reduce((n, p) => n + p.width * p.height, 0);
+
+    // PK78: determinism, and the gain it is determinism OF. Two packs of the set,
+    // the second handed its parts reversed, under both page edges; and against
+    // each the `rect` pack of the same parts, which the polygon page must not
+    // exceed on any set and must beat on this one — a mode that never moved a
+    // region would be determinism over nothing.
+    const polyRows = (['pot', 'free'] as const).map((pageEdges) => {
+      const a = packAtlas(polyInputs, { pageEdges, shape: 'polygon' });
+      const b = packAtlas(polyInputs.slice().reverse(), { pageEdges, shape: 'polygon' });
+      const rect = packAtlas(polyInputs, { pageEdges, shape: 'rect' });
+      return { pageEdges, a, rect, same: samePack(a, b) };
+    });
+    const fixtureRows = PACK_FIXTURES.flatMap(([name, fixture]) => {
+      const result = compile(optsForFixture(fixture));
+      const inputs = withFootprints(packInputsOf(result.images), result.skeletonText);
+      return (['pot', 'free'] as const).map((pageEdges) => {
+        const poly = packAtlas(inputs, { pageEdges, shape: 'polygon' });
+        const again = packAtlas(inputs.slice().reverse(), { pageEdges, shape: 'polygon' });
+        const rect = packAtlas(inputs, { pageEdges });
+        return { name: `${name}/${pageEdges}`, poly, rect, same: samePack(poly, again), meshes: inputs.filter((i) => i.footprint !== undefined).length };
+      });
+    });
+    say(
+      'PK78_TWO_POLYGON_PACKS_ARE_BYTE_IDENTICAL_AND_NONE_IS_LARGER_THAN_THE_RECT_PACK',
+      polyRows.every((r) => r.same && areaOfPack(r.a) < areaOfPack(r.rect)) &&
+        fixtureRows.every((r) => r.same && areaOfPack(r.poly) <= areaOfPack(r.rect)),
+      polyRows
+        .map((r) => `wedge set/${r.pageEdges}: polygon ${shapeOfPack(r.a)} against rect ${shapeOfPack(r.rect)}, ${r.same ? 'the reversed pack identical' : 'the reversed pack DIFFERENT'}`)
+        .concat(fixtureRows.map((r) => `${r.name} (${r.meshes} mesh region(s)): polygon ${shapeOfPack(r.poly)} against rect ${shapeOfPack(r.rect)}, ${r.same ? 'identical' : 'DIFFERENT'} reversed`))
+        .join('; '),
+      'issue #1099: A18 compares two compiles byte for byte, and the footprint pass adds a free list split by masks; ' +
+        'and the mode is opt-in on the promise that it never costs a page — each pass is run against the rectangle ' +
+        'pass on the same page and the better kept, so a larger polygon page is a broken promise, not a trade',
+    );
+
+    // PK79: losslessness where the mode can lose it. Every region's texels
+    // within one texel of what it draws are its own, on every polygon pack above —
+    // the reach of a bilinear tap anywhere inside the footprint. Planted: the
+    // same placements drawn by a packer that lets a later cell overwrite an
+    // earlier region (every cell whole, in packing order — the first pass alone),
+    // which the gem's cell, reaching past its diamond, does over a tile it was
+    // placed beside.
+    const polyFree = polyRows[1].a;
+    const naivePages = (r: ReturnType<typeof packAtlas>, inputs: readonly PackInput[]): Plate[] =>
+      r.pages.map((page, index) => {
+        const plate = new Plate(page.width, page.height);
+        for (const place of r.placements.filter((p) => p.page === index)) {
+          const input = inputs.find((i) => i.region === place.region);
+          if (input === undefined) continue;
+          const source = readPlate(input.absPath);
+          for (let cy = 0; cy < source.height + 2 * r.padding; cy++) {
+            for (let cx = 0; cx < source.width + 2 * r.padding; cx++) {
+              const sx = Math.max(0, Math.min(source.width - 1, cx - r.padding));
+              const sy = Math.max(0, Math.min(source.height - 1, cy - r.padding));
+              plate.set(place.x - r.padding + cx, place.y - r.padding + cy, source.get(sx, sy));
+            }
+          }
+        }
+        return plate;
+      });
+    const ownRows = [
+      ...polyRows.map((r) => ({ name: `wedge set/${r.pageEdges}`, pack: r.a, skeleton: honestSkeleton, inputs: polyInputs })),
+      ...PACK_FIXTURES.map(([name, fixture]) => {
+        const result = compile(optsForFixture(fixture));
+        const inputs = withFootprints(packInputsOf(result.images), result.skeletonText);
+        return { name: `${name}/free`, pack: packAtlas(inputs, { pageEdges: 'free', shape: 'polygon' }), skeleton: result.skeletonText, inputs };
+      }),
+    ].map((row) => ({ ...row, reading: footprintTexelsWrong(row.pack.pages.map((p) => p.plate), row.pack.atlasText, row.skeleton, row.inputs, row.pack.padding) }));
+    const ownWrong = ownRows.flatMap((r) => r.reading.wrong.map((w) => `${r.name}: ${w}`));
+    const naive = footprintTexelsWrong(naivePages(polyFree, polyInputs), polyFree.atlasText, honestSkeleton, polyInputs, polyFree.padding);
+    const ownProbes = [
+      ...ownWrong,
+      ...(naive.wrong.length === 0 ? ['the later-wins plant overwrote no region the check could see'] : []),
+    ];
+    const ownHeld = ownProbes.length === 0;
+    say(
+      'PK79_EVERY_REGION_ON_A_POLYGON_PAGE_KEEPS_THE_TEXELS_IT_DRAWS',
+      ownHeld,
+      probeDetail(
+        ownHeld,
+        ownProbes,
+        ownRows.map((r) => `${r.name}: ${r.reading.checked} region(s), ${r.reading.texels} texel(s) within reach of a footprint, each its own`).join('; ') +
+          `; planted later-wins drawing of wedge set/free: ${naive.wrong.length} region(s) named — ${naive.wrong.slice(0, 2).join('; ')}`,
+      ),
+      'issue #1099: under `polygon` two cells may overlap, so the page can no longer be lifted back region by region ' +
+        '(PK02) — what is left of losslessness is that no texel a region can sample is anybody else\'s, and a drawing ' +
+        'order that let the later cell win would break exactly that while every placement stayed legal',
+    );
+
+    // PK80: the footprint check, and the plant it exists for. The honest packs
+    // above hold no two footprints that meet or come within the padding, with
+    // their rectangles overlapping (that is the mode). Planted: the wedge handed
+    // to the packer as drawing only its corner — a footprint smaller than its
+    // hull, the alpha contour's mistake the card rejects — so tiles land inside
+    // the hull the file's UVs state, and the check names the wedge and a tile.
+    const understated = withFootprints(polyParts, polySkeleton([0, 0, 0.5, 0, 0, 0.5]));
+    const plantPack = packAtlas(understated, { pageEdges: 'free', shape: 'polygon' });
+    const honestReadings = ownRows.map((r) => ({ name: r.name, reading: packedFootprintFindings(r.pack.atlasText, r.skeleton, r.pack.padding) }));
+    const plantReading = packedFootprintFindings(plantPack.atlasText, honestSkeleton, plantPack.padding);
+    const hullProbes = [
+      ...honestReadings.flatMap((r) => r.reading.findings.map((f) => `${r.name}: ${f}`)),
+      ...(honestReadings[1].reading.rectanglesOverlapping === 0 ? ['the honest wedge set overlaps no two rectangles, so the check had no mode to hold'] : []),
+      ...(plantReading.findings.some((f) => f.includes('"wedge"') && f.includes('"tile_') && f.includes('meet')) ? [] : [`the understated wedge was not named: ${JSON.stringify(plantReading.findings.slice(0, 2))}`]),
+    ];
+    const hullHeld = hullProbes.length === 0;
+    say(
+      'PK80_A_NEIGHBOUR_INSIDE_A_HULL_IS_NAMED_BY_THE_FOOTPRINT_CHECK',
+      hullHeld,
+      probeDetail(
+        hullHeld,
+        hullProbes,
+        honestReadings.map((r) => `${r.name}: ${r.reading.pairs} pair(s), ${r.reading.rectanglesOverlapping} with rectangles overlapping, none of whose footprints meet`).join('; ') +
+          `; planted wedge footprint at a quarter of its hull: ${plantReading.findings.length} finding(s) — ${plantReading.findings[0] ?? 'none'}`,
+      ),
+      'issue #1099: the hull is the honest boundary because a mesh samples every texel its triangles cover, ' +
+        'transparent ones included; a packer that trusted anything smaller would draw a neighbour into the mesh, and ' +
+        'the check the gate will make (A49, the second landing) has to see it from the files alone',
+    );
+
+    // PK81: the padding between footprints. Each footprint keeps `padding` of its
+    // own, so two are at least twice that apart — today's rule between two
+    // rectangles. Planted: the same parts packed by a footprint test that drops
+    // the padding (packed at `--padding 0`) and read against the padding 2 the
+    // honest pack states.
+    const unpadded = packAtlas(polyInputs, { pageEdges: 'free', shape: 'polygon', padding: 0 });
+    const unpaddedReading = packedFootprintFindings(unpadded.atlasText, honestSkeleton, DEFAULT_PADDING);
+    const closest = Math.min(...honestReadings.map((r) => r.reading.closest));
+    const padProbes = [
+      ...(closest >= 2 * DEFAULT_PADDING ? [] : [`two honest footprints are ${closest.toFixed(4)} texels apart, under twice the padding`]),
+      ...(unpaddedReading.findings.some((f) => f.includes(`closer than the padding ${DEFAULT_PADDING}`) || f.includes('meet')) ? [] : ['the unpadded pack was not named']),
+    ];
+    const padHeld = padProbes.length === 0;
+    say(
+      'PK81_FOOTPRINTS_KEEP_TWICE_THE_PADDING_APART',
+      padHeld,
+      probeDetail(
+        padHeld,
+        padProbes,
+        `closest two footprints over ${honestReadings.length} polygon pack(s): ${closest.toFixed(4)} texels at --padding ${DEFAULT_PADDING}; ` +
+          `planted padding-free footprint test: ${unpaddedReading.findings.length} finding(s) — ${unpaddedReading.findings[0] ?? 'none'}`,
+      ),
+      'issue #1099: the padding is what the edge extension and a bilinear tap are given room in, and the card keeps it ' +
+        'between footprints as it is kept between rectangles; a footprint test that forgot it would put two drawings ' +
+        'within one tap of each other while every hull stayed clear',
+    );
+
+    // PK82: a pack with nothing to gain is the rect pack, byte for byte — the
+    // three 300x300 parts of PK70, the same three with the first drawn by a mesh
+    // whose hull is its whole rectangle, and the overlay fixture's parts with
+    // every footprint stripped, under both page edges.
+    const fullHull = freeInputs.map((input, i) => (i === 0 ? { ...input, footprint: { polygons: [[0, 0, input.width, 0, input.width, input.height, 0, input.height]] } } : input));
+    const rectOnly = [
+      ['three-part set', freeInputs],
+      ['three-part set, one hull its whole rectangle', fullHull],
+      ['overlay fixture, no footprint', packInputsOf(compile(optsForFixture(OVERLAY)).images)],
+    ] as const;
+    const sameRows = rectOnly.flatMap(([what, inputs]) =>
+      (['pot', 'free'] as const).map((pageEdges) => {
+        const rect = packAtlas(inputs, { pageEdges });
+        const poly = packAtlas(inputs, { pageEdges, shape: 'polygon' });
+        return { what: `${what}/${pageEdges}`, same: samePack(rect, poly), shape: shapeOfPack(rect) };
+      }),
+    );
+    say(
+      'PK82_A_PACK_WITH_NO_MESH_FOOTPRINT_IS_THE_SAME_UNDER_BOTH_SHAPES',
+      sameRows.every((r) => r.same),
+      sameRows.map((r) => `${r.what} (${r.shape}): ${r.same ? 'atlas text and page pixels identical' : 'DIFFERENT'}`).join('; '),
+      'issue #1099: a rectangle footprint is the cell, so the footprint test between two of them is today\'s test and ' +
+        'the pass must make today\'s decisions — a rig with no mesh that moved under `polygon` would be a second packer ' +
+        'wearing the first one\'s name',
+    );
+
+    // PK83: the pack line names the mode at its end, under both shapes, through
+    // the CLI — appended after `page edges free` when that is set, because a
+    // reader takes the line whole — and a polygon build passes A18 on its packed
+    // atlas, the second independent compile+pack.
+    const lineOf = (run: { stdout: string }): string => run.stdout.split('\n').find((line) => line.includes('  pack: ')) ?? '(no pack line)';
+    const meshBase = ['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, ...(OVERLAY.manifestPath === undefined ? [] : ['--manifest', OVERLAY.manifestPath]), '--out', join(polyDir, 'cli')];
+    const lineRuns = [
+      ['--pack', runCli([...edgesBase, '--pack']), /, padding \d+, shape rect$/],
+      ['--pack --pack-shape rect', runCli([...edgesBase, '--pack', '--pack-shape', 'rect']), /, padding \d+, shape rect$/],
+      ['--pack --pack-shape polygon', runCli([...meshBase, '--pack', '--pack-shape', 'polygon']), /, padding \d+, shape polygon$/],
+      ['--pack --page-edges free --pack-shape polygon', runCli([...meshBase, '--pack', '--page-edges', 'free', '--pack-shape', 'polygon']), /, padding \d+, page edges free, shape polygon$/],
+    ] as const;
+    const lineProbes = lineRuns.flatMap(([flags, run, want]) => {
+      const line = lineOf(run).trimEnd();
+      const a18 = run.stdout.split('\n').filter((l) => l.includes('A18_DETERMINISTIC_EMIT'));
+      return [
+        ...(run.status === 0 ? [] : [`${flags} exited ${String(run.status)}: ${run.stderr.split('\n')[0]}`]),
+        ...(want.test(line) ? [] : [`${flags}: the pack line is ${JSON.stringify(line)}`]),
+        ...(a18.length === 2 && a18.every((l) => l.includes('PASS')) ? [] : [`${flags}: A18 rows ${JSON.stringify(a18.map((l) => l.trim()))}`]),
+      ];
+    });
+    const lineHeld = lineProbes.length === 0;
+    say(
+      'PK83_THE_PACK_LINE_ENDS_WITH_THE_SHAPE_UNDER_BOTH_SHAPES',
+      lineHeld,
+      probeDetail(lineHeld, lineProbes, lineRuns.map(([flags, run]) => `${flags}: ${lineOf(run).trim()}`).join('; ') + '; A18 PASS on both gates of each'),
+      'issue #1099: spine-parts reads the pack line whole (`CHECK_PACK_LINE_READS`), so the field is appended rather ' +
+        'than inserted, and it is printed under the default too, so a reader never infers the mode from an absent word',
+    );
+
+    // PK84: the flag is refused by name at both doors, as `--page-edges` is.
+    const shapeTypo = runCli([...edgesBase, '--pack', '--pack-shape', 'poly']);
+    const shapeUnpacked = runCli([...edgesBase, '--pack-shape', 'polygon']);
+    const shapeApi = refusalOf(() => packAtlas(freeInputs, { shape: 'poly' as 'rect' }));
+    const shapeProbes = [
+      shapeTypo.status === 2 && shapeTypo.stderr.includes('--pack-shape "poly"') && shapeTypo.stderr.includes('rect, polygon')
+        ? null
+        : `--pack-shape poly exited ${String(shapeTypo.status)}: ${shapeTypo.stderr.split('\n')[0]}`,
+      shapeUnpacked.status === 2 && shapeUnpacked.stderr.includes('--pack-shape only means something with --pack')
+        ? null
+        : `--pack-shape without --pack exited ${String(shapeUnpacked.status)}: ${shapeUnpacked.stderr.split('\n')[0]}`,
+      shapeApi !== null && shapeApi.includes('"poly"') && shapeApi.includes('rect, polygon') ? null : `packAtlas said: ${String(shapeApi)}`,
+    ].filter((m): m is string => m !== null);
+    const shapeHeld = shapeProbes.length === 0;
+    say(
+      'PK84_PACK_SHAPE_IS_REFUSED_BY_NAME_UNKNOWN_OR_WITHOUT_PACK',
+      shapeHeld,
+      probeDetail(shapeHeld, shapeProbes, `${shapeTypo.stderr.split('\n')[0]} (exit ${String(shapeTypo.status)}); ${shapeUnpacked.stderr.split('\n')[0]} (exit ${String(shapeUnpacked.status)}); packAtlas: ${String(shapeApi)}`),
+      'a typo that fell back to `rect` would hand the caller who asked for the denser page the looser one, green, and ' +
+        'a shape given without a pack would be a flag that did nothing',
+    );
+
+    // PK85: the footprint set is exact where the coordinates are, and rounds only
+    // outward where they are not. `footprintCell` against a brute-force reference
+    // — a texel is owned when its square grown by `reach` meets the CLOSED
+    // polygon — on dyadic polygons, where every double in both is exact: a wedge
+    // whose edge runs through texel corners, a diamond, an inset rectangle whose
+    // edges sit exactly `reach` from a row of texels, and the whole rectangle,
+    // which must come back as the cell itself. Then a polygon with 7-decimal UVs,
+    // as `skeleton.json` writes them, where the set may only grow. The planted
+    // reference treats contact as apart (the OPEN polygon), and must disagree on
+    // the inset rectangle — so the reference can tell the reading that lets two
+    // footprints touch.
+    const PROBE_W = 16;
+    const PROBE_H = 12;
+    const reachOf = Math.max(DEFAULT_PADDING, 1);
+    const probeCell = { w: PROBE_W + 2 * DEFAULT_PADDING, h: PROBE_H + 2 * DEFAULT_PADDING };
+    const referenceSet = (polygon: number[]): Uint8Array => {
+      const loop: Texel2[] = [];
+      for (let i = 0; i < polygon.length; i += 2) loop.push([polygon[i] + DEFAULT_PADDING, polygon[i + 1] + DEFAULT_PADDING]);
+      const set = new Uint8Array(probeCell.w * probeCell.h);
+      for (let y = 0; y < probeCell.h; y++) {
+        for (let x = 0; x < probeCell.w; x++) {
+          const box: Texel2[] = [[x - reachOf, y - reachOf], [x + 1 + reachOf, y - reachOf], [x + 1 + reachOf, y + 1 + reachOf], [x - reachOf, y + 1 + reachOf]];
+          set[y * probeCell.w + x] = loopDistance(box, loop) === 0 ? 1 : 0;
+        }
+      }
+      return set;
+    };
+    // The planted reading, for an axis-aligned rectangle only: owned when the
+    // grown square and the rectangle share INTERIOR — strict inequalities, so a
+    // square that only touches the rectangle is apart.
+    const openRectSet = ([x0, y0, x1, y1]: [number, number, number, number]): Uint8Array => {
+      const set = new Uint8Array(probeCell.w * probeCell.h);
+      for (let y = 0; y < probeCell.h; y++) {
+        for (let x = 0; x < probeCell.w; x++) {
+          const inside = x - reachOf < x1 + DEFAULT_PADDING && x0 + DEFAULT_PADDING < x + 1 + reachOf && y - reachOf < y1 + DEFAULT_PADDING && y0 + DEFAULT_PADDING < y + 1 + reachOf;
+          set[y * probeCell.w + x] = inside ? 1 : 0;
+        }
+      }
+      return set;
+    };
+    const dyadic: Array<[string, number[]]> = [
+      ['wedge through texel corners', [0, 0, 16, 0, 0, 12]],
+      ['diamond', [8, 1, 15, 6, 8, 11, 1, 6]],
+      ['inset rectangle', [4, 3, 12, 3, 12, 9, 4, 9]],
+      ['whole rectangle', [0, 0, 16, 0, 16, 12, 0, 12]],
+    ];
+    const exactProbes: string[] = [];
+    const exactSaid: string[] = [];
+    for (const [what, polygon] of dyadic) {
+      const cell = footprintCell(PROBE_W, PROBE_H, DEFAULT_PADDING, { polygons: [polygon] });
+      const want = referenceSet(polygon);
+      let differ = 0;
+      for (let k = 0; k < want.length; k++) if (want[k] !== cell.mask[k]) differ++;
+      const owned = cell.mask.reduce((n, v) => n + v, 0);
+      if (differ > 0) exactProbes.push(`${what}: ${differ} texel(s) differ from the closed reference`);
+      if (what === 'whole rectangle' && !cell.whole) exactProbes.push('the whole rectangle did not come back as the cell');
+      exactSaid.push(`${what} ${owned}/${want.length}`);
+    }
+    const decimal = [0.1234567, 0.0416667, 0.9583333, 0.3333333, 0.6666667, 0.9583333, 0.0416667, 0.6666667].map((n, i) => n * (i % 2 === 0 ? PROBE_W : PROBE_H));
+    const decimalCell = footprintCell(PROBE_W, PROBE_H, DEFAULT_PADDING, { polygons: [decimal] });
+    const decimalWant = referenceSet(decimal);
+    let missing = 0;
+    let extra = 0;
+    for (let k = 0; k < decimalWant.length; k++) {
+      if (decimalWant[k] === 1 && decimalCell.mask[k] === 0) missing++;
+      if (decimalWant[k] === 0 && decimalCell.mask[k] === 1) extra++;
+    }
+    if (missing > 0) exactProbes.push(`the 7-decimal polygon's set is missing ${missing} texel(s) the closed reference owns`);
+    const open = openRectSet([4, 3, 12, 9]);
+    const closedInset = footprintCell(PROBE_W, PROBE_H, DEFAULT_PADDING, { polygons: [dyadic[2][1]] });
+    let openDiffer = 0;
+    for (let k = 0; k < open.length; k++) if (open[k] !== closedInset.mask[k]) openDiffer++;
+    if (openDiffer === 0) exactProbes.push('the open reference agreed with the set on the inset rectangle, so contact was never tested');
+    const exactHeld = exactProbes.length === 0;
+    say(
+      'PK85_THE_FOOTPRINT_SET_IS_EXACT_ON_DYADIC_POLYGONS_AND_ONLY_GROWS_ELSEWHERE',
+      exactHeld,
+      probeDetail(
+        exactHeld,
+        exactProbes,
+        `a ${PROBE_W}x${PROBE_H} region at --padding ${DEFAULT_PADDING}, owned/cell texels equal to the closed reference: ${exactSaid.join(', ')}; ` +
+          `7-decimal polygon: ${missing} missing, ${extra} extra (FOOTPRINT_SLACK ${FOOTPRINT_SLACK}); planted open reference: ${openDiffer} texel(s) apart on the inset rectangle`,
+      ),
+      'issue #1099: the brief\'s rule is that a rounding which lets two footprints touch is a defect — so the set is ' +
+        'held to the closed polygon where doubles are exact, and allowed only to grow where they are not',
+    );
+  }
   return bad;
 }
 
@@ -105909,7 +106518,12 @@ function main(): void {
       'skeleton whether it traced the loose PNG or the turned pack — and beside them the page RECTANGLE such a ' +
       'region occupies, which A06 has to print and A19 has to open: the same reading at both quarter turns, and ' +
       'every one of a page of solid parts still named at each rotation, where the transposition applied at 90 ' +
-      'alone had A19 measuring two opaque rectangles green at 270)' +
+      'alone had A19 measuring two opaque rectangles green at 270; and — issue #1099 — `--pack-shape polygon`: two ' +
+      'polygon packs byte-identical and none larger than the rect pack, every texel within a tap of what a region ' +
+      'draws its own with a later-wins drawing named, a neighbour inside an understated hull and a padding-free ' +
+      'footprint test each named by the geometric check the gate will make, a pack with no mesh footprint the rect ' +
+      'pack byte for byte, the pack line ending in the shape under both, the flag refused by name, and the ' +
+      'footprint set equal to the closed polygon on dyadic shapes and only ever grown elsewhere)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +

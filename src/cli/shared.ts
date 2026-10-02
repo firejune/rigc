@@ -14,7 +14,7 @@
  * anything it imports: the bodies that reach the runtime are
  * `./spine_commands.ts`'s, which only `cli.ts` imports.
  */
-import { type AtlasRegion, DEFAULT_PADDING, DEFAULT_PAGE_EDGES, DEFAULT_PAGE_SIZE, packAtlas, PAGE_EDGES, type PageEdges, pageFootprint } from '../atlas.ts';
+import { type AtlasRegion, DEFAULT_PACK_SHAPE, DEFAULT_PADDING, DEFAULT_PAGE_EDGES, DEFAULT_PAGE_SIZE, PACK_SHAPES, packAtlas, type PackInput, packFootprints, type PackShape, PAGE_EDGES, type PageEdges, pageFootprint } from '../atlas.ts';
 import { copyAtlasPages, plannedPageCopies } from '../emit.ts';
 import { CLI_DEFAULT_PROFILE, VALIDATE_PROFILES } from '../assertions/report.ts';
 import type { AssertionProfile } from '../assertions/kinds.ts';
@@ -985,6 +985,10 @@ const FLAG_MEANINGS: Record<string, string> = {
     'both; free tries every width from the widest part up, takes the height the placement needs and keeps ' +
     'the least area — a smaller page, at the cost of region attachments sampling within 1 LSB of the loose ' +
     'build rather than exactly',
+  'pack-shape': `what two packed rectangles may share, --pack only (default ${DEFAULT_PACK_SHAPE}): rect keeps every ` +
+    'region\'s cell apart; polygon packs a region that only meshes draw by its emitted hull, so a neighbour may ' +
+    'sit inside its rectangle where the hull is not, with the padding kept between footprints (so a mesh\'s ' +
+    'rectangle is its own bytes only where it can be sampled) — a region attachment stays its rectangle',
   'atlas-in':
     'resolve every part against the regions of this pre-packed .atlas instead of against loose PNGs — region ' +
     'geometry (bounds/offsets/rotate) is read from the file and the atlas is re-emitted into --out, re-anchored',
@@ -1115,6 +1119,7 @@ const FLAG_VALUES: Record<string, string> = {
   'page-size': '<px>',
   padding: '<px>',
   'page-edges': 'pot|free',
+  'pack-shape': 'rect|polygon',
   'texture-from': '<path>',
   poser: 'core|spine',
   reference: '<dir|skeleton.json>',
@@ -1239,7 +1244,7 @@ export const COMMANDS: CommandDoc[] = [
       core: {
         usage: [
           'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
-          `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free]   (parts onto shared pages, written into --out)`,
+          `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
           'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
           'rigc build --cut <name> --cuts <cuts.json>',
         ],
@@ -1263,7 +1268,7 @@ export const COMMANDS: CommandDoc[] = [
     spineFormat: true,
     usage: [
       'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
-      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free]   (parts onto shared pages, written into --out)`,
+      `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
       'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
       'rigc build --cut <name> --cuts <cuts.json>',
     ],
@@ -1278,6 +1283,7 @@ export const COMMANDS: CommandDoc[] = [
       'page-size',
       'padding',
       'page-edges',
+      'pack-shape',
       'atlas-in',
       'cut',
       'cuts',
@@ -1298,7 +1304,7 @@ export const COMMANDS: CommandDoc[] = [
       'this line said "the same arguments as build, minus --profile" and was false in both',
       'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
       'command read what `ingest --art none` writes was reachable and undocumented, while',
-      '--pack, --page-size, --padding, --page-edges and --copy-images are build\'s and do nothing here —',
+      '--pack, --page-size, --padding, --page-edges, --pack-shape and --copy-images are build\'s and do nothing here —',
       'they decide what is WRITTEN, and this command writes nothing. What it takes is listed',
       'above, and that is now the whole of it.',
     ],
@@ -1814,6 +1820,42 @@ export function readPageEdges(flags: Record<string, string>): PageEdges {
 }
 
 /**
+ * Read `--pack-shape`, or its default — `rect` (issue #1099).
+ *
+ * Refused on any other value for `readPageEdges`'s reason: a typo that fell
+ * back to `rect` would hand the caller who asked for the denser page the
+ * looser one, green, and say nothing.
+ */
+export function readPackShape(flags: Record<string, string>): PackShape {
+  const raw = flags['pack-shape'];
+  if (raw === undefined) return DEFAULT_PACK_SHAPE;
+  const found = PACK_SHAPES.find((e) => e === raw);
+  if (!found) throw new UsageError(`--pack-shape ${JSON.stringify(raw)}; known values: ${PACK_SHAPES.join(', ')}`);
+  return found;
+}
+
+/**
+ * The parts of a compile as `packAtlas` takes them — under `polygon` each with
+ * the footprint its attachments draw, read off the skeleton text the build
+ * emitted (`packFootprints`); under `rect` without, which is the input every
+ * pack had before #1099.
+ */
+function packInputs(result: CompileResult, shape: PackShape): PackInput[] {
+  const sizes = new Map(result.images.map((img) => [img.region, { width: img.width, height: img.height }]));
+  const footprints = shape === 'polygon' ? packFootprints(result.skeletonText, (region) => sizes.get(region)) : null;
+  return result.images.map((img) => {
+    const footprint = footprints?.get(img.region) ?? undefined;
+    return {
+      region: img.region,
+      absPath: img.absPath,
+      width: img.width,
+      height: img.height,
+      ...(footprint === undefined ? {} : { footprint }),
+    };
+  });
+}
+
+/**
  * The rectangle a region occupies **on its page**, for a line that has already
  * said where the region is — and the empty string where the page rectangle is
  * the one `bounds:` already states.
@@ -1890,7 +1932,7 @@ export function readBuildInvocation(flags: Record<string, string>): { label: str
   // now a build like any other — and it is the only one that puts the renderer's
   // own rulebook over shared-page sampling.
   if (!packing) {
-    for (const name of ['page-size', 'padding', 'page-edges'] as const) {
+    for (const name of ['page-size', 'padding', 'page-edges', 'pack-shape'] as const) {
       if (flags[name] !== undefined) throw new UsageError(`--${name} only means something with --pack`);
     }
   }
@@ -2103,15 +2145,10 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
       pageSize: readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE),
       padding: readIntFlag(flags, 'padding', DEFAULT_PADDING),
       pageEdges: readPageEdges(flags),
+      shape: readPackShape(flags),
       pageStem: 'skeleton',
     };
-    const inputs = result.images.map((img) => ({
-      region: img.region,
-      absPath: img.absPath,
-      width: img.width,
-      height: img.height,
-    }));
-    const packed = packAtlas(inputs, packOpts);
+    const packed = packAtlas(packInputs(result, packOpts.shape), packOpts);
     atlasText = packed.atlasText;
     for (const page of packed.pages) {
       page.plate.writePng(join(opts.outDir, page.name));
@@ -2119,7 +2156,11 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
         `  ..    pack: ${page.name} ${page.width}x${page.height}, ` +
           `${packed.placements.filter((p) => packed.pages[p.page].name === page.name).length} region(s), ` +
           `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}` +
-          (packOpts.pageEdges === 'free' ? ', page edges free' : ''),
+          (packOpts.pageEdges === 'free' ? ', page edges free' : '') +
+          // Appended, never inserted: a reader that takes the line whole keeps
+          // every field it read before #1099, and the mode is named under the
+          // default too, so no reader infers it from an absent word.
+          `, shape ${packed.shape}`,
       );
     }
     for (const place of packed.placements) {
@@ -2134,15 +2175,7 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
     // a region, and A18 compares a second independent compile+pack. Two gates on
     // one build is the cost of shipping a second atlas shape.
     console.log('  ..    validate (packed atlas, pages on disk)');
-    const packAgain = packAtlas(
-      compile(opts).images.map((img) => ({
-        region: img.region,
-        absPath: img.absPath,
-        width: img.width,
-        height: img.height,
-      })),
-      packOpts,
-    );
+    const packAgain = packAtlas(packInputs(compile(opts), packOpts.shape), packOpts);
     // The document written is spelled from the packed atlas, and this gate's A18 compares it with a
     // second compile's spelled from the second, independent pack (issue #1016).
     modelText = modelDocument(result.model, result.skeletonText, atlasText);

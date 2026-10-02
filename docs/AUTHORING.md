@@ -221,6 +221,7 @@ What the flags mean:
 | `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
 | `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
 | `--page-edges` | `build --pack` only: `pot` (default) or `free`. `pot` keeps both page edges powers of two; `free` sizes the page to the parts — a smaller page, at the cost of region attachments sampling within one least significant bit of the loose build instead of exactly. Any other value is refused by name — **§0.1** |
+| `--pack-shape` | `build --pack` only: `rect` (default) or `polygon`. `rect` keeps every region's cell apart; `polygon` packs a region that only meshes draw by its emitted hull, so a neighbour may sit inside its rectangle where the hull is not, with the padding kept between footprints. A region attachment's footprint stays its rectangle. Any other value is refused by name, and so is the flag without `--pack` — **§0.1** |
 | `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through (§5.1) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
@@ -314,7 +315,7 @@ atlas. `--pack` is the other arrangement.
 
 ```bash
 bun cli.ts build --rig … --motion … --out spine --pack
-#   ..    pack: skeleton.png 512x1024, 26 region(s), 67.9% covered, padding 2
+#   ..    pack: skeleton.png 512x1024, 26 region(s), 67.9% covered, padding 2, shape rect
 #   ..    validate (packed atlas, pages on disk)
 ```
 
@@ -489,7 +490,62 @@ The pixel counts are over 49 frames at `render --max 1024`. **Covered** is the
 regions' own rectangles over the page, which the pack line prints; **opaque** is
 the page's texels with any alpha. The gap between the two is transparency
 inside the parts, which no packer that copies bytes can remove. The pack line
-ends `, page edges free` when the flag is set.
+carries `, page edges free` when the flag is set.
+
+**`--pack-shape polygon`: rectangles that overlap where nothing is drawn**
+(issue #1099, stage 1 of #1093). A mesh samples only the texels its triangles
+cover, so the part of its rectangle outside its **hull** — the outer loop of
+its triangles, the mesh's first `hull` vertices — can carry a neighbour's
+pixels. Under `polygon` every region whose attachments are all meshes (or
+linked meshes, which draw their source's hull) is packed by that hull as
+`skeleton.json` writes its UVs; a region any region attachment draws keeps its
+rectangle, because a region attachment draws its whole quad. The atlas format
+does not change — every region is still `bounds` + `offsets` + `rotate: 0` —
+what changes is that two rectangles may overlap where neither footprint is.
+
+- **The footprint test.** A region owns every texel of its cell whose square,
+  grown by `max(--padding, 1)` texels on every side, meets its footprint
+  (boundary contact counts); a rectangle owns its whole cell. Two regions may
+  be placed when they own no texel in common. Between two rectangles that is
+  the `rect` rule exactly, so a rig with no mesh packs byte for byte as it does
+  under `rect`; between any two footprints it keeps them at least twice the
+  padding apart, as two rectangles are. The set is computed in doubles from the
+  UVs and every comparison is made in the footprint's favour by `1e-6` texels,
+  so rounding can only keep two footprints further apart, never let them
+  touch.
+- **The placement** is the same MaxRects search, ordering and tie-breaks, with
+  the free list split by what each region owns instead of by its cell, and a
+  candidate is the free rectangle that holds what the cell owns. Every pass is
+  also run as the `rect` pass on the same page and the better kept — more parts
+  placed, then the higher bottom edge, then `rect` on a tie — so a `polygon`
+  page is never larger than the `rect` page. `--page-edges` and the spill rule
+  are unchanged.
+- **The pixels.** Every cell is drawn whole in packing order, then every
+  region's owned texels are drawn again with its own values, so every texel a
+  region can sample is its own (`PK79`). A texel nobody owns carries the last
+  cell drawn over it — which no region samples. So a mesh region's rectangle
+  is no longer its own bytes outside its hull, and lifting it back off the page
+  (`PK02`, under `rect`) is not a claim this mode makes; a region attachment's
+  is, unchanged.
+- **What it costs.** A region that moves on a page samples through a different
+  `x / pageWidth`, so its pixels can move by one least significant bit — the
+  same bit two `rect` packs of one rig at different positions differ by.
+  Measured over the seven gallery rigs (`--pack --page-edges free`, both
+  posers, every frame at the protocol rate): five pack identically under both
+  shapes and render pixel-identical; `nod` and `squash`, whose packs move, differ
+  in 207 of 11,157,504 and 36 of 2,613,248 channel samples, all by exactly 1 —
+  against 155 and 44, all by 1, between their own `rect` packs under `pot` and
+  `free`. No texel is read from a neighbour (that is three orders of magnitude
+  louder, `PK06`).
+- ⚠️ Under `--profile spine-html` `A06` refuses two regions whose rectangles
+  overlap (the clause is about what a tiling page means), so a `polygon` pack
+  that used the mode fails that profile by name. The rule that measures
+  footprints instead of rectangles is a later landing of issue #1099.
+
+The pack line ends `, shape rect` or `, shape polygon` — named under the
+default too, so no reader infers the mode from an absent word, and appended
+after every other field, so a reader that takes the line whole keeps every
+field it read before.
 
 ### 0.2 Building against a pack somebody else made — `--atlas-in`
 
@@ -974,9 +1030,9 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   atlas (`--poser` in the flag table); the refusal is unchanged and still comes
   first, so a size-only pair needs `--atlas-in` here whichever reader the survey
   takes. ⚠️ `--profile`,
-  `--pack`, `--page-size`, `--padding`, `--page-edges` and `--copy-images` are
-  `build`'s and are not here: five of them decide what is *written*, and this
-  command writes nothing.
+  `--pack`, `--page-size`, `--padding`, `--page-edges`, `--pack-shape` and
+  `--copy-images` are `build`'s and are not here: six of them decide what is
+  *written*, and this command writes nothing.
 
   📐 **What it will not measure: the texels of a page that is not its declared
   size.** Under
