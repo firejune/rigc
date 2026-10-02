@@ -1,8 +1,9 @@
 /**
  * A06, the body (issue #1025, step 4c of #380): every page the atlas names is
  * the size its PNG is, every region lies inside its page, and — under
- * `spine-html` — no page claims premultiplied alpha, no two regions on one page
- * overlap and no region is turned.
+ * `spine-html` — no page claims premultiplied alpha and no region is turned.
+ * The clause that refused two regions on one page overlapping is
+ * `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` since issue #1099 (`./a49.ts`).
  *
  * Moved out of `src/validate.ts` unchanged but for what it reads: the pages and
  * regions are a fact (`../facts/atlas_regions.ts`), the directory is the
@@ -13,7 +14,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Verdicts } from '../harness.ts';
-import type { AtlasRegionEntry, AtlasRegionFacts } from '../facts/atlas_regions.ts';
+import type { AtlasRegionFacts } from '../facts/atlas_regions.ts';
 import { SKIP_NO_ATLAS, SKIP_NO_ATLAS_PAGE } from '../reasons.ts';
 import { pageFootprint, pageGridSentence } from '../../atlas.ts';
 import { readPngHeader } from '../../png.ts';
@@ -202,30 +203,27 @@ export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { a
     }
   }
   if (!policy) return unreadSizes();
-  // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2). This
-  // clause used to be the first alternative alone — every region's UVs
-  // `(0,0)-(1,1)` — which is rigc's *unpacked* convention and exactly what
-  // `build --pack` stops being true, so `--pack --profile spine-html` had to be
-  // a named CLI refusal. A pack is not a defect, and refusing it under this
-  // profile meant the one shape that exercises the renderer's shared-page
-  // sampling could never be gated by the renderer's own rulebook.
-  //
-  // What the first alternative bought was the attachment -> region -> file
-  // chain being checkable exactly, and `A27` already owns that half and already
-  // stands down on a multi-region page. What is left to check on a *tiling*
-  // page is what makes shared-page sampling well defined at all: no two regions
-  // on one page overlapping. A foreign pack can fail that while loading clean,
-  // and two overlapping rectangles put one drawing inside another's.
+  // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2), and
+  // since issue #1099 the tiling half is not this assertion's. It held that no
+  // two regions on one page overlap — the check that makes shared-page
+  // sampling well defined — and it was stated over rectangles, which is the
+  // right statement for a region attachment and the wrong one for a mesh: a
+  // mesh draws its hull, and `--pack-shape polygon` puts a neighbour inside a
+  // mesh's rectangle wherever the hull is not. The clause is now
+  // `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` ([`./a49.ts`](a49.ts)), which
+  // refuses a pair only where the rectangles overlap AND what the two regions
+  // draw does — so every pair this clause refused where neither region is a
+  // readable mesh hull (an alias, a sequence frame, a rotated region, two
+  // rectangles planted over the same texels) is refused there, by the same two
+  // rectangles, under the same profile.
   //
   // ⚠️ Its sibling — every region inside the page it names — moved above and
   // out of this profile in issue #694, and the two are not symmetrical. That
-  // one is broken for every consumer; this one is a statement about what a
+  // one is broken for every consumer; the overlap is a statement about what a
   // pack MEANS, and the corpus is the evidence rather than the taste:
   // measured over the ten atlases in `examples/`, 0 of 132 regions are off
   // their page and 49 pairs on four of those pages overlap, editor-exported
-  // and correct. A rule that called those files broken would be one
-  // consumer's convention refusing everybody else's data, which is the thing
-  // the profile split exists to prevent.
+  // and correct. That is why A49 is a renderer rule.
   //
   // ⚠️ Rotation stays refused either way, and that is not the same clause: it
   // is about rigc's own packer never turning a region, which is a statement
@@ -234,38 +232,6 @@ export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { a
   // its page, measured against `MeshAttachment.computeUVs` (`PKR02`) — and the two
   // must not be re-merged: an artifact under the renderer's own rulebook that
   // rigc did not pack is still a foreign artifact, whatever rigc can measure.
-  const regionsPerPage = new Map<string, AtlasRegionEntry[]>();
-  for (const region of atlas.regions) {
-    const on = regionsPerPage.get(region.page.name);
-    if (on) on.push(region);
-    else regionsPerPage.set(region.page.name, [region]);
-  }
-  for (const [pageName, on] of regionsPerPage) {
-    // The `onePartPerPage` guard that stood here went with the clause it was
-    // written for: with only the pair check left, a page carrying one region
-    // has no pair and the loop below does nothing on it anyway. Nothing reads
-    // `u`/`v`/`u2`/`v2` in this assertion any more, which is the point of
-    // #579 kept rather than restated.
-    const rects = on.map((region) => {
-      const foot = pageFootprint(region);
-      return { name: region.name, x: region.x, y: region.y, width: foot.width, height: foot.height };
-    });
-    for (let i = 0; i < rects.length; i++) {
-      for (let j = i + 1; j < rects.length; j++) {
-        const a = rects[i];
-        const b = rects[j];
-        if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) {
-          fail(
-            'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
-            `regions "${a.name}" (${a.x},${a.y} ${a.width}x${a.height}) and "${b.name}" (${b.x},${b.y} ` +
-              `${b.width}x${b.height}) overlap on page "${pageName}"; a page is one part covering it exactly or ` +
-              'a tiling of regions that do not, and two rectangles over the same texels put one drawing inside ' +
-              "the other's",
-          );
-        }
-      }
-    }
-  }
   for (const region of atlas.regions) {
     if (region.degrees !== 0) {
       fail(

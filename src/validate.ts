@@ -102,6 +102,7 @@ import { a22MeshUvsInUnitRange } from './assertions/bodies/a22.ts';
 import { a38SkinMembersAreSkinRequired } from './assertions/bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from './assertions/bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from './assertions/bodies/a19.ts';
+import { a49PackedFootprintsDoNotOverlap } from './assertions/bodies/a49.ts';
 import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
 import type { MeshEntry as MeshAttachmentEntry, MeshFacts } from './assertions/facts/mesh_attachments.ts';
 import type { ClipEnd, PolygonEntry, PolygonFacts } from './assertions/facts/vertex_polygons.ts';
@@ -3200,6 +3201,13 @@ export function validate(input: ValidateInput): ValidateReport {
   // that does not ask — the reader opted in, and the message is where they find
   // out what they opted into.
   check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => a19OverlayPngsHaveAlpha(verdicts, { atlas }, spineStage(skeletonData), { regionAttachments }, input));
+  // Two regions on one page whose rectangles overlap and whose footprints do
+  // too — a mesh's hull, else the rectangle (issue #1099). The clause A06 held
+  // about two rectangles over the same texels, read over what each region
+  // draws; the argument and the footprint are `./assertions/bodies/a49.ts` and
+  // `./assertions/footprints.ts`. The meshes are the loaded skeleton's, and
+  // where it did not load every footprint is the rectangle A06 read.
+  check('A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP', () => a49PackedFootprintsDoNotOverlap(verdicts, { atlas }, spineRegionJoins(input.atlasText, raw), skeletonData === null ? null : loadedMeshFacts()));
 
   // -------------------------------------------------------------------------
   // Archetype assertions — the invariants the RIG declares about itself.

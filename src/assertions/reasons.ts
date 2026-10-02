@@ -99,6 +99,8 @@ export const SKIP_NO_TIMELINE = 'no animation here carries a timeline';
 export const SKIP_NO_PHYSICS_CONSTRAINT = 'the skeleton declares no physics constraint';
 export const SKIP_NO_ATLAS_PAGE = 'the atlas declares no page';
 export const SKIP_NO_ATLAS_REGION = 'the atlas declares no region';
+/** A49's (issue #1099): the subject is a pair of regions on one page, and an atlas of one-region pages carries none. */
+export const SKIP_NO_ATLAS_REGION_PAIR = 'no page of the atlas carries two regions, so there is no pair of footprints to hold apart';
 export const SKIP_NO_ATTACHMENT_REGION_JOIN =
   'no attachment names a region and the atlas declares none, so there is no attachment-to-region join to hold';
 export const SKIP_NO_TWO_COLOR_TINT =

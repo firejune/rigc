@@ -3,7 +3,7 @@
  * step 4e of #380) — the half of the gate the entry that links none of
  * spine-core runs beside the model side (`../model/index.ts`).
  *
- * ⭐ **Every one of the 49 is accounted for, by name.** The model side runs
+ * ⭐ **Every one of the 50 is accounted for, by name.** The model side runs
  * the moved assertions (`MOVED_ASSERTIONS`) over the document. What is left —
  * the complement, read off `ASSERTION_KIND` rather than listed — is the
  * round trip's own: A00, A01, A02, A05, A07, A16, A18, A31, A35 at the time of

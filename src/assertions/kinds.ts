@@ -32,9 +32,11 @@ export type AssertionKind = 'validity' | 'renderer' | 'archetype';
  * validity half must never stop running; their policy clauses are gated inside
  * the assertion body against `profile`, and each such clause says so where it
  * lives. They are A06 (size-vs-PNG and every region's rectangle inside the page
- * it names are validity; pma / rotation / two regions over the same texels are
- * policy — the rectangle moved across that line in issue #694, and the reason
- * is stated where it now sits) and A20 (weight coherence is validity; requiring
+ * it names are validity; pma and rotation are policy — the rectangle moved
+ * across that line in issue #694, and the reason is stated where it now sits;
+ * the policy clause about two regions over the same texels left A06 for
+ * `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` in issue #1099, a renderer rule of
+ * its own) and A20 (weight coherence is validity; requiring
  * a mesh to be weighted at all is policy).
  *
  * A08 was the third until issue #574 retired its policy clause. It required a
@@ -94,6 +96,7 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES: 'validity',
   A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
   A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
+  A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP: 'renderer',
 };
 
 /** Whether `profile` runs a rule of `kind`: `spine` runs validity alone, `spine-html` every kind. */

@@ -209,14 +209,14 @@ instead of being kept by hand
 
 ```
 PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
-..    49 assertions: 15 measured (15 passed, 0 failed), 19 skipped, 15 not in profile "spine"
+..    50 assertions: 15 measured (15 passed, 0 failed), 19 skipped, 16 not in profile "spine"
 ```
 
 `rigc build --profile spine-html`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    49 assertions: 21 measured (21 passed, 0 failed), 28 skipped, 0 not in profile "spine-html"
+..    50 assertions: 21 measured (21 passed, 0 failed), 29 skipped, 0 not in profile "spine-html"
 ```
 
 ---

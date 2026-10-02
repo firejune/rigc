@@ -31,7 +31,7 @@
  * handed over — now either one given beside the document is refused by name.
  *
  * ⛔ **Not wired into any command.** `build` keeps the round trip and its
- * forty-nine lines; this entry is what the selftest and the instrument call
+ * fifty lines; this entry is what the selftest and the instrument call
  * until every moved assertion is on it (the card's design, point 7).
  *
  * Links nothing from the runtime, directly or through what it imports — held
@@ -62,6 +62,7 @@ import { a22MeshUvsInUnitRange } from '../bodies/a22.ts';
 import { a38SkinMembersAreSkinRequired } from '../bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from '../bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from '../bodies/a19.ts';
+import { a49PackedFootprintsDoNotOverlap } from '../bodies/a49.ts';
 import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
 import { modelAnimatedBones } from './animated_bones.ts';
 import { modelSkinMembers } from './skin_members.ts';
@@ -304,6 +305,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
   { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
   { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), { atlasDir: input.atlasDir, rig: supply.rigInfo(read, input) }), unread: SKIP_NO_ATLAS },
+  { code: 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP', run: (v, read, input, supply) => a49PackedFootprintsDoNotOverlap(v, supply.atlasRegions(read, input), supply.regionJoins(read), supply.meshes(read)), unread: SKIP_NO_ATLAS },
   { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
