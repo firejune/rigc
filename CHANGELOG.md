@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.1](https://github.com/firejune/rigc/compare/v2.0.0...v2.0.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **cli:** a sentence that sends its reader to the entry linking spine-core names both routes there — installed, the same `rigc` once the runtime is beside the package; from a clone, `bun cli.ts` ([#1081](https://github.com/firejune/rigc/issues/1081)) ([627ff8c](https://github.com/firejune/rigc/commit/627ff8ce384ae3460954752a23f3322ed798f37c)), closes [#1072](https://github.com/firejune/rigc/issues/1072)
+* **compile:** a slider whose animation an editor import would move off its index is refused — the file lists array-index names first, and the editor re-sorts and keeps a slider by index ([#1080](https://github.com/firejune/rigc/issues/1080)) ([d6a3231](https://github.com/firejune/rigc/commit/d6a32319b2a9195884ed8c9470e5f6513fa68efc)), closes [#1040](https://github.com/firejune/rigc/issues/1040)
+* **gate:** a page on disk that cannot be read as PNG is named once, by A06 — A19 SKIPs pointing at it instead of adding a second FAIL about the same file ([#1075](https://github.com/firejune/rigc/issues/1075)) ([a746e2d](https://github.com/firejune/rigc/commit/a746e2de37a851adef42886aa7b37cd186560950)), closes [#1064](https://github.com/firejune/rigc/issues/1064)
+
 ## [2.0.0](https://github.com/firejune/rigc/compare/v1.9.4...v2.0.0) (2026-10-02)
 
 
