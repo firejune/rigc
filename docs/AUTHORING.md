@@ -524,10 +524,19 @@ what changes is that two rectangles may overlap where neither footprint is.
   are unchanged, except that the `free` search's area bound sums the texels
   the cells own rather than the cells, since overlapping cells can cover more
   than the page (a spilled `polygon` page was refused as fitting no page until
-  it did — `PK86`). What it costs in time is measured on a set shaped like a
-  production rig (30 regions of 200 to 900 px, hulls near their rectangles,
-  one `free` page about 2023x2046): 1.1–1.4 s against `rect`'s 0.2 s for the
-  pack alone, the same page.
+  it did — `PK86`). **What it costs in time**, measured for the pack alone
+  (`--page-edges free`, padding 2, page size 2048, both shapes in one
+  process, a shared machine, so read the ratios): on a production rig's region
+  set (31 meshes, a few of them large, a two-page spill, the `rect` pages to
+  the texel) 0.15–0.18 s against `rect`'s 0.06 s — it was 260–304 s before
+  issue #1102, because a page search ran a full footprint pass at every width
+  and threw each one away; on a generated set of that shape
+  (`fixtures/polypack_shapes.ts`, seed 1107) 0.17 s against 0.06 s, from
+  4.5 s. Where the footprint pass does move a page the cost is real work and
+  stays: on a generated set it packs smaller (seed 1105, 4,882,012 →
+  4,467,942 texels over two pages) 0.96–0.99 s against 0.07–0.10 s, about ten
+  to fourteen times `rect`, from 127 s. `PK93` holds the first generated set
+  as a count of free-list splits, within ten times `rect`'s.
 - **The pixels.** Every cell is drawn whole in packing order, then every
   region's owned texels are drawn again with its own values, so every texel a
   region can sample is its own (`PK79`). A texel nobody owns carries the last
