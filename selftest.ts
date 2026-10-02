@@ -83737,7 +83737,7 @@ function runCoreSuite(): number {
 
 // Its own statements, so the suite lands as one hunk.
 import { deformPosers, surveyOfBuild, surveyOfModel, type DeformSurvey } from './src/deformmeasure.ts';
-import { commandHelp, COMMANDS, entryCommands } from './src/cli/shared.ts';
+import { commandHelp, COMMANDS, entryCommands, gatedOnWriteSentence } from './src/cli/shared.ts';
 import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS } from './src/cli/core_commands.ts';
 import { roundTripOnlyCodes, SKIP_NO_ROUND_TRIP, validateEmittedText } from './src/assertions/emitted/index.ts';
 import { SPINE_COMMAND_RUNS } from './src/cli/spine_commands.ts';
@@ -88608,8 +88608,8 @@ function runRenderHashesSuite(): number | null {
     const row1060 = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
     const spec1060 = row1060 === undefined ? '' : join(import.meta.dir, row1060.name);
     const ready = row1060 !== undefined && existsSync(join(spec1060, 'rig.json')) && existsSync(join(spec1060, 'parts'));
-    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [], RC33: [], RC34: [], RC35: [] };
-    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '', RC33: '', RC34: '', RC35: '' };
+    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [], RC33: [], RC34: [], RC35: [], RC36: [], RC37: [], RC38: [] };
+    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '', RC33: '', RC34: '', RC35: '', RC36: '', RC37: '', RC38: '' };
     const firstErr = (r: { stderr: string }): string => r.stderr.split('\n').find((l) => l.trim() !== '') ?? '';
     const stacked = (r: { stderr: string }): boolean => /^\s+at \S/m.test(r.stderr);
     if (!ready) {
@@ -88889,7 +88889,11 @@ function runRenderHashesSuite(): number | null {
         };
         type Reading = 'help' | 'refusal' | 'seam';
         /** RC33 over the entry at `root` with the package absent: every sentence naming cli.ts without the route, and what was read. */
-        const routeFaults = (root: string, readings: ReadonlySet<Reading>, report: string | null): { faults: string[]; texts: number; sentences: number; naming: number } => {
+        const routeFaults = (
+          root: string,
+          readings: ReadonlySet<Reading>,
+          report: string | null,
+        ): { faults: string[]; texts: number; sentences: number; naming: number; read: Array<{ label: string; sentence: string }> } => {
           const texts: Array<{ label: string; text: string }> = [];
           const runs = entryCommands(false);
           if (readings.has('help')) {
@@ -88902,6 +88906,11 @@ function runRenderHashesSuite(): number | null {
             for (const doc of COMMANDS.filter((d) => !runs.some((run) => run.name === d.name))) {
               const r = runEntryIn(root, 'cli_core.ts', [doc.name], work);
               texts.push({ label: `the refusal of ${doc.name}`, text: r.stderr });
+              // Issue #1097: a command that re-runs the gate is refused on a rigc build with one sentence more, read here too (RC37).
+              if (doc.runtime !== false && doc.runtime.rerunsTheGate === true) {
+                const g = runEntryIn(root, 'cli_core.ts', [doc.name, coreOut], work);
+                texts.push({ label: `the refusal of ${doc.name} on a rigc build`, text: g.stderr });
+              }
             }
           }
           if (readings.has('seam')) {
@@ -88914,15 +88923,17 @@ function runRenderHashesSuite(): number | null {
           const faults: string[] = [];
           let sentences = 0;
           let naming = 0;
+          const read: Array<{ label: string; sentence: string }> = [];
           for (const t of texts) {
             for (const sentence of sentencesOf(t.text)) {
               sentences++;
+              read.push({ label: t.label, sentence });
               if (!NAMES_CLI.test(sentence)) continue;
               naming++;
               if (!ROUTE.test(sentence)) faults.push(`${t.label}: names cli.ts and not the install route — ${JSON.stringify(sentence.slice(0, 240))}`);
             }
           }
-          return { faults, texts: texts.length, sentences, naming };
+          return { faults, texts: texts.length, sentences, naming, read };
         };
         const live33 = routeFaults(tree, new Set<Reading>(['help', 'refusal', 'seam']), `${coreRun.stdout}\n${coreRun.stderr}`);
         probes.RC33.push(...live33.faults);
@@ -88931,7 +88942,7 @@ function runRenderHashesSuite(): number | null {
         if (live33.naming === 0 || reportNaming < 2) probes.RC33.push(`the walk met ${live33.naming} sentence(s) naming cli.ts, ${reportNaming} of them in the build's report (A00's SKIP and the not-run line are two), so it measures nothing`);
         figures.RC33 =
           `${live33.texts} printed text(s) of cli_core.ts with the package absent — --help, the bare invocation, ${entryCommands(false).length} command page(s) by entryCommands(false), ` +
-          `${COMMANDS.length - entryCommands(false).length} refusal(s) of the commands it does not run, the three seam refusals and ${row1060.name}'s build report — ` +
+          `${COMMANDS.length - entryCommands(false).length} refusal(s) of the commands it does not run and ${COMMANDS.filter((d) => d.runtime !== false && d.runtime.rerunsTheGate === true).length} of one that re-runs the gate on a rigc build, the three seam refusals and ${row1060.name}'s build report — ` +
           `${live33.sentences} sentence(s), ${live33.naming} naming cli.ts, each naming the install route too`;
 
         // RC34 — the seam's tail: the route where the entry links none of the runtime, and not where the runtime is there and failed.
@@ -89013,6 +89024,93 @@ function runRenderHashesSuite(): number | null {
         }
         if (reds35.length !== 3 && probes.RC35.length === 0) probes.RC35.push(`${reds35.length} of 3 plants read red`);
         figures.RC35 = `in copies of the tree: ${reds35.join('; ')}`;
+
+        // RC36–RC38 — the refusal of `validate` on a rigc build says that build already ran the gate (issue #1097). A consumer
+        // read the refusal as a gate the install could not run (#1095). RC36 holds the sentence to the directory: on the build
+        // cli_core.ts wrote above, as the positional, as its skeleton.json and with the consumer's own `--profile spine`, the
+        // refusal is the one an export gets with gatedOnWriteSentence inserted after its first sentence and nothing else moved;
+        // on that build with its model document taken away, and with no target at all, it is the export's, word for word.
+        // RC37 holds RC33's walk to the new sentence: the walk read it whole as one sentence. RC38 plants each of three
+        // faults in its own copy and reads which control turns red.
+        const gatedFaults = (root: string): { faults: string[]; shapes: number } => {
+          const out: string[] = [];
+          const exportDir = join(root, '..', `${basename(root)}-rc36-export`);
+          if (!existsSync(exportDir)) {
+            cpSync(coreOut, exportDir, { recursive: true });
+            rmSync(join(exportDir, MODEL_DOCUMENT_FILE));
+          }
+          const lineOf = (args: string[]): { status: number | null; line: string } => {
+            const r = runEntryIn(root, 'cli_core.ts', args, work);
+            return { status: r.status, line: firstErr(r) };
+          };
+          const plain = lineOf(['validate', exportDir]);
+          const head = `rigc validate: \`validate\` runs through spine-core (`;
+          const seam = `${SPINE_SIDE_ABSENT}. `;
+          if (plain.status !== 1 || !plain.line.startsWith(head) || plain.line.split(seam).length !== 2) {
+            out.push(`validate on a Spine export exited ${plain.status} saying ${JSON.stringify(plain.line.slice(0, 200))}, not the runtime refusal`);
+            return { faults: out, shapes: 0 };
+          }
+          const bare = lineOf(['validate']);
+          if (bare.line !== plain.line) out.push(`validate with no target printed ${JSON.stringify(bare.line.slice(0, 200))}, not the export's refusal`);
+          if (plain.line.includes(`has ${MODEL_DOCUMENT_FILE} beside it`)) out.push(`validate on a Spine export says it is a rigc build: ${JSON.stringify(plain.line.slice(0, 400))}`);
+          const skeleton = join(coreOut, 'skeleton.json');
+          const shapes: Array<[string, string[]]> = [
+            ['the build directory', ['validate', coreOut]],
+            ['its skeleton.json', ['validate', skeleton]],
+            ['the build directory with --profile spine', ['validate', coreOut, '--profile', 'spine']],
+          ];
+          for (const [label, args] of shapes) {
+            const got = lineOf(args);
+            const want = plain.line.split(seam).join(`${seam}${gatedOnWriteSentence(skeleton)} `);
+            if (got.status !== 1 || got.line !== want) out.push(`validate on ${label} exited ${got.status} saying ${JSON.stringify(got.line.slice(0, 600))}, not the export's refusal with the gated-on-write sentence after its first`);
+          }
+          return { faults: out, shapes: shapes.length + 2 };
+        };
+        const live36 = gatedFaults(tree);
+        probes.RC36.push(...live36.faults);
+        figures.RC36 =
+          `${row1060.name} as cli_core.ts built it, the package absent: validate on ${live36.shapes - 2} spelling(s) of the build exits 1 with the gated-on-write sentence ` +
+          'between the refusal\'s first sentence and the install route and nothing else moved; on the build with its model document removed, and with no target, it is the refusal it was';
+
+        const wanted = gatedOnWriteSentence(join(coreOut, 'skeleton.json'));
+        const met = live33.read.filter((r) => r.sentence === wanted);
+        if (met.length !== 1) probes.RC37.push(`RC33's walk read the gated-on-write sentence ${met.length} time(s) as a whole sentence, not once`);
+        else {
+          const at = live33.read.indexOf(met[0]);
+          const next = live33.read[at + 1];
+          if (next === undefined || next.label !== met[0].label || !NAMES_CLI.test(next.sentence) || !ROUTE.test(next.sentence)) {
+            probes.RC37.push(`the sentence after the gated-on-write one in ${met[0].label} is ${JSON.stringify(next?.sentence.slice(0, 200) ?? 'none')}, not the install route`);
+          }
+          figures.RC37 = `RC33's walk read ${met[0].label} and met the gated-on-write sentence whole, once, followed in the same refusal by the sentence naming cli.ts and the install route`;
+        }
+
+        const reds38: string[] = [];
+        const shared = join('src', 'cli', 'shared.ts');
+        // (a) The sentence keyed on the wrong condition — on an export, not on a build.
+        const inverted = copyWith('gated-inverted', false, shared, 'build.modelPath === null ? null : gatedOnWriteSentence', 'build.modelPath !== null ? null : gatedOnWriteSentence');
+        if (inverted !== null) {
+          const read = gatedFaults(inverted).faults;
+          if (read.length === 0) probes.RC38.push('the sentence keyed on an export rather than a build left RC36 green');
+          else reds38.push(`inverted condition: RC36 red on ${read.length} probe(s)`);
+        }
+        // (b) The table's mark taken off `validate` — the sentence never prints.
+        const unmarked = copyWith('gated-unmarked', false, shared, ', rerunsTheGate: true }', ' }');
+        if (unmarked !== null) {
+          const read = gatedFaults(unmarked).faults;
+          if (read.length === 0) probes.RC38.push("validate's rerunsTheGate mark taken away left RC36 green");
+          else if (!read.every((p) => p.startsWith('validate on '))) probes.RC38.push(`the unmarked table read red for another reason: ${read[0].slice(0, 200)}`);
+          else reds38.push(`mark removed: RC36 red on ${read.length} spelling(s)`);
+        }
+        // (c) The new sentence sending its reader to `bun cli.ts validate` with no install route.
+        const routeless38 = copyWith('gated-routeless', false, shared, "'with A00_ROUNDTRIP_PARSE alone reported as a SKIP.'", "'with A00_ROUNDTRIP_PARSE alone reported as a SKIP, which `bun cli.ts validate` runs.'");
+        if (routeless38 !== null) {
+          const read = routeFaults(routeless38, new Set<Reading>(['refusal']), null).faults;
+          if (read.length === 0) probes.RC38.push('the gated-on-write sentence naming cli.ts without the route left RC33 green');
+          else if (!read.every((p) => p.startsWith('the refusal of validate on a rigc build: '))) probes.RC38.push(`the routeless sentence read red elsewhere: ${read[0].slice(0, 200)}`);
+          else reds38.push(`sentence naming cli.ts without the route: RC33 red on ${read.length} sentence(s), "${read[0].slice(0, 90)}…"`);
+        }
+        if (reds38.length !== 3 && probes.RC38.length === 0) probes.RC38.push(`${reds38.length} of 3 plants read red`);
+        figures.RC38 = `in copies of the tree: ${reds38.join('; ')}`;
       }
     }
     const cases: Array<[string, string, string]> = [
@@ -89025,6 +89123,9 @@ function runRenderHashesSuite(): number | null {
       ['RC33', 'RC33_EVERY_SENTENCE_THE_SECOND_ENTRY_PRINTS_NAMING_CLI_TS_NAMES_THE_INSTALL_ROUTE', 'issue #1079: on an install the second entry is what `rigc` runs without the runtime, and a sentence sending its reader to `bun cli.ts` alone gives somebody with no clone nothing to do; #1072 fixed seven such sentences by hand, and only a walk over everything the entry prints, derived from the command table, keeps the next one from landing green'],
       ['RC34', 'RC34_THE_SEAMS_TAIL_NAMES_THE_ROUTE_WHERE_THE_RUNTIME_IS_ABSENT_AND_NOT_WHERE_IT_FAILED', 'issue #1079: render --poser spine, an export and explain --poser spine on an install said the runtime could not be used and stopped there; the same tail is printed when the runtime is installed and fails to load, where "install it" is the wrong sentence, so the route is held on one side and its absence on the other'],
       ['RC35', 'RC35_A_REFUSAL_REWORDED_TO_CLI_TS_ALONE_OR_THE_ROUTE_ON_THE_WRONG_SIDE_OF_THE_SEAM_TURNS_RC33_OR_RC34_RED', 'RC33 and RC34 read green on a tree that names the route everywhere and on a walk that reads nothing alike; the plants are what show each sees the sentence it is about'],
+      ['RC36', 'RC36_VALIDATE_REFUSED_ON_A_RIGC_BUILD_SAYS_THE_BUILD_RAN_THE_GATE_AND_ON_AN_EXPORT_SAYS_WHAT_IT_SAID', 'issue #1097: a consumer ran validate after every build, met the refusal on the entry without spine-core and read it as a gate the install could not run (#1095), because the refusal said only what validate needs; the one fact that ends the question is in the directory, and an export, which carries no record, keeps the sentence it had'],
+      ['RC37', 'RC37_RC33S_WALK_READS_THE_GATED_ON_WRITE_SENTENCE_WHOLE_BEFORE_THE_INSTALL_ROUTE', 'issue #1097: RC33 holds every sentence the entry prints to the install route, so a sentence added to a refusal is in its population only if the walk reads a refusal that carries it — and reads it as one sentence, not split on a path'],
+      ['RC38', 'RC38_THE_SENTENCE_ON_AN_EXPORT_THE_MARK_REMOVED_OR_CLI_TS_WITHOUT_THE_ROUTE_TURNS_RC36_OR_RC33_RED', 'RC36 and RC37 read green on a tree that prints the sentence nowhere if they read nothing; the plants show each sees the fault it is about'],
     ];
     for (const [key, code, why] of cases) {
       const held = probes[key].length === 0;
