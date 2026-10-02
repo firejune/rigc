@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 49 named assertions and their profiles, the selftest that has watched every
+today, the 50 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -1055,7 +1055,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 49 named assertions over the loaded skeleton. Each one exists because
+and then runs 50 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -1063,7 +1063,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 50 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
@@ -1077,16 +1077,16 @@ So `validate` and `build` take a `--profile`:
 | Profile | Runs | For |
 | --- | --- | --- |
 | `spine` | the 34 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 49 — those 34 plus 7 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `spine-html` | all 50 — those 34 plus 8 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 49 and `assertionCountForProfile('spine')` is 34, so a
+`ASSERTION_NAMES.length` is 50 and `assertionCountForProfile('spine')` is 34, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 34 validity rules are about. The other 15 are somebody's policy
+that is what the 34 validity rules are about. The other 16 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile spine-html` when you want them.
@@ -1151,6 +1151,7 @@ the renderer policy*.
 | `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a numbered image series the runtime does not show as the file states it — a `sequence` block with no `count` or a `setup` past the end, a key whose `mode` is outside the seven (loads as `hold`), whose `index` is fractional or past the end, whose advancing mode runs at an effective delay of 0 (`Infinity \| 0` is 0: it never advances), or that steps an attachment with no block — and then the pose: every key sampled mid-frame and the region shown held to the frame the file's statement gives, the arithmetic of `SequenceTimeline.applyToSlot` transcribed rather than read back. Measured on forged skeletons through spine-core 4.3.13, every one of those loads without a word (issue #729). `validity`: the arithmetic is the runtime's. SKIPs when no attachment carries a `sequence` and no animation keys one |
 | `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every ik constraint is either mixed in at setup or keyed away from 0 by an animation — a `mix` timeline keying 0 only is no rescue, a lifted Bezier between two keys of 0 is (#765). `IkConstraint.update` returns on `mix === 0`, so a constraint resting there that nothing keys loads, sits in the update cache and moves nothing. SKIPs when the skeleton declares no ik constraint |
 | `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every transform constraint drives some property, and a mix of a property it drives is away from 0 at setup or on a value an animation poses (#765). The mixes of properties it does not drive are never read, which matters because a key that omits a mix reads it as 1. A negative mix runs, and the editor's own example exports rest five transforms at −1, so live is `!== 0`. SKIPs when the skeleton declares no transform constraint |
+| `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` | renderer | no two regions on one page draw over each other: a pair is refused where the rectangles overlap **and** the footprints do — a mesh region's hull, from its UVs over the region's bounds, and every other region's rectangle — so a `--pack-shape polygon` page whose rectangles overlap outside the hulls passes ([#1099](https://github.com/firejune/rigc/issues/1099)). For two rectangles it is the tiling clause `A06` held until then. SKIPs when no page carries two regions |
 
 ## Usage
 

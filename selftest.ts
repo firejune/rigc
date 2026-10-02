@@ -44015,6 +44015,8 @@ function losslessReport(
 }
 
 import { FOOTPRINT_SLACK, footprintCell, packFootprints } from './src/atlas.ts';
+import { a49PackedFootprintsDoNotOverlap } from './src/assertions/bodies/a49.ts';
+import { regionFootprints } from './src/assertions/footprints.ts';
 
 // ---------------------------------------------------------------------------
 // polygon packing — the footprints a pack keeps apart (issue #1099)
@@ -45450,17 +45452,18 @@ function runPackerSuite(): number {
     'PK20_TWO_REGIONS_OVER_THE_SAME_TEXELS_ARE_REFUSED_BY_NAME',
     overlapReport.failures.some(
       (f) =>
-        f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' &&
+        f.assertion === 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP' &&
         f.detail.includes('overlap') &&
         f.detail.includes(packedRegions[0].name.trim()) &&
         f.detail.includes(packedRegions[1].name.trim()),
     ),
     `"${packedRegions[1].name.trim()}" moved onto "${packedRegions[0].name.trim()}"'s corner: ` +
-      (overlapReport.failures.find((f) => f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG')?.detail.slice(0, 150) ??
-        'A06 did not fire'),
+      (overlapReport.failures.find((f) => f.assertion === 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP')?.detail.slice(0, 150) ??
+        'A49 did not fire'),
     'a tiling page is the alternative the clause now accepts, so what "tiling" excludes has to be a named ' +
       'failure — two rectangles over the same texels load clean and draw one drawing inside another. Both names ' +
-      'are required in the message because the repair needs the pair',
+      'are required in the message because the repair needs the pair. Since issue #1099 the clause is A49\'s, ' +
+      'and a rectangle\'s footprint is the rectangle, so this pair is refused there as it was by A06',
   );
   const runsOff = withBounds(
     htmlPack.atlasText,
@@ -45752,8 +45755,9 @@ function runPackerSuite(): number {
   // quarter turns. All four readers of it now call `pageFootprint`.
   //
   // ⭐ The two cases are the two things that rectangle is USED for, and only one
-  // of them is what the card assumed. PK56 is the rectangle A06 PRINTS beside a
-  // failure. PK57 is the rectangle A19 OPENS — a scan that walks past the drawing
+  // of them is what the card assumed. PK56 is the rectangle the overlap clause
+  // PRINTS beside a failure — A06's until issue #1099, A49's since, which reads
+  // a turned region as its whole rectangle (`src/assertions/footprints.ts`). PK57 is the rectangle A19 OPENS — a scan that walks past the drawing
   // into the transparent gutter finds its texel there and names nothing, so this
   // one is an assertion's own verdict and not a diagnostic.
   //
@@ -45788,7 +45792,7 @@ function runPackerSuite(): number {
     const report = gatePacked(pack.dir, overlapped, overlayCompile, 'spine-html', ATLAS_EDIT_TWIN);
     const printed = new Map<string, string>();
     for (const f of report.failures) {
-      if (f.assertion !== 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' || !f.detail.includes('overlap on page')) continue;
+      if (f.assertion !== 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP' || !f.detail.includes('overlap on page')) continue;
       for (const [name, rect] of footRectIn(f.detail)) printed.set(name, rect);
     }
     footByTurn.set(degrees, printed);
@@ -45808,7 +45812,7 @@ function runPackerSuite(): number {
       if (turned && region.width !== region.height) footDiscriminating++;
       if (rect !== want) {
         footWrong.push(
-          `rotate ${degrees}: A06 names "${name}" at ${rect} where the runtime samples ${want} for its ` +
+          `rotate ${degrees}: A49 names "${name}" at ${rect} where the runtime samples ${want} for its ` +
             `${region.width}x${region.height} drawing`,
         );
       }
@@ -45826,7 +45830,7 @@ function runPackerSuite(): number {
     ...firstFew(quarterApart, 'region(s)'),
     ...floorProbes(
       [
-        [footNamed, TURNS.length * 2, `A06 printed ${footNamed} rectangle(s) in all`],
+        [footNamed, TURNS.length * 2, `A49 printed ${footNamed} rectangle(s) in all`],
         [footDiscriminating, 1, `${footDiscriminating} of them are a quarter turn of a non-square drawing`],
       ],
       'a rectangle nobody printed, or one that is square at a quarter turn, cannot tell the two rules apart',
@@ -45834,7 +45838,7 @@ function runPackerSuite(): number {
   ];
   const footHeld = footProbes.length === 0;
   say(
-    'PK56_THE_PAGE_RECTANGLE_A06_NAMES_FOR_A_TURNED_REGION_IS_THE_ONE_THE_PAGE_HOLDS',
+    'PK56_THE_PAGE_RECTANGLE_A49_NAMES_FOR_A_TURNED_REGION_IS_THE_ONE_THE_PAGE_HOLDS',
     footHeld,
     probeDetail(
       footHeld,
@@ -46131,18 +46135,19 @@ function runPackerSuite(): number {
   // PK61: and the neighbour it stood beside does NOT move. Two regions over the
   // same texels is what an editor's own packer writes — 49 pairs on four of the
   // ten corpus atlases — so it stays the renderer's policy while the rectangle
-  // leaves it.
+  // leaves it. Since issue #1099 the overlap is A49's, a renderer rule.
+  const FOOTPRINT_RULE = 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP';
   const splitProbes: string[] = [];
   for (const profile of VALIDATE_PROFILES) {
     // Overlap is the renderer's policy, so only `spine-html` fails a moved assertion over it — and only there does the twin run.
     const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile, profile === 'spine-html' ? ATLAS_EDIT_TWIN : undefined);
-    const named = report.failures.some((f) => f.assertion === ATLAS_RULE && f.detail.includes('overlap on page'));
+    const named = report.failures.some((f) => f.assertion === FOOTPRINT_RULE && f.detail.includes('overlap on page'));
     if (profile === 'spine' && named) {
-      splitProbes.push(`profile ${profile} refuses two regions over the same texels: ${verdictOf(report, ATLAS_RULE)}`);
+      splitProbes.push(`profile ${profile} refuses two regions over the same texels: ${verdictOf(report, FOOTPRINT_RULE)}`);
     }
     if (profile === 'spine-html' && !named) {
       splitProbes.push(
-        `profile ${profile} accepts two regions over the same texels: A06 came back ${verdictOf(report, ATLAS_RULE)}`,
+        `profile ${profile} accepts two regions over the same texels: A49 came back ${verdictOf(report, FOOTPRINT_RULE)}`,
       );
     }
   }
@@ -47440,6 +47445,233 @@ function runPackerSuite(): number {
       probeDetail(spillHeld, spillProbes, spillSaid.join('; ')),
       'issue #1099: a production rig of 48 regions spilled under `rect` and was refused under `polygon` — the area ' +
         'bound of the `free` search assumed cells never overlap, which is the one assumption the mode removes',
+    );
+
+    // --- PK87..PK91: the gate reads footprints (issue #1099, A49) -----------
+    //
+    // A49 replaced A06's tiling clause: two regions on one page are refused
+    // where their rectangles overlap AND what they draw does — a mesh's hull,
+    // every other region's rectangle. These hold it over real art: the gallery,
+    // built the way spine-parts' `check` stage builds a demo, the plant a
+    // polygon pack must never pass, the pack it must pass, the plant a rect
+    // pack must not pass, and the gate's footprints held to the packer's.
+    const FOOTPRINT_RULE = 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP';
+    const galleryRoot = resolve(import.meta.dir, 'gallery');
+    const galleryNames = existsSync(galleryRoot) ? galleryExampleNames(galleryRoot) : [];
+    const galleryOpts = (name: string, outDir: string): Options => ({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir });
+    /** A gallery rig compiled and packed in process, its pages on disk, and the document `build` writes beside that pack. */
+    const galleryPack = (name: string, shape: 'rect' | 'polygon') => {
+      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-${name}-${shape}-`));
+      const result = compile(galleryOpts(name, dir));
+      const pack = packAtlas(withFootprints(packInputsOf(result.images), result.skeletonText), { pageEdges: 'free', shape });
+      for (const page of pack.pages) page.plate.writePng(join(dir, page.name));
+      return { name, dir, result, pack, modelText: modelDocument(result.model, result.skeletonText, pack.atlasText) };
+    };
+    type GalleryPack = ReturnType<typeof galleryPack>;
+    const gateOn = (g: GalleryPack, atlasText: string, profile: ValidateProfile, twin?: ModelTwin): ReturnType<typeof validate> =>
+      validate({ skeletonText: g.result.skeletonText, atlasText, atlasDir: g.dir, declaredDurations: g.result.declaredDurations, rig: g.result.rig, modelText: g.modelText, profile }, twin);
+    /** The model side over the same edit: the document's pages spelled from the edited atlas, as `ATLAS_EDIT_TWIN` forges them. */
+    const modelOn = (g: GalleryPack, atlasText: string, profile: ValidateProfile): ModelReport => {
+      const doc = JSON.parse(g.modelText) as Record<string, unknown>;
+      doc.pages = pagesOfAtlas(atlasText);
+      return validateModel({ modelText: `${JSON.stringify(doc, null, 2)}\n`, atlasDir: g.dir, profile });
+    };
+    const a49Lines = (report: { failures: Array<{ assertion: string; detail: string }> }): string[] => report.failures.filter((f) => f.assertion === FOOTPRINT_RULE).map((f) => f.detail);
+    const galleryProbes = galleryNames.length === 0 ? [`no gallery rig under ${galleryRoot}, so nothing here measured real art`] : [];
+
+    // PK86: the route spine-parts' `check` stage runs — every gallery rig built
+    // `--pack --page-edges free --pack-shape polygon` through the CLI, under both
+    // profiles — exits 0, with A49 measured (PASS) under `spine-html` and out of
+    // profile under `spine`. The case is only worth something because some of
+    // those pages overlap two rectangles: `nod` and `squash` do, and under A06's
+    // clause they failed `spine-html` by name.
+    const routeRows = galleryNames.flatMap((name) =>
+      VALIDATE_PROFILES.map((profile) => {
+        const out = mkdtempSync(join(tmpdir(), `rigc-a49-route-${name}-`));
+        const run = runCli(['build', '--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json'), '--out', out, '--profile', profile, '--pack', '--page-edges', 'free', '--pack-shape', 'polygon']);
+        const lines = run.stdout.split('\n');
+        const rows = lines.filter((line) => line.includes(FOOTPRINT_RULE)).map((line) => line.trim());
+        const summaries = lines.filter((line) => /^ {2}\.\. {4}\d+ assertions: /.test(line)).map((line) => line.trim());
+        const reading = run.status === 0 ? packedFootprintFindings(readFileSync(join(out, 'skeleton.atlas'), 'utf8'), readFileSync(join(out, 'skeleton.json'), 'utf8'), DEFAULT_PADDING) : null;
+        return { name, profile, run, rows, summaries, overlapping: reading?.rectanglesOverlapping ?? 0 };
+      }),
+    );
+    const routeProbes = [
+      ...galleryProbes,
+      ...routeRows.flatMap((r) => {
+        const packed = r.rows[r.rows.length - 1] ?? '(no A49 row)';
+        const want = r.profile === 'spine-html' ? `PASS  ${FOOTPRINT_RULE}` : `PROF  ${FOOTPRINT_RULE}`;
+        return [
+          ...(r.run.status === 0 ? [] : [`${r.name}/${r.profile} exited ${String(r.run.status)}: ${(r.run.stdout.split('\n').find((l) => l.includes('FAIL')) ?? r.run.stderr.split('\n')[0]).trim()}`]),
+          ...(r.run.status !== 0 || (r.rows.length === 2 && packed.startsWith(want)) ? [] : [`${r.name}/${r.profile}: the packed gate's A49 row is ${JSON.stringify(packed)}`]),
+        ];
+      }),
+      ...(routeRows.some((r) => r.profile === 'spine-html' && r.overlapping > 0) ? [] : ['no gallery polygon pack overlaps two rectangles, so the case cannot tell A49 from the clause it replaced']),
+    ];
+    const routeHeld = routeProbes.length === 0;
+    const overlapsSaid = routeRows.filter((r) => r.profile === 'spine-html' && r.overlapping > 0).map((r) => `${r.name} ${r.overlapping}`);
+    const nodLine = routeRows.find((r) => r.name === 'nod' && r.profile === 'spine-html')?.summaries.slice(-1)[0] ?? '(no nod row)';
+    say(
+      'PK87_EVERY_GALLERY_POLYGON_PACK_BUILDS_GREEN_UNDER_BOTH_PROFILES',
+      routeHeld,
+      probeDetail(
+        routeHeld,
+        routeProbes,
+        `${routeRows.length} build(s) of ${galleryNames.length} gallery rig(s), \`--pack --page-edges free --pack-shape polygon\` under ${VALIDATE_PROFILES.join(' and ')}: ` +
+          `every one exit 0, A49 PASS on each packed gate under spine-html and PROF under spine; rectangle pairs overlapping on ${overlapsSaid.join(', ') || 'none'}; ` +
+          `nod under spine-html: ${nodLine}`,
+      ),
+      'issue #1099: the polygon pack is the mode\'s whole point, and the rectangle clause it replaced refused it by ' +
+        'name under the renderer\'s profile — so the route a consumer gates a demo on has to come back green, on the ' +
+        'pages where rectangles overlap and footprints do not',
+    );
+
+    // PK87: the plant a polygon pack must never pass — on `nod`'s polygon pack,
+    // the smallest other region moved so its rectangle is centred on the centroid
+    // of a mesh's first triangle, read off the file. No measured literal: the
+    // mesh, the triangle, the region and the page are found, not written down.
+    // Red by name on both suppliers under `spine-html`, the same line on each;
+    // and under `spine` the rule is out of profile and the build is green.
+    const hullProbes2: string[] = [...galleryProbes];
+    let plantSaid = '(no plant)';
+    if (galleryNames.includes('nod')) {
+      const nod = galleryPack('nod', 'polygon');
+      const parsedNod = parseAtlasText(nod.pack.atlasText);
+      const skel = JSON.parse(nod.result.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+      let host: { region: string; uvs: number[]; triangles: number[] } | null = null;
+      for (const skin of skel.skins) {
+        for (const table of Object.values(skin.attachments)) {
+          for (const [key, att] of Object.entries(table)) {
+            if (host !== null || att.type !== 'mesh') continue;
+            host = { region: typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : key, uvs: att.uvs as number[], triangles: att.triangles as number[] };
+          }
+        }
+      }
+      const hostRegion = host === null ? undefined : parsedNod.regions.find((r) => r.name.trim() === host?.region);
+      const page = parsedNod.pages.find((p) => p.regions.some((r) => r === hostRegion));
+      const visitor = page?.regions.filter((r) => r !== hostRegion).sort((a, b) => a.width * a.height - b.width * b.height)[0];
+      if (host === null || hostRegion === undefined || page === undefined || visitor === undefined) hullProbes2.push('nod carries no mesh region with a neighbour on its page, so there is nothing to plant');
+      else {
+        const [t0, t1, t2] = host.triangles;
+        const cx = hostRegion.x + ((host.uvs[2 * t0] + host.uvs[2 * t1] + host.uvs[2 * t2]) / 3) * hostRegion.originalWidth;
+        const cy = hostRegion.y + ((host.uvs[2 * t0 + 1] + host.uvs[2 * t1 + 1] + host.uvs[2 * t2 + 1]) / 3) * hostRegion.originalHeight;
+        const vx = Math.max(0, Math.min(page.width - visitor.width, Math.round(cx - visitor.width / 2)));
+        const vy = Math.max(0, Math.min(page.height - visitor.height, Math.round(cy - visitor.height / 2)));
+        const planted = withBounds(nod.pack.atlasText, visitor.name.trim(), vx, vy, visitor.width, visitor.height);
+        const spineSide = gateOn(nod, planted, 'spine-html', ATLAS_EDIT_TWIN);
+        const modelSide = modelOn(nod, planted, 'spine-html');
+        const outOfProfile = gateOn(nod, planted, 'spine');
+        const spineLines = a49Lines(spineSide);
+        const modelLines = a49Lines(modelSide);
+        const names = (line: string): boolean => line.includes(`"${host?.region}"`) && line.includes(`"${visitor.name.trim()}"`) && line.includes(`page "${page.name}"`) && line.includes(`the hull of mesh`);
+        if (!spineLines.some(names)) hullProbes2.push(`spine-core's side did not name "${visitor.name.trim()}" inside "${host.region}"'s hull: ${JSON.stringify(spineLines.slice(0, 1))}`);
+        if (!modelLines.some(names)) hullProbes2.push(`the model side did not name "${visitor.name.trim()}" inside "${host.region}"'s hull: ${JSON.stringify(modelLines.slice(0, 1))}`);
+        if (JSON.stringify(spineLines) !== JSON.stringify(modelLines)) hullProbes2.push(`the two suppliers printed different A49 lines: ${JSON.stringify(spineLines)} against ${JSON.stringify(modelLines)}`);
+        if (spineSide.failures.some((f) => f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG')) hullProbes2.push('A06 fired on the plant too, so the plant is not about the footprint alone');
+        if (outOfProfile.failures.length > 0 || !outOfProfile.profileSkipped.some((p) => p.assertion === FOOTPRINT_RULE)) {
+          hullProbes2.push(`under spine the plant came back ${outOfProfile.failures.map((f) => f.assertion).join(', ') || 'with A49 not out of profile'}`);
+        }
+        plantSaid = `"${visitor.name.trim()}" (${visitor.width}x${visitor.height}) centred at ${vx},${vy} on the centroid of mesh "${host.region}"'s first triangle: ${spineLines[0] ?? 'nothing'}`;
+      }
+    }
+    const hullHeld2 = hullProbes2.length === 0;
+    say(
+      'PK88_A_REGION_MOVED_INSIDE_A_MESH_HULL_IS_REFUSED_BY_A49_ON_BOTH_SUPPLIERS',
+      hullHeld2,
+      probeDetail(hullHeld2, hullProbes2, `${plantSaid}; the model side printed the same line; under spine A49 is out of profile and the plant builds green`),
+      'issue #1099: the hull is what a mesh samples, so a neighbour inside it is drawn into the mesh — the one ' +
+        'overlap the polygon mode must still refuse, by the page and both regions, whichever supplier gates the build',
+    );
+
+    // PK88: the pack it must pass, and the reading it must not be. On the
+    // gallery's polygon packs whose rectangles overlap outside the hulls, A49
+    // passes on both suppliers (the document is the pack's own, so the supplier
+    // check compares every line); the same body handed no meshes — every
+    // footprint its rectangle, A06's old reading — names every one of those
+    // pairs, so the pass is the footprints' and not a rule that measured nothing.
+    const passProbes: string[] = [...galleryProbes];
+    const passSaid: string[] = [];
+    for (const name of galleryNames) {
+      const g = galleryPack(name, 'polygon');
+      const reading = packedFootprintFindings(g.pack.atlasText, g.result.skeletonText, g.pack.padding);
+      if (reading.rectanglesOverlapping === 0) continue;
+      const report = gateOn(g, g.pack.atlasText, 'spine-html');
+      const runtime = runtimeFacts(g.result.skeletonText, g.pack.atlasText);
+      const asRectangles: string[] = [];
+      if (runtime !== null) a49PackedFootprintsDoNotOverlap({ fail: (_a, detail) => void asRectangles.push(detail), skip: () => {}, stats: {} }, runtime.atlasRegions, runtime.regionJoins, null);
+      if (!report.passed.includes(FOOTPRINT_RULE)) passProbes.push(`${name}: A49 came back ${verdictOf(report, FOOTPRINT_RULE)} on its honest polygon pack`);
+      if (asRectangles.length !== reading.rectanglesOverlapping) passProbes.push(`${name}: the rectangle reading named ${asRectangles.length} pair(s), and ${reading.rectanglesOverlapping} rectangle pair(s) overlap`);
+      passSaid.push(`${name}: ${reading.rectanglesOverlapping} rectangle pair(s) overlapping, A49 PASS, the rectangle reading names ${asRectangles.length}`);
+    }
+    if (galleryNames.length > 0 && passSaid.length === 0) passProbes.push('no gallery polygon pack overlaps two rectangles, so nothing here was a pass the old clause refused');
+    const passHeld = passProbes.length === 0;
+    say(
+      'PK89_RECTANGLES_OVERLAPPING_OUTSIDE_THE_HULLS_PASS_A49',
+      passHeld,
+      probeDetail(passHeld, passProbes, passSaid.join('; ')),
+      'issue #1099: that is the mode\'s point — a neighbour in a mesh\'s transparent corner draws nothing the mesh ' +
+        'samples — and the counterfactual is what keeps the pass honest: a body that read every footprint as its ' +
+        'rectangle would refuse exactly these pairs, so a pass here is a measurement of the hulls',
+    );
+
+    // PK89: the plant a rect pack must not pass. On `nod`'s rect pack, the second
+    // region a region attachment draws moved onto the first one's corner — two
+    // rectangles, each its own footprint — refused by A49 naming both, on both
+    // suppliers.
+    const rectProbes: string[] = [...galleryProbes];
+    let rectSaid = '(no plant)';
+    if (galleryNames.includes('nod')) {
+      const nodRect = galleryPack('nod', 'rect');
+      const facts = runtimeFacts(nodRect.result.skeletonText, nodRect.pack.atlasText);
+      const meshes = runtimeRigFacts(nodRect.result.skeletonText, nodRect.pack.atlasText)?.meshes ?? null;
+      const whole = facts === null ? [] : regionFootprints(facts.atlasRegions, facts.regionJoins, meshes).filter((f) => f.whole && f.drawn.includes('region attachment'));
+      if (whole.length < 2) rectProbes.push(`nod's rect pack has ${whole.length} region(s) a region attachment draws, so two rectangles cannot be planted`);
+      else {
+        const [first, second] = whole;
+        const planted = withBounds(nodRect.pack.atlasText, second.region.name.trim(), first.region.x, first.region.y, second.region.width, second.region.height);
+        const spineLines = a49Lines(gateOn(nodRect, planted, 'spine-html', ATLAS_EDIT_TWIN));
+        const modelLines = a49Lines(modelOn(nodRect, planted, 'spine-html'));
+        const names = (line: string): boolean => line.includes(`"${first.region.name}"`) && line.includes(`"${second.region.name}"`) && line.includes('the two rectangles share');
+        if (!spineLines.some(names)) rectProbes.push(`spine-core's side did not name the pair: ${JSON.stringify(spineLines.slice(0, 1))}`);
+        if (JSON.stringify(spineLines) !== JSON.stringify(modelLines)) rectProbes.push(`the two suppliers printed different A49 lines: ${JSON.stringify(spineLines)} against ${JSON.stringify(modelLines)}`);
+        rectSaid = `"${second.region.name}" moved onto "${first.region.name}"'s corner on nod's rect pack: ${spineLines[0] ?? 'nothing'}`;
+      }
+    }
+    const rectHeld = rectProbes.length === 0;
+    say(
+      'PK90_TWO_RECTANGLES_OVER_THE_SAME_TEXELS_ON_A_RECT_PACK_ARE_REFUSED_BY_A49',
+      rectHeld,
+      probeDetail(rectHeld, rectProbes, `${rectSaid}; the model side printed the same line`),
+      'issue #1099: a rectangle\'s footprint is the rectangle, so every pair A06\'s tiling clause refused between two ' +
+        'region attachments is refused by A49 — the replacement is not a relaxation of the rectangle case',
+    );
+
+    // PK90: the gate's footprints are the packer's. Over every gallery rig, the
+    // regions the gate reads as hulls (`regionFootprints`, over spine-core's
+    // facts) are exactly the regions `packFootprints` hands the packer a polygon
+    // for — two readers of one rule, the packer's off `skeleton.json` and the
+    // gate's off the loaded skins, held to the same answer.
+    const sameProbes: string[] = [...galleryProbes];
+    let hullRegions = 0;
+    for (const name of galleryNames) {
+      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-same-${name}-`));
+      const result = compile(galleryOpts(name, dir));
+      const sizes = new Map(result.images.map((img) => [img.region, { width: img.width, height: img.height }]));
+      const packer = [...packFootprints(result.skeletonText, (region) => sizes.get(region))].filter(([, f]) => f !== null).map(([region]) => region).sort();
+      const facts = runtimeFacts(result.skeletonText, result.atlasText);
+      const meshes = runtimeRigFacts(result.skeletonText, result.atlasText)?.meshes ?? null;
+      const gate = facts === null ? [] : regionFootprints(facts.atlasRegions, facts.regionJoins, meshes).filter((f) => !f.whole).map((f) => f.region.name).sort();
+      hullRegions += gate.length;
+      if (JSON.stringify(packer) !== JSON.stringify(gate)) sameProbes.push(`${name}: the packer reads hulls on [${packer.join(', ')}] and the gate on [${gate.join(', ')}]`);
+    }
+    if (galleryNames.length > 0 && hullRegions === 0) sameProbes.push('no gallery rig carries a mesh region, so the two readings were compared on rectangles alone');
+    const sameHeld = sameProbes.length === 0;
+    say(
+      'PK91_THE_GATE_READS_A_HULL_ON_EXACTLY_THE_REGIONS_THE_PACKER_PACKS_BY_ONE',
+      sameHeld,
+      probeDetail(sameHeld, sameProbes, `${galleryNames.length} gallery rig(s): ${hullRegions} mesh region(s), each read as a hull by both the packer and the gate, and every other region a rectangle by both`),
+      'issue #1099: a packer that placed by a hull the gate read as a rectangle would be refused on its own honest ' +
+        'pack, and one the gate read as a hull where the packer kept a rectangle would let a neighbour in unseen',
     );
   }
   return bad;
@@ -57673,23 +57905,23 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       'adds all 39: the other 14 are one renderer\'s policy and one canvas budget\'s, and they\n' +
       'fire on perfectly correct editor-produced Spine data.\n',
     clean:
-      'adds all 40: the other 15 are one renderer\'s policy and one canvas budget\'s, and they\n' +
+      'adds all 50: the other 16 are one renderer\'s policy and one canvas budget\'s, and they\n' +
       'fire on perfectly correct editor-produced Spine data.\n',
   },
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 49 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 50 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 49, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 50, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 50 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -57698,7 +57930,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 49 — those 34 plus 7 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 50 — those 34 plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -57712,7 +57944,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       ' `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`,' +
       ' `A30_STROKE_WITHIN_CAP_CONTAINMENT` |\n',
     clean:
-      '**Fifteen assertions do not run under `spine`, and they come back `PROF`, not\n' +
+      '**Sixteen assertions do not run under `spine`, and they come back `PROF`, not\n' +
       '`SKIP`:**\n' +
       '\n' +
       '| Excluded as | Rules |\n' +
@@ -57724,7 +57956,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'INGEST §3.3: the quoted report summary inside a fence (#360, found on the current tree)',
     stale: '```\n  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply\n```\n',
-    clean: '```\n  ..    profile spine — 7 renderer-policy and 8 archetype assertion(s) do not apply\n```\n',
+    clean: '```\n  ..    profile spine — 8 renderer-policy and 8 archetype assertion(s) do not apply\n```\n',
   },
   {
     row: 'README + LADDER: the certification line\'s gate version (#359)',
