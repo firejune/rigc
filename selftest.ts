@@ -4178,8 +4178,76 @@ const DIFF_FIXTURE = resolve(import.meta.dir, 'examples/3-timing-and-spacing/exp
  */
 const DIFF_MESH_FIXTURE = resolve(import.meta.dir, 'examples/6-arcs/export/6-arcs-pro.json');
 
-/** Which fixture a case mutates. `mesh` is `DIFF_MESH_FIXTURE`; the default is `DIFF_FIXTURE`. */
-type DiffFixture = 'default' | 'mesh';
+/**
+ * The third fixture, and the only one with a slider in it (issue #1078): issue
+ * #1040's probe, rebuilt from `gallery/look` — the gallery's one slider rig —
+ * with its animations renamed `5, -a, 10, 2b, 01` the way #1040 renamed them.
+ * None of the twelve editor exports declares a slider, so without it every case
+ * about a slider's wiring would mutate nothing.
+ *
+ * ⚠️ The renaming is PLANTED in the built JSON rather than built, and it has to
+ * be: since #1040 the compiler refuses a slider whose animation an editor import
+ * would move off its index, which is exactly this probe (`PS191`). So this is the
+ * build as rigc 2.0.0 wrote it, and the repointing D47 plants is the export the
+ * editor wrote from it. #1040 also renamed five bones and declared five events
+ * under the same names; neither reaches a slider's wiring, so neither is here.
+ */
+const DIFF_SLIDER_SOURCE = { rig: 'gallery/look/rig.json', motion: 'gallery/look/motion.json' };
+/** `gallery/look`'s animations, renamed as #1040's probe named them, and the two copies it added. */
+const DIFF_SLIDER_RENAMES: ReadonlyArray<{ name: string; from: string }> = [
+  { name: '5', from: 'turn' },
+  { name: '-a', from: 'tilt' },
+  { name: '10', from: 'sweep' },
+  { name: '2b', from: 'sweep' },
+  { name: '01', from: 'tilt' },
+];
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/** #1040's probe as a skeleton's JSON text — see `DIFF_SLIDER_SOURCE`. */
+function diffSliderProbeText(): string {
+  const outDir = mkdtempSync(join(tmpdir(), 'rigc-diff-slider-probe-'));
+  const built = compile({
+    rigPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.rig),
+    motionPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.motion),
+    outDir,
+  });
+  const j = JSON.parse(built.skeletonText) as any;
+  const was = j.animations as Record<string, unknown>;
+  const sliders = (j.constraints as any[]).filter((c) => c.type === 'slider');
+  if (sliders.length !== 2) throw new Error(`gallery/look declares ${sliders.length} slider(s) where #1040's probe has two`);
+  for (const r of DIFF_SLIDER_RENAMES) {
+    if (was[r.from] === undefined) throw new Error(`gallery/look has no animation "${r.from}" to rename "${r.name}"`);
+  }
+  j.animations = Object.fromEntries(DIFF_SLIDER_RENAMES.map((r) => [r.name, structuredClone(was[r.from])]));
+  // Each slider follows its animation to the FIRST name it was given, which is
+  // #1040's `yaw -> "5"`, `tilt -> "-a"`.
+  for (const s of sliders) {
+    const to = DIFF_SLIDER_RENAMES.find((r) => r.from === s.animation);
+    if (to === undefined) throw new Error(`slider "${s.name}" applies "${s.animation}", which the probe does not rename`);
+    s.animation = to.name;
+  }
+  return JSON.stringify(j);
+}
+
+/**
+ * What the editor writes back for a slider: the animation at the slider's old
+ * index once the object is re-sorted into the comparator's order (#1040's
+ * measurement). Derived from the order the parsed file lists and the order
+ * `editorNamesInOrder` emits, never typed — `"-a"` and `"2b"` are what this
+ * returns on the probe, not what it was told.
+ */
+function editorRepointedSliders(j: any): Array<{ name: string; was: string; now: string }> {
+  const fileOrder = Object.keys(j.animations ?? {});
+  const editorOrder = editorNamesInOrder(fileOrder, 'animations');
+  return (j.constraints as any[])
+    .filter((c) => c.type === 'slider' && typeof c.animation === 'string')
+    .map((c) => ({ name: c.name as string, was: c.animation as string, now: editorOrder[fileOrder.indexOf(c.animation)] }))
+    .filter((s) => s.now !== s.was);
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
+/** Which fixture a case mutates. `mesh` is `DIFF_MESH_FIXTURE`, `sliders` is #1040's probe; the default is `DIFF_FIXTURE`. */
+type DiffFixture = 'default' | 'mesh' | 'sliders';
 
 interface DiffCase {
   name: string;
@@ -4214,6 +4282,13 @@ interface DiffCase {
    * nonzero. Optional, so the cases that do not name it are unchanged.
    */
   mutateReference?: (skeleton: Record<string, unknown>) => void;
+  /**
+   * What the moved measure's note must say, for a case whose finding is only
+   * useful if the report NAMES it (issue #1078): the measure, and every phrase
+   * its note has to carry — derived from the two skeletons, so a case states the
+   * object and both values rather than a string typed beside it.
+   */
+  expectNote?: (candidate: Record<string, unknown>, reference: Record<string, unknown>) => { id: string; parts: string[] };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -4658,6 +4733,101 @@ const DIFF_CASES: DiffCase[] = [
       if (stated === 0) throw new Error('fixture carries no unnamed attachment — the case would prove nothing');
     },
   },
+  {
+    name: 'D47_repoint_both_sliders_the_way_an_editor_import_does',
+    fixture: 'sliders',
+    why:
+      'issue #1078, on the probe issue #1040 took through a licensed editor: the export came back with each slider ' +
+      'applying the animation at its old index in the re-sorted list, and `diff` moved only `curve_kinds`, for an ' +
+      'unrelated reason. The candidate is that export — the repointing derived from the two orders, not typed — and ' +
+      '`constraints.refs` is the one measure that may move: the animation names, their count and every timeline ' +
+      'are the same on both sides. Its note has to name each slider and both animations, because "2 of 3 ' +
+      'constraints wired differently" sends a reader looking at every bone first',
+    expect: ['constraints.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const repointed = editorRepointedSliders(j);
+      if (repointed.length !== 2) throw new Error(`the editor's re-sort repoints ${repointed.length} slider(s) of the probe where #1040 measured two`);
+      for (const s of repointed) ((j as any).constraints as any[]).find((c) => c.name === s.name).animation = s.now;
+    },
+    expectNote: (_candidate, reference) => ({
+      id: 'constraints.refs',
+      parts: [
+        '2 wired differently',
+        ...editorRepointedSliders(reference).map(
+          (s) => `slider constraint "${s.name}": animation ${JSON.stringify(s.now)} vs ${JSON.stringify(s.was)}`,
+        ),
+      ],
+    }),
+  },
+  {
+    name: 'D48_move_a_slider_to_another_property',
+    fixture: 'sliders',
+    why:
+      'the census\'s second slider field: `property` names what the slider reads off its bone, from the set the ' +
+      'parser throws outside of, and a slider moved from `rotate` to `x` drives its animation from another dial. ' +
+      'Measured before this case existed, it moved no measure here and no value in the value walk either, so ' +
+      'nothing in the tree compared it. `refs` alone moves',
+    expect: ['constraints.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const slider = ((j as any).constraints as any[]).find((c) => c.type === 'slider' && c.property === 'rotate');
+      if (slider === undefined) throw new Error('the probe has no slider reading `rotate` — the case would prove nothing');
+      slider.property = 'x';
+    },
+    expectNote: (candidate) => {
+      const moved = ((candidate as any).constraints as any[]).find((c) => c.type === 'slider' && c.property === 'x');
+      return { id: 'constraints.refs', parts: ['1 wired differently', `slider constraint "${moved?.name}": property "x" vs "rotate"`] };
+    },
+  },
+  {
+    name: 'D49_remap_a_transform_property_onto_another',
+    fixture: 'mesh',
+    why:
+      'the census\'s transform field: the keys of `properties` are the property a transform reads and the one it ' +
+      'writes, and `x>x` remapped to `x>y` moves a bone along the other axis. Same blindness as D48 — no measure ' +
+      'and no value moved — because `diff` stopped at the bones and slots and the value walk skips `properties` by ' +
+      'name. One constraint, so `refs` alone moves, and the note names the pair on both sides',
+    expect: ['constraints.refs'],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      const remapped = ((j as any).constraints as any[]).find(
+        (c) => c.type === 'transform' && Object.keys(c.properties ?? {}).join() === 'x' && Object.keys(c.properties.x.to ?? {}).join() === 'x',
+      );
+      if (remapped === undefined) throw new Error('fixture has no transform mapping `x` onto `x` alone — the case would prove nothing');
+      remapped.properties = { x: { ...remapped.properties.x, to: { y: remapped.properties.x.to.x } } };
+    },
+    expectNote: (candidate) => {
+      const moved = ((candidate as any).constraints as any[]).find((c) => c.type === 'transform' && c.properties?.x?.to?.y !== undefined && Object.keys(c.properties).join() === 'x');
+      return { id: 'constraints.refs', parts: ['1 wired differently', `transform constraint "${moved?.name}": property "x>y" vs "x>x"`] };
+    },
+  },
+  {
+    name: 'D50_write_every_transform_properties_map_in_another_key_order',
+    fixture: 'mesh',
+    why:
+      'the tolerance half of D49: `properties` is a JSON object, and any writer may key it in its own order — so ' +
+      'the comparison reads the pairs as a set, and the same map written backwards moves nothing. A measure that ' +
+      'moved here would call every re-serialised export rewired',
+    expect: [],
+    expectAgnostic: [],
+    expectReported: [],
+    mutate: (j) => {
+      let reversed = 0;
+      for (const c of ((j as any).constraints as any[]).filter((k) => k.type === 'transform')) {
+        const from = Object.entries(c.properties ?? {}) as Array<[string, any]>;
+        if (from.length < 2) continue;
+        c.properties = Object.fromEntries(
+          from.reverse().map(([k, v]) => [k, { ...v, to: Object.fromEntries(Object.entries(v.to ?? {}).reverse()) }]),
+        );
+        reversed++;
+      }
+      if (reversed === 0) throw new Error('fixture has no transform mapping two properties — the case would prove nothing');
+    },
+  },
 ];
 
 /**
@@ -5069,11 +5239,25 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
     const gotAgnostic = [...movedAgnostic].sort().join(', ');
     const wantReported = [...c.expectReported].sort().join(', ');
     const gotReported = [...movedReported].sort().join(', ');
-    if (want === got && wantAgnostic === gotAgnostic && wantReported === gotReported) {
+    // The note, for a case that states one: found by id over every block, and
+    // held to carry each phrase the case derived from the two skeletons.
+    const noteWanted = c.expectNote?.(candidate, reference);
+    const noteMeasure =
+      noteWanted === undefined
+        ? undefined
+        : [
+            ...report.sections.flatMap((s) => [...s.measures, ...(s.nameAgnostic?.measures ?? []), ...(s.reported?.measures ?? [])]),
+            ...report.header.measures,
+          ].find((m) => m.id === noteWanted.id);
+    const noteMissing = noteWanted === undefined ? [] : noteWanted.parts.filter((p) => !(noteMeasure?.note ?? '').includes(p));
+    if (want === got && wantAgnostic === gotAgnostic && wantReported === gotReported && noteMissing.length === 0) {
       console.log(
         `  PASS  ${c.name}  (moved exactly ${moved.length} name-matched, ${movedAgnostic.length} name-agnostic, ` +
           `${movedReported.length} reported measure(s))`,
       );
+      if (noteMeasure !== undefined) {
+        console.log(`          ${noteMeasure.id} ${noteMeasure.matched}/${noteMeasure.total} — ${noteMeasure.note ?? 'no note'}`);
+      }
       console.log(`          ${c.why}`);
     } else {
       bad++;
@@ -5089,6 +5273,12 @@ function runDiffMeasureControls(texts: Record<DiffFixture, string>): number {
       if (wantReported !== gotReported) {
         console.log(`          reported expected to move: [${wantReported}]`);
         console.log(`          reported actually moved:   [${gotReported}]`);
+      }
+      if (noteMissing.length > 0) {
+        console.log(
+          `          ${noteWanted?.id} note ${noteMeasure === undefined ? '(no such measure)' : JSON.stringify(noteMeasure.note ?? '')} ` +
+            `does not say: ${noteMissing.map((p) => JSON.stringify(p)).join(', ')}`,
+        );
       }
     }
   }
@@ -5114,10 +5304,11 @@ function runDiffSuite(tally: RunTally): number | null {
     console.log('          ⚠️ This is a HOLE in this run, not a pass — `rigc diff` was not exercised at all.');
     return null;
   }
-  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro) ──');
+  console.log('\n── rigc diff (fixtures: 3-timing-and-spacing-ess, 6-arcs-pro, #1040\'s slider probe from gallery/look) ──');
   const texts: Record<DiffFixture, string> = {
     default: readFileSync(DIFF_FIXTURE, 'utf8'),
     mesh: readFileSync(DIFF_MESH_FIXTURE, 'utf8'),
+    sliders: diffSliderProbeText(),
   };
   let bad = 0;
 
@@ -5131,6 +5322,10 @@ function runDiffSuite(tally: RunTally): number | null {
     () =>
       runDiffIdentityControls('3-timing-and-spacing-ess', texts.default) +
       runDiffIdentityControls('6-arcs-pro', texts.mesh) +
+      // The positive control for D47–D48 (issue #1078): the probe against
+      // itself, so the slider wiring those two move reads 1.000 on an
+      // identical pair before either case is allowed to say it moved.
+      runDiffIdentityControls('gallery/look slider probe', texts.sliders) +
       // In this phase and not a third one: a renamed copy against its original
       // is an identity comparison whose vocabulary moved, which is the question
       // this phase already asks. A third bracket would also need the summary to
@@ -103335,8 +103530,9 @@ function main(): void {
           .filter(Boolean)
           .join(', ') +
         ' self-checks did NOT run — this run does not cover them. `bun run fetch-examples` gets them.'
-      : `, + ${n('diff/identity')} diff identity controls (name-matched, name-agnostic and reported, over both a ` +
-        `mesh-free and a mesh-carrying fixture), + ${n('diff/measure')} diff measure controls, ` +
+      : `, + ${n('diff/identity')} diff identity controls (name-matched, name-agnostic and reported, over a ` +
+        'mesh-free fixture, a mesh-carrying one and a slider probe built from gallery/look)' +
+        `, + ${n('diff/measure')} diff measure controls, ` +
         '+ ' + n('check') + ' check controls (frames-only reads, a faithful ' +
         'transcription, a time-reversed one, a framing invariant to transparent margins, a scale difference ' +
         "the framing names, the frames' own box used when the candidate lands in it and refused when it does " +

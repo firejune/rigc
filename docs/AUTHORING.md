@@ -1330,6 +1330,13 @@ physics constraint ([FACE.md](FACE.md)), and `diff` moved only
 repointed sliders**, and the re-rendered mean absolute error of 8.43–10.41 is the
 size #535 measured out of order. Hence a refusal rather than a note.
 
+⇒ **`diff` names it now** (issue #1078). `constraints.refs` compares every name a
+constraint resolves — its bones and slots, a slider's `animation` and `property`,
+and the `from`/`to` pairs of a transform's `properties` — and its note names each
+constraint wired differently with both sides' names. On the probe above, planted
+without the editor: `0.333 refs 1/3 … — 2 wired differently: slider constraint
+"yaw": animation "-a" vs "5"; slider constraint "tilt": animation "2b" vs "-a"`.
+
 **R11 — The `skins` array is written with `default` first and the rest in exactly
 the order R10 describes.** A skin is a **name** in the JSON half of the format and
 an **ordinal** in the binary half — `skins[readInt()]` for an attachment timeline,
