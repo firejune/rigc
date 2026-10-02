@@ -9,8 +9,8 @@ compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-rigc
 
 rigc compiles a rig spec and a motion spec into Spine 4.3 skeleton data and an
 atlas, runs its named assertions — rigc's own validator in the published package,
-held equal to a `@esotericsoftware/spine-core` round trip in its CI — and writes
-**only if every one is green**. You cannot see the
+held to a `@esotericsoftware/spine-core` round trip's verdicts in its CI, all but
+the parse itself — and writes **only if every one is green**. You cannot see the
 rig you are authoring. The validator's messages and the shipped guides are the
 whole interface, and this skill only says which of them to open.
 
@@ -19,8 +19,9 @@ whole interface, and this skill only says which of them to open.
 - **Validation is never bypassed.** `build` writes nothing on a red gate; there is
   no `--no-validate`, and none may be added — AUTHORING §0 says so in as many
   words. Correctness is the whole of the reason: the assertions are what make the
-  output trustworthy, and they are held to the official parser's verdict on every
-  corpus the repository measures.
+  output trustworthy, and they are held to the official parser's verdicts in the
+  repository's CI — all but the parse itself, which runs only where the runtime is
+  installed and is reported as a SKIP elsewhere.
 - **The compiler never invents a value.** A field the spec leaves out is a
   `CompileError` naming that field. Fill the spec; do not expect a default read off
   the art — AUTHORING §2 and §5.

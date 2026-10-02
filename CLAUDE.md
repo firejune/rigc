@@ -57,12 +57,18 @@ sincere about it. rigc exists to convert that silence into a named failure.
   with it added beside — and rigc's own validator over the model document and
   the emitted text, which `cli_core.ts build` runs where it is not (the published
   package, since 2.0.0: `spine-core` is a devDependency). The second supplier is
-  admitted on measurement, not on its word: `verdict_gate` holds the two to
-  identical verdict lines on every public recipe, every production rig and every
-  selftest call, and `core_gate` holds rigc's poser to spine-core's poses at
-  tolerance 0 on the same corpora — the equivalence #380 was built for, run on
-  every change. A bypass of either supplier turns rigc back into a program that
-  prints plausible JSON. Do not accept a "just for testing" bypass.
+  admitted on measurement, not on its word, and the measurement's scope is
+  stated rather than rounded up: of the 49 assertions, the 40 the model side
+  runs are held to the round trip's verdict lines by `verdict_gate`, the 8
+  restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A18) by
+  `RC28`, and `A00_ROUNDTRIP_PARSE` — the parse by the official runtime — does
+  not run on the core build and is reported as a SKIP that says so. `core_gate`
+  holds rigc's poser to spine-core's poses at tolerance 0. CI runs all of that
+  on every change over the public recipes and every selftest call; the 14
+  production rigs are measured by hand with private recipes CI does not have,
+  before each landing — a practice, not a gate CI enforces. A bypass of either
+  supplier turns rigc back into a program that prints plausible JSON. Do not
+  accept a "just for testing" bypass.
 
   A second reason stood here until 2026-09-05, when issue #398 retired it: that a
   build path not linking the runtime would be a Spine-format emitter with no

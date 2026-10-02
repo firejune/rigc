@@ -11,12 +11,14 @@ as a **development dependency**: a clone and CI install it, and every Spine file
 published package does not carry it** — an install of `spine-rigc` has no Spine
 runtime in it unless one is installed beside it, and then the same `rigc` uses it.
 
-Key obligation that propagates to users of a Spine Runtimes integration:
-integrating the Spine Runtimes into software is permitted **provided that each user
-of the resulting product obtains their own Spine Editor license**, and any
-redistribution includes the Spine Runtimes license and copyright notice. Where that
-integration happens with rigc — this repository, its CI, or an install with the
-runtime beside it — that obligation applies there.
+Its terms, as the licence states them: integration of the Spine Runtimes into
+software is permitted **under the terms and conditions of Section 2 of the
+[Spine Editor License Agreement](https://esotericsoftware.com/spine-editor-license)**;
+otherwise it is permitted **provided that each user of the Products obtains their
+own Spine Editor license** and any redistribution of the Products includes the
+licence and copyright notice. Where a Spine Runtime is integrated with rigc — this
+repository, its CI, or an install with the runtime beside it — those terms apply
+there.
 
 ### What that means for rigc, as a chain of facts
 
@@ -25,18 +27,21 @@ Software's terms, not a licence term of this project:
 
 1. rigc's output **is Spine skeleton data**.
 2. Playing Spine skeleton data in a product requires **a Spine Runtime**.
-3. The Spine Runtimes License requires **each user of such a product to own a Spine
-   Editor license**.
+3. Integrating a Spine Runtime into a product is permitted **under Section 2 of the
+   Spine Editor License Agreement**, or otherwise on the condition that **each user
+   of the product obtains their own Spine Editor license** and the product carries
+   the Runtimes licence and copyright notice — the two routes above.
 4. The published rigc **links no Spine runtime**. This repository does, as a
    development dependency for its own gate, and so does an install with
    `spine-core` added beside it. Validation is not optional on either: the gate
    runs through the runtime where it is installed and through rigc's own validator
-   where it is not, and the two are held to the same verdicts in CI.
+   where it is not, and the two are held to the same verdicts in CI on 48 of the
+   49 assertions — the official parser's own parse runs only where the runtime is.
 
-> **Shipping rigc's output in a product requires a Spine Editor license** — that is
-> 1–3, and rigc neither creates that requirement nor removes it. Running the
-> published rigc links no Spine runtime; whether its output is then played by one is
-> the consumer's choice, and 1–3 apply to it.
+> **A product that plays rigc's output integrates a Spine Runtime, and 1–3 apply to
+> that integration** — rigc neither creates those terms nor removes them. Running
+> the published rigc links no Spine runtime; whether its output is then played by
+> one is the consumer's choice.
 
 ### The Spine Web Player, and what `rigc preview` does with it
 
