@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.1](https://github.com/firejune/rigc/compare/v2.1.0...v2.1.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **atlas:** a polygon page search stops a footprint pass at its first miss and prunes its free list by the edge a piece was cut along — a production-shaped page packs in 0.17 s where it took 304 s, the same pages to the byte ([#1105](https://github.com/firejune/rigc/issues/1105)) ([58942b9](https://github.com/firejune/rigc/commit/58942b9f71d6e4fb1b59e91286e7ec4aac2b2a10)), closes [#1102](https://github.com/firejune/rigc/issues/1102)
+
 ## [2.1.0](https://github.com/firejune/rigc/compare/v2.0.3...v2.1.0) (2026-10-02)
 
 
