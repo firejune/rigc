@@ -40,9 +40,10 @@ export interface PolypackShape {
 
 /**
  * The seed `PK93` holds the cost on: the first from 1102 up whose set spills to
- * two pages under `rect` and packs to the same pages under `polygon`, as the
- * rig it stands for does (1102 spills to three, 1103–1106 do not spill or do
- * not pack identically).
+ * two pages under `rect` and packs to the same pages under `polygon` with the
+ * owned box's anchor alone (`footprintAnchors: 'box'`), as the rig it stands
+ * for did before issue #1104 (1102 spills to three, 1103–1106 do not spill or
+ * do not pack identically). `polygon` now packs it on one page (`PK97`).
  */
 export const POLYPACK_SEED = 1107;
 

@@ -714,6 +714,44 @@ export type PackShape = (typeof PACK_SHAPES)[number];
 export const DEFAULT_PACK_SHAPE: PackShape = 'rect';
 
 /**
+ * Where a `polygon` candidate may put a cell against the free rectangle it is
+ * placed in (issue #1104) — `packOnePageByFootprint`, *Candidates*.
+ *
+ * `box` puts the cell's owned box on the free rectangle's corner — the only
+ * rule before #1104. The other three may also put the cell's own corner there
+ * (`packOnePageByFootprint`, *Candidates*):
+ *
+ *   * `box-or-cell` — on every free rectangle;
+ *   * `box-else-cell` — only on a free rectangle where the owned box's anchor
+ *     would put the cell off the page;
+ *   * `best-of` — the footprint pass run with `box` and with `box-or-cell` on
+ *     the same page and the better kept (more cells, then the higher bottom
+ *     edge, then `box`), as `placePass` keeps the better of `rect` and a
+ *     footprint pass.
+ *
+ * No single rule is never-larger than `box` — `box-or-cell` packs `PK78`'s
+ * wedge set 7.2 % larger — so `polygon` does not pick one: it packs the whole
+ * set as `rect`, under `box` and under `box-else-cell` and keeps the least Σ
+ * page area (`POLYGON_CANDIDATE_RULES`, `packAtlas`). `box-else-cell` is the
+ * third candidate on measurement: over 96 packs (seeds 1100–1124, the tree's
+ * 21 sets, the wedge and spill sets, `pot` and `free`) the choice with it sums
+ * to 212,607,001 texels, with `best-of` 214,407,755 and with `box-or-cell` the
+ * same. `best-of` is never worse than `box` on one page, but against
+ * `box-else-cell` it gives the smaller pack on 12 of the 27 sets where the two
+ * differ and the larger on 15 — neither dominates, and the sum decides.
+ *
+ * The CLI never sets one rule; `PackOptions.footprintAnchors` is the instrument's and the plant's.
+ */
+export const FOOTPRINT_ANCHORS = ['box', 'box-or-cell', 'box-else-cell', 'best-of'] as const;
+export type FootprintAnchors = (typeof FOOTPRINT_ANCHORS)[number];
+/** The rule a footprint search uses when it is given none — `freePageSearch`'s and `footprintPass`'s callers outside `packAtlas`. */
+export const DEFAULT_FOOTPRINT_ANCHORS: FootprintAnchors = 'box';
+/** The footprint rules `polygon` packs under besides `rect`, in the order a tie goes to (`packAtlas`). */
+export const POLYGON_CANDIDATE_RULES: readonly FootprintAnchors[] = ['box', 'box-else-cell'];
+/** Which whole pack a `polygon` pack kept: `rect`'s, or one footprint rule's. */
+export type PackCandidate = 'rect' | FootprintAnchors;
+
+/**
  * The part of a region its attachments draw, in the region's own texels — x
  * right and y down from the drawing's top-left corner, so `(u · width, v ·
  * height)` for a mesh UV `(u, v)`. Each polygon is a flat `[x0, y0, x1, y1, …]`
@@ -750,6 +788,21 @@ export interface PackOptions {
   pageEdges?: PageEdges;
   /** What two rectangles may share (default `rect`). See `PACK_SHAPES`. */
   shape?: PackShape;
+  /**
+   * One footprint rule alone instead of `polygon`'s choice between whole packs
+   * (`FOOTPRINT_ANCHORS`) — for `tools/pack_anchor.ts` and the selftest's plant
+   * (`PK97`); the CLI never sets it. Absent, `polygon` keeps the least Σ page
+   * area of `rect` and `POLYGON_CANDIDATE_RULES`.
+   */
+  footprintAnchors?: FootprintAnchors;
+  /** Where to count what every search the pack runs placed (`PassTally`) — the controls' and the instrument's cost reading. */
+  tally?: PassTally;
+  /**
+   * `false` runs every footprint pass of every search to its end — issue
+   * #1102's early stop off, for the selftest's plant (`PK95`) only. The pages are
+   * the same either way (`PK94`); only the cost differs.
+   */
+  stopAtMiss?: boolean;
 }
 
 /** Where one region landed. `x`/`y` are the REGION's own corner, not its cell's. */
@@ -782,6 +835,8 @@ export interface PackResult {
   padding: number;
   /** The shape the pack was made under — what the `pack:` line's last field states. */
   shape: PackShape;
+  /** The whole pack that was kept: `rect` under `shape: 'rect'`, and under `polygon` the candidate of least Σ page area (`packAtlas`). */
+  candidate: PackCandidate;
 }
 
 /** A free rectangle in the MaxRects free list. */
@@ -826,15 +881,18 @@ function smallestPageFor(
   maxEdge: number,
   pageEdges: PageEdges,
   shapes?: readonly CellShape[],
+  anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
+  tally?: PassTally,
+  stopAtMiss = true,
 ): { width: number; height: number; rects: Rect[] } | null {
-  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge, shapes);
+  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge, shapes, anchors, tally, stopAtMiss);
   const edges: number[] = [];
   for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
   const candidates: Array<{ w: number; h: number }> = [];
   for (const w of edges) for (const h of edges) candidates.push({ w, h });
   candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
   for (const candidate of candidates) {
-    const attempt = placePass(cells, shapes, candidate.w, candidate.h, Infinity, { wholeOrNothing: true });
+    const attempt = placePass(cells, shapes, candidate.w, candidate.h, Infinity, { wholeOrNothing: stopAtMiss, anchors, tally });
     if (attempt.some((r) => r === null)) continue;
     return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
   }
@@ -886,8 +944,13 @@ function smallestFreePageFor(
   cells: Array<{ w: number; h: number }>,
   maxEdge: number,
   shapes?: readonly CellShape[],
+  anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
+  tally?: PassTally,
+  stopAtMiss = true,
 ): { width: number; height: number; rects: Rect[] } | null {
-  return freePageSearch(cells, maxEdge, shapes).page;
+  const search = freePageSearch(cells, maxEdge, shapes, { anchors, stopAtMiss });
+  if (tally !== undefined) for (const key of Object.keys(tally) as Array<keyof PassTally>) tally[key] += search.tally[key];
+  return search.page;
 }
 
 /** What one `free` page search did: the page it chose, and what each width cost. */
@@ -916,6 +979,8 @@ export interface FreePageSearchOptions {
   stopAtMiss?: boolean;
   /** `false` scans the whole free list for a piece's containers (`splitFree`), as the prune did before issue #1102. */
   edgeIndex?: boolean;
+  /** Where a candidate may anchor a cell (`FOOTPRINT_ANCHORS`) — `tools/pack_anchor.ts`'s candidate rules; default `box`. */
+  anchors?: FootprintAnchors;
 }
 
 /**
@@ -948,7 +1013,7 @@ export function freePageSearch(
     cellArea = 0;
     for (const shape of shapes) cellArea += shape.owned;
   }
-  const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0, tally: { rectPlaced: 0, footprintPlaced: 0, bandSplits: 0, containmentTests: 0 } };
+  const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0, tally: emptyTally() };
   let best: { width: number; height: number; rects: Rect[] } | null = null;
   for (let width = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; width <= maxEdge; width += FREE_EDGE_STEP) {
     out.widths++;
@@ -958,7 +1023,7 @@ export function freePageSearch(
       continue;
     }
     const maxBottom = best === null ? Infinity : Math.floor(bestArea / width);
-    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom, { wholeOrNothing, tally: out.tally, edgeIndex: options.edgeIndex ?? true });
+    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom, { wholeOrNothing, tally: out.tally, edgeIndex: options.edgeIndex ?? true, anchors: options.anchors });
     let height = 0;
     for (const r of attempt) if (r !== null) height = Math.max(height, r.y + r.h);
     if (height > maxBottom) {
@@ -1150,7 +1215,7 @@ function placePass(
   // it did not abandon (46 %). The largest cell's owned box does not start at
   // its cell's corner, so on an empty page that cell is every footprint pass's
   // first miss — all 1,709 of them — and every one of those passes was thrown
-  // away. With the early stop the pack takes 0.15–0.7 s by the load, the
+  // away (issue #1104 measures the anchor that causes it). With the early stop the pack takes 0.15–0.7 s by the load, the
   // same pages.
   const rectCanFit = !wholeOrNothing || cellAreaOf(cells) <= pageW * pageH;
   const byRect = rectCanFit ? packOnePage(cells, pageW, pageH, maxBottom) : null;
@@ -1165,8 +1230,20 @@ function placePass(
   // than `rect` on two of the five gallery rigs that carry a mesh, because a
   // greedy pass that places one cell differently places every later one
   // differently too.
-  const byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally);
-  if (tally !== undefined) tally.footprintPlaced += placedCount(byFootprint);
+  const anchors = pass.anchors ?? DEFAULT_FOOTPRINT_ANCHORS;
+  let byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, anchors === 'best-of' ? 'box' : anchors);
+  if (anchors === 'best-of') {
+    // Issue #1104's fourth candidate: both searches on the same page, the
+    // better kept and the first anchor's on a tie — so a pass is never worse
+    // than the first anchor's on that page.
+    if (tally !== undefined) tally.footprintPlaced += placedCount(byFootprint);
+    const byTwo = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, 'box-or-cell');
+    const bottom = (placed: Array<Rect | null>): number => placed.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
+    const placedBox = placedCount(byFootprint);
+    const placedTwo = placedCount(byTwo);
+    if (placedTwo > placedBox || (placedTwo === placedBox && bottom(byTwo) < bottom(byFootprint))) byFootprint = byTwo;
+    if (tally !== undefined) tally.footprintPlaced += placedTwo;
+  } else if (tally !== undefined) tally.footprintPlaced += placedCount(byFootprint);
   if (byRect === null) return byFootprint;
   const bottomOf = (placed: Array<Rect | null>): number => placed.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
   const placedRect = placedCount(byRect);
@@ -1183,6 +1260,8 @@ interface PassOptions {
   tally?: PassTally;
   /** `splitFree`'s edge index (default on); off only for the selftest's plant. */
   edgeIndex?: boolean;
+  /** Where a candidate may anchor a cell (`FOOTPRINT_ANCHORS`). */
+  anchors?: FootprintAnchors;
 }
 
 /** How many cells a pass placed. */
@@ -1213,6 +1292,22 @@ export interface PassTally {
   bandSplits: number;
   /** Containment tests the footprint passes' prune made (`splitFree`). */
   containmentTests: number;
+  /**
+   * Free rectangles that held a cell's owned box and were refused as its
+   * first-anchor candidate only because the cell, anchored there, would leave
+   * the page — at negative x or y, or past the right or bottom edge (issue
+   * #1104, `tools/pack_anchor.ts`).
+   */
+  boxAnchorRefused: number;
+  /** Cells a footprint pass missed although some free rectangle held their owned box. */
+  missedByAnchor: number;
+  /** Cells a footprint pass placed at the second anchor — the cell's own corner on the free rectangle's — under a candidate rule that has one (`FOOTPRINT_ANCHORS`). */
+  secondAnchorPlaced: number;
+}
+
+/** A tally with nothing counted. */
+export function emptyTally(): PassTally {
+  return { rectPlaced: 0, footprintPlaced: 0, bandSplits: 0, containmentTests: 0, boxAnchorRefused: 0, missedByAnchor: 0, secondAnchorPlaced: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -1589,9 +1684,12 @@ const UNTOUCHED = -1;
  *   * a candidate is a free rectangle that holds the cell's protected set's
  *     bounding box, anchored at its top-left corner — the cell placed so that
  *     box's corner lands there, which may put the cell's own unclaimed
- *     texels over a neighbour's — and whose cell stays on the page;
- *   * the score is Best Short Side Fit over that box, with the same total
- *     tie-break (smallest long-side leftover, then topmost, then leftmost);
+ *     texels over a neighbour's — and whose cell stays on the page
+ *     (*Candidates*, below, for the rules measured beside it);
+ *   * the score is Best Short Side Fit over the part of the free rectangle the
+ *     box uses from its corner (the box itself, under the default anchor),
+ *     with the same total tie-break (smallest long-side leftover, then
+ *     topmost, then leftmost, then the first anchor);
  *   * the free list is split and pruned by the same code (`splitFree`), once
  *     per rectangle of the protected set.
  *
@@ -1599,6 +1697,27 @@ const UNTOUCHED = -1;
  * cell, the anchor IS the free rectangle's corner and the split IS the cell's:
  * a pack with no mesh region makes `packOnePage`'s decisions one for one
  * (`PK82`).
+ *
+ * ## Candidates — the second anchor (issue #1104)
+ *
+ * The first anchor puts the owned box's corner on the free rectangle's corner,
+ * the cell then reaching up and left of it by the box's offset. So a cell whose
+ * box is inset by `(dx, dy)` can only go where a free rectangle starts at least
+ * `dx` from the page's left and `dy` from its top — on an empty page, nowhere.
+ * A large region whose mesh draws a small part of it is then every footprint
+ * pass's first miss: on `fixtures/polypack_shapes.ts`'s seed 1107, and on the
+ * production rig it stands for, every footprint pass lost to the rectangle pass
+ * and the polygon pack was the `rect` pack to the texel.
+ *
+ * The second anchor puts the cell's own corner there instead, the box inset by
+ * its offset, and is a candidate when the free rectangle holds the box where it
+ * then lies. The two coincide when the box starts at the cell's corner, so it
+ * is only tried for an inset box — never for a whole cell, which is why a pack
+ * with no mesh region is unchanged by it. Both keep the box inside a free
+ * rectangle and the cell on the page, so no texel test, gutter or atlas field
+ * changes: `bounds` stays inside `size`, as the runtime's UVs assume. Which
+ * free rectangles get it is the rule (`FOOTPRINT_ANCHORS`); which rule's pack
+ * is written is `packAtlas`'s choice by Σ page area.
  *
  * 🔒 **The footprint test is then stated outright rather than trusted to the
  * bookkeeping.** A candidate inside a free rectangle cannot meet a placed set,
@@ -1618,6 +1737,7 @@ function packOnePageByFootprint(
   stopAtMiss = false,
   edgeIndex = true,
   tally?: PassTally,
+  anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
 ): Array<Rect | null> {
   const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
   const placed: Array<Rect | null> = [];
@@ -1633,33 +1753,56 @@ function packOnePageByFootprint(
 
   for (const shape of shapes) {
     const box = shape.bbox;
-    let best: Rect | null = null;
+    let best: { x: number; y: number; frX: number; frY: number; anchor: number } | null = null;
     let bestShort = Infinity;
     let bestLong = Infinity;
+    let held = false;
+    // The second anchor differs from the first only when the box is inset.
+    const anchorCount = anchors !== 'box' && (box.x !== 0 || box.y !== 0) ? 2 : 1;
     for (const fr of free) {
       if (fr.w < box.w || fr.h < box.h) continue;
-      const x = fr.x - box.x;
-      const y = fr.y - box.y;
-      if (x < 0 || y < 0 || x + shape.width > pageW || y + shape.height > pageH) continue;
-      const leftoverW = fr.w - box.w;
-      const leftoverH = fr.h - box.h;
-      const short = Math.min(leftoverW, leftoverH);
-      const long = Math.max(leftoverW, leftoverH);
-      if (best !== null) {
-        if (short > bestShort) continue;
-        if (short === bestShort) {
-          if (long > bestLong) continue;
-          if (long === bestLong) {
-            if (fr.y > best.y) continue;
-            if (fr.y === best.y && fr.x >= best.x) continue;
+      held = true;
+      let firstOffPage = false;
+      for (let anchor = 0; anchor < anchorCount; anchor++) {
+        // Anchor 0: the owned box's corner on the free corner. Anchor 1: the
+        // cell's own corner there, the box then inset by its own offset.
+        const x = anchor === 0 ? fr.x - box.x : fr.x;
+        const y = anchor === 0 ? fr.y - box.y : fr.y;
+        const usedW = anchor === 0 ? box.w : box.x + box.w;
+        const usedH = anchor === 0 ? box.h : box.y + box.h;
+        if (usedW > fr.w || usedH > fr.h) continue;
+        const offPage = x < 0 || y < 0 || x + shape.width > pageW || y + shape.height > pageH;
+        if (anchor === 0) firstOffPage = offPage;
+        // `box-else-cell`: the second anchor only where the first left the page.
+        if (anchor === 1 && anchors === 'box-else-cell' && !firstOffPage) continue;
+        if (offPage) {
+          if (anchor === 0 && tally !== undefined) tally.boxAnchorRefused++;
+          continue;
+        }
+        const leftoverW = fr.w - usedW;
+        const leftoverH = fr.h - usedH;
+        const short = Math.min(leftoverW, leftoverH);
+        const long = Math.max(leftoverW, leftoverH);
+        if (best !== null) {
+          if (short > bestShort) continue;
+          if (short === bestShort) {
+            if (long > bestLong) continue;
+            if (long === bestLong) {
+              if (fr.y > best.frY) continue;
+              if (fr.y === best.frY) {
+                if (fr.x > best.frX) continue;
+                if (fr.x === best.frX && anchor >= best.anchor) continue;
+              }
+            }
           }
         }
+        best = { x, y, frX: fr.x, frY: fr.y, anchor };
+        bestShort = short;
+        bestLong = long;
       }
-      best = fr;
-      bestShort = short;
-      bestLong = long;
     }
     if (best === null) {
+      if (held && tally !== undefined) tally.missedByAnchor++;
       placed.push(null);
       // A caller that keeps only a pass placing every cell has its answer
       // (`placePass`, `wholeOrNothing`): the rest are not placed.
@@ -1669,7 +1812,8 @@ function packOnePageByFootprint(
       }
       continue;
     }
-    const put: Rect = { x: best.x - box.x, y: best.y - box.y, w: shape.width, h: shape.height };
+    if (best.anchor === 1 && tally !== undefined) tally.secondAnchorPlaced++;
+    const put: Rect = { x: best.x, y: best.y, w: shape.width, h: shape.height };
     for (const other of owned) {
       // Two cells that do not overlap cannot share a texel, and that answer
       // takes no texel to read; only an overlap is scanned, and only over the
@@ -1693,6 +1837,21 @@ function packOnePageByFootprint(
     for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH, edgeIndex, tally);
   }
   return placed;
+}
+
+/**
+ * One footprint pass on an empty `pageW x pageH` page, run to its end, with
+ * what it counted — exported for `tools/pack_anchor.ts` (issue #1104).
+ */
+export function footprintPass(
+  shapes: readonly CellShape[],
+  pageW: number,
+  pageH: number,
+  anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
+): { rects: Array<{ x: number; y: number; w: number; h: number } | null>; tally: PassTally } {
+  const tally = emptyTally();
+  const rects = packOnePageByFootprint(shapes, pageW, pageH, Infinity, false, true, tally, anchors);
+  return { rects, tally };
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -1902,6 +2061,130 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
   }
 }
 
+/** Where every part lands and the size each page is written at — one candidate's whole pack, before anything is drawn. */
+interface PackLayout {
+  /** page index -> the placements on it, in packing order. */
+  perPage: Placement[][];
+  /** page index -> the size that page is written at. */
+  pageSizes: Array<{ width: number; height: number }>;
+  placements: Placement[];
+}
+
+/**
+ * One whole pack's layout under one placement rule: the single-page search,
+ * or — when the set does not fit one page — the spill, each page then shrunk
+ * to the smallest that holds it. `shapes` absent is the rectangle pass
+ * throughout (`rect`, and the first of `polygon`'s candidates); given, the
+ * footprint pass under `anchors`.
+ */
+function layoutPack(
+  sorted: readonly PackInput[],
+  cells: Array<{ w: number; h: number }>,
+  shapes: readonly CellShape[] | undefined,
+  maxEdge: number,
+  pageEdges: PageEdges,
+  padding: number,
+  anchors: FootprintAnchors,
+  tally?: PassTally,
+  stopAtMiss = true,
+): PackLayout {
+  const single = smallestPageFor(cells, maxEdge, pageEdges, shapes, anchors, tally, stopAtMiss);
+
+  /** page index -> the placements on it, in packing order. */
+  const perPage: Placement[][] = [];
+  /** page index -> the size that page is written at. */
+  const pageSizes: Array<{ width: number; height: number }> = [];
+  const placements: Placement[] = [];
+  if (single !== null) {
+    perPage.push([]);
+    pageSizes.push({ width: single.width, height: single.height });
+    single.rects.forEach((rect, i) => {
+      const place: Placement = {
+        region: sorted[i].region,
+        page: 0,
+        x: rect.x + padding,
+        y: rect.y + padding,
+        width: sorted[i].width,
+        height: sorted[i].height,
+      };
+      perPage[0].push(place);
+      placements.push(place);
+    });
+  } else {
+    // Spill. Which parts share a page is decided at the MAXIMUM size — that is
+    // what makes the boundary deterministic and independent of the shrink below
+    // — and parts are taken in packing order, whatever will not fit the current
+    // page opening the next one.
+    let remaining = sorted.map((input, i) => ({ input, cell: cells[i], shape: shapes?.[i] }));
+    const shapesOf = (list: typeof remaining): CellShape[] | undefined =>
+      shapes === undefined ? undefined : list.map((r) => r.shape ?? footprintCell(r.input.width, r.input.height, padding));
+    while (remaining.length > 0) {
+      const pageIndex = perPage.length;
+      const attempt = placePass(
+        remaining.map((r) => r.cell),
+        shapesOf(remaining),
+        maxEdge,
+        maxEdge,
+        Infinity,
+        { anchors, tally },
+      );
+      const onPage: typeof remaining = [];
+      const leftOver: typeof remaining = [];
+      attempt.forEach((rect, i) => {
+        if (rect === null) leftOver.push(remaining[i]);
+        else onPage.push(remaining[i]);
+      });
+      if (onPage.length === 0) {
+        // Unreachable: every cell was proven to fit an empty page above. Kept as
+        // a named stop rather than an infinite loop if that ever stops holding.
+        throw new CompileError(
+          `packing stalled with ${remaining.length} region(s) left and an empty ${maxEdge}x${maxEdge} page`,
+        );
+      }
+      // ⭐ Then the page is written at the smallest power-of-two pair that holds
+      // the cells assigned to it, not at the maximum (issue #266, follow-up 3).
+      // A spill used to write `pageSize x pageSize` for every page, so a set that
+      // overflowed by one small part paid for a second full page of transparency
+      // — 4 MiB of decoded RAM at the 2048 default for a part that might be
+      // 64x64. Re-packing through the same search the single-page case uses is
+      // what keeps "the page written is the smallest that holds what is on it"
+      // one rule; a page whose own cells need the maximum simply gets it back.
+      const shrunk = smallestPageFor(
+        onPage.map((r) => r.cell),
+        maxEdge,
+        pageEdges,
+        shapesOf(onPage),
+        anchors,
+        tally,
+        stopAtMiss,
+      );
+      if (shrunk === null) {
+        // Unreachable for the same reason as the stall above: these cells were
+        // just placed on a maxEdge page.
+        throw new CompileError(`page ${pageIndex + 1} of the spill holds ${onPage.length} region(s) that no page fits`);
+      }
+      const onThisPage: Placement[] = [];
+      shrunk.rects.forEach((rect, i) => {
+        const place: Placement = {
+          region: onPage[i].input.region,
+          page: pageIndex,
+          x: rect.x + padding,
+          y: rect.y + padding,
+          width: onPage[i].input.width,
+          height: onPage[i].input.height,
+        };
+        onThisPage.push(place);
+        placements.push(place);
+      });
+      perPage.push(onThisPage);
+      pageSizes.push({ width: shrunk.width, height: shrunk.height });
+      remaining = leftOver;
+    }
+  }
+
+  return { perPage, pageSizes, placements };
+}
+
 /**
  * Pack these parts onto shared pages.
  *
@@ -1965,9 +2248,17 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
  *     two footprints keeps them `2 · padding` apart (`CellShape`);
  *   * **the placement** is `packOnePageByFootprint`, MaxRects with the free list
  *     split by what each cell owns, run beside the rectangle pass on every page
- *     tried and kept only when it is better (`placePass`) — so a `polygon` page
- *     is never larger than the `rect` page, and a set with no mesh footprint is
- *     placed exactly as under `rect` (`PK82`);
+ *     tried and kept only when it is better (`placePass`);
+ *   * **the pack written** is the least Σ page area — over every page, a spill's
+ *     included — of three whole packs: `rect`'s, the footprint pack under the
+ *     owned box's anchor, and under `box-else-cell` (issue #1104), the earlier
+ *     on a tie. So a `polygon` pack is never larger in page area than `rect`'s
+ *     on any set, by construction, and a set with no mesh footprint is `rect`'s
+ *     pack to the byte (`PK82`). The per-page rule alone never promised that
+ *     across a spill: seed 1105 under `pot` packed 8,388,608 texels against
+ *     `rect`'s 6,291,456 before it (`PK96`). It costs the three packs' searches
+ *     — no search is shared, since a free search's bounds depend on the best
+ *     page its own passes found;
  *   * **the pixels** are drawn in two passes: every cell whole in packing order,
  *     as under `rect`, then every region's owned texels again with its own
  *     values. The owned sets are disjoint, so the second pass's order decides
@@ -2027,94 +2318,31 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   const shapes =
     shape === 'polygon' ? sorted.map((input) => footprintCell(input.width, input.height, padding, input.footprint)) : undefined;
 
-  const single = smallestPageFor(cells, maxEdge, pageEdges, shapes);
-
-  /** page index -> the placements on it, in packing order. */
-  const perPage: Placement[][] = [];
-  /** page index -> the size that page is written at. */
-  const pageSizes: Array<{ width: number; height: number }> = [];
-  const placements: Placement[] = [];
-  if (single !== null) {
-    perPage.push([]);
-    pageSizes.push({ width: single.width, height: single.height });
-    single.rects.forEach((rect, i) => {
-      const place: Placement = {
-        region: sorted[i].region,
-        page: 0,
-        x: rect.x + padding,
-        y: rect.y + padding,
-        width: sorted[i].width,
-        height: sorted[i].height,
-      };
-      perPage[0].push(place);
-      placements.push(place);
-    });
-  } else {
-    // Spill. Which parts share a page is decided at the MAXIMUM size — that is
-    // what makes the boundary deterministic and independent of the shrink below
-    // — and parts are taken in packing order, whatever will not fit the current
-    // page opening the next one.
-    let remaining = sorted.map((input, i) => ({ input, cell: cells[i], shape: shapes?.[i] }));
-    const shapesOf = (list: typeof remaining): CellShape[] | undefined =>
-      shapes === undefined ? undefined : list.map((r) => r.shape ?? footprintCell(r.input.width, r.input.height, padding));
-    while (remaining.length > 0) {
-      const pageIndex = perPage.length;
-      const attempt = placePass(
-        remaining.map((r) => r.cell),
-        shapesOf(remaining),
-        maxEdge,
-        maxEdge,
-      );
-      const onPage: typeof remaining = [];
-      const leftOver: typeof remaining = [];
-      attempt.forEach((rect, i) => {
-        if (rect === null) leftOver.push(remaining[i]);
-        else onPage.push(remaining[i]);
-      });
-      if (onPage.length === 0) {
-        // Unreachable: every cell was proven to fit an empty page above. Kept as
-        // a named stop rather than an infinite loop if that ever stops holding.
-        throw new CompileError(
-          `packing stalled with ${remaining.length} region(s) left and an empty ${maxEdge}x${maxEdge} page`,
-        );
-      }
-      // ⭐ Then the page is written at the smallest power-of-two pair that holds
-      // the cells assigned to it, not at the maximum (issue #266, follow-up 3).
-      // A spill used to write `pageSize x pageSize` for every page, so a set that
-      // overflowed by one small part paid for a second full page of transparency
-      // — 4 MiB of decoded RAM at the 2048 default for a part that might be
-      // 64x64. Re-packing through the same search the single-page case uses is
-      // what keeps "the page written is the smallest that holds what is on it"
-      // one rule; a page whose own cells need the maximum simply gets it back.
-      const shrunk = smallestPageFor(
-        onPage.map((r) => r.cell),
-        maxEdge,
-        pageEdges,
-        shapesOf(onPage),
-      );
-      if (shrunk === null) {
-        // Unreachable for the same reason as the stall above: these cells were
-        // just placed on a maxEdge page.
-        throw new CompileError(`page ${pageIndex + 1} of the spill holds ${onPage.length} region(s) that no page fits`);
-      }
-      const onThisPage: Placement[] = [];
-      shrunk.rects.forEach((rect, i) => {
-        const place: Placement = {
-          region: onPage[i].input.region,
-          page: pageIndex,
-          x: rect.x + padding,
-          y: rect.y + padding,
-          width: onPage[i].input.width,
-          height: onPage[i].input.height,
-        };
-        onThisPage.push(place);
-        placements.push(place);
-      });
-      perPage.push(onThisPage);
-      pageSizes.push({ width: shrunk.width, height: shrunk.height });
-      remaining = leftOver;
-    }
+  // ⭐ `polygon` is a choice between whole packs (issue #1104), made on the
+  // one figure the mode exists to lower — the sum of the pages' areas — and
+  // made over every page, a spill's included. The candidates, in order: the
+  // rectangle pack (`rect`'s own, to the byte); the footprint pack with the
+  // owned box's anchor (`box`); and the footprint pack that may also put a
+  // cell's own corner where the first anchor would leave the page
+  // (`box-else-cell`). The least Σ area wins, the earlier candidate on a tie.
+  // So a `polygon` pack is never larger than `rect`'s, nor than the one-anchor
+  // pack, on any set — by construction, across a spill as well as on one page,
+  // which no single greedy rule gives: one more candidate position placed
+  // PK78's gem differently and every tile after it (one page 7.2 % larger),
+  // and the first page of a spill choosing differently left seed 1105 under
+  // `pot` on two 2048x2048 pages against `rect`'s 2048x2048 + 1024x2048.
+  // `footprintAnchors` names one rule alone instead (the instrument, the plant).
+  const candidates: Array<{ name: PackCandidate; layout: PackLayout }> = [];
+  if (shapes === undefined) candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true) });
+  else if (opts.footprintAnchors !== undefined) candidates.push({ name: opts.footprintAnchors, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, opts.footprintAnchors, opts.tally, opts.stopAtMiss ?? true) });
+  else {
+    candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true) });
+    for (const rule of POLYGON_CANDIDATE_RULES) candidates.push({ name: rule, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, rule, opts.tally, opts.stopAtMiss ?? true) });
   }
+  const areaOf = (layout: PackLayout): number => layout.pageSizes.reduce((n, p) => n + p.width * p.height, 0);
+  let chosen = candidates[0];
+  for (const c of candidates) if (areaOf(c.layout) < areaOf(chosen.layout)) chosen = c;
+  const { perPage, pageSizes, placements } = chosen.layout;
 
   // Draw. Reading each source once, in packing order, keeps the decode count at
   // one per part whatever the page layout turned out to be.
@@ -2188,7 +2416,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     });
   });
 
-  return { pages, placements, atlasText: writeAtlasText(emitPages), padding, shape };
+  return { pages, placements, atlasText: writeAtlasText(emitPages), padding, shape, candidate: chosen.name };
 }
 
 // ---------------------------------------------------------------------------

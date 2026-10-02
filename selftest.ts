@@ -44014,7 +44014,7 @@ function losslessReport(
   return { regions, wrong };
 }
 
-import { FOOTPRINT_SLACK, footprintCell, packFootprints } from './src/atlas.ts';
+import { emptyTally, FOOTPRINT_SLACK, footprintCell, footprintPass, packFootprints, type FootprintAnchors, type PassTally } from './src/atlas.ts';
 import { a49PackedFootprintsDoNotOverlap } from './src/assertions/bodies/a49.ts';
 import { regionFootprints } from './src/assertions/footprints.ts';
 import { POLYPACK_GAIN_SEED, POLYPACK_SEED, polypackShapes, writePolypackInputs } from './fixtures/polypack_shapes.ts';
@@ -47696,7 +47696,7 @@ function runPackerSuite(): number {
         ? [inputs.slice()]
         : [inputs.slice(), ...pack.pages.map((_, i) => inputs.filter((p) => pack.placements.some((pl) => pl.page === i && pl.region === p.region)))];
     type SearchCost = { splits: number; footprintPlaced: number; containmentTests: number; pages: string[] };
-    const costOf = (inputs: readonly PackInput[], pack: ReturnType<typeof packAtlas>, shape: 'rect' | 'polygon', options: { stopAtMiss?: boolean; edgeIndex?: boolean } = {}): SearchCost => {
+    const costOf = (inputs: readonly PackInput[], pack: ReturnType<typeof packAtlas>, shape: 'rect' | 'polygon', options: { stopAtMiss?: boolean; edgeIndex?: boolean; anchors?: FootprintAnchors } = {}): SearchCost => {
       const out: SearchCost = { splits: 0, footprintPlaced: 0, containmentTests: 0, pages: [] };
       for (const set of searchesOf(inputs, pack)) {
         const sorted = inPackOrder(set);
@@ -47714,21 +47714,25 @@ function runPackerSuite(): number {
       const rect = packAtlas(inputs, { pageEdges: 'free' });
       const poly = packAtlas(inputs, { pageEdges: 'free', shape: 'polygon' });
       const again = packAtlas(inputs.slice().reverse(), { pageEdges: 'free', shape: 'polygon' });
-      return { what: `${what} set (seed ${seed}, ${inputs.length} meshes)`, inputs, rect, poly, same: samePack(poly, again), identical: samePack(rect, poly) };
+      // The owned box's anchor alone — the search before issue #1104, the one
+      // the rig this set stands for was packed by (PK97's plant).
+      const box = packAtlas(inputs, { pageEdges: 'free', shape: 'polygon', footprintAnchors: 'box' });
+      return { what: `${what} set (seed ${seed}, ${inputs.length} meshes)`, inputs, rect, poly, box, same: samePack(poly, again), identical: samePack(rect, box) };
     });
 
     // PK92: on both generated sets the polygon pack is the rect pack or a
-    // smaller one, and deterministic. The replica-shaped set packs as the rig
-    // did — two pages, the rect pages to the texel, since its largest region's
-    // mesh draws a small part of it and so the footprint pass cannot place that
-    // region on an empty page (its owned box does not start at its cell's
-    // corner); the gain-shaped set is one where the footprint pass wins.
+    // smaller one, and deterministic. The replica-shaped set is the shape it
+    // stands for under the search the rig was packed by — the owned box's
+    // anchor alone, before issue #1104: two pages, the rect pages to the byte,
+    // since its largest region's mesh draws a small part of it and that anchor
+    // cannot place the region on an empty page (its owned box does not start
+    // at its cell's corner). Both sets pack smaller as `polygon` now packs them.
     const genProbes = genRows.flatMap((r) => [
       ...(r.same ? [] : [`${r.what}: the reversed polygon pack DIFFERS`]),
       ...(areaOfPack(r.poly) <= areaOfPack(r.rect) ? [] : [`${r.what}: polygon ${shapeOfPack(r.poly)} is larger than rect ${shapeOfPack(r.rect)}`]),
     ]);
-    if (genRows[0].rect.pages.length < 2 || !genRows[0].identical) genProbes.push(`the replica-shaped set did not spill to identical packs (rect ${shapeOfPack(genRows[0].rect)}, polygon ${shapeOfPack(genRows[0].poly)}), so it is not the shape it stands for`);
-    if (areaOfPack(genRows[1].poly) >= areaOfPack(genRows[1].rect)) genProbes.push(`the gain-shaped set gained nothing (rect ${shapeOfPack(genRows[1].rect)}, polygon ${shapeOfPack(genRows[1].poly)}), so no footprint pass did work`);
+    if (genRows[0].rect.pages.length < 2 || !genRows[0].identical) genProbes.push(`the replica-shaped set did not spill to identical packs under the owned box's anchor alone (rect ${shapeOfPack(genRows[0].rect)}, polygon ${shapeOfPack(genRows[0].box)}), so it is not the shape it stands for`);
+    for (const r of genRows) if (areaOfPack(r.poly) >= areaOfPack(r.rect)) genProbes.push(`${r.what} gained nothing (rect ${shapeOfPack(r.rect)}, polygon ${shapeOfPack(r.poly)}), so no footprint pass did work`);
     const genHeld = genProbes.length === 0;
     say(
       'PK92_A_PRODUCTION_SHAPED_SET_PACKS_NO_LARGER_UNDER_POLYGON',
@@ -47736,25 +47740,42 @@ function runPackerSuite(): number {
       probeDetail(
         genHeld,
         genProbes,
-        genRows.map((r) => `${r.what}: rect ${shapeOfPack(r.rect)} = ${areaOfPack(r.rect)}, polygon ${shapeOfPack(r.poly)} = ${areaOfPack(r.poly)}${r.identical ? ', identical' : ''}, the reversed pack identical`).join('; '),
+        genRows.map((r) => `${r.what}: rect ${shapeOfPack(r.rect)} = ${areaOfPack(r.rect)}, polygon ${shapeOfPack(r.poly)} = ${areaOfPack(r.poly)} (${r.poly.candidate}), the reversed pack identical; the owned box's anchor alone ${shapeOfPack(r.box)} = ${areaOfPack(r.box)}${r.identical ? ', the rect pack to the byte' : ''}`).join('; '),
       ),
       'issue #1102: the set the cost is held on has to be the shape that cost — few regions, a few of them large, a ' +
         'spill — and a pack that moved nothing would hold the cost of a mode doing nothing, so the second set is one it wins on',
     );
 
-    // PK93: the bound. On the replica-shaped set the polygon pack's searches make
-    // no more than ten times the free-list splits of the rect pack's.
-    const COST_BOUND = 10;
-    const rectCost = costOf(replicaShaped, genRows[0].rect, 'rect');
-    const polyCost = costOf(replicaShaped, genRows[0].poly, 'polygon');
+    // PK93: the bound, read again for issue #1104. It was ten times rect's
+    // splits on a set where every footprint pass was thrown away; with the
+    // second anchor the passes place, and `polygon` runs three whole packs
+    // (rect, the owned box's anchor, the second anchor) and keeps the smallest.
+    // The unit is now every search the pack runs, the spill's assignment pass
+    // included (`PackOptions.tally`). The shape that matters is the production
+    // rig's — a set that spills under `rect`, where the polygon pack does its
+    // work — which this set stands for: measured 13.6x here, and the replica of
+    // that rig 14.6–16.4x per rule (so about 18x for the three). Sets that fit
+    // one rect page read up to 126x, because rect's one search is cheap there,
+    // not because the polygon pack is: the ratio is a ratio to the denominator.
+    // 25x sits above the production figures with room and an order of magnitude
+    // under the pathology #1102 removed (PK95: about 190x).
+    const COST_BOUND = 25;
+    const packCost = (inputs: readonly PackInput[], options: Parameters<typeof packAtlas>[1]): { splits: number; tally: PassTally } => {
+      const tally = emptyTally();
+      packAtlas(inputs.slice(), { ...options, tally });
+      return { splits: tally.rectPlaced + tally.bandSplits, tally };
+    };
+    const rectCost = packCost(replicaShaped, { pageEdges: 'free' });
+    const polyCost = packCost(replicaShaped, { pageEdges: 'free', shape: 'polygon' });
     const boundHeld = rectCost.splits > 0 && polyCost.splits <= COST_BOUND * rectCost.splits;
     say(
-      'PK93_THE_POLYGON_PACK_OF_A_PRODUCTION_SHAPED_SET_COSTS_WITHIN_TEN_TIMES_RECT',
+      'PK93_THE_POLYGON_PACK_OF_A_PRODUCTION_SHAPED_SET_COSTS_WITHIN_TWENTY_FIVE_TIMES_RECT',
       boundHeld,
-      `${genRows[0].what}: rect ${rectCost.splits} free-list split(s) over ${rectCost.pages.length} search(es), polygon ${polyCost.splits} ` +
-        `(${polyCost.footprintPlaced} cell(s) placed by footprint passes), bound ${COST_BOUND}x = ${COST_BOUND * rectCost.splits}`,
-      'issue #1102: before it the single-page search ran a full footprint pass at every width although nothing fits — ' +
-        'no best page ever bounds a width there — and each one was thrown away; on the rig that was 1,764 s against 19 s',
+      `${genRows[0].what}: rect ${rectCost.splits} free-list split(s) over every search its pack ran, polygon ${polyCost.splits} over its three ` +
+        `candidate packs (${polyCost.tally.footprintPlaced} cell(s) placed by footprint passes), ${(polyCost.splits / rectCost.splits).toFixed(2)}x; bound ${COST_BOUND}x = ${COST_BOUND * rectCost.splits}`,
+      'issue #1102: before it the single-page search ran a full footprint pass at every width although nothing fits, and ' +
+        'each one was thrown away — on the rig that was 1,764 s against 19 s; issue #1104: a search that now places costs ' +
+        'what placing costs, so the bound is read against the production shape it is for, not the discarded work it was set on',
     );
 
     // PK94: the savings move no page. On every gallery rig (the seven whose
@@ -47772,12 +47793,17 @@ function runPackerSuite(): number {
         const result = compile({ rigPath: join(galleryDir, name, 'rig.json'), motionPath: join(galleryDir, name, 'motion.json'), outDir: join(polyGenDir, `gallery-${name}`) });
         const inputs = withFootprints(packInputsOf(result.images), result.skeletonText);
         const pack = packAtlas(inputs, { pageEdges: 'free', shape: 'polygon' });
-        const on = costOf(inputs, pack, 'polygon');
-        const off = costOf(inputs, pack, 'polygon', { stopAtMiss: false, edgeIndex: false });
+        // The search of the candidate the pack kept (issue #1104): rect's, or
+        // one footprint rule's.
+        const kept = pack.candidate === 'rect' ? ('rect' as const) : ('polygon' as const);
+        const rule = pack.candidate === 'rect' ? undefined : pack.candidate;
+        const on = costOf(inputs, pack, kept, { anchors: rule });
+        const off = costOf(inputs, pack, kept, { stopAtMiss: false, edgeIndex: false, anchors: rule });
         const written = `${pack.pages.map((p) => `${p.width}x${p.height}`).join('+')}`;
-        return { name, pack, on, off, written, meshes: inputs.filter((i) => i.footprint !== undefined).length };
+        return { name, inputs, skeleton: result.skeletonText, pack, on, off, written, meshes: inputs.filter((i) => i.footprint !== undefined).length };
       });
-    const replicaOff = costOf(replicaShaped, genRows[0].poly, 'polygon', { stopAtMiss: false });
+    const replicaBoxOn = costOf(replicaShaped, genRows[0].box, 'polygon', { anchors: 'box' });
+    const replicaBoxOff = costOf(replicaShaped, genRows[0].box, 'polygon', { stopAtMiss: false, anchors: 'box' });
     const keepProbes = [
       ...galleryRows.flatMap((r) => [
         ...(r.on.pages.join('|') === r.off.pages.join('|') ? [] : [`gallery/${r.name}: the search with the savings off finds ${r.off.pages.join(' | ')} where the pack's finds ${r.on.pages.join(' | ')}`]),
@@ -47785,7 +47811,7 @@ function runPackerSuite(): number {
         ...(r.off.containmentTests > 0 && r.on.containmentTests >= r.off.containmentTests ? [`gallery/${r.name}: the edge index made ${r.on.containmentTests} containment test(s), the full scan ${r.off.containmentTests}`] : []),
       ]),
       ...(galleryRows.some((r) => r.off.containmentTests > 0) ? [] : ['no gallery rig ran a footprint pass that pruned, so the edge index was never asked']),
-      ...(replicaOff.pages.join('|') === polyCost.pages.join('|') ? [] : [`${genRows[0].what}: with the early stop off the searches find ${replicaOff.pages.join(' | ')}`]),
+      ...(replicaBoxOff.pages.join('|') === replicaBoxOn.pages.join('|') ? [] : [`${genRows[0].what}, the owned box's anchor alone: with the early stop off the searches find ${replicaBoxOff.pages.join(' | ')}`]),
     ];
     const keepHeld = keepProbes.length === 0;
     say(
@@ -47795,25 +47821,164 @@ function runPackerSuite(): number {
         keepHeld,
         keepProbes,
         galleryRows.map((r) => `gallery/${r.name} (${r.meshes} mesh region(s)): ${r.written}, the same with the savings off; containment tests ${r.on.containmentTests} against ${r.off.containmentTests}`).join('; ') +
-          `; ${genRows[0].what}: the same ${replicaOff.pages.length} search(es) with the early stop off`,
+          `; ${genRows[0].what}, the owned box's anchor alone (every pass missing a cell): the same ${replicaBoxOff.pages.length} search(es) with the early stop off`,
       ),
       'issue #1102: a cost fix is admitted on the argument that no decision changes — the early stop drops only what a ' +
         'page search throws away, the edge index asks the containment test of the only entries that can answer yes — ' +
         'and the argument is held here by the answer it predicts, on every rig whose bytes are already held',
     );
 
-    // PK95: the plant. The replica-shaped set's searches with the early stop
-    // off — the code before issue #1102 — make more free-list splits than the
-    // bound allows, so PK93 measures the saving it exists for.
+    // PK95: the plant. The replica-shaped set's polygon pack with the early
+    // stop off — the code before issue #1102 — makes more free-list splits than
+    // the bound allows, so PK93 measures the saving it exists for.
+    const replicaOff = packCost(replicaShaped, { pageEdges: 'free', shape: 'polygon', stopAtMiss: false });
     const plantHeld = replicaOff.splits > COST_BOUND * rectCost.splits;
     say(
       'PK95_A_POLYGON_SEARCH_WITHOUT_THE_EARLY_STOP_IS_PAST_THE_BOUND',
       plantHeld,
       `${genRows[0].what}, every footprint pass run to its end: ${replicaOff.splits} free-list split(s) ` +
-        `(${replicaOff.footprintPlaced} cell(s) placed by footprint passes) against the bound ${COST_BOUND * rectCost.splits}, ` +
+        `(${replicaOff.tally.footprintPlaced} cell(s) placed by footprint passes) against the bound ${COST_BOUND * rectCost.splits}, ` +
         `${(replicaOff.splits / rectCost.splits).toFixed(1)}x rect`,
       'a bound nobody has seen fail is not a bound: this is the work every width of a search that cannot fit one page ' +
         'did and discarded, measured in the unit PK93 holds',
+    );
+
+    // --- PK96..PK99: `polygon` as a choice between whole packs (issue #1104) ---
+    // Every set this suite packs, under both page edges: the wedge set, the
+    // three fixtures, PK86's spill set at --page-size 256, both generated sets
+    // and every gallery rig — each packed `rect`, `polygon` under the owned
+    // box's anchor alone (`footprintAnchors: 'box'`, the search before #1104),
+    // and `polygon` as it packs.
+    const polySkeletonOf = (shapes: ReadonlyArray<{ region: string; width: number; height: number; hull: number[] }>): string =>
+      JSON.stringify({
+        skins: [
+          {
+            name: 'default',
+            attachments: Object.fromEntries(
+              shapes.map((sh) => {
+                const uvs = sh.hull.map((v, i) => (i % 2 === 0 ? v / sh.width : v / sh.height));
+                return [sh.region, { [sh.region]: { type: 'mesh', uvs, hull: uvs.length / 2, triangles: [], vertices: uvs } }];
+              }),
+            ),
+          },
+        ],
+      });
+    const anchorSets: Array<{ name: string; inputs: PackInput[]; skeleton: string; pageSize: number }> = [
+      { name: 'wedge set', inputs: polyInputs, skeleton: honestSkeleton, pageSize: DEFAULT_PAGE_SIZE },
+      ...PACK_FIXTURES.map(([name, fixture]) => {
+        const result = compile(optsForFixture(fixture));
+        return { name, inputs: withFootprints(packInputsOf(result.images), result.skeletonText), skeleton: result.skeletonText, pageSize: DEFAULT_PAGE_SIZE };
+      }),
+      { name: 'PK86 spill set', inputs: spillInputs, skeleton: spillSkeleton, pageSize: 256 },
+      { name: genRows[0].what, inputs: replicaShaped, skeleton: polySkeletonOf(polypackShapes(POLYPACK_SEED)), pageSize: DEFAULT_PAGE_SIZE },
+      { name: genRows[1].what, inputs: gainShaped, skeleton: polySkeletonOf(polypackShapes(POLYPACK_GAIN_SEED)), pageSize: DEFAULT_PAGE_SIZE },
+      ...galleryRows.map((r) => ({ name: `gallery/${r.name}`, inputs: r.inputs, skeleton: r.skeleton, pageSize: DEFAULT_PAGE_SIZE })),
+    ];
+    const anchorRows = anchorSets.flatMap((set) =>
+      (['pot', 'free'] as const).map((pageEdges) => {
+        const base = { pageEdges, pageSize: set.pageSize };
+        const rect = packAtlas(set.inputs, base);
+        const box = packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' });
+        const poly = packAtlas(set.inputs, { ...base, shape: 'polygon' });
+        const again = packAtlas(set.inputs, { ...base, shape: 'polygon' });
+        const reversed = packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' });
+        return { ...set, name: `${set.name}/${pageEdges}`, pageEdges, rect, box, poly, same: samePack(poly, again) && samePack(poly, reversed) };
+      }),
+    );
+
+    // PK96: Σ page area, over every page a pack writes, is never above `rect`'s
+    // nor above the owned box's anchor alone on any set — by construction, since
+    // both are candidates of the choice — and is below the latter where #1104
+    // says it must be: on the replica-shaped set, whose one-anchor pack is the
+    // rect pack. The defect it closes is in the population: seed 1105 under
+    // `pot`, where the one-anchor pack wrote 8,388,608 texels against rect's
+    // 6,291,456.
+    const replicaFree = anchorRows.find((r) => r.name === `${genRows[0].what}/free`);
+    const sumProbes = [
+      ...anchorRows.flatMap((r) => [
+        ...(areaOfPack(r.poly) <= areaOfPack(r.rect) ? [] : [`${r.name}: polygon ${shapeOfPack(r.poly)} = ${areaOfPack(r.poly)} is larger than rect ${shapeOfPack(r.rect)} = ${areaOfPack(r.rect)}`]),
+        ...(areaOfPack(r.poly) <= areaOfPack(r.box) ? [] : [`${r.name}: polygon ${shapeOfPack(r.poly)} = ${areaOfPack(r.poly)} is larger than the owned box's anchor alone ${shapeOfPack(r.box)} = ${areaOfPack(r.box)}`]),
+      ]),
+      ...(replicaFree !== undefined && areaOfPack(replicaFree.poly) < areaOfPack(replicaFree.box) ? [] : [`${genRows[0].what}/free: polygon packed no smaller than the owned box's anchor alone, so the second anchor did no work`]),
+    ];
+    const sumHeld = sumProbes.length === 0;
+    const boxOverRect = anchorRows.filter((r) => areaOfPack(r.box) > areaOfPack(r.rect));
+    const keptCount = (name: string): number => anchorRows.filter((r) => r.poly.candidate === name).length;
+    say(
+      'PK96_A_POLYGON_PACK_IS_NEVER_LARGER_IN_PAGE_AREA_THAN_RECT_OR_ONE_ANCHOR_ON_ANY_SET',
+      sumHeld,
+      probeDetail(
+        sumHeld,
+        sumProbes,
+        `${anchorRows.length} pack(s) over ${anchorSets.length} set(s) under pot and free: kept rect ${keptCount('rect')}, box ${keptCount('box')}, box-else-cell ${keptCount('box-else-cell')}; ` +
+          anchorRows.filter((r) => areaOfPack(r.poly) < areaOfPack(r.box)).map((r) => `${r.name} ${areaOfPack(r.box)} -> ${areaOfPack(r.poly)}`).join(', ') +
+          `; the owned box's anchor alone larger than rect on ${boxOverRect.map((r) => `${r.name} (${areaOfPack(r.box)} against ${areaOfPack(r.rect)})`).join(', ') || 'none'}`,
+      ),
+      'issue #1104: no single greedy rule is never-larger — one more candidate position packed the wedge set 7.2 % ' +
+        'larger, and a spill\'s first page choosing differently left seed 1105 under pot on two full pages where rect ' +
+        'wrote one and a half — so the mode chooses between whole packs on the figure it exists to lower',
+    );
+
+    // PK97: the plant. The second anchor dropped — the owned box's anchor alone
+    // — puts the replica-shaped set back on the rect pages to the byte, while
+    // `polygon` packs it on fewer pages: the control sees the anchor. And the
+    // census `tools/pack_anchor.ts` prints, in the tally it reads: one footprint
+    // pass of every cell on an empty page of the maximum size refuses candidates
+    // for the page edge alone and misses cells a free rectangle held, with the
+    // first anchor; with the second, it misses none.
+    const replicaShapes = inPackOrder(replicaShaped).map((p) => footprintCell(p.width, p.height, genRows[0].poly.padding, p.footprint));
+    const firstBox = footprintPass(replicaShapes, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE, 'box');
+    const firstTwo = footprintPass(replicaShapes, DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE, 'box-else-cell');
+    const insetCells = replicaShapes.filter((c) => c.bbox.x !== 0 || c.bbox.y !== 0).length;
+    const plantProbes = [
+      ...(genRows[0].identical ? [] : [`with the owned box's anchor alone the set packs ${shapeOfPack(genRows[0].box)}, not the rect pack ${shapeOfPack(genRows[0].rect)}`]),
+      ...(genRows[0].poly.pages.length < genRows[0].box.pages.length ? [] : [`polygon packs ${shapeOfPack(genRows[0].poly)}, no fewer pages than the owned box's anchor alone (${shapeOfPack(genRows[0].box)})`]),
+      ...(firstBox.tally.boxAnchorRefused > 0 && firstBox.tally.missedByAnchor > 0 ? [] : [`the first anchor's pass refused ${firstBox.tally.boxAnchorRefused} candidate(s) for the page edge and missed ${firstBox.tally.missedByAnchor} cell(s), so the census saw nothing to count`]),
+      ...(firstTwo.tally.missedByAnchor === 0 && firstTwo.tally.secondAnchorPlaced > 0 ? [] : [`with the second anchor the pass still missed ${firstTwo.tally.missedByAnchor} cell(s) a free rectangle held, placing ${firstTwo.tally.secondAnchorPlaced} at the second`]),
+    ];
+    const plantSeen = plantProbes.length === 0;
+    say(
+      'PK97_DROPPING_THE_SECOND_ANCHOR_PUTS_THE_REPLICA_SHAPED_SET_BACK_ON_THE_RECT_PAGES',
+      plantSeen,
+      probeDetail(
+        plantSeen,
+        plantProbes,
+        `${genRows[0].what}: the owned box's anchor alone ${shapeOfPack(genRows[0].box)}, the rect pack to the byte; polygon ${shapeOfPack(genRows[0].poly)} (${genRows[0].poly.candidate}). ` +
+          `One pass of all ${replicaShapes.length} cells (${insetCells} with an inset owned box) on an empty ${DEFAULT_PAGE_SIZE}x${DEFAULT_PAGE_SIZE} page: the first anchor ` +
+          `refuses ${firstBox.tally.boxAnchorRefused} candidate(s) for the page edge alone and misses ${firstBox.tally.missedByAnchor} cell(s); with the second, ` +
+          `${firstTwo.tally.missedByAnchor} missed, ${firstTwo.tally.secondAnchorPlaced} placed at the second`,
+      ),
+      'a fix nobody has seen undone is not held: the replica-shaped set is the production rig\'s shape, and on that ' +
+        'rig the owned box\'s anchor gave the rect page to the texel — so taking the second anchor away has to give it back',
+    );
+
+    // PK98: every sampled texel its own, on every polygon pack above that kept
+    // a footprint candidate — PK79's brute force against the hull loops each
+    // set's skeleton states (a skeleton written for the generated sets).
+    const texelRows = anchorRows.filter((r) => r.poly.candidate !== 'rect').map((r) => ({ name: r.name, reading: footprintTexelsWrong(r.poly.pages.map((p) => p.plate), r.poly.atlasText, r.skeleton, r.inputs, r.poly.padding) }));
+    const texelProbes = [
+      ...texelRows.flatMap((r) => r.reading.wrong.map((w) => `${r.name}: ${w}`)),
+      ...(texelRows.some((r) => r.name === `${genRows[0].what}/free`) ? [] : ['the replica-shaped set\'s free pack kept rect, so its two-anchor page was never read']),
+    ];
+    const texelHeld = texelProbes.length === 0;
+    say(
+      'PK98_EVERY_REGION_ON_A_KEPT_FOOTPRINT_PACK_KEEPS_THE_TEXELS_IT_DRAWS',
+      texelHeld,
+      probeDetail(texelHeld, texelProbes, texelRows.map((r) => `${r.name}: ${r.reading.checked} region(s), ${r.reading.texels} texel(s), each its own`).join('; ')),
+      'issue #1104: the second anchor is what puts most of a set inside its largest cell\'s rectangle, where a cell drawn ' +
+        'whole later could overwrite an earlier region — PK79\'s check on the packs where that happens, not only on its own sets',
+    );
+
+    // PK99: determinism. Every polygon pack above made again, and once more
+    // from its parts handed over reversed, byte-identical — over a choice that
+    // adds a tie (the earlier candidate wins) and a second anchor's tie-break.
+    const detProbes = anchorRows.filter((r) => !r.same).map((r) => `${r.name}: the polygon pack made again or from reversed parts DIFFERS`);
+    const detHeld = detProbes.length === 0;
+    say(
+      'PK99_EVERY_POLYGON_PACK_OF_EVERY_SET_IS_BYTE_IDENTICAL_MADE_AGAIN_OR_FROM_REVERSED_PARTS',
+      detHeld,
+      probeDetail(detHeld, detProbes, `${anchorRows.length} polygon pack(s), each identical made again and from its parts reversed — atlas text and every page's pixels`),
+      'A18 compares two compiles byte for byte; a choice between three whole packs is three chances to depend on input order',
     );
   }
   return bad;
