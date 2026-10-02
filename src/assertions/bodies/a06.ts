@@ -10,13 +10,14 @@
  * and the argument for the SKIP guards it shares with A17 and A19 (#568, #608)
  * — stays in `validate()`.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Verdicts } from '../harness.ts';
 import type { AtlasRegionEntry, AtlasRegionFacts } from '../facts/atlas_regions.ts';
 import { SKIP_NO_ATLAS, SKIP_NO_ATLAS_PAGE } from '../reasons.ts';
 import { pageFootprint, pageGridSentence } from '../../atlas.ts';
 import { readPngHeader } from '../../png.ts';
+import { imageDataProblem } from '../../../tools/plate.ts';
 
 export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { atlas }: AtlasRegionFacts, input: { atlasDir: string }, policy: boolean): void {
   if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
@@ -104,7 +105,32 @@ export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { a
           `size was not measured: ${header.problem}`,
       );
     }
-    const info = header.info;
+    // 🔒 **And a page whose header reads and whose image data does not decode
+    // is this rule's too** (issue #1074), for the reason #1064 made the
+    // unreadable header its: this is the one reader of every page that runs
+    // under both profiles. Measured before this, on the tree's 19 recipes with
+    // the first page's compressed stream overwritten past its first half,
+    // this rule PASSED on 19 of 19 (it read the header only) and `A19` alone
+    // named the file, as `threw: cannot decode PNG …`, on the 12 whose first
+    // page carries a part. On the 7 gallery rigs, whose first page is the base
+    // plate `A19` does not scan, nothing did: both rules PASSED under both
+    // profiles, and the default build wrote a directory `render` then died on.
+    //
+    // ⚠️ The stream is inflated, not decoded: `imageDataProblem` is the
+    // decoder's own refusing half and nothing after it — 68.9 ms over the 19
+    // builds' pages against `validate()`'s 286.2 ms under `spine`, where a
+    // whole decode would be 459.6 ms. A page whose data does not decode has no
+    // size worth comparing, so the grid clause is not asked of it: one file,
+    // one line.
+    const undecodable = header.info === null ? null : imageDataProblem(readFileSync(abs), abs);
+    if (undecodable !== null) {
+      fail(
+        'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+        `page "${page.name}" declares ${page.width}x${page.height} and its file cannot be read as PNG, so ` +
+          `nothing on it was measured: ${undecodable}`,
+      );
+    }
+    const info = undecodable === null ? header.info : null;
     const onPage = atlas.regions.filter((region) => region.page.name === page.name);
     const gridSaid = info === null ? null : pageGridSentence(page, info, onPage);
     if (gridSaid !== null) {

@@ -474,7 +474,7 @@ import {
   SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
-import { readPngHeader, readPngInfo } from './src/png.ts';
+import { pngProblem, readPngHeader, readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineAnimation, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
 import {
@@ -837,12 +837,27 @@ function atlasWithPagesUnreadable(
   bytes: (png: Uint8Array) => Uint8Array,
   pick: (block: readonly string[]) => boolean,
 ): { atlasText: string; moved: string[] } {
+  return atlasWithPageBytes(atlasText, atlasDir, `unreadable_${tag}`, bytes, pick);
+}
+
+/**
+ * `atlasWithPagesUnreadable` with the directory named by the caller — for an
+ * edit that leaves the page readable (issue #1074's tolerance), which a
+ * directory called `unreadable_` would misdescribe.
+ */
+function atlasWithPageBytes(
+  atlasText: string,
+  atlasDir: string,
+  dir: string,
+  bytes: (png: Uint8Array) => Uint8Array,
+  pick: (block: readonly string[]) => boolean,
+): { atlasText: string; moved: string[] } {
   const moved: string[] = [];
   const blocks = atlasText.split('\n\n').map((block) => {
     const lines = block.split('\n');
     if (lines[0] === '' || !pick(lines)) return block;
     const was = lines[0];
-    lines[0] = was.replace(/[^/]*$/, (base) => `unreadable_${tag}/${base}`);
+    lines[0] = was.replace(/[^/]*$/, (base) => `${dir}/${base}`);
     const target = resolve(atlasDir, lines[0]);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, bytes(readFileSync(resolve(atlasDir, was))));
@@ -869,6 +884,91 @@ function cutInsideFirstIdat(png: Uint8Array): Uint8Array {
     at += 12 + length;
   }
   throw new Error('the fixture page has no IDAT chunk to cut');
+}
+
+/** A PNG's chunks as the file's own walk finds them: type and data. */
+function pngChunks(png: Uint8Array): Array<{ type: string; body: Uint8Array }> {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const out: Array<{ type: string; body: Uint8Array }> = [];
+  for (let at = PNG_SIGNATURE.length; at + 8 <= png.length; ) {
+    const length = view.getUint32(at);
+    const type = String.fromCharCode(png[at + 4], png[at + 5], png[at + 6], png[at + 7]);
+    // A copy, not `slice`: on a `Buffer` that is a view into a shared pool, and an edit would land outside the chunk.
+    out.push({ type, body: new Uint8Array(png.subarray(at + 8, at + 8 + length)) });
+    if (type === 'IEND') break;
+    at += 12 + length;
+  }
+  return out;
+}
+
+/** The PNG rebuilt from `chunks`, every CRC computed — so the only thing wrong with an edited file is the edit. */
+function pngOfChunks(chunks: ReadonlyArray<{ type: string; body: Uint8Array }>): Uint8Array {
+  const parts = [PNG_SIGNATURE, ...chunks.map((c) => pngChunk(c.type, c.body))];
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+/**
+ * The page with its IHDR width (`axis` 0) or height (`axis` 1) stated as 0
+ * and the CRC recomputed (issue #1073): every chunk intact, and the file a PNG
+ * of no texels, which the format forbids.
+ */
+function zeroDimension(axis: 0 | 1): (png: Uint8Array) => Uint8Array {
+  return (png) =>
+    pngOfChunks(
+      pngChunks(png).map((c) => {
+        if (c.type !== 'IHDR') return c;
+        const body = c.body.slice();
+        new DataView(body.buffer).setUint32(axis * 4, 0);
+        return { ...c, body };
+      }),
+    );
+}
+
+/**
+ * The page with the second half of its first IDAT's data inverted and the
+ * chunk's CRC recomputed (issue #1074): the signature, IHDR, the chunk walk
+ * and the zlib header intact, the compressed stream past them broken. The
+ * half is found by the file's own walk, not typed here.
+ */
+function brokenStream(png: Uint8Array): Uint8Array {
+  let first = true;
+  return pngOfChunks(
+    pngChunks(png).map((c) => {
+      if (c.type !== 'IDAT' || !first) return c;
+      first = false;
+      const body = c.body.slice();
+      for (let i = body.length >> 1; i < body.length; i++) body[i] ^= 0xff;
+      return { ...c, body };
+    }),
+  );
+}
+
+/**
+ * The page with its compressed stream re-cut into three IDAT chunks, every
+ * CRC computed (issue #1074's tolerance): a legal file holding the same image
+ * — the format makes the stream the concatenation of every IDAT — which a
+ * stream check that inflated one chunk alone would refuse.
+ */
+function streamInThreeIdats(png: Uint8Array): Uint8Array {
+  const chunks = pngChunks(png);
+  const data = chunks.filter((c) => c.type === 'IDAT').map((c) => c.body);
+  const stream = new Uint8Array(data.reduce((n, d) => n + d.length, 0));
+  let at = 0;
+  for (const d of data) {
+    stream.set(d, at);
+    at += d.length;
+  }
+  const firstIdat = chunks.findIndex((c) => c.type === 'IDAT');
+  if (firstIdat < 0 || stream.length < 3) throw new Error('the fixture page has no stream to re-cut');
+  const third = Math.ceil(stream.length / 3);
+  const idats = [0, 1, 2].map((i) => ({ type: 'IDAT', body: stream.slice(i * third, (i + 1) * third) }));
+  return pngOfChunks([...chunks.slice(0, firstIdat), ...idats, ...chunks.filter((c, i) => i > firstIdat && c.type !== 'IDAT')]);
 }
 
 /**
@@ -905,9 +1005,14 @@ function pagesUnreadableHold(report: ValidateReport, moved: readonly string[], a
 
 /** M12d/M12e's break: the first page block that is not the base plate's, made unreadable on disk. */
 function unreadableFirstPartPage(a: Artifacts, atlasDir: string, tag: string, bytes: (png: Uint8Array) => Uint8Array): { atlasText: string; moved: string[] } {
+  return firstPartPageAs(a, atlasDir, `unreadable_${tag}`, bytes);
+}
+
+/** The first page block that is not the base plate's, rewritten as `bytes` of itself under `dir/`. */
+function firstPartPageAs(a: Artifacts, atlasDir: string, dir: string, bytes: (png: Uint8Array) => Uint8Array): { atlasText: string; moved: string[] } {
   const base = coversTheStage(a.skeletonText);
   let first = true;
-  return atlasWithPagesUnreadable(a.atlasText, atlasDir, tag, bytes, (block) => {
+  return atlasWithPageBytes(a.atlasText, atlasDir, dir, bytes, (block) => {
     if (!first || base(block)) return false;
     first = false;
     return true;
@@ -925,6 +1030,18 @@ function unreadableFirstPartPageHold(report: ValidateReport, broken: Artifacts, 
     `1 of the ${withParts} page(s) carrying a part were not read — "${moved[0]}" — because the file cannot be read as PNG`,
   );
 }
+
+/**
+ * A #1064 reading, and that A06's one line about the page says `phrase` —
+ * what M12f–M12h add to it: the route is #1064's, the sentence is the card's.
+ */
+function saidByA06(hold: { held: boolean; read: string }, report: ValidateReport, phrase: string): { held: boolean; read: string } {
+  const said = report.failures.filter((f) => f.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' && f.detail.includes(phrase)).length;
+  return { held: hold.held && said === 1, read: `${hold.read}; A06 lines saying ${JSON.stringify(phrase)}: ${said}` };
+}
+
+/** Where M12i wrote its re-cut page, for its reading to open (a reading sees the report and the atlas, not the directory). */
+const M12I_WRITTEN: string[] = [];
 
 /** Whether a page block holds the region that covers the skeleton's whole stage — the base plate's page (`M77`'s reading). */
 function coversTheStage(skeletonText: string): (block: readonly string[]) => boolean {
@@ -2280,6 +2397,67 @@ const MUTANTS: Mutant[] = [
     mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'cut', cutInsideFirstIdat).atlasText }),
     holds: (report, broken) => unreadableFirstPartPageHold(report, broken, 'cut'),
     twin: ATLAS_EDIT_TWIN,
+  },
+  // ─── a page whose IHDR states a dimension of 0 is unreadable, and A06's (issue #1073) ───
+  //
+  // `pngProblem` accepted it, so A06 printed its grid sentence over a ratio of
+  // 0.0000 and A19 a "not measured" line once per region on the page. The
+  // reader refuses it now, and the page takes #1064's route: one A06 line
+  // naming the file and the dimension, A19 SKIPping over it.
+  {
+    name: 'M12f_one_page_file_whose_ihdr_width_is_0_is_named_by_A06_alone_and_A19_skips',
+    origin:
+      'issue #1073: a page whose IHDR stated a width of 0 was read as a PNG of the wrong size — A06\'s grid sentence ' +
+      'at 0.0000 and A19\'s "not measured" once per region',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'w0', zeroDimension(0)).atlasText }),
+    holds: (report, broken) => saidByA06(unreadableFirstPartPageHold(report, broken, 'w0'), report, ': its width is 0, where the format requires'),
+    twin: ATLAS_EDIT_TWIN,
+  },
+  {
+    name: 'M12g_one_page_file_whose_ihdr_height_is_0_is_named_by_A06_alone_and_A19_skips',
+    origin: 'issue #1073: the same with the height, the other field the format requires to be at least 1',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'h0', zeroDimension(1)).atlasText }),
+    holds: (report, broken) => saidByA06(unreadableFirstPartPageHold(report, broken, 'h0'), report, ': its height is 0, where the format requires'),
+    twin: ATLAS_EDIT_TWIN,
+  },
+  // ─── a page whose image data does not decode is A06's too (issue #1074) ───
+  //
+  // The chunk walk intact, the compressed stream broken past its first half.
+  // A06 read the header only and PASSED; A19 alone named the file, as
+  // `threw: cannot decode PNG …`. A06 now asks the decoder's refusing half and
+  // names it in a sentence carrying the decoder's own words; A19 SKIPs.
+  {
+    name: 'M12h_one_page_file_whose_compressed_stream_is_broken_is_named_by_A06_alone_and_A19_skips',
+    origin:
+      'issue #1074: a page with an intact header over a broken zlib stream passed A06 and was named only by A19\'s ' +
+      'thrown decode error — a stack message as the detail',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'zlib', brokenStream).atlasText }),
+    holds: (report, broken) =>
+      saidByA06(unreadableFirstPartPageHold(report, broken, 'zlib'), report, 'image data cannot be decoded: the decoder stops with "'),
+    twin: ATLAS_EDIT_TWIN,
+  },
+  {
+    name: 'M12i_a_page_whose_compressed_stream_is_cut_into_three_idat_chunks_is_accepted',
+    origin:
+      'issue #1074\'s tolerance: the stream is the concatenation of every IDAT, so the same image re-cut into three ' +
+      'chunks is a legal file, and a stream check that inflated one chunk alone would refuse it',
+    expect: null,
+    mutate: (a, atlasDir) => {
+      const { atlasText, moved } = firstPartPageAs(a, atlasDir, 'three_idats', streamInThreeIdats);
+      M12I_WRITTEN.splice(0, M12I_WRITTEN.length, ...moved.map((name) => resolve(atlasDir, name)));
+      return { ...a, atlasText };
+    },
+    holds: (report) => {
+      const verdicts = ['A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A19_OVERLAY_PNGS_HAVE_ALPHA'].map((code) => [code.slice(0, 3), report.passed.includes(code)] as const);
+      const idats = M12I_WRITTEN.map((path) => pngChunks(readFileSync(path)).filter((c) => c.type === 'IDAT').length);
+      return {
+        held: M12I_WRITTEN.length === 1 && idats.every((n) => n === 3) && verdicts.every(([, passed]) => passed),
+        read: `${M12I_WRITTEN.length} page(s) re-cut, into [${idats.join(', ')}] IDAT chunk(s); ${verdicts.map(([code, passed]) => `${code} ${passed ? 'PASS' : 'not PASS'}`).join(', ')}`,
+      };
+    },
   },
   {
     name: 'M13_version_label_from_the_4_2_era',
@@ -103258,6 +103436,137 @@ function runVerdictSuppliersSuite(): number {
       "issue #1064: a page on disk that is not a PNG was named by A06 and again by A19's \"not measured\" FAIL; A19 now SKIPs pointing at A06, and VF03's twins compare only the lines a break fails",
     );
   }
+
+  // --- VF21 / VF22: the two states #1064 left, on both sides (issues #1073, #1074) ---
+  //
+  // VF18's comparison over a page whose IHDR states a dimension of 0 (VF21)
+  // and one whose compressed stream is broken behind an intact header (VF22).
+  // On each broken build every such page is named by exactly one failure
+  // line on each side, A06's, carrying the card's own phrase; A19 SKIPs
+  // pointing at A06 under spine-html. The tolerance is twofold: the pages as
+  // built print no such line on either side, and the nearest legal file —
+  // a 1x1 PNG for VF21, the same stream re-cut into three IDATs for VF22 —
+  // prints A06's pristine lines on both sides. The plant: the pristine model
+  // lines against the broken spine lines, which must differ.
+  const twinOfUnreadable = (
+    code: string,
+    breaks: ReadonlyArray<[string, string, (png: Uint8Array) => Uint8Array]>,
+    phrase: string,
+    legal: [string, (png: Uint8Array) => Uint8Array],
+    origin: string,
+  ): void => {
+    const probes: string[] = [];
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19, 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const phrased = (report: ValidateReport | ModelReport): number => report.failures.filter((f) => f.assertion === A06 && f.detail.includes(phrase)).length;
+    const unreadableSkips = (report: ValidateReport | ModelReport): number =>
+      report.skipped.filter((s) => s.assertion === A19 && s.reason.includes(A06)).length;
+    const counts = { compared: 0, lines: 0, tolerated: 0, skipsUnreadable: 0, namedOnce: 0 };
+    let plantDiffered = false;
+    for (const { opts, result } of fixtures) {
+      const modelText = threadedModel(result, result.atlasText) ?? '';
+      const variants: Array<[string, { atlasText: string; moved: string[] }, boolean]> = [
+        ['no page edited', { atlasText: result.atlasText, moved: [] }, false],
+        [legal[0], firstPartPageAs(result, opts.outDir, `legal_${code}`, legal[1]), false],
+        ...breaks.map(([label, tag, bytes]): [string, { atlasText: string; moved: string[] }, boolean] => [label, unreadableFirstPartPage(result, opts.outDir, tag, bytes), true]),
+      ];
+      for (const profile of VALIDATE_PROFILES) {
+        const reports: Array<{ spine: ValidateReport; model: ModelReport }> = [];
+        for (const [label, { atlasText, moved }, broken] of variants) {
+          const input: ValidateInput = { skeletonText: result.skeletonText, atlasText, atlasDir: opts.outDir, declaredDurations: result.declaredDurations, rig: result.rig, profile };
+          const doc = JSON.parse(modelText) as Record<string, unknown>;
+          doc.pages = pagesOfAtlas(atlasText);
+          const spineReport = validateOverSpine(input);
+          const modelReport = validateModel(modelInputOf(input, `${JSON.stringify(doc, null, 2)}\n`));
+          reports.push({ spine: spineReport, model: modelReport });
+          counts.compared++;
+          for (const pageCode of pageCodes) {
+            const a = linesOfCode(spineReport, pageCode);
+            const b = linesOfCode(modelReport, pageCode);
+            counts.lines += a.length;
+            if (a.join('\n') !== b.join('\n')) probes.push(`${opts.rigPath} [${profile}] ${label} ${pageCode.slice(0, 3)}: validate() ${JSON.stringify(a)}, the model side ${JSON.stringify(b)}`);
+          }
+          if (!broken) {
+            // The tolerance: no such line, no #1064 SKIP, and A06 printing what the pristine build prints.
+            const said = phrased(spineReport) + phrased(modelReport) + unreadableSkips(spineReport) + unreadableSkips(modelReport);
+            const verdictOf = (report: ValidateReport): string => `${report.passed.includes(A06) ? 'PASS' : 'not PASS'} with ${report.failures.filter((f) => f.assertion === A06).length} failure(s)`;
+            if (said !== 0) probes.push(`${opts.rigPath} [${profile}] ${label}: ${said} refusal line(s) or SKIP(s) on a page that reads`);
+            else if (verdictOf(spineReport) !== verdictOf(reports[0].spine)) probes.push(`${opts.rigPath} [${profile}] ${label}: A06 ${verdictOf(spineReport)} where the pristine build is ${verdictOf(reports[0].spine)}`);
+            else counts.tolerated++;
+            continue;
+          }
+          if (profile === 'spine-html') counts.skipsUnreadable += unreadableSkips(spineReport);
+          for (const [side, report] of [['validate()', spineReport], ['the model side', modelReport]] as const) {
+            for (const name of moved) {
+              const naming = report.failures.filter((f) => f.detail.includes(`"${name}"`)).map((f) => f.assertion.slice(0, 3));
+              if (naming.length === 1 && naming[0] === 'A06' && phrased(report) === 1) counts.namedOnce++;
+              else probes.push(`${opts.rigPath} [${profile}] ${label}: ${side} names "${name}" by [${naming.join('+') || 'nothing'}] with ${phrased(report)} A06 line(s) saying ${JSON.stringify(phrase)}, where one such file is A06's one line`);
+            }
+          }
+        }
+        // The plant: the comparison can fail — the pristine build's model lines against the first break's spine lines.
+        if (linesOfCode(reports[0].model, A06).join('\n') !== linesOfCode(reports[2].spine, A06).join('\n')) plantDiffered = true;
+      }
+    }
+    if (!plantDiffered) probes.push("the pristine build's A06 lines read the same as the broken build's, so the comparison measures nothing");
+    probes.push(
+      ...floorProbes(
+        [
+          [counts.compared, 1, `${counts.compared} report pair(s) compared`],
+          [counts.tolerated, 1, `${counts.tolerated} readable build(s) read`],
+          [counts.skipsUnreadable, 1, `${counts.skipsUnreadable} A19 SKIP(s) read`],
+          [counts.namedOnce, 1, `${counts.namedOnce} page naming(s) read`],
+        ],
+        'and a comparison over nothing is not a comparison',
+      ),
+    );
+    const held = probes.length === 0;
+    say(
+      code,
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page edited, ${legal[0]}, ${breaks.map(([label]) => label).join(', ')} — ` +
+          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of a broken page, each by A06's one line saying ${JSON.stringify(phrase)}; ` +
+          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under spine-html; ${counts.tolerated} readable build(s) with no such line and no SKIP; ` +
+          "the pristine build's A06 lines differ from the broken build's, so the comparison can fail",
+      ),
+      origin,
+    );
+  };
+  {
+    // The boundary the refusal stands on, read off the reader rather than a fixture: 1 is the smallest legal dimension.
+    const one = pngProblem(encodePng(1, 1, new Uint8Array(4)), '1x1.png');
+    const zero = pngProblem(encodePng(1, 1, new Uint8Array(4)).map((b, i) => (i >= 16 && i < 20 ? 0 : b)), '0x1.png');
+    if (one !== null || zero === null) {
+      say(
+        'VF21_A_PAGE_WHOSE_IHDR_STATES_A_DIMENSION_OF_0_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
+        false,
+        `the reader's boundary is not at 1: a 1x1 PNG reads ${JSON.stringify(one)}, a 0x1 one ${JSON.stringify(zero)}`,
+        'issue #1073',
+      );
+    } else {
+      twinOfUnreadable(
+        'VF21_A_PAGE_WHOSE_IHDR_STATES_A_DIMENSION_OF_0_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
+        [
+          ['the first page carrying a part with width 0', 'vf21_w0', zeroDimension(0)],
+          ['the same with height 0', 'vf21_h0', zeroDimension(1)],
+        ],
+        ', where the format requires each dimension to be at least 1',
+        ['the same page re-encoded whole', (png) => { const plate = decodePng(png); return encodePng(plate.width, plate.height, plate.data); }],
+        "issue #1073: a page whose IHDR stated a dimension of 0 was read as a PNG of the wrong size, A06's grid sentence at 0.0000 and A19's \"not measured\" per region; the reader now refuses it and A19 SKIPs pointing at A06",
+      );
+    }
+  }
+  twinOfUnreadable(
+    'VF22_A_PAGE_WHOSE_COMPRESSED_STREAM_IS_BROKEN_PRINTS_THE_SAME_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
+    [['the first page carrying a part with its stream broken past its first half', 'vf22_zlib', brokenStream]],
+    'image data cannot be decoded: the decoder stops with "',
+    ['the same stream re-cut into three IDAT chunks', streamInThreeIdats],
+    "issue #1074: a page with an intact header over a broken stream passed A06 and was named only by A19's `threw: cannot decode PNG …`; A06 now names it in a sentence carrying the decoder's words, and A19 SKIPs",
+  );
 
   return bad;
 }
