@@ -47364,6 +47364,83 @@ function runPackerSuite(): number {
       'issue #1099: the brief\'s rule is that a rounding which lets two footprints touch is a defect — so the set is ' +
         'held to the closed polygon where doubles are exact, and allowed only to grow where they are not',
     );
+
+    // PK86: a polygon pack that spills. Which parts share a page is decided at
+    // the largest page, and each spilled page is then re-searched for its own
+    // smallest size. The `free` search skipped a width when the cells' AREA
+    // exceeded it — true of disjoint rectangles and false of overlapping cells —
+    // so a spilled page whose cells overlapped was refused as fitting no page
+    // (measured first on a 48-region production rig: `rect` exit 0, `polygon`
+    // `page 1 of the spill holds 25 region(s) that no page fits`). The bound is
+    // the texels the cells OWN, which are disjoint. Held on a set that spills —
+    // a 250x250 wedge and ten 50x50 tiles at --page-size 256 — under both page
+    // edges, with no more pages than `rect`; on two gallery rigs that spill at
+    // --page-size 1024 through the CLI, with as many pages as `rect`; and the
+    // bound itself: the first polygon page's cells, handed to `freePageSearch`
+    // without their shapes (the cell-area bound), find no page.
+    const spillParts = [polyPart('wedge250', 250, 250, (x, y) => x + y < 250, 0), ...Array.from({ length: 10 }, (_, i) => polyPart(`spill_${i}`, 50, 50, () => true, i + 1))];
+    const spillSkeleton = JSON.stringify({
+      skins: [
+        {
+          name: 'default',
+          attachments: Object.fromEntries([
+            ['w', { wedge250: { type: 'mesh', uvs: WEDGE, hull: 3, triangles: [0, 1, 2], vertices: WEDGE } }],
+            ...Array.from({ length: 10 }, (_, i) => [`s${i}`, { [`spill_${i}`]: {} }]),
+          ]),
+        },
+      ],
+    });
+    const spillInputs = withFootprints(spillParts, spillSkeleton);
+    const spillProbes: string[] = [];
+    const spillSaid: string[] = [];
+    for (const pageEdges of ['pot', 'free'] as const) {
+      const rect = packAtlas(spillInputs, { pageSize: 256, pageEdges });
+      let poly: ReturnType<typeof packAtlas> | null = null;
+      try {
+        poly = packAtlas(spillInputs, { pageSize: 256, pageEdges, shape: 'polygon' });
+      } catch (err) {
+        spillProbes.push(`${pageEdges}: the polygon pack threw ${(err as Error).message}`);
+      }
+      if (poly === null) continue;
+      if (rect.pages.length < 2) spillProbes.push(`${pageEdges}: the rect pack did not spill (${shapeOfPack(rect)}), so nothing here is a spill`);
+      if (poly.pages.length > rect.pages.length) spillProbes.push(`${pageEdges}: polygon wrote ${poly.pages.length} page(s) where rect wrote ${rect.pages.length}`);
+      const owned = footprintTexelsWrong(poly.pages.map((pg) => pg.plate), poly.atlasText, spillSkeleton, spillInputs, poly.padding);
+      if (owned.wrong.length > 0) spillProbes.push(`${pageEdges}: ${owned.wrong.join('; ')}`);
+      spillSaid.push(`${pageEdges}: rect ${shapeOfPack(rect)}, polygon ${shapeOfPack(poly)}`);
+      if (pageEdges === 'free') {
+        const first = poly.placements.filter((pl) => pl.page === 0);
+        const cells = first.map((pl) => ({ w: pl.width + 2 * poly.padding, h: pl.height + 2 * poly.padding }));
+        const shapes = first.map((pl) => footprintCell(pl.width, pl.height, poly.padding, spillInputs.find((i) => i.region === pl.region)?.footprint));
+        const byOwned = freePageSearch(cells, 256, shapes).page;
+        const byCells = freePageSearch(cells, 256).page;
+        const cellArea = cells.reduce((n, c) => n + c.w * c.h, 0);
+        if (byOwned === null) spillProbes.push('the first polygon page re-searched with its shapes found no page');
+        if (cellArea <= 256 * 256) spillProbes.push(`the first polygon page's cells cover ${cellArea} texels, within the page, so a cell-area bound would not have refused it`);
+        if (byCells !== null) spillProbes.push(`the first polygon page re-searched by cell area found ${byCells.width}x${byCells.height}, so the plant does not reach the bound`);
+        spillSaid.push(`its first page's ${first.length} cells cover ${cellArea} texels of cell over a 256x256 = 65536 page: searched by what they own, ${byOwned === null ? 'none' : `${byOwned.width}x${byOwned.height}`}; by their cells' area (the planted bound), ${byCells === null ? 'no page' : `${byCells.width}x${byCells.height}`}`);
+      }
+    }
+    for (const name of ['look', 'portrait']) {
+      const counts = (['rect', 'polygon'] as const).map((shape) => {
+        const run = runCli([
+          'build', '--rig', join(import.meta.dir, 'gallery', name, 'rig.json'), '--motion', join(import.meta.dir, 'gallery', name, 'motion.json'),
+          '--out', join(polyDir, `spill-${name}-${shape}`), '--pack', '--page-size', '1024', '--page-edges', 'free', '--pack-shape', shape,
+        ]);
+        if (run.status !== 0) spillProbes.push(`gallery/${name} --pack-shape ${shape} --page-size 1024 exited ${String(run.status)}: ${run.stderr.split('\n')[0]}`);
+        return run.stdout.split('\n').filter((line) => line.includes('  pack: ')).length;
+      });
+      if (counts[0] < 2) spillProbes.push(`gallery/${name} at --page-size 1024 wrote ${counts[0]} rect page(s), so it does not spill`);
+      if (counts[1] > counts[0]) spillProbes.push(`gallery/${name}: polygon wrote ${counts[1]} page(s) where rect wrote ${counts[0]}`);
+      spillSaid.push(`gallery/${name} at --page-size 1024: ${counts[0]} rect page(s), ${counts[1]} polygon page(s)`);
+    }
+    const spillHeld = spillProbes.length === 0;
+    say(
+      'PK86_A_POLYGON_PACK_THAT_SPILLS_WRITES_NO_MORE_PAGES_THAN_RECT',
+      spillHeld,
+      probeDetail(spillHeld, spillProbes, spillSaid.join('; ')),
+      'issue #1099: a production rig of 48 regions spilled under `rect` and was refused under `polygon` — the area ' +
+        'bound of the `free` search assumed cells never overlap, which is the one assumption the mode removes',
+    );
   }
   return bad;
 }
@@ -106523,7 +106600,8 @@ function main(): void {
       'draws its own with a later-wins drawing named, a neighbour inside an understated hull and a padding-free ' +
       'footprint test each named by the geometric check the gate will make, a pack with no mesh footprint the rect ' +
       'pack byte for byte, the pack line ending in the shape under both, the flag refused by name, and the ' +
-      'footprint set equal to the closed polygon on dyadic shapes and only ever grown elsewhere)' +
+      'footprint set equal to the closed polygon on dyadic shapes and only ever grown elsewhere, and a polygon pack ' +
+      'that spills writing no more pages than rect where a cell-area bound refused every width of its first page)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +

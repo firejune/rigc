@@ -919,6 +919,14 @@ export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: 
     tallest = Math.max(tallest, cell.h);
     cellArea += cell.w * cell.h;
   }
+  // 🔒 Under `polygon` cells may overlap, so their area is no bound on the page;
+  // what is, is the texels they OWN, which are disjoint (issue #1099). Bounding
+  // by the cells' area skipped every width a polygon spill page needed, and a
+  // spilled page whose cells overlapped was refused as fitting no page at all.
+  if (shapes !== undefined) {
+    cellArea = 0;
+    for (const shape of shapes) cellArea += shape.owned;
+  }
   const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0 };
   let best: { width: number; height: number; rects: Rect[] } | null = null;
   for (let width = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; width <= maxEdge; width += FREE_EDGE_STEP) {
@@ -1171,6 +1179,8 @@ export interface CellShape {
   bbox: Rect;
   /** The mask is the whole cell: the region is placed exactly as `shape: 'rect'` places it. */
   whole: boolean;
+  /** How many texels the mask owns — what the `free` search's area bound sums, since owned sets are disjoint and cells may not be. */
+  owned: number;
 }
 
 /** How far in a polygon's favour every footprint comparison is made. See `CellShape`, *Exactness*. */
@@ -1244,7 +1254,7 @@ export function footprintCell(width: number, height: number, padding: number, fo
   const ch = height + 2 * padding;
   const whole = (): CellShape => {
     const cell = { x: 0, y: 0, w: cw, h: ch };
-    return { width: cw, height: ch, mask: new Uint8Array(cw * ch).fill(1), rects: [cell], bbox: { ...cell }, whole: true };
+    return { width: cw, height: ch, mask: new Uint8Array(cw * ch).fill(1), rects: [cell], bbox: { ...cell }, whole: true, owned: cw * ch };
   };
   if (footprint === undefined) return whole();
   const mask = new Uint8Array(cw * ch);
@@ -1326,7 +1336,9 @@ export function footprintCell(width: number, height: number, padding: number, fo
     maxX = 1;
     maxY = 1;
   }
-  return { width: cw, height: ch, mask, rects, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY }, whole: false };
+  let count = 0;
+  for (const v of mask) count += v;
+  return { width: cw, height: ch, mask, rects, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY }, whole: false, owned: count };
 }
 
 /** Whether two placed cells' protected sets share a texel. */
@@ -1352,8 +1364,20 @@ function shapesMeet(a: CellShape, ax: number, ay: number, b: CellShape, bx: numb
  * from, so an untouched rectangle inside a new piece would have lain inside
  * that one — so the test `packOnePage` makes for it always answers "not
  * contained", and skipping it keeps the list exactly as that prune leaves it.
+ *
+ * ⭐ And a second (issue #1099, measured on production rigs): a free rectangle
+ * narrower than `minW` or shorter than `minH` is dropped. The caller passes the
+ * least bounding box of every cell the pass places, so such a rectangle can
+ * never be a candidate, and neither can any piece later cut from it (a piece
+ * lies inside the rectangle it was cut from); and a rectangle a dropped one
+ * contains is itself too small. So every rectangle that could ever be a
+ * candidate is kept, in the order the full prune keeps it, and the decisions
+ * are the same. What it removes is the staircase of slivers an irregular hull's
+ * bands cut along its edge: on a production-shaped set (30 regions, 200 to 900
+ * px, hulls near their rectangles, a `free` page about 2023x2046) the pack
+ * took 18.5 s with the slivers kept and spent 95 % of it in this prune.
  */
-function splitFree(free: Rect[], put: Rect): void {
+function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1): void {
   const next: Rect[] = [];
   const untouched: boolean[] = [];
   for (const fr of free) {
@@ -1374,16 +1398,17 @@ function splitFree(free: Rect[], put: Rect): void {
     while (untouched.length < next.length) untouched.push(false);
   }
   const contains = (a: Rect, b: Rect): boolean => b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+  const usable = (r: Rect): boolean => r.w >= minW && r.h >= minH;
   free.length = 0;
   for (let i = 0; i < next.length; i++) {
-    if (next[i].w <= 0 || next[i].h <= 0) continue;
+    if (!usable(next[i])) continue;
     if (untouched[i]) {
       free.push(next[i]);
       continue;
     }
     let contained = false;
     for (let j = 0; j < next.length && !contained; j++) {
-      if (i === j || next[j].w <= 0 || next[j].h <= 0) continue;
+      if (i === j || !usable(next[j])) continue;
       if (contains(next[j], next[i]) && (j < i || !contains(next[i], next[j]))) contained = true;
     }
     if (!contained) free.push(next[i]);
@@ -1402,7 +1427,8 @@ function splitFree(free: Rect[], put: Rect): void {
  * coarser — a free rectangle is still clear of every owned texel — and they
  * are what keeps it short: per row, a 60-part set of ellipse hulls packed on a
  * `free` page in over ten minutes; in bands of 8 rows, in 14.9 s against the
- * rectangle pass's 0.6 s, the same page. Everything else is
+ * rectangle pass's 0.6 s, the same page — and with `splitFree`'s sliver drop
+ * beside them, in 5.8 s against 2.2 s (a loaded machine). Everything else is
  * MaxRects as `packOnePage` runs it:
  *
  *   * a candidate is a free rectangle that holds the cell's protected set's
@@ -1433,6 +1459,14 @@ function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pag
   const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
   const placed: Array<Rect | null> = [];
   const owned: Array<{ shape: CellShape; x: number; y: number }> = [];
+  // The least box any cell of this pass needs — what a free rectangle must
+  // hold to be a candidate for anything (`splitFree`, the second saving).
+  let minW = Infinity;
+  let minH = Infinity;
+  for (const shape of shapes) {
+    minW = Math.min(minW, shape.bbox.w);
+    minH = Math.min(minH, shape.bbox.h);
+  }
 
   for (const shape of shapes) {
     const box = shape.bbox;
@@ -1468,6 +1502,12 @@ function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pag
     }
     const put: Rect = { x: best.x - box.x, y: best.y - box.y, w: shape.width, h: shape.height };
     for (const other of owned) {
+      // Two cells that do not overlap cannot share a texel, and that answer
+      // takes no texel to read; only an overlap is scanned, and only over the
+      // overlap's own box (`shapesMeet`).
+      const apart =
+        put.x >= other.x + other.shape.width || other.x >= put.x + put.w || put.y >= other.y + other.shape.height || other.y >= put.y + put.h;
+      if (apart) continue;
       if (shapesMeet(shape, put.x, put.y, other.shape, other.x, other.y)) {
         throw new CompileError(
           `internal: the footprint pass placed a ${shape.width}x${shape.height} cell at ${put.x},${put.y} over ` +
@@ -1481,7 +1521,7 @@ function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pag
       while (placed.length < shapes.length) placed.push(null);
       return placed;
     }
-    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h });
+    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH);
   }
   return placed;
 }

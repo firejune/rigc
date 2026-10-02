@@ -519,7 +519,13 @@ what changes is that two rectangles may overlap where neither footprint is.
   also run as the `rect` pass on the same page and the better kept — more parts
   placed, then the higher bottom edge, then `rect` on a tie — so a `polygon`
   page is never larger than the `rect` page. `--page-edges` and the spill rule
-  are unchanged.
+  are unchanged, except that the `free` search's area bound sums the texels
+  the cells own rather than the cells, since overlapping cells can cover more
+  than the page (a spilled `polygon` page was refused as fitting no page until
+  it did — `PK86`). What it costs in time is measured on a set shaped like a
+  production rig (30 regions of 200 to 900 px, hulls near their rectangles,
+  one `free` page about 2023x2046): 1.1–1.4 s against `rect`'s 0.2 s for the
+  pack alone, the same page.
 - **The pixels.** Every cell is drawn whole in packing order, then every
   region's owned texels are drawn again with its own values, so every texel a
   region can sample is its own (`PK79`). A texel nobody owns carries the last
