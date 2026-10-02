@@ -137,9 +137,52 @@
  * animation deforms a curve a path constraint walks (unmeasured). A slider's
  * deform, sequence and draw-order keys are posed since issue #955, after the
  * sample's own (`./deform.ts`, `./draw_order.ts`; they were `sliderAttachmentsWhy`'s
- * absence before). Physics timelines under `Physics.none` pose nothing
- * (`./constraints_physics.ts`) and events a slider does not fire, so neither
- * leaves anything out.
+ * absence before). Its physics timelines are posed since issue #1049 (below),
+ * and events a slider does not fire, so neither leaves anything out.
+ *
+ * ## Its physics timelines (issue #1049)
+ *
+ * Under `Physics.none` a physics constraint applies nothing
+ * (`./constraints_physics.ts`), so neither do a slider's physics keys. Under
+ * the step they do, and until issue #1049 the core applied none of them: on
+ * the selftest's own builds where a dial's animation keys `wind` or
+ * `gravity` of a constraint declared after it, every bone the constraint
+ * drives left spine-core from the third step (`tip` worldX
+ * 14.87037037037037 against 12.092592592592593 at 0.025 s), and with a slot
+ * on that bone `render` drew wrong frames with no refusal. Measured against
+ * spine-core 4.3.13's output only — A10's looping walk, `render`'s recipe at
+ * 60 and 12 fps and the oracle's stepped grid under `--raw`, on 400 compiled
+ * rigs of one or two sliders and one or two physics constraints in random
+ * order, every kind keyed, at tolerance 0 — the rule is:
+ *
+ * - **A slider writes its physics keys into the pass's physics records, at
+ *   its place in the update order**, at the time it applies its animation at
+ *   (`at`), after the step's own animation posed them; a physics constraint
+ *   after it steps with what it wrote, one before it has already stepped.
+ *   Applying the writes to every constraint of the pass whatever its place
+ *   read 239 of the 400 rigs off; not applying them, 205.
+ * - **A write lasts one pass.** The next step's records start again from the
+ *   step's own animation: a write that stood where the step's animation does
+ *   not key read 323 of 400 off.
+ * - **Before the timeline's first key it writes nothing**, as for bones.
+ * - **`wind`, `gravity` under `additive`: `current + v·mix`.** Every other
+ *   value (`inertia`, `strength`, `damping`, `mass`, `mix`), and every value
+ *   of a slider that is not additive: `current + (v − current)·mix`, with
+ *   `current` the value as the pass holds it (the step's own animation and
+ *   any slider before). Adding every kind read 104 of 400 off; blending from
+ *   the setup value (before the step's own animation), 80; writing the key
+ *   itself at mix exactly 1, 20 — in the last bit.
+ * - **A `mass` key blends the mass**, `1 / (m + (v − m)·mix)` with `m =
+ *   1 / massInverse`; blending the inverse read 28 of 400 off.
+ * - **A `reset` key fires nothing** — the slider applies its animation at one
+ *   time, from that time, so no key is crossed (the path-slider suite's
+ *   `PS159` measured the same on the pose); firing a key at or before `at` on
+ *   every pass read 112 of 400 off.
+ * - The timeline naming no constraint (`*`) writes every active constraint
+ *   whose `…Global` flag for that value is on, as a step's own does.
+ *
+ * `CO31` holds the rule on the `core_gate` probe rows and a seeded population
+ * on all three entries; `CO32` plants each rejected reading (`SolverRules`).
  *
  * ## Purity
  *
@@ -148,8 +191,9 @@
  */
 import type { ModelBone } from '../model.ts';
 import { channelAt, keyIndexAt, type CoreAnimationTimelines, type CoreCurve, type CoreKey } from './animation.ts';
-import { sourceValue, TRANSFORM_PROPERTIES, type SolverState, type TransformProperty } from './constraints.ts';
+import { sourceValue, TRANSFORM_PROPERTIES, type CoreConstraintRecord, type SolverRules, type SolverState, type TransformProperty } from './constraints.ts';
 import type { CompiledDocument, CoreAnimation } from './index.ts';
+import { EVERY_GLOBAL_PHYSICS, physicsActive, physicsState, resetPhysicsState, unnamedPhysicsTargets, type CorePhysicsRecord, type CorePhysicsTimeline, type PhysicsStepContext } from './constraints_physics.ts';
 
 /** The fields a slider's record may carry after `kind`, `name`, `declaredIn` (`buildRigConstraint` in `src/compile.ts`). */
 export const SLIDER_FIELDS = ['animation', 'additive', 'loop', 'mix', 'bone', 'property', 'from', 'to', 'scale', 'max', 'local', 'time', 'skin'] as const;
@@ -160,6 +204,8 @@ export interface CoreSliderRecord {
   name: string;
   animation: string;
   timelines: CoreAnimationTimelines;
+  /** Its animation's physics timelines, in the animation's order (issue #1049) — set by `readModel` once the animations' constraint timelines are read, which is after the records. */
+  physics: readonly CorePhysicsTimeline[];
   /** The setup bones its animation keys, by name — what a non-additive key's value is added to. */
   setup: ReadonlyMap<string, ModelBone>;
   additive: boolean;
@@ -252,7 +298,7 @@ export function readSliderRecord(raw: Record<string, unknown>, name: string, whe
     if (b !== undefined) setup.set(b.name, b);
   }
   const record: CoreSliderRecord = {
-    kind: 'slider', name, animation: anim?.name ?? '', timelines: anim?.timelines ?? { declared: 0, duration: 0, bones: [], slots: [], later: [], attachments: [], drawOrder: [], events: [] }, setup,
+    kind: 'slider', name, animation: anim?.name ?? '', timelines: anim?.timelines ?? { declared: 0, duration: 0, bones: [], slots: [], later: [], attachments: [], drawOrder: [], events: [] }, physics: [], setup,
     additive: flag('additive'), loop, mix: num('mix', 1), time: num('time', 0), bone, property,
     from: num('from', 0), to: num('to', 0), scale: num('scale', 1), local: flag('local'), skin: flag('skin'), listedBySkin: false,
   };
@@ -380,13 +426,14 @@ function valuesAt(keys: readonly CoreKey[], t: number): number[] | null {
  * loop to pose again with everything below them. The application is pushed
  * onto `applied` for the slots.
  */
-export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: SliderApplication[]): string[] {
+export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: SliderApplication[], physics?: SliderPhysicsTarget): string[] {
   if (r.mix === 0) return [];
   const time = sliderTime(state, r);
   const d = r.timelines.duration;
   const at = r.loop && d !== 0 ? time % d : time;
   applied?.push({ name: r.name, timelines: r.timelines, at, alpha: r.mix, additive: r.additive, time });
   const alpha = r.mix;
+  if (physics !== undefined && state.rules.sliderWritesPhysics) applySliderPhysics(r, at, alpha, physics);
   const changed: string[] = [];
   for (const target of r.timelines.bones) {
     const index = state.index.get(target.name);
@@ -443,6 +490,89 @@ export function applySlider(state: SolverState, r: CoreSliderRecord, applied?: S
     if (wrote || (state.rules.sliderReposesKeyedBones && target.timelines.length > 0)) changed.push(target.name);
   }
   return changed;
+}
+
+/** The physics records a stepped pass carries, by name — what a slider's physics timelines write and a later physics constraint steps with (issue #1049, the header's *Its physics timelines*). */
+export interface SliderPhysicsTarget {
+  records: Map<string, CorePhysicsRecord>;
+  /** Each record's setup values, before the step's own animation — what a planted blend from the setup reads. */
+  setup: ReadonlyMap<string, CorePhysicsRecord>;
+  active: (r: CorePhysicsRecord) => boolean;
+  rules: Readonly<SolverRules>;
+  ctx: PhysicsStepContext;
+  /** What the sliders wrote this pass, by constraint and field — kept only under the planted reading that a write outlasts its pass. */
+  written: Map<string, Partial<Record<PhysicsField, number>>>;
+}
+
+/** The fields of a physics record a timeline writes. */
+type PhysicsField = 'inertia' | 'strength' | 'damping' | 'massInverse' | 'wind' | 'gravity' | 'mix';
+
+/**
+ * The physics records of one stepped pass, ready for the sliders to write
+ * (issue #1049): every physics record as the step's own animation posed it.
+ * Under the planted reading that a slider's write outlasts its pass, what
+ * the sliders wrote on the step before stands wherever the step's own
+ * animation does not key it (`PhysicsStepContext.keyedNow`).
+ */
+export function sliderPhysicsTarget(records: readonly CoreConstraintRecord[], active: ReadonlySet<string>, ctx: PhysicsStepContext, rules: Readonly<SolverRules>): SliderPhysicsTarget {
+  const posed = new Map(records.flatMap((r): Array<[string, CorePhysicsRecord]> => (r.kind === 'physics' ? [[r.name, r]] : [])));
+  const out = new Map(posed);
+  const written = new Map<string, Partial<Record<PhysicsField, number>>>();
+  if (!rules.sliderPhysicsLastsOnePass) {
+    for (const [name, fields] of ctx.carried ?? new Map<string, Partial<Record<PhysicsField, number>>>()) {
+      const r = out.get(name);
+      if (r === undefined) continue;
+      const next = { ...r };
+      const kept: Partial<Record<PhysicsField, number>> = {};
+      for (const [f, v] of Object.entries(fields) as Array<[PhysicsField, number]>) {
+        if (ctx.keyedNow?.has(`${name}/${f}`)) continue;
+        next[f] = v;
+        kept[f] = v;
+      }
+      out.set(name, next);
+      written.set(name, kept);
+    }
+    ctx.carried = written;
+  }
+  return { records: out, setup: ctx.setupRecords ?? posed, active: (r) => physicsActive(r, active), rules, ctx, written };
+}
+
+/** The value kinds a slider's physics timeline adds under `additive` (`./additive.ts`'s table); the rest write. */
+const PHYSICS_ADDS: ReadonlySet<string> = new Set(['wind', 'gravity']);
+
+/** A slider's physics timelines applied at `at` with alpha `alpha` onto the pass's physics records (the header's *Its physics timelines*). */
+function applySliderPhysics(r: CoreSliderRecord, at: number, alpha: number, target: SliderPhysicsTarget): void {
+  const rules = target.rules;
+  for (const tl of r.physics) {
+    const named = target.records.get(tl.name);
+    const targets = tl.name === EVERY_GLOBAL_PHYSICS ? unnamedPhysicsTargets([...target.records.values()], tl.kind, target.active) : named !== undefined && target.active(named) ? [named] : [];
+    if (tl.kind === 'reset') {
+      // A slider applies its animation at one time, from that time: no key is crossed, so a reset key fires nothing (PS159).
+      if (!rules.sliderPhysicsResetIsDead && tl.keys.some((k) => k.time <= at)) for (const p of targets) resetPhysicsState(physicsState(target.ctx, p.name), target.ctx.time);
+      continue;
+    }
+    const i = keyIndexAt(tl.keys, at);
+    if (i < 0) continue;
+    const v = channelAt(tl.keys, i, 0, at);
+    const adds = r.additive && (PHYSICS_ADDS.has(tl.kind) || !rules.sliderPhysicsAddsWindGravityOnly);
+    for (const p of targets) {
+      const from = rules.sliderPhysicsFromCurrent ? p : (target.setup.get(p.name) as CorePhysicsRecord);
+      const next = { ...p };
+      let field: PhysicsField;
+      if (tl.kind === 'mass') {
+        field = 'massInverse';
+        if (rules.sliderPhysicsBlendsMass) {
+          const m = 1 / from.massInverse;
+          next.massInverse = 1 / (adds ? 1 / p.massInverse + v * alpha : m + (v - m) * alpha);
+        } else next.massInverse = adds ? p.massInverse + (1 / v) * alpha : from.massInverse + (1 / v - from.massInverse) * alpha;
+      } else {
+        field = tl.kind;
+        next[field] = adds ? p[field] + v * alpha : from[field] + (v - from[field]) * alpha;
+      }
+      target.records.set(p.name, next);
+      if (!rules.sliderPhysicsLastsOnePass) target.written.set(p.name, { ...target.written.get(p.name), [field]: next[field] });
+    }
+  }
 }
 
 /** A slot's pose as the sliders move it: what it shows, its light colour and its dark colour (`null` when it states none). */

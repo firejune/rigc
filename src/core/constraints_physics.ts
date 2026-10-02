@@ -172,7 +172,9 @@
  * no value, on each of the seven, read exact — the `mass` one NaN in both
  * dumps). The timeline that
  * names no constraint (`*`) writes every active constraint whose `…Global`
- * flag for that value is on, and resets every active constraint.
+ * flag for that value is on, and resets every active constraint. A
+ * slider's animation keys them too, at the slider's place in the update
+ * order (issue #1049, `./constraints_slider.ts` *Its physics timelines*).
  *
  * **reset.** A `reset` key resets its constraints on the step whose apply
  * crosses it — a key in `(last, t]`, `last` the time the walk last applied
@@ -569,6 +571,12 @@ export interface PhysicsStepContext {
    * names for that. Absent on every walk but the looping one.
    */
   loop?: boolean;
+  /** A plant only (issue #1049, `sliderPhysicsLastsOnePass: false`): what the sliders wrote on the step before, by constraint and field. */
+  carried?: Map<string, Partial<Record<'inertia' | 'strength' | 'damping' | 'massInverse' | 'wind' | 'gravity' | 'mix', number>>>;
+  /** Each `constraint/field` the step's own animation keys — what the planted carried write gives way to. */
+  keyedNow?: Set<string>;
+  /** A plant only (issue #1049, `sliderPhysicsFromCurrent: false`): each physics record's setup values, before the step's own animation. */
+  setupRecords?: Map<string, CorePhysicsRecord>;
 }
 
 /** A constraint's state in `ctx`, created fresh on its first update. */
@@ -813,6 +821,8 @@ export function stepPhysicsRecords(records: readonly CoreConstraintRecord[], key
   const physics = records.filter((r): r is CorePhysicsRecord => r.kind === 'physics');
   const posed = posedPhysics(physics, keyed, t, ctx.last, (r) => physicsActive(r, active), {}, ctx.loop === true && t < ctx.last);
   ctx.last = t;
+  ctx.setupRecords = new Map(physics.map((r) => [r.name, r]));
+  ctx.keyedNow = new Set(keyed.flatMap((tl) => (tl.kind === 'reset' ? [] : (tl.name === EVERY_GLOBAL_PHYSICS ? unnamedPhysicsTargets(physics, tl.kind, (r) => physicsActive(r, active)).map((r) => r.name) : [tl.name]).map((n) => `${n}/${tl.kind === 'mass' ? 'massInverse' : tl.kind}`))));
   for (const name of posed.reset) resetPhysicsState(physicsState(ctx, name), before);
   return records.map((r) => (r.kind === 'physics' ? (posed.records.get(r.name) as CorePhysicsRecord) : r));
 }

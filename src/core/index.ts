@@ -881,6 +881,11 @@ export function readModel(text: string, where = 'the model document'): CompiledD
       if (isRecord(raw) && animations[i] !== undefined) animations[i].constraints = readConstraintTimelines(raw.constraints, `animations[${i}] "${animations[i].name}"`, constraints, problems);
     });
   }
+  // A slider's physics timelines are its animation's (issue #1049), read only now.
+  for (const c of constraints) {
+    const r = c.record;
+    if (r?.kind === 'slider') r.physics = animations.find((a) => a.name === r.animation)?.constraints.physicsKeyed ?? [];
+  }
   const editorOrder = spec === CORE_DOCUMENT_SPEC && 'editorOrder' in value ? readEditorOrder(value.editorOrder, skins, animations, problems) : null;
   if (problems.length > 0) throw new CoreInputError(`${where}: ${problems.length} problem(s): ${problems.join('; ')}`);
   const stated: CoreStated | null = editorOrder === null ? null : { stage, editorOrder };
