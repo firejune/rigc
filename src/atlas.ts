@@ -31,6 +31,12 @@
  * be ADDED to the page for the render to agree as well, and `PACK_NO_ROTATE` for
  * the field this deliberately does not use.
  *
+ * Under `shape: 'polygon'` (issue #1099) the copy is lossless where a region
+ * can be SAMPLED: two rectangles may overlap where neither region draws, so a
+ * mesh region's rectangle outside its hull may carry a neighbour's texels, and
+ * the claim the selftest holds there is that every texel within a tap of what
+ * a region draws is its own (`PK79`). See `packAtlas`, *`shape: 'polygon'`*.
+ *
  * ⚠️ **The rendered pictures are equal to within one least significant bit, not
  * bit-for-bit, and the difference is arithmetic rather than texels.** Measured: 0
  * to 480 channel samples of 7 to 21 million on the three public fixtures, worst
@@ -693,6 +699,32 @@ export const DEFAULT_PAGE_EDGES: PageEdges = 'pot';
  */
 export const FREE_EDGE_STEP = 1;
 
+/**
+ * What a packed region's rectangle may share with its neighbours' — `--pack-shape`
+ * (issue #1099, stage 1 of #1093). See `packAtlas`, *`shape: 'polygon'`*.
+ *
+ * `rect` is the default and is the packer exactly as it was before the option
+ * existed: no two cells overlap. `polygon` packs every region whose every
+ * attachment is a mesh by that mesh's emitted hull, so two rectangles may
+ * overlap where neither region's footprint is; a region attachment's footprint
+ * stays its rectangle, because it draws its whole quad.
+ */
+export const PACK_SHAPES = ['rect', 'polygon'] as const;
+export type PackShape = (typeof PACK_SHAPES)[number];
+export const DEFAULT_PACK_SHAPE: PackShape = 'rect';
+
+/**
+ * The part of a region its attachments draw, in the region's own texels — x
+ * right and y down from the drawing's top-left corner, so `(u · width, v ·
+ * height)` for a mesh UV `(u, v)`. Each polygon is a flat `[x0, y0, x1, y1, …]`
+ * loop, closed from its last vertex back to its first: a mesh's hull loop, and
+ * each of its triangles. Absent on a `PackInput`, the footprint is the whole
+ * rectangle, which is what every region attachment's is.
+ */
+export interface PackFootprint {
+  polygons: ReadonlyArray<readonly number[]>;
+}
+
 /** The part a page is packed from: its region name and its pixels. */
 export interface PackInput {
   region: string;
@@ -700,6 +732,11 @@ export interface PackInput {
   absPath: string;
   width: number;
   height: number;
+  /**
+   * What the region's attachments draw (`packFootprints`), read only under
+   * `shape: 'polygon'`. Absent means the rectangle.
+   */
+  footprint?: PackFootprint;
 }
 
 export interface PackOptions {
@@ -711,6 +748,8 @@ export interface PackOptions {
   pageStem?: string;
   /** What the page's edges may be (default `pot`). See `PAGE_EDGES`. */
   pageEdges?: PageEdges;
+  /** What two rectangles may share (default `rect`). See `PACK_SHAPES`. */
+  shape?: PackShape;
 }
 
 /** Where one region landed. `x`/`y` are the REGION's own corner, not its cell's. */
@@ -741,6 +780,8 @@ export interface PackResult {
   /** The atlas text for the packed pages. */
   atlasText: string;
   padding: number;
+  /** The shape the pack was made under — what the `pack:` line's last field states. */
+  shape: PackShape;
 }
 
 /** A free rectangle in the MaxRects free list. */
@@ -784,15 +825,16 @@ function smallestPageFor(
   cells: Array<{ w: number; h: number }>,
   maxEdge: number,
   pageEdges: PageEdges,
+  shapes?: readonly CellShape[],
 ): { width: number; height: number; rects: Rect[] } | null {
-  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge);
+  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge, shapes);
   const edges: number[] = [];
   for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
   const candidates: Array<{ w: number; h: number }> = [];
   for (const w of edges) for (const h of edges) candidates.push({ w, h });
   candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
   for (const candidate of candidates) {
-    const attempt = packOnePage(cells, candidate.w, candidate.h);
+    const attempt = placePass(cells, shapes, candidate.w, candidate.h);
     if (attempt.some((r) => r === null)) continue;
     return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
   }
@@ -843,8 +885,9 @@ function smallestPageFor(
 function smallestFreePageFor(
   cells: Array<{ w: number; h: number }>,
   maxEdge: number,
+  shapes?: readonly CellShape[],
 ): { width: number; height: number; rects: Rect[] } | null {
-  return freePageSearch(cells, maxEdge).page;
+  return freePageSearch(cells, maxEdge, shapes).page;
 }
 
 /** What one `free` page search did: the page it chose, and what each width cost. */
@@ -864,9 +907,10 @@ export interface FreePageSearch {
  * `smallestFreePageFor`'s search with its bookkeeping — exported so the
  * selftest can compare its page against an unbounded every-width reference and
  * see that the bounds did prune (`PK75`). The page is the whole of what the
- * packer uses; the counts are for the control.
+ * packer uses; the counts are for the control. `shapes`, one per cell, is
+ * `shape: 'polygon'`'s placement (`placePass`); absent, the rectangle pass.
  */
-export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: number): FreePageSearch {
+export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: number, shapes?: readonly CellShape[]): FreePageSearch {
   let widest = 0;
   let tallest = 0;
   let cellArea = 0;
@@ -874,6 +918,14 @@ export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: 
     widest = Math.max(widest, cell.w);
     tallest = Math.max(tallest, cell.h);
     cellArea += cell.w * cell.h;
+  }
+  // 🔒 Under `polygon` cells may overlap, so their area is no bound on the page;
+  // what is, is the texels they OWN, which are disjoint (issue #1099). Bounding
+  // by the cells' area skipped every width a polygon spill page needed, and a
+  // spilled page whose cells overlapped was refused as fitting no page at all.
+  if (shapes !== undefined) {
+    cellArea = 0;
+    for (const shape of shapes) cellArea += shape.owned;
   }
   const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0 };
   let best: { width: number; height: number; rects: Rect[] } | null = null;
@@ -885,7 +937,7 @@ export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: 
       continue;
     }
     const maxBottom = best === null ? Infinity : Math.floor(bestArea / width);
-    const attempt = packOnePage(cells, width, maxEdge, maxBottom);
+    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom);
     let height = 0;
     for (const r of attempt) if (r !== null) height = Math.max(height, r.y + r.h);
     if (height > maxBottom) {
@@ -1031,6 +1083,592 @@ function packOnePage(
 }
 
 /**
+ * One placement pass: the rectangle pass (`packOnePage`) when `shapes` is
+ * absent, which is every `shape: 'rect'` call and so every pack made before the
+ * option existed, and the footprint pass (`packOnePageByFootprint`) when it is
+ * given.
+ */
+function placePass(
+  cells: Array<{ w: number; h: number }>,
+  shapes: readonly CellShape[] | undefined,
+  pageW: number,
+  pageH: number,
+  maxBottom = Infinity,
+): Array<Rect | null> {
+  const byRect = packOnePage(cells, pageW, pageH, maxBottom);
+  if (shapes === undefined || shapes.every((s) => s.whole)) return byRect;
+  // ⭐ `polygon` never costs a page anything `rect` would have saved. Both passes
+  // are run on the same page and the better one is kept: more cells placed,
+  // then the higher bottom edge, then — on a tie — the rectangle pass. Two
+  // disjoint cells never share a protected texel, so the rectangle pass is
+  // itself a legal footprint placement, and keeping it where it is better is
+  // choosing between two legal answers, not giving the mode up. Measured
+  // before this rule existed: the footprint pass alone wrote larger pages
+  // than `rect` on two of the five gallery rigs that carry a mesh, because a
+  // greedy pass that places one cell differently places every later one
+  // differently too.
+  const byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom);
+  const placedOf = (pass: Array<Rect | null>): number => pass.reduce((n, r) => (r === null ? n : n + 1), 0);
+  const bottomOf = (pass: Array<Rect | null>): number => pass.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
+  const placedRect = placedOf(byRect);
+  const placedFoot = placedOf(byFootprint);
+  if (placedFoot !== placedRect) return placedFoot > placedRect ? byFootprint : byRect;
+  return bottomOf(byFootprint) < bottomOf(byRect) ? byFootprint : byRect;
+}
+
+// ---------------------------------------------------------------------------
+// footprints — `shape: 'polygon'` (issue #1099)
+// ---------------------------------------------------------------------------
+
+/**
+ * A cell as `shape: 'polygon'` places it: the region plus `padding` on every
+ * side, and the cell texels the region OWNS — its protected set.
+ *
+ * ## The protected set, and why it is the footprint test
+ *
+ * A region attachment owns its whole cell, exactly the cell `shape: 'rect'`
+ * keeps apart from every other: it draws its whole quad, and its gutter is what
+ * makes its edge sample as the loose page's does (`extrudeCell`).
+ *
+ * A mesh region owns every cell texel `t` whose unit square, grown by `reach =
+ * max(padding, 1)` texels on every side (a Chebyshev dilation), meets one of
+ * the region's footprint polygons, closed — boundary contact counts. Then:
+ *
+ *   * it holds every texel the mesh can sample. A bilinear tap at a point `q`
+ *     inside a triangle reads the four texels whose centres are within one
+ *     texel of `q`, and each of those squares lies within half a texel of `q`;
+ *     `reach` ≥ 1 covers that with room for the float32 page UVs the runtime
+ *     stores (`src/atlas.ts`'s header: worst 3.15e-5 texels);
+ *   * it keeps the padding the rectangle keeps. A rectangle's cell is the
+ *     rectangle grown by `padding`, and this is the hull grown by `padding` —
+ *     for a hull that covers its whole drawing, texel for texel the same cell,
+ *     which is why such a mesh is placed exactly as a rectangle is;
+ *   * it is clipped to the cell, so a region never claims a texel outside the
+ *     cell its own pixels are extruded into.
+ *
+ * ⇒ **Two cells may be placed with their rectangles overlapping exactly when
+ * their protected sets share no texel.** For two rectangles that is today's
+ * rule — two cells share no texel — so a pack with no mesh region is placed
+ * by `rect`'s arithmetic, decision for decision. For any two footprints it
+ * means their Chebyshev distance is at least `2 · padding`: if a point of one
+ * were within `2 · padding` of a point of the other, the texel under their
+ * midpoint would be in both protected sets.
+ *
+ * ## Exactness — where it rounds, and in which direction
+ *
+ * The polygons are doubles: a UV as `skeleton.json` states it, times the
+ * region's integer size. The set is computed row by row — the band
+ * `[row − reach, row + 1 + reach]` against each polygon: every edge clipped to
+ * the band, and the polygon's even-odd spans on the band's two lines, which
+ * together are the polygon's exact extent inside the band — and every
+ * comparison that could decide "outside" is made `FOOTPRINT_SLACK` in the
+ * polygon's favour. **The only rounding grows the set**, by at most that slack
+ * (1e-6 texels, against a double's 1e-13 on these magnitudes), so it can make
+ * two footprints keep further apart than they had to and never lets two
+ * touch.
+ */
+export interface CellShape {
+  /** The cell: the region plus `padding` on every side. */
+  width: number;
+  height: number;
+  /** 1 on every texel the region owns, row-major over the cell. */
+  mask: Uint8Array;
+  /** `mask` rounded out to bands of `FOOTPRINT_BAND_ROWS` rows, as disjoint rectangles in cell texels, top to bottom — what the free list is split by. */
+  rects: Rect[];
+  /** The bounding box of `mask`, in cell texels. */
+  bbox: Rect;
+  /** The mask is the whole cell: the region is placed exactly as `shape: 'rect'` places it. */
+  whole: boolean;
+  /** How many texels the mask owns — what the `free` search's area bound sums, since owned sets are disjoint and cells may not be. */
+  owned: number;
+}
+
+/** How far in a polygon's favour every footprint comparison is made. See `CellShape`, *Exactness*. */
+export const FOOTPRINT_SLACK = 1e-6;
+
+/**
+ * How many rows of a cell's owned set one free-list rectangle spans — the
+ * resolution the footprint pass's free list keeps, not the resolution of the
+ * footprint test (which is the exact set, texel by texel). Splitting the free
+ * list by one rectangle per row of a curved hull made it thousands long: a
+ * 60-part set of ellipse hulls ran over ten minutes on a `free` page. See
+ * `packOnePageByFootprint` for what the bands cost.
+ */
+export const FOOTPRINT_BAND_ROWS = 8;
+
+/**
+ * The closed x-extent of one polygon inside the band `y0 ≤ y ≤ y1`, as a list
+ * of closed intervals whose union is exactly that extent: each edge clipped to
+ * the band, and the even-odd spans on the band's two lines (a point inside the
+ * polygon and the band either reaches a band line vertically without leaving
+ * the polygon, or meets an edge inside the band on the way).
+ */
+function bandExtent(poly: readonly number[], offset: number, y0: number, y1: number, out: Array<[number, number]>): void {
+  const n = poly.length / 2;
+  for (let i = 0; i < n; i++) {
+    const ax = poly[2 * i] + offset;
+    const ay = poly[2 * i + 1] + offset;
+    const j = (i + 1) % n;
+    const bx = poly[2 * j] + offset;
+    const by = poly[2 * j + 1] + offset;
+    if (Math.max(ay, by) < y0 || Math.min(ay, by) > y1) continue;
+    if (ay === by) {
+      out.push([Math.min(ax, bx), Math.max(ax, bx)]);
+      continue;
+    }
+    let t0 = (y0 - ay) / (by - ay);
+    let t1 = (y1 - ay) / (by - ay);
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    t0 = Math.max(0, t0);
+    t1 = Math.min(1, t1);
+    if (t0 > t1) continue;
+    const xa = ax + (bx - ax) * t0;
+    const xb = ax + (bx - ax) * t1;
+    out.push([Math.min(xa, xb), Math.max(xa, xb)]);
+  }
+  for (const y of [y0, y1]) {
+    const crossings: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const ay = poly[2 * i + 1] + offset;
+      const j = (i + 1) % n;
+      const by = poly[2 * j + 1] + offset;
+      if ((ay <= y && y < by) || (by <= y && y < ay)) {
+        const ax = poly[2 * i] + offset;
+        const bx = poly[2 * j] + offset;
+        crossings.push(ax + ((y - ay) * (bx - ax)) / (by - ay));
+      }
+    }
+    crossings.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < crossings.length; k += 2) out.push([crossings[k], crossings[k + 1]]);
+  }
+}
+
+/**
+ * A region's cell and protected set (`CellShape`) — the rectangle when
+ * `footprint` is absent, the dilated footprint polygons when it is given.
+ * Exported so the selftest can hold the pages to the sets the packer kept
+ * apart (`PK79`) without restating the rule.
+ */
+export function footprintCell(width: number, height: number, padding: number, footprint?: PackFootprint): CellShape {
+  const cw = width + 2 * padding;
+  const ch = height + 2 * padding;
+  const whole = (): CellShape => {
+    const cell = { x: 0, y: 0, w: cw, h: ch };
+    return { width: cw, height: ch, mask: new Uint8Array(cw * ch).fill(1), rects: [cell], bbox: { ...cell }, whole: true, owned: cw * ch };
+  };
+  if (footprint === undefined) return whole();
+  const mask = new Uint8Array(cw * ch);
+  const reach = Math.max(padding, 1);
+  const spans: Array<[number, number]> = [];
+  for (let row = 0; row < ch; row++) {
+    spans.length = 0;
+    const y0 = row - reach - FOOTPRINT_SLACK;
+    const y1 = row + 1 + reach + FOOTPRINT_SLACK;
+    for (const poly of footprint.polygons) if (poly.length >= 6) bandExtent(poly, padding, y0, y1, spans);
+    const at = row * cw;
+    for (const [a, b] of spans) {
+      const from = Math.max(0, Math.ceil(a - 1 - reach - FOOTPRINT_SLACK));
+      const to = Math.min(cw - 1, Math.floor(b + reach + FOOTPRINT_SLACK));
+      for (let x = from; x <= to; x++) mask[at + x] = 1;
+    }
+  }
+  if (mask.every((v) => v === 1)) return whole();
+  // The rectangles the free list is split by: the set rounded OUT to bands of
+  // `FOOTPRINT_BAND_ROWS` rows — each band the columns any of its rows owns,
+  // as runs, merged downwards while a run repeats exactly. Disjoint, a superset
+  // of the set, and in a fixed order (top to bottom, then left to right), so
+  // the free list is split the same way every time. Only the free list reads
+  // them; what a cell owns, what is drawn and what the footprint test compares
+  // is the exact set.
+  const rects: Rect[] = [];
+  let open = new Map<number, Rect>();
+  const columns = new Uint8Array(cw);
+  for (let band = 0; band < ch; band += FOOTPRINT_BAND_ROWS) {
+    const rows = Math.min(FOOTPRINT_BAND_ROWS, ch - band);
+    columns.fill(0);
+    for (let row = band; row < band + rows; row++) for (let x = 0; x < cw; x++) if (mask[row * cw + x] === 1) columns[x] = 1;
+    const next = new Map<number, Rect>();
+    let x = 0;
+    while (x < cw) {
+      if (columns[x] === 0) {
+        x++;
+        continue;
+      }
+      const start = x;
+      while (x < cw && columns[x] === 1) x++;
+      const key = start * (cw + 1) + x;
+      const continued = open.get(key);
+      if (continued !== undefined && continued.y + continued.h === band) {
+        continued.h += rows;
+        next.set(key, continued);
+      } else {
+        const rect = { x: start, y: band, w: x - start, h: rows };
+        rects.push(rect);
+        next.set(key, rect);
+      }
+    }
+    open = next;
+  }
+  // The bounding box is the exact set's: a candidate is placed so that box
+  // lies in a free rectangle, which no other cell's bands reach.
+  let minX = cw;
+  let minY = ch;
+  let maxX = 0;
+  let maxY = 0;
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      if (mask[y * cw + x] === 0) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + 1);
+      maxY = Math.max(maxY, y + 1);
+    }
+  }
+  // A footprint that owns nothing (no polygon of three vertices) still owns a
+  // texel: a cell that claimed no texel could be placed on top of another and
+  // the packer would have nothing to keep apart. Its top-left texel is the
+  // smallest claim, and it is the cell's own.
+  if (rects.length === 0) {
+    mask[0] = 1;
+    rects.push({ x: 0, y: 0, w: 1, h: 1 });
+    minX = 0;
+    minY = 0;
+    maxX = 1;
+    maxY = 1;
+  }
+  let count = 0;
+  for (const v of mask) count += v;
+  return { width: cw, height: ch, mask, rects, bbox: { x: minX, y: minY, w: maxX - minX, h: maxY - minY }, whole: false, owned: count };
+}
+
+/** Whether two placed cells' protected sets share a texel. */
+function shapesMeet(a: CellShape, ax: number, ay: number, b: CellShape, bx: number, by: number): boolean {
+  const x0 = Math.max(ax, bx);
+  const y0 = Math.max(ay, by);
+  const x1 = Math.min(ax + a.width, bx + b.width);
+  const y1 = Math.min(ay + a.height, by + b.height);
+  for (let y = y0; y < y1; y++) {
+    const rowA = (y - ay) * a.width - ax;
+    const rowB = (y - by) * b.width - bx;
+    for (let x = x0; x < x1; x++) if (a.mask[rowA + x] === 1 && b.mask[rowB + x] === 1) return true;
+  }
+  return false;
+}
+
+/**
+ * MaxRects' split of every free rectangle `put` overlaps, then its prune —
+ * `packOnePage`'s, with one saving that changes no rectangle and no order: a
+ * free rectangle `put` did not touch is never tested for containment. Before
+ * the split no free rectangle lay inside another (the prune's own
+ * postcondition), and every new piece lies inside the rectangle it was cut
+ * from, so an untouched rectangle inside a new piece would have lain inside
+ * that one — so the test `packOnePage` makes for it always answers "not
+ * contained", and skipping it keeps the list exactly as that prune leaves it.
+ *
+ * ⭐ And a second (issue #1099, measured on production rigs): a free rectangle
+ * narrower than `minW` or shorter than `minH` is dropped. The caller passes the
+ * least bounding box of every cell the pass places, so such a rectangle can
+ * never be a candidate, and neither can any piece later cut from it (a piece
+ * lies inside the rectangle it was cut from); and a rectangle a dropped one
+ * contains is itself too small. So every rectangle that could ever be a
+ * candidate is kept, in the order the full prune keeps it, and the decisions
+ * are the same. What it removes is the staircase of slivers an irregular hull's
+ * bands cut along its edge: on a production-shaped set (30 regions, 200 to 900
+ * px, hulls near their rectangles, a `free` page about 2023x2046) the pack
+ * took 18.5 s with the slivers kept and spent 95 % of it in this prune.
+ */
+function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1): void {
+  const next: Rect[] = [];
+  const untouched: boolean[] = [];
+  for (const fr of free) {
+    const overlaps = put.x < fr.x + fr.w && put.x + put.w > fr.x && put.y < fr.y + fr.h && put.y + put.h > fr.y;
+    if (!overlaps) {
+      next.push(fr);
+      untouched.push(true);
+      continue;
+    }
+    if (put.x > fr.x) next.push({ x: fr.x, y: fr.y, w: put.x - fr.x, h: fr.h });
+    if (put.x + put.w < fr.x + fr.w) {
+      next.push({ x: put.x + put.w, y: fr.y, w: fr.x + fr.w - (put.x + put.w), h: fr.h });
+    }
+    if (put.y > fr.y) next.push({ x: fr.x, y: fr.y, w: fr.w, h: put.y - fr.y });
+    if (put.y + put.h < fr.y + fr.h) {
+      next.push({ x: fr.x, y: put.y + put.h, w: fr.w, h: fr.y + fr.h - (put.y + put.h) });
+    }
+    while (untouched.length < next.length) untouched.push(false);
+  }
+  const contains = (a: Rect, b: Rect): boolean => b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+  const usable = (r: Rect): boolean => r.w >= minW && r.h >= minH;
+  free.length = 0;
+  for (let i = 0; i < next.length; i++) {
+    if (!usable(next[i])) continue;
+    if (untouched[i]) {
+      free.push(next[i]);
+      continue;
+    }
+    let contained = false;
+    for (let j = 0; j < next.length && !contained; j++) {
+      if (i === j || !usable(next[j])) continue;
+      if (contains(next[j], next[i]) && (j < i || !contains(next[i], next[j]))) contained = true;
+    }
+    if (!contained) free.push(next[i]);
+  }
+}
+
+/**
+ * `packOnePage` with the free-space test replaced by the footprint test
+ * (issue #1099) — the placement `shape: 'polygon'` makes.
+ *
+ * What changes is what the free list is the free space OF. `packOnePage`
+ * splits it by each placed cell; this splits it by each placed cell's
+ * protected set rounded out to bands of `FOOTPRINT_BAND_ROWS` rows
+ * (`CellShape.rects`), so a free rectangle may lie inside an earlier cell
+ * wherever that cell's region draws nothing. The bands only make the free list
+ * coarser — a free rectangle is still clear of every owned texel — and they
+ * are what keeps it short: per row, a 60-part set of ellipse hulls packed on a
+ * `free` page in over ten minutes; in bands of 8 rows, in 14.9 s against the
+ * rectangle pass's 0.6 s, the same page — and with `splitFree`'s sliver drop
+ * beside them, in 5.8 s against 2.2 s (a loaded machine). Everything else is
+ * MaxRects as `packOnePage` runs it:
+ *
+ *   * a candidate is a free rectangle that holds the cell's protected set's
+ *     bounding box, anchored at its top-left corner — the cell placed so that
+ *     box's corner lands there, which may put the cell's own unclaimed
+ *     texels over a neighbour's — and whose cell stays on the page;
+ *   * the score is Best Short Side Fit over that box, with the same total
+ *     tie-break (smallest long-side leftover, then topmost, then leftmost);
+ *   * the free list is split and pruned by the same code (`splitFree`), once
+ *     per rectangle of the protected set.
+ *
+ * ⇒ For a cell whose set is the whole cell (`CellShape.whole`), the box IS the
+ * cell, the anchor IS the free rectangle's corner and the split IS the cell's:
+ * a pack with no mesh region makes `packOnePage`'s decisions one for one
+ * (`PK82`).
+ *
+ * 🔒 **The footprint test is then stated outright rather than trusted to the
+ * bookkeeping.** A candidate inside a free rectangle cannot meet a placed set,
+ * because no free rectangle overlaps one; every placement is nevertheless
+ * checked texel for texel against every set already placed, and a meeting is
+ * an internal error, not a placement.
+ *
+ * It terminates and is deterministic for `packOnePage`'s reasons: one pass
+ * over the cells in the caller's order, each over a finite free list, every
+ * choice made by a total order, and no input but the cells and the page.
+ */
+function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pageH: number, maxBottom = Infinity): Array<Rect | null> {
+  const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
+  const placed: Array<Rect | null> = [];
+  const owned: Array<{ shape: CellShape; x: number; y: number }> = [];
+  // The least box any cell of this pass needs — what a free rectangle must
+  // hold to be a candidate for anything (`splitFree`, the second saving).
+  let minW = Infinity;
+  let minH = Infinity;
+  for (const shape of shapes) {
+    minW = Math.min(minW, shape.bbox.w);
+    minH = Math.min(minH, shape.bbox.h);
+  }
+
+  for (const shape of shapes) {
+    const box = shape.bbox;
+    let best: Rect | null = null;
+    let bestShort = Infinity;
+    let bestLong = Infinity;
+    for (const fr of free) {
+      if (fr.w < box.w || fr.h < box.h) continue;
+      const x = fr.x - box.x;
+      const y = fr.y - box.y;
+      if (x < 0 || y < 0 || x + shape.width > pageW || y + shape.height > pageH) continue;
+      const leftoverW = fr.w - box.w;
+      const leftoverH = fr.h - box.h;
+      const short = Math.min(leftoverW, leftoverH);
+      const long = Math.max(leftoverW, leftoverH);
+      if (best !== null) {
+        if (short > bestShort) continue;
+        if (short === bestShort) {
+          if (long > bestLong) continue;
+          if (long === bestLong) {
+            if (fr.y > best.y) continue;
+            if (fr.y === best.y && fr.x >= best.x) continue;
+          }
+        }
+      }
+      best = fr;
+      bestShort = short;
+      bestLong = long;
+    }
+    if (best === null) {
+      placed.push(null);
+      continue;
+    }
+    const put: Rect = { x: best.x - box.x, y: best.y - box.y, w: shape.width, h: shape.height };
+    for (const other of owned) {
+      // Two cells that do not overlap cannot share a texel, and that answer
+      // takes no texel to read; only an overlap is scanned, and only over the
+      // overlap's own box (`shapesMeet`).
+      const apart =
+        put.x >= other.x + other.shape.width || other.x >= put.x + put.w || put.y >= other.y + other.shape.height || other.y >= put.y + put.h;
+      if (apart) continue;
+      if (shapesMeet(shape, put.x, put.y, other.shape, other.x, other.y)) {
+        throw new CompileError(
+          `internal: the footprint pass placed a ${shape.width}x${shape.height} cell at ${put.x},${put.y} over ` +
+            `the footprint of the ${other.shape.width}x${other.shape.height} cell at ${other.x},${other.y}`,
+        );
+      }
+    }
+    placed.push(put);
+    owned.push({ shape, x: put.x, y: put.y });
+    if (put.y + put.h > maxBottom) {
+      while (placed.length < shapes.length) placed.push(null);
+      return placed;
+    }
+    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH);
+  }
+  return placed;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isNumberList = (v: unknown): v is number[] => Array.isArray(v) && v.every((n) => typeof n === 'number' && Number.isFinite(n));
+
+/**
+ * What every packed region's attachments draw, read off the `skeleton.json` the
+ * build emitted — the footprints `shape: 'polygon'` packs by (issue #1099).
+ *
+ * The emitted text and not the model, because the footprint has to be what the
+ * runtime will sample: the mesh's UVs as the file writes them.
+ *
+ *   * The region an attachment samples is its `path`, else its `name`, else its
+ *     key — the runtime's rule — and a `sequence` samples `that + (start +
+ *     frame)` zero-padded to `digits`, for every frame (`start` 1 and `digits` 0
+ *     when the file omits them, the parser's defaults).
+ *   * A **region** attachment's footprint is its rectangle (`null` here).
+ *   * A **mesh**'s is the polygon of its first `hull` vertices, closed from the
+ *     last back to the first, and each of its triangles — the hull is the outer
+ *     loop of the triangles' union, so for a well-formed mesh the triangles add
+ *     nothing, and for one whose triangles reach outside its loop they protect
+ *     what is drawn. In the region's own texels: `(u · width, v · height)`.
+ *   * A **linked mesh** draws its source's geometry over its own region: the
+ *     mesh keyed `source` (`parent` before 4.3) in the slot `slot` names (its
+ *     own by default) of the skin `skin` names (`default` by default).
+ *   * A region with **any** rectangle use is a rectangle, and so is every
+ *     region whose drawing cannot be read as a polygon here — a mesh whose UVs
+ *     leave 0..1 (it samples outside its own rectangle, which only the
+ *     rectangle keeps the same), a hull or triangle list that does not index its
+ *     vertices, a link whose source is not a mesh. Several meshes over one
+ *     region give it the union of their polygons.
+ *
+ * Returns, per region name, its footprint, or `null` for a rectangle; a region
+ * no attachment names is absent, and the packer treats it as a rectangle.
+ * Nothing read here can be invented: every fallback is the rectangle, which is
+ * the footprint `shape: 'rect'` gives everything.
+ */
+export function packFootprints(
+  skeletonText: string,
+  sizeOf: (region: string) => { width: number; height: number } | undefined,
+): Map<string, PackFootprint | null> {
+  const doc: unknown = JSON.parse(skeletonText);
+  const skins = isObject(doc) && Array.isArray(doc.skins) ? doc.skins : [];
+  const tableOf = (skin: string, slot: string): Record<string, unknown> | undefined => {
+    for (const s of skins) {
+      if (!isObject(s) || s.name !== skin || !isObject(s.attachments)) continue;
+      const table = s.attachments[slot];
+      return isObject(table) ? table : undefined;
+    }
+    return undefined;
+  };
+  /** A mesh's UV polygons — hull loop, then triangles — or null when they cannot be read as polygons over its own rectangle. */
+  const uvPolygonsOf = (mesh: Record<string, unknown>): number[][] | null => {
+    const { uvs, hull, triangles } = mesh;
+    if (!isNumberList(uvs) || uvs.length % 2 !== 0 || typeof hull !== 'number' || !isNumberList(triangles)) return null;
+    const vertices = uvs.length / 2;
+    if (!Number.isInteger(hull) || hull < 3 || hull > vertices || triangles.length % 3 !== 0) return null;
+    if (uvs.some((n) => n < 0 || n > 1)) return null;
+    if (triangles.some((t) => !Number.isInteger(t) || t < 0 || t >= vertices)) return null;
+    const out: number[][] = [uvs.slice(0, 2 * hull)];
+    for (let t = 0; t < triangles.length; t += 3) {
+      const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+      out.push([uvs[2 * a], uvs[2 * a + 1], uvs[2 * b], uvs[2 * b + 1], uvs[2 * c], uvs[2 * c + 1]]);
+    }
+    return out;
+  };
+  const uses = new Map<string, number[][][] | null>();
+  const use = (region: string, polygons: number[][] | null): void => {
+    const held = uses.get(region);
+    if (held === null) return;
+    if (polygons === null) uses.set(region, null);
+    else if (held === undefined) uses.set(region, [polygons]);
+    else held.push(polygons);
+  };
+  for (const s of skins) {
+    if (!isObject(s) || !isObject(s.attachments)) continue;
+    for (const [slot, table] of Object.entries(s.attachments)) {
+      if (!isObject(table)) continue;
+      for (const [key, att] of Object.entries(table)) {
+        if (!isObject(att)) continue;
+        const type = att.type ?? 'region';
+        if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
+        const base = typeof att.path === 'string' ? att.path : typeof att.name === 'string' ? att.name : key;
+        const regions: string[] = [];
+        const seq = att.sequence;
+        if (isObject(seq) && typeof seq.count === 'number') {
+          const start = typeof seq.start === 'number' ? seq.start : 1;
+          const digits = typeof seq.digits === 'number' ? seq.digits : 0;
+          for (let f = 0; f < seq.count; f++) regions.push(base + String(start + f).padStart(digits, '0'));
+        } else regions.push(base);
+        let polygons: number[][] | null = null;
+        if (type === 'mesh') polygons = uvPolygonsOf(att);
+        else if (type === 'linkedmesh') {
+          const sourceKey = typeof att.source === 'string' ? att.source : typeof att.parent === 'string' ? att.parent : null;
+          const source =
+            sourceKey === null
+              ? undefined
+              : tableOf(typeof att.skin === 'string' ? att.skin : 'default', typeof att.slot === 'string' ? att.slot : slot)?.[sourceKey];
+          polygons = isObject(source) && source.type === 'mesh' ? uvPolygonsOf(source) : null;
+        }
+        for (const region of regions) use(region, polygons);
+      }
+    }
+  }
+  const out = new Map<string, PackFootprint | null>();
+  for (const [region, held] of uses) {
+    const size = sizeOf(region);
+    if (held === null || size === undefined) {
+      out.set(region, null);
+      continue;
+    }
+    const polygons = held.flat().map((poly) => poly.map((n, i) => n * (i % 2 === 0 ? size.width : size.height)));
+    out.set(region, { polygons });
+  }
+  return out;
+}
+
+/**
+ * Copy the texels a region owns (`CellShape.mask`) onto a page, with the
+ * values `extrudeCell` gives them — the second of `shape: 'polygon'`'s two
+ * drawing passes (see `packAtlas`).
+ */
+function extrudeOwned(page: Plate, source: Plate, cellX: number, cellY: number, padding: number, shape: CellShape): void {
+  const w = source.width;
+  const h = source.height;
+  const dst = page.data;
+  const src = source.data;
+  for (let cy = 0; cy < shape.height; cy++) {
+    const sy = Math.max(0, Math.min(h - 1, cy - padding));
+    const srcRow = sy * w * 4;
+    const dstRow = (cellY + cy) * page.width * 4;
+    for (let cx = 0; cx < shape.width; cx++) {
+      if (shape.mask[cy * shape.width + cx] === 0) continue;
+      const sx = Math.max(0, Math.min(w - 1, cx - padding));
+      const s = srcRow + sx * 4;
+      const d = dstRow + (cellX + cx) * 4;
+      dst[d] = src[s];
+      dst[d + 1] = src[s + 1];
+      dst[d + 2] = src[s + 2];
+      dst[d + 3] = src[s + 3];
+    }
+  }
+}
+
+/**
  * The packing order, and it is stated rather than inherited.
  *
  * Descending by long side then by area is what makes a shelf packer behave; the
@@ -1144,6 +1782,36 @@ function extrudeCell(page: Plate, source: Plate, cellX: number, cellY: number, p
  * against the loose build. It does not go past it, and no region's bytes change
  * (`PK02`'s lift-back holds under both).
  *
+ * ## `shape: 'polygon'` — rectangles that overlap where nothing is drawn (issue #1099)
+ *
+ * Opt-in, and the default stays `rect`, which is this function exactly as it
+ * was before the option: under `rect` no footprint is computed and every pass
+ * is `packOnePage`. Under `polygon` every input carries the footprint its
+ * attachments draw (`packFootprints`: a mesh's emitted hull, a region
+ * attachment's rectangle), and:
+ *
+ *   * **what a cell owns** is `footprintCell`'s set — the footprint grown by the
+ *     padding, clipped to the cell; two cells may overlap when they own no texel
+ *     in common, which between two rectangles is `rect`'s rule and between any
+ *     two footprints keeps them `2 · padding` apart (`CellShape`);
+ *   * **the placement** is `packOnePageByFootprint`, MaxRects with the free list
+ *     split by what each cell owns, run beside the rectangle pass on every page
+ *     tried and kept only when it is better (`placePass`) — so a `polygon` page
+ *     is never larger than the `rect` page, and a set with no mesh footprint is
+ *     placed exactly as under `rect` (`PK82`);
+ *   * **the pixels** are drawn in two passes: every cell whole in packing order,
+ *     as under `rect`, then every region's owned texels again with its own
+ *     values. The owned sets are disjoint, so the second pass's order decides
+ *     nothing and every texel a region can sample is its own (`PK79`); a texel
+ *     nobody owns carries the last cell drawn over it, which nothing samples.
+ *
+ * What it costs is measured, not conceded: a region that moves samples through
+ * a different `x / pageWidth`, so on the two gallery rigs whose pack moved,
+ * 207 and 36 channel samples differ from the `rect` render, every one by 1 —
+ * the bit two `rect` packs of the same rig differ by when one is `pot` and one
+ * `free` (155 and 44). `--page-edges`, the width search and the spill rule are
+ * unchanged.
+ *
  * ⚠️ `pot` is not the smaller answer's poor relation, and its search was never
  * "double until it fits": it tries every power-of-two pair in order of area.
  * On both rigs above the cells' own area (1,206,755 and 540,793 texels at
@@ -1157,6 +1825,10 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   const pageEdges = opts.pageEdges ?? DEFAULT_PAGE_EDGES;
   if (!PAGE_EDGES.includes(pageEdges)) {
     throw new CompileError(`--page-edges ${JSON.stringify(String(opts.pageEdges))}; known values: ${PAGE_EDGES.join(', ')}`);
+  }
+  const shape = opts.shape ?? DEFAULT_PACK_SHAPE;
+  if (!PACK_SHAPES.includes(shape)) {
+    throw new CompileError(`--pack-shape ${JSON.stringify(String(opts.shape))}; known values: ${PACK_SHAPES.join(', ')}`);
   }
   if (!Number.isInteger(pageSize) || pageSize < 1) {
     throw new CompileError(`--page-size must be a positive integer, got ${String(opts.pageSize)}`);
@@ -1181,7 +1853,12 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     );
   }
 
-  const single = smallestPageFor(cells, maxEdge, pageEdges);
+  // `polygon` only: every cell's protected set. Under `rect` there are none and
+  // every pass below is the rectangle pass, the code it was before #1099.
+  const shapes =
+    shape === 'polygon' ? sorted.map((input) => footprintCell(input.width, input.height, padding, input.footprint)) : undefined;
+
+  const single = smallestPageFor(cells, maxEdge, pageEdges, shapes);
 
   /** page index -> the placements on it, in packing order. */
   const perPage: Placement[][] = [];
@@ -1208,15 +1885,18 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     // what makes the boundary deterministic and independent of the shrink below
     // — and parts are taken in packing order, whatever will not fit the current
     // page opening the next one.
-    let remaining = sorted.map((input, i) => ({ input, cell: cells[i] }));
+    let remaining = sorted.map((input, i) => ({ input, cell: cells[i], shape: shapes?.[i] }));
+    const shapesOf = (list: typeof remaining): CellShape[] | undefined =>
+      shapes === undefined ? undefined : list.map((r) => r.shape ?? footprintCell(r.input.width, r.input.height, padding));
     while (remaining.length > 0) {
       const pageIndex = perPage.length;
-      const attempt = packOnePage(
+      const attempt = placePass(
         remaining.map((r) => r.cell),
+        shapesOf(remaining),
         maxEdge,
         maxEdge,
       );
-      const onPage: Array<{ input: PackInput; cell: { w: number; h: number } }> = [];
+      const onPage: typeof remaining = [];
       const leftOver: typeof remaining = [];
       attempt.forEach((rect, i) => {
         if (rect === null) leftOver.push(remaining[i]);
@@ -1241,6 +1921,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
         onPage.map((r) => r.cell),
         maxEdge,
         pageEdges,
+        shapesOf(onPage),
       );
       if (shrunk === null) {
         // Unreachable for the same reason as the stall above: these cells were
@@ -1269,12 +1950,16 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   // Draw. Reading each source once, in packing order, keeps the decode count at
   // one per part whatever the page layout turned out to be.
   const byRegion = new Map(sorted.map((input) => [input.region, input]));
+  const shapeByRegion = new Map<string, CellShape>();
+  if (shapes !== undefined) sorted.forEach((input, i) => shapeByRegion.set(input.region, shapes[i]));
   const pages: PackedPage[] = [];
   const emitPages: EmitPage[] = [];
   perPage.forEach((onPage, index) => {
     const { width: pageW, height: pageH } = pageSizes[index];
     const plate = new Plate(pageW, pageH);
     let covered = 0;
+    /** `polygon` only: each region's source and protected set, for the second pass. */
+    const owners: Array<{ source: Plate; place: Placement; shape: CellShape }> = [];
     for (const place of onPage) {
       const input = byRegion.get(place.region)!;
       const source = readPlate(input.absPath);
@@ -1289,6 +1974,22 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
       }
       extrudeCell(plate, source, place.x - padding, place.y - padding, padding);
       covered += place.width * place.height;
+      const owned = shapeByRegion.get(place.region);
+      if (owned !== undefined) owners.push({ source, place, shape: owned });
+    }
+    // `polygon`'s second pass. The first wrote every cell whole, in packing
+    // order, so where two cells overlap the later one's texels lie on top; this
+    // one writes each region's protected set again, with its own values. The
+    // sets are pairwise disjoint (the footprint test), so the order of this pass
+    // decides nothing, and every texel a region owns ends as its own: a texel
+    // under some region's footprint carries that region's value, and a texel
+    // under none carries the last cell drawn over it.
+    // Every region, a whole cell's included: a rectangle's texels are what a
+    // later mesh's cell is most likely to have been drawn over. A page whose
+    // every cell is whole had no overlap to undo and is left as the first pass
+    // drew it, which is `rect`'s page.
+    if (owners.some((o) => !o.shape.whole)) {
+      for (const { source, place, shape: owned } of owners) extrudeOwned(plate, source, place.x - padding, place.y - padding, padding, owned);
     }
     const name = index === 0 ? `${stem}.png` : `${stem}${index + 1}.png`;
     pages.push({ name, width: pageW, height: pageH, plate, occupancy: covered / (pageW * pageH) });
@@ -1318,7 +2019,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
     });
   });
 
-  return { pages, placements, atlasText: writeAtlasText(emitPages), padding };
+  return { pages, placements, atlasText: writeAtlasText(emitPages), padding, shape };
 }
 
 // ---------------------------------------------------------------------------
