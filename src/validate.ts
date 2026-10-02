@@ -85,6 +85,7 @@ import type { SlotColourFacts, SlotTimelines } from './assertions/facts/slot_col
 import { a03RegionWidthHeightFinite } from './assertions/bodies/a03.ts';
 import { a11NoClippingAttachments } from './assertions/bodies/a11.ts';
 import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
+import { a18DeterministicEmit } from './assertions/bodies/a18.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
 import { attachmentRegionLookups, type AttachmentRegionJoin } from './assertions/region_lookups.ts';
 import { attachmentRegionJoins } from './region_joins.ts';
@@ -182,20 +183,9 @@ export type { Failure } from './assertions/harness.ts';
  */
 export type ValidateProfile = AssertionProfile;
 
-export const VALIDATE_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
-
-/**
- * What the CLI uses when `--profile` is absent — and ONLY the CLI. This is not
- * `validate()`'s default; that function has none (above).
- *
- * `spine` since issue #221. The published package's pitch is "the output imports
- * into the Spine editor", which is exactly the question `spine` asks, and a
- * stranger's first build was being judged instead against one renderer's policy
- * and one project's canvas budget — 14 rules they have no stake in, with the
- * escape hatch documented only in prose. Defaults beat prose. `spine-html` is
- * still one flag away, and every report names the profile that judged it.
- */
-export const CLI_DEFAULT_PROFILE: ValidateProfile = 'spine';
+// The profiles, the CLI's default and the report printer — `./assertions/report.ts` since issue #1060, so the
+// entry that links none of spine-core gates and prints with them; every one is re-exported from here.
+export { CLI_DEFAULT_PROFILE, reportLines, VALIDATE_PROFILES } from './assertions/report.ts';
 
 // What kind of rule each assertion is — `./assertions/kinds.ts` since issue
 // #1025, where the model side's harness reads the same table.
@@ -840,19 +830,6 @@ export function timelineAddCells(data: ReturnType<SkeletonJson['readSkeletonData
     });
   }
   return cells;
-}
-
-/**
- * Where two texts first differ, as A18 names it: the 1-based line and each
- * side's line, trimmed and cut to 120 characters.
- */
-function firstDifferingLine(first: string, second: string): string {
-  const a = first.split('\n');
-  const b = second.split('\n');
-  let i = 0;
-  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
-  const cut = (line: string | undefined): string => (line === undefined ? '(end of text)' : JSON.stringify(line.trim().slice(0, 120)));
-  return `${i + 1}: ${cut(a[i])} first, ${cut(b[i])} second`;
 }
 
 /**
@@ -3348,28 +3325,19 @@ export function validate(input: ValidateInput): ValidateReport {
   check('A30_STROKE_WITHIN_CAP_CONTAINMENT', () => a30StrokeWithinCapContainment(verdicts, rawBoneTimelines(raw), input));
 
   // --- A18: determinism ----------------------------------------------------
+  // The body is `./assertions/bodies/a18.ts` (issue #1060): the model document's clause, which the model side
+  // runs too, and the Spine pair's two clauses handed to it as this side's encoding findings, in their order.
+  // Same vacuous-pass trap as A09: re-gating artifacts already on disk hands this assertion no second compile.
   check('A18_DETERMINISTIC_EMIT', () => {
-    // Same vacuous-pass trap as A09: re-gating artifacts already on disk hands
-    // this assertion no second compile, and there is nothing determinate about
-    // a comparison that never ran.
-    if (!input.reEmit) {
-      return skip('A18_DETERMINISTIC_EMIT', 'no second compile to compare against (re-gating artifacts on disk)');
-    }
-    if (input.reEmit.skeletonText !== input.skeletonText) {
-      fail('A18_DETERMINISTIC_EMIT', 'recompiling produced a different skeleton.json');
-    }
-    if (input.reEmit.atlasText !== input.atlasText) {
-      fail('A18_DETERMINISTIC_EMIT', 'recompiling produced a different skeleton.atlas');
-    }
-    // The model document is compared like the Spine pair (issue #922): it is
-    // written beside them, and a map iterated in an order nothing fixed would
-    // reach it before it reached either of them — the document writes every
-    // `Map` of the model as an array in the map's order.
-    if (input.modelText === undefined) {
-      fail('A18_DETERMINISTIC_EMIT', 'a second compile was handed over with no first model document to compare its skeleton.model.json against');
-    } else if (input.reEmit.modelText !== input.modelText) {
-      fail('A18_DETERMINISTIC_EMIT', `recompiling produced a different skeleton.model.json (first differing line ${firstDifferingLine(input.modelText, input.reEmit.modelText)})`);
-    }
+    const again = input.reEmit;
+    const encoding =
+      again === undefined
+        ? []
+        : [
+            ...(again.skeletonText !== input.skeletonText ? ['recompiling produced a different skeleton.json'] : []),
+            ...(again.atlasText !== input.atlasText ? ['recompiling produced a different skeleton.atlas'] : []),
+          ];
+    a18DeterministicEmit(verdicts, { again: again !== undefined, encoding, first: input.modelText, second: again?.modelText ?? '' });
   });
 
   // --- every assertion leaves a row ----------------------------------------
@@ -3442,44 +3410,6 @@ function meshWeightsOf(mesh: MeshAttachment): Array<Array<{ bone: number; weight
     out.push(vertex);
   }
   return out;
-}
-
-export function reportLines(report: ValidateReport): string[] {
-  const lines: string[] = [];
-  // The profile goes FIRST and names what it left out. A report that says
-  // "green" without saying which rulebook produced it is the one thing this
-  // switch could make worse than no switch: `--profile spine` green means
-  // "valid Spine", never "passes the renderer policy".
-  const renderer = report.profileSkipped.filter((p) => p.kind === 'renderer').length;
-  const archetype = report.profileSkipped.filter((p) => p.kind === 'archetype').length;
-  lines.push(
-    report.profileSkipped.length === 0
-      ? `  ..    profile ${report.profile} — every assertion applies`
-      : `  ..    profile ${report.profile} — ${renderer} renderer-policy and ${archetype} archetype assertion(s) do not apply`,
-  );
-  for (const name of report.passed) lines.push(`  PASS  ${name}`);
-  for (const s of report.skipped) lines.push(`  SKIP  ${s.assertion}: ${s.reason}`);
-  for (const p of report.profileSkipped) lines.push(`  PROF  ${p.assertion}: ${p.kind} rule, not in profile "${report.profile}"`);
-  for (const f of report.failures) lines.push(`  FAIL  ${f.assertion}: ${f.detail}`);
-  // How many of them MEASURED anything, which is the figure the rows above do
-  // not hand a reader (issue #568). Counting `PASS` lines answers a different
-  // question — before the sweep that closed #568 a run could print seven of
-  // them over a candidate on which five rules had not executed at all.
-  //
-  // ⚠️ Every figure here is a count of ASSERTIONS and not of rows, which is why
-  // the failed side is a Set: `fail()` is called once per finding, so one
-  // assertion can print six `FAIL` lines, and a line-count would report 47 of
-  // 42. The four buckets partition `ASSERTION_NAMES`, so the total is derived
-  // by adding them rather than stated — a `42` written here would be the one
-  // number in the report that no run could contradict.
-  const failed = new Set(report.failures.map((f) => f.assertion));
-  const measured = report.passed.length + failed.size;
-  const total = measured + report.skipped.length + report.profileSkipped.length;
-  lines.push(
-    `  ..    ${total} assertions: ${measured} measured (${report.passed.length} passed, ${failed.size} failed), ` +
-      `${report.skipped.length} skipped, ${report.profileSkipped.length} not in profile "${report.profile}"`,
-  );
-  return lines;
 }
 
 export function atlasDirOf(atlasPath: string): string {

@@ -8,24 +8,20 @@
  * module (`SPINE_COMMAND_RUNS`); an entry that does not links nothing of the
  * runtime, and refuses these commands naming what each needs it for.
  */
-import { type AtlasRegion, DEFAULT_PADDING, DEFAULT_PAGE_EDGES, DEFAULT_PAGE_SIZE, packAtlas, PAGE_EDGES, type PageEdges, pageFootprint } from '../atlas.ts';
 import { type BallotCandidateInput, type BallotInput, buildBallot, ledgerLineText, MAX_CANDIDATES, MIN_CANDIDATES, parseLedger, readBallotManifest, resultFilename, TIE, verifyResult, VOTE_RULES } from '../ballot.ts';
 import { boneDistance, boneDistLines, type BoneDistReport } from '../bonedist.ts';
 import { IDENTITY_CORRESPONDENCE } from '../correspondence.ts';
 import { checkLines, type CheckReport } from '../check.ts';
-import { compile, type CompileOptions } from '../compile.ts';
+import { compile } from '../compile.ts';
 import { diffLines, type DiffReport, diffSkeletons, reportedFigures, sectionFigures } from '../diff.ts';
-import { copyAtlasPages, plannedPageCopies } from '../emit.ts';
 import { findRung, RUNG_IDS, type RungSkeleton } from '../ladder.ts';
-import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { buildPreview, buildPreviewPanes, PLAYER_LINE, type PreviewGate, type PreviewInput, type PreviewPage } from '../preview.ts';
 import { atlasPageNames } from '../render.ts';
 import { BoneDistError } from '../bonedist.ts';
-import { type CompileResult } from '../types.ts';
-import { assertionCountForProfile, CLI_DEFAULT_PROFILE, reportLines, validate, VALIDATE_PROFILES, type ValidateProfile } from '../validate.ts';
-import { type CliRefusal, type CommandRun, DEFAULT_BALLOT, dropLine, PACKAGE_ROOT, DEFAULT_LEDGER, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, parseJsonNamed, readAnimationFlag, readJsonFile, readPackageMeta, readSkeletonText, readVersion, resolveArtifacts, resolveCut, resolveViewable, runCheck, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
+import { assertionCountForProfile, CLI_DEFAULT_PROFILE, reportLines, validate, type ValidateProfile } from '../validate.ts';
+import { type CliRefusal, type CommandRun, DEFAULT_BALLOT, PACKAGE_ROOT, DEFAULT_LEDGER, parseJsonNamed, readAnimationFlag, readJsonFile, readPackageMeta, readSkeletonText, readVersion, resolveBuild, resolveCut, resolveViewable, runCheck, spinePairOf, type BuildGate, runBuild, readProfile, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 
 function repositoryUrl(): string {
@@ -39,358 +35,36 @@ function repositoryUrl(): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Read `--profile`, defaulting to `spine` — see `CLI_DEFAULT_PROFILE`.
- *
- * An unknown name is a usage error rather than a silent fallback, and that
- * matters in both directions: a typo used to re-apply the strictest rulebook to
- * data the caller was trying to exempt, and it would now drop the policy layer
- * from a caller who typed `--profile spine-htlm` and believes they asked for it.
- * Neither is something to discover from a green.
+ * `cli.ts build`'s gate (issue #1060, `BuildGate`): the round trip through
+ * spine-core and every named assertion — the gate `build` has always run,
+ * with the arguments it has always been handed, and the same lines.
  */
-function readProfile(flags: Record<string, string>): ValidateProfile {
-  const raw = flags.profile;
-  if (raw === undefined) return CLI_DEFAULT_PROFILE;
-  const found = VALIDATE_PROFILES.find((p) => p === raw);
-  if (!found) throw new UsageError(`--profile ${JSON.stringify(raw)}; known profiles: ${VALIDATE_PROFILES.join(', ')}`);
-  return found;
-}
-
-/**
- * An atlas text to gate INSTEAD of the compile's own, with the second, independent
- * emit A18 compares it against.
- *
- * `--pack` is the only caller. A packed build is gated twice on purpose — once as
- * compiled (which is the gate that reads the loose PNGs, so `A06`'s size-vs-file
- * clause still measures the art R5 measures) and once as packed (which is the pair
- * that actually ships). Handing the second pass its texts rather than re-deriving
- * them here keeps `runGate` ignorant of what a pack is.
- */
-interface AtlasOverride {
-  text: string;
-  again: string;
-}
-
-function runGate(
-  result: CompileResult,
-  modelText: string,
-  opts: CompileOptions,
-  profile: ValidateProfile,
-  /** The atlas text `build` writes for a compile's own — `--copy-images` renames the pages — which the second compile's document is spelled from, as `modelText` was (issue #1016). */
-  written: (atlasText: string) => string,
-  atlas?: AtlasOverride,
-): number {
-  // The determinism check compares a second, independent compile — its model
-  // document included, which is the text `build` writes beside the pair, and
-  // which states where each region sits in the atlas written with it (`pages`,
-  // issue #1016): so the second document is spelled from the second compile's
-  // atlas as it would be written, or from the second, independent pack.
-  const again = compile(opts);
-  const report = validate({
-    skeletonText: result.skeletonText,
-    atlasText: atlas ? atlas.text : result.atlasText,
-    atlasDir: opts.outDir,
-    declaredDurations: result.declaredDurations,
-    modelText,
-    reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model, again.skeletonText, atlas ? atlas.again : written(again.atlasText)) },
-    rig: result.rig,
-    profile,
-  });
-  for (const line of reportLines(report)) console.log(line);
-  console.log(
-    `  ..    ${Object.entries(report.stats)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(' ')}`,
-  );
-  return report.failures.length;
-}
-
-/**
- * Read one non-negative integer flag, or its default.
- *
- * A usage error rather than a `NaN` that reaches the packer: `--padding two`
- * would otherwise place every region at NaN and write a blank page, which is a
- * green build and an empty picture.
- */
-function readIntFlag(flags: Record<string, string>, name: string, fallback: number): number {
-  const raw = flags[name];
-  if (raw === undefined) return fallback;
-  if (!/^\d+$/.test(raw)) throw new UsageError(`--${name} takes a non-negative integer, got ${JSON.stringify(raw)}`);
-  return Number(raw);
-}
-
-/**
- * Read `--page-edges`, or its default — `pot`.
- *
- * An unknown value is a usage error for `readProfile`'s reason: a typo that fell
- * back to `pot` would hand the caller who asked for the smaller page the bigger
- * one, green, and say nothing.
- */
-function readPageEdges(flags: Record<string, string>): PageEdges {
-  const raw = flags['page-edges'];
-  if (raw === undefined) return DEFAULT_PAGE_EDGES;
-  const found = PAGE_EDGES.find((e) => e === raw);
-  if (!found) throw new UsageError(`--page-edges ${JSON.stringify(raw)}; known values: ${PAGE_EDGES.join(', ')}`);
-  return found;
-}
-
-/**
- * The rectangle a region occupies **on its page**, for a line that has already
- * said where the region is — and the empty string where the page rectangle is
- * the one `bounds:` already states.
- *
- * ## The fact no surface an author reads carried (issue #718)
- *
- * The atlas line beside this clause prints the DRAWING's size, because that is
- * what an attachment's width and height mean. A packer that turned the drawing a
- * quarter to fit it wrote `bounds:` in the drawing's orientation too. So an
- * author holding the pack and the build report had neither end of the rectangle
- * they have to cut out of the page to measure a part against a rendered frame —
- * and the one place rigc printed it was `A06`'s overlap text, reachable only
- * under `--profile spine-html`. The knowledge was in the tree the whole time:
- * `pageFootprint` has derived this rectangle for every reader of it since issue
- * #579, and nothing an author reads said it.
- *
- * ⚠️ **The condition is `pageFootprint`'s own answer, not a second reading of
- * `degrees`.** Re-spelling that predicate here is the exact duplication #579 was
- * filed on — four readers derived this rectangle and two derived it wrongly — so
- * the clause asks the function whether its answer differs from the `bounds:`
- * line, and prints only then.
- *
- * 🔸 A consequence worth stating rather than leaving to be discovered: a region
- * whose KEPT rectangle is square is silent here, because a quarter turn leaves
- * its footprint the same two numbers and there is nothing the pack does not
- * already say. The general rule — `bounds` is the unturned size, the footprint
- * is its transpose at `rotate: 90` and `rotate: 270`, and which way to turn the
- * rectangle to recover the drawing — belongs to an author's own reading and is
- * stated in `docs/AUTHORING.md` §0.2, which holds for every region including
- * that one.
- */
-function pageRectangle(region: AtlasRegion): string {
-  const foot = pageFootprint(region);
-  return foot.width === region.width && foot.height === region.height
-    ? ''
-    : `, occupies ${foot.width}x${foot.height}`;
-}
+const ROUND_TRIP_GATE: BuildGate = {
+  heading: (profile) => `  ..    validate (spine-core round trip + machine assertions, profile ${profile})`,
+  run: ({ result, atlasText, atlasDir, modelText, reEmit, profile }) => {
+    const report = validate({
+      skeletonText: result.skeletonText,
+      atlasText,
+      atlasDir,
+      declaredDurations: result.declaredDurations,
+      modelText,
+      reEmit,
+      rig: result.rig,
+      profile,
+    });
+    for (const line of reportLines(report)) console.log(line);
+    console.log(
+      `  ..    ${Object.entries(report.stats)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')}`,
+    );
+    return report.failures.length;
+  },
+  look: (outDir) => `rigc: look at it: rigc preview --candidate ${outDir}`,
+};
 
 export function cmdBuild(flags: Record<string, string>): void {
-  const { label, opts } = resolveCut(flags);
-  const profile = readProfile(flags);
-  const packing = flags.pack !== undefined;
-  // Two combinations are refused rather than silently resolved, because in each
-  // one the two flags disagree about a single question and there is no answer
-  // that is not a guess about which the caller meant. (There were three until
-  // issue #266 — see the note below the second.)
-  if (packing && opts.atlasInPath !== undefined) {
-    throw new UsageError(
-      '--pack and --atlas-in are opposite directions through the same door: --pack MAKES an atlas out of the ' +
-        'loose parts, --atlas-in resolves the parts against one somebody already made. Pick one',
-    );
-  }
-  if (packing && flags['copy-images'] !== undefined) {
-    throw new UsageError(
-      '--pack already writes self-contained pages into --out (that is what packing is), and --copy-images copies ' +
-        'the loose part PNGs, which a packed atlas does not reference. Drop --copy-images',
-    );
-  }
-  // The copy itself happens after the gate (below). The header has to know NOW,
-  // because the skeleton text the gate reads is the skeleton text that is written
-  // — `skeleton.images` says where the parts will be (issue #370).
-  if (flags['copy-images'] !== undefined) opts.copyImages = true;
-  // `--pack --profile spine-html` used to be the third refusal here, because
-  // A06's coverage clause was "one part per page" flat and a legitimate pack
-  // arrived at the gate reading as a defect. Since issue #266's second follow-up
-  // that clause is "one part per page OR a tiling page", so the combination is
-  // now a build like any other — and it is the only one that puts the renderer's
-  // own rulebook over shared-page sampling.
-  if (!packing) {
-    for (const name of ['page-size', 'padding', 'page-edges'] as const) {
-      if (flags[name] !== undefined) throw new UsageError(`--${name} only means something with --pack`);
-    }
-  }
-  console.log(`rigc build ${label}`);
-  // Named explicitly and on their own lines rather than folded into the header
-  // above: with two input files, a header that names only one of them (the rig,
-  // historically) reads as though it were the one at fault whenever the error
-  // that follows actually comes from the other.
-  console.log(`  ..    rig    ${opts.rigPath}`);
-  console.log(`  ..    motion ${opts.motionPath}`);
-  const result = compile(opts);
-
-  if (opts.atlasInPath !== undefined) console.log(`  ..    atlas-in ${opts.atlasInPath}`);
-  console.log(`  ..    ${result.images.length} part page(s):`);
-  for (const img of result.images) {
-    // An imported part says where on the page it came from, because "resolved
-    // against a region" is the claim `--atlas-in` makes and a line that only
-    // repeated the page filename would look identical for all of them. A page
-    // that declares a `scale:` also says so and shows the texels it was read
-    // from: the size on the left is the DRAWING's and the rectangle is the
-    // pack's, and issue #267 is the report that printed the second as the first.
-    //
-    // `pageRectangle` closes the line's last silence (issue #718), and it is
-    // placed LAST rather than beside the turn it follows from, which is where
-    // the card put it. The two clauses collide nowhere else, and the collision
-    // is real: `scale 0.5 (373x106 texels)` is itself a size, so
-    // `rotate 90, occupies 106x373 scale 0.5 (…)` reads as though the footprint
-    // were the scaled quantity. As a trailing clause of the whole location
-    // phrase it is unambiguous with a `scale:` line and identical to the card's
-    // wording without one, which is every pack that has no `scale:` to state.
-    const where =
-      img.atlas === undefined
-        ? img.page
-        : `${img.page} @ ${img.atlas.x},${img.atlas.y}${img.atlas.degrees ? ` rotate ${img.atlas.degrees}` : ''}` +
-          (img.atlasScale === undefined
-            ? ''
-            : ` scale ${img.atlasScale} (${img.atlas.originalWidth}x${img.atlas.originalHeight} texels)`) +
-          pageRectangle(img.atlas);
-    console.log(`  ..      ${img.region.padEnd(24)} ${img.width}x${img.height}  <- ${where}`);
-  }
-  for (const d of result.droppedStates) console.log(dropLine(d));
-  // "The optional slots are optional" is a claim about this code path, so this
-  // code path says which ones it left out rather than being silently right.
-  for (const a of result.absentParts) {
-    console.log(`  ABSENT ${a.slot}: ${a.why} — slot not emitted`);
-  }
-  for (const m of result.meshes) {
-    console.log(
-      `  MESH  ${m.slot.padEnd(12)} ${m.kind.padEnd(8)} ${m.vertices} vertices / ${m.triangles} triangles  ` +
-        `${meshBudget(result.rig)}  bones=[${m.bones.join(', ')}]  attachments=[${m.attachments.join(', ')}]${meshFit(m)}` +
-        meshDepthNote(m) +
-        meshInfluenceNote(m),
-    );
-  }
-  for (const ph of result.physics) {
-    console.log(
-      `  PHYS  ${ph.name.padEnd(12)} bone=${ph.bone.padEnd(14)} components=[${ph.components.join(', ')}] ` +
-        `mix=${ph.mix}${ph.drivesMesh ? '  <- drives a mesh: its canvas re-rasterises while the spring settles' : ''}`,
-    );
-  }
-
-  // The model's document is spelled before the gate, so the text A18 compares
-  // is the text written, and a model the document cannot carry is refused
-  // before anything is (issue #922). It states where each region sits in the
-  // atlas written beside it (`pages`, issue #1016), so it is spelled from that
-  // atlas: under `--copy-images` the text with the copies' page names, planned
-  // here from the text alone (`plannedPageCopies`) and copied after the gate.
-  // Under `--pack` the pages move again after this gate, and the document
-  // written is the one the packed gate below spells and compares.
-  const copying = flags['copy-images'] !== undefined;
-  const writtenAtlas = (atlasText: string): string => (copying ? plannedPageCopies(atlasText, opts.outDir).atlasText : atlasText);
-  let modelText = modelDocument(result.model, result.skeletonText, writtenAtlas(result.atlasText));
-  console.log(`  ..    validate (spine-core round trip + machine assertions, profile ${profile})`);
-  const failures = runGate(result, modelText, opts, profile, writtenAtlas);
-  if (failures > 0) {
-    console.error(`rigc: ${failures} assertion(s) failed — nothing written`);
-    process.exit(1);
-  }
-
-  mkdirSync(opts.outDir, { recursive: true });
-
-  // `--copy-images`: `--out` is otherwise NOT self-contained — a page's default
-  // path is relative to the source art (often `../parts/foo.png`), which is
-  // correct for a build sitting beside the project it came from and breaks the
-  // moment the directory is zipped, committed or moved on its own (issue #217).
-  // Opt-in only: the default stays exactly what it has always been.
-  //
-  // What is copied is what the ATLAS names, not what the image list holds: under
-  // `--atlas-in` the two are different lists, and rebuilding the text from the
-  // second wrote a file the pack never contained — zero bytes for a rig that
-  // declares no parts, one fabricated page per part for a rig that does, both of
-  // them green here because the gate above had already read the compile's own
-  // text (issue #693, `src/emit.ts`).
-  let atlasText = result.atlasText;
-  if (flags['copy-images'] !== undefined) {
-    const copied = copyAtlasPages(atlasText, opts.outDir);
-    // The document's pages were spelled from the plan; the copy is held to it before anything of the pair is written.
-    if (copied.atlasText !== writtenAtlas(result.atlasText)) {
-      throw new Error(`internal: --copy-images wrote an atlas whose page names are not the ones ${MODEL_DOCUMENT_FILE} was spelled with — nothing of the pair was written`);
-    }
-    atlasText = copied.atlasText;
-    console.log(`  ..    copy-images: ${copied.pages.length} page(s) copied into ${opts.outDir}`);
-    for (const p of copied.pages) {
-      const note = p.to === basename(p.from) ? '' : '  (renamed — basename collision)';
-      console.log(`  ..      ${p.to.padEnd(24)} <- ${p.from}  (${p.regions} region(s))${note}`);
-    }
-  }
-
-  // `--pack`: the parts go onto shared pages, which are written here as real
-  // PNGs, so `--out` is self-contained by construction. The atlas above stays
-  // the one the gate just read — packing changes only the ARRANGEMENT of the
-  // bytes, and the sizes in `result.images` are still the ones measured off the
-  // loose PNGs (see src/atlas.ts's header).
-  if (packing) {
-    const packOpts = {
-      pageSize: readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE),
-      padding: readIntFlag(flags, 'padding', DEFAULT_PADDING),
-      pageEdges: readPageEdges(flags),
-      pageStem: 'skeleton',
-    };
-    const inputs = result.images.map((img) => ({
-      region: img.region,
-      absPath: img.absPath,
-      width: img.width,
-      height: img.height,
-    }));
-    const packed = packAtlas(inputs, packOpts);
-    atlasText = packed.atlasText;
-    for (const page of packed.pages) {
-      page.plate.writePng(join(opts.outDir, page.name));
-      console.log(
-        `  ..    pack: ${page.name} ${page.width}x${page.height}, ` +
-          `${packed.placements.filter((p) => packed.pages[p.page].name === page.name).length} region(s), ` +
-          `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}` +
-          (packOpts.pageEdges === 'free' ? ', page edges free' : ''),
-      );
-    }
-    for (const place of packed.placements) {
-      console.log(
-        `  ..      ${place.region.padEnd(24)} ${place.width}x${place.height} -> ` +
-          `${packed.pages[place.page].name} @ ${place.x},${place.y}`,
-      );
-    }
-    // The pages are on disk now, so the packed pair can be gated as an artifact
-    // rather than trusted as a construction: A17 stats every page, A06 reads its
-    // IHDR back, A07 re-reads the text shape, A08 re-joins every attachment onto
-    // a region, and A18 compares a second independent compile+pack. Two gates on
-    // one build is the cost of shipping a second atlas shape.
-    console.log('  ..    validate (packed atlas, pages on disk)');
-    const packAgain = packAtlas(
-      compile(opts).images.map((img) => ({
-        region: img.region,
-        absPath: img.absPath,
-        width: img.width,
-        height: img.height,
-      })),
-      packOpts,
-    );
-    // The document written is spelled from the packed atlas, and this gate's A18 compares it with a
-    // second compile's spelled from the second, independent pack (issue #1016).
-    modelText = modelDocument(result.model, result.skeletonText, atlasText);
-    const packFailures = runGate(result, modelText, opts, profile, (text) => text, { text: atlasText, again: packAgain.atlasText });
-    if (packFailures > 0) {
-      console.error(
-        `rigc: ${packFailures} assertion(s) failed on the PACKED atlas — the pages were written to ` +
-          `${opts.outDir}, the skeleton/atlas pair was not`,
-      );
-      process.exit(1);
-    }
-  }
-
-  writeFileSync(join(opts.outDir, 'skeleton.json'), result.skeletonText);
-  writeFileSync(join(opts.outDir, 'skeleton.atlas'), atlasText);
-  // rigc's own record of the compiled rig (`rigc-compiled/3`, issue #922;
-  // its `pages` the atlas just written, issue #1016), written with the pair
-  // and only after the same gate — under `--pack`, the packed one. rigc's own posing core
-  // reads it (`readModel`, `src/core/index.ts`, issue #380's step 2).
-  writeFileSync(join(opts.outDir, MODEL_DOCUMENT_FILE), modelText);
-  console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
-  console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
-  console.log(`rigc: wrote ${join(opts.outDir, MODEL_DOCUMENT_FILE)}`);
-  // The next command is part of the message (issue #837). A green build is the
-  // moment somebody wants to see what came out, and the one page rigc writes
-  // for that is `preview` of exactly this directory — so the line names it,
-  // with the path already resolved. Printed only here: a red build wrote
-  // nothing, so there is nothing to look at and no line.
-  console.log(`rigc: look at it: rigc preview --candidate ${opts.outDir}`);
+  runBuild(flags, ROUND_TRIP_GATE);
 }
 
 export function cmdValidate(flags: Record<string, string>, positional: string[]): void {
@@ -400,7 +74,9 @@ export function cmdValidate(flags: Record<string, string>, positional: string[])
   const named = flags.cut !== undefined || flags.rig !== undefined;
   const profile = readProfile(flags);
   const derivedOpts = named ? resolveCut(flags).opts : null;
-  const { skeletonPath, atlasPath } = resolveArtifacts(derivedOpts ? derivedOpts.outDir : (positional[0] ?? '.'), flags.atlas);
+  // Both files there before the first line, from the one statement of a build (issue #1046): a directory without them
+  // read the skeleton unguarded and died on an ENOENT and a stack.
+  const { skeletonPath, atlasPath } = spinePairOf(resolveBuild(derivedOpts ? derivedOpts.outDir : (positional[0] ?? '.'), flags.atlas));
   console.log(`rigc validate ${skeletonPath}`);
   console.log(`  ..    atlas ${atlasPath}`);
   const skeletonText = readFileSync(skeletonPath, 'utf8');
@@ -509,11 +185,8 @@ export function cmdPreview(flags: Record<string, string>, candidates: string[]):
   }
   const found = several
     ? candidates.map((target) => {
-        const { skeletonPath, atlasPath } = resolveArtifacts(target, undefined);
-        for (const path of [skeletonPath, atlasPath]) {
-          if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
-        }
-        return { target, skeletonPath, atlasPath, atlasDir: dirname(atlasPath) };
+        const { skeletonPath, atlasPath, atlasDir } = spinePairOf(resolveBuild(target, undefined));
+        return { target, skeletonPath, atlasPath, atlasDir };
       })
     : [{ target: flags.candidate, ...resolveViewable(flags) }];
   // ⚠️ By the FILE each one resolves to, not by the text typed: `build/` and
@@ -616,10 +289,7 @@ export function cmdPreview(flags: Record<string, string>, candidates: string[]):
 
 /** Load one candidate off disk in the shape a ballot needs. */
 function loadBallotCandidate(target: string): { candidate: BallotCandidateInput; animations: string[] } {
-  const { skeletonPath, atlasPath } = resolveArtifacts(target, undefined);
-  for (const path of [skeletonPath, atlasPath]) {
-    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
-  }
+  const { skeletonPath, atlasPath } = spinePairOf(resolveBuild(target, undefined));
   const skeletonText = readFileSync(skeletonPath, 'utf8');
   const atlasText = readFileSync(atlasPath, 'utf8');
   const atlasDir = dirname(atlasPath);

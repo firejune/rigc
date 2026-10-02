@@ -18,11 +18,18 @@
  * ⚠️ What it cannot do, and refuses by name rather than reaching for: an input
  * only the runtime reads — a Spine export, `--poser spine`, a fallback the
  * poser line names, the deform survey of a build the core refuses — and a
- * command whose body is the runtime's (`build`, `validate`, `bench`,
- * `bonedist`, `preview`, `vote`). Both say what they needed spine-core for and
- * that this entry links none of it; `cli.ts` runs them.
+ * command whose body is the runtime's (`validate`, `bench`, `bonedist`,
+ * `preview`, `vote`). Both say what they needed spine-core for and that this
+ * entry links none of it; `cli.ts` runs them.
+ *
+ * `build` is the one name with a body here of its own (issue #1060,
+ * `CORE_ENTRY_RUNS`): `cli.ts build`'s body (`runBuild`), writing the same
+ * files, with another gate — the model side over the document and the round
+ * trip's own rules restated over the emitted text, A00 (spine-core's parse) a
+ * SKIP naming it. `--help` and `build --help` say so; the command table states
+ * it (`runtime.core` in `src/cli/shared.ts`).
  */
-import { CORE_COMMAND_RUNS } from './src/cli/core_commands.ts';
+import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS } from './src/cli/core_commands.ts';
 import { runCli } from './src/cli/shared.ts';
 
-runCli({ checkout: 'cli_core.ts', linksRuntime: false, runs: CORE_COMMAND_RUNS }, process.argv.slice(2));
+runCli({ checkout: 'cli_core.ts', linksRuntime: false, runs: { ...CORE_COMMAND_RUNS, ...CORE_ENTRY_RUNS } }, process.argv.slice(2));
