@@ -225,6 +225,28 @@ npm pack --dry-run --json   # the same list, one object per file
 whatever the allowlist says. The `ships` job reads the first of those two, for
 that reason.
 
+#### What an install has, and which entry it runs
+
+`@esotericsoftware/spine-core` is a **devDependency** (issue
+[#1061](https://github.com/firejune/rigc/issues/1061)): `bun install` in a clone
+and in CI installs it, and an install of the package does not. Every module still
+ships — the runtime-linking ones included — so the difference is in which entry
+the installed `rigc` runs, and `bin/rigc.cjs` decides it by one fact: whether the
+runtime resolves from the package's own location.
+
+| an install with | `rigc` runs | `rigc --version` prints (stdout, then stderr) |
+| --- | --- | --- |
+| no `@esotericsoftware/spine-core` (what `npm install spine-rigc` gives) | `cli_core.ts` — `explain`, `ingest`, `diff`, `check`, `render`, `pose`, `chainfit`, `skills`; every other command refused by name | the version, then `entry: cli_core.ts — @esotericsoftware/spine-core absent — …` |
+| `@esotericsoftware/spine-core` installed beside it | `cli.ts` — every command, `build` through the round trip | the version, then `entry: cli.ts — @esotericsoftware/spine-core <version> present` |
+
+No environment variable and no flag chooses the entry. `CUR113` holds that
+`cli_core.ts`'s static closure, within what `files` ships, reaches none of the
+modules that import the runtime and none of the modules registering a command the
+command table marks as needing it; `CUR114` holds that `cli.ts` reaches every one
+of those linkers; `CUR115` holds the manifest (the runtime only in
+`devDependencies`, at the version `bun.lock` resolves) and runs the launcher in a
+copy with and without the runtime beside it.
+
 `publishConfig.provenance` is deliberately **not** set. Provenance can only be
 attested from a run holding an OIDC token, so setting it in `package.json` would
 fail the manual fallback below; the workflow passes `--provenance` on the
@@ -272,22 +294,29 @@ which is the `✅ applied` antipattern with a release attached to it.
 [`ci.yml`](.github/workflows/ci.yml)**, on every pull request and every push to
 `main`. It runs `bun run smoke` — [`scripts/install_smoke.ts`](scripts/install_smoke.ts) —
 which packs a tarball out of the branch, installs it into an **empty** directory
-that has a `package.json` of its own, and builds a rig from there: compile, the
-round trip through `spine-core`, and files on disk. What that proves, and none of
-it was proven before:
+that has a `package.json` of its own, and runs it in three phases (issue
+[#1061](https://github.com/firejune/rigc/issues/1061)):
 
-- the `bin` shim resolves and hands off, and the installed `rigc` is what runs;
-- `files` is closed under what the commands actually need at run time, not just
-  under the imports a scanner can see;
-- `@esotericsoftware/spine-core` comes down with the package, and the round trip
-  runs against the version the installed `package.json` asks for — the emitted
-  `skeleton.spine` is compared against it rather than against a number written
-  into the smoke;
-- `skeleton.json`, `skeleton.atlas` and the packed page PNG are on disk, the
-  named assertions the fixture reaches are in the output, and the installed CLI
-  reads its own output back with `rigc validate`;
-- with `bun` off PATH the shim says so in one sentence instead of dying as
-  `env: bun: No such file or directory`.
+1. **As installed — no runtime.** The install must not have brought
+   `@esotericsoftware/spine-core`; `rigc --version` must name `cli_core.ts`; and
+   `rigc build` on that entry is tried. Until the core entry has a `build` of its
+   own ([#1060](https://github.com/firejune/rigc/issues/1060)) it refuses by name,
+   and the smoke prints that as a `HOLE` line and in its summary — never as a pass.
+2. **The runtime installed beside it**, at the version the installed
+   `package.json` declares as its devDependency. The same `rigc --version` must
+   now name `cli.ts`, and the build runs through the round trip: compile, the
+   round trip against that version (the emitted `skeleton.spine` is compared with
+   it rather than with a number written into the smoke), the named assertions the
+   fixture reaches, `skeleton.json`, `skeleton.atlas` and the packed page PNG on
+   disk, and `rigc validate` reading it back. The import surface is probed here.
+3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
+   more, and `rigc render` and `rigc check` run on that build without it.
+   `rigc skills install` and the without-Bun shim check run in this phase.
+
+What that proves: the `bin` shim resolves and hands off, and picks its entry by
+whether the runtime resolves; `files` is closed under what each entry needs at
+run time, not just under the imports a scanner can see; the package installs and
+runs without the runtime, and builds through the round trip with it.
 
 The package carries no art and no spec — `gallery/`, `fixtures/` and `examples/`
 are outside the allowlist — so the fixture is authored into the install
@@ -297,9 +326,12 @@ one animation with two rotate timelines. Its plates come from the package's own
 resolution that lands anywhere but inside the install. Nothing under this
 repository is on the fixture's path; the tarball is the only thing that crosses.
 
-🌱 **The plants are in the tool, so every run has seen it fail.** Three packages
-are broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of
-the packed tree, `@esotericsoftware/spine-core` out of `dependencies` — each
+🌱 **The plants are in the tool, so every run has seen it fail.** Packages are
+broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of the
+packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
+install then has the runtime, which is not the package this tree packs),
+`cli_core.ts` out of `files` (the install's `rigc --version` dies), and the skills
+and `exports` plants — each
 patched into an **extraction** of the tarball and packed again from there, so the
 checkout is never modified and there is no restore to forget. A plant case is
 green only when the smoke went red at the step it was supposed to, naming what
@@ -327,7 +359,8 @@ bun run smoke -- --keep                        # leave the install directories t
 ```
 
 It needs `npm`, `bun` and `tar` on PATH and the network for exactly one package,
-the dependency. It deliberately does **not** need this repository's dev
+`@esotericsoftware/spine-core`, which phase 2 installs beside the package — the
+package's own install fetches nothing. It deliberately does **not** need this repository's dev
 dependencies, and the CI job deliberately does not install them — a job holding
 the repository's own tooling would be answering a different question. `npm pack`
 does not run `prepublishOnly` (measured: the pack returns in under a second,

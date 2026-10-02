@@ -104,6 +104,14 @@ import { fileURLToPath } from 'node:url';
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
 const ROOT = resolve(import.meta.dir, '..');
 
+/**
+ * The runtime, which the package declares as a devDependency only (issue
+ * #1061): an install has none, and the launcher then runs `cli_core.ts`. The
+ * smoke measures that install first, then adds the runtime beside it and
+ * measures the same `rigc` running `cli.ts`, then takes it away again.
+ */
+const RUNTIME = '@esotericsoftware/spine-core';
+
 // ---------------------------------------------------------------------------
 // The fixture, authored here because the package carries no art and no spec
 // ---------------------------------------------------------------------------
@@ -621,7 +629,7 @@ function waitForRegistry(spec: string, minutes: number, cwd: string, into: strin
 // The tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
-type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'drop-dependency' | 'drop-skills' | 'drop-exports' | 'drop-deep-exports';
+type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'add-dependency' | 'drop-core-entry' | 'drop-skills' | 'drop-exports' | 'drop-deep-exports';
 
 /** The module each plant takes out of the package, and the step whose output has to name it. */
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
@@ -635,10 +643,15 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     steps: ['build'],
     what: '`src/validate.ts` removed from the packed tree. `files` names the `src` DIRECTORY, so a module leaves the package by leaving the tree rather than by leaving the array, and this is what that looks like from the install: the owner of the spine-core round trip is the module that goes missing',
   },
-  'drop-dependency': {
+  'add-dependency': {
     names: ['@esotericsoftware/spine-core'],
-    steps: ['build'],
-    what: '`@esotericsoftware/spine-core` removed from `dependencies`. The tree would not notice — a checkout installs it as a devDependency of nothing and it is already there — and the install is where the round trip has nothing to run',
+    steps: ['install'],
+    what: '`@esotericsoftware/spine-core` put back in `dependencies` (issue #1061), which is the package every version before 2.0.0 shipped: the install fetches the runtime, so the state this smoke exists to measure — an install with no spine-core, running the core entry — never happens, and the install step has to say so rather than quietly testing the other package',
+  },
+  'drop-core-entry': {
+    names: ['cli_core.ts'],
+    steps: ['version'],
+    what: '`cli_core.ts` removed from `files` (issue #1061). A clone always has it, and the launcher only reaches for it where spine-core is absent — which is every install — so a package that ships no core entry is one whose `rigc` dies on its first command, and only an install can show it',
   },
   'drop-skills': {
     names: ['skills/'],
@@ -710,13 +723,17 @@ function tarballFor(
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as {
     files?: string[];
     dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
     exports?: Record<string, string>;
   };
   if (plant === 'drop-plate') {
     pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'tools/plate.ts');
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-  } else if (plant === 'drop-dependency') {
-    delete (pkg.dependencies ?? {})['@esotericsoftware/spine-core'];
+  } else if (plant === 'add-dependency') {
+    pkg.dependencies = { ...(pkg.dependencies ?? {}), [RUNTIME]: pkg.devDependencies?.[RUNTIME] ?? 'latest' };
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'drop-core-entry') {
+    pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'cli_core.ts');
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else if (plant === 'drop-skills') {
     pkg.files = (pkg.files ?? []).filter((entry) => entry !== 'skills');
@@ -753,22 +770,22 @@ function tarballFor(
   // package fails.
   //
   // ⚠️ Some plants change the path list and three do not, so one clause cannot
-  // serve both: `drop-dependency` and the two `exports` plants leave every path
+  // serve both: `add-dependency` and the two `exports` plants leave every path
   // where it was and edit `package.json`, and a clause written only for the
   // first kind would pass them by construction.
   const before = new Set(paths);
   const after = tarPaths(second, work);
   const gone = [...before].filter((p) => !after.includes(p));
   let evidence = '';
-  if (plant === 'drop-dependency') {
+  if (plant === 'add-dependency') {
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
     const deps = shipped.status === 0 ? ((JSON.parse(shipped.out) as { dependencies?: Record<string, string> }).dependencies ?? {}) : {};
-    if (shipped.status !== 0 || '@esotericsoftware/spine-core' in deps) {
+    if (shipped.status !== 0 || !(RUNTIME in deps)) {
       faults.push(
-        `SMOKE_PLANT_APPLIED: the packed package.json still declares ${Object.keys(deps).join(', ') || '(unreadable)'}, so nothing was planted and a red below would be somebody else's fault`,
+        `SMOKE_PLANT_APPLIED: the packed package.json declares ${Object.keys(deps).join(', ') || 'no dependencies'}, not ${RUNTIME}, so nothing was planted and a red below would be somebody else's fault`,
       );
     } else {
-      evidence = `the packed package.json declares ${Object.keys(deps).length} dependenc(ies) where the tree declares 1`;
+      evidence = `the packed package.json declares ${RUNTIME} ${deps[RUNTIME]} in dependencies, where the tree declares it only as a devDependency`;
     }
   } else if (plant === 'drop-exports' || plant === 'drop-deep-exports') {
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
@@ -837,6 +854,8 @@ interface CaseResult {
   /** Which named step each fault came from, so a plant can require the red where it planted it. */
   steps: string[];
   notes: string[];
+  /** What the case could not measure and says so by name — never counted as a pass (issue #1061). */
+  holes: string[];
   output: string;
 }
 
@@ -844,6 +863,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const faults: string[] = [];
   const steps: string[] = [];
   const notes: string[] = [];
+  const holes: string[] = [];
   let output = '';
   const fault = (step: string, message: string): void => {
     faults.push(message);
@@ -852,7 +872,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 
   const built = tarballFor(work, spec.source, spec.plant);
   for (const f of built.faults) fault('pack', f);
-  if (built.tgz === '') return { name: spec.name, faults, steps, notes, output };
+  if (built.tgz === '') return { name: spec.name, faults, steps, notes, holes, output };
   notes.push(`the tarball carries ${built.paths.length} path(s)`);
   if (built.evidence !== '') notes.push(built.evidence);
 
@@ -876,7 +896,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left no node_modules/spine-rigc/package.json under ${home}. ${install.out.trim().slice(0, 4000)}`,
     );
     if (!keep) rmSync(home, { recursive: true, force: true });
-    return { name: spec.name, faults, steps, notes, output };
+    return { name: spec.name, faults, steps, notes, holes, output };
   }
 
   const bin = join(home, 'node_modules', '.bin', 'rigc');
@@ -884,17 +904,32 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('install', `SMOKE_INSTALL_EMPTY_DIR: the install wrote no node_modules/.bin/rigc under ${home}, so the package's own \`bin\` entry never reached a shim`);
   }
 
-  // The dependency, by the version the installed package asks for rather than by
-  // one written here: the emitted skeleton names it back, and those two have to
-  // be the same fact.
-  const corePkg = join(home, 'node_modules', '@esotericsoftware', 'spine-core', 'package.json');
-  let coreVersion: string | null = null;
+  // 🔒 Phase one: the install as a user receives it — no runtime (issue #1061).
+  // The package declares spine-core as a devDependency, so an install that
+  // fetched it is installing some other package than the one this tree packs.
+  const runtimeDir = join(home, 'node_modules', '@esotericsoftware', 'spine-core');
+  const corePkg = join(runtimeDir, 'package.json');
+  const shippedManifest = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as { version?: string; devDependencies?: Record<string, string> };
+  const pkgVersion = shippedManifest.version ?? '';
+  const runtimeWanted = shippedManifest.devDependencies?.[RUNTIME] ?? null;
   if (existsSync(corePkg)) {
-    coreVersion = (JSON.parse(readFileSync(corePkg, 'utf8')) as { version?: string }).version ?? null;
-    notes.push(`@esotericsoftware/spine-core ${coreVersion ?? '(no version field)'} came down with it`);
-  } else if (spec.plant !== 'drop-dependency') {
-    fault('install', `SMOKE_INSTALL_EMPTY_DIR: the install left no node_modules/@esotericsoftware/spine-core, so no round trip can run`);
+    fault(
+      'install',
+      `SMOKE_INSTALL_HAS_NO_SPINE_CORE: the install brought ${RUNTIME} ${(JSON.parse(readFileSync(corePkg, 'utf8')) as { version?: string }).version ?? ''} into node_modules, so it is not the install a user of this package receives — the runtime is a devDependency and nothing installs it`,
+    );
+  } else {
+    notes.push(`installed without ${RUNTIME} (a devDependency${runtimeWanted === null ? '' : ` at ${runtimeWanted}`}, not installed)`);
   }
+  const expectVersion = (step: string, entry: string, says: string): void => {
+    const ran = run(bin, ['--version'], home);
+    output += ran.out;
+    const lines = ran.out.split('\n');
+    if (ran.status !== 0 || !lines.includes(pkgVersion) || !ran.out.includes(says)) {
+      fault(step, `SMOKE_VERSION_NAMES_THE_ENTRY: \`node_modules/.bin/rigc --version\` exited ${ran.status} printing ${JSON.stringify(ran.out.trim().slice(0, 600))}; ${pkgVersion} and "${says}" were required — the launcher has to run ${entry} here and say so`);
+    } else {
+      notes.push(`--version: ${ran.out.trim().split('\n').join(' / ')}`);
+    }
+  };
 
   // The fixture: written here, generated by the package.
   writeFileSync(join(home, 'rig.json'), `${JSON.stringify(RIG_SPEC, null, 2)}\n`);
@@ -933,6 +968,46 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       }
     }
   }
+
+  expectVersion('version', 'cli_core.ts', `entry: cli_core.ts — ${RUNTIME} absent`);
+
+  // The build on the core entry. Until the core entry has a build of its own
+  // (issue #1060) it refuses by name — and a refusal is a HOLE here, never a
+  // pass: the case says what it could not measure and goes on.
+  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', 'core-build', '--profile', 'spine-html', '--pack'], home);
+  output += coreBuild.out;
+  if (coreBuild.status === 0 && existsSync(join(home, 'core-build', 'skeleton.model.json'))) {
+    notes.push(`the build run before the runtime was added wrote core-build/skeleton.model.json, ${coreBuild.out.split('\n').filter((line) => /^\s*PASS\s/.test(line)).length} PASS line(s)`);
+    for (const line of coreBuild.out.split('\n').filter((l) => /^\s*FAIL\s/.test(l))) fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build printed ${line.trim()}`);
+  } else if (coreBuild.status === 0) {
+    fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build exited 0 and wrote no core-build/skeleton.model.json. ${coreBuild.out.trim().slice(0, 2000)}`);
+  } else {
+    holes.push(
+      `SMOKE_CORE_ENTRY_BUILDS: the core entry's build exited ${coreBuild.status} — ${JSON.stringify(coreBuild.out.trim().split('\n')[0].slice(0, 300))} — so a build without spine-core is not measured by this run (the core entry has no build until issue #1060 lands); render and check below run on the full entry's build instead`,
+    );
+  }
+
+  // 🔒 Phase two: the runtime installed beside the package, by the version the
+  // package declares — and the SAME `rigc` now runs cli.ts and the round trip.
+  // The emitted skeleton names that version back, and those two have to be the
+  // same fact.
+  let coreVersion: string | null = null;
+  if (runtimeWanted === null) {
+    fault('runtime', `SMOKE_RUNTIME_INSTALLS_BESIDE: the installed package.json declares no ${RUNTIME} devDependency, so there is no version to install beside it`);
+  } else {
+    const beside =
+      spec.installer === 'npm'
+        ? run('npm', ['install', `${RUNTIME}@${runtimeWanted}`, '--no-save', '--no-audit', '--no-fund'], home)
+        : run('bun', ['add', `${RUNTIME}@${runtimeWanted}`], home);
+    output += beside.out;
+    if (!existsSync(corePkg)) {
+      fault('runtime', `SMOKE_RUNTIME_INSTALLS_BESIDE: ${spec.installer} install of ${RUNTIME}@${runtimeWanted} exited ${beside.status} and left no ${corePkg}. ${beside.out.trim().slice(0, 2000)}`);
+    } else {
+      coreVersion = (JSON.parse(readFileSync(corePkg, 'utf8')) as { version?: string }).version ?? null;
+      notes.push(`${RUNTIME} ${coreVersion ?? '(no version field)'} installed beside it`);
+    }
+  }
+  if (coreVersion !== null) expectVersion('version', 'cli.ts', `entry: cli.ts — ${RUNTIME} ${coreVersion} present`);
 
   // The build. Every flag is one a stranger would reach for: `--pack` writes a
   // real page PNG and validates the packed atlas as well as the loose one, and
@@ -1035,6 +1110,35 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     notes.push(`exports: ${exportsCounts}`);
   }
 
+  // 🔒 Phase three: the runtime taken away again, and the build the full entry
+  // wrote rendered and checked by the core entry — the two commands an install
+  // without spine-core is for. `check` is held against the frames `render` just
+  // wrote, so it measures that the core entry reads the build and the frames,
+  // not how the rig looks.
+  rmSync(runtimeDir, { recursive: true, force: true });
+  if (!existsSync(runtimeDir)) {
+    expectVersion('version', 'cli_core.ts', `entry: cli_core.ts — ${RUNTIME} absent`);
+    if (existsSync(join(outDir, 'skeleton.model.json'))) {
+      const rendered = run(bin, ['render', '--candidate', 'build', '--out', 'frames'], home);
+      output += rendered.out;
+      if (rendered.status !== 0 || !existsSync(join(home, 'frames', 'frames.json'))) {
+        fault('render', `SMOKE_CORE_ENTRY_RENDERS_THE_BUILD: \`rigc render --candidate build\` without ${RUNTIME} exited ${rendered.status} and wrote ${existsSync(join(home, 'frames', 'frames.json')) ? '' : 'no '}frames/frames.json. ${rendered.out.trim().slice(0, 2000)}`);
+      } else {
+        notes.push(`without ${RUNTIME}: render wrote ${readdirSync(join(home, 'frames')).length} entr(ies) under frames/`);
+        const checked = run(bin, ['check', '--candidate', 'build', '--frames', 'frames'], home);
+        output += checked.out;
+        const poser = checked.out.split('\n').find((line) => /\bposer\b/.test(line))?.trim() ?? '';
+        if (checked.status !== 0) {
+          fault('check', `SMOKE_CORE_ENTRY_CHECKS_THE_BUILD: \`rigc check --candidate build --frames frames\` without ${RUNTIME} exited ${checked.status}. ${checked.out.trim().slice(0, 2000)}`);
+        } else {
+          notes.push(`without ${RUNTIME}: check exited 0${poser === '' ? '' : ` (${poser.slice(0, 160)})`}`);
+        }
+      }
+    } else {
+      fault('render', 'SMOKE_CORE_ENTRY_RENDERS_THE_BUILD: the full entry wrote no build/skeleton.model.json, so there is no build for the core entry to render');
+    }
+  }
+
   // The skills, the way an agent host needs them (issue #831): the INSTALLED
   // package links its own `skills/` into a directory of this install — one with a
   // space in it, so a link that was not relative-and-quoted-safe would show —
@@ -1083,7 +1187,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   }
 
   if (!keep) rmSync(home, { recursive: true, force: true });
-  return { name: spec.name, faults, steps, notes, output };
+  return { name: spec.name, faults, steps, notes, holes, output };
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,11 +1216,12 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs and builds, resolves every \`exports\` entry and every shipped path from the install, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry; with spine-core installed beside it the same rigc builds through the round trip, resolves every \`exports\` entry and every shipped path; with spine-core taken away again it renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
-  drop-dependency  @esotericsoftware/spine-core out of \`dependencies\` — the smoke has to go RED naming it
+  add-dependency   @esotericsoftware/spine-core put back in \`dependencies\` — the install has to go RED naming it
+  drop-core-entry  cli_core.ts out of \`files\` — the install's \`rigc --version\` has to go RED naming it
   drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
   drop-exports     \`exports\` out of package.json — importing spine-rigc/plate has to go RED naming it
   drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
@@ -1216,7 +1321,8 @@ function main(): number {
     { name: 'unusual-path', source, installer, plant: 'none', dirName: 'install smoke ünïcode 한글' },
     { name: 'drop-plate', source, installer, plant: 'drop-plate', dirName: 'planted-plate' },
     { name: 'drop-src-module', source, installer, plant: 'drop-src-module', dirName: 'planted-src' },
-    { name: 'drop-dependency', source, installer, plant: 'drop-dependency', dirName: 'planted-dep' },
+    { name: 'add-dependency', source, installer, plant: 'add-dependency', dirName: 'planted-dep' },
+    { name: 'drop-core-entry', source, installer, plant: 'drop-core-entry', dirName: 'planted-core-entry' },
     { name: 'drop-skills', source, installer, plant: 'drop-skills', dirName: 'planted-skills' },
     { name: 'drop-exports', source, installer, plant: 'drop-exports', dirName: 'planted-exports' },
     { name: 'drop-deep-exports', source, installer, plant: 'drop-deep-exports', dirName: 'planted-deep-exports' },
@@ -1229,6 +1335,7 @@ function main(): number {
 
   let bad = 0;
   let ran = 0;
+  let holes = 0;
   for (const spec of chosen) {
     const work = mkdtempSync(join(tmpdir(), 'rigc-smoke-'));
     try {
@@ -1238,6 +1345,8 @@ function main(): number {
       if (planted === null) {
         if (result.faults.length === 0) {
           console.log(`  PASS  SMOKE_CASE[${spec.name}]  ${result.notes.join('; ')}`);
+          for (const hole of result.holes) console.log(`  HOLE  ${hole}`);
+          holes += result.holes.length;
         } else {
           bad += 1;
           console.log(`  FAIL  SMOKE_CASE[${spec.name}]`);
@@ -1277,7 +1386,8 @@ function main(): number {
     console.log('  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)` : `rigc install smoke: ${bad} of ${ran} case(s) failed`);
+  const holeNote = holes === 0 ? '' : ` — and ${holes} HOLE(s) above, each a thing this run did not measure rather than a pass`;
+  console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)${holeNote}` : `rigc install smoke: ${bad} of ${ran} case(s) failed${holeNote}`);
   if (bad === 0) return EXIT_GREEN;
   // 🚨 The second of the two outcomes, said out loud. Reaching here on a
   // registry source means the wait above ENDED — the registry handed over this

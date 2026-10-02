@@ -55875,6 +55875,72 @@ function modulesSrcReachesOutsideItself(root: string): string[] {
   return [...out].sort();
 }
 
+// ---------------------------------------------------------------------------
+// the shipped closure (issue #1061) — CUR113–CUR115's instruments
+// ---------------------------------------------------------------------------
+
+/** What `coreClosureFrom` returns: every module reached by value with the module it was first reached from, the runtime's linkers among them, and every reached path the population does not hold. */
+interface CoreClosure {
+  modules: string[];
+  via: ReadonlyMap<string, string | null>;
+  linkers: Array<{ module: string; chain: string[] }>;
+  problems: string[];
+}
+
+/** The static value closure of `roots` over `population`, breadth first, so each module's recorded chain is a shortest one. */
+function coreClosureFrom(population: ReadonlyMap<string, string>, roots: readonly string[]): CoreClosure {
+  const via = new Map<string, string | null>();
+  const queue: string[] = [];
+  for (const r of roots) {
+    if (via.has(r)) continue;
+    via.set(r, null);
+    queue.push(r);
+  }
+  const linkers: Array<{ module: string; chain: string[] }> = [];
+  const chainOf = (module: string): string[] => {
+    const chain: string[] = [];
+    for (let at: string | null = module; at !== null; at = via.get(at) ?? null) chain.unshift(at);
+    return chain;
+  };
+  while (queue.length > 0) {
+    const rel = queue.shift() as string;
+    const text = population.get(rel);
+    if (text === undefined) continue;
+    for (const { spec, typeOnly } of specifiersOf(codeOnly(text))) {
+      if (typeOnly) continue;
+      if (/^@esotericsoftware\/spine-core(\/|$)/.test(spec)) {
+        if (!linkers.some((l) => l.module === rel)) linkers.push({ module: rel, chain: [...chainOf(rel), spec] });
+        continue;
+      }
+      if (!spec.startsWith('.')) continue;
+      const target = join(dirname(rel), spec).split('\\').join('/');
+      if (!via.has(target)) {
+        via.set(target, rel);
+        queue.push(target);
+      }
+    }
+  }
+  const problems = [...via.keys()].filter((m) => !population.has(m)).map((m) => `${m} is reached (${chainOf(m).join(' > ')}) and is not in the population read`);
+  return { modules: [...via.keys()].filter((m) => population.has(m)).sort(), via, linkers, problems };
+}
+
+/** `population` with `line` added at the top of `rel` — a plant, on a copy. */
+function plantedInto(population: ReadonlyMap<string, string>, rel: string, line: string): Map<string, string> {
+  const out = new Map(population);
+  out.set(rel, `${line}\n${population.get(rel) ?? ''}`);
+  return out;
+}
+
+/** A closure's members counted by directory, with the top-level `src/` and `tools/` members named — the reading the next cut takes. */
+function closureByDirectory(modules: readonly string[]): string {
+  const core = modules.filter((m) => m.startsWith('src/core/')).length;
+  const assertions = modules.filter((m) => m.startsWith('src/assertions/')).length;
+  const top = modules.filter((m) => m.startsWith('src/') && !m.slice(4).includes('/'));
+  const other = modules.filter((m) => !m.startsWith('src/'));
+  const rest = modules.length - core - assertions - top.length - other.length;
+  return `src/core/ ${core}, src/assertions/ ${assertions}, src/ ${top.length} [${top.map((m) => m.slice(4)).join(', ')}]${rest > 0 ? `, other src/ subdirectories ${rest}` : ''}, outside src/ ${other.length} [${other.join(', ')}]`;
+}
+
 function runCurrencySuite(): number {
   console.log('\n── what a shipped or landing doc STATES about the tool (issue #360) ──');
   let bad = 0;
@@ -58401,6 +58467,161 @@ function runCurrencySuite(): number {
       "v1.6.0's publish ran the selftest with no examples/ and four core-suite corpus controls went red after the " +
         'tag and the GitHub release existed, because the workflow and RELEASING.md both said the selftest needs no ' +
         'corpus. Red on the tree before #1003 — no fetch step in the publishing job',
+    );
+  }
+
+  // --- CUR113–CUR115: the package as an install receives it — spine-core a devDependency (issue #1061) --
+  //
+  // `@esotericsoftware/spine-core` is a devDependency: a clone and CI install it,
+  // an install of the package does not. So the package has to run without it, and
+  // what makes that true is a property of the shipped import graph, held here over
+  // `files` rather than over the tree: the entry the launcher picks when the runtime
+  // is absent (`cli_core.ts`) reaches, through what ships, none of the modules that
+  // import the runtime and none of the modules registering a command the command
+  // table marks as needing it (CUR113); the entry it picks when the runtime resolves
+  // (`cli.ts`) reaches every one of those linkers, so the round trip is still what a
+  // clone runs (CUR114); and the manifest, the lockfile and the launcher state the
+  // split the graph needs — the runtime declared only as a devDependency, at the
+  // version the lockfile pins, and chosen by resolution alone (CUR115).
+  {
+    const RUNTIME_SPEC = /^@esotericsoftware\/spine-core(\/|$)/;
+    const shippedModules = [...shipped].filter((file) => /\.(ts|mjs|cjs)$/.test(file)).sort();
+    const population = new Map(shippedModules.map((file) => [file, readFileSync(join(root, file), 'utf8')] as const));
+    const linkersOf = (pop: ReadonlyMap<string, string>): string[] =>
+      [...pop].filter(([, text]) => specifiersOf(codeOnly(text)).some((s) => !s.typeOnly && RUNTIME_SPEC.test(s.spec))).map(([file]) => file).sort();
+    // The modules that register a body the command table marks as needing the runtime — RC26's registrars, read off the marks.
+    const registrars: Array<[string, Readonly<Record<string, unknown>>]> = [
+      ['src/cli/core_commands.ts', CORE_COMMAND_RUNS],
+      ['src/cli/spine_commands.ts', SPINE_COMMAND_RUNS],
+    ];
+    const runtimeRegistrars = registrars
+      .filter(([, runs]) => COMMANDS.some((doc) => doc.runtime !== false && Object.prototype.hasOwnProperty.call(runs, doc.name)))
+      .map(([module]) => module);
+    const chainIn = (closure: CoreClosure, module: string): string => {
+      const chain: string[] = [];
+      for (let at: string | null = module; at !== null; at = closure.via.get(at) ?? null) chain.unshift(at);
+      return chain.join(' > ');
+    };
+    const shippedClosureFaults = (pop: ReadonlyMap<string, string>, entry: string): { closure: CoreClosure; faults: string[] } => {
+      const closure = coreClosureFrom(pop, [entry]);
+      const faults: string[] = [];
+      if (!pop.has(entry)) faults.push(`${entry} is not shipped — \`files\` does not carry the entry the launcher runs without the runtime`);
+      for (const missing of closure.problems) faults.push(`🔒 ${missing.replace('is not in the population read', 'is not shipped')}`);
+      const linkers = linkersOf(pop);
+      for (const module of closure.modules) {
+        if (linkers.includes(module)) faults.push(`🔒 ${module} imports spine-core and the install's entry reaches it: ${chainIn(closure, module)}`);
+        if (runtimeRegistrars.includes(module)) faults.push(`🔒 ${module} registers commands marked as needing the runtime and the install's entry reaches it: ${chainIn(closure, module)}`);
+      }
+      return { closure, faults };
+    };
+
+    // CUR113
+    const live = shippedClosureFaults(population, 'cli_core.ts');
+    const probes113 = [...live.faults];
+    // The plant: one closure member, the deepest the walk recorded, importing the round trip.
+    const member = [...live.closure.modules].filter((m) => m !== 'cli_core.ts' && m.startsWith('src/')).sort((a, b) => chainIn(live.closure, b).split(' > ').length - chainIn(live.closure, a).split(' > ').length || a.localeCompare(b))[0];
+    let plantedChain = '';
+    if (member === undefined) probes113.push('cli_core.ts reaches no module of src/, so the plant has nowhere to go');
+    else {
+      const spec = relative(dirname(member), 'src/validate.ts').split('\\').join('/');
+      const planted = shippedClosureFaults(plantedInto(population, member, `import { validate as planted } from '${spec.startsWith('.') ? spec : `./${spec}`}';`), 'cli_core.ts');
+      const raised = planted.faults.filter((f) => !live.faults.includes(f));
+      plantedChain = raised.find((f) => f.includes(`${member} > src/validate.ts`)) ?? '';
+      if (plantedChain === '') probes113.push(`an import of validate.ts planted in ${member} raised [${raised.join('; ')}], none naming the chain through ${member}`);
+    }
+    const dropped = shippedClosureFaults(new Map([...population].filter(([file]) => file !== 'cli_core.ts')), 'cli_core.ts');
+    if (!dropped.faults.some((f) => f.startsWith('cli_core.ts is not shipped'))) probes113.push('a package whose `files` leaves cli_core.ts out was not faulted');
+    const held113 = probes113.length === 0 && live.closure.modules.length > 1;
+    say(
+      'CUR113_THE_ENTRY_AN_INSTALL_RUNS_REACHES_NO_RUNTIME_LINKER_AND_NO_RUNTIME_COMMAND_THROUGH_WHAT_SHIPS',
+      held113,
+      probeDetail(
+        held113,
+        probes113,
+        `\`files\` ships ${shippedModules.length} module(s); cli_core.ts's static closure within them is ${live.closure.modules.length} module(s) (${closureByDirectory(live.closure.modules)}), every one shipped, and reaches none of the ` +
+          `${linkersOf(population).length} shipped module(s) that import spine-core [${linkersOf(population).join(', ')}] nor the module(s) registering a command marked as needing it [${runtimeRegistrars.join(', ')}]; ` +
+          `an import of validate.ts planted in ${member ?? '(none)'} is named — ${plantedChain.replace(/^🔒 /, '')} — and a \`files\` without cli_core.ts is named`,
+      ),
+      'issue #1061: spine-core is a devDependency, so an install has no runtime and the launcher hands it to cli_core.ts; RC24–RC26 hold that entry over the tree, and this holds it over what `files` ships — the allowlist an install actually has, where a module reached and not shipped is `Cannot find module` and a module reached that links the runtime is the same',
+    );
+
+    // CUR114
+    const full = coreClosureFrom(population, ['cli.ts']);
+    const linkers = linkersOf(population);
+    const unreached = linkers.filter((module) => !full.modules.includes(module));
+    const probes114 = unreached.map((module) => `${module} imports spine-core and cli.ts does not reach it, so the full entry does not run what it links`);
+    if (linkers.length === 0) probes114.push('no shipped module imports spine-core, so there is no round trip for the full entry to reach');
+    const extra = 'src/planted_linker.ts';
+    const withExtra = new Map(population).set(extra, "import { Skeleton } from '@esotericsoftware/spine-core';\nexport const planted = Skeleton;\n");
+    const extraUnreached = linkersOf(withExtra).filter((module) => !coreClosureFrom(withExtra, ['cli.ts']).modules.includes(module));
+    if (!extraUnreached.includes(extra)) probes114.push('a shipped module linking the runtime that cli.ts does not reach was not named');
+    const held114 = probes114.length === 0;
+    say(
+      'CUR114_THE_ENTRY_A_CLONE_RUNS_REACHES_EVERY_SHIPPED_MODULE_THAT_LINKS_SPINE_CORE',
+      held114,
+      probeDetail(
+        held114,
+        probes114,
+        `cli.ts's static closure within \`files\` is ${full.modules.length} module(s) and reaches all ${linkers.length} shipped linker(s) [${linkers.join(', ')}] — the round trip a clone and CI run, and the launcher's choice when the runtime resolves; a planted linker it does not reach is named`,
+      ),
+      'issue #1061: the launcher runs cli.ts exactly when spine-core resolves, so the promise that a clone and CI still round-trip every build is the promise that cli.ts reaches every module linking the runtime — a linker nothing reaches is dead weight in the package and a gate nobody runs',
+    );
+
+    // CUR115
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string>; bin?: Record<string, string> };
+    const RUNTIME = '@esotericsoftware/spine-core';
+    const lock = readFileSync(join(root, 'bun.lock'), 'utf8');
+    const pinned = new RegExp(`"${RUNTIME.replace('/', '\\/')}": \\["${RUNTIME.replace('/', '\\/')}@([^"]+)"`).exec(lock)?.[1] ?? null;
+    const probes115: string[] = [];
+    if (manifest.dependencies !== undefined && RUNTIME in manifest.dependencies) probes115.push(`package.json declares ${RUNTIME} in dependencies, so every install fetches it`);
+    const declared = manifest.devDependencies?.[RUNTIME];
+    if (declared === undefined) probes115.push(`package.json declares no ${RUNTIME} devDependency, so a clone and CI would have no round trip`);
+    else if (pinned === null || declared !== pinned) probes115.push(`package.json pins ${RUNTIME} at ${JSON.stringify(declared)} and bun.lock resolves ${JSON.stringify(pinned)}`);
+    const launcher = manifest.bin?.rigc;
+    let launcherLine = 'not run: no `node` on PATH (the launcher suite says so)';
+    if (launcher === undefined) probes115.push('package.json names no `rigc` bin');
+    else if (firstOnPath('node') !== null) {
+      const nodeBin = join(firstOnPath('node') as string, 'node');
+      const work = mkdtempSync(join(tmpdir(), 'rigc-cur115-'));
+      const tree = (name: string, runtime: boolean, drop?: string): string => {
+        const at = absentTree(join(work, name));
+        mkdirSync(join(at, 'bin'), { recursive: true });
+        cpSync(join(root, launcher), join(at, launcher));
+        if (runtime) {
+          mkdirSync(join(at, 'node_modules', '@esotericsoftware'), { recursive: true });
+          symlinkSync(join(root, 'node_modules', '@esotericsoftware', 'spine-core'), join(at, 'node_modules', '@esotericsoftware', 'spine-core'), 'dir');
+        }
+        if (drop !== undefined) rmSync(join(at, drop));
+        return at;
+      };
+      const version = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version;
+      const installed = (JSON.parse(readFileSync(join(root, 'node_modules', '@esotericsoftware', 'spine-core', 'package.json'), 'utf8')) as { version?: string }).version;
+      const runIn = (at: string, env?: Record<string, string>): { status: number | null; stdout: string; stderr: string } => {
+        const r = spawnSync(nodeBin, [join(at, launcher), '--version'], { cwd: work, encoding: 'utf8', env: { ...process.env, ...env } });
+        return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+      };
+      const absent = runIn(tree('absent', false));
+      const present = runIn(tree('present', true));
+      // Whatever an environment says, the choice is the resolution's: the absent tree under a variable naming the full entry still runs the core one.
+      const urged = runIn(join(work, 'absent'), { RIGC_ENTRY: 'cli.ts', RIGC_FULL: '1' });
+      const noCore = runIn(tree('nocore', false, 'cli_core.ts'));
+      if (absent.status !== 0 || absent.stdout !== `${version}\n` || !absent.stderr.includes(`entry: cli_core.ts — ${RUNTIME} absent`)) probes115.push(`with ${RUNTIME} absent the launcher exited ${absent.status} printing ${JSON.stringify(absent.stdout)} / ${JSON.stringify(absent.stderr.trim())}`);
+      if (present.status !== 0 || present.stdout !== `${version}\n` || present.stderr.trim() !== `entry: cli.ts — ${RUNTIME} ${installed} present`) probes115.push(`with ${RUNTIME} beside it the launcher exited ${present.status} printing ${JSON.stringify(present.stdout)} / ${JSON.stringify(present.stderr.trim())}`);
+      if (urged.stderr !== absent.stderr || urged.stdout !== absent.stdout) probes115.push(`an environment naming the full entry changed what the launcher ran: ${JSON.stringify(urged.stderr.trim())}`);
+      if (noCore.status === 0 || noCore.stdout.includes(version)) probes115.push(`with ${RUNTIME} absent and cli_core.ts removed the launcher exited ${noCore.status} printing ${JSON.stringify(noCore.stdout)} — it fell back to an entry rather than failing`);
+      launcherLine = `${launcher} under node in a copy with an empty node_modules: stdout ${JSON.stringify(absent.stdout.trim())}, stderr ${JSON.stringify(absent.stderr.trim())}; with the runtime linked beside it: ${JSON.stringify(present.stderr.trim())}; an environment naming the full entry changes nothing; with cli_core.ts gone it exits ${noCore.status}`;
+      rmSync(work, { recursive: true, force: true });
+    }
+    const held115 = probes115.length === 0;
+    say(
+      'CUR115_THE_RUNTIME_IS_A_DEVDEPENDENCY_AND_THE_LAUNCHER_CHOOSES_ITS_ENTRY_BY_RESOLUTION_ALONE',
+      held115,
+      probeDetail(
+        held115,
+        probes115,
+        `package.json declares ${RUNTIME} only as a devDependency, at ${JSON.stringify(declared)}, the version bun.lock resolves; ${launcherLine}`,
+      ),
+      'issue #1061: the owner settled 2.0.0 as one package whose install carries no runtime — the round trip stays what a clone and CI run, so the dependency moves to devDependencies, and the launcher is the one place that decides which entry an install runs; a choice anything but resolution could flip would be a bypass of the 🔒 invariant spelled as a variable',
     );
   }
 
