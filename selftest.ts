@@ -801,6 +801,61 @@ function firstPageLine(atlasText: string): string {
   return line;
 }
 
+/**
+ * The atlas with the pages `pick` chooses moved off the disk, and the names
+ * they were moved to (issue #1055). A page line is the first line of a page
+ * block; it is moved into a directory that is not there with its basename
+ * kept, so the file is not on disk while `A27`'s subject — the page's basename
+ * against its one region's name — is untouched. `pick` sees the block's lines,
+ * so a caller chooses a page by what the block states rather than by position.
+ */
+function atlasWithPagesOffDisk(atlasText: string, pick: (block: readonly string[]) => boolean): { atlasText: string; moved: string[] } {
+  const moved: string[] = [];
+  const blocks = atlasText.split('\n\n').map((block) => {
+    const lines = block.split('\n');
+    if (lines[0] === '' || !pick(lines)) return block;
+    lines[0] = lines[0].replace(/[^/]*$/, (base) => `not_on_disk/${base}`);
+    moved.push(lines[0]);
+    return lines.join('\n');
+  });
+  if (moved.length === 0) throw new Error('the fixture atlas has no page block the mutant picks');
+  return { atlasText: blocks.join('\n\n'), moved };
+}
+
+/** Whether a page block holds the region that covers the skeleton's whole stage — the base plate's page (`M77`'s reading). */
+function coversTheStage(skeletonText: string): (block: readonly string[]) => boolean {
+  const stage = (JSON.parse(skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
+  return (block) => block.includes(`bounds: 0, 0, ${stage.width}, ${stage.height}`);
+}
+
+/**
+ * What `A06` and `A19` must print on a build whose pages in `moved` are not on
+ * disk (issue #1055): no PASS and no FAIL of either, a SKIP whose reason
+ * carries `a06`/`a19` and points at A17, and each moved page named by exactly
+ * one failure line of the whole report — A17's, whose subject it is.
+ */
+function pagesOffDiskHold(report: ValidateReport, moved: readonly string[], a06: string, a19: string): { held: boolean; read: string } {
+  const reasonOf = (code: string): string => report.skipped.find((s) => s.assertion === code)?.reason ?? '';
+  const verdictOf = (code: string): string =>
+    report.passed.includes(code) ? 'PASS' : report.failures.some((f) => f.assertion === code) ? 'FAIL' : reasonOf(code) !== '' ? 'SKIP' : 'nothing';
+  const namings = moved.map((name) => report.failures.filter((f) => f.detail.includes(`"${name}"`)));
+  const a17 = report.failures.filter((f) => f.assertion === 'A17_ATLAS_PAGE_FILES_EXIST');
+  const said = (code: string, want: string): boolean =>
+    verdictOf(code) === 'SKIP' && reasonOf(code).includes(want) && reasonOf(code).includes('A17_ATLAS_PAGE_FILES_EXIST');
+  const held =
+    said('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', a06) &&
+    said('A19_OVERLAY_PNGS_HAVE_ALPHA', a19) &&
+    a17.length === moved.length &&
+    namings.every((lines) => lines.length === 1 && lines[0].assertion === 'A17_ATLAS_PAGE_FILES_EXIST');
+  return {
+    held,
+    read:
+      `${moved.length} page(s) off disk; A17 failed ${a17.length} time(s); each page named by [${namings.map((lines) => lines.map((f) => f.assertion.slice(0, 3)).join('+') || 'nothing').join(', ')}]; ` +
+      `A06 ${verdictOf('A06_ATLAS_PAGE_SIZE_MATCHES_PNG')}: ${reasonOf('A06_ATLAS_PAGE_SIZE_MATCHES_PNG')}; ` +
+      `A19 ${verdictOf('A19_OVERLAY_PNGS_HAVE_ALPHA')}: ${reasonOf('A19_OVERLAY_PNGS_HAVE_ALPHA')}`,
+  };
+}
+
 /** The first region name in an atlas: the line right after its page's `pma:`. */
 function firstRegionName(atlasText: string): string {
   const lines = atlasText.split('\n');
@@ -2028,6 +2083,64 @@ const MUTANTS: Mutant[] = [
         (doc as any).pages[0].name = '../nope_not_here.png';
       },
     },
+  },
+  // ─── a page file not on disk is named once, and read by nobody (issue #1055) ───
+  //
+  // M12's break, asked of the two rules that read a page's FILE beside the one
+  // whose subject the file is. Until #1055 both walked past a page they could
+  // not open and printed PASS. Now A17 names the file and is the report's
+  // only red line about it; A06 and A19 SKIP, naming what they did not read.
+  // The page is chosen structurally — the first block that does not hold the
+  // stage-covering base plate, so A19 has a part on it to have not read.
+  {
+    name: 'M12b_one_page_file_not_on_disk_is_named_by_A17_alone_and_A06_A19_skip',
+    origin:
+      'issue #1055: with a page file missing, A06\'s size clause and A19 walked past it and printed PASS over a page ' +
+      'neither had opened',
+    expect: 'A17_ATLAS_PAGE_FILES_EXIST',
+    mutate: (a) => {
+      const base = coversTheStage(a.skeletonText);
+      let first = true;
+      const off = atlasWithPagesOffDisk(a.atlasText, (block) => {
+        if (!first || base(block)) return false;
+        first = false;
+        return true;
+      });
+      return { ...a, atlasText: off.atlasText };
+    },
+    holds: (report, broken) => {
+      const blocks = broken.atlasText.split('\n\n');
+      const pages = blocks.length;
+      const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+      const moved = broken.atlasText.split('\n').filter((line) => line.includes('/not_on_disk/'));
+      return pagesOffDiskHold(
+        report,
+        moved,
+        `the size of 1 of the ${pages} page(s) the atlas declares was not measured — "${moved[0]}"`,
+        `1 of the ${withParts} page(s) carrying a part were not read — "${moved[0]}"`,
+      );
+    },
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
+  },
+  {
+    name: 'M12c_every_page_file_not_on_disk_is_named_by_A17_alone_and_A06_A19_skip',
+    origin: 'issue #1055: with every page file missing, A19 printed PASS having read nothing at all',
+    expect: 'A17_ATLAS_PAGE_FILES_EXIST',
+    mutate: (a) => ({ ...a, atlasText: atlasWithPagesOffDisk(a.atlasText, () => true).atlasText }),
+    holds: (report, broken) => {
+      const blocks = broken.atlasText.split('\n\n');
+      const pages = blocks.length;
+      const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+      const moved = broken.atlasText.split('\n').filter((line) => line.includes('/not_on_disk/'));
+      return pagesOffDiskHold(
+        report,
+        moved,
+        `none of the ${pages} page file(s) the atlas declares is on disk`,
+        `none of the ${withParts} page file(s) carrying a part is on disk`,
+      );
+    },
+    twin: ATLAS_EDIT_TWIN,
   },
   {
     name: 'M13_version_label_from_the_4_2_era',
@@ -102169,6 +102282,83 @@ function runVerdictSuppliersSuite(): number {
           `on the fixtures' own calls under both profiles, ${buckets} report bucket(s) list the moved codes in one order on both sides; two neighbouring rows swapped are named: ${JSON.stringify(planted)}`,
       ),
       'issue #1054: the seven cuts of #1025 appended their rows in landing order, so a model-side report listed its lines in another order than the round trip\'s — invisible to a comparison per code, and the first thing a reader of the two reports side by side sees',
+    );
+  }
+
+  // --- VF17: a page file not on disk prints the same lines on both sides (issue #1055) ---
+  //
+  // The twin convention (VF03) compares the lines of the codes a break FAILS,
+  // and on this break that is A17 alone: A06 and A19 now SKIP, so their lines
+  // are compared here, on every fixture under both profiles, with no page,
+  // the first page and every page off the disk. The pages present are the
+  // tolerance: there neither side prints a #1055 SKIP.
+  {
+    const probes: string[] = [];
+    const pageCodes = ['A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A17_ATLAS_PAGE_FILES_EXIST', 'A19_OVERLAY_PNGS_HAVE_ALPHA', 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const unreadSkips = (report: ValidateReport | ModelReport): string[] =>
+      report.skipped
+        .filter((s) => (s.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' || s.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA') && s.reason.includes('A17_ATLAS_PAGE_FILES_EXIST'))
+        .map((s) => s.assertion.slice(0, 3));
+    const counts = { compared: 0, lines: 0, skipsPresent: 0, skipsOff: 0 };
+    let plantDiffered = false;
+    for (const { opts, result } of fixtures) {
+      const modelText = threadedModel(result, result.atlasText) ?? '';
+      let first = true;
+      const variants: Array<[string, string]> = [
+        ['no page off disk', result.atlasText],
+        [
+          'the first page off disk',
+          atlasWithPagesOffDisk(result.atlasText, () => {
+            const was = first;
+            first = false;
+            return was;
+          }).atlasText,
+        ],
+        ['every page off disk', atlasWithPagesOffDisk(result.atlasText, () => true).atlasText],
+      ];
+      for (const profile of VALIDATE_PROFILES) {
+        const reports: Array<{ spine: ValidateReport; model: ModelReport }> = [];
+        for (const [label, atlasText] of variants) {
+          const input: ValidateInput = { skeletonText: result.skeletonText, atlasText, atlasDir: opts.outDir, declaredDurations: result.declaredDurations, rig: result.rig, profile };
+          const doc = JSON.parse(modelText) as Record<string, unknown>;
+          doc.pages = pagesOfAtlas(atlasText);
+          const spineReport = validateOverSpine(input);
+          const modelReport = validateModel(modelInputOf(input, `${JSON.stringify(doc, null, 2)}\n`));
+          reports.push({ spine: spineReport, model: modelReport });
+          counts.compared++;
+          for (const code of pageCodes) {
+            const a = linesOfCode(spineReport, code);
+            const b = linesOfCode(modelReport, code);
+            counts.lines += a.length;
+            if (a.join('\n') !== b.join('\n')) probes.push(`${opts.rigPath} [${profile}] ${label} ${code.slice(0, 3)}: validate() ${JSON.stringify(a)}, the model side ${JSON.stringify(b)}`);
+          }
+          if (atlasText === result.atlasText) counts.skipsPresent += unreadSkips(spineReport).length + unreadSkips(modelReport).length;
+          else {
+            const said = unreadSkips(spineReport);
+            counts.skipsOff += said.length;
+            if (!said.includes('A06')) probes.push(`${opts.rigPath} [${profile}] ${label}: A06 printed no SKIP naming the page it did not read`);
+          }
+        }
+        // The plant: the comparison can fail — the present build's model lines against the spine lines with every page off.
+        const a06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+        if (linesOfCode(reports[0].model, a06).join('\n') !== linesOfCode(reports[2].spine, a06).join('\n')) plantDiffered = true;
+      }
+    }
+    if (counts.skipsPresent !== 0) probes.push(`${counts.skipsPresent} #1055 SKIP(s) printed on a build whose pages are all on disk`);
+    if (!plantDiffered) probes.push("the present build's A06 lines read the same as the build with every page off disk, so the comparison measures nothing");
+    probes.push(...floorProbes([[counts.compared, 1, `${counts.compared} report pair(s) compared`], [counts.skipsOff, 1, `${counts.skipsOff} #1055 SKIP(s) read`]], 'and a comparison over nothing is not a comparison'));
+    const held = probes.length === 0;
+    say(
+      'VF17_A_PAGE_FILE_NOT_ON_DISK_PRINTS_THE_SAME_A06_A17_A19_A27_LINES_ON_BOTH_SIDES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page, the first and every page off disk — ` +
+          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.skipsOff} SKIP(s) of A06/A19 naming a page not read, 0 on the builds whose pages are present; ` +
+          "the present build's A06 lines differ from those of the build with every page off, so the comparison can fail",
+      ),
+      "issue #1055: A06's size clause and A19 walked past a page file they could not open and printed PASS; they now SKIP naming it, and VF03's twins compare only the lines a break fails",
     );
   }
 

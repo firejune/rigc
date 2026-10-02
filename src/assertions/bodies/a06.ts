@@ -18,12 +18,61 @@ import { SKIP_NO_ATLAS, SKIP_NO_ATLAS_PAGE } from '../reasons.ts';
 import { pageFootprint, pageGridSentence } from '../../atlas.ts';
 import { readPngHeader } from '../../png.ts';
 
-export function a06AtlasPageSizeMatchesPng({ fail, skip }: Verdicts, { atlas }: AtlasRegionFacts, input: { atlasDir: string }, policy: boolean): void {
+export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { atlas }: AtlasRegionFacts, input: { atlasDir: string }, policy: boolean): void {
   if (!atlas) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS);
   if (atlas.pages.length === 0) return skip('A06_ATLAS_PAGE_SIZE_MATCHES_PNG', SKIP_NO_ATLAS_PAGE);
+  // Every sentence this body prints goes through here, so the end of the body
+  // can tell "nothing failed" from "something failed" (issue #1055, below).
+  let failures = 0;
+  const fail = (assertion: string, detail: string): void => {
+    failures++;
+    failed(assertion, detail);
+  };
+  // 🔒 **A page whose file is not on disk is a page whose size was not
+  // measured, and the body says so rather than passing** (issue #1055). Until
+  // this the loop below walked past such a page and the assertion came out
+  // PASS — on a build with every page file deleted, a PASS over a size clause
+  // that had opened nothing, measured on 33 of the 38 recipe-and-profile
+  // pairs of the tree's 19 recipes (the other five failed clauses that read
+  // only the atlas's numbers: overlap and rotation, under `spine-html`). What the body does instead is decided by what `A17` prints on
+  // the same input, so that one missing file is named once, by the rule whose
+  // subject it is: A17 FAILs naming every such file and its path, which keeps
+  // the report red; this body adds no FAIL of its own about the file (a
+  // second naming), and it does not PASS (a certificate over a size nobody
+  // read). It SKIPs with a reason that names the pages it did not read and
+  // points at A17 — `unreadSizes` below, at both of the body's exits.
+  //
+  // ⚠️ Only when nothing else here failed. `skip()` is per assertion, and a
+  // skip beside failures puts A06 in two of the report's buckets (the #705
+  // argument in `a19.ts`); and a FAIL certifies nothing, so the unread page
+  // is A17's alone there. ⚠️ Not the tree's other multi-clause rule either
+  // (`../reasons.ts`, #580: a multi-clause assertion SKIPs only when EVERY
+  // clause had nothing to measure). That rule is about a clause whose subject
+  // list is EMPTY — zero is a count, and a count was measured. A page the
+  // atlas declares is a member of the size clause's subject that is present
+  // and was not read, and the PASS this replaces claimed it was.
+  const unread: string[] = [];
+  const unreadSizes = (): void => {
+    if (failures > 0 || unread.length === 0) return;
+    const total = atlas.pages.length;
+    skip(
+      'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+      unread.length === total
+        ? `no page's size was measured: none of the ${total} page file(s) the atlas declares is on disk, which ` +
+            "A17_ATLAS_PAGE_FILES_EXIST names file by file. The clauses that read only the atlas's own numbers found " +
+            "nothing to fail, and that is not a pass while every page's size is unread"
+        : `the size of ${unread.length} of the ${total} page(s) the atlas declares was not measured — ` +
+            `${unread.map((name) => JSON.stringify(name)).join(', ')} — because the file is not on disk, which ` +
+            `A17_ATLAS_PAGE_FILES_EXIST names. The ${total - unread.length} page(s) that were read, and the clauses ` +
+            "that read only the atlas's own numbers, found nothing to fail, and that is not a pass while a page's size is unread",
+    );
+  };
   for (const page of atlas.pages) {
     const abs = resolve(input.atlasDir, page.name);
-    if (!existsSync(abs)) continue; // A17 owns this
+    if (!existsSync(abs)) {
+      unread.push(page.name); // A17 names the file; this body says only that it did not read it
+      continue;
+    }
     // 🔒 **A page that is not a PNG is a named failure, not a throw** (issue
     // #732). The reader's throw used to reach this rule's catch and print as
     // `threw: not a PNG (bad signature)`: the verdict right, the sentence a
@@ -118,7 +167,7 @@ export function a06AtlasPageSizeMatchesPng({ fail, skip }: Verdicts, { atlas }: 
       );
     }
   }
-  if (!policy) return;
+  if (!policy) return unreadSizes();
   // ⭐ **One part per page OR a tiling page** (issue #266, follow-up 2). This
   // clause used to be the first alternative alone — every region's UVs
   // `(0,0)-(1,1)` — which is rigc's *unpacked* convention and exactly what
@@ -192,4 +241,5 @@ export function a06AtlasPageSizeMatchesPng({ fail, skip }: Verdicts, { atlas }: 
       );
     }
   }
+  unreadSizes();
 }

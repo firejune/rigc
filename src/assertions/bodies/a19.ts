@@ -21,13 +21,20 @@ import { colourTypeName, readPngHeader } from '../../png.ts';
 import { readPlate } from '../../../tools/plate.ts';
 import type { RigInfo } from '../../types.ts';
 
-export function a19OverlayPngsHaveAlpha({ fail, skip }: Verdicts, { atlas }: AtlasRegionFacts, stage: StageFacts, { regionAttachments }: Pick<SkinEntryFacts, 'regionAttachments'>, input: { atlasDir: string; rig?: RigInfo }): void {
+export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atlas }: AtlasRegionFacts, stage: StageFacts, { regionAttachments }: Pick<SkinEntryFacts, 'regionAttachments'>, input: { atlasDir: string; rig?: RigInfo }): void {
   // A SKIP for the same reason A06's is (#568). This one is invisible under
   // `spine`, where the profile excludes the rule before its body runs — and
   // that is exactly why it was worth finding: `--profile spine-html` reported
   // it, and A27 below, green on an atlas nothing had read.
   if (!atlas) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS);
   if (atlas.pages.length === 0) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS_PAGE);
+  // Every sentence this body prints goes through here, so its end can tell
+  // "nothing failed" from "something failed" (issue #1055, at the page loop).
+  let failures = 0;
+  const fail = (assertion: string, detail: string): void => {
+    failures++;
+    failed(assertion, detail);
+  };
   const stageW = stage.width ?? 0;
   const stageH = stage.height ?? 0;
   // 🔒 **Which image is the base plate is decided ONCE, and the rig's own
@@ -96,10 +103,34 @@ export function a19OverlayPngsHaveAlpha({ fail, skip }: Verdicts, { atlas }: Atl
     if (on) on.push(region);
     else sharedPages.set(region.page.name, [region]);
   }
+  // 🔒 **A page whose file is not on disk is a page whose parts were not
+  // read, and the body says so rather than passing** (issue #1055). Until
+  // this the loop walked past such a page, and on a build with every page
+  // file deleted the assertion printed PASS on all 19 of the tree's recipes
+  // under `spine-html` having opened nothing. The rule for what it prints
+  // instead is `a06.ts`'s, read off what `A17` prints on the same input: A17
+  // FAILs naming each missing file, so the report is already red and the file
+  // already named; a FAIL here would be the second naming and a PASS a
+  // certificate over alpha nobody read. So the body SKIPs, naming the pages it
+  // did not read and pointing at A17 — only when it failed nothing else,
+  // because `skip()` is per assertion (#705's argument, below) and a FAIL
+  // certifies nothing.
+  //
+  // ⚠️ A page counts only when it carries a part this rule judges, by the
+  // predicate the non-PNG branch below uses: a missing page holding nothing
+  // but the base plate had nothing for this rule to read either way, so it
+  // moves nothing here (the size it was not measured at is `A06`'s to say).
+  let pagesWithParts = 0;
+  const unread: string[] = [];
   for (const page of atlas.pages) {
     const abs = resolve(input.atlasDir, page.name);
-    if (!existsSync(abs)) continue;
     const on = sharedPages.get(page.name) ?? [];
+    const carriesPart = on.length > 1 ? on.some((region) => !baseRegions.has(region.name)) : !basePages.has(page.name);
+    if (carriesPart) pagesWithParts++;
+    if (!existsSync(abs)) {
+      if (carriesPart) unread.push(page.name); // A17 names the file; this body says only that it did not read it
+      continue;
+    }
     // 🔒 **A page that is not a PNG is a non-measurement for every part on
     // it** (issue #732), stated the way #705's and #715's are: a FAIL naming
     // what was not read, because `skip()` is per assertion and would delete
@@ -292,4 +323,15 @@ export function a19OverlayPngsHaveAlpha({ fail, skip }: Verdicts, { atlas }: Atl
         'spine does not run this check.',
     );
   }
+  if (failures > 0 || unread.length === 0) return;
+  skip(
+    'A19_OVERLAY_PNGS_HAVE_ALPHA',
+    unread.length === pagesWithParts
+      ? `no part's alpha was read: none of the ${pagesWithParts} page file(s) carrying a part is on disk, which ` +
+          'A17_ATLAS_PAGE_FILES_EXIST names file by file, and that is not a pass while every part is unread'
+      : `${unread.length} of the ${pagesWithParts} page(s) carrying a part were not read — ` +
+          `${unread.map((name) => JSON.stringify(name)).join(', ')} — because the file is not on disk, which ` +
+          `A17_ATLAS_PAGE_FILES_EXIST names. Every part on the ${pagesWithParts - unread.length} page(s) that were ` +
+          "read can draw a transparent pixel, and that is not a pass while a part's alpha is unread",
+  );
 }
