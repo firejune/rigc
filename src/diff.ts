@@ -689,6 +689,43 @@ interface AttachmentFact {
    * — see `attachments.runtime_name`.
    */
   runtimeName: string;
+  /**
+   * Every name the attachment resolves, as `<field>:<name>` and sorted — see
+   * `attachmentRefTokens` for which fields and why.
+   */
+  refs: string;
+  /** The same tokens as a list, for the note that spells a disagreement out. */
+  refList: string[];
+}
+
+/**
+ * The names an attachment resolves (issue #1085): the atlas region a region or
+ * a mesh draws, a clipping polygon's end slot, and the mesh a linked mesh takes
+ * its geometry from — with the skin and slot it is found under, where stated.
+ *
+ * ⭐ The region is read as the runtime resolves it, `path`, else the stated
+ * `name`, else the placeholder (SPEC_COVERAGE §1.5's three-level indirection),
+ * for the reason `runtime_name` reads its name that way: a file that spells the
+ * path out and one that leaves it to the parser name the same region, and a
+ * measure that called those different would score every export against every
+ * writer that states its paths. Every other field is a token only when the file
+ * states it — absent is no token, never a default, as in `constraints.refs`.
+ *
+ * Measured on public builds through spine-core: a region's `path` moved to the
+ * other eye of `spineboy-pro` changes 94 of its 99 sampled draws, its clipping
+ * polygon's `end` moved six slots on changes the clipping of 9, and a linked
+ * mesh on `gallery/nod` taking `ear_r` instead of `ear_l` as its source changes
+ * all 18 of its sampled poses. `diff` compared none of the three, and two of them occur in
+ * none of the twelve editor exports (a stated `path` and a linked mesh).
+ */
+function attachmentRefTokens(type: string, key: string, att: Json): string[] {
+  const out: string[] = [];
+  if (type === 'region' || type === 'mesh' || type === 'linkedmesh') out.push(`path:${str(att.path) ?? str(att.name) ?? key}`);
+  for (const field of ['end', 'source', 'skin', 'slot'] as const) {
+    const s = str(att[field]);
+    if (s !== null) out.push(`${field}:${s}`);
+  }
+  return out.sort();
 }
 
 function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, AttachmentFact> } {
@@ -725,6 +762,8 @@ function attachmentFacts(root: Json): { skins: Set<string>; byKey: Map<string, A
           edgesPresent: type === 'mesh' ? 'edges' in att : null,
           size: num(att.width) !== null && num(att.height) !== null ? `${num(att.width)}x${num(att.height)}` : 'unstated',
           runtimeName: str(att.name) ?? attName,
+          refs: attachmentRefTokens(type, attName, att).join(' '),
+          refList: attachmentRefTokens(type, attName, att),
         });
       }
     }
@@ -795,6 +834,22 @@ function diffAttachments(c: Json, r: Json): DiffSection {
       counted([...ar.values()].map((f) => f.size)),
       counted([...br.values()].map((f) => f.size)),
     ),
+    wiringAgreement(
+      'attachments.refs',
+      'each attachment resolves the same region, clipping end and linked-mesh source',
+      a.byKey,
+      b.byKey,
+      (key) => `attachment ${JSON.stringify(key)}`,
+      '`attachments.names`',
+    ),
+    wiringAgreement(
+      'attachments.skin_members',
+      'each skin activates the same skin-required bones and constraints',
+      skinMembers(c),
+      skinMembers(r),
+      (skin) => `skin ${JSON.stringify(skin)}`,
+      '`attachments.skins`',
+    ),
   ],
   undefined,
   // ── reported (issue #46) ────────────────────────────────────────────────
@@ -851,6 +906,67 @@ function diffAttachments(c: Json, r: Json): DiffSection {
     // number of keys compared, so a report over few shared keys says so.
     runtimeNames(a.byKey, b.byKey),
   ]);
+}
+
+/**
+ * What each skin activates (issue #1085): the `bones` and the per-kind
+ * constraint lists a skin declares, as `<list>:<name>` tokens, sorted — a skin's
+ * MEMBERSHIP, which is what decides whether a bone or constraint marked
+ * `skin: true` is active under it.
+ *
+ * Measured on public builds through spine-core: a `gallery/look` bone made
+ * skin-required and left out of the skin's `bones` moves every one of its 27
+ * sampled poses, and `gallery/walk`'s `leg_b_ik` left out of the skin's `ik`
+ * moves all 9. None of the twelve editor exports declares a membership list, so
+ * every one of them reads `1/1` per skin here — two empty lists agree — which is
+ * the comparison being made rather than an absence of one.
+ */
+function skinMembers(root: Json): Map<string, { refs: string; refList: string[] }> {
+  const out = new Map<string, { refs: string; refList: string[] }>();
+  for (const skin of objs(root.skins)) {
+    const name = str(skin.name) ?? 'default';
+    const refList: string[] = [];
+    for (const list of ['bones', 'ik', 'transform', 'path', 'physics', 'slider'] as const) {
+      for (const member of arr(skin[list])) {
+        const s = str(member);
+        if (s !== null) refList.push(`${list}:${s}`);
+      }
+    }
+    refList.sort();
+    out.set(name, { refs: refList.join(' '), refList });
+  }
+  return out;
+}
+
+/**
+ * `agreement` over the larger roster on a `refs` string, with the note
+ * `constraints.refs` writes: each entry both sides hold whose names differ,
+ * field by field and candidate first, then a count of the entries one side holds
+ * alone, which `elsewhere` is the measure that names.
+ */
+function wiringAgreement<T extends { refs: string; refList: string[] }>(
+  id: string,
+  what: string,
+  a: Map<string, T>,
+  b: Map<string, T>,
+  label: (key: string) => string,
+  elsewhere: string,
+): DiffMeasure {
+  const base = agreement(id, what, a, b, (x, y) => x.refs === y.refs);
+  const missed = base.total - base.matched;
+  if (missed === 0) return base;
+  const differ: string[] = [];
+  for (const [key, fact] of a) {
+    const other = b.get(key);
+    if (other !== undefined && other.refs !== fact.refs) differ.push(refsDisagreement(label(key), fact, other));
+  }
+  const oneSided = missed - differ.length;
+  const spelled = differ.slice(0, REFS_SPELLED_OUT);
+  const note =
+    (differ.length === 0 ? '' : `${differ.length} differ: ${spelled.join('; ')}`) +
+    (differ.length > spelled.length ? `; …and ${differ.length - spelled.length} more` : '') +
+    (oneSided === 0 ? '' : `${differ.length === 0 ? '' : '; '}${oneSided} on one side only, which ${elsewhere} names`);
+  return { ...base, note };
 }
 
 /**
@@ -921,7 +1037,8 @@ interface ConstraintFact {
  * property fields were blinder still: measured on `gallery/look` and `6-arcs-pro`,
  * a slider moved from `rotate` to `x` and a transform remapped from `x>x` to
  * `x>y` moved no measure here and no value in the value walk either (its skip
- * list names `properties`), so nothing in the tree compared them at all.
+ * list named `properties`), so nothing in the tree compared them at all. Since
+ * issue #1084 the walk reads both, by class (`property/kind`, `properties/FromX/to/ToY`).
  *
  * ⚠️ Absent is no token, never a default: a transform with no `properties` maps
  * nothing, and two sides that both omit a field agree about it. And the tokens
@@ -967,8 +1084,8 @@ const REFS_SPELLED_OUT = 3;
  * "5" vs "-a"` — the candidate's names for each field that differs, then the
  * reference's, `none` where a side has none.
  */
-function refsDisagreement(at: string, a: ConstraintFact, b: ConstraintFact): string {
-  const byField = (f: ConstraintFact): Map<string, string[]> => {
+function refsDisagreement(at: string, a: { refList: string[] }, b: { refList: string[] }): string {
+  const byField = (f: { refList: string[] }): Map<string, string[]> => {
     const m = new Map<string, string[]>();
     for (const token of f.refList) {
       const colon = token.indexOf(':');
@@ -1024,9 +1141,43 @@ function constraintRefs(a: Map<string, ConstraintFact>, b: Map<string, Constrain
   return { ...base, note };
 }
 
+/**
+ * The constraints in the order the file declares them, by kind and name — the
+ * key `constraintFacts` uses, so that `leg` as an ik and as a transform are two
+ * entries here as well.
+ *
+ * 🔍 **Why the order is data** (issue #1085). 4.3 folds every constraint into one
+ * array and applies them in its order, so two files with the same constraints
+ * wired the same way can pose differently. Measured by reversing the array and
+ * posing both through spine-core: `spineboy-pro` moves 98 of its 99 sampled
+ * poses, `6-arcs-pro` 8 of 9 and `sack-pro` 8 of 36 (33 of 36 with physics
+ * stepped); swapping `aim-torso-ik` and `aim-torso-transform` alone moves the 9
+ * samples of `aim`. Before this nothing in the tree compared it — the value walk
+ * keys constraints by name, so it is blind to the order by construction.
+ *
+ * ⚠️ Not every swap poses differently, and the measure does not pretend to know
+ * which do: `gallery/look`'s two sliders and `gallery/walk`'s two legs drive
+ * disjoint bones and read the same pose either way. A reordering is reported as
+ * what the file states, the way `bones.order` reports one.
+ */
+function constraintOrder(root: Json): string[] {
+  const out: string[] = [];
+  for (const con of objs(root.constraints)) {
+    const name = str(con.name);
+    if (name !== null) out.push(constraintAt(str(con.type) ?? '(none)', name));
+  }
+  return out;
+}
+
 function diffConstraints(c: Json, r: Json): DiffSection {
   const a = constraintFacts(c);
   const b = constraintFacts(r);
+  const ao = constraintOrder(c);
+  const bo = constraintOrder(r);
+  const shared = ao.filter((n) => b.has(n));
+  const sharedOther = bo.filter((n) => a.has(n));
+  const inOrder = lcs(shared, sharedOther);
+  const max = Math.max(a.size, b.size);
   return sectionOf('constraints', [
     measure('constraints.count', 'how many constraints', Math.min(a.size, b.size), Math.max(a.size, b.size)),
     jaccard('constraints.names', 'the constraint names', new Set(a.keys()), new Set(b.keys())),
@@ -1038,8 +1189,31 @@ function diffConstraints(c: Json, r: Json): DiffSection {
     ),
     agreement('constraints.type_by_name', 'each constraint is the same type', a, b, (x, y) => x.type === y.type),
     constraintRefs(a, b),
+    measure(
+      'constraints.order',
+      'the constraints are declared, and so applied, in the same order',
+      inOrder,
+      max,
+      [
+        ...(inOrder === shared.length ? [] : [outOfOrder(shared, sharedOther)]),
+        ...(shared.length === max ? [] : [`${max - shared.length} of the larger roster not on both sides, which \`constraints.names\` names`]),
+      ].join('; ') || undefined,
+    ),
   ]);
 }
+
+/**
+ * `constraints.order`'s note when the shared constraints are not in one order:
+ * both sides' order of them, candidate first, spelled out to a limit.
+ */
+function outOfOrder(a: string[], b: string[]): string {
+  const spell = (list: string[]): string =>
+    list.slice(0, ORDER_SPELLED_OUT).join(', ') + (list.length > ORDER_SPELLED_OUT ? `, …and ${list.length - ORDER_SPELLED_OUT} more` : '');
+  return `${a.length - lcs(a, b)} out of order: candidate ${spell(a)}; reference ${spell(b)}`;
+}
+
+/** How many constraints `constraints.order`'s note lists per side before it counts the rest. */
+const ORDER_SPELLED_OUT = 6;
 
 interface AnimationFacts {
   names: string[];
@@ -1096,6 +1270,136 @@ function animationFacts(root: Json): AnimationFacts {
     }
   });
   return facts;
+}
+
+/**
+ * The names the animations resolve, as two multisets of tokens (issue #1085).
+ *
+ * `animationFacts` keeps each timeline's kind and drops its target on purpose —
+ * a candidate's own vocabulary would otherwise be counted against it a second
+ * time inside `timeline_kinds` (#21) — and reads no key's contents beyond its
+ * time and curve. So until this, a bone timeline moved onto another bone, an
+ * attachment key naming another attachment, a draw-order key naming another slot
+ * and an event key firing another event each moved no measure in this file, and
+ * every one of them poses or draws differently: measured on public builds
+ * through spine-core, a retargeted bone timeline moves 7 of `gallery/look`'s 27
+ * sampled poses, two slots' attachment keys swapped move 9 of `spineboy-pro`'s
+ * 99, a draw-order offset moved to the next slot moves 9 of `spineboy-ess`'s 72
+ * and an event key renamed to a second event moves the event block of one sample.
+ *
+ * - `targets`: one token per timeline, `<animation>|<group>|<target>` — the
+ *   bone, slot or constraint it keys, a deform's or sequence's
+ *   `skin/slot/attachment`, and each slot a draw-order folder holds. The
+ *   timeline's own kind is left out on purpose: it is `timeline_kinds`'
+ *   subject, and a rotate keyed as a scale on the same bone moves that measure
+ *   and must not move this one too.
+ * - `keyed`: one token per name a KEY carries, with its position in the
+ *   timeline — an attachment key's attachment (`(none)` for a key that clears
+ *   the slot), each draw-order offset's slot, an event key's event.
+ *
+ * Both are names, so both are name-matched, and a candidate with its own names
+ * reads low here exactly as it does on `names` — the name-agnostic block is
+ * where that rig is read. ⚠️ No key VALUE is read: a key's time, an offset's
+ * distance and an event's payload are the value walk's.
+ */
+interface AnimationRefs {
+  targets: Map<string, number>;
+  keyed: Map<string, number>;
+}
+
+/** The physics group's empty name, which applies a timeline to every physics constraint. */
+const EVERY_PHYSICS_CONSTRAINT = '(every physics constraint)';
+
+function animationRefs(root: Json): AnimationRefs {
+  const targets = new Map<string, number>();
+  const keyed = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string): void => {
+    m.set(k, (m.get(k) ?? 0) + 1);
+  };
+  if (!isObj(root.animations)) return { targets, keyed };
+  for (const [anim, body] of Object.entries(root.animations)) {
+    if (!isObj(body)) continue;
+    for (const group of ['bones', 'slots', 'path', 'physics', 'slider'] as const) {
+      const held = body[group];
+      if (!isObj(held)) continue;
+      for (const [target, timelines] of Object.entries(held)) {
+        if (!isObj(timelines)) continue;
+        const named = group === 'physics' && target === '' ? EVERY_PHYSICS_CONSTRAINT : target;
+        for (const [timeline, keys] of Object.entries(timelines)) {
+          if (!Array.isArray(keys)) continue;
+          bump(targets, `${anim}|${group}|${named}`);
+          if (group === 'slots' && timeline === 'attachment') {
+            keys.forEach((key, i) => {
+              if (isObj(key)) bump(keyed, `${anim}|attachment key ${i}|${target}: ${str(key.name) ?? '(none)'}`);
+            });
+          }
+        }
+      }
+    }
+    for (const group of ['ik', 'transform'] as const) {
+      const held = body[group];
+      if (!isObj(held)) continue;
+      for (const [target, keys] of Object.entries(held)) if (Array.isArray(keys)) bump(targets, `${anim}|${group}|${target}`);
+    }
+    if (isObj(body.attachments)) {
+      for (const [skin, bySlot] of Object.entries(body.attachments)) {
+        if (!isObj(bySlot)) continue;
+        for (const [slot, byAttachment] of Object.entries(bySlot)) {
+          if (!isObj(byAttachment)) continue;
+          for (const [attachment, timelines] of Object.entries(byAttachment)) {
+            if (!isObj(timelines)) continue;
+            for (const keys of Object.values(timelines)) {
+              if (Array.isArray(keys)) bump(targets, `${anim}|attachments|${skin}/${slot}/${attachment}`);
+            }
+          }
+        }
+      }
+    }
+    const offsets = (label: string, keys: unknown): void => {
+      arr(keys).forEach((key, i) => {
+        if (!isObj(key)) return;
+        for (const offset of objs(key.offsets)) bump(keyed, `${anim}|${label} key ${i}|${str(offset.slot) ?? '(none)'}`);
+      });
+    };
+    offsets('drawOrder', body.drawOrder);
+    objs(body.drawOrderFolder).forEach((folder, f) => {
+      for (const slot of arr(folder.slots)) bump(targets, `${anim}|drawOrderFolder ${f}|${str(slot) ?? '(none)'}`);
+      offsets(`drawOrderFolder ${f}`, folder.keys);
+    });
+    arr(body.events).forEach((key, i) => {
+      if (isObj(key)) bump(keyed, `${anim}|event key ${i}|${str(key.name) ?? '(none)'}`);
+    });
+  }
+  return { targets, keyed };
+}
+
+/** How many tokens a names histogram's note spells out per side before it counts the rest. */
+const TOKENS_SPELLED_OUT = 3;
+
+/**
+ * `histogram`, with a note naming what each side holds that the other does not —
+ * the figure alone says some name moved, and a reader acting on it needs which.
+ */
+function namesHistogram(id: string, what: string, a: Map<string, number>, b: Map<string, number>): DiffMeasure {
+  const base = histogram(id, what, a, b);
+  if (base.matched === base.total) return base;
+  // A token one side holds more often than the other, with how many more — a
+  // bone keyed by three timelines on one side and one on the other is `×2`.
+  const only = (x: Map<string, number>, y: Map<string, number>): string[] => {
+    const out: string[] = [];
+    for (const [k, v] of x) {
+      const extra = v - (y.get(k) ?? 0);
+      if (extra > 0) out.push(`${JSON.stringify(k)}${extra > 1 ? ` ×${extra}` : ''}`);
+    }
+    return out;
+  };
+  const spell = (side: string, list: string[]): string =>
+    list.length === 0
+      ? ''
+      : `${side} only: ${list.slice(0, TOKENS_SPELLED_OUT).join(', ')}` +
+        (list.length > TOKENS_SPELLED_OUT ? `, …and ${list.length - TOKENS_SPELLED_OUT} more` : '');
+  const parts = [spell('candidate', only(a, b)), spell('reference', only(b, a))].filter((p) => p !== '');
+  return { ...base, note: `${base.total - base.matched} differ — ${parts.join('; ')}` };
 }
 
 /**
@@ -1266,6 +1570,8 @@ function diffAnimations(c: Json, r: Json, pairsStated: readonly DiffAnimationPai
   const at = keyingTotals(a);
   const bt = keyingTotals(b);
   const paired = pairAnimations(a, b, pairsStated);
+  const refsA = animationRefs(c);
+  const refsB = animationRefs(r);
   const perSecond = (t: KeyingTotals): number => (t.seconds === 0 ? 0 : t.keys / t.seconds);
   const perTimeline = (t: KeyingTotals): number => (t.timelines === 0 ? 0 : t.keys / t.timelines);
   return sectionOf('animations', [
@@ -1284,6 +1590,18 @@ function diffAnimations(c: Json, r: Json, pairsStated: readonly DiffAnimationPai
     histogram('animations.event_keys', 'as many event firings', a.events, b.events),
     agreement('animations.draw_order', 'a draw-order timeline is present or absent alike', a.hasDrawOrder, b.hasDrawOrder, (x, y) => x === y),
     agreement('animations.deform', 'a deform timeline is present or absent alike', a.hasDeform, b.hasDeform, (x, y) => x === y),
+    namesHistogram(
+      'animations.targets',
+      'each timeline keys the same bone, slot, constraint or attachment',
+      refsA.targets,
+      refsB.targets,
+    ),
+    namesHistogram(
+      'animations.keyed_names',
+      'each key names the same attachment, draw-order slot or event',
+      refsA.keyed,
+      refsB.keyed,
+    ),
   ],
   // ── the same two skeletons' shots, paired rather than named (issue #720) ──
   //
@@ -1628,7 +1946,7 @@ export const VALUE_PARSED_ULP = 2 ** -23;
  * Both terms are derived rather than fitted: the first is rigc's models' grid,
  * the second is the parser's storage. Measured over the twelve editor exports
  * in `examples/`, the widest gap between a rebuild and the file it was read
- * from is **0** — none of 188,339 numeric values differs at all, since issue
+ * from is **0** — none of 189,699 numeric values differs at all, since issue
  * #716 made every emitted number its float's own name (it was 0.81 of this
  * bound, over 56,951 values that differed, while rigc emitted six decimals) —
  * so the corpus sits inside a bound that was not drawn around it, and no
@@ -1657,7 +1975,11 @@ const VALUE_MEASURES: ReadonlyArray<{ id: string; what: string; prefix: string }
   { id: 'values.bones', what: 'every bone setup pose, its length and its colour', prefix: 'bones/' },
   { id: 'values.slots', what: 'every slot colour, dark colour, blend mode and setup attachment', prefix: 'slots/' },
   { id: 'values.attachments', what: 'every attachment offset, size, vertex, weight, uv and triangle', prefix: 'skins/' },
-  { id: 'values.constraints', what: 'every constraint pose field and flag', prefix: 'constraints/' },
+  {
+    id: 'values.constraints',
+    what: 'every constraint field the parser reads: pose, flags, offsets, and the property map and its kinds',
+    prefix: 'constraints/',
+  },
   { id: 'values.events', what: 'every event payload in the setup pose', prefix: 'events/' },
   { id: 'values.key_times', what: 'every key time, and each animation\'s duration', prefix: 'animations/' },
   { id: 'values.key_values', what: 'every keyed value: poses, deform vertices, draw orders, event payloads', prefix: 'animations/' },

@@ -105,7 +105,7 @@ instead of a reader noticing:
 ```
   ── summary ──
   validate   green  (profile spine)
-  ess        bones=0.567  slots=0.476  attachments=0.926  constraints=1.000  animations=0.936  events=1.000
+  ess        bones=0.567  slots=0.476  attachments=0.894  constraints=1.000  animations=0.856  events=1.000
              bones 0.567 (name-matched) · 1.000 (name-agnostic)   slots 0.476 (name-matched) · 1.000 (name-agnostic)
              reported: mesh_edges 1.000 · runtime_name 1.000 · key_density 0.710 · keys_per_timeline 0.710 · stage_present 1.000 · stage_box 0.000
 ```
@@ -532,6 +532,113 @@ a **supplied input** (`identity` or a mapping file, never derived), and reports
 four quantities — root-relative position over skeleton size, rotation, scale, and
 the full linear part — **never combined into a score and never gating**: the
 figures land in `sections[].reported`, beside and never inside the gated table.
+
+**2026-10-02 — five measures that read names, and a constraint's order**
+([#1085](https://github.com/firejune/rigc/issues/1085)). Five name-matched measures
+join three sections: `attachments.refs` (the region an attachment draws, a clipping
+polygon's `end`, a linked mesh's `source`, `skin` and `slot`), `attachments.skin_members`
+(what each skin activates), `constraints.order` (the order the one constraint array is
+applied in), `animations.targets` (what each timeline keys) and `animations.keyed_names`
+(the attachment, draw-order slot or event each key names). Each was a difference every
+measure read 1.000 over and each one poses or draws differently — planted on a public
+build and posed through spine-core, per field, in [BENCHMARK.md](BENCHMARK.md)'s *What
+`diff` reads, and what it leaves*. A section mean is a mean over its measures, so **every
+run on this page whose `attachments` or `animations` section was below 1.000 moves**:
+71 recorded section figures across all 26 run records, 52 down and 19 up. A figure moves
+up where the two added measures read above the section's old mean — `skin_members` reads
+`1/1` on every run, because no candidate and no reference declares a membership list,
+and that is agreement rather than an absence of data, the way `stage_present` counts two
+missing stages. **No `constraints` figure moves**: on every run that section reads either
+1.000 with nothing on either side, or 0.000 with no constraint name in common, and
+`order` adds `0/0` or `0/n` to it. No clause reads a section mean — G4 and G5 read
+`count` and `names` — so **no verdict moves**, and 🚫 no `bench.json` was rewritten.
+"Before this change" is the same candidate re-read by the tree this change was made on,
+which is where it differs from "as recorded" (#28, above, on `attachments`).
+
+| run | against | section | as recorded | before this change | after | the two measures added |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| `2026-08-23-rung2-1` | `ess` | `attachments` | 0.805 | 0.870 | **0.830** | refs 5/17 · skin_members 1/1 |
+| `2026-08-23-rung2-1` | `ess` | `animations` | 0.622 | 0.622 | **0.524** | targets 12/72 · keyed_names 0/36 |
+| `2026-08-23-rung2-2` | `ess` | `attachments` | 0.762 | 0.853 | **0.794** | refs 1/17 · skin_members 1/1 |
+| `2026-08-23-rung2-2` | `ess` | `animations` | 0.623 | 0.623 | **0.510** | targets 0/72 · keyed_names 0/36 |
+| `2026-08-23-rung3-1` | `ess` | `attachments` | 0.870 | 0.926 | **0.894** | refs 1/2 · skin_members 1/1 |
+| `2026-08-23-rung3-1` | `ess` | `animations` | 0.911 | 0.911 | **0.837** | targets 0/8 · keyed_names 0/0 |
+| `2026-08-23-rung3-2` | `ess` | `attachments` | 0.870 | 0.926 | **0.894** | refs 1/2 · skin_members 1/1 |
+| `2026-08-23-rung3-2` | `ess` | `animations` | 0.936 | 0.936 | **0.856** | targets 0/8 · keyed_names 0/0 |
+| `2026-08-23-rung4-1` | `ess` | `attachments` | 0.772 | 0.859 | **0.804** | refs 1/9 · skin_members 1/1 |
+| `2026-08-23-rung4-1` | `ess` | `animations` | 0.854 | 0.854 | **0.713** | targets 5/31 · keyed_names 0/7 |
+| `2026-08-23-rung5-1` | `ess` | `attachments` | 0.801 | 0.897 | **0.837** | refs 4/29 · skin_members 1/1 |
+| `2026-08-23-rung5-1` | `ess` | `animations` | 0.697 | 0.697 | **0.581** | targets 7/66 · keyed_names 1/127 |
+| `2026-08-23-rung6-1` | `pro` | `attachments` | 0.321 | 0.396 | **0.437** | refs 1/4 · skin_members 1/1 |
+| `2026-08-23-rung6-1` | `pro` | `animations` | 0.810 | 0.810 | **0.680** | targets 3/16 · keyed_names 0/2 |
+| `2026-08-23-rung8-1/ball` | `ball` | `attachments` | 0.444 | 0.444 | **0.545** | refs 2/2 · skin_members 1/1 |
+| `2026-08-23-rung8-1/ball` | `ball` | `animations` | 0.878 | 0.878 | **0.845** | targets 4/10 · keyed_names 0/0 |
+| `2026-08-23-rung8-1/ball` | `pendulum` | `attachments` | 0.167 | 0.167 | **0.227** | refs 0/6 · skin_members 1/1 |
+| `2026-08-23-rung8-1/ball` | `pendulum` | `animations` | 0.817 | 0.817 | **0.759** | targets 0/8 · keyed_names 0/0 |
+| `2026-08-23-rung8-1/pendulum` | `ball` | `attachments` | 0.148 | 0.148 | **0.212** | refs 0/6 · skin_members 1/1 |
+| `2026-08-23-rung8-1/pendulum` | `ball` | `animations` | 0.917 | 0.917 | **0.841** | targets 0/10 · keyed_names 0/0 |
+| `2026-08-23-rung8-1/pendulum` | `pendulum` | `animations` | 0.846 | 0.846 | **0.783** | targets 0/8 · keyed_names 0/0 |
+| `2026-08-23-rung8-2` | `ball` | `attachments` | 0.667 | 0.667 | **0.727** | refs 2/2 · skin_members 1/1 |
+| `2026-08-23-rung8-2` | `ball` | `animations` | 0.876 | 0.876 | **0.853** | targets 5/10 · keyed_names 0/0 |
+| `2026-08-23-rung8-2` | `pendulum` | `attachments` | 0.148 | 0.148 | **0.212** | refs 0/6 · skin_members 1/1 |
+| `2026-08-23-rung8-2` | `pendulum` | `animations` | 0.814 | 0.814 | **0.757** | targets 0/8 · keyed_names 0/0 |
+| `2026-08-23-spineboy-1/ess` | `ess` | `attachments` | 0.976 | 0.976 | **0.974** | refs 26/28 · skin_members 1/1 |
+| `2026-08-23-spineboy-1/ess` | `ess` | `animations` | 0.821 | 0.821 | **0.767** | targets 106/149 · keyed_names 9/27 |
+| `2026-08-23-spineboy-1/ess` | `pro` | `attachments` | 0.253 | 0.253 | **0.328** | refs 27/80 · skin_members 1/1 |
+| `2026-08-23-spineboy-1/ess` | `pro` | `animations` | 0.573 | 0.573 | **0.496** | targets 80/418 · keyed_names 11/103 |
+| `2026-08-23-spineboy-2/ess` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-08-23-spineboy-2/ess` | `ess` | `animations` | 0.806 | 0.806 | **0.748** | targets 102/149 · keyed_names 8/28 |
+| `2026-08-23-spineboy-2/ess` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-08-23-spineboy-2/ess` | `pro` | `animations` | 0.553 | 0.553 | **0.481** | targets 79/418 · keyed_names 13/103 |
+| `2026-08-24-rung3-1` | `ess` | `animations` | 0.768 | 0.768 | **0.765** | targets 4/8 · keyed_names 0/0 |
+| `2026-08-24-spineboy-3` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-08-24-spineboy-3` | `ess` | `animations` | 0.804 | 0.804 | **0.741** | targets 108/149 · keyed_names 5/27 |
+| `2026-08-24-spineboy-3` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-08-24-spineboy-3` | `pro` | `animations` | 0.572 | 0.572 | **0.490** | targets 81/418 · keyed_names 5/103 |
+| `2026-08-26-rung1-1/balls` | `balls` | `animations` | 0.687 | 0.687 | **0.715** | targets 15/22 · keyed_names 0/0 |
+| `2026-08-26-rung1-1/balls` | `drop` | `attachments` | 0.694 | 0.694 | **0.659** | refs 0/8 · skin_members 1/1 |
+| `2026-08-26-rung1-1/balls` | `drop` | `animations` | 0.222 | 0.222 | **0.273** | targets 0/15 · keyed_names 0/0 |
+| `2026-08-26-rung1-1/drop` | `balls` | `attachments` | 0.667 | 0.667 | **0.636** | refs 0/8 · skin_members 1/1 |
+| `2026-08-26-rung1-1/drop` | `balls` | `animations` | 0.222 | 0.222 | **0.273** | targets 0/22 · keyed_names 0/0 |
+| `2026-08-26-rung1-1/drop` | `drop` | `attachments` | 0.911 | 0.911 | **0.909** | refs 4/5 · skin_members 1/1 |
+| `2026-08-26-rung3-1` | `ess` | `animations` | 0.823 | 0.823 | **0.810** | targets 4/8 · keyed_names 0/0 |
+| `2026-08-26-rung4-1` | `ess` | `attachments` | 0.930 | 0.930 | **0.922** | refs 7/9 · skin_members 1/1 |
+| `2026-08-26-rung4-1` | `ess` | `animations` | 0.822 | 0.822 | **0.745** | targets 16/31 · keyed_names 2/7 |
+| `2026-08-26-rung5-1` | `ess` | `attachments` | 0.897 | 0.897 | **0.837** | refs 4/29 · skin_members 1/1 |
+| `2026-08-26-rung5-1` | `ess` | `animations` | 0.763 | 0.763 | **0.643** | targets 10/66 · keyed_names 5/96 |
+| `2026-08-28-rung7-1` | `sack-pro` | `attachments` | 0.407 | 0.407 | **0.515** | refs 3/3 · skin_members 1/1 |
+| `2026-08-28-rung7-1` | `sack-pro` | `animations` | 0.791 | 0.791 | **0.744** | targets 11/181 · keyed_names 0/0 |
+| `2026-08-28-rung7-2` | `sack-pro` | `attachments` | 0.407 | 0.407 | **0.515** | refs 3/3 · skin_members 1/1 |
+| `2026-08-28-rung7-2` | `sack-pro` | `animations` | 0.798 | 0.798 | **0.748** | targets 8/181 · keyed_names 0/0 |
+| `2026-08-28-spineboy-1` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-08-28-spineboy-1` | `ess` | `animations` | 0.778 | 0.778 | **0.730** | targets 113/156 · keyed_names 8/27 |
+| `2026-08-28-spineboy-1` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-08-28-spineboy-1` | `pro` | `animations` | 0.547 | 0.547 | **0.473** | targets 86/418 · keyed_names 8/103 |
+| `2026-08-28-spineboy-2` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-08-28-spineboy-2` | `ess` | `animations` | 0.777 | 0.777 | **0.729** | targets 113/156 · keyed_names 8/27 |
+| `2026-08-28-spineboy-2` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-08-28-spineboy-2` | `pro` | `animations` | 0.545 | 0.545 | **0.471** | targets 86/418 · keyed_names 8/103 |
+| `2026-09-02-rung7-3` | `sack-pro` | `attachments` | 0.407 | 0.407 | **0.515** | refs 3/3 · skin_members 1/1 |
+| `2026-09-02-rung7-3` | `sack-pro` | `animations` | 0.798 | 0.798 | **0.748** | targets 8/181 · keyed_names 0/0 |
+| `2026-09-03-spineboy-1` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-09-03-spineboy-1` | `ess` | `animations` | 0.812 | 0.812 | **0.738** | targets 100/149 · keyed_names 4/27 |
+| `2026-09-03-spineboy-1` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-09-03-spineboy-1` | `pro` | `animations` | 0.568 | 0.568 | **0.484** | targets 72/418 · keyed_names 4/103 |
+| `2026-09-03-spineboy-2` | `ess` | `attachments` | 0.955 | 0.955 | **0.953** | refs 26/29 · skin_members 1/1 |
+| `2026-09-03-spineboy-2` | `ess` | `animations` | 0.703 | 0.703 | **0.637** | targets 95/149 · keyed_names 1/27 |
+| `2026-09-03-spineboy-2` | `pro` | `attachments` | 0.262 | 0.262 | **0.338** | refs 29/80 · skin_members 1/1 |
+| `2026-09-03-spineboy-2` | `pro` | `animations` | 0.474 | 0.474 | **0.407** | targets 71/418 · keyed_names 4/103 |
+
+⭐ **Every drop is the naming gap, read once more, and the name-agnostic block is where
+it is read away.** A candidate authored from a brief names its own bones and keys, so
+`targets` reads low wherever `bones.names` already does — rung 2 attempt 2 `0/72` — and
+`refs` wherever `attachments.names` does. Measured rather than assumed: on all 26 run
+records, not one `attachments.refs`, `attachments.skin_members` or `constraints.order`
+miss is an entry both sides hold under the same key and wire differently — every one is
+a key on one side only, which `names` already counts. That is the price
+`bones.parent_by_name` and `constraints.refs` already pay, it is why each of these sits
+in the name-matched block, and it is why a transcription (*B1's proof*, below) and every
+one of the nineteen editor and gallery round trips read all five at 1.000.
 
 ### The honesty rule
 
@@ -8278,7 +8385,7 @@ reason and gate for neither.
         1.000  bone_binding_shape           2/2         as many slots hang off a bone of each shape (`?` = no such bone is declared)
         1.000  order_shape                  2/2         the draw order is the same order of `<attachment type>@<bone shape>`
 
-    attachments           mean 1.000  over 9 measures
+    attachments           mean 1.000  over 11 measures
         1.000  skins                        1/1         the skin names
         1.000  count                        2/2         how many attachments
         1.000  names                        2/2         skin/slot/attachment keys
@@ -8288,19 +8395,22 @@ reason and gate for neither.
         1.000  mesh_weighted                0/0         each mesh is weighted, or is not, alike  — neither side has any
         1.000  mesh_hull                    0/0         each mesh declares the same hull length  — neither side has any
         1.000  region_size                  2/2         NAME-AGNOSTIC: as many regions of each stated size (`unstated` is its own size)
+        1.000  refs                         2/2         each attachment resolves the same region, clipping end and linked-mesh source
+        1.000  skin_members                 1/1         each skin activates the same skin-required bones and constraints
 
     attachments (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
         1.000  mesh_edges                   0/0         each mesh declares an edge list, or declares none, alike  — neither side has any
         1.000  runtime_name                 2/2         each attachment both sides hold answers to the same name at runtime (`name` if stated, else its placeholder)
 
-    constraints           mean 1.000  over 5 measures
+    constraints           mean 1.000  over 6 measures
         1.000  count                        0/0         how many constraints  — neither side has any
         1.000  names                        0/0         the constraint names  — neither side has any
         1.000  type_counts                  0/0         as many of each constraint type  — neither side has any
         1.000  type_by_name                 0/0         each constraint is the same type  — neither side has any
         1.000  refs                         0/0         each constraint names the same bones, slots, animation and properties  — neither side has any
+        1.000  order                        0/0         the constraints are declared, and so applied, in the same order  — neither side has any
 
-    animations            mean 1.000  over 9 measures
+    animations            mean 1.000  over 11 measures
         1.000  count                        2/2         how many animations
         1.000  names                        2/2         the animation names
         1.000  duration                     2/2         each animation runs as long (last key time, within one frame)
@@ -8310,6 +8420,8 @@ reason and gate for neither.
         1.000  event_keys                   0/0         as many event firings  — neither side has any
         1.000  draw_order                   2/2         a draw-order timeline is present or absent alike
         1.000  deform                       2/2         a deform timeline is present or absent alike
+        1.000  targets                      8/8         each timeline keys the same bone, slot, constraint or attachment
+        1.000  keyed_names                  0/0         each key names the same attachment, draw-order slot or event  — neither side has any
 
     animations (reported) (no mean)   over 2 measures  — unobservable from the frames, so reported and folded into nothing
         1.000  key_density                  9.857/9.857 how hard the shot is keyed, as keys per second  — candidate 9.857 vs reference 9.857 keys/s; the two agree. Convention: every key of every timeline (69 vs 69) over the summed last-key time of every animation (7s vs 7s), compared as min/max at 3 decimal places.
@@ -8320,14 +8432,17 @@ reason and gate for neither.
         1.000  payloads                     0/0         each event carries the same typed payload  — neither side has any
 ```
 
-Thirteen of those measures are **vacuous** and say so — the derivation is a grep of
+Fifteen of those measures are **vacuous** and say so — the derivation is a grep of
 the block for `0/0` with "neither side has any" beside it: the five mesh figures
 (four under `attachments`, `mesh_edges` under `attachments (reported)`), every
-constraint figure, and every event figure, which is three and not two because
-`animations.event_keys` counts event firings from inside the `animations` section.
-That last one is why this sentence read *eleven* while the block already held twelve:
-the count was taken off the section headings, and one event figure does not sit under
-`events`. A rung with meshes or constraints will not get them for free.
+constraint figure, every event figure, which is three and not two because
+`animations.event_keys` counts event firings from inside the `animations` section,
+and `animations.keyed_names`, because this skeleton keys no attachment, no draw order
+and no event. The event figure outside `events` is why this sentence once read
+*eleven* while the block already held twelve: the count was taken off the section
+headings. It read *thirteen* until `constraints.order` and `animations.keyed_names`
+arrived ([#1085](https://github.com/firejune/rigc/issues/1085)). A rung with meshes or
+constraints will not get them for free.
 
 The two name-agnostic blocks are 1.000 here for the least interesting reason
 available — a transcription has the reference's own names, so there is no gap for

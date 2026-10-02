@@ -135,9 +135,9 @@ every reader of every other section would then have to handle.
 | `skeleton` (the header) | — | — | **`stage_present`** · **`stage_box`** |
 | `bones` | `count` · `names` · `parent_by_name` · `order` · `length_present` · `inherit_present` · `depth_histogram` · `degree_sequence` | `count` · `depth_histogram` · `degree_sequence` · `shape_histogram` · `order_shape` | — |
 | `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
-| `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` | — | **`mesh_edges`** · **`runtime_name`** |
-| `constraints` | `count` · `names` · `type_counts` · `type_by_name` · `refs` | — | — |
-| `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` | over the paired shots, and only where something pairs them: `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `draw_order` · `deform` | **`key_density`** · **`keys_per_timeline`** |
+| `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` · `refs` · `skin_members` | — | **`mesh_edges`** · **`runtime_name`** |
+| `constraints` | `count` · `names` · `type_counts` · `type_by_name` · `refs` · `order` | — | — |
+| `animations` | `count` · `names` · `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `event_keys` · `draw_order` · `deform` · `targets` · `keyed_names` | over the paired shots, and only where something pairs them: `duration` · `timeline_kinds` · `key_counts` · `curve_kinds` · `draw_order` · `deform` | **`key_density`** · **`keys_per_timeline`** |
 | `events` | `names` · `payloads` | — | — |
 
 ##### Why a measure can be reported and not gating
@@ -183,7 +183,7 @@ reason: they are not in a section at all.
 Every measure in that table reads *presence*, *names*, *counts*, *order* and
 *kinds* — never the numbers inside them. So a decompiler that halved every
 rotation, dropped every bone's `length` or mirrored every vertex reads **1.000 on
-all 49 measures**, which is what [issue #615](https://github.com/firejune/rigc/issues/615)
+all 54 measures**, which is what [issue #615](https://github.com/firejune/rigc/issues/615)
 was opened about. `diffSkeletonValues` is the answer and it is a **separate call**
 with a report of its own:
 
@@ -193,7 +193,7 @@ with a report of its own:
 | `values.bones` | every bone setup pose, its `length` and its colour |
 | `values.slots` | every slot colour, dark colour, blend mode and setup attachment |
 | `values.attachments` | every attachment offset, size, vertex, weight, uv and triangle |
-| `values.constraints` | every constraint pose field and flag |
+| `values.constraints` | every constraint field the parser reads: its pose, its flags and modes, a transform's six offsets and its property map — each `from` and `to` by its class (`properties/FromX/to/ToY/max`), and a slider's property by its class (`property/kind`) |
 | `values.events` | every event payload in the setup pose |
 | `values.key_times` | every key time, and each animation's duration |
 | `values.key_values` | every keyed value: poses, deform vertices, draw orders, event payloads |
@@ -210,7 +210,7 @@ Three properties, and each is the reason for the one after it:
   one of the three modules allowed to link the runtime) and this compares what
   comes back.
 - **It therefore needs both skeletons *and* both atlases**, which is why it is
-  not part of `rigc diff`'s 49 and why `bench.json` is unchanged by it. A
+  not part of `rigc diff`'s 54 and why `bench.json` is unchanged by it. A
   skeleton whose attachments carry a `sequence` cannot be parsed without the
   pack that resolves it, and half the corpus does.
 - **Its tolerance is derived, never fitted.** `valueTolerance(m) = 1e-6 +
@@ -220,9 +220,11 @@ Three properties, and each is the reason for the one after it:
   float32 ULP, because `spine-core` stores frames, curves and vertices in a
   `Float32Array` and every other number rigc emits is its float32's shortest
   name. Over the twelve editor exports in `examples/` the widest gap between a
-  rebuild and the file it was read from is **0**: not one of 188,339 numeric
+  rebuild and the file it was read from is **0**: not one of 189,699 numeric
   values differs, because the rebuild spells every number as the editor did
-  (`IG73`). It was **0.81** of the bound, over 56,951 values that differed,
+  (`IG73`). (188,339 until [#1084](https://github.com/firejune/rigc/issues/1084) let
+  1,360 more numbers into the walk — the colour channels, the transform offsets and
+  property maps — and the gap over them is 0 as well.) It was **0.81** of the bound, over 56,951 values that differed,
   while rigc wrote six fixed decimals (issue #716).
   ⛔ It is also the floor of what the measure can see at all: a difference
   smaller than one float32 step is invisible to the parser and so to this.
@@ -234,6 +236,83 @@ rule does not cover — there the reference **is** the file the specs were read
 from, so a value that moved is a decompiler loss and there is nothing for a
 candidate to be entitled to — and `IG16` in `selftest.ts` gates it for that
 reason, the same one that makes it gate `mesh_edges` there.
+
+##### What `diff` reads, and what it leaves — the census of #1084 and #1085
+
+Two cards asked the same question from two sides: *which field or order does the
+format write that nothing here compares, and does a difference there reach a pose?*
+[#1084](https://github.com/firejune/rigc/issues/1084) for the value walk,
+[#1085](https://github.com/firejune/rigc/issues/1085) for the names `diff` reads.
+Every row below was **planted** — one change to one field of a public build, an
+editor export or a gallery rig — and read four ways: the value walk, `diff`'s
+structural measures, the pose (`tools/pose_oracle.ts`'s document, the one
+`tools/core_gate.ts` compares: bones, slot colours, draw order, attachment vertices,
+clipping and UVs, setup and nine samples per animation, and stepped once more for a
+physics field), and, where the pose agreed, the frames `rigc render` draws. *Reaches*
+is that measurement and not a reading of the format.
+
+**The value walk's blind spots** — fields it skipped, all of which reach a pose or a
+frame, all of which it now reads:
+
+| Field | Planted on | Reaches | Why the walk missed it |
+| --- | --- | --- | --- |
+| a transform's six offsets (`rotation`, `x`, `y`, `scaleX`, `scaleY`, `shearY`) | `6-arcs-pro` `tail` (`x`, `y`); `spineboy-pro` `front-foot-board-transform`, every property mapped (all six) | pose — every sample of the constraint's bones | the parser holds them as `offsets`, a name the skip list kept for a sequence's region offsets |
+| a transform's `properties`: each `from`'s `offset`, each `to`'s `offset`, `scale`, `max` | `tail`'s `x>x` (`offset`, `scale`); `front-foot-board-transform` with `clamp` (`max`) | pose (`max` only where the constraint clamps: 97 of 99 samples, none without) | the whole map was skipped as *derived from the constraint*, which it is not |
+| which property a `from` reads and a `to` writes, as the walk sees them | `tail` `x>x` → `x>y` | pose | the classes (`FromX`, `ToY`) have the same fields, so a remap moved only `mixX`, by side effect |
+| a slider's `property` | `gallery/look` `yaw`, `rotate` → `x` | pose, 7 of 27 samples | same shape: `FromRotate` and `FromX` are both `{ offset, to }` |
+| a slider's `local` | `yaw`, flipped | pose, 5 of 27 samples | shares its name with a bone pose's derived `local` |
+| a colour's alpha and blue (`a`, `b`) | `spineboy-pro`: a slot's alpha `ff` → `80`, a slot's blue; a region's own colour | slot: pose, every slot row; attachment: frame, 1 of 190 (the pose document does not hold an attachment's colour) | share their names with two entries of a bone's world matrix |
+
+So the walk now reads a list of unnamed objects of one shared-shape class each —
+`properties` and every `to` — by those classes rather than by position, and pushes the
+class of any such object as a value of its own (`property/kind`). Writing the map in
+another key order moves nothing, posed or walked (`D56`). Over the 76 constraint fields
+SPEC_COVERAGE §1.4 lists, the walk read **67** and now reads **76**; the nine it
+gained are the six offsets, `properties`, and a slider's `property` (its class) and
+`local`. What it still cannot see is what the parser does not read: a transform's mix
+for a property the constraint does not map, and a slider's `time` once it has a
+`bone` — planted, each moves no value and no pose, because no value moved.
+
+**The names `diff` did not read** — each now a measure:
+
+| Field or order | Planted on | Reaches | Measure |
+| --- | --- | --- | --- |
+| the order of the one constraint array | `spineboy-pro`, `6-arcs-pro`, `sack-pro` reversed; `aim-torso-ik` ⇄ `aim-torso-transform` | pose: 98 of 99, 8 of 9, 8 of 36 (33 of 36 stepped); the swap 9 of 99 | `constraints.order` |
+| a timeline's target — a bone, slot, ik, transform, path or physics constraint | each kind retargeted onto one with none of that group (`gallery/look`, `spineboy-pro`, `gallery/ride`, `sack-pro`) | pose: 7 of 27 (bone), 7 of 99 (slot), 9 of 99 (ik, transform), 8 of 18 (path); physics in the stepped pose, 8 of 36 | `animations.targets` |
+| the slots a draw-order folder holds | `spineboy-ess`, a folder given to both sides with one slot swapped | draw order, 9 of 72 | `animations.targets` |
+| an attachment key's attachment | `spineboy-pro`: two slots' first keys swapped; one key renamed within its slot | draw: 9 of 99; 1 of 99 | `animations.keyed_names` |
+| a draw-order offset's slot | `spineboy-ess`, one offset moved onto the next slot | draw order, 9 of 72 | `animations.keyed_names` |
+| an event key's event | `spineboy-pro`, a key firing a second, identical event | the event block, 1 of 99 | `animations.keyed_names` |
+| the region an attachment draws (`path`) | `spineboy-pro`'s eye pointed at the other eye | draw: 94 of 99 | `attachments.refs` |
+| a clipping polygon's `end` | `spineboy-pro`, six slots on | clipping: 9 of 99 | `attachments.refs` |
+| a linked mesh's `source` (and the `skin` and `slot` it is found under) | `gallery/nod`, a linked mesh taking `ear_r` instead of `ear_l` | every sampled pose, 18 of 18 | `attachments.refs` |
+| what a skin activates (`bones`, `ik`, `transform`, `path`, `physics`, `slider`) | `gallery/look` `yaw_dial`, `gallery/walk` `leg_b_ik`, each skin-required and dropped from the list | pose: 27 of 27; 9 of 9 | `attachments.skin_members` |
+
+Three things were measured and are **not** a measure, each for a reason the plant
+gave:
+
+- **Two timelines swapped between two targets that both keep one** — `gallery/nod`'s
+  two ear deforms traded — leaves the same names on both sides; what moved is which
+  keys sit under which name, a value. The walk sees it (it keys timelines by owner);
+  `diff` by its own rule does not read values.
+- **Not every reordering poses differently.** `gallery/look`'s two sliders and
+  `gallery/walk`'s two legs drive disjoint bones and pose the same either way, and
+  `constraints.order` still moves: it reports the order a file states, as
+  `bones.order` does, and the pose is the reading that says whether it mattered.
+- **A writer's key order is not a difference**: an animation's groups and a
+  transform's map written backwards move nothing (`D72`, `D50`, `D56`).
+
+⭐ Two of the measures are **non-vacuous on every export without the construct
+being there**, and on purpose. `attachments.refs` compares every attachment, because
+every region and mesh draws a region even when the file leaves its `path` to the
+parser — read as the runtime resolves it, `path`, else `name`, else the key, so a
+writer that spells the path out and one that does not agree (`D71`). And
+`attachments.skin_members` reads `1/1` per skin on a file that declares no membership
+list, which is agreement and not an absence of data, the way `stage_present` counts
+two missing stages. Neither of the twelve editor exports' constructs that are absent
+everywhere — a stated `path`, a linked mesh, a membership list, a draw-order folder —
+could otherwise have been given a fixture `IG18` would accept; the `diff` suite
+plants each one instead.
 
 ##### `skeleton.stage_present` / `skeleton.stage_box` — the value that was required and unmeasured
 

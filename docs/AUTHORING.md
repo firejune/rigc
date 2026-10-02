@@ -1008,6 +1008,24 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   [INGEST.md](INGEST.md) §1.3.1, and *The measure inventory* in
   [BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md),
   which is repository material rather than part of this package.
+
+  🔍 **The wiring is compared by name too, not only the rosters** (issue #1085).
+  `constraints.order` reads the order of the one constraint array, which is the
+  order the runtime applies it in; `animations.targets` reads what each timeline
+  keys and `animations.keyed_names` what each key names — an attachment key's
+  attachment, a draw-order offset's slot, an event key's event; `attachments.refs`
+  reads the region an attachment draws, a clipping polygon's `end` and a linked
+  mesh's `source`; `attachments.skin_members` reads what each skin activates.
+  Every one of those, changed alone, poses or draws differently, and every one read
+  1.000 before. Each note names what differs, candidate first —
+  `candidate only: "heavy|bones|root"; reference only: "heavy|bones|bone"` is a
+  rotate timeline moved from `bone` to `root`, and `attachment
+  "default/clipping/clipping": end "portal-flare6" vs "head-bb"` is a clipping that
+  stops at another slot. A region's `path` is read as the runtime resolves it —
+  `path`, else `name`, else the key — so stating the path an attachment already
+  resolves is no difference. These are name-matched: your own names read low here
+  exactly as they do on `names`, and a low figure with `names` at 1.000 is the
+  wiring that moved.
 - **`check`** renders your candidate into the reference frames' own pixel grid and
   compares pixels — the only thing here that can see a wrong animation. **§9.**
   🚨 What it certifies is the **default skin** unless you pass `--skin <name>`:
