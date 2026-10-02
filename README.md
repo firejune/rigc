@@ -668,8 +668,11 @@ bun cli.ts build --rig … --motion … --out build/ --copy-images
 bun tools/editor_roundtrip.ts --build build/ --editor /Applications/Spine.app/Contents/MacOS/Spine
 ```
 
-It prints the import and export exit codes, the validator's verdict on the
-export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
+Of the editor's `--version` it records one line, the `Spine <x.y.z> …` line that
+carries the version, and nothing else that command prints — the rest of it
+names the licence holder — or `editor version: not found in --version output`
+where no such line is there. It prints the import and export exit codes, the
+validator's verdict on the export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
 animation **for each skin the build and the export both declare** — one
 render-and-check block per skin, with a per-skin roll-up under them, because a
 rig's contested art lives in its named skins and a single un-skinned check draws

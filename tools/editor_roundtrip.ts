@@ -153,6 +153,41 @@ function bundleName(plist: string): string | null {
   }
 }
 
+/**
+ * The editor naming its own version, as MEASURED on a licensed 4.3 editor on
+ * macOS 2026-10-02 (issue #1077). `--version` printed nine lines on stdout and
+ * none on stderr, in this shape:
+ *
+ *     the launcher's banner        `Spine Launcher <x.y.z> (<platform>)`
+ *     the copyright line
+ *     the operating system and its version
+ *     `Starting: Spine <x.y.z> Professional`
+ *     `Spine <x.y.z> Professional`             <- this line
+ *     `Licensed to:`
+ *     the licensee's name
+ *     the licensee's e-mail address
+ *     `Complete.`
+ *
+ * 🚨 The tool used to print the last three of those, which are the licensee's
+ * name, e-mail and `Complete.` — personal data in a log that gets pasted into
+ * PR bodies and cards, and no version at all (issue #1040 found it). So the
+ * report keeps ONE line, the one the editor starts with its own name and a
+ * version, and nothing else from that output.
+ *
+ * ⚠️ Anchored at the start of the line and to a version straight after the
+ * word, which is what separates it from its neighbours: the launcher's banner
+ * has `Launcher` there (and is a different version), and the `Starting:` line
+ * does not start with `Spine`. A line that merely contains a version somewhere —
+ * the operating system's — is not the editor's.
+ */
+const EDITOR_VERSION_LINE = /^Spine[ \t]+\d+\.\d+\.\d+\b[^\n]*$/m;
+
+/** What step 0 prints for the editor's version: its own line, or a sentence saying it was not there. */
+function editorVersionLine(output: string): string {
+  const line = EDITOR_VERSION_LINE.exec(output);
+  return line === null ? 'editor version: not found in --version output' : line[0].trim();
+}
+
 /** The trial naming itself in its own `--version` output, or null. */
 function trialSignalFromVersion(output: string): string | null {
   const banner = TRIAL_BANNER.exec(output);
@@ -981,7 +1016,8 @@ function main(): void {
 
     const ver = run(opts.editor, ['--version'], 60);
     emit(`  editor   ${opts.editor}`);
-    for (const line of ver.stdout.trim().split('\n').slice(-3)) emit(`           ${line}`);
+    // One line, never the output's tail: the tail is the licensee's (issue #1077).
+    emit(`           ${editorVersionLine(`${ver.stdout}\n${ver.stderr}`)}`);
     // The second signal, and the only one that works on a platform whose trial
     // path this repository has never seen: the binary's own banner. It costs no
     // extra call — `--version` above is one the tool already made.

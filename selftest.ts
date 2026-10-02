@@ -52298,6 +52298,98 @@ function runEditorRoundtripSuite(): number {
     );
   }
 
+  // --- ERT75-77: what step 0 keeps of `--version` — issue #1077 ---------------
+  // 🚨 Step 0 printed the last three lines of the editor's `--version`. On the
+  // licensed 4.3 editor measured 2026-10-02 those are the licensee's name, the
+  // licensee's e-mail and `Complete.`; the version is four lines above them, on
+  // the line that starts `Spine <x.y.z>`. A round-trip log is the file that gets
+  // pasted into a PR body, so the tool keeps that one line and nothing else.
+  //
+  // ⭐ The stubs print the measured SHAPE, nine lines in that order, with
+  // placeholder values no person has. They print it only on `--version`, so the
+  // import that follows fails silently and nothing the stub said can reach the
+  // report by the step-1 quotation route (ERT07) — whatever ERT76 finds, step 0
+  // put there.
+  {
+    const placeholderName = 'Placeholder Licensee';
+    const placeholderMail = 'licensee@example.invalid';
+    const versionLine = 'Spine 4.3.99 Professional';
+    const licensedShape = (withVersion: boolean): string[] => [
+      'Spine Launcher 4.3.98 (macOS Apple Silicon)',
+      'Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com',
+      'Mac OS X aarch64 99.9.9',
+      ...(withVersion ? [`Starting: ${versionLine}`, versionLine] : ['Starting: the editor']),
+      'Licensed to:',
+      placeholderName,
+      placeholderMail,
+      'Complete.',
+    ];
+    const stub = (dir: string, withVersion: boolean): string => {
+      const bundle = join(root, dir, 'Spine.app');
+      const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
+      writeStubEditor(editor, join(root, `${dir}-ran`), [], [
+        'if [ "$1" = "--version" ]; then',
+        ...licensedShape(withVersion).map((l) => `echo '${l}'`),
+        'fi',
+      ]);
+      writeBundlePlist(bundle, 'Spine');
+      return editor;
+    };
+    const trip = (dir: string, withVersion: boolean): { status: number | null; stdout: string; stderr: string; log: string; step0: string[] } => {
+      const out = join(root, `out-${dir}`);
+      const ran = runRoundtrip(['--build', build, '--out', out, '--editor', stub(dir, withVersion)]);
+      const logFile = join(out, 'roundtrip.log');
+      const log = existsSync(logFile) ? readFileSync(logFile, 'utf8') : '';
+      return { ...ran, log, step0: reportBlock(ran.stdout, '## 0 versions').map((l) => l.trim()) };
+    };
+    const licensed = trip('Licensed', true);
+    const logStep0 = reportBlock(licensed.log, '## 0 versions').map((l) => l.trim());
+
+    say(
+      'ERT75_STEP_0_PRINTS_THE_EDITORS_OWN_VERSION_LINE_IN_THE_REPORT_AND_THE_LOG',
+      licensed.step0.includes(versionLine) && logStep0.includes(versionLine),
+      `report step 0 carries "${versionLine}" = ${licensed.step0.includes(versionLine)}, ` +
+        `roundtrip.log step 0 = ${logStep0.includes(versionLine)}; step 0 printed ${JSON.stringify(licensed.step0.slice(2))}`,
+      'the version is what step 0 exists to record, and on the measured editor it is the fifth of nine lines — the ' +
+        'tail the tool used to print has none',
+    );
+
+    // Every line of the shape that is not the version line, anywhere the run
+    // wrote: stdout, stderr and the log. Not just the licensee's two — the
+    // launcher banner carries a version too, and printing it would be the tool
+    // choosing a line by something other than the rule.
+    const others = licensedShape(true).filter((l) => l !== versionLine);
+    const leaked = (text: string): string[] => others.filter((l) => text.includes(l));
+    const leakedAnywhere = [...new Set([...leaked(licensed.stdout), ...leaked(licensed.stderr), ...leaked(licensed.log)])];
+    say(
+      'ERT76_NO_OTHER_LINE_OF_VERSION_OUTPUT_REACHES_THE_REPORT_THE_REFUSAL_OR_THE_LOG',
+      leakedAnywhere.length === 0 && licensed.step0.includes(versionLine) && licensed.log !== '',
+      `lines of --version other than the version found in stdout, stderr or roundtrip.log: ` +
+        `${leakedAnywhere.length === 0 ? 'none' : JSON.stringify(leakedAnywhere)}; the log was written = ${licensed.log !== ''}`,
+      'the lines after the version are the licensee\'s name and e-mail, and a round-trip log is pasted into PR ' +
+        'bodies and cards — issue #1040 had to redact one by hand',
+    );
+
+    const versionless = trip('Versionless', false);
+    const named = 'editor version: not found in --version output';
+    const versionlessLeaks = licensedShape(false).filter((l) =>
+      `${versionless.stdout}\n${versionless.stderr}\n${versionless.log}`.includes(l),
+    );
+    say(
+      'ERT77_A_VERSION_OUTPUT_WITH_NO_VERSION_LINE_SAYS_SO_BY_NAME_AND_PRINTS_NO_TAIL',
+      versionless.step0.includes(named) &&
+        versionlessLeaks.length === 0 &&
+        versionless.status === 1 &&
+        versionless.stderr.includes('the editor wrote no project file; the import did not happen'),
+      `step 0 names the absence = ${versionless.step0.includes(named)}, lines of --version printed: ` +
+        `${versionlessLeaks.length === 0 ? 'none' : JSON.stringify(versionlessLeaks)}, exit=${String(versionless.status)}, ` +
+        `went on to the import = ${versionless.stderr.includes('the editor wrote no project file')}`,
+      'the launcher banner carries a version and is not the editor\'s, so with no `Spine <x.y.z>` line the honest ' +
+        'report is the absence, named — a fallback to the tail would print the licensee exactly when the rule found ' +
+        'nothing; and an absent version is not a refusal, so the run goes on',
+    );
+  }
+
   // --- ERT10-11: step 6 can see a constraint at all — issue #561 -------------
   //
   // 🚨 `shapeOf` counted constraints out of the 4.1-era top-level arrays
@@ -103477,7 +103569,10 @@ function main(): void {
     'whole, where both sides refuse and step 5 quotes each renderer and reports a SKIP by name rather than a bare ' +
     'exit code; the same refusal on ONE side only, which is the loss the trip exists to find and stays red; and ' +
     'a skin the export does not declare, whose two children exit on the same code as the refusal and carry none ' +
-    'of its words, so the code alone can never be the signal)';
+    'of its words, so the code alone can never be the signal. And what step 0 keeps of the editor\'s ' +
+    '`--version` (issue #1077): the one `Spine <x.y.z>` line, in the report and the log, and none of the lines ' +
+    'around it — the measured shape puts the licensee\'s name and e-mail in the tail the tool used to print — ' +
+    'with the absence of that line named rather than filled with the tail)';
   const shippedDocs =
     ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +
