@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/firejune/rigc/compare/v2.0.3...v2.1.0) (2026-10-02)
+
+
+### Features
+
+* **atlas:** `--pack-shape polygon` packs a mesh region by its emitted hull, so a neighbour may sit inside its rectangle where the hull is not — never a larger page than `rect`, every sampled texel its own, and the pack line ends in the shape ([#1101](https://github.com/firejune/rigc/issues/1101)) ([fb689f8](https://github.com/firejune/rigc/commit/fb689f8c655545764e79e0f949914ceea001444c))
+* **gate:** A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP replaces A06's tiling clause — two regions on one page are refused where their rectangles overlap and what they draw does too (a mesh's hull, every other region's rectangle), so a --pack-shape polygon page whose rectangles overlap outside the hulls gates green under spine-html ([#1103](https://github.com/firejune/rigc/issues/1103)) ([a8d465c](https://github.com/firejune/rigc/commit/a8d465cd9fc072cd980f55602b1b9652de027ca6)), closes [#1099](https://github.com/firejune/rigc/issues/1099)
+
+
+### Instrument
+
+* **tools:** `tools/hull_ceiling.ts` measures what polygon packing could save over a corpus — over the 19 public recipes the hulls cover 0.981 of the rectangle area when only meshes are hull-packed, 0.735 when region attachments are converted to traced contours, and 0.714 is the opaque-texel floor ([#1098](https://github.com/firejune/rigc/issues/1098)) ([2c42bd3](https://github.com/firejune/rigc/commit/2c42bd3eef19cda48344a9f9304aac1b65bac850))
+
 ## [2.0.3](https://github.com/firejune/rigc/compare/v2.0.2...v2.0.3) (2026-10-02)
 
 
