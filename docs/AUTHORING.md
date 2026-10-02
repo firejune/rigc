@@ -139,9 +139,17 @@ green.** A red
 run leaves nothing on disk, so there is no half-written artifact to mistake for a
 result. There is no `--no-validate`, and there will not be one.
 
-`bun cli_core.ts build` — the entry that links none of spine-core — takes the same
-flags and writes the same files, byte for byte: `skeleton.json`, `skeleton.atlas`,
-`skeleton.model.json`, and the pages `--pack` or `--copy-images` put in `--out`.
+The commands in this guide are spelled as a clone of the repository runs them,
+`bun cli.ts …`. Installed, the command is `rigc`, and which entry it runs turns on one
+thing: with `@esotericsoftware/spine-core` installed beside the package, `rigc` is
+`bun cli.ts` and runs every command; without it, `rigc` runs `cli_core.ts` — the
+entry that links none of spine-core, `bun cli_core.ts` in a clone — which refuses by
+name the commands that need the runtime (its `--help` lists the ones it runs).
+`rigc --version` names the entry that ran.
+
+That entry's `build` takes the same flags and writes the same files, byte for byte:
+`skeleton.json`, `skeleton.atlas`, `skeleton.model.json`, and the pages `--pack` or
+`--copy-images` put in `--out`.
 Only the gate differs, because the round trip is spine-core's: it runs the model
 side over the document, and the round trip's own rules restated over the text the
 emitter wrote (A01, A02, A05, A07, A16, A31, A35, and A18 over a second compile's
@@ -5897,7 +5905,7 @@ Fix A00 and run it again.
 
 | Assertion | Profile | What tripped it, and where to fix it |
 | --- | --- | --- |
-| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked. ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words Under `cli_core.ts build`, which links none of spine-core, it is a **SKIP** naming spine-core — the one rule of the 49 that entry does not run; `bun cli.ts build` and `rigc validate` run it (`RC28`). |
+| `A00_ROUNDTRIP_PARSE` | both | `spine-core` could not parse the skeleton or the atlas. Almost everything else in the report is downstream of this one — fix it first. When it fails, every rule that reads the loaded skeleton or the loaded atlas reports **SKIP** saying so by name, so the row count stays at the full registry and the summary's *measured* figure tells you how little was actually asked. ⚠️ **Two rules run before it and can be upstream of it**: `A31_DRAW_ORDER_OFFSETS_RESOLVE`, because a bad draw-order key makes the loader spin rather than return, and `A08_REGION_NAMES_MATCH_ATTACHMENTS`, because a `path` naming no region makes it throw. The round trip is still attempted either way; when the loader refuses a path A08 has already refused, this row **defers** to A08 by name instead of restating the miss in the parser's poorer words Under `cli_core.ts build`, which links none of spine-core, it is a **SKIP** naming spine-core — the one rule of the 49 that entry does not run. The entry that links spine-core runs it on `build` and `validate`: installed, the same `rigc` once `@esotericsoftware/spine-core` is installed beside the package; from a clone, `bun cli.ts` (`RC28`). |
 | `A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS` | both | a 4.1/4.2-shaped `ik`/`transform`/`path`/`physics`/`slider` array. rigc emits the 4.3 `constraints` array, so this normally means hand-edited JSON Under `cli_core.ts build` the same clause runs over the text the emitter wrote and prints this line in the same words (`RC28`). |
 | `A02_NO_BONE_TRANSFORM_KEY` | both | `bone "…" uses "transform", the key 4.0 and 4.1 spelled; 4.2 and 4.3 spell it "inherit"` — rename it `inherit` in the rig spec Under `cli_core.ts build` the same clause runs over the text the emitter wrote and prints this line in the same words (`RC28`). |
 | `A03_REGION_WIDTH_HEIGHT_FINITE` | both | a region loaded `NaN` or a non-positive size — the attachment has no `image` and no `width`/`height`. **SKIP** when the skeleton carries no region attachment |

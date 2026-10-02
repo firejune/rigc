@@ -43,8 +43,9 @@ installed.
 | a picture of a key pose | `rigc pose` | where each loose part PNG sits in it, in spec coordinates — the movement between two poses is then yours to key ([docs/MOTION.md](docs/MOTION.md)) |
 | the same picture, and a rig | `rigc chainfit` | the parts `pose` refuses because something is drawn over them — read through the candidate's own draw order and hierarchy, with the share of each part the answer was measured on |
 
-Everything in that table needs Bun and this package: no clone, no reference art, no
-art pipeline, no server.
+Everything in that table needs Bun and this package — `preview` and `vote` also
+`@esotericsoftware/spine-core` installed beside it (see below) — and no clone, no
+reference art, no art pipeline, no server.
 
 ## What rigc is, and what it is not
 
@@ -147,8 +148,12 @@ Bun script, and npm only writes the shim that calls it.
 
 Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
 because they are written from a clone of this repository (`bun install`, then run
-the CLI in place); the two are interchangeable — `rigc build …` is
-`bun cli.ts build …`.
+the CLI in place). With `@esotericsoftware/spine-core` installed beside the package
+the two are interchangeable — `rigc build …` is `bun cli.ts build …`. Without it,
+`rigc` runs the entry that links none of the runtime (`bun cli_core.ts` in a clone):
+`build` writes the same files gated without the parse, and a command that needs the
+runtime is refused by name, saying how to get it (that entry's `--help` lists the
+commands it runs). `rigc --version` names the entry that ran.
 
 One command is a repository workflow rather than a package one: `bench` measures
 against Spine's official example projects — fetched, never committed — and against

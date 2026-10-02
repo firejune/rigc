@@ -1238,22 +1238,25 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the gate round-trips every build through it before anything is written',
       core: {
         usage: [
-          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]   (the same files cli.ts build writes; gated without spine-core — see build --help)',
+          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
           `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free]   (parts onto shared pages, written into --out)`,
           'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
           'rigc build --cut <name> --cuts <cuts.json>',
         ],
         notes: [
-          'this entry\'s build writes what `bun cli.ts build` writes — skeleton.json, skeleton.atlas,',
-          'skeleton.model.json and the pages --pack or --copy-images put in --out — by the same',
-          'body, and only when no assertion fails. Its gate is not the round trip through',
-          'spine-core, which this entry links none of. What runs instead: the model side over',
-          'the document (every assertion moved off the round trip), and the round trip\'s own',
-          'rules restated over the text the emitter wrote — A01, A02, A05, A07, A16, A31, A35,',
-          'and A18 over a second, independent compile\'s skeleton, atlas and document. What does',
-          'not run is A00_ROUNDTRIP_PARSE, spine-core\'s parse: it reports SKIP naming spine-core,',
-          'and `bun cli.ts build` and `rigc validate` run it. The report\'s last line says which',
-          'ran here and which did not.',
+          'this entry\'s build writes what the entry that links spine-core writes — skeleton.json,',
+          'skeleton.atlas, skeleton.model.json and the pages --pack or --copy-images put in',
+          '--out — by the same body, and only when no assertion fails. Its gate is not the round',
+          'trip through spine-core, which this entry links none of. What runs instead: the model',
+          'side over the document (every assertion moved off the round trip), and the round',
+          'trip\'s own rules restated over the text the emitter wrote — A01, A02, A05, A07, A16,',
+          'A31, A35, and A18 over a second, independent compile\'s skeleton, atlas and document.',
+          'What does not run is A00_ROUNDTRIP_PARSE, spine-core\'s parse: it reports SKIP naming',
+          'spine-core. The report\'s last line says which ran here and which did not. A00 runs',
+          'in build and validate on the entry that links spine-core: installed, the same `rigc`',
+          'runs that entry once @esotericsoftware/spine-core is installed beside the package',
+          '(`rigc --version` names the entry that ran); from a source checkout, it is',
+          '`bun cli.ts`.',
         ],
       },
     },
@@ -1737,7 +1740,8 @@ export function usageText(docs: readonly CommandDoc[], checkout: string, rules: 
     '',
     checkout === 'cli.ts'
       ? '(from a source checkout: `bun cli.ts <command>` is the same as `rigc <command>`)'
-      : `(from a source checkout: \`bun ${checkout} <command>\` runs the commands below, which link nothing of spine-core; \`bun cli.ts <command>\` runs every command)`,
+      : `(installed: \`rigc\` runs this entry where @esotericsoftware/spine-core is not installed beside the package, and every command once it is; ` +
+        `from a source checkout: \`bun ${checkout} <command>\` runs the commands below, which link nothing of spine-core; \`bun cli.ts <command>\` runs every command)`,
     '',
     'usage:',
     ...docs.flatMap((c) => c.usage.map((u) => `  ${u}`)),
@@ -2253,7 +2257,8 @@ function commandNeedsRuntime(doc: CommandDoc, runs: readonly string[]): SpineRun
   const needs = doc.runtime === false ? 'nothing' : doc.runtime.for;
   return new SpineRuntimeError(
     `\`${doc.name}\` runs through spine-core (${needs}), and the runtime could not be used: ${SPINE_SIDE_ABSENT}. ` +
-      `The commands this entry runs are ${runs.join(', ')}; \`bun cli.ts ${doc.name}\` runs it`,
+      `The commands this entry runs are ${runs.join(', ')}; the entry that links spine-core runs \`${doc.name}\` — ` +
+      `installed, \`rigc ${doc.name}\` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, \`bun cli.ts ${doc.name}\``,
   );
 }
 

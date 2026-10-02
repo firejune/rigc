@@ -1573,7 +1573,8 @@ const MODEL_AND_TEXT_GATE: BuildGate = {
     const notRun = text.skipped.filter((x) => x.assertion === 'A00_ROUNDTRIP_PARSE').map((x) => x.assertion);
     console.log(
       `  ..    here: ${ran(model)} rule(s) on the model side over the document, ${ran(text) - notRun.length} of the round trip's own restated over the emitted text; ` +
-        `not run: ${notRun.join(', ') || 'none'} — spine-core's parse, which only \`bun cli.ts build\` and \`rigc validate\` run`,
+        `not run: ${notRun.join(', ') || 'none'} — spine-core's parse, which only the entry that links spine-core runs, on build and validate: ` +
+        `installed, the same \`rigc\` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, \`bun cli.ts\``,
     );
     return report.failures.length;
   },
