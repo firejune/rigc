@@ -73,7 +73,10 @@ rigc's own code is MIT (see [LICENSE](LICENSE)). That says nothing about Spine, 
 the following is a restatement of Esoteric Software's terms, not a term of ours:
 
 1. rigc's output **is Spine skeleton data**.
-2. Playing Spine skeleton data in a product requires **a Spine Runtime**.
+2. A product that plays it with **a Spine Runtime** — the official runtimes, the Web
+   Player — has integrated the Spine Runtimes. rigc also writes the model document
+   its own core poses, and a product may play that or anything else; what the terms
+   turn on is the integration.
 3. Integrating a Spine Runtime into a product is permitted **under Section 2 of the
    [Spine Editor License Agreement](https://esotericsoftware.com/spine-editor-license)**,
    or otherwise on the condition that **each user of the product obtains their own
@@ -83,10 +86,10 @@ the following is a restatement of Esoteric Software's terms, not a term of ours:
    as a development dependency, for its own gate — and so does an install with the
    runtime added beside it.
 
-> **A product that plays rigc's output integrates a Spine Runtime, and 1–3 apply to
-> that integration** — rigc neither adds those terms nor removes them. Running the
-> published rigc links no Spine runtime; whether its output is then played by one is
-> the consumer's choice.
+> **If a product integrates a Spine Runtime to play rigc's output, that integration
+> is subject to the terms above** — rigc neither adds those terms nor removes them.
+> Running the published rigc links no Spine runtime, and whether its output is then
+> played by one, by rigc's own core, or by something else is the consumer's choice.
 
 See [NOTICE.md](NOTICE.md) for the full notice.
 

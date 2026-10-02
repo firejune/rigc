@@ -26,7 +26,10 @@ rigc's own code is MIT (see `LICENSE`). The following is a restatement of Esoter
 Software's terms, not a licence term of this project:
 
 1. rigc's output **is Spine skeleton data**.
-2. Playing Spine skeleton data in a product requires **a Spine Runtime**.
+2. A product that plays it with **a Spine Runtime** — the official runtimes, the Web
+   Player — has integrated the Spine Runtimes. rigc also writes the model document
+   its own core poses, and a product may play that or anything else; what the terms
+   turn on is the integration.
 3. Integrating a Spine Runtime into a product is permitted **under Section 2 of the
    Spine Editor License Agreement**, or otherwise on the condition that **each user
    of the product obtains their own Spine Editor license** and the product carries
@@ -38,10 +41,11 @@ Software's terms, not a licence term of this project:
    where it is not, and the two are held to the same verdicts in CI on 48 of the
    49 assertions — the official parser's own parse runs only where the runtime is.
 
-> **A product that plays rigc's output integrates a Spine Runtime, and 1–3 apply to
-> that integration** — rigc neither creates those terms nor removes them. Running
-> the published rigc links no Spine runtime; whether its output is then played by
-> one is the consumer's choice.
+> **If a product integrates a Spine Runtime to play rigc's output, that integration
+> is subject to the terms above** — rigc neither creates those terms nor removes
+> them. Running the published rigc links no Spine runtime, and whether its output is
+> then played by one, by rigc's own core, or by something else is the consumer's
+> choice.
 
 ### The Spine Web Player, and what `rigc preview` does with it
 
@@ -60,9 +64,8 @@ Two consequences worth stating plainly:
 
 - a generated preview needs a network connection the first time it is opened, and
   says so in the page when the player does not arrive;
-- the obligation above is unchanged by it. Playing Spine skeleton data in the
-  Spine Web Player is a Spine Runtimes integration like any other, so **each user
-  of a product built this way needs their own Spine Editor license.**
+- using the Spine Web Player is a Spine Runtimes integration, subject to the
+  terms described above.
 
 ## Example assets
 
