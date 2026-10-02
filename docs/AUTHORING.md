@@ -145,6 +145,10 @@ thing: with `@esotericsoftware/spine-core` installed beside the package, `rigc` 
 `bun cli.ts` and runs every command; without it, `rigc` runs `cli_core.ts` — the
 entry that links none of spine-core, `bun cli_core.ts` in a clone — which refuses by
 name the commands that need the runtime (its `--help` lists the ones it runs).
+`validate` is one of them, and pointed at a rigc build — a directory with
+`skeleton.model.json` beside the pair — its refusal says that build already ran the
+gate before it wrote, and which rules that gate is on this entry, before the install
+route; on a Spine export it says what it always said (`RC36`).
 `rigc --version` names the entry that ran.
 
 That entry's `build` takes the same flags and writes the same files, byte for byte:

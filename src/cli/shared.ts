@@ -1225,8 +1225,13 @@ interface CommandDoc {
    * claim anybody keeps by hand: `RC26` in `selftest.ts` derives it from the
    * import graph of the module whose bodies register the command, and a
    * mark that disagrees with the graph is red by name.
+   *
+   * `rerunsTheGate` marks a command whose body re-runs the gate `build` ran
+   * before it wrote (`validate`): refused by the entry that links none of the
+   * runtime and pointed at a rigc build, its refusal says that gate already
+   * ran (`gatedOnWrite`, issue #1097).
    */
-  runtime: false | { for: string; core?: CoreBody };
+  runtime: false | { for: string; core?: CoreBody; rerunsTheGate?: true };
   /**
    * Whether the command exists for the Spine format — reads, writes, compares
    * or embeds Spine skeleton data as the whole of what it does with it — so
@@ -1311,7 +1316,7 @@ export const COMMANDS: CommandDoc[] = [
   },
   {
     name: 'validate',
-    runtime: { for: 'the gate it re-runs is the round trip through it' },
+    runtime: { for: 'the gate it re-runs is the round trip through it', rerunsTheGate: true },
     spineFormat: true,
     usage: [
       'rigc validate <dir | skeleton.json> [--atlas <path>] [--profile spine|spine-html]',
@@ -2280,16 +2285,63 @@ export function entryCommands(linksRuntime: boolean): CommandDoc[] {
 }
 
 /**
+ * What the refusal of a command that re-runs the gate says when its target is
+ * a rigc build (issue #1097): that build already ran the gate, before it wrote
+ * anything. A consumer met the refusal and read it as a gate the install could
+ * not run, because the refusal said only what `validate` needs (#1095).
+ *
+ * ⚠️ Every clause is a fact about what the directory carries, never a reading
+ * of the document: `skeleton.model.json` beside the pair is what makes it a
+ * rigc build (`resolveBuild`'s `modelPath`), and emit-only-after-green is
+ * what makes a rigc build gated on write. It does not say which entry wrote
+ * it, which spec version the document is, or that the skeleton is still the
+ * one the gate passed — nothing here reads the document, so those are said as
+ * where to look (`spine.sha256`), not as findings.
+ */
+export function gatedOnWriteSentence(skeletonPath: string): string {
+  return (
+    `The target is a rigc build — ${skeletonPath} has ${MODEL_DOCUMENT_FILE} beside it — and a rigc build writes nothing until its gate is green: ` +
+    `that gate ran when the pair was written, and the document is the record of what it passed, its spine.sha256 naming the skeleton bytes the gate read ` +
+    "— on this entry the gate is the model side's rules over the document and the round trip's own restated over the emitted text, " +
+    'with A00_ROUNDTRIP_PARSE alone reported as a SKIP.'
+  );
+}
+
+/**
+ * `gatedOnWriteSentence` for a refused command marked `rerunsTheGate`, or
+ * `null` — the refusal then says what it always said. The target is
+ * `cmdValidate`'s: the positional (`.` without one) through `resolveBuild`;
+ * a `--cut` or `--rig` run derives its directory from a spec, which the
+ * refusal does not compile, so it keeps the sentence it had. Arguments
+ * `parseArgs` or `resolveBuild` refuses are the command's to refuse, not the
+ * runtime refusal's, and leave it as it was.
+ */
+function gatedOnWrite(doc: CommandDoc, args: readonly string[]): string | null {
+  if (doc.runtime === false || doc.runtime.rerunsTheGate !== true) return null;
+  try {
+    const { flags, positional } = parseArgs([...args], REPEATABLE_FLAGS[doc.name]);
+    if (flags.cut !== undefined || flags.rig !== undefined) return null;
+    const build = resolveBuild(positional[0] ?? '.', flags.atlas);
+    return build.modelPath === null ? null : gatedOnWriteSentence(build.skeletonPath);
+  } catch (err) {
+    if (err instanceof UsageError) return null;
+    throw err;
+  }
+}
+
+/**
  * A command `COMMANDS` documents and this entry does not run, because its body
  * reaches spine-core and the entry links none of it — refused naming what the
  * command runs through the runtime for, and the commands the entry does run.
  * A `SpineRuntimeError`, so it is printed and exits as the export an entry
  * cannot pose is.
  */
-function commandNeedsRuntime(doc: CommandDoc, runs: readonly string[]): SpineRuntimeError {
+function commandNeedsRuntime(doc: CommandDoc, runs: readonly string[], args: readonly string[]): SpineRuntimeError {
   const needs = doc.runtime === false ? 'nothing' : doc.runtime.for;
+  const gated = gatedOnWrite(doc, args);
   return new SpineRuntimeError(
     `\`${doc.name}\` runs through spine-core (${needs}), and the runtime could not be used: ${SPINE_SIDE_ABSENT}. ` +
+      (gated === null ? '' : `${gated} `) +
       `The commands this entry runs are ${runs.join(', ')}; the entry that links spine-core runs \`${doc.name}\` — ` +
       `installed, \`rigc ${doc.name}\` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, \`bun cli.ts ${doc.name}\``,
   );
@@ -2325,7 +2377,7 @@ export function runCli(entry: CliEntry, argv: readonly string[]): void {
     }
     if (!known.includes(command)) {
       const elsewhere = COMMANDS.find((doc) => doc.name === command);
-      if (elsewhere !== undefined) throw commandNeedsRuntime(elsewhere, known);
+      if (elsewhere !== undefined) throw commandNeedsRuntime(elsewhere, known, rest);
       throw new UsageError(`unknown command: ${command}`);
     }
 
