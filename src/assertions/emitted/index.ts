@@ -55,7 +55,9 @@ interface EmittedTexts {
 
 /** A00's SKIP here: what did not run, and where it does. */
 export const SKIP_NO_ROUND_TRIP =
-  "spine-core's parser is the subject of this rule and this entry links none of it — `bun cli.ts build` and `rigc validate` run the round trip, and the selftest and CI run it on every corpus build";
+  "spine-core's parser is the subject of this rule and this entry links none of it — the entry that links it runs the round trip on build and validate " +
+  '(installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts`), ' +
+  'and the selftest and CI run it on every corpus build';
 
 /** The code this file SKIPs rather than restates. */
 const A00 = 'A00_ROUNDTRIP_PARSE';

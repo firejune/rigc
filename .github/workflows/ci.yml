@@ -136,29 +136,43 @@ jobs:
   # with the repository's own tooling on hand. `scripts/install_smoke.ts` imports
   # nothing but node builtins for the same reason, so this job needs bun to run
   # the script, node and npm to install, and the network to reach the registry
-  # for `@esotericsoftware/spine-core` — the one package the install fetches.
+  # for `@esotericsoftware/spine-core`. The install itself fetches nothing: the
+  # package declares no dependencies (the runtime is a devDependency since
+  # #1066), and phase 1 of every case holds that it arrived without one, that
+  # `rigc --version` names `cli_core.ts`, and that `rigc build` there writes the
+  # model document without it. Phase 2 is the one fetch — the runtime
+  # installed beside the package at the version the package declares, after which
+  # the same `rigc` has to name `cli.ts` and build through the round trip — and
+  # phase 3 removes it again and runs `render`, `check` and `skills install`
+  # without it.
   #
   # 🌱 **The plants run here too, and that is the point of running them.** The
-  # battery is five cases: a correct tarball builds, the same tarball installed
-  # at a path with spaces and non-ASCII in it builds, and three packages broken
+  # battery is nine cases: a correct tarball builds, the same tarball installed
+  # at a path with spaces and non-ASCII in it builds, and seven packages broken
   # on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of the
-  # packed tree, `@esotericsoftware/spine-core` out of `dependencies` — each of
-  # which has to make the smoke RED naming what went missing. A plant is patched
-  # into an extraction of the tarball and packed again from there, so nothing in
-  # the checkout is modified and no restore can be forgotten. Without them this
-  # job is a gate nobody has seen fail; with them every run has seen it fail
-  # three times.
+  # packed tree, `@esotericsoftware/spine-core` put back in `dependencies`,
+  # `cli_core.ts` out of `files` (those two #1061's), `skills` out of `files`,
+  # `exports` removed, and `exports` cut down to its named entries — each of
+  # which has to make the smoke RED naming what went missing, at the step where
+  # it was planted. A plant is patched into an extraction of the tarball and
+  # packed again from there, so nothing in the checkout is modified and no
+  # restore can be forgotten. Without them this job is a gate nobody has seen
+  # fail; with them every run has seen it fail seven times. The list is
+  # `battery` in `scripts/install_smoke.ts`; this paragraph restates it.
   #
   # 🕳️ **What it cannot see**, stated rather than left to be assumed: it runs the
   # tarball this tree packs, which is not the tarball npm serves until a publish
   # makes it one. That half is `release.yml`'s confirmation step, which runs the
   # same script with `--source registry` after the publish — and the reason it is
   # a confirmation rather than the gate is that its own firing cannot be observed
-  # without publishing something broken, while this one's can, three times a run.
+  # without publishing something broken, while this one's can, seven times a run.
   installs:
     runs-on: ubuntu-latest
-    # Five cases — five packs and five installs — measured at 9.4s on the machine
-    # this was written on. The ceiling is for a slow registry, not for the work.
+    # Nine cases — a pack and an install each, and phase 2's install of the
+    # runtime where a case reaches it — measured at 56s for the whole job, setup
+    # included, on run 36974234251 (main at v2.0.0); five cases had measured
+    # 9.4s on a workstation before #1066. The ceiling is for a slow registry,
+    # not for the work.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

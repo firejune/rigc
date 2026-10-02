@@ -44,6 +44,13 @@ Codex, Gemini CLI and Antigravity read skills from `.agents/skills/` in the
 workspace and none of them reads `node_modules`; `rigc skills install` puts every
 skill the package ships there, and `rigc skills --help` says what it refuses.
 
+The package links no Spine runtime. `validate`, `preview` and `vote` below run
+through `@esotericsoftware/spine-core`: install it beside the package
+(`bun add -d @esotericsoftware/spine-core`) and the same `rigc` runs them, and
+`build` runs the round trip as well. Without it they are refused by name, and
+`build` writes the same files gated without the parse — `rigc --version` names the
+entry that ran.
+
 ## The loop
 
 1. `rigc build --rig <spec> --motion <spec> --images <dir> --out <dir>` compiles,
