@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.2](https://github.com/firejune/rigc/compare/v2.0.1...v2.0.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **diff:** `constraints.refs` compares every name a constraint resolves — a slider's animation and property, and a transform's property map — and its note names each constraint wired differently with both sides' names ([#1088](https://github.com/firejune/rigc/issues/1088)) ([61b5940](https://github.com/firejune/rigc/commit/61b594024661f2a874235d8d56860ad243a08969)), closes [#1078](https://github.com/firejune/rigc/issues/1078)
+* **gate:** a page whose IHDR states a dimension of 0, or whose image data does not decode, is named once by A06 in a sentence — every other reader refuses it by the same sentence instead of a grid ratio of 0.0000, a stack, or silence ([#1089](https://github.com/firejune/rigc/issues/1089)) ([6013a06](https://github.com/firejune/rigc/commit/6013a069f529547c25f010a40b9c0e2decc3b506)), closes [#1073](https://github.com/firejune/rigc/issues/1073) [#1074](https://github.com/firejune/rigc/issues/1074)
+* **tools:** the round trip records the editor's version as its one `Spine <x.y.z>` line of `--version` and prints nothing else from that output — the tail it printed was the licensee's name and e-mail ([#1083](https://github.com/firejune/rigc/issues/1083)) ([ae12dd8](https://github.com/firejune/rigc/commit/ae12dd83defb365a613d7f95720e5c776b8b2e50)), closes [#1077](https://github.com/firejune/rigc/issues/1077)
+
+
+### Instrument
+
+* **cli:** every sentence the entry without spine-core prints naming `cli.ts` names the install route too, and the seam's absent-side refusal ends on it ([#1087](https://github.com/firejune/rigc/issues/1087)) ([6f536b3](https://github.com/firejune/rigc/commit/6f536b3947619431bae183be77c5330a8438cc47)), closes [#1079](https://github.com/firejune/rigc/issues/1079)
+
 ## [2.0.1](https://github.com/firejune/rigc/compare/v2.0.0...v2.0.1) (2026-10-02)
 
 
