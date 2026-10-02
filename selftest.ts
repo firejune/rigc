@@ -83409,6 +83409,8 @@ function runDeformCoreSuite(): number | null {
 // the byte-identity instrument: tools/emit_hashes.ts (issue #914, step 1a of #380)
 // ---------------------------------------------------------------------------
 
+import { CeilingInputError, ceilingTable, measureBuild, regionWindow, rowOf, type ContourReader, type RegionResolver } from './tools/hull_ceiling.ts';
+
 /** The hashes command in a child process, as a caller runs it. */
 function runHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, ['tools/emit_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -84006,6 +84008,339 @@ function runEmitHashesSuite(): number | null {
         'regenerated in the same change, and the red has to carry the three things the author acts on — the row, the ' +
         'file and the one command — or it is a refusal nobody can clear',
     );
+  }
+
+  // --- HUL01–HUL06: tools/hull_ceiling.ts's arithmetic (issue #1093) ---------
+  // The polygon-packing ceiling is a table nobody can check by eye, so its
+  // readings are held on parts whose answers are known: an opaque rectangle,
+  // a trimmed region, a gallery rig traced by a planted tracer, two region
+  // names the runtime resolves past the key, and one drawing at four turns.
+  {
+    /** A one-page build on disk: `regions` are `[name, x, y, w, h, offsets]` and every texel inside them is opaque. */
+    const synthetic = (label: string, regions: Array<{ name: string; x: number; y: number; w: number; h: number; offsets?: [number, number, number, number] }>, attachments: Record<string, Record<string, unknown>>, clear: Array<[number, number]> = [], paint?: Array<[number, number, number, number]>): string => {
+      const dir = join(work, label);
+      mkdirSync(dir, { recursive: true });
+      const page = new Plate(200, 100);
+      for (const [x, y, w, h] of paint ?? regions.map((r): [number, number, number, number] => [r.x, r.y, r.w, r.h])) page.rect(x, y, w, h, [200, 120, 40, 255]);
+      for (const [x, y] of clear) page.set(x, y, [0, 0, 0, 0]);
+      page.writePng(join(dir, 'page.png'));
+      const atlas = ['page.png', 'size: 200, 100', 'filter: Linear, Linear', 'pma: false'];
+      for (const r of regions) {
+        const o = r.offsets ?? [0, 0, r.w, r.h];
+        atlas.push(r.name, `bounds: ${r.x}, ${r.y}, ${r.w}, ${r.h}`, `offsets: ${o.join(', ')}`, 'rotate: 0');
+      }
+      writeFileSync(join(dir, 'skeleton.atlas'), `${atlas.join('\n')}\n`);
+      writeFileSync(join(dir, 'skeleton.json'), JSON.stringify({ skeleton: {}, bones: [{ name: 'root' }], skins: [{ name: 'default', attachments }] }));
+      return dir;
+    };
+    const square = [0, 0, 1, 0, 1, 1, 0, 1];
+    const pair = [
+      { name: 'solid', x: 0, y: 0, w: 40, h: 30 },
+      { name: 'quad', x: 50, y: 0, w: 40, h: 30 },
+    ];
+    const pairAttachments = { a: { solid: {} }, b: { quad: { type: 'mesh', uvs: square, hull: 4, triangles: [0, 1, 2, 0, 2, 3], vertices: square } } };
+
+    // --- HUL01: an opaque rectangle is its own hull, contour and floor ------
+    {
+      const probes: string[] = [];
+      let said = '';
+      try {
+        const whole = measureBuild(synthetic('hul01', pair, pairAttachments));
+        const row = rowOf('hul01', 'synthetic', whole, null);
+        const want = { rect: 2400, hullMeshes: 2400, hullTraced: 2400, hullConvex: 2400, opaque: 2400, opaqueDrawn: 2400, checked: 2 };
+        for (const [k, v] of Object.entries(want)) if (row[k as keyof typeof want] !== v) probes.push(`${k} is ${String(row[k as keyof typeof want])}, not ${v}`);
+        // The three readings must separate on one cleared corner texel: opaque and the contour lose the
+        // texel, the convex hull loses only the half of it a diagonal through its far corner cuts off.
+        const cut = measureBuild(synthetic('hul01-cut', pair, pairAttachments, [[0, 0]])).measures.find((m) => m.name === 'solid');
+        if (cut === undefined) probes.push('the cleared build has no region "solid"');
+        else {
+          if (cut.opaque !== 1199) probes.push(`one corner cleared: opaque is ${cut.opaque}, not 1199`);
+          if (cut.silhouette !== 1199) probes.push(`one corner cleared: the contour encloses ${cut.silhouette}, not 1199`);
+          if (cut.convex !== 1199.5) probes.push(`one corner cleared: the convex hull is ${cut.convex}, not 1199.5`);
+        }
+        // The floor separates from the raw count on one opaque texel outside an authored hull: a 40x40 mesh whose
+        // hull is the UV square 0.25..0.75 (texels 10..30) over art that is that square plus the texel at (0, 0).
+        const inset = [0.25, 0.25, 0.75, 0.25, 0.75, 0.75, 0.25, 0.75];
+        const out = measureBuild(
+          synthetic('hul01-out', [{ name: 'inset', x: 100, y: 0, w: 40, h: 40 }], { d: { inset: { type: 'mesh', uvs: inset, hull: 4, triangles: [0, 1, 2, 0, 2, 3], vertices: inset } } }, [], [[110, 10, 20, 20], [100, 0, 1, 1]]),
+        ).measures[0];
+        if (out?.meshHull !== 400) probes.push(`the inset hull reads ${String(out?.meshHull)}, not 400`);
+        if (out?.opaque !== 401) probes.push(`the inset region's opaque count is ${String(out?.opaque)}, not 401`);
+        if (out?.opaqueDrawn !== 400) probes.push(`the opaque texels inside its hull are ${String(out?.opaqueDrawn)}, not 400 — the texel outside the hull is never drawn`);
+        // A region whose texels are all transparent is legal and must not vanish into a total: the row names it by page.
+        const blank = rowOf('hul01-blank', 'synthetic', measureBuild(synthetic('hul01-blank', pair, pairAttachments, [], [[0, 0, 40, 30]])), null);
+        const blankLine = ceilingTable([blank]).find((l) => l.startsWith('| hul01-blank '));
+        if (blank.emptyRegions['1'] !== 1) probes.push(`a transparent region counted as ${JSON.stringify(blank.emptyRegions)}, not one on page 1`);
+        if (blankLine === undefined || !blankLine.includes('1 region(s) with a rectangle read no texel of alpha > 0 (1 on page 1 of 1')) probes.push(`the row does not name the transparent region: ${JSON.stringify(blankLine)}`);
+        said = `rect ${row.rect}, mesh hull ${row.hullMeshes}, contour ${row.hullTraced}, convex ${row.hullConvex}, opaque ${row.opaque}, drawn opaque ${row.opaqueDrawn}, tracer agreeing on ${row.checked}; one corner cleared: ${cut?.opaque} / ${cut?.silhouette} / ${cut?.convex}; one opaque texel outside a 400-texel hull: opaque ${String(out?.opaque)}, drawn ${String(out?.opaqueDrawn)}; a transparent mesh region named in the notes as ${JSON.stringify(blank.emptyRegions)} by page`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL01_AN_OPAQUE_RECTANGLE_IS_ITS_OWN_HULL_CONTOUR_AND_FLOOR_AND_ONE_CLEARED_TEXEL_SEPARATES_THE_THREE',
+        held,
+        probeDetail(held, probes, `a 40x30 opaque region and a 40x30 mesh whose hull is its UV square: ${said}`),
+        'issue #1093: every ratio in the ceiling table is one of these readings over a rectangle, and a ratio of 1.000 on ' +
+          'a part that is its own rectangle is the identity the arithmetic has to keep; the cleared corner is what shows ' +
+          'the three readings are three and not one number printed thrice; and the texel outside the hull is why the ' +
+          'floor is the opaque texels that are DRAWN — an authored hull may leave art out, and then the raw count is ' +
+          'above the hull (measured on four production rigs) and no floor at all',
+      );
+    }
+
+    // --- HUL02: a tracer that answers the rectangle is named on a gallery part --
+    {
+      const probes: string[] = [];
+      let said = '';
+      const plant: ContourReader = (mask) => ({ area: mask.width * mask.height, islands: 1 });
+      try {
+        const built = buildRecipes([recipes[0]], join(work, 'hul02'), import.meta.dir);
+        const out = built[0].out;
+        if (built[0].exits.some((e) => e !== 0)) probes.push(`${recipes[0].name} exited ${JSON.stringify(built[0].exits)}`);
+        const honest = measureBuild(out);
+        const narrower = honest.measures.filter((m) => m.silhouette < m.rect);
+        const checked = honest.measures.filter((m) => 'area' in m.traced && m.traced.islands === 1).length;
+        if (narrower.length === 0) probes.push(`no region of ${recipes[0].name} is narrower than its rectangle, so the plant has nothing to be caught on`);
+        if (checked === 0) probes.push('the honest tracer agreed with the contour on no region');
+        let refusal = '';
+        try {
+          measureBuild(out, { trace: plant });
+          probes.push('the planted tracer measured without a refusal');
+        } catch (err) {
+          if (!(err instanceof CeilingInputError)) throw err;
+          refusal = err.message;
+          const named = /^region "([^"]+)": the tracer's outline encloses (\d+) texels and the silhouette counts (\d+)/.exec(refusal);
+          if (named === null) probes.push(`the refusal does not name the region and both counts: ${JSON.stringify(refusal)}`);
+          else if (!narrower.some((m) => m.name === named[1])) probes.push(`the refusal names "${named[1]}", which is not a region narrower than its rectangle`);
+        }
+        said = `${recipes[0].name}: the honest tracer agrees with the contour on ${checked} region(s), and ${narrower.length} region(s) are narrower than their rectangle; planted: ${JSON.stringify(refusal.slice(0, 160))}`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL02_A_TRACER_THAT_ANSWERS_THE_RECTANGLE_IS_NAMED_ON_A_GALLERY_PART_NARROWER_THAN_ITS_RECTANGLE',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1093: the traced row is the contour counted over every island, and `traceAlphaOutline` is its witness on ' +
+          'every one-island region; a witness that could agree with a wrong count is no witness, so a tracer that returns ' +
+          'the rectangle has to refuse the row by the region\'s name on real art',
+      );
+    }
+
+    // --- HUL03: a trimmed mesh's hull is read in the drawing and clipped to what is on the page --
+    {
+      const probes: string[] = [];
+      let said = '';
+      // A 100x100 drawing kept as 50x40, 10 in from its left and 20 up from its bottom: the kept rectangle is
+      // x 10..60, y 40..80 (y down). The hull is the drawing's top-left quarter, x 0..50, y 0..50.
+      const quarter = [0, 0, 0.5, 0, 0.5, 0.5, 0, 0.5];
+      try {
+        const m = measureBuild(
+          synthetic('hul03', [{ name: 'trim', x: 100, y: 0, w: 50, h: 40, offsets: [10, 20, 100, 100] }], { c: { trim: { type: 'mesh', uvs: quarter, hull: 4, triangles: [0, 1, 2, 0, 2, 3], vertices: quarter } } }),
+        ).measures[0];
+        const packedReading = 0.5 * 50 * (0.5 * 40);
+        if (m?.meshHull !== 400) probes.push(`the hull reads ${String(m?.meshHull)} texels, not 400 (x 10..50 by y 40..50)`);
+        if (m?.rect !== 2000) probes.push(`the rectangle reads ${String(m?.rect)}, not 2000`);
+        if (packedReading === m?.meshHull) probes.push('the rejected reading — UVs times the packed size — gives the same number, so this probe cannot tell them apart');
+        said = `hull ${String(m?.meshHull)} of rectangle ${String(m?.rect)}; UVs times the packed size would read ${packedReading}, unclipped in the drawing 2500`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL03_A_TRIMMED_MESH_HULL_IS_READ_IN_THE_DRAWING_AND_CLIPPED_TO_THE_KEPT_RECTANGLE',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1093: a mesh\'s UVs address the untrimmed drawing, so on a packer that strips whitespace the hull has to be ' +
+          'scaled by the original size and cut to the kept rectangle; no region of the fetched corpus is trimmed, so only ' +
+          'this probe holds the reading the private rigs need',
+      );
+    }
+
+    // HUL04/HUL05 read gallery/nod, which carries three meshes: built once, then copied beside its `out` at the
+    // same depth (its pages are named `../gallery/nod/parts/…` from there) and edited in the copy.
+    const nodRecipe = galleryRecipe(import.meta.dir, 'nod').recipe;
+    const nodBuilt = buildRecipes([nodRecipe], join(work, 'hul04'), import.meta.dir)[0];
+    const nodCopy = (label: string, edit: (skeleton: { skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> }, atlas: string[]) => void): string => {
+      const dir = join(dirname(nodBuilt.out), label);
+      cpSync(nodBuilt.out, dir, { recursive: true });
+      const skeleton = JSON.parse(readFileSync(join(dir, 'skeleton.json'), 'utf8'));
+      const atlas = readFileSync(join(dir, 'skeleton.atlas'), 'utf8').split('\n');
+      edit(skeleton, atlas);
+      writeFileSync(join(dir, 'skeleton.json'), JSON.stringify(skeleton));
+      writeFileSync(join(dir, 'skeleton.atlas'), atlas.join('\n'));
+      return dir;
+    };
+    const keyOnly: RegionResolver = (key) => ({ region: key, by: 'key' });
+    /** The refusal a build gives under a reading, or '' when it measures. */
+    const refusalOf = (dir: string, resolve: RegionResolver): string => {
+      try {
+        measureBuild(dir, { resolve });
+        return '';
+      } catch (err) {
+        if (err instanceof CeilingInputError) return err.message;
+        throw err;
+      }
+    };
+
+    // --- HUL04: a mesh whose `name` is its region, past its key -------------
+    {
+      const probes: string[] = [];
+      let said = '';
+      try {
+        if (nodBuilt.exits.some((e) => e !== 0)) probes.push(`gallery/nod exited ${JSON.stringify(nodBuilt.exits)}`);
+        const honest = measureBuild(nodBuilt.out).measures.find((m) => m.kind === 'mesh');
+        if (honest === undefined) throw new Error('gallery/nod built no mesh-kind region');
+        const key = honest.name;
+        const renamed = `dir/${key}`;
+        const dir = nodCopy('out-hul04', (skeleton, atlas) => {
+          for (const table of Object.values(skeleton.skins[0].attachments)) if (table[key] !== undefined) table[key].name = renamed;
+          const at = atlas.indexOf(key);
+          if (at < 0) throw new Error(`the atlas has no line "${key}"`);
+          atlas[at] = renamed;
+        });
+        const m = measureBuild(dir).measures.find((x) => x.name === renamed);
+        if (m === undefined) probes.push(`no region "${renamed}" was measured`);
+        else {
+          if (m.resolvedBy.join() !== 'name') probes.push(`"${renamed}" was reached by ${m.resolvedBy.join(', ')}, not by its name`);
+          if (m.meshHull !== honest.meshHull || m.opaque !== honest.opaque) probes.push(`"${renamed}" reads hull ${m.meshHull} and opaque ${m.opaque}, not the ${honest.meshHull} and ${honest.opaque} of "${key}" before the rename`);
+        }
+        const planted = refusalOf(dir, keyOnly);
+        if (!planted.includes(`samples region "${key}"`)) probes.push(`the key-only reading did not refuse by the key "${key}": ${JSON.stringify(planted)}`);
+        said = `mesh "${key}" named "${renamed}" with the atlas region renamed to match: reached by ${m?.resolvedBy.join(', ')}, hull ${m?.meshHull} as before; the key-only reading: ${JSON.stringify(planted)}`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL04_A_MESH_NAMED_PAST_ITS_KEY_SAMPLES_THE_REGION_ITS_NAME_STATES',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1093: the instrument read a region by `path`, else the key, and refused two gate-green production rigs whose ' +
+          'meshes state a `name` in a folder; the runtime reads `path`, else `name`, else the key, and so does ' +
+          '`diff`\'s `attachments.refs` since #1094. gallery/nod rather than an editor export, because CI has no ' +
+          '`examples/` and a control there would SKIP on every CI run',
+      );
+    }
+
+    // --- HUL05: a linked mesh in a second skin, its key not its name -------
+    {
+      const probes: string[] = [];
+      let said = '';
+      try {
+        const honest = measureBuild(nodBuilt.out).measures.find((m) => m.kind === 'mesh');
+        if (honest === undefined) throw new Error('gallery/nod built no mesh-kind region');
+        const source = honest.name;
+        const slot = Object.entries(JSON.parse(readFileSync(join(nodBuilt.out, 'skeleton.json'), 'utf8')).skins[0].attachments as Record<string, Record<string, unknown>>).find(([, t]) => t[source] !== undefined)?.[0];
+        if (slot === undefined) throw new Error(`no slot holds "${source}"`);
+        const dir = nodCopy('out-hul05', (skeleton, atlas) => {
+          skeleton.skins.push({ name: 'alt', attachments: { [slot]: { x: { type: 'linkedmesh', name: 'x_alt', source, skin: 'default' } } } });
+          // A second page entry naming the same file, holding one region `x_alt` over the source's rectangle.
+          const at = atlas.indexOf(source);
+          const pageAt = atlas.lastIndexOf('', at) + 1;
+          atlas.push('', ...atlas.slice(pageAt, at), 'x_alt', ...atlas.slice(at + 1, at + 4));
+        });
+        const measured = measureBuild(dir);
+        const m = measured.measures.find((x) => x.name === 'x_alt');
+        if (measured.attachments.linked !== 1) probes.push(`${measured.attachments.linked} linked mesh(es) counted, not 1`);
+        if (m === undefined) probes.push('no region "x_alt" was measured');
+        else {
+          if (m.kind !== 'mesh' || m.resolvedBy.join() !== 'name') probes.push(`"x_alt" is ${m.kind}-kind reached by ${m.resolvedBy.join(', ')}, not mesh-kind by its name`);
+          if (m.meshHull !== honest.meshHull) probes.push(`"x_alt" reads hull ${m.meshHull}, not its source "${source}"'s ${honest.meshHull}`);
+        }
+        const planted = refusalOf(dir, keyOnly);
+        if (!planted.includes('samples region "x"')) probes.push(`the key-only reading did not refuse by the key "x": ${JSON.stringify(planted)}`);
+        said = `a linked mesh keyed "x", named "x_alt", in skin "alt", sourcing "${source}" in skin "default": mesh-kind by ${m?.resolvedBy.join(', ')}, hull ${m?.meshHull} = its source's; the key-only reading: ${JSON.stringify(planted)}`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL05_A_LINKED_MESH_IN_A_SECOND_SKIN_SAMPLES_ITS_NAME_AND_TAKES_ITS_SOURCES_HULL',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1093: the second refused production row was a linked mesh keyed apart from its name in a second skin; the ' +
+          'region is its own `name` and the geometry is the `source` in the skin `skin` names — the 4.3 fields, which ' +
+          'the first version read as `parent` and would have folded into a "hulls differ" rectangle had the key resolved',
+      );
+    }
+
+    // --- HUL06: one drawing at four turns reads the same in every column ---
+    {
+      const probes: string[] = [];
+      let said = '';
+      // An L of 12x8: the left 4 columns and the bottom 3 rows, so no turn of it is another.
+      const W = 12;
+      const H = 8;
+      const art = (x: number, y: number): boolean => x < 4 || y >= H - 3;
+      const turns = [0, 90, 180, 270];
+      try {
+        const dir = join(work, 'hul06');
+        mkdirSync(dir, { recursive: true });
+        const page = new Plate(80, 20);
+        const atlas = ['page.png', 'size: 80, 20', 'filter: Linear, Linear', 'pma: false'];
+        const attachments: Record<string, Record<string, unknown>> = {};
+        const tri = [0, 0, 1, 0, 0, 1];
+        turns.forEach((d, i) => {
+          const rx = i * 20;
+          for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+              if (!art(x, y)) continue;
+              const px = d === 90 ? rx + y : d === 180 ? rx + W - 1 - x : d === 270 ? rx + H - 1 - y : rx + x;
+              const py = d === 90 ? W - 1 - x : d === 180 ? H - 1 - y : d === 270 ? x : y;
+              page.set(px, py, [200, 120, 40, 255]);
+            }
+          }
+          atlas.push(`r${d}`, `bounds: ${rx}, 0, ${W}, ${H}`, `offsets: 0, 0, ${W}, ${H}`, `rotate: ${d}`);
+          attachments[`s${d}`] = { [`r${d}`]: { type: 'mesh', uvs: tri, hull: 3, triangles: [0, 1, 2], vertices: tri } };
+        });
+        page.writePng(join(dir, 'page.png'));
+        writeFileSync(join(dir, 'skeleton.atlas'), `${atlas.join('\n')}\n`);
+        writeFileSync(join(dir, 'skeleton.json'), JSON.stringify({ skeleton: {}, bones: [{ name: 'root' }], skins: [{ name: 'default', attachments }] }));
+        // What the drawing holds, counted in the drawing: the art, and the art whose centre is under the
+        // triangle (0,0)-(W,0)-(0,H), i.e. x/W + y/H < 1 at the centre.
+        let opaque = 0;
+        let drawn = 0;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (art(x, y)) {
+          opaque++;
+          if ((x + 0.5) / W + (y + 0.5) / H < 1) drawn++;
+        }
+        const measured = measureBuild(dir);
+        const parsed = parseAtlasText(readFileSync(join(dir, 'skeleton.atlas'), 'utf8'));
+        const plate = readPlate(join(dir, 'page.png'));
+        for (const d of turns) {
+          const m = measured.measures.find((x) => x.name === `r${d}`);
+          if (m === undefined) {
+            probes.push(`no region r${d} measured`);
+            continue;
+          }
+          if (m.opaque !== opaque || m.opaqueDrawn !== drawn || m.silhouette !== opaque || m.meshHull !== (W * H) / 2) {
+            probes.push(`rotate ${d}: opaque ${m.opaque}, drawn ${m.opaqueDrawn}, silhouette ${m.silhouette}, hull ${m.meshHull} — not ${opaque}, ${drawn}, ${opaque}, ${(W * H) / 2}`);
+          }
+          const region = parsed.regions.find((r) => r.name === `r${d}`);
+          if (region === undefined) continue;
+          const lifted = extractRegion(plate, region);
+          const mine = regionWindow(plate, region);
+          let differ = 0;
+          for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (lifted.data[(y * W + x) * 4 + 3] !== mine.alpha[y * W + x]) differ++;
+          if (differ > 0) probes.push(`rotate ${d}: the window differs from extractRegion's lift in ${differ} texel(s)`);
+        }
+        said = `an L of ${opaque} texels in a ${W}x${H} drawing at rotate 0, 90, 180 and 270 on one page: every turn reads opaque ${opaque}, drawn ${drawn} under the triangle hull, silhouette ${opaque} and hull ${(W * H) / 2}, and its window equals extractRegion's lift texel for texel`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL06_ONE_DRAWING_AT_FOUR_TURNS_READS_THE_SAME_IN_EVERY_COLUMN_AND_LIFTS_AS_EXTRACTREGION_DOES',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1093: three production rigs read 0 opaque texels under nonzero hulls, and they turn many regions; a turned ' +
+          'region is read through a hand-written index map, so the map is held to `extractRegion` — the tree\'s one lift — ' +
+          'and the counts to the drawing, at every turn',
+      );
+    }
   }
 
   rmSync(work, { recursive: true, force: true });
@@ -105463,7 +105798,13 @@ function main(): void {
           'covering every gallery rig and every fetched export with no finding; bad inputs refused with exit 2 ' +
           'and nothing written; and — issue #930 — the tracked gallery base byte-identical to what `base` writes on ' +
           'this tree, a hand-edited copy reading STALE, and a gallery build moved on purpose named by row, file and ' +
-          'the one command that refreshes the base)') +
+          'the one command that refreshes the base; and — issue #1093 — `tools/hull_ceiling.ts`, the polygon-packing ' +
+          'ceiling: an opaque rectangle its own hull, contour and floor with one cleared texel separating the three, one ' +
+          'opaque texel outside a hull separating the drawn floor from the raw count, and a transparent region named by ' +
+          'page; a trimmed mesh hull read in the drawing and cut to the kept rectangle; a tracer that answers the ' +
+          'rectangle named by region on a gallery rig; a mesh named past its key and a linked mesh in a second skin each ' +
+          'reaching the region the runtime reaches, the key-only reading refused by name; and one drawing at four turns ' +
+          'reading the same in every column, its window equal to extractRegion\'s lift)') +
       (renderHashesBad === null
         ? ''
         : ', + ' + n('render-hashes') + ' render-hashes controls (issue #965 — `tools/render_hashes.ts`, the render-identity ' +
