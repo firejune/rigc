@@ -822,6 +822,110 @@ function atlasWithPagesOffDisk(atlasText: string, pick: (block: readonly string[
   return { atlasText: blocks.join('\n\n'), moved };
 }
 
+/**
+ * The atlas with the pages `pick` chooses replaced, on disk, by bytes rigc
+ * cannot read as a PNG (issue #1064) — `atlasWithPagesOffDisk`'s other half.
+ * Each chosen page is moved into a directory `unreadable_<tag>/` beside its
+ * file, with its basename kept (so `A27`'s subject is untouched), and the file
+ * written there is `bytes` of the real page: the page is on disk (`A17` has
+ * nothing to say) and is not a PNG this tree can read.
+ */
+function atlasWithPagesUnreadable(
+  atlasText: string,
+  atlasDir: string,
+  tag: string,
+  bytes: (png: Uint8Array) => Uint8Array,
+  pick: (block: readonly string[]) => boolean,
+): { atlasText: string; moved: string[] } {
+  const moved: string[] = [];
+  const blocks = atlasText.split('\n\n').map((block) => {
+    const lines = block.split('\n');
+    if (lines[0] === '' || !pick(lines)) return block;
+    const was = lines[0];
+    lines[0] = was.replace(/[^/]*$/, (base) => `unreadable_${tag}/${base}`);
+    const target = resolve(atlasDir, lines[0]);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, bytes(readFileSync(resolve(atlasDir, was))));
+    moved.push(lines[0]);
+    return lines.join('\n');
+  });
+  if (moved.length === 0) throw new Error('the fixture atlas has no page block the mutant picks');
+  return { atlasText: blocks.join('\n\n'), moved };
+}
+
+/** Text where a PNG should be: no signature at all (issue #1064's first state). */
+const notAPng = (): Uint8Array => new TextEncoder().encode('this page is text, not an image\n');
+
+/**
+ * The page cut halfway through its first IDAT chunk's data (issue #1064's
+ * second state): the signature and IHDR intact, the pixel data short. The cut
+ * is placed by the file's own chunk walk, not at a byte count typed here.
+ */
+function cutInsideFirstIdat(png: Uint8Array): Uint8Array {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  for (let at = PNG_SIGNATURE.length; at + 8 <= png.length; ) {
+    const length = view.getUint32(at);
+    if (String.fromCharCode(png[at + 4], png[at + 5], png[at + 6], png[at + 7]) === 'IDAT') return png.slice(0, at + 8 + Math.floor(length / 2));
+    at += 12 + length;
+  }
+  throw new Error('the fixture page has no IDAT chunk to cut');
+}
+
+/**
+ * What the report must print on a build whose pages in `moved` are on disk and
+ * cannot be read as PNG (issue #1064): A06 FAILs once per page naming it, A17
+ * PASSes (every file is there), A19 raises no failure and SKIPs with a reason
+ * carrying `a19` and pointing at A06 — and each moved page is named by exactly
+ * one failure line of the whole report, A06's, whose subject the file is.
+ */
+function pagesUnreadableHold(report: ValidateReport, moved: readonly string[], a19: string): { held: boolean; read: string } {
+  const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+  const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+  const reasonOf = (code: string): string => report.skipped.find((s) => s.assertion === code)?.reason ?? '';
+  const verdictOf = (code: string): string =>
+    report.passed.includes(code) ? 'PASS' : report.failures.some((f) => f.assertion === code) ? 'FAIL' : reasonOf(code) !== '' ? 'SKIP' : 'nothing';
+  const namings = moved.map((name) => report.failures.filter((f) => f.detail.includes(`"${name}"`)));
+  const a06 = report.failures.filter((f) => f.assertion === A06);
+  const held =
+    verdictOf(A19) === 'SKIP' &&
+    reasonOf(A19).includes(a19) &&
+    reasonOf(A19).includes(A06) &&
+    verdictOf('A17_ATLAS_PAGE_FILES_EXIST') === 'PASS' &&
+    a06.length === moved.length &&
+    a06.every((f) => f.detail.includes('cannot be read as PNG')) &&
+    namings.every((lines) => lines.length === 1 && lines[0].assertion === A06);
+  return {
+    held,
+    read:
+      `${moved.length} page(s) unreadable on disk; A06 failed ${a06.length} time(s); A17 ${verdictOf('A17_ATLAS_PAGE_FILES_EXIST')}; ` +
+      `each page named by [${namings.map((lines) => lines.map((f) => f.assertion.slice(0, 3)).join('+') || 'nothing').join(', ')}]; ` +
+      `A19 ${verdictOf(A19)}: ${reasonOf(A19)}`,
+  };
+}
+
+/** M12d/M12e's break: the first page block that is not the base plate's, made unreadable on disk. */
+function unreadableFirstPartPage(a: Artifacts, atlasDir: string, tag: string, bytes: (png: Uint8Array) => Uint8Array): { atlasText: string; moved: string[] } {
+  const base = coversTheStage(a.skeletonText);
+  let first = true;
+  return atlasWithPagesUnreadable(a.atlasText, atlasDir, tag, bytes, (block) => {
+    if (!first || base(block)) return false;
+    first = false;
+    return true;
+  });
+}
+
+/** M12d/M12e's reading: the moved page named once, by A06, and A19's SKIP counted off the broken atlas. */
+function unreadableFirstPartPageHold(report: ValidateReport, broken: Artifacts, tag: string): { held: boolean; read: string } {
+  const blocks = broken.atlasText.split('\n\n');
+  const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+  const moved = broken.atlasText.split('\n').filter((line) => line.includes(`/unreadable_${tag}/`));
+  return pagesUnreadableHold(
+    report,
+    moved,
+    `1 of the ${withParts} page(s) carrying a part were not read — "${moved[0]}" — because the file cannot be read as PNG`,
+  );
+}
+
 /** Whether a page block holds the region that covers the skeleton's whole stage — the base plate's page (`M77`'s reading). */
 function coversTheStage(skeletonText: string): (block: readonly string[]) => boolean {
   const stage = (JSON.parse(skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
@@ -1752,7 +1856,13 @@ interface Mutant {
    * rather than about one assertion — see M36a/M36b, the same edit under both.
    */
   profile?: ValidateProfile;
-  mutate: (a: Artifacts) => Artifacts;
+  /**
+   * The break. `atlasDir` is the directory the gate resolves page names
+   * against, for a break that has to put BYTES on disk rather than edit a text
+   * (issue #1064: a page that is present and not a PNG). Every other row
+   * ignores it.
+   */
+  mutate: (a: Artifacts, atlasDir: string) => Artifacts;
   /**
    * The rig info to gate the break under, derived from the pristine build's —
    * for a rule that reads a DECLARATION as well as the file (issue #855: A15
@@ -2140,6 +2250,35 @@ const MUTANTS: Mutant[] = [
         `none of the ${withParts} page file(s) carrying a part is on disk`,
       );
     },
+    twin: ATLAS_EDIT_TWIN,
+  },
+  // ─── a page file on disk and not a PNG is named once, by A06 (issue #1064) ───
+  //
+  // #1055's rule, asked of the other way a page goes unread. The file is
+  // there, so A17 passes; A06, whose subject the file's readability is, FAILs
+  // naming it; and A19, which used to add a second FAIL about the same file
+  // (#732's `not measured … belongs to A06`), SKIPs naming the page and
+  // pointing at A06. The page is chosen as M12b's is — the first block that
+  // does not hold the stage-covering base plate — so A19 has a part on it.
+  {
+    name: 'M12d_one_page_file_that_is_not_a_png_is_named_by_A06_alone_and_A19_skips',
+    origin:
+      'issue #1064: a page whose file is text was named by A06\'s refusal and again by A19\'s "not measured" FAIL — ' +
+      'two red lines about one file',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'text', notAPng).atlasText }),
+    holds: (report, broken) => unreadableFirstPartPageHold(report, broken, 'text'),
+    // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
+    twin: ATLAS_EDIT_TWIN,
+  },
+  {
+    name: 'M12e_one_page_file_that_is_a_truncated_png_is_named_by_A06_alone_and_A19_skips',
+    origin:
+      'issue #1064: a PNG cut inside its pixel data was named by A06 ("is a truncated PNG") and again by A19 — the ' +
+      'header intact, so the cut is the one the old length floor passed (#732)',
+    expect: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
+    mutate: (a, atlasDir) => ({ ...a, atlasText: unreadableFirstPartPage(a, atlasDir, 'cut', cutInsideFirstIdat).atlasText }),
+    holds: (report, broken) => unreadableFirstPartPageHold(report, broken, 'cut'),
     twin: ATLAS_EDIT_TWIN,
   },
   {
@@ -42271,7 +42410,7 @@ function runSuite(suite: Suite): number {
   // reads `modelText` only beside `reEmit`, so no break's verdict moves.
   const pristineModel = modelDocument(pristine.model, pristine.skeletonText, pristine.atlasText);
   for (const mutant of suite.mutants) {
-    const broken = mutant.mutate(base);
+    const broken = mutant.mutate(base, suite.opts.outDir);
     const report = validate({
       ...broken,
       atlasDir: suite.opts.outDir,
@@ -46861,17 +47000,25 @@ function runAtlasReaderSuite(): number | null {
         return (err as Error).message;
       }
     })();
-    const alphaSaid = detailsOf(gateOf(webpPack, 'spine-html'), A19);
+    // Since issue #1064 A19 names the page by SKIPping, pointing at A06, rather
+    // than by a second FAIL (#732's `not measured … belongs to A06`): one
+    // unreadable file is one red line, A06's. What this case holds of A19 is
+    // that it still says it did not read the page, and points at the rule
+    // that names it — and that no failure line of A19 is about it at all.
+    const webpHtml = gateOf(webpPack, 'spine-html');
+    const alphaSaid = detailsOf(webpHtml, A19);
+    const alphaSkip = webpHtml.skipped.find((s) => s.assertion === A19)?.reason ?? '';
+    // The every-page form names no page (#1055's, which leaves the file-by-file naming to the owner).
+    const namesThePage = alphaSkip.includes(`"${webpPack.page.name}"`) || alphaSkip.startsWith("no part's alpha was read");
     const oneReaderProbes = [
       ...(sentence === null ? ['the pixel reader decoded a WebP page'] : []),
       ...(sentence !== null && sentence.includes('is a WebP image') ? [] : [`the pixel reader says ${String(sentence).slice(0, 160)}`]),
       ...(sentence !== null && webpSaid.every((detail) => detail.endsWith(sentence)) ? [] : ['A06\'s detail does not end with the pixel reader\'s sentence']),
       ...(sentence !== null && compileSaid.includes(sentence) ? [] : [`the compiler says ${compileSaid.slice(0, 160)}`]),
-      ...(alphaSaid.length > 0 ? [] : ['A19 raised nothing on a page it cannot open under the profile that runs it']),
-      ...alphaSaid.flatMap((detail) => [
-        ...(detail.startsWith('threw:') ? [`A19 still reports a throw: ${detail.slice(0, 160)}`] : []),
-        ...(detail.includes('not measured') && detail.includes(A06) ? [] : [`A19 does not state a non-measurement pointing at A06: ${detail.slice(0, 160)}`]),
-      ]),
+      ...firstFew(alphaSaid.map((detail) => `A19 raised a failure on a page A06 already names: ${detail.slice(0, 160)}`), 'failure(s)'),
+      ...(alphaSkip.includes(A06) && alphaSkip.includes('be read as PNG') && namesThePage
+        ? []
+        : [`A19 does not SKIP naming the page and pointing at A06: ${JSON.stringify(alphaSkip.slice(0, 200))}`]),
     ];
     const oneReaderHeld = oneReaderProbes.length === 0;
     say(
@@ -46881,7 +47028,7 @@ function runAtlasReaderSuite(): number | null {
         oneReaderHeld,
         oneReaderProbes,
         'the pixel reader, A06 and the compiler all state one sentence about the WebP page, and A19 under the ' +
-          `renderer profile raises ${alphaSaid.length} non-measurement(s) naming A06 rather than a throw`,
+          `renderer profile raises no failure about it and SKIPs pointing at A06: ${alphaSkip}`,
       ),
       'three readers used to say three things about one file — `not a PNG (bad signature)`, `unexpected end of ' +
         'file` and a stack trace — and none of them what it was. One derivation, the way `pageFootprint` is one, is ' +
@@ -102866,6 +103013,97 @@ function runVerdictSuppliersSuite(): number {
           "the present build's A06 lines differ from those of the build with every page off, so the comparison can fail",
       ),
       "issue #1055: A06's size clause and A19 walked past a page file they could not open and printed PASS; they now SKIP naming it, and VF03's twins compare only the lines a break fails",
+    );
+  }
+
+  // --- VF18: a page file on disk and not a PNG prints the same lines on both sides (issue #1064) ---
+  //
+  // VF17's comparison over the other way a page goes unread. The twin
+  // convention (VF03) compares the lines of the codes a break FAILS, which on
+  // this break is A06 alone, so A19's SKIP — the line #1064 moved — is
+  // compared here: every fixture under both profiles, with no page made
+  // unreadable, the first page carrying a part replaced by text and by a PNG
+  // cut inside its pixel data, and every page replaced by text. On each
+  // unreadable build, every such page is named by exactly one failure line on
+  // each side, A06's. The pages as built are the tolerance: there neither
+  // side prints a #1064 SKIP.
+  {
+    const probes: string[] = [];
+    const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+    const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
+    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19, 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const unreadableSkips = (report: ValidateReport | ModelReport): number =>
+      report.skipped.filter((s) => s.assertion === A19 && s.reason.includes(A06)).length;
+    const counts = { compared: 0, lines: 0, skipsPresent: 0, skipsUnreadable: 0, namedOnce: 0 };
+    let plantDiffered = false;
+    for (const { opts, result } of fixtures) {
+      const modelText = threadedModel(result, result.atlasText) ?? '';
+      const firstPart = (tag: string, bytes: (png: Uint8Array) => Uint8Array): { atlasText: string; moved: string[] } =>
+        unreadableFirstPartPage(result, opts.outDir, tag, bytes);
+      const variants: Array<[string, { atlasText: string; moved: string[] }]> = [
+        ['no page unreadable', { atlasText: result.atlasText, moved: [] }],
+        ['the first page carrying a part as text', firstPart('vf18_text', notAPng)],
+        ['the first page carrying a part cut inside its pixel data', firstPart('vf18_cut', cutInsideFirstIdat)],
+        ['every page as text', atlasWithPagesUnreadable(result.atlasText, opts.outDir, 'vf18_all', notAPng, () => true)],
+      ];
+      for (const profile of VALIDATE_PROFILES) {
+        const reports: Array<{ spine: ValidateReport; model: ModelReport }> = [];
+        for (const [label, { atlasText, moved }] of variants) {
+          const input: ValidateInput = { skeletonText: result.skeletonText, atlasText, atlasDir: opts.outDir, declaredDurations: result.declaredDurations, rig: result.rig, profile };
+          const doc = JSON.parse(modelText) as Record<string, unknown>;
+          doc.pages = pagesOfAtlas(atlasText);
+          const spineReport = validateOverSpine(input);
+          const modelReport = validateModel(modelInputOf(input, `${JSON.stringify(doc, null, 2)}\n`));
+          reports.push({ spine: spineReport, model: modelReport });
+          counts.compared++;
+          for (const code of pageCodes) {
+            const a = linesOfCode(spineReport, code);
+            const b = linesOfCode(modelReport, code);
+            counts.lines += a.length;
+            if (a.join('\n') !== b.join('\n')) probes.push(`${opts.rigPath} [${profile}] ${label} ${code.slice(0, 3)}: validate() ${JSON.stringify(a)}, the model side ${JSON.stringify(b)}`);
+          }
+          if (moved.length === 0) {
+            counts.skipsPresent += unreadableSkips(spineReport) + unreadableSkips(modelReport);
+            continue;
+          }
+          if (profile === 'spine-html') counts.skipsUnreadable += unreadableSkips(spineReport);
+          for (const [side, report] of [['validate()', spineReport], ['the model side', modelReport]] as const) {
+            for (const name of moved) {
+              const naming = report.failures.filter((f) => f.detail.includes(`"${name}"`)).map((f) => f.assertion.slice(0, 3));
+              if (naming.length === 1 && naming[0] === 'A06') counts.namedOnce++;
+              else probes.push(`${opts.rigPath} [${profile}] ${label}: ${side} names "${name}" by [${naming.join('+') || 'nothing'}], where one unreadable file is A06's one line`);
+            }
+          }
+        }
+        // The plant: the comparison can fail — the present build's model lines against the spine lines with every page unreadable.
+        if (linesOfCode(reports[0].model, A06).join('\n') !== linesOfCode(reports[3].spine, A06).join('\n')) plantDiffered = true;
+      }
+    }
+    if (counts.skipsPresent !== 0) probes.push(`${counts.skipsPresent} #1064 SKIP(s) printed on a build whose pages are all readable`);
+    if (!plantDiffered) probes.push("the present build's A06 lines read the same as the build with every page unreadable, so the comparison measures nothing");
+    probes.push(
+      ...floorProbes(
+        [
+          [counts.compared, 1, `${counts.compared} report pair(s) compared`],
+          [counts.skipsUnreadable, 1, `${counts.skipsUnreadable} #1064 SKIP(s) read`],
+          [counts.namedOnce, 1, `${counts.namedOnce} page naming(s) read`],
+        ],
+        'and a comparison over nothing is not a comparison',
+      ),
+    );
+    const held = probes.length === 0;
+    say(
+      'VF18_A_PAGE_FILE_THAT_IS_NOT_A_PNG_PRINTS_THE_SAME_A06_A17_A19_A27_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page, the first page carrying a part as text and cut, every page as text — ` +
+          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of an unreadable page, each by A06's one line; ` +
+          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under spine-html, 0 on the builds whose pages are readable; ` +
+          "the present build's A06 lines differ from those of the build with every page unreadable, so the comparison can fail",
+      ),
+      "issue #1064: a page on disk that is not a PNG was named by A06 and again by A19's \"not measured\" FAIL; A19 now SKIPs pointing at A06, and VF03's twins compare only the lines a break fails",
     );
   }
 
