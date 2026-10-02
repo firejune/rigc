@@ -19,13 +19,19 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    // ⚠️ Not full `strict`, on purpose. The code is written against
-    // `strictNullChecks` — the compiler leans on `x === undefined` narrowing all
-    // over — and turning on the rest (`noImplicitAny`, `strictFunctionTypes`,
-    // `strictPropertyInitialization`) would be a refactor, not a gate. Raise it
-    // when somebody is prepared to do that work; do not raise it silently.
-    "strict": false,
-    "strictNullChecks": true
+    // Full `strict`, since 2026-10-02. For a long time this was
+    // `strictNullChecks` alone, with a note here that the rest would be a
+    // refactor rather than a gate. Measured before raising it: every other flag
+    // of `strict` reported 0 errors on this tree, and `noImplicitAny` exactly
+    // one — an evolving `let` whose `.kind` was read as `any` and so passed a
+    // `MeshKind` where the return type said `'ring' | 'ribbon'` (fixed in the
+    // same change). The measurement is the one a dependant with `strict: true`
+    // runs on this tree when its tsc reaches `src/` through an import, which is
+    // how that error was found (spine-parts, whose selftest imports
+    // `src/render.ts`). What was true of the comment above stays true of the
+    // code: it leans on `x === undefined` narrowing everywhere, and `strict`
+    // keeps `strictNullChecks` on.
+    "strict": true
   },
   "include": ["cli.ts", "cli_core.ts", "selftest.ts", "src/**/*.ts", "bench/**/*.ts", "tools/**/*.ts", "fixtures/**/*.ts", "scripts/**/*.ts", "gallery/**/*.ts"],
   // `bench/runs/**` is out of this surface, systematically rather than case by
