@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "rigc",
-  "description": "Author Spine 4.3 rigs with rigc, the rig compiler that verifies its own output through a spine-core round-trip. Skills that route an agent to the shipped guide for the need at hand: the hierarchy, a motion, a face, or a skeleton somebody else authored.",
+  "description": "Author Spine 4.3 rigs with rigc, the rig compiler that verifies its own output with named assertions before writing it. Skills that route an agent to the shipped guide for the need at hand: the hierarchy, a motion, a face, or a skeleton somebody else authored.",
   "author": {
     "name": "firejune",
     "url": "https://github.com/firejune"
