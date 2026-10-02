@@ -55,7 +55,7 @@ import {
   viewportOfSize,
   type Frame,
   type Viewport,
-} from './render.ts';
+} from './render_shared.ts';
 
 /** How far a channel must move for a pixel to count as "not background". */
 export const BACKGROUND_TOLERANCE = 8;

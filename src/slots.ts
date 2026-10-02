@@ -54,7 +54,7 @@ import {
   type Frame,
   type Footprint,
   type Viewport,
-} from './render.ts';
+} from './render_shared.ts';
 
 /** Components smaller than this are antialiasing crumbs, not parts. */
 const MIN_COMPONENT_PIXELS = 4;

@@ -87,6 +87,7 @@ import { a11NoClippingAttachments } from './assertions/bodies/a11.ts';
 import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
 import { attachmentRegionLookups, type AttachmentRegionJoin } from './assertions/region_lookups.ts';
+import { attachmentRegionJoins } from './region_joins.ts';
 import type { MeshEntry, SkinMeshFacts } from './assertions/facts/skin_meshes.ts';
 import type { AnimatedBoneFacts } from './assertions/facts/animated_bones.ts';
 import type { RegionJoinFacts } from './assertions/facts/region_joins.ts';
@@ -458,46 +459,9 @@ const SPINE_4_3: SpineGeneration = '4.3';
 // sides, and the model side links nothing from the runtime. Re-exported here.
 export { attachmentRegionLookups, type AttachmentRegionJoin };
 
-/**
- * Every atlas-region lookup `AtlasAttachmentLoader` will perform, read off the
- * RAW skeleton JSON — before the loader is asked, which is the whole point.
- *
- * 🚨 This is a SECOND implementation of a join `spine-core` already performs,
- * and the tree's standing judgment about a second opinion on somebody else's
- * format is that it is measured rather than asserted: `PS127` runs the loader
- * with its `findRegion` recording what it asked for, and compares. A wrong walk
- * here would refuse correct foreign data by name, which is the one failure that
- * would be worse than the silence #589 removed.
- *
- * Which entries resolve a region is the parser's list, not a guess:
- * `SkeletonJson.readAttachment` (`dist/SkeletonJson.js:524-575`) calls the
- * loader with a path for `region`, `mesh` and `linkedmesh` — a linked mesh
- * resolves its own region before the `source` branch — and for nothing else.
- * `type` defaults to `region` (`:527`), `name` to the placeholder (`:526`) and
- * `path` to the name (`:529`, `:560`): three names that default into one
- * another, which is why a report printing only the last of them cannot say
- * what to change.
- */
-export function attachmentRegionJoins(raw: unknown): AttachmentRegionJoin[] {
-  const joins: AttachmentRegionJoin[] = [];
-  if (!isObj(raw) || !Array.isArray(raw.skins)) return joins;
-  for (const skin of raw.skins as unknown[]) {
-    if (!isObj(skin) || !isObj(skin.attachments)) continue;
-    const skinName = typeof skin.name === 'string' ? skin.name : '(unnamed)';
-    for (const [slot, entries] of Object.entries(skin.attachments)) {
-      if (!isObj(entries)) continue;
-      for (const [placeholder, entry] of Object.entries(entries)) {
-        if (!isObj(entry)) continue;
-        const type = entry.type === undefined ? 'region' : entry.type;
-        if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
-        const name = typeof entry.name === 'string' ? entry.name : placeholder;
-        const path = typeof entry.path === 'string' ? entry.path : name;
-        joins.push({ skin: skinName, slot, placeholder, name, lookups: attachmentRegionLookups(entry.sequence, path) });
-      }
-    }
-  }
-  return joins;
-}
+// `attachmentRegionJoins` is `./region_joins.ts`'s since issue #1052: `explain` reads it, and an entry that links
+// nothing of the runtime has to be able to load what `explain` reads. Re-exported here.
+export { attachmentRegionJoins };
 
 /**
  * The mesh keys the `source` branch never reaches — the geometry a linked mesh

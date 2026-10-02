@@ -45,7 +45,7 @@
  * loud when the script does not arrive.
  */
 import { SPINE_VERSION } from './compile.ts';
-import { BACKGROUND } from './render.ts';
+import { BACKGROUND } from './render_shared.ts';
 
 /**
  * The Spine Web Player line the generated page loads.
