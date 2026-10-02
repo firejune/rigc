@@ -54,6 +54,30 @@
  *   not what the slot shows; under `all` every bone some skin names is
  *   active, so a one-skin rig is unchanged.
  *
+ * - **No skin set** (issue #1051): a fresh skeleton whose `setSkin` was never
+ *   called — `underNoSkin`, the state `render` without `--skin`, A10's walk
+ *   and `validate()` pose in. No skin's `bones` or constraint lists are
+ *   applied, the default skin's included, and a slot shows the default
+ *   skin's record for its placeholder, else nothing — so over a document
+ *   with skins and no `default` one every slot shows nothing. Measured with
+ *   `tools/pose_oracle.ts dump --skin none` on 93 skeletons rebuilt through
+ *   `ingest` and `compile` (31 with no default skin, 31 whose default names
+ *   skin-required members, 31 with a plain default): `Skeleton.skin` read
+ *   `null` on all 93; all 311 skin-required bones read inactive — the 51 a
+ *   default skin names among them, and the 66 a constraint writes — and the
+ *   125 bones that are not skin-required under one read active and unposed;
+ *   all 73 skin-required constraints read inactive and moved nothing when
+ *   removed — the 12 a default skin lists among them — and the 81 that are
+ *   not read active; 199 slots whose placeholder the default skin fills
+ *   showed it and 359 only named skins fill showed nothing; a colour key on
+ *   a slot whose bone is inactive held its setup colour (50 of 50) and moved
+ *   it on an active one (46 of 46), and a draw-order key applied either way
+ *   (93 of 93). The core suite's `CO29` holds the same population against
+ *   the core under `--raw` at tolerance 0, and `CO30` plants each rejected
+ *   reading (the old one among them: no skin set read as the default skin,
+ *   which differs exactly where the default skin names a skin-required
+ *   member).
+ *
  * Under `all` every skin is applied at once: `bones` and the constraint
  * lists of every skin count, and a placeholder several skins fill shows the
  * LAST of them in the Spine file's order — the case `./index.ts` leaves out
@@ -68,15 +92,16 @@ export const CORE_ALL_SKINS = 'all';
 /** The skin a document names its default skin with — Spine's `SkeletonData.defaultSkin` is the skin of this name. */
 export const CORE_DEFAULT_SKIN = 'default';
 
-/** The skins whose `bones` and constraint lists are applied: every skin under `all`, the named skin alone otherwise (the header's measurement). */
+/** The skins whose `bones` and constraint lists are applied: every skin under `all`, none with no skin set, the named skin alone otherwise (the header's measurements). */
 export function appliedSkins(doc: CompiledDocument): CoreSkin[] {
+  if (doc.skin === null) return [];
   return doc.skin === CORE_ALL_SKINS ? doc.skins : doc.skins.filter((k) => k.name === doc.skin);
 }
 
-/** Under a named skin, the skins a placeholder is looked up in, in precedence order: the named skin, then the default skin (the header's measurement). */
+/** Under a named skin or none, the skins a placeholder is looked up in, in precedence order: the named skin, then the default skin (the header's measurements). */
 export function lookupSkins(doc: CompiledDocument): CoreSkin[] {
   if (doc.skin === CORE_ALL_SKINS) return doc.skins;
-  const named = doc.skins.find((k) => k.name === doc.skin);
+  const named = doc.skin === null ? undefined : doc.skins.find((k) => k.name === doc.skin);
   const fallback = doc.skin === CORE_DEFAULT_SKIN ? undefined : doc.skins.find((k) => k.name === CORE_DEFAULT_SKIN);
   return [named, fallback].filter((k): k is CoreSkin => k !== undefined);
 }

@@ -69771,6 +69771,81 @@ function additiveSeedBuilds(work: string): Array<{ variant: string; data: Return
   });
 }
 
+// ---------------------------------------------------------------------------
+// no skin set (issue #1051) — CO29, CO30
+// ---------------------------------------------------------------------------
+
+// Its own statements, so the section lands as one hunk.
+import { buildSpineSkeleton, noSkinClass, noSkinProbeBuilds, noSkinRun } from './tools/core_gate.ts';
+import { underNoSkin } from './src/core/index.ts';
+
+/** The seeded no-skin skeletons' one atlas page: ten 20-pixel regions. */
+const NOSKIN_SEED_ATLAS = ['noskin.png', 'size: 200, 20', 'filter: Linear, Linear', ...Array.from({ length: 10 }, (_v, i) => [`r${i}`, `bounds: ${20 * i}, 0, 20, 20`]).flat(), ''].join('\n');
+
+/**
+ * One seeded Spine skeleton for the no-skin rule (issue #1051, `CO29`): seven
+ * bones in a random tree under `root`, each skin-required with probability
+ * 0.45, and a target `t`; up to two one-bone iks and a transform onto random
+ * bones from `t`, each skin-required at even odds; one to three named skins,
+ * each naming a random half of the skin-required bones and listing some of the
+ * skin-required constraints; under `mode` `none` no default skin, under
+ * `plain` a default skin naming nothing, under `members` one naming some
+ * skin-required bones and constraints. Six slots on random bones, each
+ * placeholder (and a second one an attachment key switches to) filled by the
+ * default skin or by one to three named skins with different regions — never
+ * both, which the compiler refuses — and one animation keying two bones' and
+ * the target's channels, a slot colour, an attachment and the draw order.
+ */
+function noSkinSeedSkeleton(rnd: () => number, mode: 'none' | 'plain' | 'members'): Record<string, unknown> {
+  type Obj = Record<string, unknown>;
+  const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 100) / 100;
+  const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+  const subset = <T,>(l: readonly T[], p: number): T[] => l.filter(() => rnd() < p);
+  const listOf = (k: Obj, key: string): string[] => (k[key] ??= []) as string[];
+  const bones: Obj[] = [{ name: 'root' }, { name: 't', parent: 'root', x: R(-50, 50), y: R(-50, 50) }];
+  const names: string[] = [];
+  for (let j = 1; j <= 7; j++) {
+    const b: Obj = { name: `b${j}`, parent: pick(['root', ...names]), x: R(-30, 30), y: R(-30, 30), rotation: R(-180, 180), length: R(4, 30) };
+    if (rnd() < 0.45) b.skin = true;
+    bones.push(b);
+    names.push(b.name as string);
+  }
+  if (!bones.some((b) => b.skin === true)) bones[2].skin = true;
+  const required = bones.filter((b) => b.skin === true).map((b) => b.name as string);
+  const constraints: Obj[] = [];
+  for (let k = 0, n = Math.floor(rnd() * 3); k < n; k++) constraints.push({ type: 'ik', name: `ik${k}`, target: 't', bones: [pick(names)], mix: pick([1, R(0, 1)]), ...(rnd() < 0.5 ? { skin: true } : {}) });
+  if (rnd() < 0.6) constraints.push({ type: 'transform', name: 'tc', source: 't', bones: [pick(names)], properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1), ...(rnd() < 0.5 ? { skin: true } : {}) });
+  const gated = constraints.filter((c) => c.skin === true);
+  const named: Obj[] = Array.from({ length: 1 + Math.floor(rnd() * 3) }, (_v, i) => ({ name: `s${i + 1}`, bones: subset(required, 0.5), attachments: {} }));
+  const fallback: Obj | null = mode === 'none' ? null : { name: 'default', attachments: {} };
+  if (fallback !== null && mode === 'members') {
+    fallback.bones = subset(required, 0.5);
+    for (const c of gated) if (rnd() < 0.6) listOf(fallback, c.type as string).push(c.name as string);
+    if ((fallback.bones as string[]).length === 0 && !gated.some((c) => listOf(fallback, c.type as string).includes(c.name as string))) (fallback.bones as string[]).push(required[0]);
+  }
+  for (const c of gated) if (rnd() < 0.7 || !named.some((k) => listOf(k, c.type as string).includes(c.name as string))) listOf(pick(named), c.type as string).push(c.name as string);
+  // The compiler refuses a skin-required bone no skin names (it is never active), so each is named somewhere.
+  for (const b of required) if (![...named, ...(fallback === null ? [] : [fallback])].some((k) => listOf(k, 'bones').includes(b))) listOf(pick(named), 'bones').push(b);
+  const slots: Obj[] = [];
+  let region = 0;
+  const regionAttachment = (): Obj => ({ path: `r${region++ % 10}`, width: 20, height: 20 });
+  for (let i = 0; i < 6; i++) {
+    const slot: Obj = { name: `sl${i}`, bone: pick(['root', ...names]), attachment: `p${i}` };
+    if (rnd() < 0.3) slot.color = pick(['ff8040c0', '80ff40ff']);
+    slots.push(slot);
+    const fillers = fallback !== null && rnd() < 0.5 ? [fallback] : subset(named, 0.6);
+    if (fillers.length === 0) fillers.push(pick(named));
+    for (const k of fillers) (k.attachments as Obj)[`sl${i}`] = { [`p${i}`]: regionAttachment(), [`q${i}`]: regionAttachment() };
+  }
+  const keyed = [{ time: 0, value: R(-60, 60) }, { time: R(0.3, 1.5), value: R(-60, 60) }];
+  const animation: Obj = {
+    bones: Object.fromEntries([...[...new Set([pick(names), pick(names)])].map((b): [string, Obj] => [b, { rotate: keyed }]), ['t', { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: R(-20, 20), y: R(-20, 20) }] }]]),
+    slots: Object.fromEntries([...new Set([pick(slots).name as string, pick(slots).name as string])].map((sl, i) => [sl, i === 0 ? { rgba: [{ time: 0, color: 'ffffffff' }, { time: 1, color: '40608090' }] } : { attachment: [{ time: 0.5, name: `q${sl.slice(2)}` }] }])),
+    drawOrder: [{ time: 0.4, offsets: [{ slot: pick(slots.slice(3)).name, offset: -2 }] }],
+  };
+  return { skeleton: { spine: '4.3.13' }, bones, slots, skins: [...(fallback === null ? [] : [fallback]), ...named], constraints, animations: { a: animation } };
+}
+
 function runCoreSuite(): number {
   console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
   let bad = 0;
@@ -80128,6 +80203,153 @@ function runCoreSuite(): number {
     );
   }
 
+  // ===========================================================================
+  // No skin set (issue #1051): what a fresh skeleton whose `setSkin` was never
+  // called shows over a document with skins and no `default` one, and over a
+  // `default` skin naming skin-required members — `underNoSkin`, posed through
+  // `noSkinView` by `render`, A10's walk and the model side of `validate()`.
+  // ===========================================================================
+  const noSkinWork = join(work, 'noskin');
+  const NOSKIN_MODES = ['none', 'plain', 'members'] as const;
+  const NOSKIN_N = 90;
+  const noSkinRnd = seededRandom(105101);
+  const noSkinPopulation: BuiltRow[] = [
+    ...noSkinProbeBuilds(join(noSkinWork, 'probes')),
+    ...Array.from({ length: NOSKIN_N }, (_v, i) => buildSpineSkeleton(`noskin seed ${i} (${NOSKIN_MODES[i % 3]})`, noSkinSeedSkeleton(noSkinRnd, NOSKIN_MODES[i % 3]), NOSKIN_SEED_ATLAS, join(noSkinWork, `seed${i}`))),
+  ];
+  const noSkinDocs = new Map(noSkinPopulation.filter((b) => b.exits.every((e) => e === 0)).map((b) => [b.name, readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)] as const));
+
+  // --- CO29: the no-skin view poses the probes and a seeded population as spine-core does, grid, raw, stepped, unposed and walked --
+  {
+    const probes: string[] = [];
+    for (const b of noSkinPopulation) if (b.exits.some((e) => e !== 0)) probes.push(`${b.name} did not build: ${readFileSync(join(b.out, '..', 'refused.txt'), 'utf8').trim().slice(0, 200)}`);
+    const rows = [...noSkinPopulation.filter((b) => noSkinDocs.has(b.name)).map((b) => noSkinRun(b.name, b.out, true))];
+    for (const r of rows) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+    const walks = walkBuilt(noSkinPopulation.filter((b) => noSkinDocs.has(b.name)));
+    for (const w of walks) if (w.verdict !== 'IDENTICAL') probes.push(`${w.name} walked: ${w.verdict} — ${w.why}`);
+    // The tree's own rows in the class, posed the same way — none on a corpus whose every row has a plain default skin, which is said, not passed.
+    const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null);
+    for (const r of corpus.map((b) => noSkinRun(b.name, b.out, true))) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+    // What the population reaches, off the documents: each class, and each construct the rule separates.
+    const docs = [...noSkinDocs.values()];
+    const byClass = (k: string | null): number => docs.filter((d) => noSkinClass(d) === k).length;
+    const fallback = (d: CompiledDocument): CompiledDocument['skins'][number] | undefined => d.skins.find((k) => k.name === 'default');
+    const writers = (d: CompiledDocument): Set<string> => new Set(d.constraints.flatMap((c) => (c.record !== undefined && 'bones' in c.record ? (c.record.bones as string[]) : [])));
+    const reach = {
+      defaultBones: docs.reduce((n, d) => n + (fallback(d)?.bones.length ?? 0), 0),
+      defaultConstraints: docs.reduce((n, d) => n + Object.values(fallback(d)?.constraints ?? {}).reduce((m, l) => m + l.length, 0), 0),
+      written: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && writers(d).has(b.name)).length, 0),
+      unwritten: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && !writers(d).has(b.name)).length, 0),
+      parents: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired !== true && d.bones.some((p) => p.name === b.parent && p.skinRequired === true)).length, 0),
+      namedOnly: docs.reduce((n, d) => n + d.slots.filter((sl) => sl.setup !== null && fallback(d)?.attachments[sl.name]?.[sl.setup] === undefined && d.skins.some((k) => k.attachments[sl.name]?.[sl.setup as string] !== undefined)).length, 0),
+    };
+    const sum = (f: (r: (typeof rows)[number]) => number): number => rows.reduce((n, r) => n + f(r), 0);
+    const walked = walks.reduce((n, w) => n + (w.comparison?.poses ?? 0), 0);
+    const history = walks.reduce((n, w) => n + (w.comparison?.historyNumbers ?? 0), 0);
+    probes.push(
+      ...floorProbes(
+        [
+          [byClass('no default skin'), NOSKIN_N / 3, `${byClass('no default skin')} document(s) with skins and no default one`],
+          [byClass('a default skin naming skin-required members'), NOSKIN_N / 3, `${byClass('a default skin naming skin-required members')} with a default skin naming skin-required members`],
+          [byClass(null), NOSKIN_N / 3, `${byClass(null)} with a plain default skin`],
+          [reach.defaultBones, 1, `${reach.defaultBones} skin-required bone(s) a default skin names`],
+          [reach.defaultConstraints, 1, `${reach.defaultConstraints} skin-required constraint(s) a default skin lists`],
+          [reach.written, 1, `${reach.written} skin-required bone(s) a constraint writes`],
+          [reach.unwritten, 1, `${reach.unwritten} skin-required bone(s) no constraint writes`],
+          [reach.parents, 1, `${reach.parents} bone(s) that are not skin-required under one that is`],
+          [reach.namedOnly, 1, `${reach.namedOnly} slot(s) whose setup placeholder only a named skin fills`],
+          [sum((r) => r.unposed?.boneSamples ?? 0), 1, 'unposed bone-samples compared to the bit'],
+          [history, 1, `${history} HISTORY number(s) on the walk (issue #979's class, counted apart)`],
+        ],
+        'so the no-skin rule was not held where it separates one reading from another',
+      ),
+    );
+    const ok = probes.length === 0;
+    say(
+      'CO29_THE_NO_SKIN_VIEW_POSES_THE_PROBES_AND_A_SEEDED_POPULATION_AS_SPINE_CORE_DOES_WITH_NO_SKIN_SET',
+      ok,
+      probeDetail(
+        ok,
+        probes.slice(0, 12),
+        `${rows.length} build(s) — the three probes and ${NOSKIN_N} seeded skeletons rebuilt through ingest and compile, ${byClass('no default skin')} with skins and no default one, ${byClass('a default skin naming skin-required members')} whose default names skin-required members, ${byClass(null)} with a plain default — ` +
+          `posed with no skin set by both dumpers under --raw at tolerance 0: every block, the stepped run and the unposed bones IDENTICAL over ${sum((r) => r.boneSamples)} bone-sample(s), ${sum((r) => r.slotRows)} slot row(s), ${sum((r) => r.attachmentRows)} setup attachment row(s), ${sum((r) => r.unposed?.boneSamples ?? 0)} unposed bone-sample(s) to the bit (${sum((r) => r.inactive)} bone(s) inactive at setup); ` +
+          `A10's walk identical on every one over ${walked} pose(s), ${history} HISTORY number(s) counted apart; reached: ${reach.defaultBones} skin-required bone(s) and ${reach.defaultConstraints} constraint(s) a default skin names, ${reach.written} skin-required bone(s) a constraint writes and ${reach.unwritten} none does, ${reach.parents} bone(s) under a skin-required one, ${reach.namedOnly} slot(s) only a named skin fills; ` +
+          `${corpus.length} tree row(s) in the class${corpus.length === 0 ? ' (every tree row has a plain default skin, so the probes and the seeds are the reading)' : ''}`,
+      ),
+      'issue #1051: the core refused to pose with no skin set over a document with skins and no default one, and over a default skin naming skin-required members, because that view was not measured; measured, a fresh skeleton applies no skin\'s bones or constraints — the default skin\'s included — and resolves every slot through the default skin alone, or through nothing',
+    );
+  }
+
+  // --- CO30: each reading the no-skin measurement rejected, planted in the view, turns exactly the builds it reads red --
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const emptied = (k: CompiledDocument['skins'][number], what: 'bones' | 'constraints' | 'both'): CompiledDocument['skins'][number] => ({
+      ...k,
+      bones: what === 'constraints' ? k.bones : [],
+      constraints: what === 'bones' ? k.constraints : { ik: [], transform: [], path: [], physics: [], slider: [] },
+    });
+    const fallbackOf = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name === 'default');
+    /** The document's default skin with `what` kept and the rest emptied, posed as the named skin it is — or the measured view where there is no default skin. */
+    const asDefault = (what: 'bones' | 'constraints' | 'both') => (m: CompiledDocument): CompiledDocument => {
+      if (fallbackOf(m) === undefined) return underNoSkin(m);
+      const keep = what === 'both' ? null : what === 'bones' ? 'constraints' : 'bones';
+      return underSkin({ ...m, skins: m.skins.map((k) => (k.name === 'default' && keep !== null ? emptied(k, keep) : k)) }, 'default');
+    };
+    const firstNamed = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name !== 'default');
+    const plants: Array<[string, (m: CompiledDocument) => CompiledDocument, (d: CompiledDocument) => boolean, boolean]> = [
+      // Every skin-required bone posed as active, as if the flag were not read with no skin set.
+      ['a skin-required bone posed as active', (m) => underNoSkin({ ...m, bones: m.bones.map(({ skinRequired: _flag, ...b }) => b) }), (d) => d.bones.some((b) => b.skinRequired === true), true],
+      // The default skin's bones applied with no skin set, its constraints not.
+      ["the default skin's bones activated", asDefault('bones'), (d) => (fallbackOf(d)?.bones.length ?? 0) > 0, true],
+      // The default skin's constraints applied with no skin set, its bones not — red only where an applied one moves the pose.
+      ["the default skin's constraints applied", asDefault('constraints'), (d) => Object.values(fallbackOf(d)?.constraints ?? {}).some((l) => l.length > 0), false],
+      // The reading the refusal stood in for: no skin set read as the default skin, both lists applied.
+      ['no skin set read as the default skin', asDefault('both'), (d) => noSkinClass(d) === 'a default skin naming skin-required members', true],
+      // A slot resolved through the first named skin as well, as if the runtime fell back to the first skin where there is no default.
+      ['a slot showing what the first named skin gives it', (m) => {
+        const first = firstNamed(m);
+        return first === undefined ? underNoSkin(m) : underSkin({ ...m, skins: m.skins.map((k) => (k === first ? emptied(k, 'both') : k)) }, first.name);
+      }, (d) => {
+        const first = firstNamed(d);
+        return first !== undefined && d.slots.some((sl) => sl.setup !== null && first.attachments[sl.name]?.[sl.setup] !== undefined);
+      }, true],
+    ];
+    const population = noSkinPopulation.filter((b) => noSkinDocs.has(b.name));
+    for (const [label, view, reads, exact] of plants) {
+      const red: string[] = [];
+      const predicted = population.filter((b) => reads(noSkinDocs.get(b.name) as CompiledDocument)).map((b) => b.name);
+      for (const b of population) {
+        const r = noSkinRun(b.name, b.out, true, (m) => view(m));
+        if (r.verdict !== 'IDENTICAL') red.push(b.name);
+      }
+      const outside = red.filter((n) => !predicted.includes(n));
+      const quiet = predicted.filter((n) => !red.includes(n));
+      if (red.length === 0) probes.push(`${label}: no build turned red`);
+      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+      if (exact && quiet.length > 0) probes.push(`${label}: [${quiet.slice(0, 4).join(', ')}] read it and stayed green`);
+      read.push(`${label} → ${red.length} of ${predicted.length} reading it red`);
+    }
+    // The walk under the reading the refusal stood in for: red only on the documents whose default skin names members.
+    const walkRed: string[] = [];
+    for (const b of population) {
+      const pair = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => readFileSync(join(b.out, f), 'utf8'));
+      const c = compareWalkDocuments(spineWalkDocument(loadOracleData(pair[0], pair[1], b.name)), coreWalkDocument(readModel(pair[2], b.name), undefined, {}, {}, asDefault('both')));
+      if (c.first !== null) walkRed.push(b.name);
+    }
+    const walkOutside = walkRed.filter((n) => noSkinClass(noSkinDocs.get(n) as CompiledDocument) !== 'a default skin naming skin-required members');
+    if (walkRed.length === 0) probes.push('no skin set read as the default skin, on the walk: no walk turned red');
+    if (walkOutside.length > 0) probes.push(`no skin set read as the default skin, on the walk: red on [${walkOutside.slice(0, 4).join(', ')}], whose default skin names nothing`);
+    read.push(`the same on A10's walk → ${walkRed.length} walk(s) red, every one a default skin naming members`);
+    const ok = probes.length === 0;
+    say(
+      'CO30_EACH_NO_SKIN_READING_THE_MEASUREMENT_REJECTED_PLANTED_IN_THE_VIEW_TURNS_ONLY_THE_BUILDS_READING_IT_RED',
+      ok,
+      probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
+      'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -82830,6 +83052,7 @@ function runRenderHashesSuite(): number | null {
       return dir;
     };
     const printed: Array<{ label: string; line: string }> = [];
+    const drawnByCore: string[] = [];
     let catchAll = { label: 'unreadable-document', line: '(not rendered)' };
     const renderLine = (label: string, candidate: string, args: string[] = []): string => {
       const out = join(work, `rc09-${label}`);
@@ -82865,22 +83088,27 @@ function runRenderHashesSuite(): number | null {
       extra.push(crossing.dirs);
       if (crossing.status !== 0) probes.push(`the self-crossing clip probe did not build: ${crossing.stderr.trim().split('\n')[0]}`);
       else printed.push({ label: 'self-crossing-clip', line: renderLine('crossing', crossing.dirs.outDir) });
-      // The default skin names a skin-required bone that carries no slot, so the rig still draws with no skin set.
+      // Issue #1051: the two inputs whose reasons the row listed until the core posed them — a default skin naming a skin-required
+      // bone, and skins with no default one — are drawn by the core now, so they are held to that rather than listed: the first's
+      // poser line is the core's, and the second stops at "there is nothing to draw" under the auto path and under --poser core alike.
       const named = buildOver('default-skin-names', {
         bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'extra', parent: 'root', x: 3, length: 4, skin: true }],
         skins: { default: { attachments: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } }, bones: ['extra'] } },
       });
-      if (named !== null) printed.push({ label: 'default-skin-names-a-bone', line: renderLine('default-names', named) });
-      // Skins and no default one: spine-core draws nothing with no skin set, so only `--poser core` can print the refusal.
+      if (named !== null) {
+        const run = runCli(['render', '--candidate', named, '--out', join(work, 'rc09-default-names')]);
+        const line = poserLine(run.stdout);
+        if (run.status !== 0 || !line.startsWith('rigc core — ')) probes.push(`the default-skin-names probe rendered with exit ${run.status} and poser line ${JSON.stringify(line)}, not through the core (issue #1051)`);
+        else drawnByCore.push('a default skin naming a skin-required bone: rigc core');
+      }
       const skinless = buildOver('no-default-skin', { skins: { patch: { block: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } } } });
       if (skinless !== null) {
-        const out = join(work, 'rc09-no-default');
-        const auto = runCli(['render', '--candidate', skinless, '--out', out]);
-        if (auto.status !== 2 || !auto.stderr.includes('there is nothing to draw') || existsSync(out)) probes.push(`the no-default-skin probe rendered with exit ${auto.status}, not the refusal "there is nothing to draw": ${JSON.stringify(auto.stderr.trim().split('\n')[0])}`);
-        const forced = runCli(['render', '--candidate', skinless, '--out', out, '--poser', 'core']);
-        const first = forced.stderr.trim().split('\n')[0] ?? '';
-        if (forced.status !== 2 || !first.startsWith('rigc render: --poser core: ') || existsSync(out)) probes.push(`--poser core on the no-default-skin probe exited ${forced.status}: ${JSON.stringify(first)}`);
-        printed.push({ label: 'no-default-skin (--poser core)', line: first });
+        for (const args of [[], ['--poser', 'core']]) {
+          const out = join(work, `rc09-no-default${args.length}`);
+          const run = runCli(['render', '--candidate', skinless, '--out', out, ...args]);
+          if (run.status !== 2 || !run.stderr.includes('there is nothing to draw') || existsSync(out)) probes.push(`the no-default-skin probe ${args.join(' ') || '(auto)'} rendered with exit ${run.status}, not "there is nothing to draw": ${JSON.stringify(run.stderr.trim().split('\n')[0])}`);
+        }
+        drawnByCore.push('skins and no default one: "there is nothing to draw" under the auto path and --poser core alike');
       }
       // CC15's shape through the CLI: transform "w" writes into the inactive "arm", transform "r" reads "hand" below it onto the posed "leaf".
       const leak = buildOver(
@@ -82935,7 +83163,7 @@ function runRenderHashesSuite(): number | null {
     const retiredFaults = poserReasonFaults(retired.reasons, retired.other, printed, catchAll);
     if (retiredFaults.length === 0) probes.push('the row with the retired "is not strictly convex" added back still held');
     figures =
-      `${printed.length} probe(s) rendered through the CLI, each falling back to spine-core (the no-default-skin one read off --poser core, the auto path stopping at "there is nothing to draw"), ` +
+      `${printed.length} probe(s) rendered through the CLI, each falling back to spine-core, and the two inputs issue #1051 took off the list held to the core (${drawnByCore.join('; ')}), ` +
       `against the row's ${read.reasons.length} listed reason(s) [${read.reasons.join(' | ')}] and its catch-all ${JSON.stringify(read.other)}, which the unreadable document's line carries alone; ` +
       `planted: each of the ${read.items.length} item(s) dropped in turn is red, and the retired "is not strictly convex" added back is red (${retiredFaults[0] ?? ''})`;
     rmSync(base.dir, { recursive: true, force: true });
@@ -100737,8 +100965,8 @@ function runVerdictSuppliersSuite(): number {
     const inactive = inactiveHistoryProbe(-150, 1, false);
     const inactiveAsked = ask('the inactive-bone probe', inactive.spine, '', inactive.model);
     unplanted('the inactive-bone probe', inactiveAsked);
-    // Issue #1051's class through the instrument's own row function: a rig whose skins name no `default` — the model side's A10 is the
-    // core's refusal by name, which `verdictRow` counts apart as that documented class: neither IDENTICAL nor DIFFERING.
+    // Issue #1051's class through the instrument's own row function: a rig whose skins name no `default`. Until #1051 the model
+    // side's A10 was the core's refusal by name, counted apart as a documented class; posed now with no skin set, every cell is compared.
     const noDefaultDirs = writeProbeRig({ skins: { base: { ...PROBE_BLOCK_ONLY_SKIN, marker: { marker: { image: 'marker.png' } } }, alt: { marker: { marker: { image: 'marker.png', x: 2 } } } } });
     const noDefaultMotion = join(noDefaultDirs.dir, 'probe.motion.json');
     writeFileSync(noDefaultMotion, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
@@ -100749,15 +100977,15 @@ function runVerdictSuppliersSuite(): number {
     writeFileSync(join(noDefaultDirs.outDir, MODEL_DOCUMENT_FILE), threadedModel(noDefault, noDefault.atlasText) ?? '');
     const noDefaultRow = verdictRow('the no-default-skin probe', noDefaultDirs.outDir);
     const a10Cells = noDefaultRow.cells.filter((cell) => cell.code === 'A10_NO_NAN_AFTER_STEPPING');
-    const otherDiffering = noDefaultRow.cells.filter((cell) => !cell.identical && cell.refused === undefined);
+    const otherDiffering = noDefaultRow.cells.filter((cell) => !cell.identical);
     const noDefaultLines = verdictLines([noDefaultRow]);
     const noDefaultLast = noDefaultLines.lines[noDefaultLines.lines.length - 1] ?? '';
-    if (a10Cells.length === 0 || a10Cells.some((cell) => cell.identical || cell.refused === undefined || !cell.refused.route.includes('#1051'))) probes.push(`the no-default-skin probe's A10 cells read ${JSON.stringify(a10Cells.map((cell) => ({ identical: cell.identical, refused: cell.refused?.route ?? null, model: cell.model })))}, not refused by name in issue #1051's class`);
+    if (a10Cells.length === 0 || a10Cells.some((cell) => !cell.identical || cell.refused !== undefined)) probes.push(`the no-default-skin probe's A10 cells read ${JSON.stringify(a10Cells.map((cell) => ({ identical: cell.identical, refused: cell.refused?.route ?? null, model: cell.model })))}, not compared identical (issue #1051)`);
     if (otherDiffering.length > 0) probes.push(`the no-default-skin probe differs on [${otherDiffering.map((cell) => `${cell.code} [${cell.profile}]`).join(', ')}]`);
-    if (!noDefaultLines.ok || noDefaultLines.refusedByCore !== a10Cells.length || !noDefaultLast.startsWith('IDENTICAL BUT FOR REFUSALS BY NAME')) probes.push(`the no-default-skin probe's verdict line read ${JSON.stringify(noDefaultLast.slice(0, 200))} (ok ${noDefaultLines.ok}, ${noDefaultLines.refusedByCore} refused)`);
-    // Its plant: the same row with the refusal forgotten is DIFFERING, so the count is what keeps it apart.
-    const forgotten = verdictLines([{ ...noDefaultRow, cells: noDefaultRow.cells.map(({ refused: _refused, ...cell }) => cell) }]);
-    if (forgotten.ok) probes.push('the no-default-skin probe with its refusals forgotten still read ok');
+    if (!noDefaultLines.ok || noDefaultLines.refusedByCore !== 0 || !noDefaultLast.startsWith('IDENTICAL —')) probes.push(`the no-default-skin probe's verdict line read ${JSON.stringify(noDefaultLast.slice(0, 200))} (ok ${noDefaultLines.ok}, ${noDefaultLines.refusedByCore} refused)`);
+    // Its plant: the same row with one A10 cell read as differing is DIFFERING, so the comparison is what holds it.
+    const forgotten = verdictLines([{ ...noDefaultRow, cells: noDefaultRow.cells.map((cell, i) => (i === noDefaultRow.cells.indexOf(a10Cells[0]) ? { ...cell, identical: false } : cell)) }]);
+    if (forgotten.ok) probes.push('the no-default-skin probe with an A10 cell read as differing still read ok');
     rmSync(noDefaultDirs.dir, { recursive: true, force: true });
     const t = c.steppedTallies.get(family);
     const held = probes.length === 0;
@@ -100770,7 +100998,7 @@ function runVerdictSuppliersSuite(): number {
         `${c.steppedFacts.builds} distinct build(s) over ${c.steppedFacts.calls} own call(s): ${family} ${t?.equal ?? 0} of ${t?.questions ?? 0} question(s) alike over ${t?.values ?? 0} number(s), ${t?.refused.length ?? 0} refused by the core by name; ` +
           `issue #1034's probe at /3 and /2, every answer alike: ${probeRows.join('; ')}; the overlay probe with a scale chain past the largest double, its walk wrapping [${wrapping.join(', ')}] and stepping its physics: ${nonFinite?.equal ?? 0} of ${nonFinite?.questions ?? 0} alike over ${nonFinite?.values ?? 0} number(s), A10 ${JSON.stringify(brokenSpine[0] ?? '').slice(0, 140)} on both sides; ` +
           `one value off moves the family: ${named.join('; ')}; the inactive-bone probe (HISTORY bones spelled by name) ${inactiveAsked?.equal ?? 0} of ${inactiveAsked?.questions ?? 0} alike; ` +
-          `issue #1051's class through verdictRow: ${a10Cells.length} A10 line set(s) refused by name, the verdict ${JSON.stringify(noDefaultLast.split(' — ')[0])}, and with the refusals forgotten ${forgotten.ok ? 'ok' : 'DIFFERING'}`,
+          `issue #1051's class through verdictRow, posed with no skin set: ${a10Cells.length} A10 line set(s) compared identical, the verdict ${JSON.stringify(noDefaultLast.split(' — ')[0])}, and with one A10 cell read as differing ${forgotten.ok ? 'ok' : 'DIFFERING'}`,
         (count) => `${count} difference(s) between the suppliers' stepped poses:`,
       ),
       'issue #1025, cut 4c-5a: A10 reads every pose of a looping walk and the first number of one that is not finite, and no other gate held the core\'s walk at the poses A10 asks for — so A10 runs over spine-core\'s poses and every pose it asks for is asked of the model side too, NaN and Infinity spelled as what they are',

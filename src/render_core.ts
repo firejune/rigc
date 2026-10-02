@@ -67,14 +67,15 @@
  * `--skin <name>` poses `underSkin(doc, name)` — the named skin's record,
  * else the default skin's; the named skin's bones and constraints —
  * measured against spine-core's `setSkin(name)` by the per-skin gate
- * (issue #932). No `--skin` is spine-core's "no skin set", which resolves
- * every slot through the default skin alone: posed as `underSkin(doc,
- * 'default')`, the reading `CR03` measured bit-exact against it on every tree
- * row. ⚠️ That equivalence is measured only where the default skin names no
- * skin-required bone and no constraint — which of the two readings activates
- * such a bone with no skin set was not measured — so a document whose default
- * skin names one is REFUSED by the core poser, by name, and renders through
- * spine-core; so is a document with skins and no default one.
+ * (issue #932). No `--skin` is spine-core's "no skin set" — a fresh skeleton
+ * whose `setSkin` was never called — posed as `underNoSkin` (`noSkinView`,
+ * issue #1051): no skin's bones or constraints applied, the default skin's
+ * included, and every slot resolved through the default skin alone, or
+ * through nothing where the document declares skins and no `default` one
+ * (`./core/skins.ts`, *No skin set*, for the measurement). Until #1051 it was
+ * posed as `underSkin(doc, 'default')`, and the two documents that reading
+ * did not cover — a default skin naming a skin-required member, skins with
+ * no default one — were refused here and rendered through spine-core.
  */
 import type {
   AttachmentPose,
@@ -92,9 +93,9 @@ import type {
 import { atlasRegionLookup, parseAtlasText } from './atlas.ts';
 import { pagesOfAtlas, spineFileSha256, type ModelPage } from './model.ts';
 import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
-import { activeBones, CoreInputError, readModel, sourceOfDoc, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
+import { activeBones, CoreInputError, readModel, sourceOfDoc, underNoSkin, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
 import { poseRawAnimation, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
-import { CORE_ALL_SKINS, CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
+import { CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
 import { documentPageLookup, drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvRegion, type UvSource } from './core/uvs.ts';
 import { regionCorners, worldVertices } from './core/vertices.ts';
 import type { CoreWorld } from './core/world.ts';
@@ -275,36 +276,19 @@ interface CoreInput {
 }
 
 /**
- * The document posed with no skin set — spine-core's initial state, every slot
- * resolved through the default skin alone — or refused by name where that
- * equivalence was not measured (the header's *The skin*).
+ * The document posed with no skin set — spine-core's initial state, a fresh
+ * skeleton whose `setSkin` was never called: `underNoSkin` (issue #1051), no
+ * skin's `bones` or constraint lists applied, the default skin's included,
+ * and every slot resolved through the default skin alone — or through
+ * nothing, where the document declares skins and none of them `default`
+ * (`./core/skins.ts`, *No skin set*, for the measurement).
  *
  * Exported for the model side of the validator (issue #1025), which poses a
  * slot the way `validate()` does — a fresh skeleton, no skin set — and must
  * resolve that state by this rule rather than by a copy of it.
- *
- * ⚠️ The first refusal — skins declared and none of them `default` — is issue
- * #1051: the model side's A10, which always poses, fails such a rig the round
- * trip passes; `tools/verdict_gate.ts` and the selftest's `VF02` count those
- * line sets apart as this documented class rather than as a difference.
  */
 export function noSkinView(doc: CompiledDocument): CompiledDocument {
-  if (doc.skins.length === 0) return underSkin(doc, CORE_ALL_SKINS);
-  const fallback = doc.skins.find((k) => k.name === CORE_DEFAULT_SKIN);
-  if (fallback === undefined) {
-    throw new CoreInputError(
-      `no skin was set, and this document declares skins [${doc.skins.map((k) => k.name).join(', ')}] and no "${CORE_DEFAULT_SKIN}" one — ` +
-        'what spine-core shows with no skin set over such a document was not measured',
-    );
-  }
-  const constraints = Object.entries(fallback.constraints).flatMap(([kind, names]) => names.map((n) => `${kind} "${n}"`));
-  if (fallback.bones.length > 0 || constraints.length > 0) {
-    throw new CoreInputError(
-      `no skin was set, and the "${CORE_DEFAULT_SKIN}" skin names ${[...fallback.bones.map((b) => `bone "${b}"`), ...constraints].join(', ')} — ` +
-        'whether spine-core activates what the default skin names when no skin is set was not measured, so the core does not pose it',
-    );
-  }
-  return underSkin(doc, CORE_DEFAULT_SKIN);
+  return underNoSkin(doc);
 }
 
 /** A slot row's number, which the raw entry writes as a double — `null` only for a value that is not finite. */
@@ -670,8 +654,7 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
  * issue #1014): the bones each skin leaves unposed, read off the model
  * document — `unposedBones` over `activeBones` of the skin's view, the
  * predicate the raw pose flags its bones with, and under no skin the view the
- * core poses with no skin set (`noSkinView`, refused by `CoreInputError` where
- * it refuses to pose). `skins` is the skin list in the Spine file's order:
+ * core poses with no skin set (`noSkinView`). `skins` is the skin list in the Spine file's order:
  * a `rigc-compiled/3` document's `editorOrder` (issue #1026), else the file's
  * own list, which a `/2` or `/1` document does not hold (`resolveSkinView`'s
  * note in `./core/index.ts`).
