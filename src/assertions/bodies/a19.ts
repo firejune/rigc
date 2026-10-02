@@ -122,6 +122,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
   // moves nothing here (the size it was not measured at is `A06`'s to say).
   let pagesWithParts = 0;
   const unread: string[] = [];
+  const unreadable: string[] = [];
   for (const page of atlas.pages) {
     const abs = resolve(input.atlasDir, page.name);
     const on = sharedPages.get(page.name) ?? [];
@@ -131,28 +132,42 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
       if (carriesPart) unread.push(page.name); // A17 names the file; this body says only that it did not read it
       continue;
     }
-    // 🔒 **A page that is not a PNG is a non-measurement for every part on
-    // it** (issue #732), stated the way #705's and #715's are: a FAIL naming
-    // what was not read, because `skip()` is per assertion and would delete
-    // the verdicts on every other page of the same report. The file's
-    // identity is `A06`'s to judge, and this sentence points there. A page
-    // holding nothing but the full-stage base plate has no part to judge and
-    // says nothing, exactly as a readable one would.
+    // 🔒 **A page that is on disk and cannot be read as a PNG is named once,
+    // by `A06`, and this body only says it did not read it** (issue #1064,
+    // the other half of #1055's rule). Until this it FAILed here with a
+    // second sentence about the same file (#732's `not measured … belongs to
+    // A06`), so one unreadable page was two red lines: measured on the tree's
+    // 19 recipes with the first page replaced by text bytes, by a PNG cut
+    // inside its IDAT and by one with a wrong signature byte, A06 FAILed
+    // naming the file on 19 of 19 under both profiles and this rule added its
+    // FAIL on the 12 whose first page carries a part (`spine-html`).
+    //
+    // ⭐ Who names it is read off the two bodies, not chosen. Both ask
+    // `readPngHeader` (`pngProblem`, the one reader of a page's identity) the
+    // same question about the same file, A06 runs under both profiles and this
+    // rule under `spine-html` alone, and A06 FAILs on every page for which it
+    // answers with a problem — so on every input that reaches this branch, A06
+    // has already named the file and the report is red. A FAIL here would be
+    // the second naming and a PASS a certificate over alpha nobody read, so
+    // the page joins `#1055`'s unread list, with its own owner beside it.
+    //
+    // ⚠️ #732 chose a FAIL because `skip()` is per assertion and would delete
+    // the verdicts on every other page. Under #1055's rule that argument no
+    // longer forces it: the SKIP below is printed only when this body failed
+    // nothing else, so the verdicts it would replace are all passes, and its
+    // reason says how many pages they covered. With another failure standing,
+    // the failures stand and the unreadable page is A06's alone. A page
+    // holding nothing but the base plate had nothing for this rule to read
+    // either way and moves nothing, exactly as a missing one does.
+    //
+    // ⚠️ Only what `pngProblem` refuses comes here. A page whose header it
+    // accepts and whose texels the decoder then refuses (a broken zlib stream
+    // in an intact chunk walk) reaches `readPlate` below, which A06 never
+    // calls — this rule is the one reader that finds that file unreadable,
+    // and its line is unchanged by this.
     const header = readPngHeader(abs);
     if (header.problem !== null) {
-      const shared = on.length > 1;
-      const parts = shared ? on.filter((region) => !baseRegions.has(region.name)).map((region) => region.name) : [];
-      if (shared ? parts.length === 0 : basePages.has(page.name)) continue;
-      const subject = shared
-        ? `the ${parts.length} part(s) on shared page "${page.name}" (${parts.map((name) => JSON.stringify(name)).join(', ')}) are`
-        : `part image "${page.name}" is`;
-      fail(
-        'A19_OVERLAY_PNGS_HAVE_ALPHA',
-        `${subject} not measured: this rule reads a page's alpha out of its PNG, and the file cannot be read as ` +
-          'one, so it states nothing about whether any of them can draw a transparent pixel. What the file is ' +
-          "belongs to A06_ATLAS_PAGE_SIZE_MATCHES_PNG, which names it. This is renderer policy, and it belongs to " +
-          '--profile spine-html: the default --profile spine does not run this check.',
-      );
+      if (carriesPart) unreadable.push(page.name); // A06 names the file; this body says only that it did not read it
       continue;
     }
     if (on.length > 1) {
@@ -323,15 +338,49 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
         'spine does not run this check.',
     );
   }
-  if (failures > 0 || unread.length === 0) return;
-  skip(
-    'A19_OVERLAY_PNGS_HAVE_ALPHA',
-    unread.length === pagesWithParts
-      ? `no part's alpha was read: none of the ${pagesWithParts} page file(s) carrying a part is on disk, which ` +
-          'A17_ATLAS_PAGE_FILES_EXIST names file by file, and that is not a pass while every part is unread'
-      : `${unread.length} of the ${pagesWithParts} page(s) carrying a part were not read — ` +
-          `${unread.map((name) => JSON.stringify(name)).join(', ')} — because the file is not on disk, which ` +
-          `A17_ATLAS_PAGE_FILES_EXIST names. Every part on the ${pagesWithParts - unread.length} page(s) that were ` +
-          "read can draw a transparent pixel, and that is not a pass while a part's alpha is unread",
+  if (failures > 0 || unread.length + unreadable.length === 0) return;
+  skip('A19_OVERLAY_PNGS_HAVE_ALPHA', unreadAlpha(pagesWithParts, unread, unreadable));
+}
+
+/**
+ * The SKIP's reason over the pages carrying a part that this rule did not
+ * read: `missing` (not on disk, which A17 names — issue #1055) and
+ * `unreadable` (on disk and not a PNG rigc can read, which A06 names — issue
+ * #1064). With only missing pages it is #1055's sentence to the byte; each
+ * group names its own owner, so one file is pointed at the one rule that
+ * names it.
+ */
+function unreadAlpha(pagesWithParts: number, missing: readonly string[], unreadable: readonly string[]): string {
+  const A17 = 'A17_ATLAS_PAGE_FILES_EXIST';
+  const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
+  const names = (pages: readonly string[]): string => pages.map((name) => JSON.stringify(name)).join(', ');
+  const total = missing.length + unreadable.length;
+  if (total === pagesWithParts) {
+    if (unreadable.length === 0) {
+      return (
+        `no part's alpha was read: none of the ${pagesWithParts} page file(s) carrying a part is on disk, which ` +
+        `${A17} names file by file, and that is not a pass while every part is unread`
+      );
+    }
+    if (missing.length === 0) {
+      return (
+        `no part's alpha was read: none of the ${pagesWithParts} page file(s) carrying a part can be read as PNG, ` +
+        `which ${A06} names file by file, and that is not a pass while every part is unread`
+      );
+    }
+    return (
+      `no part's alpha was read: of the ${pagesWithParts} page file(s) carrying a part, ${missing.length} are not ` +
+      `on disk, which ${A17} names file by file, and ${unreadable.length} cannot be read as PNG, which ${A06} ` +
+      'names file by file, and that is not a pass while every part is unread'
+    );
+  }
+  const because = [
+    ...(missing.length > 0 ? [`${names(missing)} — because the file is not on disk, which ${A17} names`] : []),
+    ...(unreadable.length > 0 ? [`${names(unreadable)} — because the file cannot be read as PNG, which ${A06} names`] : []),
+  ].join(', and — ');
+  return (
+    `${total} of the ${pagesWithParts} page(s) carrying a part were not read — ${because}. Every part on the ` +
+    `${pagesWithParts - total} page(s) that were read can draw a transparent pixel, and that is not a pass while ` +
+    "a part's alpha is unread"
   );
 }

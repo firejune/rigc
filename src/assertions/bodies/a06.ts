@@ -81,6 +81,14 @@ export function a06AtlasPageSizeMatchesPng({ fail: failed, skip }: Verdicts, { a
     // of a page states; this rule prefixes the size the atlas declares, the
     // value the file would have had to carry.
     //
+    // 🔒 **And this is the one line that names it** (issue #1064). A file's
+    // readability is this rule's subject — it runs under both profiles and
+    // asks `pngProblem` first, so on every input where `A19` would find the
+    // same page unreadable, this FAIL is already printed. `A19` therefore
+    // SKIPs naming the page and pointing here when it failed nothing else,
+    // and says nothing about the page when it did: one unreadable file, one
+    // line, the way #1055 made one missing file A17's alone.
+    //
     // ⚠️ No size is read off a file rigc cannot decode, deliberately. A WebP
     // header carries its dimensions in a fixed field, and reading them would
     // print a number no oracle in this tree has checked (rigc links no WebP
