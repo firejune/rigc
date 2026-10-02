@@ -20,7 +20,10 @@
  * ## The unit: a packed region, in page texels
  *
  * Packing places regions, not attachments, so every figure is summed over the
- * atlas regions some attachment samples, each region once — two region
+ * atlas regions some attachment samples, each region once. The region an
+ * attachment samples is its `path`, else its stated `name`, else its key —
+ * the runtime's rule (`runtimeRegion`; `diff`'s `attachments.refs` reads the
+ * same), and the per-region JSON says which of the three reached it — two region
  * attachments that share one image share one rectangle on the page. A region
  * is **mesh-kind** when every attachment that samples it is a mesh or a linked
  * mesh, and **region-kind** when any of them is a region attachment, because a
@@ -37,8 +40,11 @@
  *   originalHeight`, which is how a mesh's UVs address a region whose
  *   whitespace the packer stripped. The polygon is then clipped to the kept
  *   rectangle (the part of the drawing that is on the page), and its area is
- *   the shoelace area of what remains. A linked mesh takes its source's hull
- *   and its own region. A hull whose pruned polygon crosses or touches itself
+ *   the shoelace area of what remains. A linked mesh — a `mesh` or
+ *   `linkedmesh` with a `source` — takes the hull of the attachment keyed
+ *   `source` in the slot `slot` names (its own by default) of the skin `skin`
+ *   names (the default skin by default), and samples its own region; a source
+ *   that is not there refuses the row by name. A hull whose pruned polygon crosses or touches itself
  *   (`findSelfIntersection`) has no area to state: the region is counted as its
  *   rectangle and the row says how many. Several meshes sampling one region
  *   with hulls that are not the same polygon likewise count the rectangle, and
@@ -65,13 +71,28 @@
  *   shoelace area must equal `silhouetteOf`'s count to the texel, and a region
  *   where they differ refuses the row by name (`checked` in the JSON says on
  *   how many regions the two agreed).
- * - **opaque texels** — texels in the footprint with alpha > 0: the floor no
- *   packing beats.
+ * - **opaque texels** — texels in the rectangle with alpha > 0, and beside
+ *   them the **floor**: the opaque texels that are DRAWN — inside the hull
+ *   (texel centre in the polygon) for a mesh-kind region, all of them for a
+ *   region-kind one. They differ because an authored hull may leave art out:
+ *   the texels outside it are never sampled, so on such rigs the raw count
+ *   exceeds the hull and is no floor at all. A region with a rectangle and not
+ *   one texel of alpha > 0 is legal (an empty part) and is not refused, but it
+ *   is named in the row's notes by page, and so is a page with no such texel
+ *   anywhere — a total of 0 never stands silently for a page that did not read.
+ *
+ * Turned regions are read in the drawing's orientation through `regionWindow`,
+ * the index map `extractRegion` applies (HUL06 holds them equal at every
+ * turn); every count is invariant under the turn. `--json` carries, per row,
+ * every page (name, size, its texels of alpha > 0) and every region (name,
+ * page, rotate, kind, how its name was reached, rectangle, hull, silhouette,
+ * traced, convex, opaque, drawn opaque).
  *
  * Per recipe the row states Σ rectangle; Σ hull with meshes only (region-kind
  * regions counted as their rectangle); Σ hull with regions converted, once by
  * trace and once by convex hull (mesh-kind regions keep their mesh hull); Σ
- * opaque; each over Σ rectangle; and **covered** — Σ rectangle of every region
+ * drawn opaque (the floor) and Σ opaque; each hull and the floor over Σ
+ * rectangle; and **covered** — Σ rectangle of every region
  * on the pages over the pages' area, the figure `build --pack` prints. A
  * recipe whose atlas rigc wrote one part per page is built a second time with
  * `--pack --page-edges free` (into `{{work}}/packed`) and covered is read off
@@ -124,11 +145,31 @@ export const traceContour: ContourReader = (mask) => {
   return { area: Math.abs(signedArea(traced.outline)), islands: traced.islands };
 };
 
+/** How a region name was reached: the attachment's `path`, else its `name`, else its key — the runtime's order. */
+export type ResolvedBy = 'path' | 'name' | 'key';
+
+/**
+ * The atlas region an attachment samples (a sequence's frames are numbered
+ * after it): `path`, else the stated `name`, else the placeholder key — the
+ * parser's rule, and the one `diff`'s `attachments.refs` reads
+ * (`attachmentRefTokens` in src/diff.ts). A parameter so a control can plant
+ * the rejected key-only reading.
+ */
+export type RegionResolver = (key: string, att: Record<string, unknown>) => { region: string; by: ResolvedBy };
+
+export const runtimeRegion: RegionResolver = (key, att) =>
+  typeof att.path === 'string' ? { region: att.path, by: 'path' } : typeof att.name === 'string' ? { region: att.name, by: 'name' } : { region: key, by: 'key' };
+
 /** How one packed region is sampled and what it measures. */
 export interface RegionMeasure {
   name: string;
+  /** The page it sits on, as the atlas names it, and that page's place in the atlas (1-based). */
+  page: string;
+  pageIndex: number;
+  degrees: number;
   kind: 'region' | 'mesh';
-  rotated: boolean;
+  /** How the attachments sampling it reached its name, each spelling once, sorted. */
+  resolvedBy: ResolvedBy[];
   rect: number;
   /** The mesh hull's area clipped to the rectangle; null on a region-kind region. */
   meshHull: number | null;
@@ -139,6 +180,17 @@ export interface RegionMeasure {
   /** The tracer's reading of the same alpha: its outline's area and islands, or its refusal. */
   traced: { area: number; islands: number } | { refused: string };
   convex: number;
+  /** Texels with alpha > 0 in the rectangle. */
+  opaque: number;
+  /** The same, inside the area that is drawn: the hull for a mesh-kind region, the whole rectangle for a region-kind one. */
+  opaqueDrawn: number;
+}
+
+/** One page of a build's atlas: its size and how many of its texels have alpha > 0. */
+export interface PageMeasure {
+  name: string;
+  width: number;
+  height: number;
   opaque: number;
 }
 
@@ -155,12 +207,20 @@ export interface CeilingRow {
   hullTraced: number;
   hullConvex: number;
   opaque: number;
+  opaqueDrawn: number;
   /** Counts behind the fallbacks: regions counted as their rectangle, and why. */
   fallbacks: { selfIntersecting: number; hullsDiffer: number; traceRefused: Record<string, number> };
   /** Regions the tracer traced as one island, whose outline area equalled the silhouette to the texel. */
   checked: number;
+  /** Regions with a rectangle and no texel of alpha > 0, by the 1-based index of their page. */
+  emptyRegions: Record<string, number>;
+  /** Pages with no texel of alpha > 0 anywhere, by 1-based index. */
+  emptyPages: number[];
   /** Σ rectangle of every region on the pages over the pages' area, and whose pages; null when not read. */
   covered: { value: number; of: string } | null;
+  /** Every region and page, for `--json`. */
+  measures: RegionMeasure[];
+  pages: PageMeasure[];
 }
 
 // ---------------------------------------------------------------------------
@@ -212,32 +272,63 @@ export function convexArea(points: Point[]): number {
 }
 
 /**
- * A footprint's alpha, its opaque count and the convex hull of its art
- * texels' squares. Per row only the leftmost and rightmost art texel matter
- * to a convex hull, so those two squares' corners are its point set.
+ * The kept rectangle of a region, in the DRAWING's orientation (`width` x
+ * `height`, y down), read off its page through the same index map
+ * `extractRegion` in src/atlas.ts applies at 0, 90, 180 and 270 — the inverse
+ * of `MeshAttachment.computeUVs` by that function's own account. Read here
+ * rather than through `extractRegion` because that lifts the whole untrimmed
+ * drawing one `RGBA` array per texel; HUL06 holds the two byte for byte at all
+ * four turns.
  */
-export function footprintAlpha(page: Plate, x: number, y: number, w: number, h: number): { mask: AlphaMask; opaque: number; convex: number; silhouette: number } {
+export function regionWindow(page: Plate, region: AtlasRegion): AlphaMask {
+  const { width: w, height: h, degrees } = region;
   const alpha = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const px = degrees === 90 ? region.x + y : degrees === 180 ? region.x + w - 1 - x : degrees === 270 ? region.x + h - 1 - y : region.x + x;
+      const py = degrees === 90 ? region.y + w - 1 - x : degrees === 180 ? region.y + h - 1 - y : degrees === 270 ? region.y + x : region.y + y;
+      alpha[y * w + x] = px >= 0 && py >= 0 && px < page.width && py < page.height ? page.data[(py * page.width + px) * 4 + 3] : 0;
+    }
+  }
+  return { width: w, height: h, alpha };
+}
+
+/** Even-odd: is `p` inside `poly`? */
+function inside(poly: readonly Point[], x: number, y: number): boolean {
+  let hit = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+/**
+ * A window's opaque count, the convex hull of its art texels' squares and the
+ * opaque count inside `drawn` (window coordinates; null = the whole window).
+ * Per row only the leftmost and rightmost art texel matter to a convex hull,
+ * so those two squares' corners are its point set. A texel is inside `drawn`
+ * when its centre is, the convention `src/render.ts` rasterises by.
+ */
+export function windowCounts(mask: AlphaMask, drawn: readonly Point[] | null): { opaque: number; opaqueDrawn: number; convex: number; silhouette: number } {
+  const { width: w, height: h, alpha } = mask;
   let opaque = 0;
+  let opaqueDrawn = 0;
   const corners: Point[] = [];
   for (let j = 0; j < h; j++) {
     let lo = -1;
     let hi = -1;
     for (let i = 0; i < w; i++) {
-      const px = x + i;
-      const py = y + j;
-      const a = px < page.width && py < page.height ? page.data[(py * page.width + px) * 4 + 3] : 0;
-      alpha[j * w + i] = a;
-      if (a > 0) {
-        opaque++;
-        if (lo < 0) lo = i;
-        hi = i;
-      }
+      if (alpha[j * w + i] === 0) continue;
+      opaque++;
+      if (drawn === null || inside(drawn, i + 0.5, j + 0.5)) opaqueDrawn++;
+      if (lo < 0) lo = i;
+      hi = i;
     }
     if (lo >= 0) corners.push([lo, j], [lo, j + 1], [hi + 1, j], [hi + 1, j + 1]);
   }
-  const mask = { width: w, height: h, alpha };
-  return { mask, opaque, convex: convexArea(corners), silhouette: silhouetteOf(mask) };
+  return { opaque, opaqueDrawn, convex: convexArea(corners), silhouette: silhouetteOf(mask) };
 }
 
 /**
@@ -292,7 +383,8 @@ function isRecord(v: unknown): v is Json {
 interface Sampler {
   kind: 'region' | 'mesh' | 'linked';
   regions: string[];
-  /** The hull polygon in UV space, for a mesh or a linked mesh; null when its source is not found. */
+  by: ResolvedBy;
+  /** The hull polygon in UV space, for a mesh or a linked mesh (its source's). */
   hullUv: Point[] | null;
 }
 
@@ -314,13 +406,24 @@ function hullOf(att: Json): Point[] | null {
   return out;
 }
 
-/** Every attachment in every skin that samples the atlas. */
-export function samplersOf(skeleton: Json): Sampler[] {
+/**
+ * Every attachment in every skin that samples the atlas, its region resolved
+ * by `resolve`.
+ *
+ * A LINK is a `mesh` or `linkedmesh` carrying a non-empty `source` — the
+ * parser's test, which src/ingest.ts states (`linked`, issue #691): a
+ * `linkedmesh` with no `source` is read as an ordinary mesh. Its geometry is
+ * the attachment keyed `source` in the slot `slot` names (default: its own) of
+ * the skin `skin` names (default: the default skin, `"default"`); its region is
+ * its own. A source that is not there refuses the build by name — the gate
+ * resolved it, so a miss is this reader's.
+ */
+export function samplersOf(skeleton: Json, resolve: RegionResolver = runtimeRegion): Sampler[] {
   const skins = Array.isArray(skeleton.skins) ? skeleton.skins.filter(isRecord) : [];
-  const find = (skin: string, slot: string, name: string): Json | null => {
+  const find = (skin: string, slot: string, key: string): Json | null => {
     const s = skins.find((k) => k.name === skin);
     const atts = s !== undefined && isRecord(s.attachments) ? s.attachments[slot] : undefined;
-    const att = isRecord(atts) ? atts[name] : undefined;
+    const att = isRecord(atts) ? atts[key] : undefined;
     return isRecord(att) ? att : null;
   };
   const out: Sampler[] = [];
@@ -328,17 +431,22 @@ export function samplersOf(skeleton: Json): Sampler[] {
     if (!isRecord(skin.attachments)) continue;
     for (const [slot, atts] of Object.entries(skin.attachments)) {
       if (!isRecord(atts)) continue;
-      for (const [name, att] of Object.entries(atts)) {
+      for (const [key, att] of Object.entries(atts)) {
         if (!isRecord(att)) continue;
         const type = typeof att.type === 'string' ? att.type : 'region';
         if (type !== 'region' && type !== 'mesh' && type !== 'linkedmesh') continue;
-        const path = typeof att.path === 'string' ? att.path : name;
-        const regions = sequenceRegions(path, att.sequence);
-        if (type === 'region') out.push({ kind: 'region', regions, hullUv: null });
-        else if (type === 'mesh') out.push({ kind: 'mesh', regions, hullUv: hullOf(att) });
+        const { region, by } = resolve(key, att);
+        const regions = sequenceRegions(region, att.sequence);
+        const linked = typeof att.source === 'string' && att.source.length > 0;
+        if (type === 'region') out.push({ kind: 'region', regions, by, hullUv: null });
+        else if (!linked) out.push({ kind: 'mesh', regions, by, hullUv: hullOf(att) });
         else {
-          const source = typeof att.parent === 'string' ? find(typeof att.skin === 'string' ? att.skin : 'default', slot, att.parent) : null;
-          out.push({ kind: 'linked', regions, hullUv: source === null ? null : hullOf(source) });
+          const at = { skin: typeof att.skin === 'string' ? att.skin : 'default', slot: typeof att.slot === 'string' ? att.slot : slot, key: att.source as string };
+          const source = find(at.skin, at.slot, at.key);
+          if (source === null) {
+            throw new CeilingInputError(`linked mesh "${key}" in skin "${String(skin.name)}" slot "${slot}" takes its geometry from "${at.key}" in skin "${at.skin}" slot "${at.slot}", which is not there`);
+          }
+          out.push({ kind: 'linked', regions, by, hullUv: hullOf(source) });
         }
       }
     }
@@ -346,13 +454,10 @@ export function samplersOf(skeleton: Json): Sampler[] {
   return out;
 }
 
-/** The hull of a mesh in the drawing's texels (y down from the drawing's top), clipped to the kept rectangle. */
-function meshHullArea(hullUv: Point[], r: AtlasRegion): { area: number } | { fallback: 'self-intersecting' } {
+/** A mesh hull in the drawing's texels (y down from the drawing's top), pruned; null when it crosses or touches itself. */
+function hullInDrawing(hullUv: Point[], r: AtlasRegion): Point[] | null {
   const poly = prunePolygon(hullUv.map(([u, v]): Point => [u * r.originalWidth, v * r.originalHeight]));
-  if (poly.length < 3 || findSelfIntersection(poly) !== null) return { fallback: 'self-intersecting' };
-  const top = r.originalHeight - r.offsetY - r.height;
-  const clipped = clipToRect(poly, r.offsetX, top, r.offsetX + r.width, top + r.height);
-  return { area: clipped.length < 3 ? 0 : Math.abs(signedArea(clipped)) };
+  return poly.length < 3 || findSelfIntersection(poly) !== null ? null : poly;
 }
 
 function sameHull(a: Point[], b: Point[]): boolean {
@@ -382,17 +487,37 @@ export function coveredOf(atlasPath: string): number {
   return rects / area;
 }
 
+export interface MeasureOptions {
+  trace?: ContourReader;
+  resolve?: RegionResolver;
+}
+
+export interface BuildMeasure {
+  measures: RegionMeasure[];
+  pages: PageMeasure[];
+  attachments: CeilingRow['attachments'];
+}
+
 /** One build's regions measured. */
-export function measureBuild(out: string, trace: ContourReader = traceContour): { measures: RegionMeasure[]; attachments: CeilingRow['attachments'] } {
+export function measureBuild(out: string, opts: MeasureOptions = {}): BuildMeasure {
+  const trace = opts.trace ?? traceContour;
   const skeleton = JSON.parse(readFileSync(join(out, 'skeleton.json'), 'utf8')) as Json;
   const atlasPath = join(out, 'skeleton.atlas');
   if (!existsSync(atlasPath)) throw new CeilingInputError('the build wrote no skeleton.atlas');
   const parsed = parseAtlasText(readFileSync(atlasPath, 'utf8'));
-  const pages = readPages(atlasPath, parsed.pages);
-  const byName = new Map<string, { page: AtlasPage; region: AtlasRegion }>();
-  for (const page of parsed.pages) for (const region of page.regions) if (!byName.has(region.name.trim())) byName.set(region.name.trim(), { page, region });
+  const plates = readPages(atlasPath, parsed.pages);
+  const pages: PageMeasure[] = parsed.pages.map((p) => {
+    const plate = plates.get(p.name) as Plate;
+    let opaque = 0;
+    for (let i = 3; i < plate.data.length; i += 4) if (plate.data[i] > 0) opaque++;
+    return { name: p.name, width: p.width, height: p.height, opaque };
+  });
+  const byName = new Map<string, { page: AtlasPage; index: number; region: AtlasRegion }>();
+  parsed.pages.forEach((page, index) => {
+    for (const region of page.regions) if (!byName.has(region.name.trim())) byName.set(region.name.trim(), { page, index, region });
+  });
 
-  const samplers = samplersOf(skeleton);
+  const samplers = samplersOf(skeleton, opts.resolve ?? runtimeRegion);
   const attachments = { region: 0, mesh: 0, linked: 0 };
   const uses = new Map<string, Sampler[]>();
   for (const s of samplers) {
@@ -401,52 +526,63 @@ export function measureBuild(out: string, trace: ContourReader = traceContour): 
   }
   const measures: RegionMeasure[] = [];
   for (const name of [...uses.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const hit = byName.get(name);
-    if (hit === undefined) throw new CeilingInputError(`an attachment samples region "${name}", which the atlas does not list`);
-    const { page, region } = hit;
     const using = uses.get(name) ?? [];
+    const hit = byName.get(name);
+    if (hit === undefined) {
+      throw new CeilingInputError(`an attachment samples region "${name}" (reached by its ${[...new Set(using.map((s) => s.by))].sort().join(', ')}), which the atlas does not list`);
+    }
+    const { page, index, region } = hit;
     const kind: 'region' | 'mesh' = using.every((s) => s.kind !== 'region') ? 'mesh' : 'region';
-    const foot = pageFootprint(region);
-    const plate = pages.get(page.name) as Plate;
-    const alpha = footprintAlpha(plate, region.x, region.y, foot.width, foot.height);
+    const mask = regionWindow(plates.get(page.name) as Plate, region);
     const rect = region.width * region.height;
+    const top = region.originalHeight - region.offsetY - region.height;
     let meshHull: number | null = null;
     let meshFallback: RegionMeasure['meshFallback'] = null;
+    let drawn: Point[] | null = null;
     if (kind === 'mesh') {
       const hulls = using.map((s) => s.hullUv);
       const first = hulls[0];
       if (first === null || first === undefined || hulls.some((h) => h === null || !sameHull(h, first))) meshFallback = 'hulls differ';
       else {
-        const m = meshHullArea(first, region);
-        if ('area' in m) meshHull = m.area;
-        else meshFallback = m.fallback;
+        const poly = hullInDrawing(first, region);
+        if (poly === null) meshFallback = 'self-intersecting';
+        else {
+          const clipped = clipToRect(poly, region.offsetX, top, region.offsetX + region.width, top + region.height);
+          meshHull = clipped.length < 3 ? 0 : Math.abs(signedArea(clipped));
+          drawn = poly.map(([x, y]): Point => [x - region.offsetX, y - top]);
+        }
       }
     }
-    const traced = trace(alpha.mask);
-    if ('area' in traced && traced.islands === 1 && traced.area !== alpha.silhouette) {
+    const counts = windowCounts(mask, drawn);
+    const traced = trace(mask);
+    if ('area' in traced && traced.islands === 1 && traced.area !== counts.silhouette) {
       throw new CeilingInputError(
-        `region "${name}": the tracer's outline encloses ${traced.area} texels and the silhouette counts ${alpha.silhouette} — ` +
+        `region "${name}": the tracer's outline encloses ${traced.area} texels and the silhouette counts ${counts.silhouette} — ` +
           'one island traced on the corner lattice encloses exactly its filled texels, so one of the two readings is wrong',
       );
     }
     measures.push({
       name,
+      page: page.name,
+      pageIndex: index + 1,
+      degrees: region.degrees,
       kind,
-      rotated: region.degrees === 90 || region.degrees === 270,
+      resolvedBy: [...new Set(using.map((s) => s.by))].sort(),
       rect,
       meshHull,
       meshFallback,
-      silhouette: alpha.silhouette,
+      silhouette: counts.silhouette,
       traced,
-      convex: alpha.convex,
-      opaque: alpha.opaque,
+      convex: counts.convex,
+      opaque: counts.opaque,
+      opaqueDrawn: counts.opaqueDrawn,
     });
   }
-  return { measures, attachments };
+  return { measures, pages, attachments };
 }
 
 /** A build's measures summed into a row. */
-export function rowOf(name: string, packer: string, measured: ReturnType<typeof measureBuild>, covered: CeilingRow['covered']): CeilingRow {
+export function rowOf(name: string, packer: string, measured: BuildMeasure, covered: CeilingRow['covered']): CeilingRow {
   const row: CeilingRow = {
     name,
     packer,
@@ -458,15 +594,22 @@ export function rowOf(name: string, packer: string, measured: ReturnType<typeof 
     hullTraced: 0,
     hullConvex: 0,
     opaque: 0,
+    opaqueDrawn: 0,
     fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {} },
     checked: 0,
+    emptyRegions: {},
+    emptyPages: measured.pages.flatMap((p, i) => (p.opaque === 0 ? [i + 1] : [])),
     covered,
+    measures: measured.measures,
+    pages: measured.pages,
   };
   for (const m of measured.measures) {
     row.regions[m.kind]++;
-    if (m.rotated) row.regions.rotated++;
+    if (m.degrees === 90 || m.degrees === 270) row.regions.rotated++;
     row.rect += m.rect;
     row.opaque += m.opaque;
+    row.opaqueDrawn += m.opaqueDrawn;
+    if (m.rect > 0 && m.opaque === 0) row.emptyRegions[String(m.pageIndex)] = (row.emptyRegions[String(m.pageIndex)] ?? 0) + 1;
     if ('area' in m.traced && m.traced.islands === 1) row.checked++;
     if ('refused' in m.traced && m.kind === 'region') {
       row.fallbacks.traceRefused[m.traced.refused] = (row.fallbacks.traceRefused[m.traced.refused] ?? 0) + 1;
@@ -520,7 +663,7 @@ export function withPackedTwin(recipe: Recipe): Recipe {
 }
 
 /** Every recipe built into `work` and measured, in name order. */
-export function ceilingRows(recipes: readonly Recipe[], work: string, root: string, trace: ContourReader = traceContour, progress: (line: string) => void = () => {}): CeilingRow[] {
+export function ceilingRows(recipes: readonly Recipe[], work: string, root: string, opts: MeasureOptions = {}, progress: (line: string) => void = () => {}): CeilingRow[] {
   const twinned = recipes.map(withPackedTwin);
   const built = buildRecipes(twinned, work, root, progress);
   return built.map((b, i): CeilingRow => {
@@ -537,18 +680,23 @@ export function ceilingRows(recipes: readonly Recipe[], work: string, root: stri
       hullTraced: 0,
       hullConvex: 0,
       opaque: 0,
+      opaqueDrawn: 0,
       fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {} },
       checked: 0,
+      emptyRegions: {},
+      emptyPages: [],
       covered: null,
+      measures: [],
+      pages: [],
     });
     if (b.exits.some((e) => e !== 0)) return failed(`the build chain exited ${JSON.stringify(b.exits)}`);
     try {
-      const measured = measureBuild(b.out, trace);
+      const measured = measureBuild(b.out, opts);
       const packedAtlas = kind === 'loose' ? join(dirname(b.out), 'packed', 'skeleton.atlas') : join(b.out, 'skeleton.atlas');
       const covered = { value: coveredOf(packedAtlas), of: kind === 'loose' ? 'the packed twin' : 'the build' };
       if (kind === 'loose') {
         // The twin packs the same regions; its rectangles must sum to the loose build's.
-        const twin = measureBuild(join(dirname(b.out), 'packed'), traceContour);
+        const twin = measureBuild(join(dirname(b.out), 'packed'), opts);
         const twinRect = twin.measures.reduce((n, m) => n + m.rect, 0);
         const rect = measured.measures.reduce((n, m) => n + m.rect, 0);
         if (twinRect !== rect) return failed(`the packed twin's rectangles sum to ${twinRect} texels and the loose build's to ${rect}`);
@@ -575,6 +723,12 @@ function count(n: number): string {
 
 function fallbackNote(row: CeilingRow): string {
   const parts: string[] = [];
+  const empty = Object.entries(row.emptyRegions).sort(([a], [b]) => Number(a) - Number(b));
+  if (empty.length > 0) {
+    const n = empty.reduce((t, [, v]) => t + v, 0);
+    parts.push(`${n} region(s) with a rectangle read no texel of alpha > 0 (${empty.map(([p, v]) => `${v} on page ${p}`).join(', ')} of ${row.pages.length}; per region in --json)`);
+  }
+  if (row.emptyPages.length > 0) parts.push(`page(s) ${row.emptyPages.join(', ')} of ${row.pages.length} hold no texel of alpha > 0 anywhere`);
   if (row.fallbacks.selfIntersecting > 0) parts.push(`${row.fallbacks.selfIntersecting} mesh hull(s) self-intersecting, counted as the rectangle`);
   if (row.fallbacks.hullsDiffer > 0) parts.push(`${row.fallbacks.hullsDiffer} region(s) whose meshes' hulls differ, counted as the rectangle`);
   return parts.length === 0 ? '' : parts.join('; ');
@@ -599,14 +753,15 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
     'ratio',
     'Σ hull, regions convex',
     'ratio',
-    'Σ opaque',
-    'floor',
+    'Σ opaque, drawn',
+    'floor: drawn opaque / rectangle',
+    'Σ opaque, every texel',
     'covered',
     'tracer witness',
     'notes',
   ];
   const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 4 || i >= head.length - 2 ? '---' : '---:')).join(' | ')} |`];
-  const sum = { checked: 0, rect: 0, hullMeshes: 0, hullTraced: 0, hullConvex: 0, opaque: 0, a: [0, 0, 0], r: [0, 0, 0] };
+  const sum = { checked: 0, opaqueDrawn: 0, rect: 0, hullMeshes: 0, hullTraced: 0, hullConvex: 0, opaque: 0, a: [0, 0, 0], r: [0, 0, 0] };
   for (const row of rows) {
     if (row.refused !== null) {
       out.push(`| ${row.name} | ${row.packer} | REFUSED: ${row.refused} |${' |'.repeat(head.length - 3)}`);
@@ -617,6 +772,7 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
     sum.hullTraced += row.hullTraced;
     sum.hullConvex += row.hullConvex;
     sum.opaque += row.opaque;
+    sum.opaqueDrawn += row.opaqueDrawn;
     sum.checked += row.checked;
     [row.attachments.region, row.attachments.mesh, row.attachments.linked].forEach((v, i) => (sum.a[i] += v));
     [row.regions.region, row.regions.mesh, row.regions.rotated].forEach((v, i) => (sum.r[i] += v));
@@ -633,8 +789,9 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
         ratio(row.hullTraced, row.rect),
         count(row.hullConvex),
         ratio(row.hullConvex, row.rect),
+        count(row.opaqueDrawn),
+        ratio(row.opaqueDrawn, row.rect),
         count(row.opaque),
-        ratio(row.opaque, row.rect),
         row.covered === null ? '—' : `${(row.covered.value * 100).toFixed(1)} %`,
         tracerNote(row),
         fallbackNote(row),
@@ -644,7 +801,7 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
   out.push(
     `| **all rows** | | ${sum.a.join(' / ')} | ${sum.r.join(' / ')} | ${count(sum.rect)} | ${count(sum.hullMeshes)} | ${ratio(sum.hullMeshes, sum.rect)} | ` +
       `${count(sum.hullTraced)} | ${ratio(sum.hullTraced, sum.rect)} | ${count(sum.hullConvex)} | ${ratio(sum.hullConvex, sum.rect)} | ` +
-      `${count(sum.opaque)} | ${ratio(sum.opaque, sum.rect)} | | ${sum.checked} = silhouette | |`,
+      `${count(sum.opaqueDrawn)} | ${ratio(sum.opaqueDrawn, sum.rect)} | ${count(sum.opaque)} | | ${sum.checked} = silhouette | |`,
   );
   return out;
 }
@@ -659,12 +816,15 @@ export function ceilingText(rows: readonly CeilingRow[]): string {
       packer: row.packer,
       refused: row.refused,
       attachments: row.attachments,
-      regions: row.regions,
+      regionCounts: row.regions,
       rect: row.rect,
       hullMeshes: r6(row.hullMeshes),
       hullTraced: r6(row.hullTraced),
       hullConvex: r6(row.hullConvex),
       opaque: row.opaque,
+      opaqueDrawn: row.opaqueDrawn,
+      emptyRegions: row.emptyRegions,
+      emptyPages: row.emptyPages,
       fallbacks: {
         selfIntersecting: row.fallbacks.selfIntersecting,
         hullsDiffer: row.fallbacks.hullsDiffer,
@@ -672,6 +832,23 @@ export function ceilingText(rows: readonly CeilingRow[]): string {
       },
       checked: row.checked,
       covered: row.covered === null ? null : { value: r6(row.covered.value), of: row.covered.of },
+      pages: row.pages.map((p) => ({ name: p.name, width: p.width, height: p.height, opaque: p.opaque })),
+      regions: row.measures.map((m) => ({
+        name: m.name,
+        page: m.page,
+        pageIndex: m.pageIndex,
+        rotate: m.degrees,
+        kind: m.kind,
+        resolvedBy: m.resolvedBy,
+        rect: m.rect,
+        meshHull: m.meshHull === null ? null : r6(m.meshHull),
+        meshFallback: m.meshFallback,
+        silhouette: m.silhouette,
+        traced: 'area' in m.traced ? { area: m.traced.area, islands: m.traced.islands } : { refused: m.traced.refused },
+        convex: r6(m.convex),
+        opaque: m.opaque,
+        opaqueDrawn: m.opaqueDrawn,
+      })),
     })),
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
@@ -710,7 +887,7 @@ export function ceilingMain(argv: readonly string[], print: (line: string) => vo
     }
     warn(`hull_ceiling: ${recipes.length} recipe(s), work directory ${work}`);
     const started = performance.now();
-    const rows = ceilingRows(recipes, work, root, traceContour, warn);
+    const rows = ceilingRows(recipes, work, root, {}, warn);
     for (const line of ceilingTable(rows)) print(line);
     const json = flags.get('--json');
     if (json !== undefined) writeFileSync(json, ceilingText(rows));
