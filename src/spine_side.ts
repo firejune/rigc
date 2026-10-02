@@ -63,6 +63,21 @@ export const SURVEY_RUNTIME_TAIL =
  */
 export const SPINE_SIDE_ABSENT = 'the runtime side is not installed in this entry, which links nothing of spine-core';
 
+/**
+ * What an entry that registered no Spine side adds after the tail: where the
+ * runtime is (issue #1079). On an install `bin/rigc.cjs` runs this entry
+ * wherever `@esotericsoftware/spine-core` does not resolve, so "the runtime is
+ * not linked" there means "it is not installed" — and a clone runs it as
+ * `bun cli_core.ts`, so both routes are named, each for its reader.
+ *
+ * ⚠️ Only the absent side says it. A runtime that is linked and fails to load
+ * (`./render.ts`, `./deformmeasure.ts`) is installed already, and "install it
+ * beside the package" would be the wrong sentence there.
+ */
+export const SPINE_SIDE_ROUTE =
+  'the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; ' +
+  'from a source checkout, `bun cli.ts`';
+
 /** The one sentence a run that needs the runtime and cannot use it is refused in — `tail` says what the runtime is for. */
 export function spineRuntimeSentence(label: string, why: string, reason: string, tail: string): string {
   return `${label} is posed through spine-core (${why}), and the runtime could not be used: ${reason}. ${tail}`;
@@ -107,13 +122,13 @@ export function registerSpineSurvey(side: SpineSurveySide): void {
 
 /** The posing side, or a refusal of `label` (needed for `why`) naming the runtime as absent. */
 export function spinePosingFor(label: string, why: string): SpinePosingSide {
-  if (posing === null) throw new SpineRuntimeError(spineRuntimeSentence(label, why, SPINE_SIDE_ABSENT, POSING_RUNTIME_TAIL));
+  if (posing === null) throw new SpineRuntimeError(spineRuntimeSentence(label, why, SPINE_SIDE_ABSENT, `${POSING_RUNTIME_TAIL}; ${SPINE_SIDE_ROUTE}`));
   return posing;
 }
 
 /** The survey side, or a refusal of `label` (needed for `why`) naming the runtime as absent. */
 export function spineSurveyFor(label: string, why: string): SpineSurveySide {
-  if (survey === null) throw new SpineRuntimeError(spineRuntimeSentence(label, why, SPINE_SIDE_ABSENT, SURVEY_RUNTIME_TAIL));
+  if (survey === null) throw new SpineRuntimeError(spineRuntimeSentence(label, why, SPINE_SIDE_ABSENT, `${SURVEY_RUNTIME_TAIL}; ${SPINE_SIDE_ROUTE}`));
   return survey;
 }
 

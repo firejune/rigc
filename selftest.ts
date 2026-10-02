@@ -81438,7 +81438,7 @@ import { commandHelp, COMMANDS, entryCommands } from './src/cli/shared.ts';
 import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS } from './src/cli/core_commands.ts';
 import { roundTripOnlyCodes, SKIP_NO_ROUND_TRIP, validateEmittedText } from './src/assertions/emitted/index.ts';
 import { SPINE_COMMAND_RUNS } from './src/cli/spine_commands.ts';
-import { SPINE_SIDE_ABSENT } from './src/spine_side.ts';
+import { POSING_RUNTIME_TAIL, SPINE_SIDE_ABSENT, SPINE_SIDE_ROUTE, SURVEY_RUNTIME_TAIL } from './src/spine_side.ts';
 import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyStructure } from './src/deformstructure.ts';
 import { deformReportBlock } from './src/deformreport.ts';
 import { DIAL_BONE_FIELDS, float32Rows, meshWorld, poseJump } from './src/core/hooks.ts';
@@ -85970,8 +85970,8 @@ function runRenderHashesSuite(): number | null {
     const row1060 = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
     const spec1060 = row1060 === undefined ? '' : join(import.meta.dir, row1060.name);
     const ready = row1060 !== undefined && existsSync(join(spec1060, 'rig.json')) && existsSync(join(spec1060, 'parts'));
-    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [] };
-    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '' };
+    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [], RC33: [], RC34: [], RC35: [] };
+    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '', RC33: '', RC34: '', RC35: '' };
     const firstErr = (r: { stderr: string }): string => r.stderr.split('\n').find((l) => l.trim() !== '') ?? '';
     const stacked = (r: { stderr: string }): boolean => /^\s+at \S/m.test(r.stderr);
     if (!ready) {
@@ -86209,6 +86209,172 @@ function runRenderHashesSuite(): number | null {
         figures.RC32 =
           `in a copy of the tree beside an empty node_modules: cli_core.ts build of ${row1060.name}, then ${pipe.map((p) => p.name).join(', ')} on what it wrote, exit 0 — ` +
           `the lines and ${files32} file(s) cli.ts prints and writes of cli.ts's build of the same spec, the two builds' paths spelled alike`;
+
+        // RC33–RC35 — the install route (issue #1079). On an install, bin/rigc.cjs runs cli_core.ts wherever the runtime does
+        // not resolve, so a sentence that entry prints naming `cli.ts` is read by somebody with no clone; #1072 made each such
+        // sentence name the install route too, and RC33 is what holds it. The population is derived, never listed: --help and
+        // the bare invocation, `<command> --help` for every command the table gives this entry (entryCommands(false)), the
+        // refusal of every command it does not, the build's report (coreRun above: A00's SKIP and the `not run:` line), and the
+        // three inputs the posing and survey seams refuse (RC24's). The unit is the printed sentence, not the line: a help
+        // page's prose is wrapped, and `build --help` ends its route sentence on a line holding only "`bun cli.ts`.".
+        const ROUTE = /@esotericsoftware\/spine-core is (?:not )?installed beside the package/;
+        const NAMES_CLI = /\bcli\.ts\b/;
+        /** The sentences of a printed text: an indented line is a unit of its own (a usage line, a report line), consecutive unindented lines are one wrapped paragraph. */
+        const sentencesOf = (text: string): string[] => {
+          const units: string[] = [];
+          let prose: string[] = [];
+          const flush = (): void => {
+            if (prose.length > 0) units.push(prose.join(' '));
+            prose = [];
+          };
+          for (const line of text.split('\n')) {
+            if (line.trim() === '') flush();
+            else if (/^\s/.test(line)) {
+              flush();
+              units.push(line.trim());
+            } else prose.push(line.trim());
+          }
+          flush();
+          return units.flatMap((unit) => unit.split(/(?<=\.)\s+(?=[A-Z`(])/));
+        };
+        const seamArgs = (root: string): Array<{ label: string; args: string[] }> => {
+          const exportDir = join(root, '..', `${basename(root)}-export`);
+          if (!existsSync(exportDir)) {
+            cpSync(coreOut, exportDir, { recursive: true });
+            rmSync(join(exportDir, MODEL_DOCUMENT_FILE));
+          }
+          return [
+            { label: 'render --poser spine', args: ['render', '--candidate', coreOut, '--poser', 'spine', '--out', join(root, '..', `${basename(root)}-r-spine`)] },
+            { label: 'render of a Spine export', args: ['render', '--candidate', exportDir, '--out', join(root, '..', `${basename(root)}-r-export`)] },
+            { label: 'explain --poser spine', args: ['explain', '--rig', join(spec1060, 'rig.json'), '--motion', join(spec1060, 'motion.json'), '--images', parts, '--poser', 'spine', '--out', join(root, '..', `${basename(root)}-e-spine`)] },
+          ];
+        };
+        type Reading = 'help' | 'refusal' | 'seam';
+        /** RC33 over the entry at `root` with the package absent: every sentence naming cli.ts without the route, and what was read. */
+        const routeFaults = (root: string, readings: ReadonlySet<Reading>, report: string | null): { faults: string[]; texts: number; sentences: number; naming: number } => {
+          const texts: Array<{ label: string; text: string }> = [];
+          const runs = entryCommands(false);
+          if (readings.has('help')) {
+            for (const [label, args] of [['--help', ['--help']], ['the bare invocation', []], ...runs.map((doc) => [`${doc.name} --help`, [doc.name, '--help']])] as Array<[string, string[]]>) {
+              const r = runEntryIn(root, 'cli_core.ts', args, work);
+              texts.push({ label, text: `${r.stdout}\n${r.stderr}` });
+            }
+          }
+          if (readings.has('refusal')) {
+            for (const doc of COMMANDS.filter((d) => !runs.some((run) => run.name === d.name))) {
+              const r = runEntryIn(root, 'cli_core.ts', [doc.name], work);
+              texts.push({ label: `the refusal of ${doc.name}`, text: r.stderr });
+            }
+          }
+          if (readings.has('seam')) {
+            for (const s of seamArgs(root)) {
+              const r = runEntryIn(root, 'cli_core.ts', s.args, work);
+              texts.push({ label: s.label, text: r.stderr });
+            }
+          }
+          if (report !== null) texts.push({ label: "build's report", text: report });
+          const faults: string[] = [];
+          let sentences = 0;
+          let naming = 0;
+          for (const t of texts) {
+            for (const sentence of sentencesOf(t.text)) {
+              sentences++;
+              if (!NAMES_CLI.test(sentence)) continue;
+              naming++;
+              if (!ROUTE.test(sentence)) faults.push(`${t.label}: names cli.ts and not the install route — ${JSON.stringify(sentence.slice(0, 240))}`);
+            }
+          }
+          return { faults, texts: texts.length, sentences, naming };
+        };
+        const live33 = routeFaults(tree, new Set<Reading>(['help', 'refusal', 'seam']), `${coreRun.stdout}\n${coreRun.stderr}`);
+        probes.RC33.push(...live33.faults);
+        // The positive half: a walk that met no sentence naming cli.ts would hold the invariant over nothing.
+        const reportNaming = sentencesOf(coreRun.stdout).filter((s) => NAMES_CLI.test(s)).length;
+        if (live33.naming === 0 || reportNaming < 2) probes.RC33.push(`the walk met ${live33.naming} sentence(s) naming cli.ts, ${reportNaming} of them in the build's report (A00's SKIP and the not-run line are two), so it measures nothing`);
+        figures.RC33 =
+          `${live33.texts} printed text(s) of cli_core.ts with the package absent — --help, the bare invocation, ${entryCommands(false).length} command page(s) by entryCommands(false), ` +
+          `${COMMANDS.length - entryCommands(false).length} refusal(s) of the commands it does not run, the three seam refusals and ${row1060.name}'s build report — ` +
+          `${live33.sentences} sentence(s), ${live33.naming} naming cli.ts, each naming the install route too`;
+
+        // RC34 — the seam's tail: the route where the entry links none of the runtime, and not where the runtime is there and failed.
+        const seamFaults = (absentRoot: string | null, presentRoot: string | null, stub: string): string[] => {
+          const out: string[] = [];
+          if (absentRoot !== null) {
+            for (const s of seamArgs(absentRoot)) {
+              const r = runEntryIn(absentRoot, 'cli_core.ts', s.args, work);
+              const said = r.stderr.trim().split('\n')[0] ?? '';
+              const tail = s.label.startsWith('explain') ? SURVEY_RUNTIME_TAIL : POSING_RUNTIME_TAIL;
+              if (r.status !== 1 || !said.includes(`${SPINE_SIDE_ABSENT}. ${tail}`)) out.push(`absent, ${s.label}: exited ${r.status} saying ${JSON.stringify(said.slice(0, 200))}, not the absent side's refusal`);
+              else if (!said.endsWith(`${tail}; ${SPINE_SIDE_ROUTE}`) || !ROUTE.test(said)) out.push(`absent, ${s.label}: the refusal does not end on the install route — ${JSON.stringify(said.slice(-200))}`);
+            }
+          }
+          if (presentRoot !== null) {
+            for (const s of seamArgs(join(work, 'rc34-present'))) {
+              const r = runCliStubbed(stub, presentRoot, s.args);
+              const said = r.stderr.trim().split('\n')[0] ?? '';
+              const tail = s.label.startsWith('explain') ? SURVEY_RUNTIME_TAIL : POSING_RUNTIME_TAIL;
+              if (r.status !== 1 || !said.includes('and the runtime could not be used: SPINE_CORE_LOADED') || !said.includes(tail)) out.push(`present and failing, ${s.label}: exited ${r.status} saying ${JSON.stringify(said.slice(0, 200))}, not the runtime's own failure`);
+              else if (ROUTE.test(said) || said.includes(SPINE_SIDE_ROUTE)) out.push(`present and failing, ${s.label}: the refusal names the install route, and the runtime is installed — ${JSON.stringify(said.slice(-200))}`);
+            }
+          }
+          return out;
+        };
+        const stub34 = writeSpineCoreStub(work, spineCoreImportNames(import.meta.dir));
+        probes.RC34.push(...seamFaults(tree, import.meta.dir, stub34));
+        figures.RC34 =
+          `${seamArgs(tree).map((s) => s.label).join(', ')} on ${row1060.name}: with the package absent each exits 1 ending on the install route; under RC11's stub ` +
+          "(the runtime there, every access throwing) each exits 1 on the runtime's own failure with the same tail and no route";
+
+        // RC35 — the plants, each in its own copy.
+        const reds35: string[] = [];
+        const copyWith = (label: string, linked: boolean, file: string, from: string, to: string): string | null => {
+          const root = absentTree(join(work, `rc35-${label}`));
+          if (linked) {
+            rmSync(join(root, 'node_modules'), { recursive: true, force: true });
+            symlinkSync(join(import.meta.dir, 'node_modules'), join(root, 'node_modules'), 'dir');
+          }
+          const text = readFileSync(join(root, file), 'utf8');
+          const n = text.split(from).length - 1;
+          if (n !== 1) {
+            probes.RC35.push(`the ${label} plant found its text ${n} time(s) in ${file}, not once`);
+            return null;
+          }
+          writeFileSync(join(root, file), text.split(from).join(to));
+          return root;
+        };
+        // (a) The refusal of a command the entry does not run, reworded to `bun cli.ts <command>` alone.
+        const reworded = copyWith('reworded', false, join('src', 'cli', 'shared.ts'), 'installed, \\`rigc ${doc.name}\\` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, ', '');
+        if (reworded !== null) {
+          const read = routeFaults(reworded, new Set<Reading>(['refusal']), null);
+          if (read.faults.length === 0) probes.RC35.push('the refusal reworded to `bun cli.ts <command>` alone left RC33 green');
+          else if (!read.faults[0].startsWith('the refusal of ')) probes.RC35.push(`the reworded refusal read red for another reason: ${read.faults[0].slice(0, 200)}`);
+          else reds35.push(`reworded refusal: RC33 red on ${read.faults.length} sentence(s), the first "${read.faults[0].slice(0, 90)}…"`);
+        }
+        // (b) The absent side's tail without the route — RC33 cannot see it (the tail then names no cli.ts), RC34 has to.
+        const routeless = copyWith('routeless', false, join('src', 'spine_side.ts'), '`${POSING_RUNTIME_TAIL}; ${SPINE_SIDE_ROUTE}`', 'POSING_RUNTIME_TAIL');
+        if (routeless !== null) {
+          const blind = routeFaults(routeless, new Set<Reading>(['seam']), null).faults.length;
+          const read = seamFaults(routeless, null, stub34);
+          if (read.length === 0) probes.RC35.push("the absent side's posing tail without the route left RC34 green");
+          else if (!read.every((p) => p.includes('does not end on the install route'))) probes.RC35.push(`the routeless tail read red for another reason: ${read[0].slice(0, 200)}`);
+          else reds35.push(`routeless absent tail: RC34 red on ${read.length} input(s), RC33 on ${blind}`);
+        }
+        // (c) The route added where the runtime is linked and failed to load.
+        const misplaced = copyWith(
+          'misplaced',
+          true,
+          join('src', 'render.ts'),
+          '(err as Error).message, POSING_RUNTIME_TAIL));',
+          "(err as Error).message, `${POSING_RUNTIME_TAIL}; the entry that links it runs them — installed, the same \\`rigc\\` once @esotericsoftware/spine-core is installed beside the package`));",
+        );
+        if (misplaced !== null) {
+          const read = seamFaults(null, misplaced, stub34);
+          if (read.length === 0) probes.RC35.push('the route added to the present-and-failing posing refusal left RC34 green');
+          else if (!read.every((p) => p.includes('names the install route'))) probes.RC35.push(`the misplaced route read red for another reason: ${read[0].slice(0, 200)}`);
+          else reds35.push(`route on the present-and-failing side: RC34 red on ${read.length} input(s)`);
+        }
+        if (reds35.length !== 3 && probes.RC35.length === 0) probes.RC35.push(`${reds35.length} of 3 plants read red`);
+        figures.RC35 = `in copies of the tree: ${reds35.join('; ')}`;
       }
     }
     const cases: Array<[string, string, string]> = [
@@ -86218,6 +86384,9 @@ function runRenderHashesSuite(): number | null {
       ['RC30', 'RC30_THE_SECOND_ENTRYS_BUILD_WRITES_NOTHING_ON_RED_WITH_CLI_TSS_REFUSAL', 'emit only after green is the doctrine on every entry, and a gate that went red on one entry and green on the other would be two products'],
       ['RC31', 'RC31_ONE_COMMAND_NAME_TWO_BODIES_EACH_PAGE_SAYS_HOW_ITS_BUILD_IS_GATED', 'issue #1060: runtime: false | { for } said which entry runs a command; a command whose body differs by entry needs the table to say so, cli.ts\'s page must stay the page it was, and the second page has to say which rules did not run'],
       ['RC32', 'RC32_THE_ABSENT_STATE_BUILDS_AND_EVERY_COMMAND_READS_WHAT_IT_WROTE_AS_CLI_TS_READS_ITS_OWN', 'issue #1060: the build is the start of the loop; the commands after it have to read what it wrote exactly as they read cli.ts\'s, with the package absent, or the entry a user runs is a different tool'],
+      ['RC33', 'RC33_EVERY_SENTENCE_THE_SECOND_ENTRY_PRINTS_NAMING_CLI_TS_NAMES_THE_INSTALL_ROUTE', 'issue #1079: on an install the second entry is what `rigc` runs without the runtime, and a sentence sending its reader to `bun cli.ts` alone gives somebody with no clone nothing to do; #1072 fixed seven such sentences by hand, and only a walk over everything the entry prints, derived from the command table, keeps the next one from landing green'],
+      ['RC34', 'RC34_THE_SEAMS_TAIL_NAMES_THE_ROUTE_WHERE_THE_RUNTIME_IS_ABSENT_AND_NOT_WHERE_IT_FAILED', 'issue #1079: render --poser spine, an export and explain --poser spine on an install said the runtime could not be used and stopped there; the same tail is printed when the runtime is installed and fails to load, where "install it" is the wrong sentence, so the route is held on one side and its absence on the other'],
+      ['RC35', 'RC35_A_REFUSAL_REWORDED_TO_CLI_TS_ALONE_OR_THE_ROUTE_ON_THE_WRONG_SIDE_OF_THE_SEAM_TURNS_RC33_OR_RC34_RED', 'RC33 and RC34 read green on a tree that names the route everywhere and on a walk that reads nothing alike; the plants are what show each sees the sentence it is about'],
     ];
     for (const [key, code, why] of cases) {
       const held = probes[key].length === 0;
