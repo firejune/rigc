@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.9.3](https://github.com/firejune/rigc/compare/v1.9.2...v1.9.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **core:** a document posed with no skin set is posed as the runtime poses it — skins and no default one, or a default skin naming skin-required members, are drawn by the core rather than refused ([#1056](https://github.com/firejune/rigc/issues/1056)) ([544c7ec](https://github.com/firejune/rigc/commit/544c7ecca5baf2f52cf1355ce6b55ea83bb4a6d6)), closes [#1051](https://github.com/firejune/rigc/issues/1051)
+* **core:** a slider applies the physics timelines of its animation — render and check drew a rigc build wrong where a slider keys wind or gravity on a constraint that updates after it ([#1058](https://github.com/firejune/rigc/issues/1058)) ([5a04755](https://github.com/firejune/rigc/commit/5a0475561114b587b0bd8e8e546e5a7941b0b4cc)), closes [#1049](https://github.com/firejune/rigc/issues/1049)
+* **gate:** the bones an animation keys are read in the order the file keys them — an integer-like bone name is listed first, and the order of bone timelines is measured not to reach a pose across bones and to be the file's on one bone ([#1065](https://github.com/firejune/rigc/issues/1065)) ([6e1b32a](https://github.com/firejune/rigc/commit/6e1b32aef251068955416cee06868727008c952f)), closes [#1039](https://github.com/firejune/rigc/issues/1039)
+
+
+### Instrument
+
+* **cli:** an entry that links nothing of spine-core — render.ts keeps only what names the runtime, the Spine side registers into a seam, and the core commands run with the package absent ([#1059](https://github.com/firejune/rigc/issues/1059)) ([24e83cb](https://github.com/firejune/rigc/commit/24e83cb4fc439993c09bdf8a44449307079e3396))
+* **gate:** the model side reads its rig info and durations off the document, lists its rows in validate()'s order, states the meshes once, asks every fact family on one walk, and keeps the runtime's timeline names out of src/core ([#1062](https://github.com/firejune/rigc/issues/1062)) ([46267cd](https://github.com/firejune/rigc/commit/46267cd857128262bd104983aea2b0dbb5440828))
+
 ## [1.9.2](https://github.com/firejune/rigc/compare/v1.9.1...v1.9.2) (2026-10-01)
 
 
