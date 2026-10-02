@@ -80914,8 +80914,9 @@ function runCoreSuite(): number {
 
 // Its own statements, so the suite lands as one hunk.
 import { deformPosers, surveyOfBuild, surveyOfModel, type DeformSurvey } from './src/deformmeasure.ts';
-import { COMMANDS, entryCommands } from './src/cli/shared.ts';
-import { CORE_COMMAND_RUNS } from './src/cli/core_commands.ts';
+import { commandHelp, COMMANDS, entryCommands } from './src/cli/shared.ts';
+import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS } from './src/cli/core_commands.ts';
+import { roundTripOnlyCodes, SKIP_NO_ROUND_TRIP, validateEmittedText } from './src/assertions/emitted/index.ts';
 import { SPINE_COMMAND_RUNS } from './src/cli/spine_commands.ts';
 import { SPINE_SIDE_ABSENT } from './src/spine_side.ts';
 import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyStructure } from './src/deformstructure.ts';
@@ -85277,7 +85278,8 @@ function runRenderHashesSuite(): number | null {
       // --help: the commands whose `runtime` is false, every usage line of each, and none of any other.
       const help = runEntryIn(tree, 'cli_core.ts', ['--help'], work);
       const runs = entryCommands(false);
-      const others = COMMANDS.filter((doc) => doc.runtime !== false);
+      // The commands the entry does not run: since issue #1060 `build` has a body in both, documented by its own lines here (RC32).
+      const others = COMMANDS.filter((doc) => !runs.some((run) => run.name === doc.name));
       if (help.status !== 0) probes24.push(`cli_core.ts --help exited ${help.status}`);
       for (const doc of runs) for (const line of doc.usage) if (!help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help leaves out ${doc.name}'s usage line ${JSON.stringify(line.slice(0, 60))}`);
       for (const doc of others) for (const line of doc.usage) if (help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help prints ${doc.name}'s usage line, a command it does not run`);
@@ -85334,7 +85336,8 @@ function runRenderHashesSuite(): number | null {
         { name: 'render of a Spine export', args: ['render', '--candidate', exportDir, '--out', join(work, 'rc24-r-export')], starts: `rigc render: ${exportSkeleton} is posed through spine-core (no ${MODEL_DOCUMENT_FILE} beside ${exportSkeleton} — a Spine export, not a rigc build), ${absentReason}`, wrote: join(work, 'rc24-r-export') },
         { name: 'render --poser spine', args: ['render', '--candidate', row.out, '--poser', 'spine', '--out', join(work, 'rc24-r-spine')], starts: `rigc render: ${join(row.out, 'skeleton.json')} is posed through spine-core (--poser spine), ${absentReason}`, wrote: join(work, 'rc24-r-spine') },
         { name: 'render of an edited skeleton (a fallback)', args: ['render', '--candidate', editedDir, '--out', join(work, 'rc24-r-edited')], starts: `rigc render: ${join(editedDir, 'skeleton.json')} is posed through spine-core (the core refused `, wrote: join(work, 'rc24-r-edited') },
-        { name: 'build', args: ['build', '--rig', join(spec, 'rig.json'), '--motion', join(spec, 'motion.json'), '--images', parts, '--out', join(work, 'rc24-r-build')], starts: 'rigc build: `build` runs through spine-core (', wrote: join(work, 'rc24-r-build') },
+        // `validate` rather than `build`, which the entry runs since issue #1060 (RC33): a command whose only body is the runtime's.
+        { name: 'validate', args: ['validate', row.out], starts: 'rigc validate: `validate` runs through spine-core (', wrote: join(work, 'rc24-r-validate') },
       ];
       for (const r of refusals) {
         const run = runEntryIn(tree, 'cli_core.ts', r.args, work);
@@ -85409,6 +85412,8 @@ function runRenderHashesSuite(): number | null {
       const plants26: Array<[string, string[]]> = [
         [`${spineSide} marked runtime: false`, spineSide === undefined ? [] : runtimeMarkFaults(flip(spineSide, false), population).faults],
         [`${coreSide} marked as needing the runtime`, coreSide === undefined ? [] : runtimeMarkFaults(flip(coreSide, { for: 'a planted need' }), population).faults],
+        // Issue #1060: the second body taken out of the table while its module still registers it.
+        [`${live.both[0]} stating no second body`, live.both[0] === undefined ? [] : runtimeMarkFaults(flip(live.both[0], { for: 'a planted need' }), population).faults],
         ['the module of the unmarked bodies importing the round trip', runtimeMarkFaults(COMMANDS, doctored).faults],
       ];
       for (const [label, faults] of plants26) if (faults.length === 0) probes26.push(`${label}: no fault`);
@@ -85422,11 +85427,281 @@ function runRenderHashesSuite(): number | null {
           probes26,
           `${COMMANDS.length} command(s): ${live.core.length} marked runtime: false and registered by a module whose closure imports no spine-core [${live.core.join(', ')}], ` +
             `${live.spine.length} marked with what they need it for and registered by one whose closure does [${live.spine.join(', ')}]; Spine's without being the runtime's: [${spineFormat.join(', ')}]; ` +
+            `with a second body in the entry that links none of it, registered by a module whose closure imports none: [${live.both.join(', ')}]; ` +
             `${plants26.map(([label, faults]) => `${label} is ${faults.length} fault(s)`).join(', ')}`,
         ),
         'issue #1052: the second entry runs the commands marked runtime: false, and its --help prints them — a mark nobody derives would be the list typed beside the code ' +
           'that the card refuses, so the mark is held to the import graph both ways: a command marked free whose body links the runtime, and one marked bound whose body links none',
       );
+    }
+  }
+
+  // --- RC27–RC32: one statement of a build, and the second entry's build (issues #1046, #1060) --
+  //
+  // RC27 holds the one statement of a build (`resolveBuild` in src/cli/shared.ts): every command that takes one
+  // refuses a directory holding no skeleton.json, and a path with nothing at it, by the same `nothing at <path>`,
+  // exit 2, no stack, nothing written — #1046's ENOENT on `validate` and the EISDIR on `diff` were the two that read
+  // the path unguarded — and the plant is that guard taken out. RC28 holds the round trip's rules restated over the
+  // emitted text to the round trip's own lines, on a gallery build and on a mutant per rule; RC29 the second entry's
+  // build to cli.ts's, file for file, plain, --copy-images and --pack, with A00 a SKIP naming spine-core; RC30 its
+  // writing nothing on red; RC31 the command table's two bodies of `build`; RC32 the absent state's pipeline over
+  // what that build wrote.
+  {
+    const row1060 = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
+    const spec1060 = row1060 === undefined ? '' : join(import.meta.dir, row1060.name);
+    const ready = row1060 !== undefined && existsSync(join(spec1060, 'rig.json')) && existsSync(join(spec1060, 'parts'));
+    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [] };
+    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '' };
+    const firstErr = (r: { stderr: string }): string => r.stderr.split('\n').find((l) => l.trim() !== '') ?? '';
+    const stacked = (r: { stderr: string }): boolean => /^\s+at \S/m.test(r.stderr);
+    if (!ready) {
+      for (const key of Object.keys(probes)) probes[key].push(`no gallery build with its spec beside it to run (${row1060?.name ?? 'none'})`);
+    } else {
+      const parts = join(spec1060, 'parts');
+      const tree = absentTree(join(work, 'rc27-tree'));
+      const buildArgs = (out: string, extra: string[] = []): string[] => ['build', '--rig', join(spec1060, 'rig.json'), '--motion', join(spec1060, 'motion.json'), '--images', parts, '--out', out, ...extra];
+      const fullOut = join(work, 'rc27-full');
+      const coreOut = join(work, 'rc27-core');
+      const fullRun = runCli(buildArgs(fullOut));
+      const coreRun = runEntryIn(tree, 'cli_core.ts', buildArgs(coreOut), work);
+      const built = fullRun.status === 0 && coreRun.status === 0;
+      if (!built) for (const key of Object.keys(probes)) probes[key].push(`the two builds exited ${fullRun.status} (cli.ts) and ${coreRun.status} (cli_core.ts, the package absent) — ${JSON.stringify(firstErr(coreRun).slice(0, 200))}`);
+      const frames = join(work, 'rc27-frames');
+      const framesRun = built ? runCli(['render', '--candidate', fullOut, '--max', '96', '--out', frames]) : null;
+      const firstSet = existsSync(frames) ? readdirSync(frames).filter((f) => statSync(join(frames, f)).isDirectory()).sort()[0] : undefined;
+      const frame = join(frames, firstSet ?? 'none', 'f0000.png');
+      if (built && (framesRun?.status !== 0 || !existsSync(frame))) for (const key of Object.keys(probes)) probes[key].push(`the reference render of the full build exited ${framesRun?.status}`);
+
+      if (built) {
+        // RC27 — the one statement of a build, on every command that takes one.
+        const empty = join(work, 'rc27-empty');
+        mkdirSync(empty, { recursive: true });
+        const documentOnly = join(work, 'rc27-document-only');
+        mkdirSync(documentOnly, { recursive: true });
+        cpSync(join(fullOut, MODEL_DOCUMENT_FILE), join(documentOnly, MODEL_DOCUMENT_FILE));
+        const absent = join(work, 'rc27-absent', 'out');
+        const corpus = existsSync(join(import.meta.dir, 'examples', '3-timing-and-spacing', 'export'));
+        const takes: Array<{ name: string; args: (x: string, o: string) => string[] }> = [
+          { name: 'validate', args: (x) => ['validate', x] },
+          { name: 'render', args: (x, o) => ['render', '--candidate', x, '--out', o] },
+          { name: 'render --geometry', args: (x, o) => ['render', '--candidate', x, '--geometry', '--out', o] },
+          { name: 'check', args: (x, o) => ['check', '--candidate', x, '--frames', frames, '--json', join(o, 'check.json')] },
+          { name: 'chainfit', args: (x, o) => ['chainfit', '--candidate', x, '--images', parts, '--frame', frame, '--out', join(o, 'chainfit.json')] },
+          ...(corpus ? [{ name: 'bench', args: (x: string) => ['bench', '3', '--candidate', x] }] : []),
+          { name: 'bonedist', args: (x, o) => ['bonedist', '--candidate', x, '--reference', fullOut, '--bones', 'identity', '--json', join(o, 'b.json')] },
+          { name: 'preview', args: (x, o) => ['preview', '--candidate', x, '--out', join(o, 'p.html')] },
+          { name: 'vote', args: (x, o) => ['vote', '--candidate', x, '--candidate', fullOut, '--out', join(o, 'b.html')] },
+          { name: 'diff', args: (x, o) => ['diff', x, join(fullOut, 'skeleton.json'), '--json', join(o, 'd.json')] },
+        ];
+        const states = [
+          ['an empty directory', empty, join(empty, 'skeleton.json')],
+          ['a directory holding the model document alone', documentOnly, join(documentOnly, 'skeleton.json')],
+          ['a path with nothing at it', absent, absent],
+        ] as const;
+        let refused27 = 0;
+        for (const [i, c] of takes.entries()) {
+          for (const [k, [state, x, said]] of states.entries()) {
+            const o = join(work, `rc27-o-${i}-${k}`);
+            const r = runCli(c.args(x, o));
+            if (r.status !== 2 || firstErr(r) !== `rigc: nothing at ${said}` || stacked(r)) probes.RC27.push(`${c.name} on ${state} exited ${r.status} saying ${JSON.stringify(firstErr(r).slice(0, 160))}${stacked(r) ? ' with a stack' : ''}, not "rigc: nothing at ${said}"`);
+            else if (existsSync(o)) probes.RC27.push(`${c.name} on ${state} wrote ${o}`);
+            else refused27++;
+          }
+        }
+        // The plant: the statement's guard on a skeleton that is not there, taken out — validate goes back to the ENOENT #1046 filed.
+        const planted = absentTree(join(work, 'rc27-planted'));
+        rmSync(join(planted, 'node_modules'), { recursive: true, force: true });
+        symlinkSync(join(import.meta.dir, 'node_modules'), join(planted, 'node_modules'), 'dir');
+        const guard = '  if (!existsSync(skeletonPath)) throw new UsageError(`nothing at ${skeletonPath}`);\n';
+        const sharedText = readFileSync(join(planted, 'src', 'cli', 'shared.ts'), 'utf8');
+        if (sharedText.split(guard).length !== 2) probes.RC27.push('the plant found its guard line not exactly once in src/cli/shared.ts');
+        writeFileSync(join(planted, 'src', 'cli', 'shared.ts'), sharedText.split(guard).join(''));
+        const plantedRun = runEntryIn(planted, 'cli.ts', ['validate', empty], work);
+        if (plantedRun.status === 2 && firstErr(plantedRun) === `rigc: nothing at ${join(empty, 'skeleton.json')}`) probes.RC27.push('with the guard planted out, validate on an empty directory still refused by name — the probe does not see the guard');
+        figures.RC27 =
+          `${takes.length} command(s) taking a build [${takes.map((c) => c.name).join(', ')}]${corpus ? '' : ' (bench left out: no example corpus)'}: ${refused27} of ${takes.length * states.length} runs on an empty directory, ` +
+          'a directory holding the model document alone and a path with nothing at it exit 2 saying "nothing at <path>", no stack, nothing written; ' +
+          `the guard planted out, validate on the empty directory exits ${plantedRun.status}${stacked(plantedRun) ? ' with a stack' : ''}`;
+
+        // RC28 — the round trip's rules restated over the emitted text print the round trip's lines.
+        const restated = roundTripOnlyCodes().filter((code) => code !== 'A00_ROUNDTRIP_PARSE');
+        const linesOf = (report: { passed: string[]; failures: Array<{ assertion: string; detail: string }>; skipped: Array<{ assertion: string; reason: string }>; profileSkipped: Array<{ assertion: string; kind: 'renderer' | 'archetype' }>; profile: ValidateProfile; stats: Record<string, number | string> }, code: string): string[] =>
+          reportLines(report as ValidateReport).filter((line) => new RegExp(`^ {2}(PASS|SKIP|PROF|FAIL) {2}${code}\\b`).test(line));
+        const skeletonText = readFileSync(join(fullOut, 'skeleton.json'), 'utf8');
+        const atlasText = readFileSync(join(fullOut, 'skeleton.atlas'), 'utf8');
+        const modelText = readFileSync(join(fullOut, MODEL_DOCUMENT_FILE), 'utf8');
+        const pairOf = (texts: { skeletonText: string; atlasText: string; second?: { skeletonText: string; atlasText: string; modelText: string } }): { spine: ValidateReport; text: ReturnType<typeof validateEmittedText> } => ({
+          spine: validateOverSpine({ skeletonText: texts.skeletonText, atlasText: texts.atlasText, atlasDir: fullOut, profile: 'spine', modelText, ...(texts.second === undefined ? {} : { reEmit: texts.second }) }),
+          text: validateEmittedText({ skeletonText: texts.skeletonText, atlasText: texts.atlasText, modelText, profile: 'spine', ...(texts.second === undefined ? {} : { reEmit: texts.second }) }),
+        });
+        const same = { skeletonText, atlasText, modelText };
+        const clean = pairOf({ skeletonText, atlasText, second: same });
+        for (const code of restated) {
+          if (JSON.stringify(linesOf(clean.spine, code)) !== JSON.stringify(linesOf(clean.text, code))) probes.RC28.push(`${code} on ${row1060.name}: the round trip printed ${JSON.stringify(linesOf(clean.spine, code))} and the restated rule ${JSON.stringify(linesOf(clean.text, code))}`);
+        }
+        const a00 = clean.text.skipped.find((x) => x.assertion === 'A00_ROUNDTRIP_PARSE');
+        if (a00?.reason !== SKIP_NO_ROUND_TRIP || clean.text.passed.includes('A00_ROUNDTRIP_PARSE')) probes.RC28.push(`A00 on the restated side read ${JSON.stringify(a00 ?? clean.text.passed.filter((c) => c.startsWith('A00')))}, not a SKIP naming spine-core`);
+        const accounted = new Set([...MOVED_ASSERTIONS.map((m) => m.code), ...roundTripOnlyCodes()]);
+        if (accounted.size !== ASSERTION_NAMES.length) probes.RC28.push(`the model side and the restated rules account for ${accounted.size} of ${ASSERTION_NAMES.length} assertions`);
+        const skeleton = JSON.parse(skeletonText) as Record<string, unknown>;
+        const edited = (edit: (root: Record<string, unknown>) => void): string => {
+          const copy = JSON.parse(skeletonText) as Record<string, unknown>;
+          edit(copy);
+          return `${JSON.stringify(copy, null, 2)}\n`;
+        };
+        const firstAnimation = Object.keys((skeleton.animations as Record<string, unknown> | undefined) ?? {})[0];
+        const firstSlot = ((skeleton.slots as Array<{ name: string }> | undefined) ?? [])[0]?.name;
+        const mutants: Array<{ code: string; label: string; texts: { skeletonText: string; atlasText: string; second?: { skeletonText: string; atlasText: string; modelText: string } } }> = [
+          { code: 'A07_ATLAS_TEXT_SHAPE', label: 'a blank line before the atlas', texts: { skeletonText, atlasText: `\n${atlasText}` } },
+          { code: 'A07_ATLAS_TEXT_SHAPE', label: 'a blank line after the atlas', texts: { skeletonText, atlasText: `${atlasText}\n\n` } },
+          { code: 'A16_SKELETON_VERSION_4_3', label: 'a 4.2 label', texts: { skeletonText: edited((r) => void ((r.skeleton as Record<string, unknown>).spine = '4.2.43')), atlasText } },
+          { code: 'A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS', label: 'a top-level ik array', texts: { skeletonText: edited((r) => void (r.ik = [])), atlasText } },
+          { code: 'A02_NO_BONE_TRANSFORM_KEY', label: "a bone's transform key", texts: { skeletonText: edited((r) => void ((r.bones as Array<Record<string, unknown>>)[0].transform = 'normal')), atlasText } },
+          ...(firstAnimation === undefined || firstSlot === undefined
+            ? []
+            : [
+                { code: 'A31_DRAW_ORDER_OFFSETS_RESOLVE', label: 'a draw-order offset past the slots', texts: { skeletonText: edited((r) => void ((r.animations as Record<string, Record<string, unknown>>)[firstAnimation].drawOrder = [{ offsets: [{ slot: firstSlot, offset: 1000 }] }])), atlasText } },
+                { code: 'A05_CURVE_ARRAY_LENGTH', label: 'a rotate curve one number short', texts: { skeletonText: edited((r) => void ((r.animations as Record<string, Record<string, unknown>>)[firstAnimation].bones = { [String((r.bones as Array<{ name: string }>)[0].name)]: { rotate: [{ time: 0, curve: [0, 0, 1] }, { time: 1 }] } })), atlasText } },
+                { code: 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', label: 'a deform key on an attachment the skin does not have', texts: { skeletonText: edited((r) => void ((r.animations as Record<string, Record<string, unknown>>)[firstAnimation].attachments = { default: { [firstSlot]: { rc28_absent: { deform: [{ time: 0, vertices: [1, 2] }] } } } })), atlasText } },
+              ]),
+          { code: 'A18_DETERMINISTIC_EMIT', label: 'a second compile whose skeleton.json differs', texts: { skeletonText, atlasText, second: { ...same, skeletonText: `${skeletonText}\n` } } },
+          { code: 'A18_DETERMINISTIC_EMIT', label: 'a second compile whose document differs', texts: { skeletonText, atlasText, second: { ...same, modelText: modelText.replace('"spec"', '"spec" ') } } },
+        ];
+        const fired: string[] = [];
+        for (const m of mutants) {
+          const run = pairOf(m.texts);
+          const a = linesOf(run.spine, m.code);
+          const b = linesOf(run.text, m.code);
+          if (!a.some((line) => line.startsWith('  FAIL  '))) probes.RC28.push(`${m.label}: the round trip did not fail ${m.code} (${JSON.stringify(a)}), so the mutant measures nothing`);
+          else if (JSON.stringify(a) !== JSON.stringify(b)) probes.RC28.push(`${m.label}: the round trip printed ${JSON.stringify(a)} and the restated rule ${JSON.stringify(b)}`);
+          else fired.push(m.code);
+        }
+        const missed = restated.filter((code) => !fired.includes(code));
+        if (missed.length > 0) probes.RC28.push(`no mutant fired ${missed.join(', ')}`);
+        figures.RC28 =
+          `the ${restated.length} rule(s) the model side does not run and the round trip's text bears [${restated.join(', ')}], restated over the emitted text: ` +
+          `${row1060.name}'s lines the round trip's, and ${fired.length} of ${mutants.length} mutant(s) failing the same code in the same words on both; A00 a SKIP naming spine-core; ` +
+          `${MOVED_ASSERTIONS.length} on the model side and ${roundTripOnlyCodes().length} here account for all ${ASSERTION_NAMES.length}`;
+
+        // RC29 — the second entry's build writes what cli.ts build writes, the package absent.
+        const variants: Array<{ label: string; extra: string[] }> = [
+          { label: 'plain', extra: [] },
+          { label: '--copy-images', extra: ['--copy-images'] },
+          { label: '--pack', extra: ['--pack'] },
+        ];
+        const same29: string[] = [];
+        for (const v of variants) {
+          // One basename for both: under --copy-images `skeleton.images` is spelled from --out's own name (`../<out>/`).
+          const a = join(work, `rc29-full-${v.label}`, 'out');
+          const b = join(work, `rc29-core-${v.label}`, 'out');
+          const ra = runCli(buildArgs(a, v.extra));
+          const rb = runEntryIn(tree, 'cli_core.ts', buildArgs(b, v.extra), work);
+          const da = dirDigests(a);
+          const db = dirDigests(b);
+          const differ = digestDifferences(db, da);
+          if (ra.status !== 0 || rb.status !== 0) probes.RC29.push(`${v.label}: cli.ts exited ${ra.status} and cli_core.ts ${rb.status} — ${JSON.stringify(firstErr(rb).slice(0, 200))}`);
+          else if (differ.length > 0 || da.size !== db.size || !db.has('skeleton.json') || !db.has('skeleton.atlas') || !db.has(MODEL_DOCUMENT_FILE)) probes.RC29.push(`${v.label}: cli_core.ts wrote other files than cli.ts: ${differ.join(', ') || `${db.size} against ${da.size}`}`);
+          else if (!rb.stdout.includes(`  SKIP  A00_ROUNDTRIP_PARSE: ${SKIP_NO_ROUND_TRIP}`) || /^ {2}PASS {2}A00_ROUNDTRIP_PARSE$/m.test(rb.stdout) || !rb.stdout.includes('not run: A00_ROUNDTRIP_PARSE')) probes.RC29.push(`${v.label}: the second entry's report does not name A00 as not run here`);
+          else same29.push(`${v.label} ${db.size} file(s)`);
+        }
+        figures.RC29 = `${row1060.name}, cli_core.ts build with the package absent against cli.ts build, the same flags: ${same29.join(', ')} to the byte; its report says A00_ROUNDTRIP_PARSE did not run here and SKIPs it naming spine-core`;
+
+        // RC30 — the second entry's build writes nothing on red, with cli.ts's refusal.
+        const meshRow = galleryBuilds.find((g) => {
+          const rig = JSON.parse(readFileSync(join(import.meta.dir, g.name, 'rig.json'), 'utf8')) as { invariants?: { meshTriangles?: number } };
+          const doc = JSON.parse(readFileSync(join(g.out, MODEL_DOCUMENT_FILE), 'utf8')) as { meshes?: unknown[] };
+          return typeof rig.invariants?.meshTriangles === 'number' && (doc.meshes?.length ?? 0) > 0 && existsSync(join(import.meta.dir, g.name, 'parts'));
+        });
+        if (meshRow === undefined) probes.RC30.push('no gallery rig declares a mesh budget and carries a mesh to plant a red on');
+        else {
+          const redSpec = join(work, 'rc30-spec');
+          cpSync(join(import.meta.dir, meshRow.name), redSpec, { recursive: true });
+          const rig = JSON.parse(readFileSync(join(redSpec, 'rig.json'), 'utf8')) as { invariants: { meshTriangles: number } };
+          rig.invariants.meshTriangles = 1;
+          writeFileSync(join(redSpec, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+          const red = (entry: 'cli.ts' | 'cli_core.ts'): { r: ReturnType<typeof runCli>; out: string } => {
+            const out = join(work, `rc30-red-${entry}`);
+            const args = ['build', '--rig', join(redSpec, 'rig.json'), '--motion', join(redSpec, 'motion.json'), '--images', join(redSpec, 'parts'), '--out', out, '--profile', 'spine-html'];
+            return { r: entry === 'cli.ts' ? runCli(args) : runEntryIn(tree, entry, args, work), out };
+          };
+          const redFull = red('cli.ts');
+          const redCore = red('cli_core.ts');
+          const a13 = (r: { stdout: string }): string[] => r.stdout.split('\n').filter((l) => l.startsWith('  FAIL  A13_MESH_BUDGET'));
+          for (const [entry, run] of [['cli.ts', redFull], ['cli_core.ts', redCore]] as const) {
+            if (run.r.status !== 1 || !run.r.stderr.includes('assertion(s) failed — nothing written') || existsSync(run.out)) probes.RC30.push(`${entry} on a rig over its budget exited ${run.r.status}, ${existsSync(run.out) ? 'and wrote its --out' : 'wrote nothing'}: ${JSON.stringify(firstErr(run.r).slice(0, 160))}`);
+          }
+          if (a13(redCore.r).length === 0 || JSON.stringify(a13(redCore.r)) !== JSON.stringify(a13(redFull.r))) probes.RC30.push(`the A13 lines differ: ${JSON.stringify(a13(redFull.r))} against ${JSON.stringify(a13(redCore.r))}`);
+          figures.RC30 = `${meshRow.name} with its mesh budget planted to 1 triangle, --profile spine-html: both entries exit 1, write nothing, and print the same ${a13(redCore.r).length} A13 line(s) — "${(a13(redCore.r)[0] ?? '').trim().slice(0, 100)}"`;
+        }
+
+        // RC31 — one name, two bodies: the command table says which entry runs which, and each page says so.
+        const fullBuildDoc = COMMANDS.find((d) => d.name === 'build');
+        const core31 = fullBuildDoc === undefined || fullBuildDoc.runtime === false ? undefined : fullBuildDoc.runtime.core;
+        if (core31 === undefined || !entryCommands(false).some((d) => d.name === 'build')) probes.RC31.push('the second entry runs no build, or the table states no second body for it');
+        else {
+          const help = runEntryIn(tree, 'cli_core.ts', ['--help'], work);
+          for (const line of core31.usage) if (!help.stdout.includes(`  ${line}\n`)) probes.RC31.push(`cli_core.ts --help leaves out ${JSON.stringify(line.slice(0, 60))}`);
+          if (!core31.usage[0].includes('gated without spine-core')) probes.RC31.push("the second body's first usage line does not say how it is gated");
+          const buildHelp = runEntryIn(tree, 'cli_core.ts', ['build', '--help'], work);
+          if (buildHelp.status !== 0 || !core31.notes.every((line) => buildHelp.stdout.includes(line)) || !buildHelp.stdout.includes('A00_ROUNDTRIP_PARSE')) probes.RC31.push(`cli_core.ts build --help exited ${buildHelp.status} without the second body's notes naming what does not run`);
+          const fullHelp = runCli(['build', '--help']);
+          if (fullHelp.stdout !== `${commandHelp('build')}\n` || core31.notes.some((line) => fullHelp.stdout.includes(line))) probes.RC31.push("cli.ts build --help is not the command's own page, or carries the second body's notes");
+          if (runCli(['--help']).stdout.includes(core31.usage[0])) probes.RC31.push("cli.ts --help prints the second body's usage line");
+          figures.RC31 = `build: cli.ts's page is the command's own (${fullBuildDoc?.usage.length} usage line(s), no second-body note); cli_core.ts --help prints the second body's ${core31.usage.length} line(s), the first saying how it is gated, and build --help its ${core31.notes.length} line(s) of notes naming A00_ROUNDTRIP_PARSE as not run`;
+        }
+
+        // RC32 — the absent state: build, then every command that reads what it wrote, each held to cli.ts on cli.ts's build.
+        const anchor = join(work, 'rc32-anchor.json');
+        const two = join(work, 'rc32-two-parts');
+        mkdirSync(two, { recursive: true });
+        for (const name of readdirSync(parts).filter((f) => f.endsWith('.png')).sort((x, y) => statSync(join(parts, x)).size - statSync(join(parts, y)).size || (x < y ? -1 : 1)).slice(0, 2)) cpSync(join(parts, name), join(two, name));
+        const pipe: Array<{ name: string; args: (build: string, dir: string) => string[] }> = [
+          { name: 'render', args: (build, dir) => ['render', '--candidate', build, '--max', '96', '--out', dir] },
+          { name: 'render --geometry', args: (build, dir) => ['render', '--candidate', build, '--geometry', '--max', '96', '--out', dir] },
+          { name: 'check', args: (build, dir) => ['check', '--candidate', build, '--frames', frames, '--json', join(dir, 'check.json')] },
+          { name: 'explain', args: (_build, dir) => ['explain', '--rig', join(spec1060, 'rig.json'), '--motion', join(spec1060, 'motion.json'), '--images', parts, '--out', dir] },
+          { name: 'pose', args: (_build, dir) => ['pose', '--images', two, '--frame', frame, '--scale', '0.45,0.6', '--rotation', '-20,20', '--out', join(dir, 'pose.json')] },
+          { name: 'chainfit', args: (build, dir) => ['chainfit', '--candidate', build, '--images', parts, '--frame', frame, '--anchor', anchor, '--hinge', '-10,10', '--passes', '1', '--out', join(dir, 'chainfit.json')] },
+        ];
+        let files32 = 0;
+        for (const [i, p] of pipe.entries()) {
+          const a = join(work, `rc32-full-${i}`);
+          const b = join(work, `rc32-core-${i}`);
+          mkdirSync(a, { recursive: true });
+          mkdirSync(b, { recursive: true });
+          const ra = runCli(p.args(fullOut, a));
+          const rb = runEntryIn(tree, 'cli_core.ts', p.args(coreOut, b), work);
+          if (p.name === 'pose' && existsSync(join(a, 'pose.json'))) cpSync(join(a, 'pose.json'), anchor);
+          // The candidate's own path is in what check and chainfit write; every other byte is held.
+          const spelled = (dir: string, build: string): Map<string, string> => {
+            const out = new Map<string, string>();
+            for (const [rel, digest] of dirDigests(dir)) {
+              out.set(rel, rel.endsWith('.json') ? createHash('sha256').update(readFileSync(join(dir, rel), 'utf8').split(build).join('<build>').split(dir).join('<out>')).digest('hex') : digest);
+            }
+            return out;
+          };
+          const differ = digestDifferences(spelled(b, coreOut), spelled(a, fullOut));
+          files32 += dirDigests(b).size;
+          if (ra.status !== 0 || rb.status !== 0) probes.RC32.push(`${p.name}: cli.ts exited ${ra.status} on its build and cli_core.ts ${rb.status} on its own — ${JSON.stringify(firstErr(rb).slice(0, 200))}`);
+          else if (differ.length > 0) probes.RC32.push(`${p.name}: cli_core.ts wrote other files of its build than cli.ts of its own: ${differ.join(', ')}`);
+          else if (rb.stdout.split(coreOut).join('<build>').split(b).join('<out>') !== ra.stdout.split(fullOut).join('<build>').split(a).join('<out>')) probes.RC32.push(`${p.name}: cli_core.ts printed other lines of its build than cli.ts of its own`);
+        }
+        figures.RC32 =
+          `in a copy of the tree beside an empty node_modules: cli_core.ts build of ${row1060.name}, then ${pipe.map((p) => p.name).join(', ')} on what it wrote, exit 0 — ` +
+          `the lines and ${files32} file(s) cli.ts prints and writes of cli.ts's build of the same spec, the two builds' paths spelled alike`;
+      }
+    }
+    const cases: Array<[string, string, string]> = [
+      ['RC27', 'RC27_EVERY_COMMAND_TAKING_A_BUILD_REFUSES_A_PATH_HOLDING_NONE_BY_ONE_STATEMENT', 'issue #1046: validate on a directory holding no skeleton.json died on an ENOENT and a stack, and diff on a directory on an EISDIR; the refusal comes from the one function that states what a build is, so a command added later cannot read the path unguarded. The plant is the guard #1046 is about, taken out'],
+      ['RC28', 'RC28_THE_ROUND_TRIPS_RULES_RESTATED_OVER_THE_EMITTED_TEXT_PRINT_ITS_LINES_AND_A00_SKIPS_BY_NAME', 'issue #1060: the build a user runs links no spine-core, so the rules only the round trip ran must run over the text the emitter wrote — each is the round trip\'s clause word for word, which only a comparison on the same texts and the same mutants shows; the parse itself has no second reader, and its SKIP names it'],
+      ['RC29', 'RC29_THE_SECOND_ENTRYS_BUILD_WRITES_WHAT_CLI_TS_BUILD_WRITES_PLAIN_COPIED_AND_PACKED', 'issue #1060: one package, and the entry a user runs is the one without the runtime — its build is the product\'s, so it is the same build only if every file is the same bytes, under every flag that changes what is written'],
+      ['RC30', 'RC30_THE_SECOND_ENTRYS_BUILD_WRITES_NOTHING_ON_RED_WITH_CLI_TSS_REFUSAL', 'emit only after green is the doctrine on every entry, and a gate that went red on one entry and green on the other would be two products'],
+      ['RC31', 'RC31_ONE_COMMAND_NAME_TWO_BODIES_EACH_PAGE_SAYS_HOW_ITS_BUILD_IS_GATED', 'issue #1060: runtime: false | { for } said which entry runs a command; a command whose body differs by entry needs the table to say so, cli.ts\'s page must stay the page it was, and the second page has to say which rules did not run'],
+      ['RC32', 'RC32_THE_ABSENT_STATE_BUILDS_AND_EVERY_COMMAND_READS_WHAT_IT_WROTE_AS_CLI_TS_READS_ITS_OWN', 'issue #1060: the build is the start of the loop; the commands after it have to read what it wrote exactly as they read cli.ts\'s, with the package absent, or the entry a user runs is a different tool'],
+    ];
+    for (const [key, code, why] of cases) {
+      const held = probes[key].length === 0;
+      say(code, held, probeDetail(held, probes[key], figures[key]), why);
     }
   }
 
@@ -85514,9 +85789,9 @@ function entryClosure(population: ReadonlyMap<string, string>, entry: string): {
  * module (or both) registers are faults, each named.
  */
 function runtimeMarkFaults(
-  docs: ReadonlyArray<{ name: string; runtime: false | { for: string } }>,
+  docs: ReadonlyArray<{ name: string; runtime: false | { for: string; core?: unknown } }>,
   population: ReadonlyMap<string, string>,
-): { faults: string[]; core: string[]; spine: string[] } {
+): { faults: string[]; core: string[]; spine: string[]; both: string[] } {
   const registrars: Array<[string, Readonly<Record<string, unknown>>]> = [
     ['src/cli/core_commands.ts', CORE_COMMAND_RUNS],
     ['src/cli/spine_commands.ts', SPINE_COMMAND_RUNS],
@@ -85525,6 +85800,17 @@ function runtimeMarkFaults(
   const faults: string[] = [];
   const core: string[] = [];
   const spine: string[] = [];
+  // A command with a body of its own in the entry that links none of the runtime (`runtime.core`, issue #1060) is
+  // registered there by `CORE_ENTRY_RUNS`, whose module is the core one: marked and registered, both or neither.
+  const both: string[] = [];
+  const coreModuleLinks = reach.get('src/cli/core_commands.ts') ?? [];
+  for (const doc of docs) {
+    const marked = doc.runtime !== false && doc.runtime.core !== undefined;
+    const registered = Object.prototype.hasOwnProperty.call(CORE_ENTRY_RUNS, doc.name);
+    if (marked !== registered) faults.push(`${doc.name} ${marked ? 'states a second body and CORE_ENTRY_RUNS registers none' : 'is registered by CORE_ENTRY_RUNS and states no second body'}`);
+    else if (marked && coreModuleLinks.length > 0) faults.push(`${doc.name}'s second body is registered by src/cli/core_commands.ts, which reaches spine-core: ${coreModuleLinks[0].chain.join(' > ')}`);
+    else if (marked) both.push(doc.name);
+  }
   for (const doc of docs) {
     const by = registrars.filter(([, runs]) => Object.prototype.hasOwnProperty.call(runs, doc.name)).map(([module]) => module);
     if (by.length !== 1) {
@@ -85536,7 +85822,7 @@ function runtimeMarkFaults(
     else if (doc.runtime !== false && linkers.length === 0) faults.push(`${doc.name} is marked as needing spine-core (${doc.runtime.for}) and ${by[0]} links none of it, so an entry without the runtime refuses it for nothing`);
     else (doc.runtime === false ? core : spine).push(doc.name);
   }
-  return { faults, core, spine };
+  return { faults, core, spine, both };
 }
 
 // ---------------------------------------------------------------------------

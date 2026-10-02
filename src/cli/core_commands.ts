@@ -3,7 +3,9 @@
  * `ingest`, `diff`, `check`, `render`, `pose`, `chainfit` and `skills` —
  * moved here unchanged from `cli.ts` (issue #1052, step 4e of #380), with the
  * helpers only they call. Both entries register them (`CORE_COMMAND_RUNS`):
- * `cli.ts` beside the runtime's, `cli_core.ts` alone.
+ * `cli.ts` beside the runtime's, `cli_core.ts` alone. And the body
+ * `cli_core.ts` runs as `build` (`CORE_ENTRY_RUNS`, issue #1060): `runBuild`
+ * with a gate that links none of the runtime.
  *
  * Which commands these are is not a list kept here: it is `COMMANDS`'s
  * `runtime` field (`./shared.ts`), which `RC26` in `selftest.ts` holds to the
@@ -12,6 +14,9 @@
  * absent, which `RC24` runs.
  */
 import { parseAtlasText } from '../atlas.ts';
+import { validateEmittedText } from '../assertions/emitted/index.ts';
+import { validateModel } from '../assertions/model/index.ts';
+import { reportLines } from '../assertions/report.ts';
 import { chainFitLines, type ChainFitOptions, estimateChainFit } from '../chainfit.ts';
 import { checkLines, CheckPlates } from '../check.ts';
 import { writeCheckPictures } from '../checkpics.ts';
@@ -29,7 +34,7 @@ import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
-import { ATLAS_ABSENT, COMMANDS, type CommandRun, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
+import { ATLAS_ABSENT, COMMANDS, type CommandRun, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -321,11 +326,17 @@ function readAnimationPairs(values: string[], candidate: unknown, reference: unk
 export function cmdDiff(flags: Record<string, string>, lists: Record<string, string[]>, positional: string[]): void {
   const [candidate, reference] = positional;
   if (!candidate || !reference) throw new UsageError('diff takes two paths: <candidate.json> <reference.json>');
-  const candidatePath = resolve(candidate);
-  const referencePath = resolve(reference);
-  for (const path of [candidatePath, referencePath]) {
-    if (!existsSync(path)) throw new UsageError(`nothing at ${path}`);
-  }
+  // A file is read as the JSON it is; a directory is a build, and its skeleton is what is compared — through the one
+  // statement of a build (issue #1046), which refuses a directory holding none. A directory used to reach the JSON
+  // reader and die on an EISDIR and a stack.
+  const skeletonAt = (path: string): string => {
+    const at = resolve(path);
+    if (existsSync(at) && statSync(at).isDirectory()) return resolveBuild(at, undefined).skeletonPath;
+    if (!existsSync(at)) throw new UsageError(`nothing at ${at}`);
+    return at;
+  };
+  const candidatePath = skeletonAt(candidate);
+  const referencePath = skeletonAt(reference);
   const candidateJson = readJsonFile(candidatePath);
   const referenceJson = readJsonFile(referencePath);
   const animationPairs = readAnimationPairs(lists.as ?? [], candidateJson, referenceJson);
@@ -696,6 +707,9 @@ export function cmdChainFit(flags: Record<string, string>): void {
         'skeleton is all it needs of the candidate. Drop --atlas',
     );
   }
+  // The candidate through the one statement of a build (issue #1046): a path, or a directory holding no skeleton.json,
+  // is refused here as by every command that takes a build, rather than by `src/chainfit.ts`'s own reader in its own words.
+  resolveBuild(flags.candidate, undefined);
   const options: ChainFitOptions = {
     candidatePath: flags.candidate,
     imagesDir: flags.images,
@@ -1514,6 +1528,67 @@ export function cmdSkills(flags: Record<string, string>, positional: string[]): 
           (wrote < entries.length ? `, ${entries.length - wrote} already there` : ''),
   );
 }
+
+// ---------------------------------------------------------------------------
+// build — the second entry's gate (issue #1060, step 4e of #380)
+// ---------------------------------------------------------------------------
+
+/**
+ * The gate `cli_core.ts build` runs (`BuildGate`), where `cli.ts build` runs
+ * the round trip: the model side over the document (`validateModel`), and the
+ * round trip's own rules restated over the text the emitter wrote
+ * (`validateEmittedText`) — A18 among them, comparing a second, independent
+ * compile's skeleton, atlas and document byte for byte — with A00, spine-core's
+ * parse, a SKIP naming it. One report, printed by the printer `cli.ts build`
+ * prints with, and a line saying which rules ran here and which did not.
+ *
+ * ⚠️ The document the model side reads is the one this gate judges: spelled
+ * from the atlas text the gate is handed, so under `--copy-images` it names
+ * the pages where the compile measured them — the files the round trip's own
+ * A17 reads on `cli.ts` — and A18 compares the documents as written, the
+ * copies' names in them. Under `--pack` the two are one text.
+ */
+const MODEL_AND_TEXT_GATE: BuildGate = {
+  heading: (profile) =>
+    `  ..    validate (the model side over the document + the round trip's rules restated over the emitted text, profile ${profile}; this entry links no spine-core, so the round trip does not run)`,
+  run: ({ result, atlasText, atlasDir, modelText, reEmit, profile }) => {
+    const model = validateModel({ modelText: modelDocument(result.model, result.skeletonText, atlasText), atlasDir, profile });
+    const text = validateEmittedText({ skeletonText: result.skeletonText, atlasText, modelText, reEmit, profile });
+    const report = {
+      failures: [...model.failures, ...text.failures],
+      passed: [...model.passed, ...text.passed],
+      skipped: [...model.skipped, ...text.skipped],
+      profileSkipped: [...model.profileSkipped, ...text.profileSkipped],
+      stats: { ...model.stats, ...text.stats },
+      profile,
+    };
+    for (const line of reportLines(report)) console.log(line);
+    console.log(
+      `  ..    ${Object.entries(report.stats)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(' ')}`,
+    );
+    const ran = (r: { passed: string[]; failures: Array<{ assertion: string }>; skipped: Array<{ assertion: string }>; profileSkipped: Array<{ assertion: string }> }): number =>
+      new Set([...r.passed, ...r.failures.map((f) => f.assertion), ...r.skipped.map((x) => x.assertion), ...r.profileSkipped.map((x) => x.assertion)]).size;
+    const notRun = text.skipped.filter((x) => x.assertion === 'A00_ROUNDTRIP_PARSE').map((x) => x.assertion);
+    console.log(
+      `  ..    here: ${ran(model)} rule(s) on the model side over the document, ${ran(text) - notRun.length} of the round trip's own restated over the emitted text; ` +
+        `not run: ${notRun.join(', ') || 'none'} — spine-core's parse, which only \`bun cli.ts build\` and \`rigc validate\` run`,
+    );
+    return report.failures.length;
+  },
+  look: (outDir) => `rigc: look at it: rigc render --candidate ${outDir}`,
+};
+
+/**
+ * The bodies the second entry runs under a name whose full-entry body is the
+ * runtime's (`runtime.core` in `COMMANDS`, issue #1060) — registered by
+ * `cli_core.ts` alone, beside `CORE_COMMAND_RUNS`. `build` is `runBuild` with
+ * this entry's gate: it writes what `cli.ts build` writes.
+ */
+export const CORE_ENTRY_RUNS: Readonly<Record<string, CommandRun>> = {
+  build: ({ flags }) => runBuild(flags, MODEL_AND_TEXT_GATE),
+};
 
 /**
  * The bodies of every command whose `runtime` is `false` (`COMMANDS`), by
