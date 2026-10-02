@@ -884,8 +884,15 @@ function runtimeNames(a: Map<string, AttachmentFact>, b: Map<string, AttachmentF
 
 interface ConstraintFact {
   type: string;
-  /** Every bone or slot the constraint names, sorted — its wiring. */
+  /**
+   * Every name the constraint resolves, as `<field>:<name>` and sorted — its
+   * wiring: the bones and slots it reads and writes, a slider's animation, and
+   * the properties a slider or a transform maps (`property:rotate`,
+   * `property:x>y`). See `constraintFacts` for which fields and why.
+   */
   refs: string;
+  /** The same tokens as a list, for the note that spells a disagreement out. */
+  refList: string[];
 }
 
 /**
@@ -898,6 +905,28 @@ interface ConstraintFact {
  * way, so the report read 1.000 while its own header line counted one constraint
  * more than `constraints.count` did, measured at 14/14 against 13/13 on the
  * export that made the card.
+ *
+ * ⭐ **What the wiring is** (issue #1078): every field of a 4.3 constraint whose
+ * value is a NAME the parser resolves — `SPEC_COVERAGE.md` §1.4, field by field.
+ * `bones`, `bone`, `target`, `source` and `slot` name a bone or a slot; a
+ * slider's `animation` names an animation; a slider's `property` and the
+ * `from`/`to` keys of a transform's `properties` name the property read and the
+ * property written, from a closed set the parser throws outside of. Every other
+ * field is a number, a flag or a mode — a value, which this file does not compare
+ * on either side of any split; the value walk (`diffSkeletonValues`) does.
+ *
+ * 🔍 Until #1078 the list stopped at the five bone and slot fields, so an editor
+ * import that repointed both sliders of a probe (`yaw -> "5"` came back as
+ * `yaw -> "-a"`, issue #1040) read 1.000 on every constraint measure. The two
+ * property fields were blinder still: measured on `gallery/look` and `6-arcs-pro`,
+ * a slider moved from `rotate` to `x` and a transform remapped from `x>x` to
+ * `x>y` moved no measure here and no value in the value walk either (its skip
+ * list names `properties`), so nothing in the tree compared them at all.
+ *
+ * ⚠️ Absent is no token, never a default: a transform with no `properties` maps
+ * nothing, and two sides that both omit a field agree about it. And the tokens
+ * are a set, so the order a file writes `properties` in — an object, re-keyed by
+ * any writer — is not a difference.
  */
 function constraintFacts(root: Json): Map<string, ConstraintFact> {
   const out = new Map<string, ConstraintFact>();
@@ -910,13 +939,89 @@ function constraintFacts(root: Json): Map<string, ConstraintFact> {
       const s = str(b);
       if (s !== null) refs.add(`bone:${s}`);
     }
-    for (const key of ['bone', 'target', 'source', 'slot'] as const) {
+    for (const key of ['bone', 'target', 'source', 'slot', 'animation', 'property'] as const) {
       const s = str(con[key]);
       if (s !== null) refs.add(`${key}:${s}`);
     }
-    out.set(at, { type: str(con.type) ?? '(none)', refs: [...refs].sort().join(' ') });
+    if (isObj(con.properties)) {
+      for (const [from, entry] of Object.entries(con.properties)) {
+        const to = isObj(entry) && isObj(entry.to) ? Object.keys(entry.to) : [];
+        // A `from` with no `to` maps nothing at runtime, but it is still a
+        // statement the file makes, so it is a token of its own rather than
+        // silently equal to the key being absent.
+        if (to.length === 0) refs.add(`property:${from}>`);
+        for (const t of to) refs.add(`property:${from}>${t}`);
+      }
+    }
+    const refList = [...refs].sort();
+    out.set(at, { type: str(con.type) ?? '(none)', refs: refList.join(' '), refList });
   }
   return out;
+}
+
+/** How many disagreeing constraints `constraints.refs`' note spells out before it counts the rest. */
+const REFS_SPELLED_OUT = 3;
+
+/**
+ * One constraint's disagreement, by field: `slider constraint "yaw": animation
+ * "5" vs "-a"` — the candidate's names for each field that differs, then the
+ * reference's, `none` where a side has none.
+ */
+function refsDisagreement(at: string, a: ConstraintFact, b: ConstraintFact): string {
+  const byField = (f: ConstraintFact): Map<string, string[]> => {
+    const m = new Map<string, string[]>();
+    for (const token of f.refList) {
+      const colon = token.indexOf(':');
+      const field = token.slice(0, colon);
+      m.set(field, [...(m.get(field) ?? []), token.slice(colon + 1)]);
+    }
+    return m;
+  };
+  const af = byField(a);
+  const bf = byField(b);
+  const fields = [...new Set([...af.keys(), ...bf.keys()])].sort();
+  const spell = (names: string[] | undefined): string =>
+    names === undefined ? 'none' : names.map((n) => JSON.stringify(n)).join(', ');
+  const parts = fields
+    .filter((f) => (af.get(f) ?? []).join(' ') !== (bf.get(f) ?? []).join(' '))
+    .map((f) => `${f} ${spell(af.get(f))} vs ${spell(bf.get(f))}`);
+  return `${at}: ${parts.join(', ')}`;
+}
+
+/**
+ * `constraints.refs`: `agreement` over the constraints, unchanged in what it
+ * counts, with a note naming each disagreement and both sides' names — the
+ * figure alone says that some constraint is wired differently, and a reader
+ * acting on it needs to know which one and to what (issue #1078).
+ *
+ * The note's two counts partition the misses: a constraint both sides hold whose
+ * wiring differs is spelled out, and one only one side holds is counted, since
+ * `constraints.names` is the measure that names it.
+ */
+function constraintRefs(a: Map<string, ConstraintFact>, b: Map<string, ConstraintFact>): DiffMeasure {
+  const base = agreement(
+    'constraints.refs',
+    'each constraint names the same bones, slots, animation and properties',
+    a,
+    b,
+    (x, y) => x.refs === y.refs,
+  );
+  const differ: string[] = [];
+  for (const [at, fact] of a) {
+    const other = b.get(at);
+    if (other !== undefined && other.refs !== fact.refs) differ.push(refsDisagreement(at, fact, other));
+  }
+  const missed = base.total - base.matched;
+  if (missed === 0) return base;
+  const oneSided = missed - differ.length;
+  const spelled = differ.slice(0, REFS_SPELLED_OUT);
+  const note =
+    (differ.length === 0 ? '' : `${differ.length} wired differently: ${spelled.join('; ')}`) +
+    (differ.length > spelled.length ? `; …and ${differ.length - spelled.length} more` : '') +
+    (oneSided === 0
+      ? ''
+      : `${differ.length === 0 ? '' : '; '}${oneSided} on one side only, which \`constraints.names\` names`);
+  return { ...base, note };
 }
 
 function diffConstraints(c: Json, r: Json): DiffSection {
@@ -932,7 +1037,7 @@ function diffConstraints(c: Json, r: Json): DiffSection {
       counted([...b.values()].map((f) => f.type)),
     ),
     agreement('constraints.type_by_name', 'each constraint is the same type', a, b, (x, y) => x.type === y.type),
-    agreement('constraints.refs', 'each constraint names the same bones and slots', a, b, (x, y) => x.refs === y.refs),
+    constraintRefs(a, b),
   ]);
 }
 

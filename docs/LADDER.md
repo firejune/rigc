@@ -8298,7 +8298,7 @@ reason and gate for neither.
         1.000  names                        0/0         the constraint names  — neither side has any
         1.000  type_counts                  0/0         as many of each constraint type  — neither side has any
         1.000  type_by_name                 0/0         each constraint is the same type  — neither side has any
-        1.000  refs                         0/0         each constraint names the same bones and slots  — neither side has any
+        1.000  refs                         0/0         each constraint names the same bones, slots, animation and properties  — neither side has any
 
     animations            mean 1.000  over 9 measures
         1.000  count                        2/2         how many animations
