@@ -32298,6 +32298,66 @@ function runPathAndSliderSuite(): number {
       'day this goes red the limit has moved, and the guide\'s paragraph with it',
   );
 
+  // -- PS191–PS192: a slider an editor import would repoint (issue #1040) ----
+  // Measured on Spine 4.3.26 (AUTHORING R10's dated record): the editor re-sorts the `animations` object into its
+  // comparator's order and keeps a slider's animation by index, and the file lists every array-index name first.
+  // So `5, -a` (the file) comes back `-a, 5`, and a slider on "5" comes back on "-a". The pair below is that case and
+  // the one beside it the rule must NOT refuse: an array-index name in the list whose slider's animation keeps its index.
+  const dialPose = (pathMotion(PATH_MOVE).animations as Record<string, unknown>)['dial-pose'];
+  const withAnimations = (animations: Record<string, unknown>): Record<string, unknown> => ({ ...pathMotion(PATH_MOVE), animations });
+  const onFive = refusal(
+    writeProbeRig({
+      ...PATH_RIG,
+      constraints: [PATH_RIG.constraints[0], { ...PATH_RIG.constraints[1], animation: '5' }, PATH_RIG.constraints[2]],
+    }),
+    withAnimations({ '5': dialPose, '-a': PATH_MOVE }),
+  );
+  say(
+    'PS191_A_SLIDER_WHOSE_ANIMATION_AN_EDITOR_IMPORT_WOULD_MOVE_INDEX_IS_REFUSED_NAMING_THE_ANIMATION_IT_WOULD_BECOME',
+    onFive !== null &&
+      onFive.includes('rig constraint "dial"') &&
+      onFive.includes('applies animation "5"') &&
+      onFive.includes('index 0 of its animations') &&
+      onFive.includes('sorts to index 1') &&
+      onFive.includes('repoints this slider to "-a"'),
+    onFive === null ? 'the compile went through' : `refused with: ${onFive}`,
+    'the file keys `5, -a` and the editor writes `-a, 5` back holding the slider at index 0, so the export applies ' +
+      'another animation in a file that parses and gates green — the silence #535 found, reached by a name the object ' +
+      'lists first',
+  );
+
+  const keptDirs = writeProbeRig(PATH_RIG);
+  const keptMotion = withAnimations({ 'dial-pose': dialPose, '5': PATH_MOVE, '-a': PATH_MOVE });
+  const keptProbes: string[] = [];
+  let keptKeys: string[] = [];
+  try {
+    const keptGate = gateProbe(keptDirs, keptMotion);
+    for (const f of keptGate.failures) keptProbes.push(`${f.assertion}: ${f.detail}`);
+    const keptText = compile({ rigPath: keptDirs.rigPath, motionPath: join(keptDirs.dir, 'probe.motion.json'), outDir: keptDirs.outDir, imagesDir: keptDirs.dir }).skeletonText;
+    const kept = JSON.parse(keptText) as { animations: Record<string, unknown>; constraints?: Array<{ name: string; animation?: string }> };
+    keptKeys = Object.keys(kept.animations);
+    const sorted = editorNamesInOrder(keptKeys, 'animations');
+    if (keptKeys.indexOf('dial-pose') !== sorted.indexOf('dial-pose')) keptProbes.push(`"dial-pose" stands at ${keptKeys.indexOf('dial-pose')} in the file and ${sorted.indexOf('dial-pose')} in the editor's order`);
+    if (keptKeys.join(',') === sorted.join(',')) keptProbes.push(`the file's order ${keptKeys.join(', ')} is the editor's, so the case carries no array-index name out of place`);
+    const dial = (kept.constraints ?? []).find((c) => c.name === 'dial');
+    if (dial?.animation !== 'dial-pose') keptProbes.push(`the slider "dial" is emitted naming ${JSON.stringify(dial?.animation)}`);
+  } catch (err) {
+    keptProbes.push(`refused: ${(err as Error).message.slice(0, 300)}`);
+  }
+  say(
+    'PS192_AN_ARRAY_INDEX_ANIMATION_NAME_THAT_MOVES_NO_SLIDER_BUILDS_GREEN',
+    keptProbes.length === 0,
+    probeDetail(
+      keptProbes.length === 0,
+      keptProbes,
+      `animations keyed ${keptKeys.join(', ')}, the editor's order ${keptKeys.length ? editorNamesInOrder(keptKeys, 'animations').join(', ') : '(none)'}; ` +
+        'the slider "dial" applies "dial-pose", at index 2 in both, and the gate is green',
+      (count) => `${count} thing(s) the case did not hold:`,
+    ),
+    'the refusal is the measured mechanism, not "any integer-like name": a name the object lists first moves only the ' +
+      'animations it overtakes, and a slider on none of those comes back intact',
+  );
+
   return bad;
 }
 
