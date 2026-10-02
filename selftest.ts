@@ -44017,6 +44017,7 @@ function losslessReport(
 import { FOOTPRINT_SLACK, footprintCell, packFootprints } from './src/atlas.ts';
 import { a49PackedFootprintsDoNotOverlap } from './src/assertions/bodies/a49.ts';
 import { regionFootprints } from './src/assertions/footprints.ts';
+import { POLYPACK_GAIN_SEED, POLYPACK_SEED, polypackShapes, writePolypackInputs } from './fixtures/polypack_shapes.ts';
 
 // ---------------------------------------------------------------------------
 // polygon packing — the footprints a pack keeps apart (issue #1099)
@@ -47672,6 +47673,147 @@ function runPackerSuite(): number {
       probeDetail(sameHeld, sameProbes, `${galleryNames.length} gallery rig(s): ${hullRegions} mesh region(s), each read as a hull by both the packer and the gate, and every other region a rectangle by both`),
       'issue #1099: a packer that placed by a hull the gate read as a rectangle would be refused on its own honest ' +
         'pack, and one the gate read as a hull where the packer kept a rectangle would let a neighbour in unseen',
+    );
+
+    // --- PK92..PK95: what the polygon pack costs (issue #1102) -----------------
+    // A production rig of 31 meshes packed `polygon` in 1,764 s against `rect`'s
+    // 19 s, the same pages. Its silhouette is private; `fixtures/polypack_shapes.ts`
+    // generates sets of its size bands and hull-vertex range from a seed. The
+    // cost is held as an operation count, not a clock — the tree times nothing
+    // in this file (`src/` is clock-free and a timing control would be the one
+    // nondeterministic verdict here). The unit is a free-list split: one per
+    // cell a rectangle pass places, one per band of every cell a footprint pass
+    // places (`PassTally`). Every search a pack runs is rebuilt from the
+    // exported search, as PK86 does: the single-page search over every part,
+    // and — when the pack spilled — each page's own search over its parts.
+    const polyGenDir = join(polyDir, 'polypack');
+    const replicaShaped = writePolypackInputs(join(polyGenDir, `seed-${POLYPACK_SEED}`), polypackShapes(POLYPACK_SEED));
+    const gainShaped = writePolypackInputs(join(polyGenDir, `seed-${POLYPACK_GAIN_SEED}`), polypackShapes(POLYPACK_GAIN_SEED));
+    const inPackOrder = <T extends { region: string; width: number; height: number }>(parts: readonly T[]): T[] =>
+      parts.slice().sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height) || b.width * b.height - a.width * a.height || (a.region < b.region ? -1 : a.region > b.region ? 1 : 0));
+    const searchesOf = (inputs: readonly PackInput[], pack: ReturnType<typeof packAtlas>): PackInput[][] =>
+      pack.pages.length === 1
+        ? [inputs.slice()]
+        : [inputs.slice(), ...pack.pages.map((_, i) => inputs.filter((p) => pack.placements.some((pl) => pl.page === i && pl.region === p.region)))];
+    type SearchCost = { splits: number; footprintPlaced: number; containmentTests: number; pages: string[] };
+    const costOf = (inputs: readonly PackInput[], pack: ReturnType<typeof packAtlas>, shape: 'rect' | 'polygon', options: { stopAtMiss?: boolean; edgeIndex?: boolean } = {}): SearchCost => {
+      const out: SearchCost = { splits: 0, footprintPlaced: 0, containmentTests: 0, pages: [] };
+      for (const set of searchesOf(inputs, pack)) {
+        const sorted = inPackOrder(set);
+        const cells = sorted.map((p) => ({ w: p.width + 2 * pack.padding, h: p.height + 2 * pack.padding }));
+        const shapes = shape === 'polygon' ? sorted.map((p) => footprintCell(p.width, p.height, pack.padding, p.footprint)) : undefined;
+        const search = freePageSearch(cells, DEFAULT_PAGE_SIZE, shapes, options);
+        out.splits += search.tally.rectPlaced + search.tally.bandSplits;
+        out.footprintPlaced += search.tally.footprintPlaced;
+        out.containmentTests += search.tally.containmentTests;
+        out.pages.push(search.page === null ? 'none' : `${search.page.width}x${search.page.height}@${search.page.rects.map((r) => `${r.x},${r.y}`).join(';')}`);
+      }
+      return out;
+    };
+    const genRows = ([['replica-shaped', POLYPACK_SEED, replicaShaped], ['gain-shaped', POLYPACK_GAIN_SEED, gainShaped]] as const).map(([what, seed, inputs]) => {
+      const rect = packAtlas(inputs, { pageEdges: 'free' });
+      const poly = packAtlas(inputs, { pageEdges: 'free', shape: 'polygon' });
+      const again = packAtlas(inputs.slice().reverse(), { pageEdges: 'free', shape: 'polygon' });
+      return { what: `${what} set (seed ${seed}, ${inputs.length} meshes)`, inputs, rect, poly, same: samePack(poly, again), identical: samePack(rect, poly) };
+    });
+
+    // PK92: on both generated sets the polygon pack is the rect pack or a
+    // smaller one, and deterministic. The replica-shaped set packs as the rig
+    // did — two pages, the rect pages to the texel, since its largest region's
+    // mesh draws a small part of it and so the footprint pass cannot place that
+    // region on an empty page (its owned box does not start at its cell's
+    // corner); the gain-shaped set is one where the footprint pass wins.
+    const genProbes = genRows.flatMap((r) => [
+      ...(r.same ? [] : [`${r.what}: the reversed polygon pack DIFFERS`]),
+      ...(areaOfPack(r.poly) <= areaOfPack(r.rect) ? [] : [`${r.what}: polygon ${shapeOfPack(r.poly)} is larger than rect ${shapeOfPack(r.rect)}`]),
+    ]);
+    if (genRows[0].rect.pages.length < 2 || !genRows[0].identical) genProbes.push(`the replica-shaped set did not spill to identical packs (rect ${shapeOfPack(genRows[0].rect)}, polygon ${shapeOfPack(genRows[0].poly)}), so it is not the shape it stands for`);
+    if (areaOfPack(genRows[1].poly) >= areaOfPack(genRows[1].rect)) genProbes.push(`the gain-shaped set gained nothing (rect ${shapeOfPack(genRows[1].rect)}, polygon ${shapeOfPack(genRows[1].poly)}), so no footprint pass did work`);
+    const genHeld = genProbes.length === 0;
+    say(
+      'PK92_A_PRODUCTION_SHAPED_SET_PACKS_NO_LARGER_UNDER_POLYGON',
+      genHeld,
+      probeDetail(
+        genHeld,
+        genProbes,
+        genRows.map((r) => `${r.what}: rect ${shapeOfPack(r.rect)} = ${areaOfPack(r.rect)}, polygon ${shapeOfPack(r.poly)} = ${areaOfPack(r.poly)}${r.identical ? ', identical' : ''}, the reversed pack identical`).join('; '),
+      ),
+      'issue #1102: the set the cost is held on has to be the shape that cost — few regions, a few of them large, a ' +
+        'spill — and a pack that moved nothing would hold the cost of a mode doing nothing, so the second set is one it wins on',
+    );
+
+    // PK93: the bound. On the replica-shaped set the polygon pack's searches make
+    // no more than ten times the free-list splits of the rect pack's.
+    const COST_BOUND = 10;
+    const rectCost = costOf(replicaShaped, genRows[0].rect, 'rect');
+    const polyCost = costOf(replicaShaped, genRows[0].poly, 'polygon');
+    const boundHeld = rectCost.splits > 0 && polyCost.splits <= COST_BOUND * rectCost.splits;
+    say(
+      'PK93_THE_POLYGON_PACK_OF_A_PRODUCTION_SHAPED_SET_COSTS_WITHIN_TEN_TIMES_RECT',
+      boundHeld,
+      `${genRows[0].what}: rect ${rectCost.splits} free-list split(s) over ${rectCost.pages.length} search(es), polygon ${polyCost.splits} ` +
+        `(${polyCost.footprintPlaced} cell(s) placed by footprint passes), bound ${COST_BOUND}x = ${COST_BOUND * rectCost.splits}`,
+      'issue #1102: before it the single-page search ran a full footprint pass at every width although nothing fits — ' +
+        'no best page ever bounds a width there — and each one was thrown away; on the rig that was 1,764 s against 19 s',
+    );
+
+    // PK94: the savings move no page. On every gallery rig (the seven whose
+    // rect bytes `EH06` holds), packed `polygon` on a `free` page, the page and
+    // every placement the pack wrote are what the search finds with both savings
+    // off — every footprint pass run to its end, every prune scanning the whole
+    // free list — and the edge index prunes with fewer containment tests
+    // wherever a footprint pass did work. And on the replica-shaped set, whose
+    // passes miss, the same with the early stop off.
+    const galleryDir = resolve(import.meta.dir, 'gallery');
+    const galleryRows = readdirSync(galleryDir)
+      .sort()
+      .filter((n) => existsSync(join(galleryDir, n, 'rig.json')) && existsSync(join(galleryDir, n, 'motion.json')))
+      .map((name) => {
+        const result = compile({ rigPath: join(galleryDir, name, 'rig.json'), motionPath: join(galleryDir, name, 'motion.json'), outDir: join(polyGenDir, `gallery-${name}`) });
+        const inputs = withFootprints(packInputsOf(result.images), result.skeletonText);
+        const pack = packAtlas(inputs, { pageEdges: 'free', shape: 'polygon' });
+        const on = costOf(inputs, pack, 'polygon');
+        const off = costOf(inputs, pack, 'polygon', { stopAtMiss: false, edgeIndex: false });
+        const written = `${pack.pages.map((p) => `${p.width}x${p.height}`).join('+')}`;
+        return { name, pack, on, off, written, meshes: inputs.filter((i) => i.footprint !== undefined).length };
+      });
+    const replicaOff = costOf(replicaShaped, genRows[0].poly, 'polygon', { stopAtMiss: false });
+    const keepProbes = [
+      ...galleryRows.flatMap((r) => [
+        ...(r.on.pages.join('|') === r.off.pages.join('|') ? [] : [`gallery/${r.name}: the search with the savings off finds ${r.off.pages.join(' | ')} where the pack's finds ${r.on.pages.join(' | ')}`]),
+        ...(r.pack.pages.length === 1 && r.on.pages[0].startsWith(`${r.written}@`) ? [] : [`gallery/${r.name}: the pack wrote ${r.written}, the search finds ${r.on.pages[0]}`]),
+        ...(r.off.containmentTests > 0 && r.on.containmentTests >= r.off.containmentTests ? [`gallery/${r.name}: the edge index made ${r.on.containmentTests} containment test(s), the full scan ${r.off.containmentTests}`] : []),
+      ]),
+      ...(galleryRows.some((r) => r.off.containmentTests > 0) ? [] : ['no gallery rig ran a footprint pass that pruned, so the edge index was never asked']),
+      ...(replicaOff.pages.join('|') === polyCost.pages.join('|') ? [] : [`${genRows[0].what}: with the early stop off the searches find ${replicaOff.pages.join(' | ')}`]),
+    ];
+    const keepHeld = keepProbes.length === 0;
+    say(
+      'PK94_THE_COST_SAVINGS_MOVE_NO_PAGE_ON_THE_GALLERY_OR_THE_GENERATED_SET',
+      keepHeld,
+      probeDetail(
+        keepHeld,
+        keepProbes,
+        galleryRows.map((r) => `gallery/${r.name} (${r.meshes} mesh region(s)): ${r.written}, the same with the savings off; containment tests ${r.on.containmentTests} against ${r.off.containmentTests}`).join('; ') +
+          `; ${genRows[0].what}: the same ${replicaOff.pages.length} search(es) with the early stop off`,
+      ),
+      'issue #1102: a cost fix is admitted on the argument that no decision changes — the early stop drops only what a ' +
+        'page search throws away, the edge index asks the containment test of the only entries that can answer yes — ' +
+        'and the argument is held here by the answer it predicts, on every rig whose bytes are already held',
+    );
+
+    // PK95: the plant. The replica-shaped set's searches with the early stop
+    // off — the code before issue #1102 — make more free-list splits than the
+    // bound allows, so PK93 measures the saving it exists for.
+    const plantHeld = replicaOff.splits > COST_BOUND * rectCost.splits;
+    say(
+      'PK95_A_POLYGON_SEARCH_WITHOUT_THE_EARLY_STOP_IS_PAST_THE_BOUND',
+      plantHeld,
+      `${genRows[0].what}, every footprint pass run to its end: ${replicaOff.splits} free-list split(s) ` +
+        `(${replicaOff.footprintPlaced} cell(s) placed by footprint passes) against the bound ${COST_BOUND * rectCost.splits}, ` +
+        `${(replicaOff.splits / rectCost.splits).toFixed(1)}x rect`,
+      'a bound nobody has seen fail is not a bound: this is the work every width of a search that cannot fit one page ' +
+        'did and discarded, measured in the unit PK93 holds',
     );
   }
   return bad;

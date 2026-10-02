@@ -834,7 +834,7 @@ function smallestPageFor(
   for (const w of edges) for (const h of edges) candidates.push({ w, h });
   candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
   for (const candidate of candidates) {
-    const attempt = placePass(cells, shapes, candidate.w, candidate.h);
+    const attempt = placePass(cells, shapes, candidate.w, candidate.h, Infinity, { wholeOrNothing: true });
     if (attempt.some((r) => r === null)) continue;
     return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
   }
@@ -901,6 +901,21 @@ export interface FreePageSearch {
   abandoned: number;
   /** Widths never placed: too narrow for the cells' area, or wide enough that the tallest cell alone loses. */
   skipped: number;
+  /** What the passes placed, by kind (`PassTally`). */
+  tally: PassTally;
+}
+
+/**
+ * How `freePageSearch` runs its passes — for the selftest's plants only
+ * (`PK94`, `PK95`). Each turns one of issue #1102's savings off: `stopAtMiss:
+ * false` runs every footprint pass to its end, `edgeIndex: false` prunes the
+ * free list by scanning all of it. The page is the same either way; only what
+ * it costs differs, and the plants hold that.
+ */
+export interface FreePageSearchOptions {
+  stopAtMiss?: boolean;
+  /** `false` scans the whole free list for a piece's containers (`splitFree`), as the prune did before issue #1102. */
+  edgeIndex?: boolean;
 }
 
 /**
@@ -910,7 +925,13 @@ export interface FreePageSearch {
  * packer uses; the counts are for the control. `shapes`, one per cell, is
  * `shape: 'polygon'`'s placement (`placePass`); absent, the rectangle pass.
  */
-export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: number, shapes?: readonly CellShape[]): FreePageSearch {
+export function freePageSearch(
+  cells: Array<{ w: number; h: number }>,
+  maxEdge: number,
+  shapes?: readonly CellShape[],
+  options: FreePageSearchOptions = {},
+): FreePageSearch {
+  const wholeOrNothing = options.stopAtMiss ?? true;
   let widest = 0;
   let tallest = 0;
   let cellArea = 0;
@@ -927,7 +948,7 @@ export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: 
     cellArea = 0;
     for (const shape of shapes) cellArea += shape.owned;
   }
-  const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0 };
+  const out: FreePageSearch = { page: null, widths: 0, completed: 0, abandoned: 0, skipped: 0, tally: { rectPlaced: 0, footprintPlaced: 0, bandSplits: 0, containmentTests: 0 } };
   let best: { width: number; height: number; rects: Rect[] } | null = null;
   for (let width = Math.ceil(widest / FREE_EDGE_STEP) * FREE_EDGE_STEP; width <= maxEdge; width += FREE_EDGE_STEP) {
     out.widths++;
@@ -937,7 +958,7 @@ export function freePageSearch(cells: Array<{ w: number; h: number }>, maxEdge: 
       continue;
     }
     const maxBottom = best === null ? Infinity : Math.floor(bestArea / width);
-    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom);
+    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom, { wholeOrNothing, tally: out.tally, edgeIndex: options.edgeIndex ?? true });
     let height = 0;
     for (const r of attempt) if (r !== null) height = Math.max(height, r.y + r.h);
     if (height > maxBottom) {
@@ -1094,9 +1115,46 @@ function placePass(
   pageW: number,
   pageH: number,
   maxBottom = Infinity,
+  pass: PassOptions = {},
 ): Array<Rect | null> {
-  const byRect = packOnePage(cells, pageW, pageH, maxBottom);
-  if (shapes === undefined || shapes.every((s) => s.whole)) return byRect;
+  const wholeOrNothing = pass.wholeOrNothing ?? false;
+  const tally = pass.tally;
+  if (shapes === undefined || shapes.every((s) => s.whole)) {
+    const byRect = packOnePage(cells, pageW, pageH, maxBottom);
+    if (tally !== undefined) tally.rectPlaced += placedCount(byRect);
+    return byRect;
+  }
+  // ⭐ `wholeOrNothing` is the page searches' question (issue #1102): they keep
+  // a pass only when it placed every cell, so a pass that has missed one is
+  // already discarded, whatever it does next. Two savings follow, and neither
+  // can change a page the search keeps:
+  //
+  //   * the rectangle pass is not run when the cells' own area exceeds the
+  //     page — disjoint rectangles cannot all fit, so it could not place every
+  //     cell, and the pass it would have lost or won against is discarded either
+  //     way (a footprint pass that placed every cell beats a rectangle pass that
+  //     did not, on the first key);
+  //   * the footprint pass stops at its first miss (`packOnePageByFootprint`'s
+  //     `stopAtMiss`), returning the cells after it as not placed.
+  //
+  // What is returned can then differ from the full answer only in which of two
+  // failed passes it is, or in how many cells a failed pass placed — and the
+  // searches read neither. The spill's assignment pass, which keeps the cells
+  // a pass did place, never asks this (`packAtlas`).
+  //
+  // Measured on a replica of a production rig (31 meshes, a two-page `free`
+  // spill at 2048, padding 2), where the pack took 260–304 s against `rect`'s
+  // 0.14–0.24 s: the single-page search ran a full footprint pass at every one of its
+  // 854 widths (54 % of the time), because nothing fits and so no best page
+  // ever bounds a width, and the first page's own search ran one at every width
+  // it did not abandon (46 %). The largest cell's owned box does not start at
+  // its cell's corner, so on an empty page that cell is every footprint pass's
+  // first miss — all 1,709 of them — and every one of those passes was thrown
+  // away. With the early stop the pack takes 0.15–0.7 s by the load, the
+  // same pages.
+  const rectCanFit = !wholeOrNothing || cellAreaOf(cells) <= pageW * pageH;
+  const byRect = rectCanFit ? packOnePage(cells, pageW, pageH, maxBottom) : null;
+  if (tally !== undefined && byRect !== null) tally.rectPlaced += placedCount(byRect);
   // ⭐ `polygon` never costs a page anything `rect` would have saved. Both passes
   // are run on the same page and the better one is kept: more cells placed,
   // then the higher bottom edge, then — on a tie — the rectangle pass. Two
@@ -1107,13 +1165,54 @@ function placePass(
   // than `rect` on two of the five gallery rigs that carry a mesh, because a
   // greedy pass that places one cell differently places every later one
   // differently too.
-  const byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom);
-  const placedOf = (pass: Array<Rect | null>): number => pass.reduce((n, r) => (r === null ? n : n + 1), 0);
-  const bottomOf = (pass: Array<Rect | null>): number => pass.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
-  const placedRect = placedOf(byRect);
-  const placedFoot = placedOf(byFootprint);
+  const byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally);
+  if (tally !== undefined) tally.footprintPlaced += placedCount(byFootprint);
+  if (byRect === null) return byFootprint;
+  const bottomOf = (placed: Array<Rect | null>): number => placed.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
+  const placedRect = placedCount(byRect);
+  const placedFoot = placedCount(byFootprint);
   if (placedFoot !== placedRect) return placedFoot > placedRect ? byFootprint : byRect;
   return bottomOf(byFootprint) < bottomOf(byRect) ? byFootprint : byRect;
+}
+
+/** How `placePass` runs — what the page searches ask of it (issue #1102). */
+interface PassOptions {
+  /** Only a pass that places every cell is kept by the caller. See `placePass`. */
+  wholeOrNothing?: boolean;
+  /** Where to count what the passes placed. */
+  tally?: PassTally;
+  /** `splitFree`'s edge index (default on); off only for the selftest's plant. */
+  edgeIndex?: boolean;
+}
+
+/** How many cells a pass placed. */
+function placedCount(pass: ReadonlyArray<Rect | null>): number {
+  let n = 0;
+  for (const r of pass) if (r !== null) n++;
+  return n;
+}
+
+/** The cells' own area — what disjoint rectangles need of a page at least. */
+function cellAreaOf(cells: ReadonlyArray<{ w: number; h: number }>): number {
+  let area = 0;
+  for (const cell of cells) area += cell.w * cell.h;
+  return area;
+}
+
+/**
+ * What a page search's passes placed, by kind — the operation count a search's
+ * cost is held by (`PK93`), since a footprint placement splits the free list
+ * once per band of what the cell owns and a rectangle placement once.
+ */
+export interface PassTally {
+  /** Cells placed by rectangle passes (`packOnePage`). */
+  rectPlaced: number;
+  /** Cells placed by footprint passes (`packOnePageByFootprint`). */
+  footprintPlaced: number;
+  /** Free-list splits the footprint passes made — one per band of every cell they placed (`splitFree`). */
+  bandSplits: number;
+  /** Containment tests the footprint passes' prune made (`splitFree`). */
+  containmentTests: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,43 +1476,99 @@ function shapesMeet(a: CellShape, ax: number, ay: number, b: CellShape, bx: numb
  * px, hulls near their rectangles, a `free` page about 2023x2046) the pack
  * took 18.5 s with the slivers kept and spent 95 % of it in this prune.
  */
-function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1): void {
+function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1, edgeIndex = true, tally?: PassTally): void {
   const next: Rect[] = [];
-  const untouched: boolean[] = [];
+  /** Per entry of `next`: `UNTOUCHED`, or which side of `put` the piece was cut from. */
+  const side: number[] = [];
   for (const fr of free) {
     const overlaps = put.x < fr.x + fr.w && put.x + put.w > fr.x && put.y < fr.y + fr.h && put.y + put.h > fr.y;
     if (!overlaps) {
       next.push(fr);
-      untouched.push(true);
+      side.push(UNTOUCHED);
       continue;
     }
-    if (put.x > fr.x) next.push({ x: fr.x, y: fr.y, w: put.x - fr.x, h: fr.h });
+    if (put.x > fr.x) {
+      next.push({ x: fr.x, y: fr.y, w: put.x - fr.x, h: fr.h });
+      side.push(LEFT_OF_PUT);
+    }
     if (put.x + put.w < fr.x + fr.w) {
       next.push({ x: put.x + put.w, y: fr.y, w: fr.x + fr.w - (put.x + put.w), h: fr.h });
+      side.push(RIGHT_OF_PUT);
     }
-    if (put.y > fr.y) next.push({ x: fr.x, y: fr.y, w: fr.w, h: put.y - fr.y });
+    if (put.y > fr.y) {
+      next.push({ x: fr.x, y: fr.y, w: fr.w, h: put.y - fr.y });
+      side.push(ABOVE_PUT);
+    }
     if (put.y + put.h < fr.y + fr.h) {
       next.push({ x: fr.x, y: put.y + put.h, w: fr.w, h: fr.y + fr.h - (put.y + put.h) });
+      side.push(BELOW_PUT);
     }
-    while (untouched.length < next.length) untouched.push(false);
   }
   const contains = (a: Rect, b: Rect): boolean => b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
   const usable = (r: Rect): boolean => r.w >= minW && r.h >= minH;
+  // ⭐ The third saving (issue #1102): a piece's containers are looked for only
+  // among the entries that share the edge it was cut along. A piece cut from
+  // the left of `put` ends at `put.x` and keeps its parent's rows, which meet
+  // `put`'s rows (the parent overlapped `put`). A rectangle containing it covers
+  // those rows from the piece's left edge to at least `put.x`; if it reached
+  // past `put.x` it would overlap `put` — and no entry of `next` does (an
+  // untouched rectangle by definition, a piece by construction). So every
+  // container of a left piece ENDS at `put.x`; likewise a right piece's starts
+  // at `put.x + put.w`, an upper piece's ends at `put.y` and a lower piece's
+  // starts at `put.y + put.h`. The test is the full prune's test, asked of the
+  // only entries that can answer it yes, so `contained` is the same boolean and
+  // the list the same list in the same order. Measured where the footprint
+  // pass does work (`fixtures/polypack_shapes.ts`, seed 1105, the searches a
+  // `polygon` pack of it runs): 415,916,651 containment tests by the full scan,
+  // 15,407,179 by the index, 3.2 s → 2.3 s; with the early stop off as well,
+  // 11,928,721,590 → 537,215,014 and 101 s → 14.5 s. `edgeIndex: false` is
+  // that scan, kept so the selftest can hold that the index finds what the
+  // scan finds (`PK94`) and for nothing else.
+  const scan: number[][] = [[], [], [], []];
+  const all: number[] = [];
+  for (let j = 0; j < next.length; j++) {
+    const r = next[j];
+    if (!usable(r)) continue;
+    if (!edgeIndex) {
+      all.push(j);
+      continue;
+    }
+    if (r.x + r.w === put.x) scan[LEFT_OF_PUT].push(j);
+    if (r.x === put.x + put.w) scan[RIGHT_OF_PUT].push(j);
+    if (r.y + r.h === put.y) scan[ABOVE_PUT].push(j);
+    if (r.y === put.y + put.h) scan[BELOW_PUT].push(j);
+  }
   free.length = 0;
+  let tests = 0;
   for (let i = 0; i < next.length; i++) {
     if (!usable(next[i])) continue;
-    if (untouched[i]) {
+    if (side[i] === UNTOUCHED) {
       free.push(next[i]);
       continue;
     }
     let contained = false;
-    for (let j = 0; j < next.length && !contained; j++) {
-      if (i === j || !usable(next[j])) continue;
-      if (contains(next[j], next[i]) && (j < i || !contains(next[i], next[j]))) contained = true;
+    for (const j of edgeIndex ? scan[side[i]] : all) {
+      if (i === j) continue;
+      tests++;
+      if (contains(next[j], next[i]) && (j < i || !contains(next[i], next[j]))) {
+        contained = true;
+        break;
+      }
     }
     if (!contained) free.push(next[i]);
   }
+  if (tally !== undefined) {
+    tally.bandSplits++;
+    tally.containmentTests += tests;
+  }
 }
+
+/** Which side of the placed rectangle a free-list piece was cut from (`splitFree`) — an index into its edge lists. */
+const LEFT_OF_PUT = 0;
+const RIGHT_OF_PUT = 1;
+const ABOVE_PUT = 2;
+const BELOW_PUT = 3;
+const UNTOUCHED = -1;
 
 /**
  * `packOnePage` with the free-space test replaced by the footprint test
@@ -1455,7 +1610,15 @@ function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1): void {
  * over the cells in the caller's order, each over a finite free list, every
  * choice made by a total order, and no input but the cells and the page.
  */
-function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pageH: number, maxBottom = Infinity): Array<Rect | null> {
+function packOnePageByFootprint(
+  shapes: readonly CellShape[],
+  pageW: number,
+  pageH: number,
+  maxBottom = Infinity,
+  stopAtMiss = false,
+  edgeIndex = true,
+  tally?: PassTally,
+): Array<Rect | null> {
   const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
   const placed: Array<Rect | null> = [];
   const owned: Array<{ shape: CellShape; x: number; y: number }> = [];
@@ -1498,6 +1661,12 @@ function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pag
     }
     if (best === null) {
       placed.push(null);
+      // A caller that keeps only a pass placing every cell has its answer
+      // (`placePass`, `wholeOrNothing`): the rest are not placed.
+      if (stopAtMiss) {
+        while (placed.length < shapes.length) placed.push(null);
+        return placed;
+      }
       continue;
     }
     const put: Rect = { x: best.x - box.x, y: best.y - box.y, w: shape.width, h: shape.height };
@@ -1521,7 +1690,7 @@ function packOnePageByFootprint(shapes: readonly CellShape[], pageW: number, pag
       while (placed.length < shapes.length) placed.push(null);
       return placed;
     }
-    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH);
+    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH, edgeIndex, tally);
   }
   return placed;
 }
