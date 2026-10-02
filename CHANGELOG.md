@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.4](https://github.com/firejune/rigc/compare/v1.9.3...v1.9.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **gate:** a page file not on disk is named once, by A17 — A06 and A19 SKIP naming the pages they did not read instead of printing PASS over them ([#1067](https://github.com/firejune/rigc/issues/1067)) ([66f9ee6](https://github.com/firejune/rigc/commit/66f9ee6465c858a65c1ee6d6d2241021da9e2c0d)), closes [#1055](https://github.com/firejune/rigc/issues/1055)
+
 ## [1.9.3](https://github.com/firejune/rigc/compare/v1.9.2...v1.9.3) (2026-10-02)
 
 
