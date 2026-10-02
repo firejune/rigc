@@ -936,6 +936,103 @@ export function shapeDiff(before: Shape, after: Shape): string[] {
   return rows;
 }
 
+/** What a JSON value is, in the words a refusal names it by: `null`, `an array`, `a number`, … */
+function jsonKind(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value === 'object' ? 'an object' : `a ${typeof value}`;
+}
+
+/** True for the one JSON kind a skeleton file and each of its records is: a plain object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The build's `skeleton.json`, read and parsed once, or the sentence the tool
+ * refuses it with (issue #1090).
+ *
+ * 🚨 The `skeleton.images` probe in `main` used to be the first thing that read
+ * this file, and it read it with a bare `JSON.parse`. A file that was not JSON,
+ * or was JSON holding `null`, therefore left the tool as an uncaught
+ * `SyntaxError` / `TypeError` and its stack — before the editor, so with nothing
+ * of the editor's to quote, and in a shape no other refusal in this file has.
+ * And a file holding `[]` or `7` did not stop at all: the probe found no
+ * `skeleton.images` on it and the run went on to hand the editor a file that is
+ * not a skeleton, minutes of import for a refusal this could state for free.
+ *
+ * ⭐ So this is the one reader of the build's skeleton text before step 1, and
+ * it refuses by the file's path and what it found there: a directory, the
+ * parser's own message, or the JSON kind that is not an object. What it hands
+ * back is the value the probe reads, so a readable build is parsed exactly as
+ * it was and every line after this prints as it did.
+ */
+function readBuildSkeleton(source: string): { skeleton: Record<string, unknown> } | { refusal: string } {
+  const required =
+    'The round trip imports that file into the editor, so it has to be one skeleton JSON object — `skeleton`, ' +
+    '`bones`, `slots`, … — which is what `rigc build` writes there.';
+  let text: string;
+  try {
+    text = readFileSync(source, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EISDIR') return { refusal: `the build's skeleton.json at ${source} is a directory, not a file. ${required}` };
+    return { refusal: `the build's skeleton.json at ${source} could not be read (${code ?? String(err)}). ${required}` };
+  }
+  if (text.trim() === '') {
+    return { refusal: `the build's skeleton.json at ${source} is empty (${text.length} byte(s), no JSON value in them). ${required}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    const said = err instanceof Error ? err.message : String(err);
+    return { refusal: `the build's skeleton.json at ${source} is not JSON — the parser stopped with "${said}". ${required}` };
+  }
+  if (!isRecord(parsed)) {
+    return { refusal: `the build's skeleton.json at ${source} is JSON, but it holds ${jsonKind(parsed)} rather than an object. ${required}` };
+  }
+  return { skeleton: parsed };
+}
+
+/**
+ * The field of the build's skeleton the images probe would have thrown on, as a
+ * sentence naming it and what it holds — or null when every field the probe
+ * dereferences is the kind it reads (issue #1090).
+ *
+ * ⚠️ Only those fields, and only on the path that reads them: the walk below
+ * runs when `skeleton.images` is declared, and a field this does not read is the
+ * gate's to judge after the import, not a precondition of the editor's. Asking
+ * more here would be a second validator in front of the first.
+ */
+function imagesProbeFault(skeleton: Record<string, unknown>): string | null {
+  const head = skeleton.skeleton;
+  if (!isRecord(head)) return null;
+  const images = head.images;
+  if (images === undefined) return null;
+  if (typeof images !== 'string') return `\`skeleton.images\` holds ${jsonKind(images)}, not a path string`;
+  if (images === '') return null;
+  const skins = skeleton.skins;
+  if (skins === undefined) return null;
+  if (!Array.isArray(skins)) return `\`skins\` holds ${jsonKind(skins)}, not an array`;
+  for (let i = 0; i < skins.length; i++) {
+    const skin: unknown = skins[i];
+    if (!isRecord(skin)) return `\`skins[${i}]\` holds ${jsonKind(skin)}, not an object`;
+    const attachments = skin.attachments;
+    if (attachments === undefined) continue;
+    if (!isRecord(attachments)) return `\`skins[${i}].attachments\` holds ${jsonKind(attachments)}, not an object`;
+    for (const [slot, entries] of Object.entries(attachments)) {
+      if (!isRecord(entries)) return `\`skins[${i}].attachments.${slot}\` holds ${jsonKind(entries)}, not an object`;
+      for (const [placeholder, att] of Object.entries(entries)) {
+        if (!isRecord(att)) {
+          return `\`skins[${i}].attachments.${slot}.${placeholder}\` holds ${jsonKind(att)}, not an object`;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function main(): void {
   const opts = parseArgs(process.argv.slice(2));
   const rigc = rigcCommand();
@@ -975,6 +1072,19 @@ function main(): void {
   };
 
   if (!existsSync(source)) fail(`no skeleton.json in the build directory ${opts.build}`);
+  // 🔒 Read and parsed HERE, once, before anything else reads it (issue #1090):
+  // a build whose skeleton is not one JSON object is refused by name rather than
+  // thrown as a stack by the probe below, or handed to the editor.
+  const read = readBuildSkeleton(source);
+  if ('refusal' in read) return fail(read.refusal);
+  const probeFault = imagesProbeFault(read.skeleton);
+  if (probeFault !== null) {
+    fail(
+      `the build's skeleton.json at ${source} is an object, but ${probeFault} — one of the fields read before ` +
+        "step 1 to check that every image the editor's import will look for is there. A skeleton `rigc build` " +
+        'wrote never carries that; rebuild the directory with `rigc build … --copy-images`.',
+    );
+  }
 
   // 🚨 The art the EDITOR will look for, checked before the editor is started —
   // issue #562. The editor's JSON import reads `skeleton.images` and finds each
@@ -1010,7 +1120,9 @@ function main(): void {
       skeleton?: { images?: string };
       skins?: Array<{ attachments?: Record<string, Record<string, { type?: string; name?: string; path?: string }>> }>;
     }
-    const probe = JSON.parse(readFileSync(source, 'utf8')) as ImagesProbe;
+    // The value `readBuildSkeleton` parsed, and the fields this walk reads are
+    // the ones `imagesProbeFault` has already held to their kinds.
+    const probe = read.skeleton as ImagesProbe;
     const declared = probe.skeleton?.images;
     if (declared !== undefined && declared !== '') {
       const imagesDir = resolve(opts.build, declared);
