@@ -55,6 +55,7 @@
   "files": [
     "bin/rigc.cjs",
     "cli.ts",
+    "cli_core.ts",
     "src",
     "tools/plate.ts",
     "tools/font5x7.ts",
@@ -90,10 +91,8 @@
     "viewer": "vite --config viewer/vite.config.ts",
     "prepublishOnly": "bun run typecheck && bun run lint && bun run selftest"
   },
-  "dependencies": {
-    "@esotericsoftware/spine-core": "4.3.13"
-  },
   "devDependencies": {
+    "@esotericsoftware/spine-core": "4.3.13",
     "@types/bun": "^1.4.0",
     "eslint": "^10.9.0",
     "spine-html": "^0.4.1",
