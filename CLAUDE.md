@@ -47,14 +47,28 @@ sincere about it. rigc exists to convert that silence into a named failure.
 - **Emit only after green.** `build` compiles, validates, and writes *only* if
   every assertion passes. Never reorder that. A wrong file on disk outlives the
   console output that warned about it.
-- 🔒 **Validation through spine-core is not optional — this is a structural
-  invariant, not a default.** There must never be a `--no-validate` or
-  `--emit-anyway` flag, an environment escape, or an exported API that hands back
-  emitted artifacts without the round-trip having run. **Correctness is the whole
-  of the reason, and it is sufficient by itself:** the round trip through the
-  official parser is the only thing that makes the output trustworthy; a bypass
-  turns rigc back into a program that prints plausible JSON. Do not accept a
-  "just for testing" bypass.
+- 🔒 **Validation is not optional — this is a structural invariant, not a
+  default.** There must never be a `--no-validate` or `--emit-anyway` flag, an
+  environment escape, or an exported API that hands back emitted artifacts
+  without the gate having run. **Correctness is the whole of the reason, and it
+  is sufficient by itself.** The gate is one body of assertions with two
+  suppliers: the round trip through `@esotericsoftware/spine-core`, which
+  `cli.ts build` runs wherever the runtime is installed — a clone, CI, an install
+  with it added beside — and rigc's own validator over the model document and
+  the emitted text, which `cli_core.ts build` runs where it is not (the published
+  package, since 2.0.0: `spine-core` is a devDependency). The second supplier is
+  admitted on measurement, not on its word, and the measurement's scope is
+  stated rather than rounded up: of the 49 assertions, the 40 the model side
+  runs are held to the round trip's verdict lines by `verdict_gate`, the 8
+  restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A18) by
+  `RC28`, and `A00_ROUNDTRIP_PARSE` — the parse by the official runtime — does
+  not run on the core build and is reported as a SKIP that says so. `core_gate`
+  holds rigc's poser to spine-core's poses at tolerance 0. CI runs all of that
+  on every change over the public recipes and every selftest call; the 14
+  production rigs are measured by hand with private recipes CI does not have,
+  before each landing — a practice, not a gate CI enforces. A bypass of either
+  supplier turns rigc back into a program that prints plausible JSON. Do not
+  accept a "just for testing" bypass.
 
   A second reason stood here until 2026-09-05, when issue #398 retired it: that a
   build path not linking the runtime would be a Spine-format emitter with no
@@ -62,17 +76,20 @@ sincere about it. rigc exists to convert that silence into a named failure.
   of being used as a substitute for" the editor. Declaring a format-agnostic core
   with its own format and player (issue #380) makes that a promise the roadmap
   already contradicts, and an unkeepable promise is worth less than none — so it
-  is retired rather than reworded. What that does not touch: rigc links
-  `spine-core`, so the Spine Runtimes License covers running it. That is a fact
-  about what the code links, [NOTICE.md](NOTICE.md) states it, and it stands
-  whether or not the clause does.
+  is retired rather than reworded. What that does not touch: this repository
+  links `spine-core` as a devDependency, so the Spine Runtimes License covers
+  running it from a clone, in CI, or with the runtime installed beside the
+  package; the published package links none. That is a fact about what the code
+  links, [NOTICE.md](NOTICE.md) states it, and it stands whether or not the
+  clause does.
 
   ⚠️ **None of that authorises an emit path with no oracle behind it.** What the
-  invariant requires is that everything written to disk was read back by a parser
-  rigc did not write, and spine-core is what supplies that today. A backend
-  emitting rigc's own format has no such parser, so it needs its own: issue
-  #380's cross-backend oracle is the prerequisite for shipping one, not a nicety
-  attached to it.
+  invariant requires is that everything written to disk was gated by a reader
+  held to a parser rigc did not write: spine-core supplies that reading in CI,
+  and the own validator ships only because the gate above holds it equal. A
+  backend emitting a format with no such parser needs its own oracle first —
+  issue #380's cross-backend oracle was the prerequisite for the core entry's
+  build, not a nicety attached to it.
 - **Determinism is a contract, not a habit.** `A18_DETERMINISTIC_EMIT` compares a
   second, independent compile byte for byte. Anything non-deterministic —
   iteration over an unordered set, a timestamp, a locale-sensitive format, floating

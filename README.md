@@ -10,9 +10,10 @@
 
 **AI-authored Spine 2D rigging and animation, verified before it is written.** rigc is
 a rig compiler for Spine: a rig spec and a motion spec in, Spine 4.3 skeleton data out,
-round-tripped through `spine-core` and a list of named assertions before a byte is
-written. Built so AI agents can author rigs and check their own work; it ships as an
-agent skill.
+gated by a list of named assertions before a byte is written — rigc's own validator in
+the published package, held to a `spine-core` round trip's verdicts in this
+repository's CI. Built so AI agents can author rigs and check their own work; it ships
+as an agent skill.
 
 ## What you get
 
@@ -26,8 +27,10 @@ the breathing and the wave are all rigc-compiled Spine animations, rendered with
 
 Loose part PNGs and two small JSON files in; **Spine 4.3 skeleton data out** — a
 `skeleton.json` and a `skeleton.atlas` that load in any Spine runtime and **import
-into the Spine editor**. Nothing is written unless a round-trip through Spine's own
-parser and a list of named assertions all come back green.
+into the Spine editor**. Nothing is written unless a list of named assertions comes
+back green — assertions this repository holds to the verdicts of a round-trip through
+Spine's own parser, all but the parse itself, which runs only where the runtime is
+installed.
 
 | You have | You run | You get |
 | --- | --- | --- |
@@ -53,10 +56,16 @@ it cuts both ways:
   drafts, a human refines in the editor**. That hand-off is what emitting somebody
   else's format buys, and `tools/editor_roundtrip.ts` measures that it survives
   the trip in both directions.
-- rigc **links `@esotericsoftware/spine-core`** to validate what it emits — the
-  round-trip through the official parser is the only reason its output can be
-  trusted at all. So the [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license)
-  applies to rigc exactly as it applies to any other runtime integration.
+- The published package **links no Spine runtime**. `@esotericsoftware/spine-core`
+  is a development dependency: this repository uses it to hold rigc's own validator
+  to the round trip's verdicts — in CI, on the public example recipes and every
+  selftest call, and on a private corpus of production rigs measured before each
+  release. Of the 49 assertions, 48 run on both; `A00_ROUNDTRIP_PARSE`, the official
+  parser's own parse, runs only where the runtime is installed and is reported as a
+  SKIP elsewhere. Install it beside rigc (`bun add -d @esotericsoftware/spine-core`)
+  and the same `rigc` runs the round trip on every build. The
+  [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license)
+  applies to that dependency wherever it is installed.
 
 ### Licensing, stated plainly
 
@@ -64,15 +73,23 @@ rigc's own code is MIT (see [LICENSE](LICENSE)). That says nothing about Spine, 
 the following is a restatement of Esoteric Software's terms, not a term of ours:
 
 1. rigc's output **is Spine skeleton data**.
-2. Playing Spine skeleton data in a product requires **a Spine Runtime**.
-3. The Spine Runtimes License requires **each user of such a product to own a Spine
-   editor licence**.
-4. rigc **links `spine-core`** itself, so the same obligation covers running rigc.
+2. A product that plays it with **a Spine Runtime** — the official runtimes, the Web
+   Player — has integrated the Spine Runtimes. rigc also writes the model document
+   its own core poses, and a product may play that or anything else; what the terms
+   turn on is the integration.
+3. Integrating a Spine Runtime into a product is permitted **under Section 2 of the
+   [Spine Editor License Agreement](https://esotericsoftware.com/spine-editor-license)**,
+   or otherwise on the condition that **each user of the product obtains their own
+   Spine editor licence** and the product carries the Runtimes licence and copyright
+   notice — the Runtimes licence's own two routes, in its words.
+4. The published rigc **links no Spine runtime**. This repository does — `spine-core`
+   as a development dependency, for its own gate — and so does an install with the
+   runtime added beside it.
 
-> **Using rigc, or shipping rigc's output in a product, requires a Spine editor
-> licence.** rigc does not change that requirement in either direction — it neither
-> adds one nor removes one. If you were going to need an editor licence to ship a
-> Spine animation, you still do; rigc is not a route around it.
+> **If a product integrates a Spine Runtime to play rigc's output, that integration
+> is subject to the terms above** — rigc neither adds those terms nor removes them.
+> Running the published rigc links no Spine runtime, and whether its output is then
+> played by one, by rigc's own core, or by something else is the consumer's choice.
 
 See [NOTICE.md](NOTICE.md) for the full notice.
 
@@ -98,8 +115,9 @@ without a murmur — a constraint in the 4.2 shape simply vanishes, a `size:` th
 disagrees with the PNG collapses every UV, a four-number curve array yields NaN,
 a mesh whose vertex count happens to equal its UV count silently loses its bone
 weights. Every one of those loads clean, plays, and is wrong. rigc's answer is to
-make the failure legible: compile from a spec, round-trip through the real parser,
-run a list of named assertions, and **write nothing unless all of them are green.**
+make the failure legible: compile from a spec, run a list of named assertions — held
+to the real parser's verdicts in CI — and **write nothing unless all of them are
+green.**
 
 ## Install
 

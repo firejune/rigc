@@ -2,16 +2,23 @@
 
 ## Spine Runtimes
 
-This project depends on `@esotericsoftware/spine-core`, part of the
+This repository depends on `@esotericsoftware/spine-core`, part of the
 [Spine Runtimes](https://github.com/EsotericSoftware/spine-runtimes),
 Copyright (c) 2013-2025 Esoteric Software LLC, licensed under the
-[Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license).
+[Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license),
+as a **development dependency**: a clone and CI install it, and every Spine file
+`rigc build` writes there is read back through it before it is written. **The
+published package does not carry it** — an install of `spine-rigc` has no Spine
+runtime in it unless one is installed beside it, and then the same `rigc` uses it.
 
-Key obligation that propagates to users of this project: integration of the Spine
-Runtimes into software (including via this compiler, which links spine-core to
-validate what it emits) is permitted **provided that each user of the resulting
-product obtains their own Spine Editor license**, and any redistribution includes
-the Spine Runtimes license and copyright notice.
+Its terms, as the licence states them: integration of the Spine Runtimes into
+software is permitted **under the terms and conditions of Section 2 of the
+[Spine Editor License Agreement](https://esotericsoftware.com/spine-editor-license)**;
+otherwise it is permitted **provided that each user of the Products obtains their
+own Spine Editor license** and any redistribution of the Products includes the
+licence and copyright notice. Where a Spine Runtime is integrated with rigc — this
+repository, its CI, or an install with the runtime beside it — those terms apply
+there.
 
 ### What that means for rigc, as a chain of facts
 
@@ -19,16 +26,26 @@ rigc's own code is MIT (see `LICENSE`). The following is a restatement of Esoter
 Software's terms, not a licence term of this project:
 
 1. rigc's output **is Spine skeleton data**.
-2. Playing Spine skeleton data in a product requires **a Spine Runtime**.
-3. The Spine Runtimes License requires **each user of such a product to own a Spine
-   Editor license**.
-4. rigc **links `spine-core`** itself — validation is not optional and cannot be
-   switched off — so the same obligation applies to running rigc at all.
+2. A product that plays it with **a Spine Runtime** — the official runtimes, the Web
+   Player — has integrated the Spine Runtimes. rigc also writes the model document
+   its own core poses, and a product may play that or anything else; what the terms
+   turn on is the integration.
+3. Integrating a Spine Runtime into a product is permitted **under Section 2 of the
+   Spine Editor License Agreement**, or otherwise on the condition that **each user
+   of the product obtains their own Spine Editor license** and the product carries
+   the Runtimes licence and copyright notice — the two routes above.
+4. The published rigc **links no Spine runtime**. This repository does, as a
+   development dependency for its own gate, and so does an install with
+   `spine-core` added beside it. Validation is not optional on either: the gate
+   runs through the runtime where it is installed and through rigc's own validator
+   where it is not, and the two are held to the same verdicts in CI on 48 of the
+   49 assertions — the official parser's own parse runs only where the runtime is.
 
-> **Using rigc, or shipping rigc's output in a product, requires a Spine Editor
-> license.** rigc does not change that requirement in either direction: it neither
-> creates one where none existed nor removes one that did. It is not a route around
-> the editor licence.
+> **If a product integrates a Spine Runtime to play rigc's output, that integration
+> is subject to the terms above** — rigc neither creates those terms nor removes
+> them. Running the published rigc links no Spine runtime, and whether its output is
+> then played by one, by rigc's own core, or by something else is the consumer's
+> choice.
 
 ### The Spine Web Player, and what `rigc preview` does with it
 
@@ -47,9 +64,8 @@ Two consequences worth stating plainly:
 
 - a generated preview needs a network connection the first time it is opened, and
   says so in the page when the player does not arrive;
-- the obligation above is unchanged by it. Playing Spine skeleton data in the
-  Spine Web Player is a Spine Runtimes integration like any other, so **each user
-  of a product built this way needs their own Spine Editor license.**
+- using the Spine Web Player is a Spine Runtimes integration, subject to the
+  terms described above.
 
 ## Example assets
 

@@ -1,6 +1,6 @@
 ---
 name: rigc
-description: Author, build and validate Spine 4.3 skeleton data (skeleton.json plus its .atlas) from loose part PNGs with rigc, the rig compiler that verifies its own output through a spine-core round-trip before writing it. Use for any request to make a Spine rig or Spine animation from PNG parts, or where the source is a Live2D, Unity or video model whose pictures you can render, to run or read rigc build, validate, render, preview, check or vote, or to write or fix a *.rig.json or *.motion.json spec; it says which shipped guide to open for the need at hand. Not for Live2D conversion, cutting an illustration into parts, or real-time face tracking.
+description: Author, build and validate Spine 4.3 skeleton data (skeleton.json plus its .atlas) from loose part PNGs with rigc, the rig compiler that verifies its own output with named assertions before writing it. Use for any request to make a Spine rig or Spine animation from PNG parts, or where the source is a Live2D, Unity or video model whose pictures you can render, to run or read rigc build, validate, render, preview, check or vote, or to write or fix a *.rig.json or *.motion.json spec; it says which shipped guide to open for the need at hand. Not for Live2D conversion, cutting an illustration into parts, or real-time face tracking.
 license: MIT
 compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-rigc (bunx spine-rigc, or bun add -d spine-rigc); the command it installs is rigc.
 ---
@@ -8,8 +8,9 @@ compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-rigc
 # rigc — a rig compiler for agents
 
 rigc compiles a rig spec and a motion spec into Spine 4.3 skeleton data and an
-atlas, round-trips the result through `@esotericsoftware/spine-core`, runs its
-named assertions, and writes **only if every one is green**. You cannot see the
+atlas, runs its named assertions — rigc's own validator in the published package,
+held to a `@esotericsoftware/spine-core` round trip's verdicts in its CI, all but
+the parse itself — and writes **only if every one is green**. You cannot see the
 rig you are authoring. The validator's messages and the shipped guides are the
 whole interface, and this skill only says which of them to open.
 
@@ -17,8 +18,10 @@ whole interface, and this skill only says which of them to open.
 
 - **Validation is never bypassed.** `build` writes nothing on a red gate; there is
   no `--no-validate`, and none may be added — AUTHORING §0 says so in as many
-  words. Correctness is the whole of the reason: the round trip through the
-  official parser is the only thing that makes the output trustworthy.
+  words. Correctness is the whole of the reason: the assertions are what make the
+  output trustworthy, and they are held to the official parser's verdicts in the
+  repository's CI — all but the parse itself, which runs only where the runtime is
+  installed and is reported as a SKIP elsewhere.
 - **The compiler never invents a value.** A field the spec leaves out is a
   `CompileError` naming that field. Fill the spec; do not expect a default read off
   the art — AUTHORING §2 and §5.

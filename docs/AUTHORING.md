@@ -132,8 +132,10 @@ bun cli.ts vote --candidate path/to/spine-a --candidate path/to/spine-b   # -> b
 bun cli.ts vote --record vote-<id>.json                                   # -> votes.jsonl
 ```
 
-`build` compiles, round-trips the result through `@esotericsoftware/spine-core`,
-runs the named assertions, and **writes only if every one of them is green.** A red
+`build` compiles, runs the named assertions — through a `@esotericsoftware/spine-core`
+round trip where the runtime is installed, through rigc's own validator where it is
+not (§5.2 says which rules run on each) — and **writes only if every one of them is
+green.** A red
 run leaves nothing on disk, so there is no half-written artifact to mistake for a
 result. There is no `--no-validate`, and there will not be one.
 
