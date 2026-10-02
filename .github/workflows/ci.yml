@@ -26,7 +26,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Measured on 2026-10-02 at 1,770 case lines: the selftest step alone takes
+    # 18m28s on this runner (release PR #1057's run) and the whole job 19m30s on
+    # the push that merged #1062 — a 20-minute ceiling cancelled the render step
+    # on the first and the job on the push before it. Nothing here asserts
+    # timing; the ceiling exists so a hung step is killed, not to bound the suite.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
