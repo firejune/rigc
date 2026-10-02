@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.3](https://github.com/firejune/rigc/compare/v2.0.2...v2.0.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **compile:** a generated mesh's `kind` is the one that chose its builder, and `tsconfig.json` is full `strict` — measured at one error on the whole tree, which a dependant's strict tsc found first ([#1096](https://github.com/firejune/rigc/issues/1096)) ([6a51946](https://github.com/firejune/rigc/commit/6a51946b8eb3f02d694cc1183eb732541b61b003))
+* **diff:** the value walk reads a transform's offsets and property map, a slider's property and `local`, and every colour's alpha and blue; `diff` compares a timeline's target, a key's names, an attachment's region, clipping end and linked source, a skin's members and the constraints' order ([#1094](https://github.com/firejune/rigc/issues/1094)) ([b3de394](https://github.com/firejune/rigc/commit/b3de394d6666e98e2b8c9ae4f15ce9b973096e73)), closes [#1084](https://github.com/firejune/rigc/issues/1084) [#1085](https://github.com/firejune/rigc/issues/1085)
+* **tools:** a failed import or export quotes every line the editor printed except its one `Licensed to: <name> <<e-mail>>` line, which is replaced by a line saying it was withheld — the measured failure prints that line straight before its error ([#1091](https://github.com/firejune/rigc/issues/1091)) ([4f14d85](https://github.com/firejune/rigc/commit/4f14d851d4b5a6d11f7a32763e3893bd73dd2dc1)), closes [#1082](https://github.com/firejune/rigc/issues/1082)
+
 ## [2.0.2](https://github.com/firejune/rigc/compare/v2.0.1...v2.0.2) (2026-10-02)
 
 
