@@ -11,8 +11,10 @@
  * rather than folding the first two into an empty list.
  *
  * The order is the file's: A15 prints one line per keyed bone in it. The file
- * keys an animation's bones in the order the emitter writes the model's
- * (`emitAnimation`), which is the document's own list.
+ * keys an animation's bones in an object filled in the order the emitter
+ * writes the model's (`emitAnimation`), which is the document's own list — so
+ * an array-index bone name (`5`, `10`) is listed first whatever its place in
+ * that list (issue #1039), and the model side reads it through `keyedOrder`.
  *
  * Links nothing from the runtime: `validate()` reads it off the skeleton JSON
  * as A15 always did, and the model side off the document
