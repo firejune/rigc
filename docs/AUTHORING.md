@@ -1285,6 +1285,43 @@ So what is left refused is short, and each row is a pair two readings of the
 numbered series that crosses 9 → 10 is keyed **1, 2, … 9, 10, 11, 12**, which is
 what the editor does with it — and is not what a codepoint sort does.
 
+🔢 **One kind of name the file cannot key in the editor's order: a plain
+non-negative integer.** `animations` is a JSON object, and an object lists every
+key that is an array index (`5`, `10` — not `01`, `05`, `-a` or `2b`) before the
+rest, in ascending order, however it was filled. So for those names the file's
+order is the editor's with the array-index names moved to the front, and the
+editor's re-sort on import is not a no-op. That repoints a `slider` exactly when
+its animation is one of the names that move index, and **that slider is a compile
+error** naming the slider, both indices and the animation it would come back
+applying (§5.1). A name list with an array-index name in it and no slider on a
+moved name builds: the editor re-keys the object by name and nothing else in it
+refers by position.
+
+🔁 **Measured 2026-10-02 (issue #1040) — a dated record.** `gallery/look` with its
+animations named `5, -a, 10, 2b, 01` (from `turn, tilt, sweep` and copies of
+`sweep` and `tilt`), its sliders `yaw -> "5"` and `tilt -> "-a"`, five bones
+renamed to the same five names and five events declared under them, built by
+rigc 2.0.0 with `--copy-images` and round-tripped by `tools/editor_roundtrip.ts`
+through a licensed editor writing data version 4.3.26. Read off the TEXT of each
+file (a JSON parser lists array-index keys first and would hide the answer):
+
+| | the build | the export |
+| --- | --- | --- |
+| `animations` | `5, 10, -a, 01, 2b` | **`-a, 01, 2b, 5, 10`** — the comparator's order |
+| slider `yaw` | `"5"` (index 0) | **`"-a"`** — index 0 of the sorted list |
+| slider `tilt` | `"-a"` (index 2) | **`"2b"`** — index 2 of the sorted list |
+| `events` | `5, 10, -a, 2b, 01` | `-a, 01, 2b, 5, 10`; every event key still names its event |
+| `bones` (an array) | unchanged | unchanged |
+| an animation's `bones` group | the model's order, array-index names first | sorted by name — by name on both sides, so nothing moves |
+
+Both sliders moved, each to the name at its old index — the mechanism #535 found
+with `tilt` as its unmoved control. The gate on the export failed only
+`A23_PHYSICS_CONSTRAINT_EFFECTIVE`, the editor's known loss of a `rotate`
+physics constraint ([FACE.md](FACE.md)), and `diff` moved only
+`animations.curve_kinds` (218 of 222): **neither the gate nor `diff` names the
+repointed sliders**, and the re-rendered mean absolute error of 8.43–10.41 is the
+size #535 measured out of order. Hence a refusal rather than a note.
+
 **R11 — The `skins` array is written with `default` first and the rest in exactly
 the order R10 describes.** A skin is a **name** in the JSON half of the format and
 an **ordinal** in the binary half — `skins[readInt()]` for an attachment timeline,
@@ -3042,6 +3079,12 @@ against 10.4655 / 8.4961 / 8.7140 for the order above.
 stored round trips — so the emit is the editor's own order, and only what those
 round trips leave open is a compile error. **R10** has the rule and the three
 shapes to avoid.
+
+🔢 The one order the emit cannot give is a plain non-negative integer's: a JSON
+object lists `5` and `10` before every other name, so a slider whose animation
+that moves off its editor index is refused at compile, naming the animation it
+would come back applying. Measured on a licensed 4.3.26 editor; R10 carries the
+dated record.
 
 ✅ **What that order does not settle is a compile error, not a hazard.** Names a
 codepoint sort and a friendlier one disagree about — `Turn` / `turn`, `turn2` /
@@ -5739,6 +5782,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `rig constraint "X": rotateMode is "CHAINSCALE"; known: Tangent, Chain, ChainScale` | §3.5.1 — only the first letter's case is free; anything else resolves to `undefined` in the parser |
 | `<file>: slot "X" has blend "ADDITIVE"; known: normal, additive, multiply, screen (only the first letter's case is free — …)` | §3.3 — write the mode in lower case, or with only its first letter upper-cased. `SkeletonJson` reads `blend` through `Utils.enumValue`, which upper-cases the first character and looks the rest up exactly, so `ADDITIVE` loaded as no mode at all (`tools/pose_oracle.ts dump` reads it as `null`), with no error. rigc used to compare the name case-insensitively and build that file green |
 | `rig constraint "X": applies animation "Y", which the motion spec does not declare (it declares: …)` | §3.5.2 — fix the slider's `animation`, or add it to the motion spec |
+| `rig constraint "X": applies animation "Y", which the Spine file lists at index I of its animations and the Spine editor sorts to index J — so an editor import repoints this slider to "Z" …` | **R10** — a JSON object lists every array-index name (`5`, `10`) first, the editor re-sorts the animations and keeps a slider's by index (measured, R10's dated record). Rename the array-index animation names the message lists — a prefix or a leading zero (`a5`, `05`) is enough |
 | `rig constraint "X": declares both a "bone" and "time"` | §3.5.2 — `bone` picks the model and `time` belongs to the other one |
 | `rig constraint "X": declares "property" but no "bone"` | §3.5.2 — name the driving bone, or key `slider.<name>.time` instead |
 | `rig constraint "X": drives off bone "Y" rotate with "local": false, and the driving values that reach animation "A" (0s..Ds) run from −15.000° to 15.000° … the whole part of the range below 0° is dead` | §3.5.2 — add `"local": true`, which reads the bone's own rotation signed and unwrapped, or move the range so it does not cross 0°. A world rotation is wrapped into `[0, 360]` before the slider maps it, so the negative half of the range is unreachable and pins to one frame |

@@ -338,6 +338,54 @@ export function editorAnimationOrder(names: readonly string[]): string[] {
   return keyedOrder(editorNamesInOrder(names, 'animations'));
 }
 
+/** Where a slider's animation stands in the file and after the editor's re-sort, when the two differ (`sliderAnimationTheEditorRepoints`). */
+interface RepointedSlider {
+  /** The animation's index in the order the file keys (`editorAnimationOrder`). */
+  fileIndex: number;
+  /** Its index in the comparator's order, which the editor re-sorts the object into. */
+  editorIndex: number;
+  /** The animation the editor puts at `fileIndex` — the one the slider comes back naming. */
+  becomes: string;
+  /** The array-index names the file lists ahead of the comparator's order. */
+  indexNames: string[];
+}
+
+/**
+ * Whether an editor import moves a slider off `animation` — `null` when it does
+ * not (issue #1040).
+ *
+ * 🔁 **Measured, not inferred.** The editor holds a slider's animation by its
+ * INDEX in the text's order and re-sorts the `animations` object into its
+ * comparator's order (#535). Since #1034 the file's order is the comparator's
+ * with every array-index name (`5`, `10`) first, because a JSON object lists
+ * those keys first however it was filled. On 2026-10-02 a build keying
+ * `5, 10, -a, 01, 2b` went through Spine 4.3.26 and came back
+ * `-a, 01, 2b, 5, 10`, with `yaw -> "5"` returned as `yaw -> "-a"` (index 0
+ * before and after) and `tilt -> "-a"` as `tilt -> "2b"` (index 2). So the
+ * slider moves exactly when its animation's index differs between the two
+ * orders, and only then: an array-index name elsewhere in the list repoints
+ * nothing, and is not refused.
+ *
+ * A name set the comparator cannot order is R10's refusal, raised when the
+ * animations are emitted; this check has no order to read there and says
+ * nothing rather than raising it a second time in other words.
+ */
+function sliderAnimationTheEditorRepoints(animation: string, names: readonly string[]): RepointedSlider | null {
+  let sorted: string[];
+  try {
+    sorted = editorNamesInOrder(names, 'animations');
+  } catch (err) {
+    if (err instanceof CompileError) return null;
+    throw err;
+  }
+  const file = keyedOrder(sorted);
+  const fileIndex = file.indexOf(animation);
+  if (sorted[fileIndex] === animation) return null;
+  // An array-index name is one an object lists ahead of a key it was given first — the language's rule, not a restatement of it.
+  const indexNames = file.filter((name) => keyedOrder(['\u0000', name])[0] === name);
+  return { fileIndex, editorIndex: sorted.indexOf(animation), becomes: sorted[fileIndex], indexNames };
+}
+
 /**
  * The order the editor writes a list of skin or animation names in, refusing by
  * name every pair the five round trips leave open.
@@ -6783,6 +6831,21 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
       throw new CompileError(
         `${where}: applies animation "${animation}", which the motion spec does not declare` +
           (known.length ? ` (it declares: ${known.join(', ')})` : ' (it declares none at all)'),
+      );
+    }
+    // 🔁 The editor keeps a slider's animation by index and re-sorts the object
+    // the file lists array-index names first in (issue #1040, measured).
+    const repointed = sliderAnimationTheEditorRepoints(animation, [...ctx.animationNames]);
+    if (repointed !== null) {
+      const spelled = repointed.indexNames.map((name) => `"${name}"`).join(', ');
+      throw new CompileError(
+        `${where}: applies animation "${animation}", which the Spine file lists at index ${repointed.fileIndex} of ` +
+          `its animations and the Spine editor sorts to index ${repointed.editorIndex} — so an editor import ` +
+          `repoints this slider to "${repointed.becomes}", in a file that still parses and gates green. A JSON object ` +
+          `lists every array-index key (${spelled} here) before the rest, the editor re-sorts the animations into its ` +
+          'own order on import, and a slider holds its animation by index (measured on Spine 4.3.26; AUTHORING R10). ' +
+          `Rename ${spelled} so no animation name is a plain non-negative integer — a prefix or a leading zero ` +
+          `("a${repointed.indexNames[0]}", "0${repointed.indexNames[0]}") puts the file's order and the editor's in step.`,
       );
     }
     out.animation = animation;
