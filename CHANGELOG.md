@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.2](https://github.com/firejune/rigc/compare/v2.1.1...v2.1.2) (2026-10-03)
+
+
+### Bug Fixes
+
+* **atlas:** a `polygon` pack is the least total page area of three whole packs — `rect`'s, the owned-box anchor's, and one that may also put a cell's own corner where that anchor would leave the page — so a large region whose mesh draws a small part of it no longer forces the `rect` page, and no polygon pack is larger than `rect`'s on any set, a spill's pages included ([#1111](https://github.com/firejune/rigc/issues/1111)) ([3e889a2](https://github.com/firejune/rigc/commit/3e889a2a920e64e7058c45a0c9a4b321047fd6d4))
+* **cli:** the entry without spine-core, refusing `validate` on a rigc build, says the build already ran its gate before it wrote — an export's refusal is unchanged ([#1109](https://github.com/firejune/rigc/issues/1109)) ([c87ef94](https://github.com/firejune/rigc/commit/c87ef94b8e65d5db89fda8afc40b103e865afa0e)), closes [#1097](https://github.com/firejune/rigc/issues/1097)
+* **tools:** the editor round trip refuses a build whose `skeleton.json` is not one JSON object by its path and what it found there — not JSON, empty, a directory, `[]`, `null` — before the editor starts, where it used to throw a stack or start the editor on a file that is not a skeleton ([#1108](https://github.com/firejune/rigc/issues/1108)) ([ef2fbdb](https://github.com/firejune/rigc/commit/ef2fbdbe36afeb19f54ce7b11c31fcfa233f836a)), closes [#1090](https://github.com/firejune/rigc/issues/1090)
+
 ## [2.1.1](https://github.com/firejune/rigc/compare/v2.1.0...v2.1.1) (2026-10-02)
 
 
