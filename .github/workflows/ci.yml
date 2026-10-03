@@ -24,14 +24,41 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  # The selftest as n shards side by side, each a process of its own on a runner
+  # of its own (issue #1116). Every shard runs the suites whose 0-based
+  # registration index is `i − 1` modulo `n` and writes what it ran as a tally
+  # document; the `test` job below merges them, and that merge is the verdict.
+  #
+  # ⏱️ Why `n` is 6, measured on the one-process run of main at 1c36d4d (run
+  # 37131671933: the selftest step 15m41s, 941.2 s of suites): the suites dealt
+  # round-robin by registration index, less the three the merge runs, give the
+  # heaviest shard 376 s at n = 3, 364 s at n = 4 (whose first shard gets 45 s),
+  # 311 s at n = 5 and 208 s at n = 6 — and no n can go under `render-hashes`
+  # alone, 194.9 s, which is one suite and lands in shard 6. Six is the
+  # smallest n at that floor; past it, n = 7 and n = 8 measure 255 s and 242 s,
+  # because round-robin stops lining the heavy suites up apart. The runner's
+  # four cores do not bound n: each matrix job is its own runner, and none of
+  # them runs more than one suite at a time.
+  #
+  # 🔒 The selftest step stays exactly `bun run selftest` (`CUR112` reads that
+  # line, and its plant moves it), with the shard named through the environment
+  # — `RIGC_SHARD`, `RIGC_TALLY_OUT`, the precedent `RIGC_CUTS` set. A green
+  # shard exits 2, which is never a verdict and would fail the step, so the step
+  # continues on error and the merge reads the exit the shard wrote into its
+  # document: a red shard is red in the merge, by suite and FAIL line, and a
+  # shard that never wrote a document is a shard the merge refuses as missing.
+  shard:
+    name: shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # Measured on 2026-10-02 at 1,770 case lines: the selftest step alone takes
-    # 18m28s on this runner (release PR #1057's run) and the whole job 19m30s on
-    # the push that merged #1062 — a 20-minute ceiling cancelled the render step
-    # on the first and the job on the push before it. Nothing here asserts
-    # timing; the ceiling exists so a hung step is killed, not to bound the suite.
-    timeout-minutes: 40
+    # One sixth of the run measured at 208 s for its heaviest shard; the ceiling
+    # is for a hung step, as the one-process job's was.
+    timeout-minutes: 30
+    strategy:
+      # Every shard runs to its end whatever another found: a red in shard 2 is
+      # no reason not to read shard 5, and the merge names every red there is.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -56,14 +83,81 @@ jobs:
       # contents-API listings against a 60/hour budget, and would discard the
       # script's own report of which file failed from which URL. See the retry
       # block in scripts/fetch-examples.sh for the full argument.
+      #
+      # Since #1116 every shard fetches, and `linux-readings` below: seven
+      # fetches per run, each its own 18 listings under the same token.
       - name: Fetch the Spine example corpus
         run: bun run fetch-examples
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - run: bun run selftest
+        continue-on-error: true
+        env:
+          RIGC_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+          RIGC_TALLY_OUT: ${{ runner.temp }}/tally/shard-${{ matrix.shard }}.json
+
+      - name: Upload this shard's tally document
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/tally/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+
+  # The verdict: every shard's document merged (issue #1116). Named `test`
+  # because that is the check this repository's pull requests have always been
+  # read by, and it still answers the same question — the whole selftest, plus
+  # typecheck and lint. `--merge` refuses by name a set of documents that is not
+  # one run's shards each once, replays the run in registration order off them,
+  # runs the three suites that read the whole run (`seeded-random`, `run-tally`,
+  # `verdict-suppliers`) over every shard's record, holds each shard's high-water
+  # to the platform's memory ceiling, and prints the one-process summary — from
+  # the one-process code, over the replayed numbers. It runs when a shard job
+  # failed too (`!cancelled()`): a shard that wrote no document is then named as
+  # missing here rather than leaving the check skipped.
+  test:
+    needs: shard
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
       - run: bun run typecheck
       - run: bun run lint
-      - run: bun run selftest
+
+      - name: Download every shard's tally document
+        uses: actions/download-artifact@v4
+        with:
+          pattern: selftest-shard-*
+          path: ${{ runner.temp }}/tally
+          merge-multiple: true
+      - name: The merge of every shard is the verdict
+        run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json
+
+  # Linux's own readings of the gallery's builds and renders: measurement only,
+  # gating nothing. A job of its own since #1116, because neither half needs a
+  # shard's output — each builds into its own work directory from the recipes —
+  # so in a shard it would lengthen that shard by the 52 s the four steps took
+  # on run 37131671933, and in the merge job it would hold the verdict back by
+  # them and by the corpus fetch they need. Alone it runs beside the shards, on
+  # every run whatever the shards found — what the `!cancelled()` these steps
+  # carried after the one-process selftest was for.
+  linux-readings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      # The render recipes include the fetched exports' rows, so this job reads the corpus too, fetched as the shards fetch it.
+      - name: Fetch the Spine example corpus
+        run: bun run fetch-examples
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # The gallery's model documents as THIS machine writes them (issue #942).
       # The tracked base holds the Spine files only, because `gallery/look`'s
@@ -72,10 +166,8 @@ jobs:
       # (tools/emit_hashes.ts, `## base`). A second machine's document can only
       # be read here, so this uploads it: the whole `emit-hashes/1` run over the
       # base's recipes (every row's hashes, the model documents included) and
-      # `gallery/look`'s three files. Measurement only: it gates nothing, and
-      # it runs after a red selftest too, since that is when it is most wanted.
+      # `gallery/look`'s three files. Measurement only: it gates nothing.
       - name: Build the gallery's model documents on Linux
-        if: ${{ !cancelled() }}
         run: |
           bun tools/emit_hashes.ts run --recipes tools/emit_hashes.base.json \
             --out "$RUNNER_TEMP/eh/hashes.json" --work "$RUNNER_TEMP/eh/work"
@@ -83,7 +175,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/eh/look"
           cp "${rig%/gallery/look/rig.json}"/out/* "$RUNNER_TEMP/eh/look/"
       - name: Upload them as the model-documents-linux artifact
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: model-documents-linux
@@ -102,16 +193,14 @@ jobs:
       # move under a one-ulp change of it (tools/render_hashes.ts, `## base`), so
       # a second machine's reading of them — and of the fetched exports' rows,
       # which no tracked file holds — can only be taken here. Measurement only:
-      # it gates nothing, and it runs after a red selftest too.
+      # it gates nothing.
       - name: Render every recipe on Linux
-        if: ${{ !cancelled() }}
         run: |
           mkdir -p "$RUNNER_TEMP/rh"
           bun tools/emit_hashes.ts recipes --out "$RUNNER_TEMP/rh/recipes.json"
           bun tools/render_hashes.ts run --recipes "$RUNNER_TEMP/rh/recipes.json" \
             --out "$RUNNER_TEMP/rh/hashes.json" --work "$RUNNER_TEMP/rh/work"
       - name: Upload them as the render-hashes-linux artifact
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: render-hashes-linux

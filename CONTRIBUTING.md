@@ -45,6 +45,17 @@ on one suite, `bun selftest.ts --only <suite>[,<suite>…]` runs just those and
 exits 2 naming every suite it skipped — it is never a verdict, so run the whole
 `bun run selftest` before you open a pull request.
 
+The whole run can also be cut into shards and merged, which is how CI runs it:
+`bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites whose
+registration index is `i − 1` modulo `n` and writes what it ran, exiting 2 when
+green like `--only`; `bun selftest.ts --merge <file>…` over every shard's
+document refuses by name a set that is not one run's shards each once, runs the
+three suites that read the whole run, and prints the full run's summary and
+verdict. `RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
+environment. CI's `shard` jobs are the six shards side by side and its `test`
+job is the merge. On a machine you share, run the shards one after another, not
+together: each is a whole process with its own memory high-water.
+
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
 installs packages, so it needs a network:
