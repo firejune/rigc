@@ -103739,7 +103739,14 @@ function durationFaults(
 // tracked, written by the run itself (`--memory-base`), never typed — the
 // pattern `tools/emit_hashes.base.json` and `EH06` set.
 
-/** The tracked base, relative to this file. */
+/**
+ * The tracked base, relative to this file — one entry per platform, because the
+ * figure is the allocator's as much as the run's: on the same tree the macOS
+ * full run ended at rss 3,211 MB and the Linux CI run at 599 MB, its own TY26
+ * line having read 1,324 MB mid-run — Linux's allocator hands pages back where
+ * macOS's does not. One shared figure would be either useless on one platform
+ * or red on the other.
+ */
 const MEMORY_BASE_PATH = 'tools/selftest_memory.base.json';
 /** The base document's format word. */
 const MEMORY_BASE_SPEC = 'selftest-memory/1';
@@ -106208,15 +106215,27 @@ function runRunTallySuite(live: RunTally): number {
     // retained pages, so it raises the mark again. The fault names the largest
     // growth, which is the retainer when nothing after it churns past it; the
     // RSS table above the fault is where the run says the rest.
-    const plantChild = (retain: boolean): { rows: Array<{ key: string; rss: number }> } | string => {
+    //
+    // 🐧 The plant is SIZED off the base child, not fixed, because a fixed count
+    // was measured to clear the bound on one allocator and not on another: 24
+    // retained 1024² pages (96 MB) ended macOS's planted child at 238 MB against
+    // a base of 130 (bound 182), and Linux CI's at 181 MB against a base of 136
+    // (bound 191) — red. So the base child runs first and the planted one keeps
+    // pages until what it holds exceeds twice the base child's final RSS; with
+    // a margin of 1.4 that leaves the planted final above the bound by at least
+    // 0.6 × base on any allocator that keeps live pages resident at all.
+    const PAGE_SIDE = 1024;
+    const pageMegabytes = (PAGE_SIDE * PAGE_SIDE * 4) / (1024 * 1024);
+    const plantChild = (retainPages: number): { rows: Array<{ key: string; rss: number }> } | string => {
+      const retain = retainPages > 0;
       const code = [
         `import { Plate, encodePng, decodePng } from ${JSON.stringify(join(import.meta.dir, 'tools', 'plate.ts'))};`,
         'const PLANTED_RETAINED_PAGES: Plate[] = [];',
-        'const side = 1024;',
+        `const side = ${PAGE_SIDE};`,
         'const png = encodePng(side, side, new Plate(side, side).data);',
         'const rows: Array<{ key: string; rss: number }> = [];',
         "for (const key of ['decode-before', 'decode-planted', 'idle-after']) {",
-        "  for (let i = 0; i < (key === 'idle-after' ? 0 : 24); i++) {",
+        `  for (let i = 0; i < (key === 'idle-after' ? 0 : key === 'decode-planted' ? ${Math.max(24, retainPages)} : 24); i++) {`,
         '    const page = decodePng(png);',
         `    if (${retain ? 'true' : 'false'} && key === 'decode-planted') PLANTED_RETAINED_PAGES.push(page);`,
         '  }',
@@ -106231,8 +106250,9 @@ function runRunTallySuite(live: RunTally): number {
     };
     const rssOf = (rows: Array<{ key: string; rss: number }>): Map<string, SuiteRss> =>
       new Map(rows.map((row, i) => [row.key, { after: row.rss, delta: row.rss - (i === 0 ? row.rss : rows[i - 1].rss) }]));
-    const baseChild = plantChild(false);
-    const plantedChild = plantChild(true);
+    const baseChild = plantChild(0);
+    const plantPages = typeof baseChild === 'string' ? 0 : Math.ceil((2 * baseChild.rows[baseChild.rows.length - 1].rss) / pageMegabytes) + 1;
+    const plantedChild = typeof baseChild === 'string' ? 'the planted child was not run: the base child it is sized from failed' : plantChild(plantPages);
     const ty25Probes: string[] = [];
     let ty25Words = '';
     if (typeof baseChild === 'string') ty25Probes.push(baseChild);
@@ -106257,8 +106277,9 @@ function runRunTallySuite(live: RunTally): number {
           : [`writing one platform's base did not keep the other's, in key order: ${Object.keys(keptRead.platforms).join(', ')}`]),
       );
       ty25Words =
-        `a child decoding the same 1024² page 24 times in each of two suites and idle in a third ends at ${baseFinal} MB and is held under its own ` +
-        `bound (${clean.bound ?? '?'} MB, × ${MEMORY_MARGIN}); the same child keeping every page of one suite in a module-level array ` +
+        `a child decoding the same ${PAGE_SIDE}² page 24 times in each of two suites and idle in a third ends at ${baseFinal} MB and is held under its own ` +
+        `bound (${clean.bound ?? '?'} MB, × ${MEMORY_MARGIN}); the same child keeping ${plantPages} page(s) (${plantPages * pageMegabytes} MB, over twice the base) ` +
+        'of one suite in a module-level array ' +
         `ends at ${plantedFinal} MB and is named — ${planted.faults[0] ?? 'nothing'} — while no base gives no verdict and writing one ` +
         "platform's base keeps every other platform's";
     }
