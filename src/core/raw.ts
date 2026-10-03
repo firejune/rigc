@@ -113,7 +113,7 @@
  * naming why (`CoreInputError`): a renderer handed a pose with a block
  * missing would draw a different picture in silence.
  */
-import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
+import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, underNoSkin, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
 import { posedBoneWorld, posedSlots, type TimelinePlant } from './animation.ts';
 import { constraintsAbsentWhy, pathAnimationsWhy } from './constraints.ts';
 import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.ts';
@@ -406,3 +406,103 @@ export function walkIn(doc: CompiledDocument, animation: string, steps: readonly
   }
   return poses;
 }
+
+// --- #907 the setup-pose bounding box: begin ---
+/**
+ * The setup-pose bounding box (issue #907) — `setupBounds` below: the axis-aligned box around every
+ * region and mesh a skeleton draws at its setup pose, as spine-core's
+ * `Skeleton.getBounds(offset, size, temp)` returns it on a fresh skeleton —
+ * no skin set, `updateWorldTransform(Physics.none)` — which is what the Spine
+ * format says the header's `x`, `y`, `width` and `height` are.
+ *
+ * Every rule below was measured by running spine-core 4.3.13 through the
+ * tree's own loader, not read off its source:
+ *
+ * - **The view is "no skin set"** (`underNoSkin`, issue #1051): a skeleton
+ *   `build` writes is loaded and bounded before anyone calls `setSkin`, so
+ *   the slots resolve through the default skin alone and no skin's bones or
+ *   constraint lists apply.
+ * - **Constraints applied.** The box is of the pose `updateWorldTransform`
+ *   leaves, every ik, transform, path and slider constraint applied in the
+ *   document's order — the pose `poseSetup` computes. The editor's own
+ *   header is of that pose too: on `examples/spineboy/export/spineboy-pro.json`
+ *   (seven ik and seven transform constraints) `getBounds` with the
+ *   constraints applied is within 0.0035 of the header the editor wrote, and
+ *   with them stripped it is 0.31 off in `y` and `height`.
+ * - **Physics.none.** A physics constraint applies nothing at the setup pose
+ *   (the oracle's setup reading). Under `Physics.reset` spine-core's box was
+ *   the same, to the bit, on all nineteen tree rows (two declare a physics constraint).
+ * - **What is counted.** A region's four corners and a mesh's (a linked
+ *   mesh's) world vertices — the rows of the oracle's `setup.attachments`
+ *   block, in full doubles. A clipping polygon, a bounding box, a path and a
+ *   point are not counted (measured: each placed 5000 units out moved
+ *   `getBounds` by nothing), and the box is not clipped: `getBounds` called
+ *   without its optional clipper.
+ * - **A slot on an inactive bone is not counted** — measured: a skin-required
+ *   bone 1000 units out, which only a named skin activates, carrying a region
+ *   left `getBounds` at the other region's 20 units with no skin set, and 1020
+ *   with the bone not skin-required. A bone that is not skin-required under an
+ *   inactive parent is active and unposed, and its slot is counted at the
+ *   vertices that pose gives; the core poses the same vertices (the oracle's
+ *   `setup.attachments`, held at tolerance 0), and a probe of that shape read
+ *   the same box both ways.
+ * - **The box.** `x`, `y` are the least `x` and `y` over every counted
+ *   vertex and `width`, `height` the greatest less the least — the
+ *   bottom-left corner in Spine's y-up world, not the top-left. In full
+ *   doubles; `build` writes each on the model's 1e-6 grid at float32
+ *   (`headerBoxNumber` in `src/compile.ts`, whose comment says why).
+ * - **Nothing drawn is no box.** `getBounds` over no vertex returns an offset
+ *   of `+Infinity` and a size of `-Infinity`, which is not a box; this
+ *   returns `null` for it, and the emitter writes no box rather than a number
+ *   nobody measured.
+ *
+ * Pure, like the rest of `src/core/`: it links nothing from the runtime, and
+ * `tools/core_gate.ts` holds it to `getBounds` at tolerance 0 over the corpus
+ * (its `BOUNDS` rows).
+ */
+
+/** The setup-pose box: its bottom-left corner and its extent, in Spine world units, in full doubles. */
+export interface CoreBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * The setup-pose bounding box of a model document (the header's rules), or
+ * `null` where nothing is drawn. Refused by name — `CoreInputError` — where
+ * the core leaves the setup attachments out, since a box over the rest would
+ * be a box of a different pose.
+ */
+export function setupBounds(doc: CompiledDocument, plant: CorePlant = {}): CoreBounds | null {
+  const view = underNoSkin(doc);
+  const posed = poseSetup(view, { ...plant, round: rawNumber });
+  const rows = posed.setup.attachments;
+  if (rows === null) {
+    const why = posed.absent.find(([block]) => block === 'setup.attachments')?.[1] ?? 'the setup attachments were not posed';
+    throw new CoreInputError(`the setup-pose bounding box cannot be computed: ${why}`);
+  }
+  const active = activeBones(view);
+  const boneOf = new Map(view.slots.map((s) => [s.name, s.bone]));
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [slot, attachment, , vertices] of rows) {
+    const bone = boneOf.get(slot);
+    if (bone === undefined || !active.has(bone)) continue;
+    for (let i = 0; i + 1 < vertices.length; i += 2) {
+      const x = vertices[i];
+      const y = vertices[i + 1];
+      if (x === null || y === null) throw new CoreInputError(`the setup-pose bounding box cannot be computed: slot "${slot}" attachment "${attachment}" vertex ${i / 2} is not finite`);
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (minX === Infinity) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+// --- #907 the setup-pose bounding box: end ---

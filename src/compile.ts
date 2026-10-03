@@ -132,8 +132,11 @@ import { emitSkeleton, type SkeletonHeader } from './emit_spine.ts';
 import { PHYSICS_PARAMS, UNSTATED_REFERENCE_SCALE } from './keyorder.ts';
 import { curveLengthTable } from './core/constraints_path.ts';
 import { frameRegionName } from './core/uvs.ts';
+import { setupBounds, type CoreBounds } from './core/raw.ts';
+import { CoreInputError, readModel } from './core/index.ts';
 import {
   isModelVertexAttachment,
+  modelDocument,
   type CarriedFromCompileResult,
   type CompiledAnimation,
   type CompiledModel,
@@ -988,6 +991,30 @@ export function f32(n: number): number {
  */
 function onModelGrid(n: number): number {
   return f32(Math.round(n * 1e6) / 1e6);
+}
+
+/**
+ * One number of the header's setup-pose bounding box as `build` writes it
+ * (issue #907): the double rigc's core computed — equal to spine-core's
+ * `getBounds` at tolerance 0 (`tools/core_gate.ts`'s bounds rows) — on the
+ * model's 1e-6 grid at float32 (`onModelGrid`).
+ *
+ * ⭐ **Why the grid and not the bare float32.** A box edge that sits at the
+ * setup pose's origin lands on the residue of a cancellation: gallery/flex's
+ * and gallery/ride's lower edge is 1.1368683772161603e-13 — one ulp of 720 —
+ * in rigc's core and in `getBounds` alike. A float32 keeps that residue (it is
+ * a float in its own right), so the written header followed the platform's
+ * libm to the last bit: with every libm-backed `Math` function nudged one ulp,
+ * the header of those two rows moved, and with it their documents'
+ * `spine.sha256` (`TB02`, which the gallery bases on two machines stand on).
+ * On the grid the residue is the 0 it is, and the box is otherwise the box to
+ * within half a millionth of a unit — three orders below the 0.0071 by which
+ * the editor's own header differs from `getBounds` on the twelve example
+ * exports. Exported for the two readers that hold a header to `getBounds`:
+ * `tools/core_gate.ts` and the corpus suite (`withRuntimeBox`).
+ */
+export function headerBoxNumber(n: number): number {
+  return onModelGrid(n);
 }
 
 /**
@@ -2133,8 +2160,10 @@ export function compile(opts: CompileOptions): CompileResult {
     // does not hold — the rest of the header — and the editor's orders, the
     // same functions `compileModel` stated the model's `editorOrder` with: the
     // sorts are applied at emission, so the model's `skins` and `animations`
-    // keep the spec's own order.
-    const skeleton = emitSkeleton(model, header, EDITOR_ORDERS);
+    // keep the spec's own order. The header's box is the setup-pose bounding
+    // box rigc's core computes over the model (issue #907, `headerBoundsOf`),
+    // never the stage.
+    const skeleton = emitSkeleton(model, { ...header, bounds: headerBoundsOf(model, atlasText).box }, EDITOR_ORDERS);
     return {
       skeleton,
       skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
@@ -2147,6 +2176,73 @@ export function compile(opts: CompileOptions): CompileResult {
 }
 
 /**
+ * The box the Spine header carries (issue #907): the setup-pose bounding box
+ * — what the format says `skeleton.x`, `y`, `width`, `height` are — computed
+ * by rigc's own core over the model (`setupBounds` in `src/core/raw.ts`,
+ * whose header states each measured rule), each of the four on the model's
+ * 1e-6 grid at float32 (`headerBoxNumber`).
+ *
+ * ⭐ **The stage is not this value and does not move.** `model.stage` — the
+ * rig spec's `skeleton.width`/`height` or the manifest's crop, the working
+ * area the coordinate transform reads (`src/transform.ts`) — stays the
+ * model's and the document's; until issue #907 the emitter copied it into the
+ * header, which is the defect the issue names: a reader who takes the header
+ * for what the format says it is got the crop.
+ *
+ * `null` — no box in the header — in two cases, each a statement rather than
+ * a number nobody measured:
+ *
+ *   - the rig declares no stage (`"width": null, "height": null`, issue
+ *     #578): the header carried no box before, and the input that asked for
+ *     none keeps getting none;
+ *   - nothing is drawn at the setup pose: a box around no vertex does not
+ *     exist (`getBounds` returns an infinite offset and a negative-infinite
+ *     size for it);
+ *   - a region the build has no atlas rectangle for (`atlas: null`,
+ *     `ModelRegionAttachment.atlas`): its corners read the trim and original
+ *     size, which nobody measured, and the build is refused by name anyway —
+ *     the emitted atlas has no such region, and
+ *     `A08_REGION_NAMES_MATCH_ATTACHMENTS` names it. Refusing the compile
+ *     here instead would replace that named failure with a different one;
+ *   - a setup pose rigc's core leaves out (`CoreInputError` — measured on the
+ *     tree: a slider whose animation keys an ik constraint's timelines, which
+ *     the core's constraint cut does not pose). The entry without spine-core
+ *     has no other poser, and both entries must write the same bytes, so the
+ *     box is absent on both rather than present on one; refusing the compile
+ *     would refuse a rig the gate passes. `tools/core_gate.ts` reports such a
+ *     row SKIP naming the reason, never IDENTICAL.
+ *
+ * Every case but the first comes back with `why`, the sentence `build` prints
+ * beside its output (`printHeaderBox` in `src/cli/shared.ts`), so an absent
+ * box is never silent.
+ *
+ * The core poses the model through its document — the text `build` writes
+ * beside the pair, read back by `readModel` — so the box is of the document a
+ * reader holds, not of an object only this process saw. The document's
+ * `spine.sha256` names the skeleton written beside it, which does not exist
+ * yet; the digest of an empty text stands in for it here, and nothing the box
+ * depends on reads it.
+ */
+export function headerBoundsOf(model: CompiledModel, atlasText: string): { box: ModelStage | null; why: string | null } {
+  if (model.stage === null) return { box: null, why: null };
+  const unplaced = model.skins.flatMap((skin) =>
+    Object.entries(skin.attachments).flatMap(([slot, table]) =>
+      Object.entries(table).flatMap(([placeholder, entry]) => (entry.kind === 'region' && entry.atlas === null ? [`skin "${skin.name}" slot "${slot}" region "${placeholder}"`] : [])),
+    ),
+  );
+  if (unplaced.length > 0) return { box: null, why: `${unplaced[0]} has no atlas rectangle, so its corners are not known — A08_REGION_NAMES_MATCH_ATTACHMENTS names it` };
+  let box: CoreBounds | null;
+  try {
+    box = setupBounds(readModel(modelDocument(model, '', atlasText), 'the compiled model'));
+  } catch (err) {
+    if (err instanceof CoreInputError) return { box: null, why: `rigc's core does not pose this setup pose — ${err.message}` };
+    throw err;
+  }
+  if (box === null) return { box: null, why: 'the setup pose draws nothing, and a box around no vertex does not exist' };
+  return { box: { x: headerBoxNumber(box.x), y: headerBoxNumber(box.y), width: headerBoxNumber(box.width), height: headerBoxNumber(box.height) }, why: null };
+}
+
+/**
  * What `compileModel` returns: the compiled model, and what a caller needs
  * beside it to gate it, write its document and — if it asks — emit it.
  */
@@ -2154,7 +2250,7 @@ export interface CompiledBuild {
   /** The compiled model (`src/model.ts`), `stage` and `editorOrder` included (issue #1026). */
   model: CompiledModel;
   /** The rest of the Spine header the model does not hold (`SkeletonHeader`): what `compile` hands the emitter beside the model. */
-  header: SkeletonHeader;
+  header: Omit<SkeletonHeader, 'bounds'>;
   /** The atlas text the compile measured its art against — `CompileResult.atlasText`. */
   atlasText: string;
   /** Declared durations, carried into the validator (rule 4) — `CompileResult.declaredDurations`. */
@@ -3532,7 +3628,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
       : null;
   // What the skeleton carries that the model does not hold: the rest of the header.
-  const header: SkeletonHeader = {
+  const header: Omit<SkeletonHeader, 'bounds'> = {
     spine: SPINE_VERSION,
     fps: rig.skeleton?.fps,
     images: skeletonImagesPath(rig.skeleton?.images, opts, outDir, partDirs),

@@ -572,18 +572,21 @@ export interface CompiledAnimation {
 }
 
 /**
- * The setup-pose box the skeleton declares (issue #1026): its origin `x`, `y`
- * and its extent `width`, `height`, exactly as the Spine header states them —
- * the rig spec's `skeleton.width`/`height` (or the manifest's crop), and its
- * `x`/`y` or 0 beside them, which is what the header has always written
- * (issue #578: four fields or none). `null` where the rig declares no stage.
+ * The stage the skeleton declares (issue #1026): its origin `x`, `y` and its
+ * extent `width`, `height` — the rig spec's `skeleton.width`/`height` (or the
+ * manifest's crop), and its `x`/`y` or 0 beside them (issue #578: four fields
+ * or none). `null` where the rig declares no stage.
  *
  * ⭐ **Why the model holds it.** `render` and `check` say whether a candidate
  * declares a stage (issue #714), and `A14`/`A19` read its box; until this field
  * the header of `skeleton.json` was the only place the value was written, so a
- * reader of the document had to open the Spine file beside it. The Spine
- * emitter writes this value into the header (`emitSkeleton`), as it writes
- * `referenceScale` (issue #958): one value, read by both.
+ * reader of the document had to open the Spine file beside it.
+ *
+ * 🔁 **And since issue #907 this is the only place it is written.** The Spine
+ * emitter used to copy it into the header's `x`, `y`, `width`, `height`,
+ * which the format defines as the setup-pose bounding box; the header now
+ * carries that box (`headerBoundsOf` in `src/compile.ts`), and every reader of
+ * the stage — `A14`, `A19`, `explain` — reads it here.
  */
 export interface ModelStage {
   x: number;
@@ -626,8 +629,9 @@ export interface ModelEditorOrder {
 
 export interface CompiledModel extends CarriedFromCompileResult {
   /**
-   * The setup-pose box the skeleton declares, or `null` (issue #1026,
-   * `ModelStage`). The Spine header carries it as `x`, `y`, `width`, `height`.
+   * The stage the skeleton declares, or `null` (issue #1026, `ModelStage`).
+   * Not in the Spine header since issue #907, which carries the setup-pose
+   * bounding box there.
    */
   stage: ModelStage | null;
   /**

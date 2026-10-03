@@ -209,6 +209,18 @@ export interface IngestOptions {
    * refuses it rather than answering it quietly.
    */
   stage?: IngestStage;
+  /**
+   * The stage a rigc build's model document states (issue #907): its `stage`,
+   * or `null` for a rig that declared none. Given, it is read IN PLACE OF the
+   * header's `x`, `y`, `width`, `height` — which on a rigc build since #907 are
+   * the setup-pose bounding box, not the stage — and everything below reads it
+   * as it would read a header stating it (`--stage` beside it is the same
+   * refusal). Absent, the header is read, as for an export: an export carries
+   * no other box. The caller reads it — `src/` reads no files —
+   * (`documentStageBeside` in `src/cli/shared.ts`: the `rigc-compiled/3`
+   * document beside the skeleton, only when its digest is that skeleton's).
+   */
+  documentStage?: IngestStage | null;
   /** The source file's basename, for the provenance note. No path: no leak. */
   source: string;
   /** rigc's own version, for the provenance note. Passed in — `src/` reads no files. */
@@ -1149,9 +1161,9 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
 /**
  * The rig spec's `skeleton` block — and the one judgement in this module.
  *
- * 🚨 **A skeleton JSON need not carry the stage, and it cannot be derived.**
- * Posing the rig gives the ANIMATED extent, which is a different number from the
- * editor's setup box. So a file that declares none is written as declaring none
+ * 🚨 **A skeleton JSON need not carry a box, and a stage cannot be derived.**
+ * The stage is the working area the art was painted in; no pose of the rig
+ * states it. So a file that declares none is written as declaring none
  * — `"width": null, "height": null`, the rig spec's spelling for that claim since
  * issue #578 — and `compile` then emits a header with none of the four fields,
  * which is the file that was read, byte for byte. No finding: nothing was lost,
@@ -1173,9 +1185,22 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
  * that shape; the blocker names the fields it does state.
  *
  * ⭐ It is still the judgement that costs least to get wrong. `diff` does report
- * the box — `stage_present` and `stage_box`, since issue #578 — but they sit in
- * the `(reported)` block that no rung consults, so a deliberately absurd unit box
- * is green everywhere a candidate is scored.
+ * the header's box — `bounds_present` and `bounds_box` (issue #578, renamed by
+ * #907) — but they sit in the `(reported)` block that no rung consults.
+ *
+ * 🔁 **What the box becomes (issue #907).** A header's box is its setup-pose
+ * bounding box — what the format says the four are, and what every editor
+ * export carries there. It is the only box a file has, so it becomes the
+ * rebuild's stage (`A14` and `A19` measure against it, as they did against the
+ * export's header). The rebuild's own header is not carried from it: `build`
+ * computes the setup-pose bounding box of what it draws (`headerBoundsOf` in
+ * `src/compile.ts`), which for a rebuild drawing the source's vertices is
+ * spine-core's `getBounds` over the source on the header's 1e-6 grid at float32 — not the editor's
+ * arithmetic, which on the twelve examples sits up to 0.0071 units away. A
+ * rigc build's own header is likewise its bounding box, not its stage: the
+ * stage is in `skeleton.model.json`, which the caller reads and hands in as
+ * `documentStage` when that document digests this skeleton — and then it is
+ * read in place of the header's box.
  *
  * 🔇 **Both of its silences were here, and both were around the DECLARED branch
  * rather than the missing one.** That branch used to be a bare early return, so
@@ -1186,7 +1211,10 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
  * a decompiler that is right for a reason it never states is a decompiler nobody
  * can check.
  */
-function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonObject {
+function ingestHeader(source: JsonObject, opts: IngestOptions, note: Note): JsonObject {
+  // A rigc build's stage is its model document's (issue #907, `IngestOptions.documentStage`): read in place of the header's box.
+  const head: JsonObject = opts.documentStage === undefined ? source : Object.fromEntries(Object.entries(source).filter(([key]) => !(STAGE_FIELDS as readonly string[]).includes(key)));
+  if (opts.documentStage) Object.assign(head, opts.documentStage);
   // 🚨 Before a line of transcription, because a header the caller contradicted
   // is not a header to start writing a spec from (issue #626).
   if (declaresStage(head) && opts.stage !== undefined) {
@@ -1243,9 +1271,10 @@ function ingestHeader(head: JsonObject, opts: IngestOptions, note: Note): JsonOb
         `skeleton.${omitted.join('/')}`,
         `the source declares a ${String(head.width)}x${String(head.height)} stage and omits ` +
           `${omitted.map((field) => `"${field}"`).join(' and ')}; inside a declared extent an omitted origin is 0, ` +
-          'which is what `compile` emits and what `diff` compares (#620), so the rig spec states x=' +
+          'which is how `compile` and `diff` read it (#620), so the rig spec states x=' +
           `${String(out.x)}, y=${String(out.y)} rather than leaving the rebuild to a default in another module. ` +
-          `⚠️ The rebuild WILL spell ${omitted.length > 1 ? 'those fields' : 'that field'}: same box, different bytes`,
+          `⚠️ The rebuilt header WILL spell ${omitted.length > 1 ? 'those fields' : 'that field'}: it carries the ` +
+          'setup-pose bounding box `build` computes (#907), whose origin is wherever the art sits',
       );
     }
     return out;

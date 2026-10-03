@@ -645,7 +645,7 @@ export function compareFactFamilies(
   const whole = (cut: FactCut, family: FactFamily, spine: string, modelSpelling: () => string): void =>
     void asked.push({ cut, family: { family, spine: { reading: JSON.parse(spine) as unknown }, model: () => ({ reading: JSON.parse(modelSpelling()) as unknown }), whole: ['reading'], ask: () => {} } });
   if (cuts.includes('4c-1')) {
-    const runtime = runtimeFacts(skeletonText, atlasText);
+    const runtime = runtimeFacts(skeletonText, atlasText, modelText);
     if (runtime === null) return null;
     const animations = askedAnimations(modelText);
     const spine = factSpellings(runtime, animations);
@@ -769,7 +769,8 @@ export function verdictRow(name: string, outDir: string): VerdictRow {
   const declaredDurations = documentDurations(modelText);
   const inputs = { ...(rig === undefined ? {} : { rig }), ...(declaredDurations === undefined ? {} : { declaredDurations }) };
   for (const profile of VERDICT_PROFILES) {
-    const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, ...inputs });
+    // The document beside the pair is handed over as `build` hands it: since issue #907 it is where A14 and A19 read a rigc build's stage.
+    const spine = validate({ skeletonText, atlasText, atlasDir: outDir, profile, modelText, ...inputs });
     // The model side reads the rig info and the durations off the document itself, and refuses either given beside it (issue #1054).
     const modelInput: ModelValidateInput = { modelText, atlasDir: outDir, profile, given: modelGivenOf(modelText, skeletonText, atlasText) };
     const model = validateModel(modelInput);

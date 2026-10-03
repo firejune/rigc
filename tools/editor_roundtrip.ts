@@ -623,7 +623,7 @@ export function diffSummaryLines(reportPath: string): string[] {
   }
   if (headerMeasures.length === 0) {
     lines.push(
-      '  the report carries no `skeleton` header block, so the stage was never compared — the `rigc` that wrote ' +
+      '  the report carries no `skeleton` header block, so the header\'s box was never compared — the `rigc` that wrote ' +
         'it predates the header measures (issue #578), and an absent block must not read here like one that is ' +
         'all 1.000',
     );

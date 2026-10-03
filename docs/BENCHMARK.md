@@ -132,7 +132,7 @@ every reader of every other section would then have to handle.
 
 | Block | Name-matched measures | Name-agnostic | Reported |
 | --- | --- | --- | --- |
-| `skeleton` (the header) | — | — | **`stage_present`** · **`stage_box`** |
+| `skeleton` (the header) | — | — | **`bounds_present`** · **`bounds_box`** |
 | `bones` | `count` · `names` · `parent_by_name` · `order` · `length_present` · `inherit_present` · `depth_histogram` · `degree_sequence` | `count` · `depth_histogram` · `degree_sequence` · `shape_histogram` · `order_shape` | — |
 | `slots` | `count` · `names` · `order` · `bone` · `attachment` · `blend` · `color_present` | `count` · `attachment_types_by_position` · `bone_binding_shape` · `order_shape` | — |
 | `attachments` | `skins` · `count` · `names` · `type_counts` · `mesh_vertices` · `mesh_triangles` · `mesh_weighted` · `mesh_hull` · `region_size` · `refs` · `skin_members` | — | **`mesh_edges`** · **`runtime_name`** |
@@ -161,11 +161,12 @@ column the answer is no, whatever the frames are:
 - **`animations.key_density`** and **`animations.keys_per_timeline`** — two
   keyings of one curve render the same pictures at every rate, which is measured
   under *Key density* below.
-- **`skeleton.stage_present`** and **`skeleton.stage_box`** — the setup-pose
+- **`skeleton.bounds_present`** and **`skeleton.bounds_box`** — the setup-pose
   bounding box draws no pixel; `render` frames from the posed bounds and never
-  reads it. Unwinnable a second way too: every brief on the ladder says in its own
-  honesty-rule check that it carries *"no stage size"*, so an author is not told
-  it and cannot be scored on it.
+  reads it. Unwinnable a second way too: since issue #907 an author does not
+  write it — `build` computes it — and the editor's own box is its arithmetic,
+  up to 0.0071 units from `getBounds` on the twelve examples, so not even a
+  rebuild reads it 4/4.
 
 They are still findings against the reference export, so they are printed — and
 they are printed in a block of their own, with **no mean**, for two reasons. The
@@ -308,13 +309,21 @@ every region and mesh draws a region even when the file leaves its `path` to the
 parser — read as the runtime resolves it, `path`, else `name`, else the key, so a
 writer that spells the path out and one that does not agree (`D71`). And
 `attachments.skin_members` reads `1/1` per skin on a file that declares no membership
-list, which is agreement and not an absence of data, the way `stage_present` counts
-two missing stages. Neither of the twelve editor exports' constructs that are absent
+list, which is agreement and not an absence of data, the way `bounds_present` counts
+two missing boxes. Neither of the twelve editor exports' constructs that are absent
 everywhere — a stated `path`, a linked mesh, a membership list, a draw-order folder —
 could otherwise have been given a fixture `IG18` would accept; the `diff` suite
 plants each one instead.
 
-##### `skeleton.stage_present` / `skeleton.stage_box` — the value that was required and unmeasured
+##### `skeleton.bounds_present` / `skeleton.bounds_box` — the value that was required and unmeasured
+
+🔁 **Called `stage_present` / `stage_box` until issue #907**, when `build` stopped
+copying rigc's stage into the header and started writing what the format says the
+header is: the setup-pose bounding box, computed by rigc's core and held to
+spine-core's `getBounds` at tolerance 0. Since then both sides of every comparison
+carry a bounding box, the stage is the model document's, and a measure named for
+the stage would send a reader to change a value that no longer moves it. The
+history below is the measure's, under its old name.
 
 [Issue #578](https://github.com/firejune/rigc/issues/578). `build` refused a rig
 spec without a `skeleton.width`/`height`, and **no instrument in this repository
@@ -325,31 +334,30 @@ measures**. Required and unmeasured is the worst combination a field can have �
 the only way to satisfy it was to invent a number, and nothing would ever
 contradict the invention.
 
-**`stage_present` is counted `1/1` or `0/1` and never `0/0`.** Both sides always
+**`bounds_present` is counted `1/1` or `0/1` and never `0/0`.** Both sides always
 have a presence to compare, *including* when both declare nothing: that is
 agreement, not an absence of data, and scoring it vacuous would put the one shape
-the measure exists for back into silence. **`stage_box` is the one that goes
+the measure exists for back into silence. **`bounds_box` is the one that goes
 vacuous**, at `0/0`, when there are not two boxes to compare — and it compares the
-four numbers **exactly**. There is nothing here to be within a tolerance of: a
-stage is a box an exporter wrote down rather than a pose anybody measured, and the
+four numbers **exactly**. Each side's box is its writer's own computation, and an
+epsilon chosen to absorb the editor's arithmetic would be a number nobody measured;
+the
 **structural** measures in `src/diff.ts` hold exactly one tolerance (`FRAME`, for
 `animations.duration`) and no spatial one anywhere, because they compare no
 position at all — that is `bonedist.ts`, and, for two files rather than two poses,
 the value comparison below.
 
-What a skeleton "declares a stage" means here is its **extent**: a numeric
-`width` and `height`. An `x`/`y` with no extent is an origin for a box that is
-not there — no export carries that shape and rigc refuses to emit it — so it does
-not make a stage on its own. That is also what the compiler requires and what
-`A14_NO_FULL_FRAME_MESH` and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so
-the three agree on the word by construction rather than by memory.
+What a header "carries a box" means here is its **extent**: a numeric `width`
+and `height`. An `x`/`y` with no extent is an origin for a box that is not there
+— no export carries that shape and rigc never emits it — so it does not make a
+box on its own.
 
-**Inside a declared stage, an omitted `x`/`y` is read as `0`**
+**Inside a stated box, an omitted `x`/`y` is read as `0`**
 ([#620](https://github.com/firejune/rigc/issues/620)) — *exactly* is about the
 comparison, not about the spelling. The editor's writer omits a header field at
 its default, so a stage at the origin exports with a `width` and a `height` and
 no origin at all, and three rigc builds sitting at `0,0` each read their own
-editor export as `stage_box` **2/4** with the note `candidate 64x64 at
+editor export as `stage_box` (as it was then called) **2/4** with the note `candidate 64x64 at
 null,null; reference 64x64 at 0,0` — the same box, reported half moved. The
 reading is derived rather than assumed: all twelve exports under `examples/`
 omit `referenceScale`, whose default the parser spells as `100`, and none of the
@@ -358,8 +366,8 @@ omit `referenceScale`, whose default the parser spells as `100`, and none of the
 skeleton's origin is `0` in a `.skel` and absent in a `.json`; and
 `SkeletonJson.js:70-73` is a raw `skeletonData.x = skeletonMap.x` that does the
 same to `fps`, which every one of the twelve omits. The default stops at the
-origin: defaulting the extent would turn a stage-less header into a `0x0` stage
-and answer the question `stage_present` exists to ask.
+origin: defaulting the extent would turn a box-less header into a `0x0` box
+and answer the question `bounds_present` exists to ask.
 
 ##### `attachments.mesh_edges` — the third of rung 6's three features
 

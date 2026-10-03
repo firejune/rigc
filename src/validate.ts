@@ -68,6 +68,7 @@ import {
   type SpineGeneration,
 } from './generation.ts';
 import { posedNumbersOf } from './render.ts';
+import { MODEL_DOCUMENT_SPEC } from './model.ts';
 import { BONE_INHERIT_KNOWN } from './rig.ts';
 import {
   CHANNELS_BY_KIND,
@@ -860,7 +861,7 @@ export function spineSkinEntries(data: ReturnType<SkeletonJson['readSkeletonData
  * line would hide a difference (an order nothing failed on, a name no line
  * printed); `validate()` itself builds them from its own round trip.
  */
-export function runtimeFacts(skeletonText: string, atlasText: string): {
+export function runtimeFacts(skeletonText: string, atlasText: string, modelText?: string): {
   skinEntries: SkinEntryFacts;
   atlasPages: AtlasPageFacts;
   slotColour: SlotColourFacts;
@@ -890,7 +891,7 @@ export function runtimeFacts(skeletonText: string, atlasText: string): {
     skinMembers: data,
     regionJoins: spineRegionJoins(atlasText, raw),
     atlasRegions: { atlas },
-    stage: spineStage(data),
+    stage: spineStage(data, modelText),
     skeletonRoster: rawSkeletonRoster(raw),
     boneTimelines: rawBoneTimelines(raw),
     eventKeys: rawEventKeys(raw),
@@ -1231,9 +1232,42 @@ export function spineAnimatedBones(raw: Json | null): AnimatedBoneFacts {
   };
 }
 
-/** The runtime's supply of `StageFacts` (issue #1025, cut 4c-1): the loaded skeleton's `width` and `height`, as spine-core holds them — `undefined` where the header states none — or both absent with no skeleton. */
-export function spineStage(data: ReturnType<SkeletonJson['readSkeletonData']> | null): StageFacts {
-  return { width: data?.width, height: data?.height };
+/**
+ * The runtime's supply of `StageFacts` (issue #1025, cut 4c-1): the stage A14
+ * and A19 measure against.
+ *
+ * 🔸 **A rigc build's stage is its model document's, not its header's**
+ * (issue #907). Since then the header of a rigc build carries the setup-pose
+ * bounding box — what the format says it is — and the stage, the working
+ * area the art was painted in, is stated by the `rigc-compiled/3` document
+ * written beside the pair (`stage`, issue #1026). So where the caller hands a
+ * `/3` document (`modelText`), its `stage` is read: the two extents, or both
+ * `undefined` where it states `null`. Everywhere else — an editor export, a
+ * bare directory with no document, a `/2` or `/1` document, written when the
+ * header still was the stage — it is the loaded skeleton's `width` and
+ * `height`, as spine-core holds them (`undefined` where the header states
+ * none), or both absent with no skeleton. An export carries no other box, so
+ * on an export the rules measure against its bounding box, as they always
+ * did.
+ */
+export function spineStage(data: ReturnType<SkeletonJson['readSkeletonData']> | null, modelText?: string): StageFacts {
+  return documentStage(modelText) ?? { width: data?.width, height: data?.height };
+}
+
+/** The stage a `rigc-compiled/3` document states, or `undefined` where there is no such document (`spineStage`). */
+function documentStage(modelText: string | undefined): StageFacts | undefined {
+  if (modelText === undefined) return undefined;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(modelText);
+  } catch {
+    return undefined;
+  }
+  if (!isObj(doc) || doc.spec !== MODEL_DOCUMENT_SPEC || !('stage' in doc)) return undefined;
+  const stage = doc.stage;
+  if (stage === null) return { width: undefined, height: undefined };
+  if (isObj(stage) && typeof stage.width === 'number' && typeof stage.height === 'number') return { width: stage.width, height: stage.height };
+  return undefined;
 }
 
 /**
@@ -2556,7 +2590,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // somebody else's canvas. A rig that declares no budget has nothing to be
     // measured against, and the assertion says so instead of inventing a wall.
     check('A13_MESH_BUDGET', () => a13MeshBudget(verdicts, loadedMeshFacts(), input));
-    check('A14_NO_FULL_FRAME_MESH', () => a14NoFullFrameMesh(verdicts, loadedMeshFacts(), spineStage(data)));
+    check('A14_NO_FULL_FRAME_MESH', () => a14NoFullFrameMesh(verdicts, loadedMeshFacts(), spineStage(data, input.modelText)));
 
     // --- A15: idle must not key a mesh-driving bone (dirty-skip lever) -----
     //
@@ -3200,7 +3234,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // fires, and it now has to name the profile it belongs to as well as the one
   // that does not ask — the reader opted in, and the message is where they find
   // out what they opted into.
-  check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => a19OverlayPngsHaveAlpha(verdicts, { atlas }, spineStage(skeletonData), { regionAttachments }, input));
+  check('A19_OVERLAY_PNGS_HAVE_ALPHA', () => a19OverlayPngsHaveAlpha(verdicts, { atlas }, spineStage(skeletonData, input.modelText), { regionAttachments }, input));
   // Two regions on one page whose rectangles overlap and whose footprints do
   // too — a mesh's hull, else the rectangle (issue #1099). The clause A06 held
   // about two rectangles over the same texels, read over what each region

@@ -11,9 +11,12 @@
  * rather than a number standing in for it, and each body reads it as it always
  * did.
  *
- * Not in the model document: the stage is the emitter's header
- * (`SkeletonHeader.stage`), and it enters the document with issue #1026. Until
- * then the model side is given it by its caller (`../model/stage.ts`).
+ * A `rigc-compiled/3` document states it (`stage`, issue #1026), and since
+ * issue #907 that is the only place a rigc build states it: the Spine header
+ * carries the setup-pose bounding box. So both suppliers read a rigc build's
+ * stage off its document (`spineStage` in `../../validate.ts`,
+ * `../model/stage.ts`); an export, which has no document, is read off its
+ * header.
  * Links nothing from the runtime.
  */
 

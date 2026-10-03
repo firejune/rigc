@@ -190,6 +190,8 @@ import {
   editorSkinOrder,
   editorSlotKeyOrder,
   f32,
+  headerBoundsOf,
+  headerBoxNumber,
   pathChain,
   pathCurveLengths,
   relativeImagesPath,
@@ -501,6 +503,7 @@ import {
   SKIP_NO_TWO_COLOR_TINT,
   skeletonValues,
   runtimeFacts,
+  spineStage,
   runtimeRigFacts,
   timelineAddBehaviour,
   validate as validateOverSpine,
@@ -566,6 +569,7 @@ import {
   type OraclePhase,
   type OracleSample,
   parseDt,
+  spineSetupBounds,
   uvSourceOf,
 } from './tools/pose_oracle.ts';
 import {
@@ -1010,7 +1014,7 @@ function unreadableFirstPartPage(a: Artifacts, atlasDir: string, tag: string, by
 
 /** The first page block that is not the base plate's, rewritten as `bytes` of itself under `dir/`. */
 function firstPartPageAs(a: Artifacts, atlasDir: string, dir: string, bytes: (png: Uint8Array) => Uint8Array): { atlasText: string; moved: string[] } {
-  const base = coversTheStage(a.skeletonText);
+  const base = coversTheStage(a.atlasText);
   let first = true;
   return atlasWithPageBytes(a.atlasText, atlasDir, dir, bytes, (block) => {
     if (!first || base(block)) return false;
@@ -1022,7 +1026,7 @@ function firstPartPageAs(a: Artifacts, atlasDir: string, dir: string, bytes: (pn
 /** M12d/M12e's reading: the moved page named once, by A06, and A19's SKIP counted off the broken atlas. */
 function unreadableFirstPartPageHold(report: ValidateReport, broken: Artifacts, tag: string): { held: boolean; read: string } {
   const blocks = broken.atlasText.split('\n\n');
-  const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+  const withParts = blocks.filter((block) => !coversTheStage(broken.atlasText)(block.split('\n'))).length;
   const moved = broken.atlasText.split('\n').filter((line) => line.includes(`/unreadable_${tag}/`));
   return pagesUnreadableHold(
     report,
@@ -1043,10 +1047,24 @@ function saidByA06(hold: { held: boolean; read: string }, report: ValidateReport
 /** Where M12i wrote its re-cut page, for its reading to open (a reading sees the report and the atlas, not the directory). */
 const M12I_WRITTEN: string[] = [];
 
-/** Whether a page block holds the region that covers the skeleton's whole stage — the base plate's page (`M77`'s reading). */
-function coversTheStage(skeletonText: string): (block: readonly string[]) => boolean {
-  const stage = (JSON.parse(skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
-  return (block) => block.includes(`bounds: 0, 0, ${stage.width}, ${stage.height}`);
+/**
+ * Whether a page block holds the region that covers the skeleton's whole stage — the base plate's page (`M77`'s reading).
+ *
+ * ⚠️ Read off the atlas, not the header: since issue #907 the header carries the setup-pose bounding box, which on a
+ * fixture whose base plate covers its crop is the stage give or take a float32 step and need not equal it. The
+ * fixtures emit one part per page, and the base plate is the part as large as the crop — no part is larger — so the
+ * stage-covering page is the one whose `bounds` state the largest extent of any page.
+ */
+function coversTheStage(atlasText: string): (block: readonly string[]) => boolean {
+  const { width, height } = stageOfAtlas(atlasText);
+  return (block) => block.includes(`bounds: 0, 0, ${width}, ${height}`);
+}
+
+/** A fixture's stage read off its atlas (`coversTheStage`'s reading): the largest extent any page's region states at the page origin. */
+function stageOfAtlas(atlasText: string): { width: number; height: number } {
+  const extents = [...atlasText.matchAll(/^\s*bounds:\s*0,\s*0,\s*(\d+),\s*(\d+)\s*$/gm)].map((m) => [Number(m[1]), Number(m[2])]);
+  const [width, height] = extents.reduce((best, e) => (e[0] * e[1] > best[0] * best[1] ? e : best), [0, 0]);
+  return { width, height };
 }
 
 /**
@@ -2326,7 +2344,7 @@ const MUTANTS: Mutant[] = [
       'neither had opened',
     expect: 'A17_ATLAS_PAGE_FILES_EXIST',
     mutate: (a) => {
-      const base = coversTheStage(a.skeletonText);
+      const base = coversTheStage(a.atlasText);
       let first = true;
       const off = atlasWithPagesOffDisk(a.atlasText, (block) => {
         if (!first || base(block)) return false;
@@ -2338,7 +2356,7 @@ const MUTANTS: Mutant[] = [
     holds: (report, broken) => {
       const blocks = broken.atlasText.split('\n\n');
       const pages = blocks.length;
-      const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+      const withParts = blocks.filter((block) => !coversTheStage(broken.atlasText)(block.split('\n'))).length;
       const moved = broken.atlasText.split('\n').filter((line) => line.includes('/not_on_disk/'));
       return pagesOffDiskHold(
         report,
@@ -2358,7 +2376,7 @@ const MUTANTS: Mutant[] = [
     holds: (report, broken) => {
       const blocks = broken.atlasText.split('\n\n');
       const pages = blocks.length;
-      const withParts = blocks.filter((block) => !coversTheStage(broken.skeletonText)(block.split('\n'))).length;
+      const withParts = blocks.filter((block) => !coversTheStage(broken.atlasText)(block.split('\n'))).length;
       const moved = broken.atlasText.split('\n').filter((line) => line.includes('/not_on_disk/'));
       return pagesOffDiskHold(
         report,
@@ -3519,7 +3537,8 @@ const MUTANTS: Mutant[] = [
       'region, would certify an overlay that paints a solid rectangle over the plate',
     expect: 'A19_OVERLAY_PNGS_HAVE_ALPHA',
     mutate: (a) => {
-      const stage = (JSON.parse(a.skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
+      // The stage off the atlas (`stageOfAtlas`): since issue #907 the header carries the setup-pose bounding box.
+      const stage = stageOfAtlas(a.atlasText);
       const blocks = a.atlasText.trimEnd().split('\n\n');
       const at = blocks.findIndex((block) => block.split('\n').includes(`bounds: 0, 0, ${stage.width}, ${stage.height}`));
       const other = blocks.findIndex((_, i) => i !== at);
@@ -4003,8 +4022,10 @@ const ARTICULATED_MUTANTS: Mutant[] = [
         // assertion. The compiler refuses it too, which is why this has to be
         // forged in the artifact to be tested at all.
         const stage = (j as any).bones.findIndex((b: any) => b.name === 'stage');
-        const halfW = (j as any).skeleton.width / 2;
-        const halfH = (j as any).skeleton.height / 2;
+        // The stage off the atlas (`stageOfAtlas`): since issue #907 the header carries the setup-pose bounding box.
+        const box = stageOfAtlas(a.atlasText);
+        const halfW = box.width / 2;
+        const halfH = box.height / 2;
         (j as any).skins[0].attachments.stage['00_stage'] = {
           type: 'mesh',
           uvs: [0, 0, 1, 0, 1, 1, 0, 1],
@@ -4016,16 +4037,16 @@ const ARTICULATED_MUTANTS: Mutant[] = [
             1, stage, -halfW, -halfH, 1,
           ],
           hull: 4,
-          width: (j as any).skeleton.width,
-          height: (j as any).skeleton.height,
+          width: box.width,
+          height: box.height,
         };
       }),
     }),
-    // The same mesh, in the document's spelling: bound by bone NAME, sized by the stage the pair states — the
-    // value the model side is given (issue #1025, cut 4c-1).
+    // The same mesh, in the document's spelling: bound by bone NAME, sized by the stage — read off the atlas, as
+    // the mutant above reads it (issue #1025, cut 4c-1; issue #907).
     twin: {
       forge: (doc, call) => {
-        const stage = (JSON.parse(call.skeletonText) as any).skeleton;
+        const stage = stageOfAtlas(call.atlasText);
         const halfW = stage.width / 2;
         const halfH = stage.height / 2;
         const corner = (x: number, y: number): unknown[] => [{ bone: 'stage', x, y, weight: 1 }];
@@ -4714,14 +4735,14 @@ const DIFF_CASES: DiffCase[] = [
     why:
       'issue #578, and the finding the corpus sweep could not make: a deliberately absurd unit stage `0,0,1,1` was ' +
       'handed to 37 real exports and 32 of them still read 1.000 on every measure, because no measure read the ' +
-      'header at all. `stage_present` is the one that has to move here — and `stage_box` must NOT, because with one ' +
+      'header at all. `bounds_present` is the one that has to move here — and `bounds_box` must NOT, because with one ' +
       'side declaring nothing there is no second box to compare and a figure invented for it would be the vacuous ' +
       '1.000 this file refuses, wearing a red coat. Nothing name-matched or name-agnostic moves: the stage is not a ' +
       'bone, a slot or an attachment, and a report that smeared it over them would say the rig changed when the ' +
       'header did',
     expect: [],
     expectAgnostic: [],
-    expectReported: ['skeleton.stage_present'],
+    expectReported: ['skeleton.bounds_present'],
     mutate: (j) => {
       const header = (j as any).skeleton;
       if (typeof header?.width !== 'number' || typeof header?.height !== 'number') {
@@ -4733,13 +4754,13 @@ const DIFF_CASES: DiffCase[] = [
   {
     name: 'D38_move_the_stage_box_by_one_unit',
     why:
-      'the other half of D37 and the reason `stage_present` is not the whole measure: two files that both declare a ' +
+      'the other half of D37 and the reason `bounds_present` is not the whole measure: two files that both declare a ' +
       'stage agree on the QUESTION and can still disagree on the box. One unit on `x` is the smallest edit that ' +
       'says so — a transcriber who invented a stage would land here rather than on D37 — and it must leave ' +
-      '`stage_present` at 1.000, or "no stage at all" and "a stage somewhere else" would read the same',
+      '`bounds_present` at 1.000, or "no stage at all" and "a stage somewhere else" would read the same',
     expect: [],
     expectAgnostic: [],
-    expectReported: ['skeleton.stage_box'],
+    expectReported: ['skeleton.bounds_box'],
     mutate: (j) => {
       const header = (j as any).skeleton;
       if (typeof header?.x !== 'number') throw new Error('fixture declares no stage origin — the case would prove nothing');
@@ -4753,7 +4774,7 @@ const DIFF_CASES: DiffCase[] = [
       'origin is `0`, because no export in the corpus does — all twelve state `x` and `y` and all twelve are ' +
       'nonzero. The editor omits a header field at its default, so a stage sitting at `0,0` exports as ' +
       '`width`/`height` and NO `x`/`y`, and reading that as two absent numbers made a rigc build and its own ' +
-      'export read `stage_box` 2/4 — the same box, reported half moved. Nothing may move here: an origin the ' +
+      'export read `bounds_box` 2/4 — the same box, reported half moved. Nothing may move here: an origin the ' +
       'writer could not have spelled is not a box that travelled',
     expect: [],
     expectAgnostic: [],
@@ -4781,7 +4802,7 @@ const DIFF_CASES: DiffCase[] = [
       'read as moved against `10,0` — one unit of the four, exactly as D38 counts its own',
     expect: [],
     expectAgnostic: [],
-    expectReported: ['skeleton.stage_box'],
+    expectReported: ['skeleton.bounds_box'],
     mutate: (j) => {
       const header = (j as any).skeleton;
       if (typeof header?.width !== 'number' || typeof header?.height !== 'number') {
@@ -4799,16 +4820,16 @@ const DIFF_CASES: DiffCase[] = [
   {
     name: 'D41_an_origin_with_no_extent_is_still_not_a_stage',
     why:
-      'the fence around D39: the default belongs to the ORIGIN and must not reach the extent. `stageFacts` has ' +
+      'the fence around D39: the default belongs to the ORIGIN and must not reach the extent. `headerBox` (once `stageFacts`) has ' +
       'said since #578 that a stage is declared by its `width` and `height` and that an `x`/`y` alone is an origin ' +
       'for a box that is not there, and nothing had ever made that clause fire — D37 deletes all four at once, so ' +
       'it cannot tell the rule from a rule about any header field. Here the origin stays and only the extent goes: ' +
-      '`stage_present` has to move and `stage_box` has to stay vacuous. An extent defaulted to `0` the way the ' +
-      'origin now is would read as a `0x0` stage at `0,0`, leave `stage_present` still, and move `stage_box` ' +
+      '`bounds_present` has to move and `bounds_box` has to stay vacuous. An extent defaulted to `0` the way the ' +
+      'origin now is would read as a `0x0` stage at `0,0`, leave `bounds_present` still, and move `bounds_box` ' +
       'instead — which is this case failing rather than this case passing differently',
     expect: [],
     expectAgnostic: [],
-    expectReported: ['skeleton.stage_present'],
+    expectReported: ['skeleton.bounds_present'],
     mutate: (j) => {
       const header = (j as any).skeleton;
       if (typeof header?.x !== 'number' || typeof header?.y !== 'number') {
@@ -5683,10 +5704,10 @@ function runDiffIdentityControls(label: string, text: string): number {
   }
 
   // Fourth, the half every control above it is blind to: `diff X X` on a file
-  // that declares NO stage (issue #578). `stage_present` has to read 1/1 there
+  // that declares NO stage (issue #578). `bounds_present` has to read 1/1 there
   // and not `0/0` — two sides that both say "none" have agreed about something,
   // and scoring that as vacuous would put the one shape this measure was built
-  // for back into the silence it came out of. `stage_box` is the one that is
+  // for back into the silence it came out of. `bounds_box` is the one that is
   // rightly vacuous, because there are no two boxes.
   const barePair = [JSON.parse(text), JSON.parse(text)] as Array<Record<string, unknown>>;
   for (const one of barePair) {
@@ -5696,8 +5717,8 @@ function runDiffIdentityControls(label: string, text: string): number {
   const bareReport = diffSkeletons(barePair[0], barePair[1]);
   const bareDrift = movedMeasures(bareReport);
   const bareReported = movedReportedMeasures(bareReport);
-  const present = bareReport.header.measures.find((m) => m.id === 'skeleton.stage_present');
-  const box = bareReport.header.measures.find((m) => m.id === 'skeleton.stage_box');
+  const present = bareReport.header.measures.find((m) => m.id === 'skeleton.bounds_present');
+  const box = bareReport.header.measures.find((m) => m.id === 'skeleton.bounds_box');
   if (
     bareDrift.length === 0 &&
     bareReported.length === 0 &&
@@ -5708,15 +5729,15 @@ function runDiffIdentityControls(label: string, text: string): number {
   ) {
     console.log(
       `  PASS  CONTROL_A_STAGE_LESS_FILE_AGAINST_ITSELF_IS_ONE_AND_ITS_AGREEMENT_IS_NOT_VACUOUS [${label}]  ` +
-        `(stage_present ${present.matched}/${present.total}, stage_box ${box.matched}/${box.total} — ${box.note ?? 'no note'})`,
+        `(bounds_present ${present.matched}/${present.total}, bounds_box ${box.matched}/${box.total} — ${box.note ?? 'no note'})`,
     );
   } else {
     bad++;
     console.log(
       `  FAIL  CONTROL_A_STAGE_LESS_FILE_AGAINST_ITSELF_IS_ONE_AND_ITS_AGREEMENT_IS_NOT_VACUOUS [${label}]: ` +
-        `below 1.000: [${[...bareDrift, ...bareReported].join(', ')}]; stage_present ` +
-        `${present ? `${present.matched}/${present.total}` : 'absent'}, stage_box ${box ? `${box.matched}/${box.total}` : 'absent'}  ` +
-        '(want: nothing below 1.000, stage_present counted 1/1 rather than 0/0, and stage_box vacuous at 0/0)',
+        `below 1.000: [${[...bareDrift, ...bareReported].join(', ')}]; bounds_present ` +
+        `${present ? `${present.matched}/${present.total}` : 'absent'}, bounds_box ${box ? `${box.matched}/${box.total}` : 'absent'}  ` +
+        '(want: nothing below 1.000, bounds_present counted 1/1 rather than 0/0, and bounds_box vacuous at 0/0)',
     );
   }
   return bad;
@@ -16741,7 +16762,8 @@ function runStaticRigSuite(): number {
     const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'stageless');
     const staged = compile(stagedOpts);
     const stageless = compile(stagelessOpts);
-    const stagedHeader = (JSON.parse(staged.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
+    // The stage is the model's since issue #907 — the header carries the setup-pose bounding box.
+    const stagedStage = staged.model.stage;
     const gate = validate({
       skeletonText: stageless.skeletonText,
       atlasText: stageless.atlasText,
@@ -16760,9 +16782,9 @@ function runStaticRigSuite(): number {
       ...(typeof crop?.w === 'number' && typeof crop?.h === 'number'
         ? []
         : ['the fixture\'s manifest states no crop, so there is nothing for the absence to beat']),
-      ...(stagedHeader.width === crop?.w && stagedHeader.height === crop?.h
+      ...(stagedStage?.width === crop?.w && stagedStage?.height === crop?.h
         ? []
-        : [`the fixture's own build reads ${String(stagedHeader.width)}x${String(stagedHeader.height)}, not its crop — the crop is not its stage and this case measures no precedence`]),
+        : [`the fixture's own build states the stage ${String(stagedStage?.width)}x${String(stagedStage?.height)}, not its crop — the crop is not its stage and this case measures no precedence`]),
       ...(stageFieldsOf(stageless.skeletonText).length === 0
         ? []
         : [`the stageless build still carries [${stageFieldsOf(stageless.skeletonText).join(', ')}] — the crop won over the stated absence`]),
@@ -18807,7 +18829,8 @@ function runPngTransparencySuite(): number {
     const gated = gateLooseAndPacked({ ...optsForFixture(copy), rigPath, outDir }, 'spine-html');
     // Two-sided: the stated stage must really be one the overlay covers, or the
     // size reading had nothing to exempt and the case measures nothing.
-    const header = (JSON.parse(gated.result.skeletonText) as { skeleton?: { width?: number; height?: number } }).skeleton ?? {};
+    // The stage the build states — the model's since issue #907; the header carries the setup-pose bounding box.
+    const header: { width?: number; height?: number } = gated.result.model.stage ?? {};
     const covered =
       header.width !== undefined &&
       header.height !== undefined &&
@@ -46265,8 +46288,9 @@ function runPackerSuite(): number {
   // whose art is smaller than the stage in either direction, which is the
   // negation of the exemption's own question rather than a name.
   const packStage = ((): { width: number; height: number } => {
-    const parsed = JSON.parse(htmlPack.result.skeletonText) as { skeleton?: { width?: number; height?: number } };
-    return { width: parsed.skeleton?.width ?? 0, height: parsed.skeleton?.height ?? 0 };
+    // The stage is the model's since issue #907; the header carries the setup-pose bounding box.
+    const stage = htmlPack.result.model.stage;
+    return { width: stage?.width ?? 0, height: stage?.height ?? 0 };
   })();
   const overlayRegion = packedRegions.find((region) => {
     const art = htmlPack.result.images.find((img) => img.region === region.name.trim());
@@ -55564,9 +55588,9 @@ function runEditorRoundtripSuite(): number {
               `${JSON.stringify([...movedMeasures(stage.report), ...movedAgnosticMeasures(stage.report)])} — so it is ` +
               'no longer the report whose ONLY moved measure is the header one',
           ]),
-      ...(JSON.stringify(movedReportedMeasures(stage.report)) === JSON.stringify(['skeleton.stage_box'])
+      ...(JSON.stringify(movedReportedMeasures(stage.report)) === JSON.stringify(['skeleton.bounds_box'])
         ? []
-        : [`the stage fixture's reported measures moved ${JSON.stringify(movedReportedMeasures(stage.report))}, and \`skeleton.stage_box\` alone was the fixture`]),
+        : [`the stage fixture's reported measures moved ${JSON.stringify(movedReportedMeasures(stage.report))}, and \`skeleton.bounds_box\` alone was the fixture`]),
       ...(movedMeasures(edges.report).length === 0 && JSON.stringify(movedReportedMeasures(edges.report)) === JSON.stringify(['attachments.mesh_edges'])
         ? []
         : [
@@ -55657,7 +55681,7 @@ function runEditorRoundtripSuite(): number {
     const noHeaderPath = join(dr, 'no-header.json');
     writeFileSync(noHeaderPath, `${JSON.stringify(noHeader, null, 2)}\n`);
     const noHeaderLines = diffSummaryLines(noHeaderPath).join('\n');
-    const SAID = 'the stage was never compared';
+    const SAID = 'the header\'s box was never compared';
     const absentProbes = [
       ...('header' in noHeader ? ['the fixture still carries a `header` block, so nothing was removed and this case measures a report that has one'] : []),
       ...(noHeaderLines.includes(SAID) ? [] : [`a report with no \`header\` block did not say "${SAID}" — it printed ${JSON.stringify(noHeaderLines)}`]),
@@ -64698,7 +64722,10 @@ function runCurrencySuite(): number {
     });
     const header = headerProbe.skeleton as Record<string, unknown>;
     const back = rebuilt as Record<string, unknown> | null;
-    const lost = back === null ? [] : Object.keys(header).filter((k) => !declared.includes(k) && JSON.stringify(back[k]) !== JSON.stringify(header[k]));
+    // The box is not carried since issue #907: the rebuild computes the setup-pose bounding box (`headerBoundsOf`),
+    // and `IG97` holds it to `getBounds` of the source — so the four box keys are left out of "comes back as stated".
+    const computed = ['x', 'y', 'width', 'height'];
+    const lost = back === null ? [] : Object.keys(header).filter((k) => !declared.includes(k) && !computed.includes(k) && JSON.stringify(back[k]) !== JSON.stringify(header[k]));
     const probes = [
       ...standing,
       ...(refused === null ? [] : [`the header probe's rebuild was refused: ${refused}`]),
@@ -72399,6 +72426,7 @@ import { ADMITTED_CONSTRAINT_KINDS, TRANSFORM_PROPERTIES, type ConstraintPlant, 
 import { CORE_ALL_SKINS, lookupSkins } from './src/core/skins.ts';
 import { underSkin } from './src/core/index.ts';
 import { skinReachLines } from './tools/core_gate.ts';
+import { boundsOfTexts } from './tools/core_gate.ts';
 // The page UVs (issue #967), its own statements so the CU controls land as one hunk.
 import { computeUvs, frameRegionName, meshPageUvs, readUvSequences, regionPageUvs, type UvReading } from './src/core/uvs.ts';
 import { atlasRegionLookup } from './src/atlas.ts';
@@ -84171,6 +84199,184 @@ function runCoreSuite(): number {
     );
   }
 
+  // --- CO35–CO40: the header's setup-pose bounding box (issue #907) ----------
+  //
+  // `build` writes the setup-pose bounding box into the header, computed by the
+  // core over the model (`setupBounds`, `headerBoundsOf`), and the stage stays
+  // the model's. Each control builds a hand-written Spine skeleton through
+  // `ingest` and `compile` against a two-region atlas, reads the three boxes
+  // `tools/core_gate.ts`'s bounds row reads — the core's, spine-core's
+  // `getBounds`, the header's — and plants the one misreading it exists to see.
+  {
+    const boxRoot = mkdtempSync(join(tmpdir(), 'rigc-bounds-'));
+    const boxAtlas = join(boxRoot, 'p.atlas');
+    writeFileSync(boxAtlas, ['p.png', 'size: 64, 32', 'filter: Linear, Linear', 'a', 'bounds: 0, 0, 20, 20', 'b', 'bounds: 20, 0, 20, 20', ''].join('\n'));
+    const regionAt = (x: number, y = 0): Record<string, unknown> => ({ width: 20, height: 20, x, y });
+    const boxSource = (extra: Record<string, unknown>): Record<string, unknown> => ({ skeleton: { spine: SPINE_VERSION, x: 0, y: 0, width: 10, height: 10 }, ...extra });
+    /** One hand-written skeleton through `ingest` and `compile`, with the bounds row of what was built; `stageless` states the rig's stage absent. */
+    const boxBuild = (name: string, source: Record<string, unknown>, stageless = false): { result: CompileResult; modelText: string; row: ReturnType<typeof boundsOfTexts> } => {
+      const dir = join(boxRoot, name);
+      mkdirSync(dir, { recursive: true });
+      const decompiled = ingest(source, { name, art: 'none', source: `${name}.json`, version: '0' });
+      const rig = decompiled.rig as unknown as Record<string, unknown>;
+      if (stageless) rig.skeleton = { width: null, height: null };
+      writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+      writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(decompiled.motion, null, 2)}\n`);
+      const result = compile({ rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir: join(dir, 'out'), atlasInPath: boxAtlas });
+      const modelText = modelDocument(result.model, result.skeletonText, result.atlasText);
+      return { result, modelText, row: boundsOfTexts(name, result.skeletonText, result.atlasText, modelText) };
+    };
+    /** The same build with its header carrying a box it should not — the forgery each "no box" control must refuse. */
+    const forgedBox = (b: { result: CompileResult; modelText: string }): ReturnType<typeof boundsOfTexts> => {
+      const j = JSON.parse(b.result.skeletonText) as { skeleton: Record<string, unknown> };
+      Object.assign(j.skeleton, { x: 0, y: 0, width: 1, height: 1 });
+      return boundsOfTexts('forged', JSON.stringify(j), b.result.atlasText, b.modelText);
+    };
+    const boxOf = (text: string): string => JSON.stringify(['x', 'y', 'width', 'height'].map((k) => (JSON.parse(text) as { skeleton: Record<string, unknown> }).skeleton[k] ?? null));
+    const far = [-5000, -5000, 5000, -5000, 5000, 5000, -5000, 5000];
+
+    // CO35: what is counted — the default skin's regions and meshes on active bones, nothing else.
+    {
+      const b = boxBuild('counted', boxSource({
+        bones: [{ name: 'root' }, { name: 'off', parent: 'root', x: 1000, skin: true }],
+        slots: [{ name: 's1', bone: 'root', attachment: 'a' }, { name: 's2', bone: 'off', attachment: 'b' }, { name: 's3', bone: 'root', attachment: 'b' }, { name: 'c', bone: 'root', attachment: 'clip' }, { name: 'bb', bone: 'root', attachment: 'box' }, { name: 'pa', bone: 'root', attachment: 'path' }],
+        skins: [
+          { name: 'default', attachments: { s1: { a: regionAt(0) }, s2: { b: regionAt(0) }, c: { clip: { type: 'clipping', end: 's3', vertexCount: 4, vertices: far } }, bb: { box: { type: 'boundingbox', vertexCount: 4, vertices: far } }, pa: { path: { type: 'path', vertexCount: 6, lengths: [10000, 10000], vertices: [-5000, 0, -5000, 0, -2500, 0, 2500, 0, 5000, 0, 5000, 0] } } } },
+          { name: 'k', bones: ['off'], attachments: { s3: { b: regionAt(3000) } } },
+        ],
+      }));
+      const header = JSON.parse(boxOf(b.result.skeletonText)) as number[];
+      const planted = boundsOfTexts('planted', b.result.skeletonText, b.result.atlasText, b.modelText, { region: (r, bone) => regionCorners(r, bone).map((v, i) => (i % 2 === 0 ? v + 1 : v)) });
+      const probes = [
+        ...(b.row.verdict === 'IDENTICAL' ? [] : [`the row read ${b.row.verdict}: ${b.row.why}`]),
+        ...(header[2] !== null && header[2] < 100 && header[3] !== null && header[3] < 100 ? [] : [`the header ${JSON.stringify(header)} reaches past the one region the default skin shows on an active bone`]),
+        ...(planted.verdict === 'DIFF' ? [] : [`a core moving every region corner one unit right read ${planted.verdict}`]),
+      ];
+      say(
+        'CO35_THE_HEADER_IS_GETBOUNDS_OF_THE_DEFAULT_SKINS_REGIONS_AND_MESHES_ON_ACTIVE_BONES',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `header ${JSON.stringify(header)} = getBounds ${JSON.stringify(b.row.spine)} on the header's grid = rigc's core; a region in a named skin 3000 out, a region on a skin-required bone 1000 out, and a clipping polygon, a bounding box and a path 5000 out moved neither; a core shifting each region corner one unit read DIFF: ${planted.why}`),
+        'issue #907: the header is the setup-pose bounding box — what a fresh skeleton bounds with no skin set, `Physics.none` and no clipper — and both entries write it from rigc\'s core, so the core is held to getBounds at tolerance 0 on exactly the attachments getBounds reads',
+      );
+    }
+    // CO36: nothing drawn — no box, and a forged one is seen.
+    {
+      const b = boxBuild('empty', boxSource({ bones: [{ name: 'root' }], slots: [{ name: 's1', bone: 'root' }], skins: [{ name: 'default', attachments: { s1: { a: regionAt(0) } } }] }));
+      const why = headerBoundsOf(b.result.model, b.result.atlasText).why;
+      const forged = forgedBox(b);
+      const probes = [
+        ...(b.result.model.stage !== null ? [] : ['the probe declares no stage, so the case measures the stageless branch instead']),
+        ...(boxOf(b.result.skeletonText) === JSON.stringify([null, null, null, null]) ? [] : [`the header carries ${boxOf(b.result.skeletonText)} over a setup pose that draws nothing`]),
+        ...(b.row.verdict === 'IDENTICAL' && b.row.spine === null ? [] : [`the row read ${b.row.verdict} with getBounds ${JSON.stringify(b.row.spine)}`]),
+        ...(why !== null && why.includes('draws nothing') ? [] : [`build would print ${JSON.stringify(why)}`]),
+        ...(forged.verdict === 'DIFF' ? [] : [`a header forged with a box read ${forged.verdict}`]),
+      ];
+      say(
+        'CO36_A_SETUP_POSE_THAT_DRAWS_NOTHING_WRITES_NO_BOX_AND_SAYS_WHY',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `a stage declared and no slot showing anything: no box in the header, getBounds bounded nothing, build prints "${why}"; a forged box read DIFF: ${forged.why}`),
+        'issue #907: getBounds over no vertex returns an infinite offset and a negative-infinite size, which is not a box; writing 0,0,0,0 for it would be a number nobody measured',
+      );
+    }
+    // CO37: the pose is the setup pose with its constraints applied.
+    {
+      const b = boxBuild('constrained', boxSource({
+        bones: [{ name: 'root' }, { name: 'up', parent: 'root', length: 100, rotation: 10 }, { name: 'lo', parent: 'up', x: 100, length: 100 }, { name: 't', parent: 'root', x: 50, y: 150 }],
+        slots: [{ name: 's1', bone: 'up', attachment: 'a' }, { name: 's2', bone: 'lo', attachment: 'b' }],
+        skins: [{ name: 'default', attachments: { s1: { a: regionAt(50) }, s2: { b: regionAt(100) } } }],
+        constraints: [{ type: 'ik', name: 'reach', bones: ['up', 'lo'], target: 't' }],
+      }));
+      const unconstrained = boundsOfTexts('unconstrained', b.result.skeletonText, b.result.atlasText, b.modelText, { constraints: () => [] });
+      const probes = [
+        ...(b.row.verdict === 'IDENTICAL' ? [] : [`the row read ${b.row.verdict}: ${b.row.why}`]),
+        ...(unconstrained.verdict === 'DIFF' ? [] : [`a core that applies no constraint read ${unconstrained.verdict}, so the ik moved nothing the box sees`]),
+      ];
+      say(
+        'CO37_THE_BOX_IS_OF_THE_SETUP_POSE_WITH_EVERY_CONSTRAINT_APPLIED',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `an ik chain reaching for its target: header ${boxOf(b.result.skeletonText)}, the core and getBounds equal; the core with no constraint applied read DIFF: ${unconstrained.why}`),
+        'issue #907: measured on examples/spineboy/export/spineboy-pro.json, the editor\'s own header is within 0.0035 of getBounds with its ik and transform constraints applied and 0.31 off with them stripped — the box is of the constrained pose',
+      );
+    }
+    // CO38: a stage and its box apart — the gallery rig whose two differ most, measured rather than named.
+    {
+      const galleryNames = names;
+      const rows = galleryNames.map((name) => {
+        const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(boxRoot, `g-${name}`) });
+        const box = JSON.parse(boxOf(result.skeletonText)) as Array<number | null>;
+        const stage = result.model.stage;
+        const ratio = stage === null || box[2] === null || box[3] === null ? 1 : (box[2] * box[3]) / (stage.width * stage.height);
+        return { name, result, box, stage, ratio };
+      });
+      const widest = rows.reduce<(typeof rows)[number] | null>((m, r) => (m === null || Math.abs(Math.log(r.ratio)) > Math.abs(Math.log(m.ratio)) ? r : m), null);
+      const probes: string[] = [];
+      let read = '';
+      if (widest === null || widest.stage === null) probes.push('no gallery rig built with a stage');
+      else {
+        const modelText = modelDocument(widest.result.model, widest.result.skeletonText, widest.result.atlasText);
+        const row = boundsOfTexts(widest.name, widest.result.skeletonText, widest.result.atlasText, modelText);
+        const data = posableFromText(widest.result.skeletonText, widest.result.atlasText, join(boxRoot, `g-${widest.name}`)).data;
+        const read2 = spineStage(data, modelText);
+        const header = spineStage(data);
+        const rigStage = (JSON.parse(readFileSync(join(galleryRoot, widest.name, 'rig.json'), 'utf8')) as { skeleton?: { width?: number; height?: number } }).skeleton;
+        if (row.verdict !== 'IDENTICAL') probes.push(`the row read ${row.verdict}: ${row.why}`);
+        if (widest.ratio === 1) probes.push('no gallery rig\'s box differs from its stage, so nothing here tells the two apart');
+        if (read2.width !== widest.stage.width || read2.height !== widest.stage.height) probes.push(`A14 and A19 would read ${read2.width}x${read2.height} with the document handed over, not the stage ${widest.stage.width}x${widest.stage.height}`);
+        if (header.width === widest.stage.width && header.height === widest.stage.height) probes.push('the header still states the stage');
+        if (rigStage?.width !== undefined && (rigStage.width !== widest.stage.width || rigStage.height !== widest.stage.height)) probes.push(`the model's stage ${widest.stage.width}x${widest.stage.height} is not the rig's ${rigStage.width}x${rigStage.height}`);
+        read = `gallery/${widest.name}: stage ${widest.stage.width}x${widest.stage.height}, header box ${JSON.stringify(widest.box)} (area ratio ${widest.ratio.toFixed(4)}, the widest of ${rows.length}); A14 and A19 read ${read2.width}x${read2.height} off the document, and the header alone would have handed them ${header.width}x${header.height}`;
+      }
+      say(
+        'CO38_THE_STAGE_STAYS_THE_MODELS_WHERE_THE_HEADER_BOX_DIFFERS_FROM_IT_AND_THE_STAGE_READERS_READ_IT_THERE',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, read),
+        'issue #907: changing the header must not move a coordinate transform or a gate\'s reference — the stage is the rig\'s, stated in the model document, and the planted reading (the header as the stage) is the one this control shows differs',
+      );
+    }
+    // CO39: a rig that declares no stage writes no box, as before.
+    {
+      const b = boxBuild('stageless', boxSource({ bones: [{ name: 'root' }], slots: [{ name: 's1', bone: 'root', attachment: 'a' }], skins: [{ name: 'default', attachments: { s1: { a: regionAt(0) } } }] }), true);
+      const forged = forgedBox(b);
+      const probes = [
+        ...(b.result.model.stage === null ? [] : ['the rig was meant to declare no stage and the model states one']),
+        ...(boxOf(b.result.skeletonText) === JSON.stringify([null, null, null, null]) ? [] : [`the header carries ${boxOf(b.result.skeletonText)} for a rig that asked for none`]),
+        ...(b.row.verdict === 'IDENTICAL' && b.row.spine !== null ? [] : [`the row read ${b.row.verdict} with getBounds ${JSON.stringify(b.row.spine)} — the case needs a drawn region to be one`]),
+        ...(forged.verdict === 'DIFF' ? [] : [`a header forged with a box read ${forged.verdict}`]),
+      ];
+      say(
+        'CO39_A_RIG_THAT_DECLARES_NO_STAGE_WRITES_NO_BOX_THOUGH_IT_DRAWS',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `"width": null, "height": null over a drawn region (getBounds ${JSON.stringify(b.row.spine)}): no box in the header; a forged box read DIFF: ${forged.why}`),
+        'issue #907 with #578: an input that explicitly omitted the header size keeps its behaviour — the box is computable here and is still not written, because the rig said there is none',
+      );
+    }
+    // CO40: a setup pose the core leaves out writes no box on either entry, and the bounds row SKIPs naming it.
+    {
+      const b = boxBuild('unposed', boxSource({
+        bones: [{ name: 'root' }, { name: 'up', parent: 'root', length: 100, rotation: 10 }, { name: 'lo', parent: 'up', x: 100, length: 100 }, { name: 't', parent: 'root', x: 50, y: 150 }, { name: 'dial', parent: 'root' }],
+        slots: [{ name: 's1', bone: 'up', attachment: 'a' }, { name: 's2', bone: 'lo', attachment: 'b' }],
+        skins: [{ name: 'default', attachments: { s1: { a: regionAt(50) }, s2: { b: regionAt(100) } } }],
+        constraints: [{ type: 'ik', name: 'reach', bones: ['up', 'lo'], target: 't' }, { type: 'slider', name: 'dialled', animation: 'pose', bone: 'dial', property: 'rotate', scale: 0.01 }],
+        animations: { pose: { ik: { reach: [{ mix: 0 }, { time: 1, mix: 1 }] } } },
+      }));
+      const why = headerBoundsOf(b.result.model, b.result.atlasText).why;
+      const forged = forgedBox(b);
+      const probes = [
+        ...(boxOf(b.result.skeletonText) === JSON.stringify([null, null, null, null]) ? [] : [`the header carries ${boxOf(b.result.skeletonText)} over a setup pose the core does not pose`]),
+        ...(b.row.verdict === 'SKIP' && b.row.why !== null && b.row.why.includes('dialled') ? [] : [`the row read ${b.row.verdict}: ${b.row.why}`]),
+        ...(why !== null && why.includes('dialled') ? [] : [`build would print ${JSON.stringify(why)}, which does not name the slider`]),
+        ...(forged.verdict === 'DIFF' ? [] : [`a header forged with a box read ${forged.verdict}`]),
+      ];
+      say(
+        'CO40_A_SETUP_POSE_THE_CORE_LEAVES_OUT_WRITES_NO_BOX_SAYS_WHY_AND_IS_A_SKIP',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `a slider keying an ik constraint's mix: no box in the header (getBounds would read ${JSON.stringify(b.row.spine)}), the row SKIP, build prints "${why}"; a forged box read DIFF: ${forged.why}`),
+        'issue #907: both entries must write the same bytes and the entry without spine-core has only the core to pose with, so where the core leaves the setup pose out the box is absent on both and said so — never a box from one poser on one entry, and never a pass',
+      );
+    }
+    rmSync(boxRoot, { recursive: true, force: true });
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -84181,7 +84387,7 @@ function runCoreSuite(): number {
 
 // Its own statements, so the suite lands as one hunk.
 import { deformPosers, surveyOfBuild, surveyOfModel, type DeformSurvey } from './src/deformmeasure.ts';
-import { commandHelp, COMMANDS, entryCommands, gatedOnWriteSentence } from './src/cli/shared.ts';
+import { commandHelp, COMMANDS, documentStageBeside, entryCommands, gatedOnWriteSentence } from './src/cli/shared.ts';
 import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS } from './src/cli/core_commands.ts';
 import { roundTripOnlyCodes, SKIP_NO_ROUND_TRIP, validateEmittedText } from './src/assertions/emitted/index.ts';
 import { SPINE_COMMAND_RUNS } from './src/cli/spine_commands.ts';
@@ -85248,8 +85454,11 @@ function withoutPages(given: string): string | null {
 /**
  * Every way a `rigc-compiled/3` document's stated fields differ from the
  * Spine files written beside it (issue #1026), each starting with the field's
- * name: `stage` against the header's `x`, `y`, `width`, `height` (all four or
- * none), `editorOrder.animations` against the keys of `animations` in the
+ * name: `stage` against whether the header carries a box at all — since issue
+ * #907 the header's four are the setup-pose bounding box, not the stage, so
+ * what the two still share is the absence: a stage stated `null` writes no box
+ * and a stated stage over a drawn, posed rig writes one (`tools/core_gate.ts`'s
+ * bounds rows hold the box's numbers) — `editorOrder.animations` against the keys of `animations` in the
  * file's order, `editorOrder.skins` against `skins[]` and each one's
  * `attachments` keys, `pages[i].pma` against spine-core's `TextureAtlas`, and
  * the pages' `scale` statements against `atlasScales` over the atlas text —
@@ -85261,8 +85470,8 @@ function statedDifferences(doc: CompiledDocument, skeletonText: string, atlasTex
   const out: string[] = [];
   const file = JSON.parse(skeletonText) as { skeleton?: Record<string, unknown>; skins?: Array<{ name: string; attachments?: Record<string, unknown> }>; animations?: Record<string, unknown> };
   const head = file.skeleton ?? {};
-  const fileStage = ['x', 'y', 'width', 'height'].some((k) => k in head) ? { x: head.x, y: head.y, width: head.width, height: head.height } : null;
-  if (JSON.stringify(doc.stated.stage) !== JSON.stringify(fileStage)) out.push(`stage is ${JSON.stringify(doc.stated.stage)} in the document and ${JSON.stringify(fileStage)} in skeleton.json's header`);
+  const fileBox = ['x', 'y', 'width', 'height'].some((k) => k in head) ? { x: head.x, y: head.y, width: head.width, height: head.height } : null;
+  if ((doc.stated.stage === null) !== (fileBox === null)) out.push(`stage is ${JSON.stringify(doc.stated.stage)} in the document and skeleton.json's header carries ${fileBox === null ? 'no box' : `the box ${JSON.stringify(fileBox)}`}`);
   const animations = Object.keys(file.animations ?? {});
   if (JSON.stringify(doc.stated.editorOrder.animations) !== JSON.stringify(animations)) out.push(`editorOrder.animations is [${doc.stated.editorOrder.animations.join(', ')}] and skeleton.json keys [${animations.join(', ')}]`);
   const skins = (file.skins ?? []).map((k) => ({ name: k.name, slots: Object.keys(k.attachments ?? {}) }));
@@ -93108,20 +93317,25 @@ function runModelAtlasSuite(): number {
         });
         const read = (out: string, file: string): string => (existsSync(join(out, file)) ? readFileSync(join(out, file), 'utf8') : '');
         if (probes.length === 0) {
-          if (read(outs[0], 'skeleton.json') === '' || read(outs[0], 'skeleton.json') !== read(outs[1], 'skeleton.json')) probes.push('skeleton.json differs between the two packs, or was not written');
+          // Since issue #907 the header carries the setup-pose bounding box, and a trim moves a region's corners — so the two skeletons
+          // differ in the header's box and nowhere else, and the documents in `spine.sha256` besides the trim.
+          const unboxed = (text: string): string => { const j = JSON.parse(text) as { skeleton: Record<string, unknown> }; for (const k of ['x', 'y', 'width', 'height']) delete j.skeleton[k]; return JSON.stringify(j); };
+          if (read(outs[0], 'skeleton.json') === '' || unboxed(read(outs[0], 'skeleton.json')) !== unboxed(read(outs[1], 'skeleton.json'))) probes.push('skeleton.json differs between the two packs outside the header\'s box, or was not written');
           const docs = outs.map((out) => read(out, MODEL_DOCUMENT_FILE));
           const differ = leafDifferences(JSON.parse(docs[0]) as unknown, JSON.parse(docs[1]) as unknown);
           const square = documentRegions(JSON.parse(docs[1]) as unknown).filter((r) => r.region === 'square');
           if (square.length !== 1) probes.push(`${square.length} region record(s) resolve through "square", not one`);
           const stem = square.length === 1 ? `.skins[0].attachments.${square[0].at.split('/')[1]}.${square[0].at.split('/')[2]}.atlas.` : '(none)';
           const pageLeaves = pageTrimLeaves(JSON.parse(docs[1]) as unknown, 'square');
-          const expected = [...['width', 'height', 'offsetX', 'offsetY'].map((k) => `${stem}${k}`), ...pageLeaves];
+          const boxMoved = read(outs[0], 'skeleton.json') !== read(outs[1], 'skeleton.json');
+          const expected = [...['width', 'height', 'offsetX', 'offsetY'].map((k) => `${stem}${k}`), ...pageLeaves, ...(boxMoved ? ['.spine.sha256'] : [])];
           if (pageLeaves.length !== 4 || JSON.stringify(differ) !== JSON.stringify(expected)) probes.push(`the documents differ at [${differ.join(', ')}], not exactly [${expected.join(', ')}]`);
           if (square.length === 1 && rectOfRecord(square[0].record.atlas) !== JSON.stringify([70, 70, 4, 6, 80, 80])) probes.push(`the trimmed build's square reads ${rectOfRecord(square[0].record.atlas)}`);
-          const strip = (text: string): string | null => { const unpaged = withoutPages(text); return unpaged === null ? null : withoutAtlasRects(unpaged); };
-          if (strip(docs[0]) === null || strip(docs[0]) !== strip(docs[1])) probes.push('with the rectangles and the pages removed the two documents still differ');
+          const unsigned = (text: string): string => { const j = JSON.parse(text) as Record<string, unknown>; j.spine = { sha256: "" }; return `${JSON.stringify(j, null, 2)}\n`; };
+          const strip = (text: string): string | null => { const unpaged = withoutPages(unsigned(text)); return unpaged === null ? null : withoutAtlasRects(unpaged); };
+          if (strip(docs[0]) === null || strip(docs[0]) !== strip(docs[1])) probes.push('with the rectangles, the pages and the skeleton digest removed the two documents still differ');
           const before = documentRegions(JSON.parse(docs[0]) as unknown).find((r) => r.region === 'square');
-          detail = `examples/3-timing-and-spacing ingested and built against its own pack and against the pack with square's bounds 80x80 turned into 70x70 + offsets 4, 6, 80, 80: skeleton.json byte-identical, the documents differ at exactly ${differ.length} leaves — ${square[0]?.at ?? '?'}'s atlas ${rectOfRecord(before?.record.atlas)} against ${rectOfRecord(square[0]?.record.atlas)} (${ATLAS_RECT_KEYS.join(', ')}), and the same four numbers of square's region in \`pages\``;
+          detail = `examples/3-timing-and-spacing ingested and built against its own pack and against the pack with square's bounds 80x80 turned into 70x70 + offsets 4, 6, 80, 80: skeleton.json identical outside the header's box (${boxMoved ? 'which the trim moved' : 'which the trim did not move'}), the documents differ at exactly ${differ.length} leaves — ${square[0]?.at ?? '?'}'s atlas ${rectOfRecord(before?.record.atlas)} against ${rectOfRecord(square[0]?.record.atlas)} (${ATLAS_RECT_KEYS.join(', ')}), and the same four numbers of square's region in \`pages\``;
         }
       }
       const ok = probes.length === 0;
@@ -93514,7 +93728,7 @@ function runModelAtlasSuite(): number {
       const anims = st.editorOrder.animations;
       const slots0 = st.editorOrder.skins[0]?.slots ?? [];
       if (st.stage === null) probes.push(`${first.label} states no stage to move`);
-      else planted('the stage one wider', 'stage', { ...st, stage: { ...st.stage, width: st.stage.width + 1 } }, pages);
+      else planted('the stage stated absent', 'stage', { ...st, stage: null }, pages);
       if (anims.length < 2) probes.push(`${first.label} lists ${anims.length} animation(s), so their order cannot be planted`);
       else planted('two animations swapped', 'editorOrder.animations', { ...st, editorOrder: { ...st.editorOrder, animations: [anims[1], anims[0], ...anims.slice(2)] } }, pages);
       if (slots0.length < 2) probes.push(`${first.label} keys ${slots0.length} slot(s) in its first skin, so their order cannot be planted`);
@@ -97692,6 +97906,96 @@ function runIngestSuite(): number {
     );
   }
 
+  // --- IG99–IG100: a rigc build's stage is its document's (issue #907) ------
+  //
+  // Since #907 a rigc build's header is the setup-pose bounding box and the
+  // stage is only in `skeleton.model.json`. `ingest` reads the rebuild's stage
+  // from the document beside the skeleton (`documentStageBeside`) when its
+  // `spine.sha256` is that skeleton's digest, and the header otherwise. IG99
+  // takes the gallery rig whose stage and box differ most, measured rather
+  // than named; IG100 is the document of another skeleton, which is not read.
+  {
+    const galleryDir = resolve(import.meta.dir, 'gallery');
+    const rows = existsSync(galleryDir)
+      ? readdirSync(galleryDir).sort().filter((n) => existsSync(join(galleryDir, n, 'rig.json')) && existsSync(join(galleryDir, n, 'motion.json')))
+      : [];
+    const docRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-docstage-'));
+    /** One gallery build, written as `build` writes it: the pair and the document. */
+    const written = rows.map((name) => {
+      const dir = join(docRoot, name, 'A');
+      mkdirSync(dir, { recursive: true });
+      const built = compile({ rigPath: join(galleryDir, name, 'rig.json'), motionPath: join(galleryDir, name, 'motion.json'), outDir: dir });
+      writeFileSync(join(dir, 'skeleton.json'), built.skeletonText);
+      writeFileSync(join(dir, 'skeleton.atlas'), built.atlasText);
+      writeFileSync(join(dir, MODEL_DOCUMENT_FILE), modelDocument(built.model, built.skeletonText, built.atlasText));
+      const head = (JSON.parse(built.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
+      const stage = built.model.stage;
+      const ratio = stage === null || typeof head.width !== 'number' || typeof head.height !== 'number' ? 1 : (head.width * head.height) / (stage.width * stage.height);
+      return { name, dir, built, ratio };
+    });
+    const widest = written.reduce<(typeof written)[number] | null>((m, r) => (m === null || Math.abs(Math.log(r.ratio)) > Math.abs(Math.log(m.ratio)) ? r : m), null);
+    /** Ingest the build in `dir` with `documentStage` as given, rebuild through its atlas, and hand back the rebuild. */
+    const rebuild = (name: string, dir: string, documentStage: ReturnType<typeof documentStageBeside>, tag: string): CompileResult => {
+      const spec = join(docRoot, name, `S-${tag}`);
+      mkdirSync(spec, { recursive: true });
+      const read = ingest(JSON.parse(readFileSync(join(dir, 'skeleton.json'), 'utf8')) as Record<string, unknown>, { name: (JSON.parse(readFileSync(join(galleryDir, name, 'rig.json'), 'utf8')) as { name: string }).name, art: 'none', source: 'skeleton.json', version: packageVersion(), ...(documentStage === undefined ? {} : { documentStage }) });
+      writeFileSync(join(spec, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
+      writeFileSync(join(spec, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
+      return compile({ rigPath: join(spec, 'rig.json'), motionPath: join(spec, 'motion.json'), outDir: join(docRoot, name, `B-${tag}`), atlasInPath: join(dir, 'skeleton.atlas') });
+    };
+    const box = (r: CompileResult): string => {
+      const h = (JSON.parse(r.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
+      return `${String(h.width)}x${String(h.height)}`;
+    };
+    const stageOf = (r: CompileResult): string => (r.model.stage === null ? 'none' : `${r.model.stage.width}x${r.model.stage.height}`);
+    if (widest === null) {
+      console.log(`  SKIP  IG99–IG100 did not run: no gallery rig under ${galleryDir}.`);
+      console.log('          ⚠️ This is a HOLE in this run, not a pass — no rigc build was ingested against its document.');
+    } else {
+      const skeletonPath = join(widest.dir, 'skeleton.json');
+      const read = documentStageBeside(skeletonPath, readFileSync(skeletonPath, 'utf8'));
+      const original = widest.built;
+      const back = rebuild(widest.name, widest.dir, read, 'doc');
+      const planted = rebuild(widest.name, widest.dir, undefined, 'header');
+      const probes = [
+        ...(widest.ratio === 1 ? ['no gallery rig\'s header box differs from its stage, so nothing here tells the two readings apart'] : []),
+        ...(read === undefined || read === null ? [`the document beside gallery/${widest.name}'s skeleton was not read (${JSON.stringify(read)})`] : []),
+        ...(stageOf(back) === stageOf(original) ? [] : [`the rebuilt document's stage is ${stageOf(back)}, the original's ${stageOf(original)}`]),
+        ...(back.skeletonText === original.skeletonText ? [] : ['the rebuilt skeleton.json is not the build\'s, byte for byte']),
+        ...(back.atlasText === original.atlasText ? [] : ['the rebuilt skeleton.atlas is not the build\'s, byte for byte']),
+        ...(stageOf(planted) === box(original) && stageOf(planted) !== stageOf(original) ? [] : [`the header read as the stage rebuilt a stage of ${stageOf(planted)}, where the box is ${box(original)} — the plant did not show the reading`]),
+      ];
+      say(
+        'IG99_A_RIGC_BUILDS_STAGE_IS_READ_FROM_ITS_DOCUMENT_AND_THE_REBUILT_PAIR_IS_THE_BUILD',
+        probes.length === 0,
+        probeDetail(probes.length === 0, probes, `gallery/${widest.name} (the widest stage/box gap of ${written.length} gallery build(s)): stage ${stageOf(original)}, header box ${box(original)}; ingested with the document beside it, the rebuild states the stage ${stageOf(back)} and writes skeleton.json and skeleton.atlas byte-identical to the build's; the header read as the stage (the plant) rebuilt the stage ${stageOf(planted)}`),
+        'issue #907: every reader of the stage reads the stage, never the header — and on a rigc build the header is the setup-pose bounding box, so an ingest reading it as the stage rebuilds a rig whose stage is its own box and measures A14 and A19 against a number the author never stated',
+      );
+      // IG100: the document of another skeleton — the same build's document beside a skeleton one byte different — is not read.
+      const otherDir = join(docRoot, widest.name, 'other');
+      mkdirSync(otherDir, { recursive: true });
+      const otherSkeleton = join(otherDir, 'skeleton.json');
+      writeFileSync(otherSkeleton, `${original.skeletonText}\n`);
+      writeFileSync(join(otherDir, 'skeleton.atlas'), original.atlasText);
+      writeFileSync(join(otherDir, MODEL_DOCUMENT_FILE), modelDocument(original.model, original.skeletonText, original.atlasText));
+      const stray = documentStageBeside(otherSkeleton, readFileSync(otherSkeleton, 'utf8'));
+      const strayBack = rebuild(widest.name, otherDir, stray, 'stray');
+      const matched = documentStageBeside(skeletonPath, readFileSync(skeletonPath, 'utf8'));
+      const probes100 = [
+        ...(stray === undefined ? [] : [`a document whose spine.sha256 is not the skeleton beside it was read: ${JSON.stringify(stray)}`]),
+        ...(stageOf(strayBack) === box(original) ? [] : [`with the stray document left unread the rebuild's stage is ${stageOf(strayBack)}, not the header's box ${box(original)}`]),
+        ...(matched !== undefined ? [] : ['the matching document beside the build itself was not read, so this case shows nothing']),
+      ];
+      say(
+        'IG100_A_DOCUMENT_WHOSE_DIGEST_IS_NOT_THE_SKELETONS_IS_NOT_READ_AND_THE_STAGE_IS_THE_HEADERS_BOX',
+        probes100.length === 0,
+        probeDetail(probes100.length === 0, probes100, `gallery/${widest.name}'s document beside its skeleton with one byte appended: not read, the rebuild's stage is the header's box ${stageOf(strayBack)}; beside the skeleton it digests, read (${JSON.stringify(matched)})`),
+        'issue #907: a document is evidence about the skeleton it digests and no other — reading the stage off a document written beside some other skeleton would hand the rebuild a number about a different file',
+      );
+    }
+    rmSync(docRoot, { recursive: true, force: true });
+  }
+
   // --- IG16–IG21: the corpus half — twelve skeletons nobody here wrote -------
   //
   // ⭐ The strongest reference this file has, and the one every case above is
@@ -97731,6 +98035,8 @@ function runIngestSuite(): number {
   const corpus = corpusExports();
   /** Every export's source and rebuild, kept for IG73–IG75's text-level reading at the end of this suite. */
   const corpusRebuilds: Array<{ label: string; sourceText: string; skeletonText: string; packText: string; findings: string[] }> = [];
+  /** Each rebuilt export's editor residual — the largest distance between the box the editor wrote and `getBounds` over the export (issue #907, `withRuntimeBox`). */
+  const editorResiduals: Array<{ label: string; residual: number; box: number[]; sourceText: string; rebuildText: string }> = [];
   if (corpus.length === 0) {
     console.log(`  SKIP  IG16–IG21 did not run: no editor export under ${INGEST_CORPUS_ROOT}.`);
     console.log('          run `bun run fetch-examples` and re-run this suite.');
@@ -97834,7 +98140,13 @@ function runIngestSuite(): number {
       /** The packs that did not cover it, by name. The reasons are the FAIL branch's business. */
       const declined = refusals.map((line) => line.slice(0, line.indexOf(':')));
 
-      const report = built === null ? null : diffSkeletons(JSON.parse(built.skeletonText), source);
+      // Issue #907: the reference is the export with its header box replaced by
+      // `getBounds` of the export on the header's grid (`withRuntimeBox`) — a rebuild's box
+      // is computed, and the editor's is its own arithmetic.
+      const boxed = built === null ? null : withRuntimeBox(entry.label, sourceText, readFileSync(packPath, 'utf8'));
+      const referenceText = boxed === null ? sourceText : boxed.text;
+      if (boxed !== null && built !== null) editorResiduals.push({ label: entry.label, residual: boxed.residual, box: boxed.box, sourceText, rebuildText: built.skeletonText });
+      const report = built === null ? null : diffSkeletons(JSON.parse(built.skeletonText), JSON.parse(referenceText));
       // The value level (issue #615). `diff` above compares structure over raw
       // JSON; this compares the numbers inside it, with the format's defaults
       // taken from the parser rather than from a table here — `skeletonValues`
@@ -97854,7 +98166,7 @@ function runIngestSuite(): number {
           ? []
           : diffSkeletonValues(
               skeletonValues(built.skeletonText, built.atlasText),
-              skeletonValues(sourceText, readFileSync(packPath, 'utf8')),
+              skeletonValues(referenceText, readFileSync(packPath, 'utf8')),
             );
       const movedValues = movedValueMeasures(valueMeasures);
       const valuesCompared = valueMeasures.reduce((n, m) => n + m.total, 0);
@@ -97868,7 +98180,7 @@ function runIngestSuite(): number {
       if (built !== null) {
         corpusRebuilds.push({
           label: entry.label,
-          sourceText,
+          sourceText: referenceText,
           skeletonText: built.skeletonText,
           packText: readFileSync(packPath, 'utf8'),
           findings: decompiled.findings.map((f) => f.code),
@@ -97879,7 +98191,7 @@ function runIngestSuite(): number {
           label: entry.label,
           skeletonText: built.skeletonText,
           atlasText: built.atlasText,
-          sourceText,
+          sourceText: referenceText,
           packText: readFileSync(packPath, 'utf8'),
         };
       }
@@ -97933,6 +98245,74 @@ function runIngestSuite(): number {
           'this line existed',
       );
       readExports.push(entry.label);
+    }
+
+    // --- IG97-IG98: the header box is computed, not carried (issue #907) -------
+    //
+    // Since #907 a rebuild's header is the setup-pose bounding box rigc computes
+    // (`headerBounds` in `src/compile.ts`), and IG16 reads every export against
+    // a copy whose box is `getBounds` of the export on the header's grid
+    // (`withRuntimeBox`). IG97 holds that copy's box to the rebuild's header at
+    // tolerance 0, export by export, and plants the smallest edit — one float32
+    // step on the rebuild's `width` — that it must see. IG98 is why the copy
+    // exists at all: against the editor's own numbers the rebuild's box reads
+    // below 4/4, and if it ever read 4/4 on every export the substitution would
+    // be hiding nothing and could go.
+    {
+      const headerBoxOf = (text: string): number[] => {
+        const h = (JSON.parse(text) as { skeleton: Record<string, unknown> }).skeleton;
+        return [h.x, h.y, h.width, h.height].map((v) => (typeof v === 'number' ? v : Number.NaN));
+      };
+      const nudged = (text: string): string => {
+        const j = JSON.parse(text) as { skeleton: { width: number } };
+        const step = new Float32Array([j.skeleton.width]);
+        new Uint32Array(step.buffer)[0] += 1;
+        j.skeleton.width = f32(step[0]);
+        return JSON.stringify(j);
+      };
+      const off = editorResiduals.flatMap((r) => {
+        const got = headerBoxOf(r.rebuildText);
+        const at = got.findIndex((v, i) => v !== r.box[i]);
+        return at < 0 ? [] : [`${r.label}: the rebuild's header ${['x', 'y', 'width', 'height'][at]} is ${got[at]}, getBounds of its source on the header's grid is ${r.box[at]}`];
+      });
+      const plantSeen = editorResiduals.length > 0 && editorResiduals.every((r) => headerBoxOf(nudged(r.rebuildText)).some((v, i) => v !== r.box[i]));
+      const worst = editorResiduals.reduce((m, r) => (r.residual > m.residual ? r : m), { label: '(none)', residual: 0 });
+      const ig97Probes = [
+        ...(editorResiduals.length > 0 ? [] : ['no export rebuilt, so no header was compared']),
+        ...off,
+        ...(plantSeen ? [] : ['a rebuild whose width was moved by one float32 step still read as the source\'s box']),
+      ];
+      const ig97Held = ig97Probes.length === 0;
+      say(
+        'IG97_EVERY_REBUILDS_HEADER_BOX_IS_GETBOUNDS_OF_ITS_SOURCE_EXPORT_ON_THE_HEADERS_GRID',
+        ig97Held,
+        probeDetail(
+          ig97Held,
+          ig97Probes,
+          `${editorResiduals.length} rebuild(s), each header's four numbers equal to spine-core's getBounds over the export it was read from, on the header's grid (headerBoxNumber); ` +
+            `the planted rebuild (width one float32 step up) was told apart on all ${editorResiduals.length}; the editor's own box sat at most ${worst.residual.toPrecision(3)} from getBounds (${worst.label})`,
+          (count) => `${count} header(s) not the source's box:`,
+        ),
+        'issue #907: the header is the setup-pose bounding box, computed by rigc and held to getBounds — so what a ' +
+          'rebuild owes its source is the box OF the source, and that needs every drawn vertex to be the source\'s to ' +
+          'the bit. The editor\'s numbers are not that box: they are its own arithmetic over the same skeleton',
+      );
+      const editorScores = editorResiduals.map((r) => {
+        const report = diffSkeletons(JSON.parse(r.rebuildText), JSON.parse(r.sourceText));
+        const m = report.header.measures.find((x) => x.id === 'skeleton.bounds_box');
+        return { label: r.label, matched: m?.matched ?? -1, total: m?.total ?? -1 };
+      });
+      const below = editorScores.filter((e) => e.matched < e.total);
+      const ig98Held = editorScores.length > 0 && below.length > 0 && editorScores.every((e) => e.total === 4);
+      say(
+        'IG98_AGAINST_THE_EDITORS_OWN_NUMBERS_A_REBUILDS_BOX_READS_BELOW_4_OF_4',
+        ig98Held,
+        `${below.length} of ${editorScores.length} rebuild(s) read \`bounds_box\` below 4/4 against the export as the editor wrote it: ` +
+          editorScores.map((e) => `${e.label} ${e.matched}/${e.total}`).join(', '),
+        'the reason IG16 reads a copy of each export with getBounds in its header rather than the export itself: the ' +
+          'editor\'s box differs from getBounds by its arithmetic. Two-sided, because a substitution that hides nothing ' +
+          'is a reading nobody needs — if every export ever read 4/4 here, the copy could go',
+      );
     }
 
     // --- IG17: the positive control the card asked for ------------------------
@@ -98159,7 +98539,8 @@ function runIngestSuite(): number {
       string,
       unknown
     >;
-    const rebuiltBox = { x: rebuiltHeader.x, y: rebuiltHeader.y, width: rebuiltHeader.width, height: rebuiltHeader.height };
+    // The stage the rebuild states — the model's since issue #907, when the header became the setup-pose bounding box.
+    const rebuiltBox = originRebuild.model.stage;
     const originProbes = [
       ...(statedOrigin ? [] : ['the probe\'s own build states no origin to omit, so this case cannot conclude anything']),
       ...(originFindings.length === 1 ? [] : [`${originFindings.length} HEADER_ORIGIN finding(s), not 1`]),
@@ -98170,7 +98551,7 @@ function runIngestSuite(): number {
       ...(originSpec?.x === 0 && originSpec?.y === 0 ? [] : [`the rig spec states x=${originSpec?.x}, y=${originSpec?.y}, not 0,0`]),
       ...(JSON.stringify(rebuiltBox) === JSON.stringify({ ...sourceBox, x: 0, y: 0 })
         ? []
-        : [`the rebuilt header is ${JSON.stringify(rebuiltBox)}, not the source's box at an origin of 0,0`]),
+        : [`the rebuild's stage is ${JSON.stringify(rebuiltBox)}, not the source's box at an origin of 0,0`]),
       // The half the box comparison cannot see, and the one the finding is
       // about: the KEYS moved even though the numbers did not.
       ...('x' in rebuiltHeader && 'y' in rebuiltHeader && !('x' in omittedHeader) && !('y' in omittedHeader)
@@ -98184,12 +98565,12 @@ function runIngestSuite(): number {
         originProbes.length === 0,
         originProbes,
         `source header ${JSON.stringify(sourceBox)} with x/y deleted: ${originFindings.length} HEADER_ORIGIN ` +
-          `finding, rig spec skeleton ${JSON.stringify(originSpec)}, rebuilt header ${JSON.stringify(rebuiltBox)}` +
+          `finding, rig spec skeleton ${JSON.stringify(originSpec)}, rebuilt stage ${JSON.stringify(rebuiltBox)}` +
           `\n          ${originFindings[0]?.detail ?? '(no detail)'}`,
         (count) => `${count} thing(s) the omitted origin did not do:`,
       ),
       'issue #622. The rebuild was already right and that was the problem: `compile` writes `rig.skeleton?.x ?? 0` ' +
-        'under the extent guard and `diff`\'s `stage_box` reads the same omission the same way (issue #620), so the ' +
+        'under the extent guard and `diff`\'s `bounds_box` reads the same omission the same way (issue #620), so the ' +
         'numbers agreed and no finding said where the 0 came from — the one header field whose journey left no ' +
         'trace. Writing it into the spec is a reading of the format rather than an invention, and the four ' +
         'measurements for that reading are in `stageFacts`; what the finding adds is the other half, which is ' +
@@ -100524,8 +100905,8 @@ function runIngestSuite(): number {
   // the file that was read. The exam's byte round-trip subject was 0 of 42 on
   // this alone, so the equality is measured here on the shape it counted — a
   // header with none of the four fields — and `diff` is asked the question the
-  // card put to it: both sides absent is agreement, `stage_present` 1/1, and
-  // `stage_box` has no two boxes to compare.
+  // card put to it: both sides absent is agreement, `bounds_present` 1/1, and
+  // `bounds_box` has no two boxes to compare.
   {
     const probe = candidates.find((c) => c.name === 'ingest_probe')!;
     const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-stageless-'));
@@ -100595,8 +100976,8 @@ function runIngestSuite(): number {
         skipped: gate.skipped.map((sk) => sk.assertion).sort(),
       });
     const report = rebuilt === null ? null : diffSkeletons(JSON.parse(sourceText), JSON.parse(rebuilt.skeletonText));
-    const present = report?.header.measures.find((m) => m.id === 'skeleton.stage_present');
-    const box = report?.header.measures.find((m) => m.id === 'skeleton.stage_box');
+    const present = report?.header.measures.find((m) => m.id === 'skeleton.bounds_present');
+    const box = report?.header.measures.find((m) => m.id === 'skeleton.bounds_box');
     const blockers = read.findings.filter((f) => f.kind === 'blocker');
     const tripProbes = [
       ...(stageFieldsOf(built.skeletonText).length === 4
@@ -100612,8 +100993,8 @@ function runIngestSuite(): number {
         : ['the rebuild\'s verdicts differ from the staged source\'s, so the absence moved an assertion']),
       ...(report === null || (present?.matched === 1 && present.total === 1)
         ? []
-        : [`stage_present read ${present ? `${present.matched}/${present.total}` : 'nothing'}, not 1/1`]),
-      ...(report === null || box?.total === 0 ? [] : [`stage_box read ${box ? `${box.matched}/${box.total}` : 'nothing'}, not 0/0`]),
+        : [`bounds_present read ${present ? `${present.matched}/${present.total}` : 'nothing'}, not 1/1`]),
+      ...(report === null || box?.total === 0 ? [] : [`bounds_box read ${box ? `${box.matched}/${box.total}` : 'nothing'}, not 0/0`]),
     ];
     const tripHeld = tripProbes.length === 0;
     say(
@@ -100625,8 +101006,8 @@ function runIngestSuite(): number {
         `ingest_probe's build with x/y/width/height taken off: ${read.findings.length} finding(s), 0 blockers; ` +
           `build(ingest(A)) === A over ${sourceText.length} bytes; under spine the rebuild's ${rebuiltGate?.passed.length ?? 0} ` +
           `pass(es), ${rebuiltGate?.failures.length ?? 0} failure(s) and ${rebuiltGate?.skipped.length ?? 0} skip(s) are the ` +
-          `staged source's own; diff reads stage_present ${present?.matched}/${present?.total} ` +
-          `and stage_box ${box?.matched}/${box?.total} — ${box?.note ?? 'no note'}`,
+          `staged source's own; diff reads bounds_present ${present?.matched}/${present?.total} ` +
+          `and bounds_box ${box?.matched}/${box?.total} — ${box?.note ?? 'no note'}`,
         (count) => `${count} thing(s) the stageless round trip did not do:`,
       ),
       'issue #714: every production export of one corpus declares no stage, so a round trip that needed a caller\'s ' +
@@ -102418,6 +102799,44 @@ interface CorpusExport {
   path: string;
   /** Every `.atlas` in the same directory, sorted. Which one is right is resolved, not guessed. */
   packs: string[];
+}
+
+/**
+ * An editor export with its header's box replaced by the box rigc writes for
+ * it (issue #907): spine-core's `getBounds` over the export itself — no skin
+ * set, `Physics.none`, no clipper (`spineSetupBounds`) — on the header's grid (`headerBoxNumber`),
+ * spelled in place of the four numbers the editor wrote, every other byte the
+ * export's. The corpus suite diffs a rebuild against THIS, because since #907
+ * a rebuild's header is not carried from its source but computed, and the
+ * editor's own box is its own arithmetic: on the twelve examples it sits up to
+ * 0.0071 units from `getBounds` over the same file (`residual`, the largest of
+ * the four distances). Diffing against the editor's numbers would measure the
+ * editor's arithmetic, not the round trip; diffing against `getBounds` of the
+ * SOURCE holds the rebuild's header to the box of the file it was read from,
+ * at tolerance 0 — which is a strictly stronger reading than "carried", since
+ * it needs every vertex the rebuild draws to be the source's to the bit.
+ *
+ * Refused by name when the export states no box, or a field outside the one
+ * spelling every example uses (`"x": <number>` inside the header block): a
+ * substitution that silently did nothing would put the editor's numbers back.
+ */
+function withRuntimeBox(label: string, sourceText: string, packText: string): { text: string; box: number[]; residual: number } {
+  const bounds = spineSetupBounds(loadOracleData(sourceText, packText, label));
+  if (bounds === null) throw new Error(`${label}: spine-core bounded nothing, so there is no box to put in the header`);
+  const box = bounds.map(headerBoxNumber);
+  const open = sourceText.indexOf('"skeleton"');
+  const close = sourceText.indexOf('}', open);
+  if (open < 0 || close < 0) throw new Error(`${label}: no "skeleton" header block to substitute in`);
+  let head = sourceText.slice(open, close);
+  const header = (JSON.parse(sourceText) as { skeleton: Record<string, unknown> }).skeleton;
+  let residual = 0;
+  (['x', 'y', 'width', 'height'] as const).forEach((key, i) => {
+    const pattern = new RegExp(`("${key}":\\s*)(-?[0-9][0-9.eE+-]*)`);
+    if (typeof header[key] !== 'number' || !pattern.test(head)) throw new Error(`${label}: the header does not state "${key}" as a number, so the substitution has nothing to replace`);
+    residual = Math.max(residual, Math.abs((header[key] as number) - bounds[i]));
+    head = head.replace(pattern, (_m, lead: string) => `${lead}${JSON.stringify(box[i])}`);
+  });
+  return { text: sourceText.slice(0, open) + head + sourceText.slice(close), box, residual };
 }
 
 /**

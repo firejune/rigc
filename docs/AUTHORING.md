@@ -947,7 +947,7 @@ repository builds on every run.
 | `--art loose` (default) | name an `image` per attachment — `<path or placeholder>.png` — so the rebuild resolves loose PNGs and rigc measures them |
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
-| `--stage x,y,w,h` | a setup bounding box to **add** to a skeleton that declares none — without it the absence is carried as `"width": null, "height": null`. An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing |
+| `--stage x,y,w,h` | a stage to **add** to a skeleton whose header carries no box (a header's box — its setup-pose bounding box — is otherwise read as the rebuild's stage) — without it the absence is carried as `"width": null, "height": null`. An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -968,23 +968,40 @@ supply it from the project the file came from, or from the editor's own canvas �
 is recorded as a `NO_STAGE` judgement. A header stating **half** a stage (an origin
 with no extent) is a `NO_STAGE` blocker: the spec holds a stage as four fields or none.
 
+🔁 **Where the rebuild's stage comes from** (issue #907). A **rigc build**'s stage is read
+from the `skeleton.model.json` beside it, when that document's `spine.sha256` is the
+skeleton's digest (the run prints `stage … read from the skeleton.model.json beside it`) —
+its header is the setup-pose bounding box, not the stage. An **export**'s stage is its
+header box. A file's header box is its setup-pose bounding box, and for an export `ingest`
+writes it into the spec as the rebuild's **stage** — the only box an export carries, so `A14` and `A19` on the rebuild measure against it, as
+they did on the export. The rebuild's own header is then not carried but computed:
+`build` writes the bounding box of what it drew, which is `getBounds` of the source at
+float32 when the rebuild draws the source's vertices — on the twelve example exports it
+does, to the bit — and the editor's numbers are its own arithmetic, up to 0.0071 units
+away. So the four header numbers of a rebuild are not the export's spelling, and that
+is not a loss: the export's box is in the spec, as the stage. (A licensed 4.3.26
+editor's command-line import and export carried a header box through **verbatim** —
+a forged `0, 0, 1, 1` came back as `width 1, height 1` — so the editor does not
+recompute it on a round trip either; whatever box a file states travels.)
+
 ⛔ **The flag is refused beside a box the file states.** Two sources for one value, and
 the file is the one that was measured — so `ingest` names both boxes and stops rather
 than writing one of them and saying nothing. Drop the flag, or correct `skeleton` in the
 source if its box is wrong. What it does **not** do is refuse an *omitted origin*:
 inside a declared extent an omitted `x`/`y` is `0` — the reading `build` emits and
 `diff` compares — so the written spec states it and a `LOSS HEADER_ORIGIN` line says
-the source omitted it and that the rebuild will spell it.
+the source omitted it and that the rebuilt header will spell an origin — the bounding
+box's, wherever the art sits.
 
 ⚠️ **All twelve exports under `examples/` declare `x`, `y`, `width` and `height`**,
-`ingest` reads each box straight through, and not one needs the flag. What an
+`ingest` reads each box straight through into the stage, and not one needs the flag. What an
 editor export *may* do is carry none: a rigc build that declares no stage came back
 from a Spine 4.3.26 round trip with a header of `hash`, `spine`, `images`, `audio`
 and **no box at all** — the editor preserves the absence rather than inventing a
 stage. So `--stage` is for a file that really has none; the example corpus holds no
 such file, and production exports do — 48 of 48 measured. It is the value that
-costs least to get wrong: `diff` reports the box as `stage_present` and
-`stage_box` and both are `(reported)`, so nothing on the ladder consults them.
+costs least to get wrong: `diff` reports the header's box as `bounds_present` and
+`bounds_box` and both are `(reported)`, so nothing on the ladder consults them.
 
 ⚠️ **The duration is a convention, and it is recorded as one.** Skeleton JSON has no
 duration field. The largest key time is the only derivable answer and it is what a
@@ -1530,8 +1547,8 @@ that is a defect in this guide: report it.
 
 | Field | Spine meaning | Default |
 | --- | --- | --- |
-| `x`, `y` | setup-pose bounding box origin | `0` — and refused outright beside a stated absence, below |
-| `width`, `height` | setup-pose bounding box size, **or both `null` for "this skeleton declares no stage"** | falls back to the manifest's crop; **with neither the number nor the `null`, the compile fails** |
+| `x`, `y` | the **stage**'s origin — rigc's own field: see below | `0` — and refused outright beside a stated absence, below |
+| `width`, `height` | the **stage**'s size, **or both `null` for "this skeleton declares no stage"** | falls back to the manifest's crop; **with neither the number nor the `null`, the compile fails** |
 | `fps` | nonessential editor hint | `SkeletonData.fps` stays 30 |
 | `referenceScale` | 4.2+ physics/scale reference: a physics constraint's `wind` and `gravity` act over it | parser default 100. Carried as stated — never rounded — and the header leaves it out at exactly 100. `skeleton.model.json` always states it, as `referenceScale` after `spec`: the number stated, or 100 when none is — the value the Spine file is read as — and rigc's posing core steps wind and gravity over it (issue #958) |
 | `images` | where the editor's import looks for the part PNGs, as a path from the skeleton file | **written for you**: under `--copy-images` the `--out` directory itself, spelled `../<its basename>/` (a literal `./` is dropped by the editor on import; a named directory is kept and every part is found — measured on 4.3.23); otherwise the relative path from `--out` to the one directory the spec names every part PNG in (the rig's images directory, or the manifest's plates). A declared value is carried through verbatim — and overridden by `--copy-images`, which moved the parts. Parts spread over several directories have no single true path, so nothing is written |
@@ -1547,6 +1564,33 @@ links, not the editor that will open the file, and the warning is harmless.
 `width`/`height` are what `A14` and `A19` measure against, so a guessed stage is a
 gate measuring against a number nobody wrote down.
 
+🔁 **The stage is not what `skeleton.json`'s header carries** (issue #907). In the
+Spine format the header's `x`, `y`, `width`, `height` are the **setup-pose bounding
+box** — the box around the attachments at rest, which a player reads to scale and lay
+the figure out. rigc's stage is something else: the working area the art was painted
+in (a manifest's crop), the frame the coordinate transform flips against, and what
+`A14`/`A19` measure against. Until issue #907 `build` copied the stage into the header,
+so a consumer reading the file the way the format says got the crop — 3.18 times the
+figure's area on a figure that fills a quarter of its crop. Now:
+
+- **the header** carries the setup-pose bounding box, which `build` computes with
+  rigc's own core: every region and mesh the default skin shows at the setup pose, no
+  skin set, every constraint applied, on active bones only — clipping polygons,
+  bounding boxes, paths and points not counted — `x`/`y` the least corner (bottom-left,
+  y up), each of the four on the model's 1e-6 grid at float32 (a box edge at the origin
+  is otherwise a cancellation residue such as `1.1368684e-13` that follows the platform's
+  libm to the last bit). It is held to spine-core's
+  `Skeleton.getBounds()` at tolerance 0 (`tools/core_gate.ts`, its `BOUNDS` rows), so
+  both entries write the same bytes;
+- **the stage** stays the rig spec's (or the crop), and `skeleton.model.json` states it
+  as `stage` — `A14`, `A19` and `explain` read it there, on `build` and on `validate`
+  over a directory whose model document is the skeleton's own;
+- **no box** is written where the rig declares no stage (`null`, below), where the
+  setup pose draws nothing, or where a region has no atlas rectangle (that build is
+  refused by `A08` anyway).
+
+You do not author the box and there is no field for it: it is a measurement of the rig.
+
 ⭐ **A skeleton may declare no stage, and saying so is not the same as saying
 nothing.** Write the pair as `null`:
 
@@ -1554,8 +1598,9 @@ nothing.** Write the pair as `null`:
 "skeleton": { "width": null, "height": null }
 ```
 
-and the emitted header carries **none** of `x`/`y`/`width`/`height` — which is
-what an export of a skeleton whose stage was never set looks like. `null` is this
+and the emitted header carries **none** of `x`/`y`/`width`/`height` — the input
+that asked for no box gets none, which is also what an export of a skeleton whose
+bounds were never set looks like. `null` is this
 spec's spelling for a stated absence wherever it has one (`slots[].attachment` is
 `null` for "show nothing").
 
@@ -1574,32 +1619,34 @@ would be:
 
 | Reader | With a stage | Without one |
 | --- | --- | --- |
-| `build` | emits `x`/`y`/`width`/`height` | emits none of them |
+| `build` | emits `x`/`y`/`width`/`height` — the setup-pose bounding box, not the stage | emits none of them |
 | `A14_NO_FULL_FRAME_MESH` | fails a mesh as big as the stage | **SKIP**, by name |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | exempts the base plate a cut manifest names — the part whose window is the crop — and, on a build that names none, the one image that covers the stage | a manifest build exempts the plate it names, exactly as with one. A rig-spec build names no base plate, so an opaque part is refused with *"this skeleton declares no stage size to measure one against, and the build names no base plate"* and the two ways to decide it: a `skeleton` stage the plate covers, or *"build from a cut manifest, whose base plate is the part whose window is the crop"* |
-| `diff` | `stage_present` and `stage_box` | `stage_present` 1/1 when neither side declares one (agreement), `stage_box` 0/0 |
+| `diff` | `bounds_present` and `bounds_box` — the header's box, which is the bounding box | `bounds_present` 1/1 when neither header carries one (agreement), `bounds_box` 0/0 |
 | `explain` | `stage  W x H` | `stage  none declared` |
 | `render` | frames the posed extent of every animation | the same frames, plus a line saying the viewport is the posed extent and no stage |
 | `preview` | the Spine Web Player frames the posed extent of the animation it plays | the same, plus the same line |
 | `check` | fits the candidate's world box from what it draws | the same figures, plus a note saying so |
 | `build --pack` | never reads it | the same pages and atlas |
-| `ingest` | reads it straight through | writes `"width": null, "height": null`; `--stage` adds one |
+| `ingest` | reads the header's box into the rebuild's stage — an export carries no other box, so its bounding box becomes the rebuild's stage, and the rebuild's header is computed again | writes `"width": null, "height": null`; `--stage` adds one |
 
 ⚠️ A stage-less skeleton is **unmeasured, not certified**: `A14_NO_FULL_FRAME_MESH`
 reports **SKIP** on one, because there is no full frame for a mesh to span. And
-`rigc diff` reports it — `skeleton.stage_present` and `skeleton.stage_box`, in the
-header block at the top of the report — so a stage somebody invented reads
-below 1.000 against a source that has none.
+`rigc diff` reports the header's box — `skeleton.bounds_present` and
+`skeleton.bounds_box`, in the header block at the top of the report — so a build that
+carries a box reads below 1.000 against a source that carries none.
 
-⭐ **A stage at `0,0` is not a stage-less one, and an editor export spells it by
+⭐ **A box at `0,0` is not a box-less header, and an editor export spells it by
 saying nothing.** The editor omits a header field that is at its default, so a
 skeleton whose box sits at the origin exports as a `width` and a `height` with no
-`x`/`y`; `stage_box` reads that omission as the `0` it means, and its line says so
-— *the extent as stated, an omitted origin as the 0 it means*. So `4/4` on a build
-of yours against an export of that same build is the right answer rather than a
-tolerance, and an origin that really did move still reads below 1.000. The extent
-is the half that is read exactly as stated: omit a `width` and you have declared no
-stage, which `stage_present` is the measure of. Both are reported and gate nothing, for
+`x`/`y`; `bounds_box` reads that omission as the `0` it means, and its line says so
+— *the extent as stated, an omitted origin as the 0 it means*. The box is compared
+exactly: rigc's is `getBounds` on the header's 1e-6 grid at float32, the editor's is its own arithmetic, which
+on the twelve example exports sits up to 0.0071 units from `getBounds` over the same
+file — so a rebuild of an export reads below 4/4 here by the editor's arithmetic
+alone, and that is a finding about two writers rather than a moved rig. The extent
+is the half that is read exactly as stated: omit a `width` and the header carries no
+box, which `bounds_present` is the measure of. Both are reported and gate nothing, for
 the reason every reported measure is: no reading of the rendered frames could have
 decided a setup-pose bounding box. The measure inventory that says so lives in
 [BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md), which
