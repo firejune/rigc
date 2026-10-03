@@ -314,11 +314,13 @@ a card of its own.
 - **glTF as the second backend.** Rejected on #380 on 2026-09-04: a container for
   contents it cannot carry (live constraints, skins, draw order, two-colour tint,
   clipping), each a silent drop or a named absence; stays rejected.
-- **Splitting the package along the licence line.** #380's 2026-09-04 sequencing named a
-  packaging split, and step 4 as this page first stated it left the packaging and the
-  name open "if the licence line splits the package". Step 4 landed as one package,
-  `spine-rigc`, with spine-core a devDependency (2.0.0, 2026-10-02, #1066) — the
-  owner's shape, as #380's closing comment records it.
+- **Splitting the package along the licence line — not adopted in 2.0.0, which is not
+  the same as rejected.** #380's 2026-09-04 sequencing named a packaging split, and step
+  4 as this page first stated it left the packaging and the name open "if the licence
+  line splits the package". 2.0.0 kept the single `spine-rigc` package and moved
+  spine-core to a development dependency (#1066, 2026-10-02); the split was not taken,
+  and no reason against it is recorded here — it sits in this section only because the
+  page first stated it as an open option, and the option was not exercised.
 - **Reading R1 into the owner's words.** The owner asked for the spine-core oracle to be
   *replaced*; the shape on the card since 2026-09-04 is R2, and this page keeps it. If
   the owner meant R1, the correction is one line on #380 and §2 is rewritten; nothing in
