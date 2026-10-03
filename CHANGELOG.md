@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.0](https://github.com/firejune/rigc/compare/v2.4.0...v2.5.0) (2026-10-03)
+
+
+### Features
+
+* **selftest:** a suite's independent units run up to --jobs at once with the log byte-identical, and shards are dealt longest-first from a tracked durations base ([#1129](https://github.com/firejune/rigc/issues/1129)) ([d7aef3c](https://github.com/firejune/rigc/commit/d7aef3ca1e07dd0d0e1c2b0db8268a11b75597cb))
+
 ## [2.4.0](https://github.com/firejune/rigc/compare/v2.3.0...v2.4.0) (2026-10-03)
 
 
