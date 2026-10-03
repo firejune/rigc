@@ -521,26 +521,39 @@ what changes is that two rectangles may overlap where neither footprint is.
   touch.
 - **The placement** is the same MaxRects search, ordering and tie-breaks, with
   the free list split by what each region owns instead of by its cell, and a
-  candidate is the free rectangle that holds what the cell owns. Every pass is
-  also run as the `rect` pass on the same page and the better kept — more parts
-  placed, then the higher bottom edge, then `rect` on a tie — so a `polygon`
-  page is never larger than the `rect` page. `--page-edges` and the spill rule
-  are unchanged, except that the `free` search's area bound sums the texels
-  the cells own rather than the cells, since overlapping cells can cover more
-  than the page (a spilled `polygon` page was refused as fitting no page until
-  it did — `PK86`). **What it costs in time**, measured for the pack alone
-  (`--page-edges free`, padding 2, page size 2048, both shapes in one
-  process, a shared machine, so read the ratios): on a production rig's region
-  set (31 meshes, a few of them large, a two-page spill, the `rect` pages to
-  the texel) 0.15–0.18 s against `rect`'s 0.06 s — it was 260–304 s before
-  issue #1102, because a page search ran a full footprint pass at every width
-  and threw each one away; on a generated set of that shape
-  (`fixtures/polypack_shapes.ts`, seed 1107) 0.17 s against 0.06 s, from
-  4.5 s. Where the footprint pass does move a page the cost is real work and
-  stays: on a generated set it packs smaller (seed 1105, 4,882,012 →
-  4,467,942 texels over two pages) 0.96–0.99 s against 0.07–0.10 s, about ten
-  to fourteen times `rect`, from 127 s. `PK93` holds the first generated set
-  as a count of free-list splits, within ten times `rect`'s.
+  candidate is a free rectangle that holds the box of what the cell owns. Every
+  pass is also run as the `rect` pass on the same page and the better kept —
+  more parts placed, then the higher bottom edge, then `rect` on a tie.
+  `--page-edges` and the spill rule are unchanged, except that the `free`
+  search's area bound sums the texels the cells own rather than the cells,
+  since overlapping cells can cover more than the page (a spilled `polygon`
+  page was refused as fitting no page until it did — `PK86`).
+- **Where a cell may go in a free rectangle** (issue #1104). A candidate puts
+  the box of what the cell owns at the free rectangle's top-left corner, the
+  cell reaching up and left of it — so a cell whose drawn part is inset from
+  its corner (a large region whose mesh draws a small part of it) could never
+  go on an empty page, and every pass lost to the `rect` pass. A second
+  candidate puts the cell's own corner there instead, wherever the first would
+  leave the page. Both keep the cell on the page; the atlas format does not
+  change.
+- **The pack written is the least total page area of three whole packs** —
+  the `rect` pack, the footprint pack with the first anchor alone, and with
+  both — summed over every page, a spill's included, the earlier on a tie. So a
+  `polygon` pack is never larger in page area than the `rect` pack on any set,
+  by construction (before #1104 a spill could make it so: a generated set under
+  `pot` wrote 8,388,608 texels against `rect`'s 6,291,456). No single placement
+  rule gives that: the second anchor alone packs one test set 7.2 % larger than
+  the first. On a production rig's region set (31 meshes, a two-page `free`
+  spill under `rect`) it takes 4,367,445 texels to 2,585,264 (−40.8 %); on a
+  generated set of that shape (`fixtures/polypack_shapes.ts`, seed 1107)
+  4,433,292 over two pages to 2,037,204 on one; under `pot` both go to one
+  2048x2048 page. **What it costs**, for the pack alone (`--page-edges free`,
+  padding 2, page size 2048): the three packs' searches, none shared — on seed
+  1107 1.09 s against `rect`'s 0.06 s, on seed 1105 1.29 s against 0.07 s,
+  under `pot` 0.17–0.21 s; counted, 13.6 times `rect`'s free-list splits on seed
+  1107, which `PK93` holds within 25 times. The cost is the placing the
+  second anchor makes possible: before #1102 the same search threw its passes
+  away and took 260–304 s on the production set.
 - **The pixels.** Every cell is drawn whole in packing order, then every
   region's owned texels are drawn again with its own values, so every texel a
   region can sample is its own (`PK79`). A texel nobody owns carries the last
