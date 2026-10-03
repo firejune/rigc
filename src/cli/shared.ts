@@ -22,11 +22,11 @@ import { MAX_CANDIDATES, MIN_CANDIDATES } from '../ballot.ts';
 import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from '../correspondence.ts';
 import { ANCHOR_MAX_RESIDUAL, ANCHOR_MAX_UNEXPLAINED, DEFAULT_HINGE_MAX, DEFAULT_HINGE_MIN, DEFAULT_MIN_LEVER_PX, DEFAULT_MIN_VISIBLE, DEFAULT_PASSES } from '../chainfit.ts';
 import { checkAgainstFrames, type CheckOptions, CheckPlates, type CheckReport } from '../check.ts';
-import { compile, CompileError, droppedStateReason, type CompileOptions } from '../compile.ts';
+import { compile, CompileError, droppedStateReason, headerBoundsOf, type CompileOptions } from '../compile.ts';
 import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
-import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
+import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
 import { DEFAULT_MAX_RESIDUAL, DEFAULT_SCALE_MAX, DEFAULT_SCALE_MIN } from '../pose.ts';
 import {
   CandidateAtlasError,
@@ -42,7 +42,7 @@ import {
 import { BallotError } from '../ballot.ts';
 import { ChainFitError } from '../chainfit.ts';
 import { CheckError } from '../check.ts';
-import { IngestError } from '../ingest.ts';
+import { IngestError, type IngestStage } from '../ingest.ts';
 import { NotAPngError } from '../png.ts';
 import { PoseError } from '../pose.ts';
 import { SpineRuntimeError, SPINE_SIDE_ABSENT } from '../spine_side.ts';
@@ -2083,6 +2083,72 @@ function runGate(
 }
 
 /**
+ * The model document `build` wrote beside a skeleton, when the one beside it
+ * is that build's: a `skeleton.model.json` in the skeleton's directory whose
+ * `spine.sha256` is the digest of exactly this skeleton text (the digest the
+ * core poser checks before it poses a build, issue #968). Since issue #907 a
+ * rigc build's header carries the setup-pose bounding box and its stage is the
+ * document's, so a gate run over a directory reads A14's and A19's stage from
+ * this document, as `build`'s own gate did, and `ingest` reads the rebuild's
+ * stage from it (`documentStageBeside`); a skeleton with no such document
+ * beside it — an export, or a document of another skeleton — is read off its
+ * header, as before.
+ */
+export function modelTextBeside(skeletonPath: string, skeletonText: string): string | undefined {
+  const path = join(dirname(skeletonPath), MODEL_DOCUMENT_FILE);
+  if (!existsSync(path)) return undefined;
+  const text = readFileSync(path, 'utf8');
+  let digest: unknown;
+  try {
+    const doc: unknown = JSON.parse(text);
+    digest = typeof doc === 'object' && doc !== null ? (doc as { spine?: { sha256?: unknown } }).spine?.sha256 : undefined;
+  } catch {
+    return undefined;
+  }
+  return digest === spineFileSha256(skeletonText) ? text : undefined;
+}
+
+/**
+ * The stage a rigc build's model document states, for `ingest` (issue #907):
+ * the `rigc-compiled/3` document beside the skeleton whose digest is that
+ * skeleton's (`modelTextBeside`) — its `stage`, four numbers or `null` for a
+ * rig that declared none. `undefined` — read the header, as before — for an
+ * export or a bare file (no document), a document of another skeleton, a
+ * `/2` or `/1` document (written when the header still was the stage), or a
+ * `stage` that is not one of those two shapes.
+ *
+ * ⭐ Why `ingest` needs it: since #907 a rigc build's header carries the
+ * setup-pose bounding box, and the stage is only in the document. Reading the
+ * header as the stage would rebuild a rig whose stage is its own bounding box
+ * — gallery/nod's 640x700 stage came back 640x725 — so `A14` and `A19` on the
+ * rebuild would measure against a box the author never stated.
+ */
+export function documentStageBeside(skeletonPath: string, skeletonText: string): IngestStage | null | undefined {
+  const text = modelTextBeside(skeletonPath, skeletonText);
+  if (text === undefined) return undefined;
+  const doc = JSON.parse(text) as { spec?: unknown; stage?: unknown };
+  if (doc.spec !== MODEL_DOCUMENT_SPEC || !('stage' in doc)) return undefined;
+  const stage = doc.stage;
+  if (stage === null) return null;
+  if (typeof stage !== 'object') return undefined;
+  const { x, y, width, height } = stage as Record<string, unknown>;
+  return typeof x === 'number' && typeof y === 'number' && typeof width === 'number' && typeof height === 'number' ? { x, y, width, height } : undefined;
+}
+
+/**
+ * The line `build` prints when the rig declares a stage and the header carries
+ * no setup-pose bounding box (issue #907): why — nothing drawn, a region with
+ * no atlas rectangle, or a setup pose rigc's core leaves out
+ * (`headerBoundsOf`). Silent where the box is written, or where the rig
+ * declares no stage, which asked for no box.
+ */
+function printHeaderBox(result: CompileResult): void {
+  if (result.model.stage === null || typeof result.skeleton.skeleton.width === 'number') return;
+  const { why } = headerBoundsOf(result.model, result.atlasText);
+  if (why !== null) console.log(`  ..    header  no setup-pose bounding box — ${why}`);
+}
+
+/**
  * build — moved here unchanged from `./spine_commands.ts` (issue #1060) but
  * for its gate, which the entry hands in (`BuildGate`): both entries write
  * the Spine pair, the model document and the pages by this one body.
@@ -2092,6 +2158,7 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
   printBuildHeader(label, opts);
   const result = compile(opts);
   printCompiled(opts, result);
+  printHeaderBox(result);
 
   // The model's document is spelled before the gate, so the text A18 compares
   // is the text written, and a model the document cannot carry is refused

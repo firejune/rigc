@@ -19,7 +19,7 @@ import { buildPreview, buildPreviewPanes, PLAYER_LINE, type PreviewGate, type Pr
 import { atlasPageNames } from '../render.ts';
 import { BoneDistError } from '../bonedist.ts';
 import { assertionCountForProfile, CLI_DEFAULT_PROFILE, reportLines, validate, type ValidateProfile } from '../validate.ts';
-import { type CliRefusal, type CommandRun, DEFAULT_BALLOT, PACKAGE_ROOT, DEFAULT_LEDGER, parseJsonNamed, readAnimationFlag, readJsonFile, readPackageMeta, readSkeletonText, readVersion, resolveBuild, resolveCut, resolveViewable, runCheck, spinePairOf, type BuildGate, runBuild, readProfile, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
+import { type CliRefusal, type CommandRun, DEFAULT_BALLOT, PACKAGE_ROOT, DEFAULT_LEDGER, parseJsonNamed, readAnimationFlag, readJsonFile, readPackageMeta, readSkeletonText, readVersion, resolveBuild, resolveCut, resolveViewable, runCheck, spinePairOf, type BuildGate, runBuild, readProfile, STAGELESS_FRAMING, UsageError, writeJson, modelTextBeside } from './shared.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -83,12 +83,14 @@ export function cmdValidate(flags: Record<string, string>, positional: string[])
   const atlasText = readFileSync(atlasPath, 'utf8');
   const derived = derivedOpts ? compile(derivedOpts) : null;
 
+  const modelText = modelTextBeside(skeletonPath, skeletonText);
   const report = validate({
     skeletonText,
     atlasText,
     atlasDir: dirname(atlasPath),
     declaredDurations: derived?.declaredDurations,
     rig: derived?.rig,
+    ...(modelText === undefined ? {} : { modelText }),
     profile,
   });
   for (const line of reportLines(report)) console.log(line);
@@ -136,15 +138,18 @@ function skeletonAnimationNames(skeletonText: string, path: string): string[] {
  * takes it (issue #837).
  *
  * ⭐ The same call `cmdValidate` makes on a bare directory: the two texts, the
- * atlas's own directory, the default profile, and nothing a directory cannot
- * supply — no rig spec, no declared durations, no second compile. So `A09` and
+ * atlas's own directory, the default profile, the build's model document
+ * where the one beside the skeleton is its own (`modelTextBeside`, issue #907
+ * — the stage A14 and A19 read), and nothing a directory cannot supply — no
+ * rig spec, no declared durations, no second compile. So `A09` and
  * `A18` report SKIP here exactly as they do there, and the line is the line
  * that command prints for these files, not the one `build` printed for the
  * compile that wrote them. Measured on every run, because the page must not
  * carry a figure this run did not measure.
  */
-function previewGate(skeletonText: string, atlasText: string, atlasDir: string): PreviewGate {
-  const lines = reportLines(validate({ skeletonText, atlasText, atlasDir, profile: CLI_DEFAULT_PROFILE }));
+function previewGate(skeletonPath: string, skeletonText: string, atlasText: string, atlasDir: string): PreviewGate {
+  const modelText = modelTextBeside(skeletonPath, skeletonText);
+  const lines = reportLines(validate({ skeletonText, atlasText, atlasDir, ...(modelText === undefined ? {} : { modelText }), profile: CLI_DEFAULT_PROFILE }));
   const refusal = lines.find((line) => line.startsWith('  FAIL  '));
   return {
     // `reportLines` ends on the summary by construction; the gutter is the
@@ -253,7 +258,7 @@ export function cmdPreview(flags: Record<string, string>, candidates: string[]):
       console.log(`  ..    page     ${page.name.padEnd(28)} ${(page.bytes.length / 1024).toFixed(1)} KiB`);
     }
     if (!declaresSetupStage(skeletonHeaderOf(skeletonText))) console.log(`  ..    ${STAGELESS_FRAMING.preview}`);
-    const gate = previewGate(skeletonText, atlasText, atlasDir);
+    const gate = previewGate(skeletonPath, skeletonText, atlasText, atlasDir);
     console.log(`  ..    gate     ${gate.summary}`);
     if (gate.refusal !== null) {
       console.log(
@@ -540,7 +545,8 @@ export function cmdBench(flags: Record<string, string>, positional: string[]): v
   console.log('');
 
   console.log(`  ── validate (profile ${profile}) ──`);
-  const report = validate({ skeletonText, atlasText, atlasDir: dirname(atlasPath), profile });
+  const benchModel = modelTextBeside(skeletonPath, skeletonText);
+  const report = validate({ skeletonText, atlasText, atlasDir: dirname(atlasPath), ...(benchModel === undefined ? {} : { modelText: benchModel }), profile });
   for (const line of reportLines(report)) console.log(`  ${line}`);
   console.log('');
 

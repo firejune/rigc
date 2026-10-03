@@ -1702,64 +1702,66 @@ function diffEvents(c: Json, r: Json): DiffSection {
 // ---------------------------------------------------------------------------
 
 /**
- * The stage: `x`, `y`, `width`, `height` of the setup-pose bounding box, or the
- * absence of all four.
+ * The header's box: `x`, `y`, `width`, `height` of the setup-pose bounding box
+ * — the box around the attachments at the setup pose, which is what the Spine
+ * format says the four are — or the absence of all four.
  *
- * 🔍 **Why this measure exists at all** (issue #578). The stage was the one value
- * `build` required and no instrument in this tree could see: `validate`, `check`
- * and `render` all ignore it — `render` frames from the posed bounds — and `diff`
- * had no header measure, so a sweep that handed a deliberately absurd unit stage
- * `0,0,1,1` to 37 real exports read **1.000 on every measure** for 32 of them. A
- * required-and-unmeasured field is the worst combination a field can have: the
- * only way to satisfy it was to invent a number, and nothing would ever say so.
+ * 🔁 **Renamed from `stage_present`/`stage_box` by issue #907, because the old
+ * name had become a lie.** Until then `build` copied rigc's stage — the crop
+ * the art was painted in — into these four fields, so on a rigc candidate the
+ * measure read a stage and on an editor export it read a bounding box, under
+ * one word. Since #907 `build` writes the setup-pose bounding box there too
+ * (`headerBoundsOf` in `src/compile.ts`, held to spine-core's `getBounds`), so
+ * both sides of every comparison carry the same kind of value, and the stage —
+ * which a rig spec states and the model document carries — is not in the file
+ * at all. A measure called `stage` would send a reader to change the stage,
+ * which no longer moves this number.
  *
- * ⭐ **`stage_present` is 1/1 or 0/1 and never `0/0`.** Both sides always have a
- * presence to compare, including when both say "none" — that is agreement, not
- * an absence of data, and `total: 0` here would be the vacuous 1.000 this file
- * refuses. `stage_box` is the one that goes vacuous, and only when there are not
- * two boxes to compare.
+ * 🔍 **Why this measure exists at all** (issue #578). The header box was the
+ * one value `build` required and no instrument in this tree could see:
+ * `validate`, `check` and `render` all ignore it — `render` frames from the
+ * posed bounds — and `diff` had no header measure, so a sweep that handed a
+ * deliberately absurd unit stage `0,0,1,1` to 37 real exports read **1.000 on
+ * every measure** for 32 of them.
+ *
+ * ⭐ **`bounds_present` is 1/1 or 0/1 and never `0/0`.** Both sides always have
+ * a presence to compare, including when both say "none" — that is agreement,
+ * not an absence of data, and `total: 0` here would be the vacuous 1.000 this
+ * file refuses. `bounds_box` is the one that goes vacuous, and only when there
+ * are not two boxes to compare.
  */
-interface StageFacts {
+interface HeaderBox {
   present: boolean;
   /**
    * The four fields as the header MEANS them: the extent exactly as stated, and
-   * the origin of a declared stage as stated or `0` where it is omitted. See
-   * `stageFacts` for why the second half is a reading and not a fallback.
+   * the origin of a stated box as stated or `0` where it is omitted. See
+   * `headerBox` for why the second half is a reading and not a fallback.
    */
   box: Array<number | null>;
 }
 
-const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+const BOX_FIELDS = ['x', 'y', 'width', 'height'] as const;
 
 /**
- * A stage is declared by its EXTENT: a numeric `width` and `height`.
+ * A header states a box by its EXTENT: a numeric `width` and `height`.
  *
  * `x`/`y` alone are an origin for a box that is not there — no export carries
- * that shape, and rigc refuses to emit it — so they do not make a stage on their
- * own. It is also what the compiler requires and what `A14_NO_FULL_FRAME_MESH`
- * and `A19_OVERLAY_PNGS_HAVE_ALPHA` measure against, so the three agree on the
- * word by construction rather than by memory.
+ * that shape, and rigc never emits it — so they do not make a box on their own.
  *
- * ⭐ **Inside a declared stage, an omitted `x`/`y` IS `0`** (issue #620). That is
- * a reading of the format, not a value invented for a gap — the distinction this
- * file lives or dies by — and four measurements carry it, none of them anybody's
- * word for the convention:
+ * ⭐ **Inside a stated box, an omitted `x`/`y` IS `0`** (issue #620). That is a
+ * reading of the format, not a value invented for a gap — the distinction this
+ * file lives or dies by — and three measurements carry it, none of them
+ * anybody's word for the convention:
  *
- * - **This tree had already decided it, one file over.** `compile.ts` assembles
- *   the header as `header.x = rig.skeleton?.x ?? 0`, under the same guard: only
- *   when the extent is there. So a rig spec that omits its origin emits `0`, and
- *   reading the same omission in a file as absence made the compiler and the
- *   comparison disagree about one value in one header. This measure is not
- *   adopting the editor's convention so much as stopping contradicting the
- *   emitter it is pointed at.
  * - **The header's writer omits a field at its default.** All twelve exports
  *   under `examples/` omit `referenceScale`, whose default the parser itself
  *   spells two lines below the four raw assignments (`SkeletonJson.js:74`,
  *   `getValue(skeletonMap, "referenceScale", 100)`), and none of the 389 bone
  *   `x`/`y`/`rotation`/`shearX`/`shearY` values those same files DO write is an
- *   explicit `0`. A stage at the origin therefore has no spelling but the
+ *   explicit `0`. A box at the origin therefore has no spelling but the
  *   omission, so reading the omission as absence reads a value the format cannot
- *   express.
+ *   express. (An editor round trip of a header stating `"x": 0, "y": 0` wrote
+ *   neither back — measured through a licensed 4.3.26 editor for issue #907.)
  * - **The binary reader supplies it unconditionally.** `SkeletonBinary.js:69-72`
  *   reads the four as four floats with no key to be missing, so one skeleton's
  *   origin is `0` in a `.skel` and absent in a `.json`. A measure that called
@@ -1772,13 +1774,13 @@ const STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
  *   editor has never exported a frame rate.
  *
  * ⚠️ **The default is the ORIGIN's alone**, and the guard is the paragraph above
- * it: the extent is what declares a stage, so defaulting it would turn the
- * stage-less header of issue #578 into a `0x0` stage at `0,0` and answer the
- * question instead of reading it.
+ * it: the extent is what states a box, so defaulting it would turn the box-less
+ * header of issue #578 into a `0x0` box at `0,0` and answer the question
+ * instead of reading it.
  */
-function stageFacts(root: Json): StageFacts {
+function headerBox(root: Json): HeaderBox {
   const header = isObj(root.skeleton) ? root.skeleton : {};
-  const box = STAGE_FIELDS.map((k) => num(header[k]));
+  const box = BOX_FIELDS.map((k) => num(header[k]));
   const present = box[2] !== null && box[3] !== null;
   return { present, box: present ? [box[0] ?? 0, box[1] ?? 0, box[2], box[3]] : box };
 }
@@ -1787,47 +1789,51 @@ function stageFacts(root: Json): StageFacts {
  * The two header measures.
  *
  * ⚠️ **The box is compared EXACTLY, and that is a measurement rather than a
- * choice.** The brief this was built from asked for "the tolerance the other
- * measures use"; the structural measures in this file have exactly one —
+ * choice.** The structural measures in this file have exactly one tolerance —
  * `FRAME`, one sixtieth of a second, used once, for `animations.duration` — and
  * no spatial one anywhere, because they compare no position at all (that is
- * `bonedist.ts`). A stage is a box an exporter *wrote down*, not a pose anybody
- * measured, so there is nothing for it to be within a tolerance *of*; inventing
- * a spatial epsilon here would be a number nobody measured, in the file whose
- * whole job is to report measured ones.
+ * `bonedist.ts`). Each side's box is a number its writer computed: rigc's is
+ * spine-core's `getBounds` on the header's 1e-6 grid at float32 (`headerBoxNumber`; `tools/core_gate.ts` holds it), and
+ * the editor's is its own arithmetic, which on the twelve examples sits up to
+ * 0.0071 units from `getBounds` on the same skeleton and agrees with its
+ * float32 on 13 of the 48 numbers (issue #907's measurement). A rebuild and its
+ * export therefore read below 4/4 here by the editor's arithmetic alone, and an
+ * epsilon chosen to hide that would be a number nobody measured, in the file
+ * whose whole job is to report measured ones. The measure is reported and gates
+ * nothing on the ladder.
  *
  * ⭐ `diffSkeletonValues` (issue #615) is the second tolerance in the file and
  * it does not weaken this one. It compares positions, so it needs one; both its
  * terms are read off other code — the 1e-6 grid rigc's closed-form models are
- * evaluated on and the parser's float32 storage — rather than chosen here; and the four numbers above are the
- * one place the two overlap, where `stage_box` stays the stricter reading and
- * says so by staying exact.
+ * evaluated on and the parser's float32 storage — rather than chosen here; and
+ * the four numbers above are the one place the two overlap, where `bounds_box`
+ * stays the stricter reading and says so by staying exact.
  */
 function diffHeader(c: Json, r: Json): DiffReported {
-  const a = stageFacts(c);
-  const b = stageFacts(r);
+  const a = headerBox(c);
+  const b = headerBox(r);
   const both = a.present && b.present;
   const agreed = both ? a.box.filter((v, i) => v === b.box[i]).length : 0;
-  const side = (f: StageFacts): string => (f.present ? `${f.box[2]}x${f.box[3]} at ${f.box[0]},${f.box[1]}` : 'none');
+  const side = (f: HeaderBox): string => (f.present ? `${f.box[2]}x${f.box[3]} at ${f.box[0]},${f.box[1]}` : 'none');
   return {
     measures: [
       measure(
-        'skeleton.stage_present',
-        'both sides declare a setup-pose stage, or neither does',
+        'skeleton.bounds_present',
+        'both headers carry a setup-pose bounding box, or neither does',
         a.present === b.present ? 1 : 0,
         1,
-        `candidate ${side(a)}; reference ${side(b)}. A skeleton declares a stage by stating a width and a height`,
+        `candidate ${side(a)}; reference ${side(b)}. A header carries a box by stating a width and a height`,
       ),
       measure(
-        'skeleton.stage_box',
-        'the stage is the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)',
+        'skeleton.bounds_box',
+        'the header carries the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)',
         agreed,
-        both ? STAGE_FIELDS.length : 0,
+        both ? BOX_FIELDS.length : 0,
         both
           ? `candidate ${side(a)}; reference ${side(b)}`
           : a.present === b.present
-            ? 'neither side declares a stage, so there is no box to compare — `stage_present` carries that'
-            : 'only one side declares a stage, so there is no second box to compare — `stage_present` carries that',
+            ? 'neither header carries a box, so there is no box to compare — `bounds_present` carries that'
+            : 'only one header carries a box, so there is no second box to compare — `bounds_present` carries that',
       ),
     ],
   };
@@ -1971,7 +1977,7 @@ function valuesAgree(a: number | string, b: number | string): boolean {
  * distinction `DiffMeasure.total` draws everywhere else in this file.
  */
 const VALUE_MEASURES: ReadonlyArray<{ id: string; what: string; prefix: string }> = [
-  { id: 'values.skeleton', what: 'the header and the setup-pose stage', prefix: 'skeleton/' },
+  { id: 'values.skeleton', what: 'the header and its setup-pose bounding box', prefix: 'skeleton/' },
   { id: 'values.bones', what: 'every bone setup pose, its length and its colour', prefix: 'bones/' },
   { id: 'values.slots', what: 'every slot colour, dark colour, blend mode and setup attachment', prefix: 'slots/' },
   { id: 'values.attachments', what: 'every attachment offset, size, vertex, weight, uv and triangle', prefix: 'skins/' },
@@ -2170,7 +2176,7 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   // with `(no mean)` for the same reason a section's `(reported)` block has one.
   lines.push(
     `  ${'skeleton (reported)'.padEnd(21)} (no mean)   over ${report.header.measures.length} measures` +
-      '  — the stage, which no reading of the frames could decide',
+      '  — the header\'s setup-pose bounding box, which no reading of the frames could decide',
   );
   lines.push(...measureLines(report.header.measures, 'skeleton.'.length));
   lines.push('');
@@ -2232,10 +2238,10 @@ export function diffLines(report: DiffReport, labels: { candidate: string; refer
   lines.push('  the block is absent rather than guessed — and its absence beside `names` 0.000');
   lines.push('  is the report saying the candidate named its shots itself and nothing said how.');
   lines.push('');
-  lines.push('  `skeleton` is the file\'s own header block and reports two measures for the stage.');
+  lines.push('  `skeleton` is the file\'s own header block and reports two measures for its box.');
   lines.push('  It has no mean for the reason a `(reported)` block never does, and it never');
   lines.push('  gates for two: no reading of the frames recovers a setup-pose bounding box, and');
-  lines.push('  the ladder\'s briefs withhold the stage size outright.');
+  lines.push('  each side\'s box is its writer\'s own arithmetic.');
   lines.push('');
   lines.push('  A `(reported)` block has no mean because its measures have unlike units, and');
   lines.push('  it stays out of the section mean above it for the same reason no clause may');

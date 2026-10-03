@@ -28,13 +28,13 @@ import { deformReportBlock } from '../deformreport.ts';
 import { type DiffAnimationPair, diffLines, diffSkeletons } from '../diff.ts';
 import { ingest, INGEST_GUTTERS, type IngestFinding, IngestSpecRefused, type IngestStage } from '../ingest.ts';
 import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
-import { modelDocument } from '../model.ts';
+import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
-import { ATLAS_ABSENT, COMMANDS, type CommandRun, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson } from './shared.ts';
+import { ATLAS_ABSENT, COMMANDS, type CommandRun, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -889,11 +889,9 @@ export function cmdExplain(flags: Record<string, string>): void {
   // A rig may state that it has no stage at all (issue #578), and the two must
   // not print alike: `undefined x undefined` is what a template does with an
   // absence, and it reads like a defect in the tool rather than a claim in the
-  // spec.
-  const stage =
-    result.skeleton.skeleton.width === undefined || result.skeleton.skeleton.height === undefined
-      ? 'none declared'
-      : `${result.skeleton.skeleton.width} x ${result.skeleton.skeleton.height}`;
+  // spec. The stage is the model's (issue #907): the header's box is the
+  // setup-pose bounding box, which is not the stage and is not printed as it.
+  const stage = result.model.stage === null ? 'none declared' : `${result.model.stage.width} x ${result.model.stage.height}`;
   console.log(`\nstage  ${stage}  (spine ${result.skeleton.skeleton.spine})`);
 
   // The crop note describes where the numbers CAME from, and without a manifest
@@ -1295,9 +1293,16 @@ export function cmdIngest(flags: Record<string, string>, positional: string[]): 
    * with them — `JSON.stringify` — and a cast to `RigSpec` here would be this
    * file claiming a parse that did not happen.
    */
+  // A rigc build's stage is the model document's beside it, when that document is this skeleton's (issue #907): its header is the
+  // setup-pose bounding box. An export, or a skeleton with no such document, is read off its header.
+  const documentStage = documentStageBeside(skeletonPath, readFileSync(skeletonPath, 'utf8'));
+  if (documentStage !== undefined) {
+    console.log(`  ..    stage  ${documentStage === null ? 'none declared' : `${documentStage.width} x ${documentStage.height}`} — read from the ${MODEL_DOCUMENT_FILE} beside it (its spine.sha256 is this skeleton's); the header's box is the setup-pose bounding box`);
+  }
   let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
   try {
     result = ingest(readJsonFile(skeletonPath), {
+      ...(documentStage === undefined ? {} : { documentStage }),
       name: flags.name ?? basename(skeletonPath, '.json'),
       art,
       images: specImages,

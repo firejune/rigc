@@ -436,6 +436,7 @@ import {
   TextureAtlas,
   TextureAtlasRegion,
   TransformConstraintData,
+  Vector2,
   type Event,
 } from '@esotericsoftware/spine-core';
 import { historyTaint } from '../src/core/constraints.ts';
@@ -717,6 +718,25 @@ export function loadOracleData(skeletonText: string, atlasText: string, where: s
   } catch (err) {
     throw new OracleInputError(`${where}: spine-core did not load it — ${(err as Error).message}`);
   }
+}
+
+/**
+ * The setup-pose bounding box as spine-core returns it (issue #907): a fresh
+ * `Skeleton` — no skin set — posed by `updateWorldTransform(Physics.none)`
+ * and bounded by `getBounds(offset, size, temp)`, called without a clipper,
+ * in full doubles: `[x, y, width, height]`, or `null` where it returned an
+ * infinite offset (nothing drawn). The reading `src/core/raw.ts`'s
+ * `setupBounds` is held to at tolerance 0 by `tools/core_gate.ts`'s bounds
+ * rows.
+ */
+export function spineSetupBounds(data: SkeletonData): [number, number, number, number] | null {
+  const skeleton = new Skeleton(data);
+  skeleton.updateWorldTransform(Physics.none);
+  const offset = new Vector2();
+  const size = new Vector2();
+  skeleton.getBounds(offset, size, []);
+  if (!Number.isFinite(offset.x) || !Number.isFinite(offset.y)) return null;
+  return [offset.x, offset.y, size.x, size.y];
 }
 
 function constraintType(c: unknown, name: string): string {

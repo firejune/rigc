@@ -755,19 +755,33 @@ export function emitAnimations(
  *     stated, `images` spelled relative to `--out` (`skeletonImagesPath`);
  *     each only when present.
  *
+ *   - `bounds` — the setup-pose bounding box, `x`, `y`, `width`, `height`,
+ *     which is what the format says the header's four are (issue #907):
+ *     computed by `compile` with rigc's core over the model
+ *     (`headerBoundsOf`), each on the 1e-6 grid at float32 (`headerBoxNumber`), or `null` for no box — a rig that
+ *     declares no stage (issue #578), a setup pose that draws nothing, a
+ *     region with no atlas rectangle, or a setup pose the core leaves out
+ *     (that function's header). Four fields or none.
+ *
  * `referenceScale` is not here: wind and gravity act over it, so a posing
  * core reads it, and the model holds it (`CompiledModel.referenceScale`,
  * issue #958). The emitter writes the model's value into the header, where
- * `withoutParserDefaults` drops it at the parser's 100. Nor is the stage —
- * the setup-pose box, four fields or none (issue #578) — since issue #1026:
- * `render` and `check` read whether one is declared, and the model holds it
- * (`CompiledModel.stage`), so the emitter writes the model's.
+ * `withoutParserDefaults` drops it at the parser's 100.
+ *
+ * ⚠️ Nor is the stage (`CompiledModel.stage`, issue #1026) — and since issue
+ * #907 the header does not carry it at all. Until then the emitter copied the
+ * stage into the four box fields, so a reader that took the header for what
+ * the format says it is — the box around the figure at rest, for scaling and
+ * layout — got the crop the art was painted in. The stage stays the model's:
+ * the document states it, and everything that measures against it reads it
+ * there.
  */
 export interface SkeletonHeader {
   spine: string;
   fps?: number;
   images?: string;
   audio?: string | null;
+  bounds: { x: number; y: number; width: number; height: number } | null;
 }
 
 /** The editor's orders the emitter applies, passed for the reason the header's 🔸 gives. */
@@ -776,7 +790,7 @@ export interface SkeletonOrder extends EditorOrder {
 }
 
 /** The model fields a skeleton is written from. */
-export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'stage' | 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
+export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'bones' | 'slots' | 'skins' | 'constraints' | 'events' | 'animations'>;
 
 /**
  * The Spine 4.3 skeleton of a compiled model: the emitter's one entry, and
@@ -791,7 +805,7 @@ export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'stage' | 'b
  * between `skins` and `animations`, where the editor writes it), `constraints`
  * only when the model holds one (assigned after, so it lands last until the
  * key-order pass moves it). The header's keys: `spine, x, y, width, height,
- * fps, referenceScale, images, audio`, the stage's four only together.
+ * fps, referenceScale, images, audio`, the box's four only together.
  *
  * Then, on the finished object and once: `withoutParserDefaults` drops every
  * key at the value the 4.3 parser reads in its absence, and `inEditorKeyOrder`
@@ -800,7 +814,7 @@ export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'stage' | 'b
  * throws, so a refusal raised here is raised by a section emitter, in the
  * order above.
  *
- * The stage (`model.stage`, issue #1026) is written as the model holds it,
+ * The box (`header.bounds`, issue #907) is written as `compile` computed it,
  * its four fields together or none. `referenceScale` is the model's, written
  * always and dropped by the parser-default pass at 100 — so a rig stating none and a rig stating 100
  * write the same bytes, as they did when the header carried the stated value.
@@ -811,11 +825,11 @@ export type SkeletonSource = Pick<CompiledModel, 'referenceScale' | 'stage' | 'b
  */
 export function emitSkeleton(model: SkeletonSource, header: SkeletonHeader, order: SkeletonOrder): SpineSkeletonJson {
   const head: SpineSkeletonJson['skeleton'] = { spine: header.spine };
-  if (model.stage !== null) {
-    head.x = model.stage.x;
-    head.y = model.stage.y;
-    head.width = model.stage.width;
-    head.height = model.stage.height;
+  if (header.bounds !== null) {
+    head.x = header.bounds.x;
+    head.y = header.bounds.y;
+    head.width = header.bounds.width;
+    head.height = header.bounds.height;
   }
   if (header.fps !== undefined) head.fps = header.fps;
   head.referenceScale = model.referenceScale;

@@ -63,6 +63,17 @@
  * row, one line per animation (issue #936): its verdict on each sample
  * block, and the first difference of a DIFF.
  *
+ * ## The header's box (issue #907)
+ *
+ * Every row once more, in process: rigc's setup-pose bounding box over the
+ * model document (`setupBounds` in `src/core/raw.ts`) against spine-core's
+ * `getBounds` over the Spine pair (`spineSetupBounds` in `./pose_oracle.ts`)
+ * at tolerance 0, and the header `build` wrote against that box on the
+ * header's grid (`headerBoxNumber`, `boundsRow`). One `BOUNDS` line per row and a `BOUNDS GREEN|RED` verdict
+ * line after the no-skin block; a DIFF or REFUSED row turns the run RED, and
+ * a row the core cannot pose is SKIP, naming why, with the header carrying no
+ * box.
+ *
  * ## Per skin (issue #932)
  *
  * The run above poses every skin merged (`--skin all`), which is the
@@ -234,7 +245,9 @@ import { slotBonePlan, type CorePathRecord } from '../src/core/constraints_path.
 import { EVERY_GLOBAL_PHYSICS, PHYSICS_DEFAULTS, stepSchedule, type CorePhysicsRecord } from '../src/core/constraints_physics.ts';
 import { CORE_CONSTRAINT_KINDS, type CompiledDocument } from '../src/core/index.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../src/model.ts';
-import { compile, editorAnimationOrder } from '../src/compile.ts';
+import { compile, editorAnimationOrder, headerBoxNumber } from '../src/compile.ts';
+import { setupBounds } from '../src/core/raw.ts';
+import type { CorePlant } from '../src/core/index.ts';
 import { ingest } from '../src/ingest.ts';
 import { CORE_DEFAULT_SKIN } from '../src/core/skins.ts';
 import { encodePng } from './plate.ts';
@@ -263,6 +276,7 @@ import {
   compareUnposed,
   ORACLE_NO_SKIN,
   type SkinViewOf,
+  spineSetupBounds,
 } from './pose_oracle.ts';
 import type { WalkPlant } from '../src/core/walk.ts';
 
@@ -1951,6 +1965,121 @@ export function noSkinLines(rows: readonly NoSkinRow[]): { lines: string[]; ok: 
   return { lines, ok };
 }
 
+// --- #907 the setup-pose bounding box: begin ---
+/**
+ * One build's setup-pose bounding box read three ways (issue #907): rigc's
+ * core over the model document (`setupBounds`, `src/core/raw.ts`),
+ * spine-core's `getBounds` over the Spine pair (`spineSetupBounds` in
+ * `./pose_oracle.ts`: no skin set, `Physics.none`, no clipper), and the box
+ * the header of `skeleton.json` carries.
+ *
+ * `IDENTICAL` when the core's box equals spine-core's in full doubles —
+ * tolerance 0, the four numbers compared with `===` — and the header carries
+ * each one on the header's grid (`headerBoxNumber`), or, where spine-core bounded nothing or the
+ * model declares no stage (issue #578), carries no box at all; `SKIP` when the
+ * core leaves the setup pose out (a construct its cuts do not pose, named) and
+ * the header accordingly carries no box — nothing was compared, and the row
+ * says why; `DIFF` naming the first disagreement otherwise; `REFUSED` when the
+ * build wrote no pair or a side could not read it.
+ */
+export interface BoundsRow {
+  name: string;
+  verdict: 'IDENTICAL' | 'SKIP' | 'DIFF' | 'REFUSED';
+  why: string | null;
+  core: number[] | null;
+  spine: number[] | null;
+  header: number[] | null;
+  /** Whether the model document declares a stage — the one input that says the header carries no box (issue #578). */
+  staged: boolean;
+}
+
+/** The header's four box fields, `x` and `y` read as the 0 an omission means inside a declared box (`diff`'s `headerBox` rule), or `null` with no extent. */
+function headerBoxOf(skeletonText: string): number[] | null {
+  const head = (JSON.parse(skeletonText) as { skeleton?: Record<string, unknown> }).skeleton ?? {};
+  const n = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+  const width = n(head.width);
+  const height = n(head.height);
+  if (width === null || height === null) return null;
+  return [n(head.x) ?? 0, n(head.y) ?? 0, width, height];
+}
+
+/** One built output directory's bounds row; `plant` is handed to the core's side, which is how a control plants a misreading. */
+export function boundsRow(name: string, outDir: string, plant: CorePlant = {}): BoundsRow {
+  const skeleton = join(outDir, 'skeleton.json');
+  const atlas = join(outDir, 'skeleton.atlas');
+  const model = join(outDir, MODEL_DOCUMENT_FILE);
+  const missing = [skeleton, atlas, model].filter((p) => !existsSync(p));
+  const refused = (why: string): BoundsRow => ({ name, verdict: 'REFUSED', why, core: null, spine: null, header: null, staged: false });
+  if (missing.length > 0) return refused(`the build wrote no ${missing.map((p) => p.slice(outDir.length + 1)).join(', ')}`);
+  return boundsOfTexts(name, readFileSync(skeleton, 'utf8'), readFileSync(atlas, 'utf8'), readFileSync(model, 'utf8'), plant);
+}
+
+/** `boundsRow` over the three texts, for a pair a control wrote itself. */
+export function boundsOfTexts(name: string, skeletonText: string, atlasText: string, modelText: string, plant: CorePlant = {}): BoundsRow {
+  let core: number[] | null;
+  let spine: number[] | null;
+  let staged: boolean;
+  const header = headerBoxOf(skeletonText);
+  try {
+    const doc = readModel(modelText, `${name}: ${MODEL_DOCUMENT_FILE}`);
+    staged = doc.stated?.stage != null;
+    spine = spineSetupBounds(loadOracleData(skeletonText, atlasText, `${name}: skeleton.json`));
+    try {
+      const box = setupBounds(doc, plant);
+      core = box === null ? null : [box.x, box.y, box.width, box.height];
+    } catch (err) {
+      if (!(err instanceof CoreInputError)) throw err;
+      // The core leaves this setup pose out: nothing to compare, and the header must say nothing either (`headerBoundsOf`).
+      return header === null
+        ? { name, verdict: 'SKIP', why: err.message, core: null, spine, header, staged }
+        : { name, verdict: 'DIFF', why: `the core does not pose this setup pose (${err.message}), and the header still carries [${header.join(', ')}]`, core: null, spine, header, staged };
+    }
+  } catch (err) {
+    if (err instanceof OracleInputError || err instanceof CoreInputError) return { name, verdict: 'REFUSED', why: err.message, core: null, spine: null, header: null, staged: false };
+    throw err;
+  }
+  const FIELDS = ['x', 'y', 'width', 'height'];
+  const spell = (b: number[] | null): string => (b === null ? 'none' : `[${b.join(', ')}]`);
+  let why: string | null = null;
+  if ((core === null) !== (spine === null)) why = `rigc's core bounds ${spell(core)} and spine-core's getBounds ${spell(spine)}`;
+  else if (core !== null && spine !== null) {
+    const at = core.findIndex((v, i) => v !== spine?.[i]);
+    if (at >= 0) why = `${FIELDS[at]}: rigc's core ${core[at]}, spine-core's getBounds ${spine[at]} (tolerance 0)`;
+  }
+  if (why === null) {
+    const want = !staged || spine === null ? null : spine.map(headerBoxNumber);
+    if ((want === null) !== (header === null)) why = `the header carries ${spell(header)} where ${want === null ? (staged ? 'nothing is drawn, so no box' : 'the model declares no stage, so no box') : `getBounds on the header's grid is ${spell(want)}`}`;
+    else if (want !== null && header !== null) {
+      const at = want.findIndex((v, i) => v !== header[i]);
+      if (at >= 0) why = `the header's ${FIELDS[at]} is ${header[at]}, getBounds on the header's grid is ${want[at]}`;
+    }
+  }
+  return { name, verdict: why === null ? 'IDENTICAL' : 'DIFF', why, core, spine, header, staged };
+}
+
+/** Every built row's bounds row. */
+export function boundsBuilt(built: readonly BuiltRow[], plant: CorePlant = {}): BoundsRow[] {
+  return built.map((b) => boundsRow(b.name, b.out, plant));
+}
+
+/** The bounds rows' lines and their verdict line: GREEN with no row DIFF or REFUSED and at least one row IDENTICAL — a run of SKIPs compared nothing. */
+export function boundsLines(rows: readonly BoundsRow[]): { lines: string[]; ok: boolean } {
+  const lines = rows.map(
+    (r) =>
+      `  BOUNDS ${r.verdict.padEnd(9)} ${r.name}: ` +
+      (r.verdict === 'REFUSED' ? '' : `getBounds ${r.spine === null ? 'none' : `[${r.spine.join(', ')}]`}, header ${r.header === null ? 'no box' : `[${r.header.join(', ')}]`}${r.staged ? '' : ' (no stage declared)'}`) +
+      (r.why === null ? '' : ` — ${r.why}`),
+  );
+  const count = (v: BoundsRow['verdict']): number => rows.filter((r) => r.verdict === v).length;
+  const ok = count('IDENTICAL') > 0 && count('DIFF') === 0 && count('REFUSED') === 0;
+  lines.push(
+    `BOUNDS ${ok ? 'GREEN' : 'RED'} — ${rows.length} row(s): rigc's setup-pose bounding box against spine-core's getBounds at tolerance 0, and the header against it on the header's grid: ` +
+      `${count('IDENTICAL')} IDENTICAL, ${count('SKIP')} SKIP, ${count('DIFF')} DIFF, ${count('REFUSED')} REFUSED (issue #907)`,
+  );
+  return { lines, ok };
+}
+// --- #907 the setup-pose bounding box: end ---
+
 /** The no-skin probes walked (`--walk`): A10's walk is posed with no skin set, so each probe is a row as it stands. */
 export function noSkinWalkProbes(dir: string, walkPlant: WalkPlant = {}): WalkRow[] {
   return walkBuilt(noSkinProbeBuilds(dir), walkPlant);
@@ -2249,12 +2378,15 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     // Issue #1051: the rows posed with no skin set — the corpus's in the class, and the probes.
     const noSkin = noSkinLines(noSkinBuilt(built, noSkinProbeBuilds(join(work, 'noskin-probes')), raw));
     for (const line of noSkin.lines) print(line);
+    // Issue #907: the header's setup-pose bounding box, rigc's core against spine-core's getBounds.
+    const bounds = boundsLines(boundsBuilt(built));
+    for (const line of bounds.lines) print(line);
     const verdict = gateVerdict(rows);
     print(raw ? `RAW (full doubles, tolerance 0, worst in ulps) ${verdict.line}` : verdict.line);
     // The slider-physics probes (issue #1049), their own block after the corpus's verdict, which they do not move.
     const probes = sliderPhysicsSteppedLines(raw);
     for (const line of probes.lines) print(line);
-    return verdict.ok && noSkin.ok && probes.ok ? 0 : 1;
+    return verdict.ok && noSkin.ok && bounds.ok && probes.ok ? 0 : 1;
   } catch (err) {
     if (err instanceof GateInputError || err instanceof HashesInputError) {
       warn(`core_gate: ${err.message}`);

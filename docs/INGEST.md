@@ -217,7 +217,8 @@ Spine runtime plays it, whatever rigc's own rasteriser or validator thinks.
 
 `diff` takes two compiled skeletons and reports 54 measures in eight groups, plus two
 blocks that report and gate nothing: the `(reported)` measures beside `attachments`
-and `animations`, and the `skeleton` header block at the top, which measures the stage.
+and `animations`, and the `skeleton` header block at the top, which measures the header's setup-pose
+bounding box.
 A ninth group of six joins them when something has paired the two sides'
 animations — `--as <candidate>=<reference>`, or one animation each side, which pairs by
 position (§1.3.1). Both sides may be foreign; the interesting pairing during ingest is
@@ -234,9 +235,9 @@ rigc diff
   reference  …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
   ..         bones=3/3  slots=2/2  skins=1/1  attachments=2/2  constraints=0/0  animations=2/2  events=0/0   (candidate/reference)
 
-  skeleton (reported)   (no mean)   over 2 measures  — the stage, which no reading of the frames could decide
-      1.000  stage_present                1/1         both sides declare a setup-pose stage, or neither does  — …
-      1.000  stage_box                    4/4         the stage is the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)  — …
+  skeleton (reported)   (no mean)   over 2 measures  — the header's setup-pose bounding box, which no reading of the frames could decide
+      1.000  bounds_present               1/1         both headers carry a setup-pose bounding box, or neither does  — …
+      0.250  bounds_box                   1/4         the header carries the same box (x, y, width, height — the extent as stated, an omitted origin as the 0 it means)  — …
 
   bones                 mean 1.000  over 8 measures
       1.000  count                        3/3         how many bones
@@ -277,20 +278,21 @@ both files through `spine-core`, and a skeleton whose attachments carry a `seque
 cannot be parsed without the atlas that resolves it — so the measure takes two
 skeletons **and two packs**, which `rigc diff <a.json> <b.json>` does not have.
 
-⚠️ **The one exception is the skeleton's own declared box**, and it is an exception to
-the sentence and not to the rule: `skeleton.stage_box` compares four world numbers,
-but they are numbers an exporter *declared in the header* rather than a pose anything
-measured, and the block they sit in gates nothing. Moving a pivot does not move them
-either.
+⚠️ **The one exception is the header's own box**, and it is an exception to the
+sentence and not to the rule: `skeleton.bounds_box` compares four world numbers — the
+setup-pose bounding box each writer put in its header (rigc's is spine-core's
+`getBounds` on the header's 1e-6 grid at float32 since issue #907; the editor's is its own arithmetic, up to
+0.0071 units from `getBounds` on the twelve examples) — exactly, and the block they
+sit in gates nothing. The measure was called `stage_box` until #907, when `build`
+stopped writing the stage there.
 
 ⭐ **Declared is not the same as written down, and for the origin it is the
-difference between a green round trip and a false finding.** The editor omits a header
-field at its default, so a stage sitting at `0,0` exports as a `width` and a
-`height` and no `x`/`y` at all — there is no other spelling for it. The measure
-reads that omission as the `0` it means, so a rigc build whose stage is at the
-origin and the editor's export of that build read `stage_box` **4/4**. The extent is still read
-exactly as stated: it is what decides whether there is a stage at all, so a missing
-`width` is an absent stage rather than a stage of width zero.
+difference between a true reading and a false finding.** The editor omits a header
+field at its default, so a box sitting at `0,0` exports as a `width` and a `height`
+and no `x`/`y` at all — there is no other spelling for it. The measure reads that
+omission as the `0` it means. The extent is still read exactly as stated: it is what
+decides whether there is a box at all, so a missing `width` is an absent box rather
+than a box of width zero.
 
 ⛔ **And its ratios are not a score.** [`src/diff.ts`](../src/diff.ts) says so in the
 type itself (*"Unweighted mean of the measures below. NOT a quality score"*), and the
@@ -509,12 +511,17 @@ at the policy rather than implying the file was read.
   is the file that was read, byte for byte. No finding is recorded, because nothing
   was lost and nobody decided anything. `--stage x,y,w,h` is how a caller *adds* a box
   to such a file, and that is a `NO_STAGE` **judgement**. All twelve exports in the
-  fetched corpus carry a stage, and `ingest` reads it straight through. The box cannot be
-  *derived* — posing the rig gives the *animated* extent, which is a different number
-  from the setup box. 🔸 **Half a stage is a `NO_STAGE` blocker**: an origin with no
+  fetched corpus carry a box, and `ingest` reads it straight through into the rebuild's
+  stage. A **rigc build**'s stage is read instead from the `skeleton.model.json` beside it,
+  when that document's `spine.sha256` is the skeleton's digest — its header is the setup-pose
+  bounding box — and an export's from its header box. 🔁 What an export's header carries is its setup-pose bounding box; it is the
+  only box the file has, so it becomes the rebuild's stage, and the rebuild's own header
+  is computed again — `build` writes the setup-pose bounding box there, never the stage
+  (issue #907). The stage cannot be *derived*: it is the working area the art was
+  painted in, and no pose of the rig states it. 🔸 **Half a stage is a `NO_STAGE` blocker**: an origin with no
   extent, or one extent without the other, declares no stage and is not the absence
   either, and the rig spec holds a stage as four fields or none. It is also the value that costs least to get wrong: `diff`
-  reports it as two measures of its own (`stage_present`, `stage_box`) and they are
+  reports the header's box as two measures of its own (`bounds_present`, `bounds_box`) and they are
   `(reported)`, so no score reads them and an absurd box is green nearly everywhere.
   ⛔ **The flag is refused beside a box the file states** — two sources for one value,
   both named, and the file is the record of what was measured;
@@ -659,8 +666,9 @@ states.
    ⚠️ **If the export's `skeleton` block carries no `x`/`y`/`width`/`height`, write
    `"width": null, "height": null` and do not invent one** — which is also what
    `rigc ingest` writes for such a file. A made-up stage is a number no gate refuses;
-   `diff`'s header block reports `skeleton.stage_present` and `skeleton.stage_box`
-   against the source you are copying. Copy the four numbers when they are there;
+   `A14` and `A19` measure against the stage you state, and `diff`'s header block
+   reports `skeleton.bounds_present` and `skeleton.bounds_box` — your build's bounding
+   box, which you do not author, against the source's. Copy the four numbers when they are there;
    state the absence when they are not.
 4. **`explain`, then `build`.** `explain` first, because it prints what you wrote in a
    shape you can compare against the export by eye (§1.5) and it never gates. Then
@@ -704,11 +712,11 @@ State the ambition in the right units, because three different things get called
 | --- | --- | --- |
 | **Structural agreement** — same bones, slots, attachments, timelines, key counts, curve kinds | ✅ yes, and `diff` measures it | the 3-timing transcription reads **1.000 on all 54 measures**. Aim here first |
 | **Geometric agreement** — the same drawn pixels, allowing for the atlas | ✅ yes, and `check` measures it | see below |
-| **Byte-identical JSON** | ✅ **for a rebuild, in canonical form, apart from `hash` and `spine`** — the pass line below | a **rebuild** of an editor export (`ingest`, then `build`) is the export. A **transcription** by hand is not held to it: what differs there is what a person chose to write, not the emitter |
+| **Byte-identical JSON** | ✅ **for a rebuild, in canonical form, apart from `hash`, `spine` and the header's box** — the pass line below | a **rebuild** of an editor export (`ingest`, then `build`) is the export. A **transcription** by hand is not held to it: what differs there is what a person chose to write, not the emitter |
 
 ⭐ **The pass line of the byte round trip, stated once:** `build(ingest(x))` of an
 editor export `x` is **identical to `x` in canonical form, apart from `hash` and
-`spine`** — canonical form being `JSON.stringify(JSON.parse(text), null, 2)` of each
+`spine`**, and from the header's box (below) — canonical form being `JSON.stringify(JSON.parse(text), null, 2)` of each
 file, which keeps every number as parsed, every key in its order and every omitted key
 omitted, and drops only whitespace and the exponent's spelling (an export setting, not
 a property of the rig). It holds on all twelve exports under `examples/`; for a
@@ -722,11 +730,22 @@ has no field for, by design, and each has its finding:
 | `hash` | `undefined` vs `"VFWbaK2UoCM"` | the editor's project hash — a value about a file rigc did not write, so a spec that carried it would be claiming an export it did not come from. `HEADER_BOOKKEEPING` |
 | `spine` | `"4.3.13"` vs `"4.3.75-beta"` | the version of the runtime rigc links, stamped by design and re-checked by `A16`. `HEADER_REDERIVED` |
 
+🔁 **The header's box is the third difference, and it is not a key the spec lacks** (issue
+#907). The rig spec carries the export's `x`, `y`, `width`, `height` — as the rebuild's
+stage — and the rebuild does not copy them back: its header carries the setup-pose bounding
+box `build` computes, which is spine-core's `getBounds` over the export on the header's grid
+(the rebuild draws the export's vertices to the bit, so its box is the export's box), where
+the editor wrote its own arithmetic, at most 0.0071 units away on the twelve —
+`spineboy-pro`'s rebuild writes `-188.63641, -7.936074, 418.453, 686.19934` against the
+editor's `-188.6338, -7.939564, 418.4499, 686.2023`. The suite holds each rebuild's box to
+`getBounds` of its source at tolerance 0 (`IG97`) and reads every other byte against a copy
+of the export carrying that box.
+
 🔢 **The rest of the header, and every omitted default, comes back as the export
 spells it.** The **header's `audio`** is a stated value like `images`, and the rig
 spec carries it ([AUTHORING §3.1](AUTHORING.md)). The emitter leaves out exactly the
 keys the parser reads the same way without them ([AUTHORING §10.6c](AUTHORING.md)).
-One shape is left and it is deliberate: a stage at the origin, which the editor writes as
+One shape is left and it is deliberate: a box at the origin, which the editor writes as
 `width`/`height` with no `x`/`y` and rigc spells whole. The 4.3 JSON reader has no
 default for the origin — an absent one loads as `undefined`, a written `0` as `0` — so
 it is not a key the parser reads the same way without it, and the row is not in the

@@ -73,7 +73,14 @@ export const RIG_SPEC_VERSION = 'rigc-rig/1';
 // ---------------------------------------------------------------------------
 
 /**
- * The setup-pose bounding box and the runtime hints, all optional.
+ * The stage and the runtime hints, all optional.
+ *
+ * 🔁 The four box fields here are rigc's **stage** — the working area the art
+ * was painted in, the frame the coordinate transform and `A14`/`A19` read —
+ * and not the Spine header's box of the same names, which the format defines
+ * as the setup-pose bounding box. Since issue #907 `build` writes that box
+ * into the header, computed from the rig (`headerBoundsOf` in
+ * `src/compile.ts`), and states the stage in `skeleton.model.json`.
  *
  * `x`/`y` default to 0 and `width`/`height` fall back to the cut manifest's crop
  * when there is one. With neither a manifest nor a declaration here the compile
@@ -85,7 +92,7 @@ export const RIG_SPEC_VERSION = 'rigc-rig/1';
  * stage** (issue #578). Omitting them is silence and stays a refusal by name;
  * stating them `null` is a claim, and the emitted header then carries none of
  * `x`/`y`/`width`/`height` — which is what an editor export of a skeleton whose
- * stage was never set looks like, and what a transcriber of one has to be able
+ * bounds were never set looks like, and what a transcriber of one has to be able
  * to write down. `null` is this spec's spelling for a stated absence everywhere
  * else it has one (`RigSlot.attachment` = "show nothing", the cut manifest's
  * `image` = "this cut does not carry the part"), so it is the spelling here too

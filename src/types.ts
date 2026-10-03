@@ -1167,10 +1167,12 @@ export interface SpineSkeletonJson {
   skeleton: {
     spine: string;
     /**
-     * The setup-pose bounding box. All four together or none of them: a rig spec
+     * The setup-pose bounding box — and since issue #907 that is what `build`
+     * writes here, computed by rigc's core (`headerBoundsOf` in `compile.ts`);
+     * it used to copy the stage. All four together or none of them: a rig spec
      * that declares no stage (`skeleton.width`/`height` stated `null` — see
      * `RigSkeletonHeader`) emits a header without any of them, which is what an
-     * export of a skeleton whose stage was never set carries (issue #578).
+     * export of a skeleton whose bounds were never set carries (issue #578).
      *
      * ⚠️ Optional here because the *runtime* leaves them `undefined` when they
      * are absent, not 0. `SkeletonData` declares `x = 0 … height = 0`

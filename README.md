@@ -622,7 +622,10 @@ example corpus, ingested, rebuilt through the pack beside it and `diff`ed agains
 source, comes back **12 of 12, no blockers, 1.000 on every measure the report
 carries** — and each rebuild is its export's own text in canonical form, apart from
 the header's `hash` and `spine`: the editor's project hash and the runtime version
-rigc stamps, the two keys the rig spec has no field for by design (12 of 12).
+rigc stamps, the two keys the rig spec has no field for by design (12 of 12) — and
+the header's box, which `build` computes rather than carries (issue #907): the rebuild
+writes spine-core's `getBounds` over the export on the header's 1e-6 grid at float32, equal on all twelve,
+where the editor wrote its own arithmetic, up to 0.0071 units away.
 [INGEST.md §2.3](docs/INGEST.md) states that pass line and why those two are the
 exceptions.
 
@@ -643,7 +646,10 @@ specs are still written — a spec plus a list of what is missing from it beats 
   too**, for the opposite reason: two sources for one value, where the file is the record
   of what was measured. **All twelve exports in the example corpus carry a stage** and
   none of them needs the flag. It is the value that costs least to get wrong, because
-  `diff` reports the box and gates nothing on it.
+  `diff` reports the box and gates nothing on it. 🔁 The box an export's header carries
+  is its setup-pose bounding box, and it becomes the rebuild's *stage*; the rebuild's own
+  header is computed again, because since issue #907 `build` writes the setup-pose
+  bounding box there — never the stage — held to spine-core's `getBounds`.
 - **An animation's duration.** The format has no such field. The largest key time is
   the only derivable answer and it is what a runtime plays to; it is wrong for an
   animation that holds its last pose past its last key, so it is recorded as a finding
