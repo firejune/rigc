@@ -3,31 +3,31 @@
   "suites": [
     {
       "suite": "overlay_probe",
-      "seconds": 0.9
+      "seconds": 2.6
     },
     {
       "suite": "articulated_probe",
-      "seconds": 0.7
+      "seconds": 1
     },
     {
       "suite": "articulated_probe (contained cut)",
-      "seconds": 0.2
+      "seconds": 0.4
     },
     {
       "suite": "rig-spec",
-      "seconds": 0.9
+      "seconds": 2
     },
     {
       "suite": "static-rig",
-      "seconds": 7.2
+      "seconds": 7.1
     },
     {
       "suite": "png-transparency",
-      "seconds": 1.3
+      "seconds": 1.7
     },
     {
       "suite": "draw-order",
-      "seconds": 0
+      "seconds": 0.1
     },
     {
       "suite": "key-time",
@@ -39,7 +39,7 @@
     },
     {
       "suite": "constraint-deform",
-      "seconds": 0.7
+      "seconds": 1.9
     },
     {
       "suite": "hold-curve",
@@ -47,7 +47,7 @@
     },
     {
       "suite": "path-slider",
-      "seconds": 6
+      "seconds": 9
     },
     {
       "suite": "polygon",
@@ -55,31 +55,31 @@
     },
     {
       "suite": "contour-mesh",
-      "seconds": 4.8
+      "seconds": 4
     },
     {
       "suite": "segments-mesh",
-      "seconds": 0.1
+      "seconds": 0.3
     },
     {
       "suite": "deform-winding",
-      "seconds": 2.2
+      "seconds": 4.9
     },
     {
       "suite": "deform-transform",
-      "seconds": 0.1
+      "seconds": 0.3
     },
     {
       "suite": "deform-report",
-      "seconds": 0.9
+      "seconds": 1.4
     },
     {
       "suite": "group-member",
-      "seconds": 0.1
+      "seconds": 0.2
     },
     {
       "suite": "mesh-rasteriser",
-      "seconds": 0.1
+      "seconds": 0.2
     },
     {
       "suite": "mesh-outline",
@@ -87,11 +87,11 @@
     },
     {
       "suite": "mesh-rung",
-      "seconds": 0
+      "seconds": 0.1
     },
     {
       "suite": "mesh-check",
-      "seconds": 10
+      "seconds": 12.9
     },
     {
       "suite": "slot-attribution",
@@ -107,19 +107,19 @@
     },
     {
       "suite": "cli",
-      "seconds": 26.4
+      "seconds": 26.7
     },
     {
       "suite": "bin-launcher",
-      "seconds": 0.3
+      "seconds": 0.5
     },
     {
       "suite": "editor-roundtrip",
-      "seconds": 12.9
+      "seconds": 4.7
     },
     {
       "suite": "shipped-doc",
-      "seconds": 0.1
+      "seconds": 0
     },
     {
       "suite": "agent-skill",
@@ -127,83 +127,83 @@
     },
     {
       "suite": "currency",
-      "seconds": 18.1
+      "seconds": 16.6
     },
     {
       "suite": "gallery-transcript",
-      "seconds": 5.6
+      "seconds": 6.7
     },
     {
       "suite": "docs-transcript",
-      "seconds": 34.4
+      "seconds": 50.9
     },
     {
       "suite": "doc-script",
-      "seconds": 2
+      "seconds": 4
     },
     {
       "suite": "see-it",
-      "seconds": 1.7
+      "seconds": 2
     },
     {
       "suite": "geometry-export",
-      "seconds": 4.2
+      "seconds": 7.3
     },
     {
       "suite": "pose",
-      "seconds": 61.7
+      "seconds": 98.4
     },
     {
       "suite": "pose-oracle",
-      "seconds": 4.7
+      "seconds": 7.1
     },
     {
       "suite": "core",
-      "seconds": 106.9
+      "seconds": 166
     },
     {
       "suite": "emit-hashes",
-      "seconds": 31
+      "seconds": 14.5
     },
     {
       "suite": "render-hashes",
-      "seconds": 251.4
+      "seconds": 204.4
     },
     {
       "suite": "deform-core",
-      "seconds": 5.9
+      "seconds": 10.6
     },
     {
       "suite": "model-bones",
-      "seconds": 1.4
+      "seconds": 1
     },
     {
       "suite": "model-vertices",
-      "seconds": 4.6
+      "seconds": 2.5
     },
     {
       "suite": "model-records",
-      "seconds": 4.5
+      "seconds": 2.4
     },
     {
       "suite": "model-animations",
-      "seconds": 4.3
+      "seconds": 2.3
     },
     {
       "suite": "model-document",
-      "seconds": 28.4
+      "seconds": 13.9
     },
     {
       "suite": "model-atlas",
-      "seconds": 3.3
+      "seconds": 4.2
     },
     {
       "suite": "chainfit",
-      "seconds": 47.7
+      "seconds": 88.9
     },
     {
       "suite": "ballot",
-      "seconds": 1.2
+      "seconds": 1.3
     },
     {
       "suite": "copy-images",
@@ -215,15 +215,15 @@
     },
     {
       "suite": "packer",
-      "seconds": 106.5
+      "seconds": 138.4
     },
     {
       "suite": "atlas-reader",
-      "seconds": 2.8
+      "seconds": 3.9
     },
     {
       "suite": "diff",
-      "seconds": 0.4
+      "seconds": 0.6
     },
     {
       "suite": "bonedist",
@@ -231,11 +231,11 @@
     },
     {
       "suite": "check",
-      "seconds": 62
+      "seconds": 97.7
     },
     {
       "suite": "slider-reader",
-      "seconds": 0.2
+      "seconds": 0.3
     },
     {
       "suite": "generation",
@@ -243,7 +243,7 @@
     },
     {
       "suite": "ingest",
-      "seconds": 14.6
+      "seconds": 18.5
     },
     {
       "suite": "loop-seam",
@@ -255,11 +255,11 @@
     },
     {
       "suite": "gate-helper",
-      "seconds": 0.9
+      "seconds": 1.2
     },
     {
       "suite": "gallery-example",
-      "seconds": 2.8
+      "seconds": 2.6
     },
     {
       "suite": "registered-cut",
