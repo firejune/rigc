@@ -699,7 +699,9 @@ declares, or the banner the binary prints about itself — rather than starting 
 and failing downstream. Both refusals point at `--exported <file>`, which
 measures an export the editor already made and is the half of this tool that
 needs no editor at all. A build whose `skeleton.json` is missing, is not JSON, or
-holds JSON that is not one object is refused by name before the editor starts.
+holds JSON that is not one object is refused by name before the editor starts,
+and so is a build with no atlas or an atlas that is a directory, or an
+`--exported` file that is not one JSON object.
 
 ⛔ **Run the round trip by hand, on a machine that has the editor.** CI has no
 editor, so no automated check runs it.
