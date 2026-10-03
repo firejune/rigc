@@ -48032,6 +48032,185 @@ function runPackerSuite(): number {
       'issue #1104: an instrument that dies on one refused set measures nothing — the production run lost thirteen ' +
         'recipes to one drawing past the page — and the packer\'s refusal is the reason a reader needs, so it is the row',
     );
+
+    // --- PK101..PK104: `pack_anchor --trace-regions` (issue #1115) -----------
+    // The three generated probes, each carrying region attachments over plates
+    // whose art is strictly inside the rectangle (a 2-texel transparent margin,
+    // fixtures/public.ts's `writePlate`), packed as the instrument packs them:
+    // `rect`, `polygon` with meshes only (today), and `polygon` with every
+    // region-kind region converted in memory to its traced contour, at
+    // tolerance 0 (`lattice`) and at the mesher with tolerance 1 and the contour
+    // generator's defaults for the rest.
+    const TRACE_TOLERANCE = 1;
+    const tightnesses: ReadonlyArray<{ label: string; tightness: Tightness }> = [
+      { label: 'traced:0', tightness: { kind: 'lattice' } },
+      { label: `traced:t=${TRACE_TOLERANCE}`, tightness: { kind: 'mesher', tolerance: TRACE_TOLERANCE } },
+    ];
+    const noScales = new Map<string, number>();
+    const traceSets = PACK_FIXTURES.map(([name, fixture]) => {
+      const result = compile(optsForFixture(fixture));
+      return { name, bare: packInputsOf(result.images), inputs: withFootprints(packInputsOf(result.images), result.skeletonText), skeleton: result.skeletonText };
+    });
+    type TraceRow = { name: string; label: string; pageEdges: 'free' | 'pot'; rect: number; poly: number; traced: number; kept: string; byContour: number; regionKind: number; refused: string };
+    const traceRowsOf = (drop: boolean): TraceRow[] =>
+      traceSets.flatMap((set) =>
+        tightnesses.flatMap(({ label, tightness }) => {
+          const tp = tracedPack(set.inputs, set.skeleton, noScales, tightness, DEFAULT_PADDING, DEFAULT_PAGE_SIZE, drop);
+          return (['free', 'pot'] as const).map((pageEdges): TraceRow => ({
+            name: set.name,
+            label,
+            pageEdges,
+            rect: areaOfPack(packAtlas(set.bare.slice(), { pageEdges })),
+            poly: areaOfPack(packAtlas(set.inputs.slice(), { pageEdges, shape: 'polygon' })),
+            traced: tp[pageEdges].area,
+            kept: tp[pageEdges].kept,
+            byContour: tp.byContour,
+            regionKind: tp.regionKind,
+            refused: Object.entries(tp.refused).map(([why, n]) => `${n} ${why}`).join(', '),
+          }));
+        }),
+      );
+    const traceRows = traceRowsOf(false);
+    const traceLine = (r: TraceRow): string => `${r.name}/${r.label}/${r.pageEdges}: rect ${r.rect}, polygon ${r.poly}, traced ${r.traced} (${r.kept}), ${r.byContour}/${r.regionKind} by contour${r.refused === '' ? '' : ` (rect: ${r.refused})`}`;
+    // The strict-gain sets: tolerance 0 on `articulated`, the mesher on `contained`, both `free` — the probe output this was written against.
+    const GAIN_SETS = [`articulated/traced:0/free`, `contained/traced:t=${TRACE_TOLERANCE}/free`];
+    const pk101Probes = (rows: readonly TraceRow[]): string[] => [
+      ...rows.flatMap((r) => (r.traced <= r.poly ? [] : [`${r.name}/${r.label}/${r.pageEdges}: traced ${r.traced} is larger than the meshes-only polygon pack ${r.poly}`])),
+      ...GAIN_SETS.flatMap((key) => {
+        const r = rows.find((x) => `${x.name}/${x.label}/${x.pageEdges}` === key);
+        if (r === undefined) return [`${key}: not packed`];
+        return [
+          ...(r.byContour >= 1 ? [] : [`${key}: no region-kind region packed by contour (${r.byContour}/${r.regionKind})`]),
+          ...(r.traced < r.rect ? [] : [`${key}: traced ${r.traced} is not below rect ${r.rect} — the contour was read and the pack did not use it`]),
+        ];
+      }),
+    ];
+    const pk101 = pk101Probes(traceRows);
+    const pk101Held = pk101.length === 0;
+    say(
+      'PK101_TRACE_REGIONS_PACKS_A_REGION_KIND_REGION_BY_ITS_CONTOUR_BELOW_RECT_AND_NO_LARGER_THAN_MESHES_ONLY',
+      pk101Held,
+      probeDetail(pk101Held, pk101, `${traceRows.length} pack(s): ${traceRows.filter((r) => r.pageEdges === 'free').map(traceLine).join('; ')}; every pot pack ${traceRows.filter((r) => r.pageEdges === 'pot').every((r) => r.traced === r.rect) ? 'equals rect' : 'differs from rect somewhere'}`),
+      'issue #1115: the stage-2 figure is the pack a conversion would write, so a region-kind region has to pack by the ' +
+        'contour its art states — and a figure that read the contour and packed the rectangle would print a ceiling\'s worth of nothing',
+    );
+
+    // PK102: every region on a traced pack that kept a footprint candidate
+    // keeps the texels it draws — PK79's brute force (`footprintTexelsWrong`)
+    // over the CONVERTED skeleton, so a converted region is held to its traced
+    // polygon's texels. Planted: the same packs read against the skeleton as
+    // built, where a region attachment still draws its whole quad — the check
+    // has to name a region, which is the measurement that the gain is real
+    // overlap and that it is a conversion's to claim, not today's build's.
+    const texelReads = traceSets.flatMap((set) =>
+      tightnesses.flatMap(({ label, tightness }) => {
+        const { parts, traced } = tracedInputs(set.inputs, set.skeleton, noScales, tightness);
+        return (['free', 'pot'] as const).flatMap((pageEdges) => {
+          const pack = packAtlas(parts.slice(), { pageEdges, shape: 'polygon' });
+          if (pack.candidate === 'rect') return [];
+          const plates = pack.pages.map((p) => p.plate);
+          return [{
+            name: `${set.name}/${label}/${pageEdges}`,
+            honest: footprintTexelsWrong(plates, pack.atlasText, traced.skeletonText, parts, pack.padding),
+            asBuilt: footprintTexelsWrong(plates, pack.atlasText, set.skeleton, parts, pack.padding),
+          }];
+        });
+      }),
+    );
+    const pk102 = [
+      ...texelReads.flatMap((r) => r.honest.wrong.map((w) => `${r.name}: ${w}`)),
+      ...(texelReads.length > 0 ? [] : ['no traced pack kept a footprint candidate, so no traced page was read']),
+      ...(texelReads.some((r) => r.asBuilt.wrong.length > 0) ? [] : ['read against the skeleton as built, no traced pack named a region — the check cannot see a traced overlap']),
+    ];
+    const pk102Held = pk102.length === 0;
+    say(
+      'PK102_EVERY_REGION_ON_A_TRACED_PACK_KEEPS_THE_TEXELS_ITS_TRACED_POLYGON_DRAWS',
+      pk102Held,
+      probeDetail(
+        pk102Held,
+        pk102,
+        `${texelReads.map((r) => `${r.name}: ${r.honest.checked} region(s), ${r.honest.texels} texel(s), each its own`).join('; ')}; ` +
+          `planted (read against the skeleton as built): ${texelReads.filter((r) => r.asBuilt.wrong.length > 0).length} of ${texelReads.length} pack(s) name a region — ${texelReads.flatMap((r) => r.asBuilt.wrong.slice(0, 1).map((w) => `${r.name}: ${w}`)).slice(0, 2).join('; ')}`,
+      ),
+      'issue #1115: a traced region packs by a polygon smaller than the quad it draws today, so its neighbours may land ' +
+        'inside that quad — legal only for the mesh a conversion would write, and only if every texel that mesh samples is its own',
+    );
+
+    // PK103: the two tightnesses order — the mesher's footprint holds the
+    // lattice outline pushed out by a margin, so on a set where the two differ
+    // its Σ must not be below tolerance 0's; where every region's owned set is
+    // the same under both, the packs are the same pack. Printed: per set, how
+    // many region-kind regions own the same texels under both. Also held: the
+    // defaults the instrument restates are the ones `src/compile.ts` states.
+    const ownedSame = traceSets.map((set) => {
+      const masks = tightnesses.map(({ tightness }) => tracedInputs(set.inputs, set.skeleton, noScales, tightness));
+      const regionKind = regionKindRegions(set.skeleton).regions;
+      const kinds = set.inputs.filter((p) => regionKind.has(p.region));
+      const sameRegions = new Set<string>();
+      for (const part of kinds) {
+        const cell = (m: { parts: PackInput[] }): Uint8Array => footprintCell(part.width, part.height, DEFAULT_PADDING, m.parts.find((p) => p.region === part.region)?.footprint).mask;
+        const a = cell(masks[0]);
+        const b = cell(masks[1]);
+        if (a.length === b.length && a.every((v, k) => v === b[k])) sameRegions.add(part.region);
+      }
+      // Where the mesher changes nothing: the set cut down to its region-kind
+      // regions that own the same texels under both, packed `free` under each
+      // tightness — the same pack, to the texel of page area.
+      const subset = (m: { parts: PackInput[] }): PackInput[] => m.parts.filter((p) => sameRegions.has(p.region));
+      const subsetAreas = sameRegions.size === 0 ? null : masks.map((m) => areaOfPack(packAtlas(subset(m), { pageEdges: 'free', shape: 'polygon' })));
+      return { name: set.name, kinds: kinds.length, same: sameRegions.size, subsetAreas };
+    });
+    const orderRows = traceSets.flatMap((set) =>
+      (['free', 'pot'] as const).map((pageEdges) => {
+        const at = (label: string): TraceRow => traceRows.find((r) => r.name === set.name && r.label === label && r.pageEdges === pageEdges) as TraceRow;
+        return { key: `${set.name}/${pageEdges}`, zero: at('traced:0').traced, mesher: at(`traced:t=${TRACE_TOLERANCE}`).traced };
+      }),
+    );
+    const ORDER_SET = 'contained/free';
+    const ordered = orderRows.find((r) => r.key === ORDER_SET);
+    const compileText = readFileSync(join(import.meta.dir, 'src', 'compile.ts'), 'utf8');
+    const statedDefaults = /const CONTOUR_DEFAULTS = \{ margin: (\d+(?:\.\d+)?), maxVertices: (\d+), alpha: (\d+) \} as const;/.exec(compileText);
+    const pk103 = [
+      ...(ordered === undefined ? [`${ORDER_SET}: not packed`] : ordered.mesher > ordered.zero ? [] : [`${ORDER_SET}: the two tightnesses do not differ here (traced:0 ${ordered.zero}, mesher ${ordered.mesher}), or the mesher packs smaller`]),
+      ...(ownedSame.some((s) => s.subsetAreas !== null) ? [] : ['no set has a region-kind region owning the same texels under both tightnesses, so the equal half was never packed']),
+      ...ownedSame.flatMap((s) => (s.subsetAreas !== null && s.subsetAreas[0] !== s.subsetAreas[1] ? [`${s.name}: its ${s.same} region(s) owning the same texels under both pack to ${s.subsetAreas[0]} and ${s.subsetAreas[1]}`] : [])),
+      ...ownedSame.flatMap((s) => (s.same === s.kinds ? orderRows.filter((r) => r.key.startsWith(`${s.name}/`) && r.zero !== r.mesher).map((r) => `${r.key}: every owned set the same under both tightnesses and the packs differ (${r.zero} against ${r.mesher})`) : [])),
+      ...(statedDefaults === null
+        ? ['src/compile.ts no longer states CONTOUR_DEFAULTS in the form this control reads']
+        : Number(statedDefaults[1]) === CONTOUR_GENERATOR_DEFAULTS.margin && Number(statedDefaults[2]) === CONTOUR_GENERATOR_DEFAULTS.maxVertices && Number(statedDefaults[3]) === CONTOUR_GENERATOR_DEFAULTS.alpha
+          ? []
+          : [`src/compile.ts states margin ${statedDefaults[1]}, maxVertices ${statedDefaults[2]}, alpha ${statedDefaults[3]} and tools/trace_footprint.ts restates ${JSON.stringify(CONTOUR_GENERATOR_DEFAULTS)}`]),
+    ];
+    const pk103Held = pk103.length === 0;
+    say(
+      'PK103_THE_MESHER_TIGHTNESS_PACKS_NO_SMALLER_THAN_TOLERANCE_ZERO_WHERE_THEY_DIFFER',
+      pk103Held,
+      probeDetail(
+        pk103Held,
+        pk103,
+        `${orderRows.map((r) => `${r.key}: traced:0 ${r.zero}, traced:t=${TRACE_TOLERANCE} ${r.mesher}${r.zero === r.mesher ? ' (equal)' : ''}`).join('; ')}; ` +
+          `region-kind regions owning the same texels under both, and those alone packed free under each: ${ownedSame.map((s) => `${s.name} ${s.same}/${s.kinds}${s.subsetAreas === null ? '' : ` (${s.subsetAreas.join(' = ')})`}`).join(', ')}; ` +
+          `defaults margin ${CONTOUR_GENERATOR_DEFAULTS.margin}, maxVertices ${CONTOUR_GENERATOR_DEFAULTS.maxVertices}, alpha ${CONTOUR_GENERATOR_DEFAULTS.alpha} as src/compile.ts states them`,
+      ),
+      'issue #1115: tolerance 0 is the polygon no mesher improves on and the mesher\'s is what a conversion emits; a ' +
+        'mesher column below the lattice one on a set where they differ would be a reading of something other than the two polygons',
+    );
+
+    // PK104: the plant — the contour read and then dropped, every region-kind
+    // region packed as its rectangle while the count still says "by contour"
+    // (`tracedSet`'s `drop`). PK101's own probes, run on the planted rows,
+    // have to name it.
+    const plantRows = traceRowsOf(true);
+    const plantNamed = pk101Probes(plantRows);
+    const plantCaught = plantNamed.some((p) => p.includes('is not below rect'));
+    say(
+      'PK104_A_TRACE_THAT_PACKS_THE_RECTANGLE_AFTER_ALL_IS_NAMED_BY_PK101',
+      plantCaught,
+      `planted (contour read, rectangle packed): PK101_TRACE_REGIONS_PACKS_A_REGION_KIND_REGION_BY_ITS_CONTOUR_BELOW_RECT_AND_NO_LARGER_THAN_MESHES_ONLY names ${plantNamed.length} probe(s) — ${plantNamed.slice(0, 2).join('; ') || 'none'}; ` +
+        `${plantRows.filter((r) => GAIN_SETS.includes(`${r.name}/${r.label}/${r.pageEdges}`)).map(traceLine).join('; ')}`,
+      'a gate nobody has seen fail is not a gate: the count of regions packed by contour is the instrument\'s own word, ' +
+        'and only the pack can show that the word was kept',
+    );
   }
   return bad;
 }
@@ -85092,7 +85271,8 @@ function runDeformCoreSuite(): number | null {
 // ---------------------------------------------------------------------------
 
 import { CeilingInputError, ceilingTable, measureBuild, regionWindow, rowOf, type ContourReader, type RegionResolver } from './tools/hull_ceiling.ts';
-import { anchorMain } from './tools/pack_anchor.ts';
+import { anchorMain, tracedInputs, tracedPack } from './tools/pack_anchor.ts';
+import { CONTOUR_GENERATOR_DEFAULTS, regionKindRegions, type Tightness } from './tools/trace_footprint.ts';
 
 /** The hashes command in a child process, as a caller runs it. */
 function runHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {

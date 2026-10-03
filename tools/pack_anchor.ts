@@ -9,6 +9,7 @@
  *
  *   bun tools/pack_anchor.ts [--recipes <recipes.json>] [--root <dir>] [--regions <set.json>]…
  *                            [--seeds <n,n,…>] [--padding <n>] [--page-size <n>] [--work <dir>] [--json <out.json>]
+ *                            [--trace-regions <tolerance>]
  *
  * With no source flag, the tree's own: `fixtures/polypack_shapes.ts`'s two
  * seeds (`POLYPACK_SEED`, `POLYPACK_GAIN_SEED`) and `tools/emit_hashes.ts`'s
@@ -63,6 +64,25 @@
  * a `--page-size` page is a refused row, so a corpus with a drawing past 2048
  * is measured with `--page-size 4096` (every set of the run then at 4096).
  *
+ * ## `--trace-regions <tolerance>`: the stage-2 realised figure (issue #1115)
+ *
+ * Every built set is packed `polygon` twice more, with every **region-kind**
+ * region (one any region attachment samples — `hull_ceiling`'s definition)
+ * packed by the contour rigc's tracer states for its art, converted in memory
+ * and read back through `packFootprints` (`tools/trace_footprint.ts`); mesh-kind
+ * regions keep the footprint they pack by today, and nothing on disk changes.
+ * `traced:0` is the corner-lattice outline at threshold 1, unsimplified and with
+ * no margin — the polygon `hull_ceiling`'s *regions traced* ceiling counts;
+ * `traced:t=<tolerance>` is `buildContourMesh` at that tolerance and the contour
+ * generator's defaults for the rest (margin 1, maxVertices 64, alpha 1). The
+ * flag's value is that tolerance because the generator has none to default to.
+ * A fourth table states, per set and edge mode, Σ page area and its ratio to
+ * `rect` for `polygon` and both tightnesses, and how many region-kind regions
+ * packed by contour (a refused one keeps its rectangle and is counted by
+ * reason); `--json` carries it per set as `traced`. Seed and `--regions` sets
+ * have no build and no region attachment, and carry no reading. The seconds
+ * each tightness took go to stderr. Without the flag nothing printed changes.
+ *
  * ## Refused rows
  *
  * A set nothing can be measured on is a **REFUSED** row carrying the sentence
@@ -101,6 +121,7 @@ import { CompileError } from '../src/errors.ts';
 import { readPlate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
+import { CONTOUR_GENERATOR_DEFAULTS, tracedSet, type Tightness, type TracedSet } from './trace_footprint.ts';
 import { POLYPACK_GAIN_SEED, POLYPACK_SEED, polypackShapes, writePolypackInputs, type PolypackShape } from '../fixtures/polypack_shapes.ts';
 
 export const PACK_ANCHOR_SPEC = 'pack-anchor/1';
@@ -150,6 +171,30 @@ export interface AnchorRow {
   pot: EdgeRow | null;
   cost: { rect: SearchCost; polygon: Record<AnchorColumn, SearchCost> } | null;
   deterministic: boolean | null;
+  /** `--trace-regions` only (the key is absent without the flag): the set packed with its region-kind regions by their traced contour. */
+  traced?: TracedRow;
+}
+
+/** One tightness's `polygon` pack with every region-kind region converted in memory (`tracedSet`). */
+export interface TracedPack {
+  /** Region-kind regions among the set's parts, and how many of them pack by a contour. */
+  regionKind: number;
+  byContour: number;
+  /** Why the others keep their rectangle, by name. */
+  refused: Record<string, number>;
+  free: PageSet & { kept: PackCandidate };
+  pot: PageSet & { kept: PackCandidate };
+  /** Both packs made again, and from reversed parts, byte-identical. */
+  deterministic: boolean;
+}
+
+/** `--trace-regions <tolerance>`: the two tightnesses (`Tightness`) and the mesher's parameters the second ran at. */
+export interface TracedRow {
+  tolerance: number;
+  margin: number;
+  maxVertices: number;
+  lattice: TracedPack;
+  mesher: TracedPack;
 }
 
 /** The packer's own order (`packOrder` in src/atlas.ts): longest side, then area, then name. */
@@ -235,8 +280,8 @@ function refusedRow(name: string, why: string): AnchorRow {
   return { name, refused: why, cells: 0, meshCells: 0, insets: [], duplicates: 0, firstPass: { refused: 0, missed: 0, placed: 0 }, free: null, pot: null, cost: null, deterministic: null };
 }
 
-/** A built recipe's atlas regions, lifted to loose parts with the footprints its skeleton states. */
-export function inputsOfBuild(out: string, liftDir: string): { inputs: PackInput[]; duplicates: number } {
+/** A built recipe's atlas regions, lifted to loose parts with the footprints its skeleton states — and, for `--trace-regions`, the skeleton text and each part's page `scale:`. */
+export function inputsOfBuild(out: string, liftDir: string): { inputs: PackInput[]; duplicates: number; skeletonText: string; scales: Map<string, number> } {
   const atlasPath = join(out, 'skeleton.atlas');
   const skeletonPath = join(out, 'skeleton.json');
   if (!existsSync(atlasPath)) throw new AnchorInputError('the build wrote no skeleton.atlas');
@@ -245,6 +290,7 @@ export function inputsOfBuild(out: string, liftDir: string): { inputs: PackInput
   mkdirSync(liftDir, { recursive: true });
   const seen = new Set<string>();
   const lifted: Array<{ region: string; absPath: string; width: number; height: number }> = [];
+  const scales = new Map<string, number>();
   let duplicates = 0;
   for (const page of atlas.pages) {
     const pagePath = join(out, page.name);
@@ -260,16 +306,88 @@ export function inputsOfBuild(out: string, liftDir: string): { inputs: PackInput
       const absPath = join(liftDir, `${String(lifted.length).padStart(4, '0')}.png`);
       extractRegion(plate, region).writePng(absPath);
       lifted.push({ region: name, absPath, width: region.originalWidth, height: region.originalHeight });
+      scales.set(name, page.scale);
     }
   }
   if (lifted.length === 0) throw new AnchorInputError('the atlas states no region');
   const sizes = new Map(lifted.map((p) => [p.region, { width: p.width, height: p.height }]));
-  const footprints = packFootprints(readFileSync(skeletonPath, 'utf8'), (region) => sizes.get(region));
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const footprints = packFootprints(skeletonText, (region) => sizes.get(region));
   const inputs = lifted.map((p): PackInput => {
     const footprint = footprints.get(p.region) ?? undefined;
     return footprint === undefined ? p : { ...p, footprint };
   });
-  return { inputs, duplicates };
+  return { inputs, duplicates, skeletonText, scales };
+}
+
+/**
+ * A set's parts with every region-kind region traced and converted in memory
+ * (`tracedSet`) and every other region's footprint as `packFootprints` reads
+ * it today — what `tracedPack` packs, and what the selftest's controls hold.
+ * `drop` is `tracedSet`'s plant, for the selftest only.
+ */
+export function tracedInputs(
+  inputs: readonly PackInput[],
+  skeletonText: string,
+  scales: ReadonlyMap<string, number>,
+  tightness: Tightness,
+  drop = false,
+): { parts: PackInput[]; traced: TracedSet } {
+  const traced = tracedSet(
+    skeletonText,
+    inputs.map((p) => ({ region: p.region, absPath: p.absPath, width: p.width, height: p.height, pageScale: scales.get(p.region) ?? 1 })),
+    tightness,
+    drop,
+  );
+  const parts = inputs.map((p): PackInput => {
+    const footprint = traced.footprints.get(p.region) ?? undefined;
+    const bare = { region: p.region, absPath: p.absPath, width: p.width, height: p.height };
+    return footprint === undefined ? bare : { ...bare, footprint };
+  });
+  return { parts, traced };
+}
+
+/** One tightness's `polygon` packs of a set's `tracedInputs`, under both page edges. */
+export function tracedPack(
+  inputs: readonly PackInput[],
+  skeletonText: string,
+  scales: ReadonlyMap<string, number>,
+  tightness: Tightness,
+  padding: number,
+  pageSize: number,
+  drop = false,
+): TracedPack {
+  const { parts, traced } = tracedInputs(inputs, skeletonText, scales, tightness, drop);
+  let deterministic = true;
+  const edge = (pageEdges: PageEdges): PageSet & { kept: PackCandidate } => {
+    const opts = { pageEdges, padding, pageSize, shape: 'polygon' as const };
+    const pack = packAtlas(parts.slice(), opts);
+    if (!samePack(pack, packAtlas(parts.slice(), opts)) || !samePack(pack, packAtlas(parts.slice().reverse(), opts))) deterministic = false;
+    return { ...pageSet(pack), kept: pack.candidate };
+  };
+  const free = edge('free');
+  const pot = edge('pot');
+  return { regionKind: traced.regionKind, byContour: traced.byContour, refused: traced.refused, free, pot, deterministic };
+}
+
+/** Both tightnesses of a built set, the mesher's at `tolerance`; the seconds each took go to `warn`. */
+export function tracedRow(
+  name: string,
+  inputs: readonly PackInput[],
+  skeletonText: string,
+  scales: ReadonlyMap<string, number>,
+  tolerance: number,
+  padding: number,
+  pageSize: number,
+  warn: (line: string) => void = () => {},
+): TracedRow {
+  const t0 = performance.now();
+  const lattice = tracedPack(inputs, skeletonText, scales, { kind: 'lattice' }, padding, pageSize);
+  const t1 = performance.now();
+  const mesher = tracedPack(inputs, skeletonText, scales, { kind: 'mesher', tolerance }, padding, pageSize);
+  const t2 = performance.now();
+  warn(`pack_anchor: ${name} traced:0 ${((t1 - t0) / 1000).toFixed(1)} s, traced:t=${tolerance} ${((t2 - t1) / 1000).toFixed(1)} s`);
+  return { tolerance, margin: CONTOUR_GENERATOR_DEFAULTS.margin, maxVertices: CONTOUR_GENERATOR_DEFAULTS.maxVertices, lattice, mesher };
 }
 
 /** A `--regions` document as generated-set shapes, refused by name where an entry is not one. */
@@ -359,6 +477,69 @@ export function anchorTable(rows: readonly AnchorRow[]): string[] {
     const c = r.cost;
     out.push(`| ${r.name} | ${count(c.rect.splits)} | ${ANCHOR_COLUMNS.map((a) => `${count(c.polygon[a].splits)} (${ratio(c.polygon[a].splits, c.rect.splits)})`).join(' | ')} | ${r.deterministic === true ? 'yes' : 'NO'} |`);
   }
+  if (rows.some((r) => r.traced !== undefined)) out.push('', ...tracedTable(rows));
+  return out;
+}
+
+function share(n: number, d: number): string {
+  return d > 0 ? (n / d).toFixed(3) : '—';
+}
+
+function refusalNote(p: TracedPack): string {
+  const parts = Object.entries(p.refused).map(([why, n]) => `${n} ${why}`);
+  return parts.length === 0 ? '' : ` (rect: ${parts.join(', ')})`;
+}
+
+/**
+ * `--trace-regions`: per built set and edge mode, `rect`, `polygon` as it packs
+ * today, and `polygon` with every region-kind region packed by its traced
+ * contour at the two tightnesses — Σ page area and its ratio to `rect` — and
+ * how many region-kind regions packed by contour. Σ rows over the sets that
+ * carry the reading.
+ */
+export function tracedTable(rows: readonly AnchorRow[]): string[] {
+  const withTrace = rows.filter((r) => r.traced !== undefined && r.free !== null && r.pot !== null);
+  const first = withTrace[0]?.traced;
+  if (first === undefined) return [];
+  const t = `traced:t=${first.tolerance}`;
+  const out: string[] = [
+    `Region-kind regions packed by their traced contour: traced:0 = the corner-lattice outline at threshold 1, unsimplified, no margin; ${t} = buildContourMesh at tolerance ${first.tolerance}, margin ${first.margin}, maxVertices ${first.maxVertices}, alpha 1. A refused region keeps its rectangle and is counted by reason.`,
+    '',
+    `| set | edges | rect | polygon | ratio | traced:0 | ratio | ${t} | ratio | by contour / region-kind, traced:0 | by contour / region-kind, ${t} | deterministic |`,
+    '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |',
+  ];
+  const sums = { free: { rect: 0, polygon: 0, lattice: 0, mesher: 0 }, pot: { rect: 0, polygon: 0, lattice: 0, mesher: 0 } };
+  const regions = { kind: 0, lattice: 0, mesher: 0 };
+  for (const r of withTrace) {
+    const tr = r.traced as TracedRow;
+    regions.kind += tr.lattice.regionKind;
+    regions.lattice += tr.lattice.byContour;
+    regions.mesher += tr.mesher.byContour;
+    for (const edges of ['free', 'pot'] as const) {
+      const e = r[edges] as EdgeRow;
+      const rect = e.rect.area;
+      const poly = e.polygon.polygon.area;
+      const l = tr.lattice[edges];
+      const m = tr.mesher[edges];
+      sums[edges].rect += rect;
+      sums[edges].polygon += poly;
+      sums[edges].lattice += l.area;
+      sums[edges].mesher += m.area;
+      out.push(
+        `| ${r.name} | ${edges} | ${count(rect)} | ${count(poly)} | ${share(poly, rect)} | ${l.pages} = ${count(l.area)} (${l.kept}) | ${share(l.area, rect)} | ${m.pages} = ${count(m.area)} (${m.kept}) | ${share(m.area, rect)} | ` +
+          `${tr.lattice.byContour} / ${tr.lattice.regionKind}${refusalNote(tr.lattice)} | ${tr.mesher.byContour} / ${tr.mesher.regionKind}${refusalNote(tr.mesher)} | ${tr.lattice.deterministic && tr.mesher.deterministic ? 'yes' : 'NO'} |`,
+      );
+    }
+  }
+  for (const edges of ['free', 'pot'] as const) {
+    const s = sums[edges];
+    out.push(
+      `| **Σ** over ${withTrace.length} built set(s) | ${edges} | ${count(s.rect)} | ${count(s.polygon)} | ${share(s.polygon, s.rect)} | ${count(s.lattice)} | ${share(s.lattice, s.rect)} | ${count(s.mesher)} | ${share(s.mesher, s.rect)} | ` +
+        `${regions.lattice} / ${regions.kind} | ${regions.mesher} / ${regions.kind} | |`,
+    );
+  }
+  const untraced = rows.filter((r) => r.refused === null && r.traced === undefined).length;
+  if (untraced > 0) out.push('', `${untraced} measured set(s) have no build behind them (a generator seed or a --regions set: no region attachment, no art to trace) and carry no traced reading.`);
   return out;
 }
 
@@ -393,30 +574,49 @@ function positiveInt(flag: string, value: string | undefined, fallback: number, 
 }
 
 /** Every recipe built into `work` and measured, in name order. */
-export function recipeRows(recipes: readonly Recipe[], work: string, root: string, padding: number, pageSize: number, progress: (line: string) => void = () => {}, refusals: 'row' | 'throw' = 'row'): AnchorRow[] {
+export function recipeRows(
+  recipes: readonly Recipe[],
+  work: string,
+  root: string,
+  padding: number,
+  pageSize: number,
+  progress: (line: string) => void = () => {},
+  refusals: 'row' | 'throw' = 'row',
+  traceTolerance: number | null = null,
+): AnchorRow[] {
   const built = buildRecipes(recipes, join(work, 'build'), root, progress);
   return built.map((b, i) => {
     if (b.exits.some((e) => e !== 0)) return refusedRow(b.name, `the build chain exited ${JSON.stringify(b.exits)}`);
-    let lifted: { inputs: PackInput[]; duplicates: number };
+    let lifted: ReturnType<typeof inputsOfBuild>;
     try {
       lifted = inputsOfBuild(b.out, join(work, 'lift', String(i).padStart(3, '0')));
     } catch (err) {
       if (err instanceof AnchorInputError) return refusedRow(b.name, err.message);
       throw err;
     }
-    return measuredRow(b.name, () => lifted.inputs, padding, pageSize, lifted.duplicates, refusals);
+    const row = measuredRow(b.name, () => lifted.inputs, padding, pageSize, lifted.duplicates, refusals);
+    if (traceTolerance === null || row.refused !== null) return row;
+    return { ...row, traced: tracedRow(b.name, lifted.inputs, lifted.skeletonText, lifted.scales, traceTolerance, padding, pageSize, progress) };
   });
 }
 
 /** The command; returns the exit code. */
 export function anchorMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error, refusals: 'row' | 'throw' = 'row'): number {
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--regions', '--seeds', '--padding', '--page-size', '--work', '--json'], ['--regions']);
+    const flags = parseFlags(argv, ['--recipes', '--root', '--regions', '--seeds', '--padding', '--page-size', '--work', '--json', '--trace-regions'], ['--regions']);
     const one = (flag: string): string | undefined => flags.get(flag)?.[0];
     const root = resolve(one('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new AnchorInputError(`--root ${root} is not a directory`);
     const padding = positiveInt('--padding', one('--padding'), DEFAULT_PADDING, 0);
     const pageSize = positiveInt('--page-size', one('--page-size'), DEFAULT_PAGE_SIZE, 1);
+    const traceText = one('--trace-regions');
+    const traceTolerance = traceText === undefined ? null : Number(traceText);
+    if (traceTolerance !== null && !(Number.isFinite(traceTolerance) && traceTolerance > 0)) {
+      throw new AnchorInputError(
+        `--trace-regions takes the contour mesher's simplification tolerance in pixels, a positive number, got ${JSON.stringify(traceText)} — ` +
+          'the contour generator has no default tolerance (its "tolerance" is required) and the mesher refuses 0; tolerance 0 is the traced:0 column, which every run prints',
+      );
+    }
     const named = one('--recipes');
     const regionSets = flags.get('--regions') ?? [];
     const seedText = one('--seeds');
@@ -445,7 +645,7 @@ export function anchorMain(argv: readonly string[], print: (line: string) => voi
     const rows: AnchorRow[] = [];
     for (const seed of seeds) rows.push(measuredRow(`seed ${seed}`, () => writePolypackInputs(join(work, 'seeds', String(seed)), polypackShapes(seed)), padding, pageSize, 0, refusals));
     sets.forEach(({ shapes }, i) => rows.push(measuredRow(`regions ${i + 1} (${shapes.length} regions)`, () => writePolypackInputs(join(work, 'regions', String(i)), shapes), padding, pageSize, 0, refusals)));
-    if (recipes.length > 0) rows.push(...recipeRows(recipes, work, root, padding, pageSize, warn, refusals));
+    if (recipes.length > 0) rows.push(...recipeRows(recipes, work, root, padding, pageSize, warn, refusals, traceTolerance));
     for (const line of anchorTable(rows)) print(line);
     const json = one('--json');
     if (json !== undefined) writeFileSync(json, anchorText(rows));
