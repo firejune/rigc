@@ -74,6 +74,15 @@
  * is skipped with that reason unless a suite before it printed a case — name
  * one beside it, as above. It is a development aid — the full run, with no
  * `--only`, is the verdict, and it is what a pull request is checked by.
+ *
+ * ## What every suite prints at its end
+ *
+ * One line under the suite's last case — `suite <key>: <n> case line(s), <t> s,
+ * rss <MB> MB (<±MB> MB)` — its seconds off a clock around its call and the
+ * process's resident set after it with the suite's own change to it (issue
+ * #1116). Before the verdict line the run prints the heaviest suites by time
+ * and by RSS growth, and its wall time less every suite's own as the harness's
+ * overhead. `TY23` holds every suite the run called to a printed line of both.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -103352,6 +103361,133 @@ function prefixOpeningCollisions(blocks: readonly SuiteBlock[]): string[] {
   return faults;
 }
 
+/**
+ * The line a timed tally prints after each suite it called (issue #1116), and
+ * the pattern `observe` reads it back with.
+ *
+ * Lower-case `suite` at the two-space indent on purpose: `gutterWord` reads an
+ * upper-case word there as a case line, so this line can never be counted as
+ * one, and `TY23` holds that it is not.
+ */
+const DURATION_LINE = /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\))?$/;
+
+/** What the process's resident set was after one suite, and how far the suite moved it, in whole megabytes. */
+interface SuiteRss {
+  after: number;
+  delta: number;
+}
+
+/** Bytes as whole megabytes — the unit a duration line prints its RSS in. */
+function megabytes(bytes: number): number {
+  return Math.round(bytes / (1024 * 1024));
+}
+
+/**
+ * One suite's duration line, in the shape `DURATION_LINE` reads: its cases,
+ * its seconds, and the process's RSS after it with the suite's own change to
+ * it (issue #1116 — the run's memory grows, and this is where it is read).
+ */
+function durationLine(key: string, controls: number, seconds: number, rss: SuiteRss): string {
+  const sign = rss.delta < 0 ? '-' : '+';
+  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${sign}${Math.abs(rss.delta)} MB)`;
+}
+
+/** How many suites the heaviest-suites table names. */
+const HEAVIEST_SHOWN = 10;
+
+/**
+ * The heaviest suites by time, heaviest first, one line each — the table the
+ * run ends with (issue #1116). Ties break on the key so two runs with equal
+ * figures print one order.
+ */
+function heaviestLines(seconds: ReadonlyMap<string, number>): string[] {
+  const ranked = [...seconds].sort((a, b) => (b[1] !== a[1] ? b[1] - a[1] : a[0] < b[0] ? -1 : 1));
+  const total = ranked.reduce((sum, [, s]) => sum + s, 0);
+  return ranked
+    .slice(0, HEAVIEST_SHOWN)
+    .map(([key, s]) => `  ${s.toFixed(1).padStart(8)} s  ${(total > 0 ? (100 * s) / total : 0).toFixed(1).padStart(5)} %  ${key}`);
+}
+
+/** The heading over `heaviestLines`, naming how many it shows of how many were timed. */
+function heaviestHeading(seconds: ReadonlyMap<string, number>): string {
+  return `the ${Math.min(HEAVIEST_SHOWN, seconds.size)} heaviest of the ${seconds.size} suite(s) timed, by seconds and share of their sum:`;
+}
+
+/**
+ * The suites that grew the process most, largest growth first, each with the
+ * RSS it left behind — the second table the run ends with. Ties break on the
+ * key, as `heaviestLines`'s do.
+ */
+function rssGrowthLines(rss: ReadonlyMap<string, SuiteRss>): string[] {
+  const ranked = [...rss].sort((a, b) => (b[1].delta !== a[1].delta ? b[1].delta - a[1].delta : a[0] < b[0] ? -1 : 1));
+  return ranked
+    .slice(0, HEAVIEST_SHOWN)
+    .map(([key, r]) => `  ${`${r.delta < 0 ? '-' : '+'}${Math.abs(r.delta)}`.padStart(8)} MB  ${String(r.after).padStart(6)} MB after  ${key}`);
+}
+
+/** The heading over `rssGrowthLines`. */
+function rssGrowthHeading(rss: ReadonlyMap<string, SuiteRss>): string {
+  return `the ${Math.min(HEAVIEST_SHOWN, rss.size)} heaviest of the ${rss.size} suite(s) by RSS growth — the change across the suite, and the RSS it left:`;
+}
+
+/**
+ * Everything wrong with the durations a run recorded and printed (issue
+ * #1116). Empty means every suite the tally called printed a duration, every
+ * duration printed belongs to a suite it called and says what the clock read,
+ * and the durations fit inside the run's own wall time.
+ *
+ * ⚠️ The last clause is the one that makes a sum meaningful: suites are timed
+ * one after another inside one process, so their seconds are disjoint slices of
+ * its life and cannot add up to more than it. A sum above the wall is a suite
+ * counted twice — a `tally.of` nested inside another — and the difference below
+ * it is the harness's own overhead (module load, fixture generation, the
+ * bookkeeping between calls), which the run prints rather than bounds.
+ */
+function durationFaults(
+  blocks: readonly SuiteBlock[],
+  seconds: ReadonlyMap<string, number>,
+  printed: ReadonlyMap<string, number>,
+  wallSeconds: number,
+  rss: ReadonlyMap<string, SuiteRss> = new Map(),
+  printedRss: ReadonlyMap<string, SuiteRss> = new Map(),
+): string[] {
+  const faults: string[] = [];
+  for (const block of blocks) {
+    const clock = seconds.get(block.key);
+    const said = printed.get(block.key);
+    if (clock === undefined) faults.push(`the suite "${block.key}" was tallied with no clock read around its call`);
+    if (said === undefined) {
+      faults.push(`the suite "${block.key}" ran and printed no duration line, so the log does not say what it took`);
+    } else if (clock !== undefined && said.toFixed(1) !== clock.toFixed(1)) {
+      faults.push(`the suite "${block.key}" printed ${said.toFixed(1)} s while the clock around it read ${clock.toFixed(1)} s`);
+    }
+    // The RSS is read the same way: off the line, held to what was measured.
+    const measured = rss.get(block.key);
+    const stated = printedRss.get(block.key);
+    if (said !== undefined && stated === undefined) {
+      faults.push(`the suite "${block.key}" printed its duration and no RSS, so the log does not say what it left in memory`);
+    } else if (stated !== undefined && (measured === undefined || stated.after !== measured.after || stated.delta !== measured.delta)) {
+      faults.push(
+        `the suite "${block.key}" printed rss ${stated.after} MB (${stated.delta} MB) while the process read ` +
+          (measured === undefined ? 'nothing' : `${measured.after} MB (${measured.delta} MB)`),
+      );
+    }
+  }
+  for (const key of printed.keys()) {
+    if (!blocks.some((block) => block.key === key)) {
+      faults.push(`a duration line names the suite "${key}", which this run never called`);
+    }
+  }
+  const summed = [...seconds.values()].reduce((sum, s) => sum + s, 0);
+  if (summed > wallSeconds) {
+    faults.push(
+      `the suites' durations sum to ${summed.toFixed(1)} s, more than the run's own ${wallSeconds.toFixed(1)} s: ` +
+        'a suite was timed twice, which is a tally.of nested inside another',
+    );
+  }
+  return faults;
+}
+
 /** True for the section header every suite opens with. */
 function isSectionHeader(line: string): boolean {
   return /^\n?── .+ ──$/.test(line);
@@ -103634,6 +103770,31 @@ class RunTally {
   readonly skipped: SuiteBlock[] = [];
   /** Every key `of` was called with, in call order: the registry `--only` is checked against. */
   readonly registered: string[] = [];
+  /**
+   * What each suite this tally CALLED took, in seconds, off the clock around
+   * the call (issue #1116). Held apart from `blocks` for `RT04`'s reason: two
+   * runs of one miniature must tally the same blocks, and a time never repeats.
+   */
+  readonly seconds = new Map<string, number>();
+  /**
+   * The duration each suite PRINTED, read back off its `suite <key>: …` line by
+   * `observe` — the record the floor holds `seconds` to, because a duration
+   * nobody printed is one a reader of the log never saw (`durationFaults`).
+   */
+  readonly printedSeconds = new Map<string, number>();
+  /**
+   * The process's RSS after each suite this tally called and the suite's own
+   * change to it, in MB (issue #1116), and what each duration line PRINTED of
+   * that — held to each other by `durationFaults`, as the seconds are.
+   */
+  readonly rss = new Map<string, SuiteRss>();
+  readonly printedRss = new Map<string, SuiteRss>();
+  /**
+   * Whether `of` prints a suite's duration line after it. `main` turns it on;
+   * the miniatures this file drives a tally over leave it off, so the lines
+   * they compare are the lines their suites printed.
+   */
+  timed = false;
 
   /**
    * `only` is the set `--only` named, or `null` for the full run — which is the
@@ -103651,6 +103812,12 @@ class RunTally {
   observe(line: string): void {
     if (isSectionHeader(line)) {
       this.headerLines++;
+      return;
+    }
+    const timed = DURATION_LINE.exec(line);
+    if (timed !== null) {
+      this.printedSeconds.set(timed[1], Number(timed[3]));
+      if (timed[4] !== undefined && timed[5] !== undefined) this.printedRss.set(timed[1], { after: Number(timed[4]), delta: Number(timed[5]) });
       return;
     }
     const word = gutterWord(line);
@@ -103715,8 +103882,16 @@ class RunTally {
       });
       return undefined as unknown as T;
     }
+    // ⏱️ The one clock in this file (issue #1116), around the suite's call and
+    // nothing else. `src/` stays clock-free and `CO04` holds that over the core;
+    // this file is a harness, and what it times is a suite, never an artifact.
+    const began = performance.now();
+    const rssBefore = process.memoryUsage().rss;
     const value = suite();
-    this.blocks.push({
+    const seconds = (performance.now() - began) / 1000;
+    const rssAfter = process.memoryUsage().rss;
+    const rss: SuiteRss = { after: megabytes(rssAfter), delta: megabytes(rssAfter) - megabytes(rssBefore) };
+    const block: SuiteBlock = {
       key,
       ran: reads.ran === undefined ? true : reads.ran(value),
       controls: this.controlLines - controls,
@@ -103725,7 +103900,11 @@ class RunTally {
       fails: this.failLines - fails,
       returned: reads.failures === undefined ? statedFailures(value) : reads.failures(value),
       names: this.named.slice(named),
-    });
+    };
+    this.blocks.push(block);
+    this.seconds.set(key, seconds);
+    this.rss.set(key, rss);
+    if (this.timed) console.log(durationLine(key, block.controls, seconds, rss));
     return value;
   }
 
@@ -105512,6 +105691,97 @@ function runRunTallySuite(live: RunTally): number {
         "suite. The plants are two-sided on purpose: a helper that turned every absent-corpus FAIL into a HOLE would " +
         'hide a gallery row reading DIFF on a fresh clone, and one that ignored the corpus would put the fresh ' +
         "clone's run back at exit 1",
+    );
+  }
+
+  // --- TY23: every suite this run called printed what it took ---------------
+  //
+  // Issue #1116. A duration is read back off the line the suite's section ends
+  // with, for the reason every count here is: what a reader of the log sees is
+  // the record, and a clock reading nobody printed is not one. Driven through a
+  // real timed tally with `console.log` routed into it, because the line is a
+  // thing the tally PRINTS and then reads, and a table of synthetic durations
+  // would assert the reading without the printing.
+  {
+    const timedMiniature = (drop: string | null, unmeasured: string | null = null): { tally: RunTally; lines: string[] } => {
+      const tally = new RunTally();
+      tally.timed = true;
+      const lines: string[] = [];
+      const real = console.log;
+      console.log = (...args: unknown[]): void => {
+        const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+        if (drop !== null && line.startsWith(`  suite ${drop}:`)) return;
+        // The RSS plant: the duration line printed with its RSS clause cut off.
+        const printed = unmeasured !== null && line.startsWith(`  suite ${unmeasured}:`) ? line.replace(/, rss .*$/, '') : line;
+        lines.push(printed);
+        tally.observe(printed);
+      };
+      try {
+        for (const key of ['alpha', 'beta']) {
+          tally.of(key, () => {
+            console.log(`\n── ${key} ──`);
+            return reportCase(`PROBE_${key}`, true, 'a detail line', 'an origin line');
+          });
+        }
+      } finally {
+        console.log = real;
+      }
+      return { tally, lines };
+    };
+    const whole = timedMiniature(null);
+    const dropped = timedMiniature('beta');
+    const faultsOf = (t: RunTally): string[] => durationFaults(t.blocks, t.seconds, t.printedSeconds, performance.now() / 1000, t.rss, t.printedRss);
+    const wholeFaults = faultsOf(whole.tally);
+    const droppedFaults = faultsOf(dropped.tally);
+    const rssless = timedMiniature(null, 'alpha');
+    const rsslessFaults = faultsOf(rssless.tally);
+    // Forged rather than timed: the miniature's suites take microseconds, and a sum past the wall needs figures a
+    // reader can check by eye — two suites of 2 s and 3 s inside a run that says it lasted 4 s.
+    const forged = new Map([['alpha', 2], ['beta', 3]]);
+    const forgedRss = new Map([['alpha', { after: 100, delta: 0 }], ['beta', { after: 100, delta: 0 }]]);
+    const doubled = durationFaults(whole.tally.blocks, forged, forged, 4, forgedRss, forgedRss);
+    const sample = durationLine('a suite (with a spaced key)', 3, 1.25, { after: 512, delta: -3 });
+    const sampleRead = DURATION_LINE.exec(sample);
+    const wallNow = performance.now() / 1000;
+    const liveFaults = durationFaults(live.blocks, live.seconds, live.printedSeconds, wallNow, live.rss, live.printedRss);
+    const liveRss = [...live.rss.values()];
+    const liveSum = [...live.seconds.values()].reduce((sum, s) => sum + s, 0);
+    const probes = [
+      ...(gutterWord(sample) === null && sampleRead?.[1] === 'a suite (with a spaced key)' && sampleRead[4] === '512' && sampleRead[5] === '-3'
+        ? []
+        : [`the duration line "${sample}" is read as a case line, or not read back to its key and RSS`]),
+      ...(rsslessFaults.length === 1 && rsslessFaults[0].includes('"alpha"') && rsslessFaults[0].includes('no RSS')
+        ? []
+        : [`the miniature with alpha's RSS cut off its duration line is not named by it: ${rsslessFaults.join('; ') || 'nothing'}`]),
+      ...(whole.lines.filter((line) => DURATION_LINE.test(line)).length === 2 && wholeFaults.length === 0
+        ? []
+        : [`a timed miniature of two suites printed ${whole.lines.filter((line) => DURATION_LINE.test(line)).length} duration line(s) and faulted: ${wholeFaults.join('; ') || 'nothing'}`]),
+      ...(droppedFaults.length === 1 && droppedFaults[0].includes('"beta"') && droppedFaults[0].includes('no duration line')
+        ? []
+        : [`the same miniature with beta's duration line taken out of the log is not named by it: ${droppedFaults.join('; ') || 'nothing'}`]),
+      ...(doubled.length === 1 && doubled[0].includes('timed twice') ? [] : [`durations above the wall are not named: ${doubled.join('; ') || 'nothing'}`]),
+      ...(live.timed ? [] : ['the live run is not timed, so no suite of it printed a duration']),
+      ...liveFaults.map((fault) => `this run: ${fault}`),
+    ];
+    const held = probes.length === 0;
+    say(
+      'TY23_EVERY_SUITE_THIS_RUN_CALLED_PRINTED_ITS_DURATION_AND_RSS_AND_THE_SUM_FITS_THE_WALL',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the ${live.blocks.length} suite(s) this run has called so far each printed a duration the clock agrees with ` +
+          `and the RSS the process read after it (${liveRss.length === 0 ? 'none' : `${Math.min(...liveRss.map((r) => r.after))}–${Math.max(...liveRss.map((r) => r.after))} MB`}), ` +
+          `summing to ${liveSum.toFixed(1)} s of the ${wallNow.toFixed(1)} s the process has run, so ` +
+          `${(wallNow - liveSum).toFixed(1)} s so far lies outside every finished suite — this one's own time included; a miniature with one ` +
+          `suite's duration line taken out of its log is named — ${droppedFaults[0] ?? 'nothing'} — one with a line cut ` +
+          `before its RSS is named — ${rsslessFaults[0] ?? 'nothing'} — and durations ` +
+          `summing past the wall are named — ${doubled[0] ?? 'nothing'}`,
+      ),
+      'issue #1116: nothing in the run said where its time or its memory went, so the heavy suites were a guess and a ' +
+        'change meant to lighten the run could not be measured. The sum is held to the wall because suites run one after ' +
+        'another in one process, so their seconds are disjoint slices of it; the remainder is the overhead, printed ' +
+        'rather than bounded, because a bound on it would be a figure nobody derived',
     );
   }
 
@@ -107453,6 +107723,7 @@ function main(): void {
   // of weakening the only thing standing between a vacuous run and a green one.
   // The floor is now one per suite and it is checked by `tallyFaults`.
   const tally = new RunTally(ONLY);
+  tally.timed = true;
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
     const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
@@ -107559,12 +107830,29 @@ function main(): void {
   // printing green: a suite that ran and measured nothing, a suite call nobody
   // wrapped, a section opened twice or not at all, a gutter word the scan does
   // not recognise, a scan that matched nothing. `runRunTallySuite` plants each.
-  const floorFaults = tallyFaults(tally.everyBlock, tally.gutter, tally.total, tally.parts);
+  const wallSeconds = performance.now() / 1000;
+  const floorFaults = [
+    ...tallyFaults(tally.everyBlock, tally.gutter, tally.total, tally.parts),
+    ...durationFaults(tally.blocks, tally.seconds, tally.printedSeconds, wallSeconds, tally.rss, tally.printedRss),
+  ];
   if (floorFaults.length > 0) {
     console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const fault of floorFaults) console.error(`  ${fault}`);
     process.exit(2);
   }
+  // ⏱️ Where the time went (issue #1116), before the verdict line so a red or
+  // partial run carries it too. The overhead is the run's wall time less every
+  // suite's own: module load, fixture generation and the harness between calls.
+  const timedSum = [...tally.seconds.values()].reduce((sum, s) => sum + s, 0);
+  console.log(heaviestHeading(tally.seconds));
+  for (const line of heaviestLines(tally.seconds)) console.log(line);
+  console.log(rssGrowthHeading(tally.rss));
+  for (const line of rssGrowthLines(tally.rss)) console.log(line);
+  console.log(
+    `the run: ${wallSeconds.toFixed(1)} s of wall time, ${timedSum.toFixed(1)} s of it inside the ${tally.seconds.size} ` +
+      `suite(s) timed and ${(wallSeconds - timedSum).toFixed(1)} s of harness overhead outside every suite; ` +
+      `the process ended at rss ${megabytes(process.memoryUsage().rss)} MB`,
+  );
   // 🔒 The verdict, off the same blocks the floor above just reconciled against
   // the log (issue #533). There is no second sum to keep in step with this one:
   // a suite is counted where it is wrapped, or it is not counted at all, and
