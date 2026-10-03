@@ -87,6 +87,10 @@
  * growth and by heap growth, and its wall time less every suite's own as the
  * harness's overhead. `TY23` holds every suite the run called to a printed
  * line of the time and the RSS, and `TY24` to the heap and external figures.
+ * The run's final RSS is then held under its platform's tracked base
+ * (`tools/selftest_memory.base.json`, written by `--memory-base`) times a
+ * stated margin; `TY25` plants a retaining suite against it and `TY26` holds
+ * the live run, as a SKIP naming the command where the platform has no base.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -708,6 +712,21 @@ function readOnlyList(argv: readonly string[]): ReadonlySet<string> | null {
 }
 
 const ONLY = readOnlyList(process.argv.slice(2));
+
+/**
+ * Whether this run writes its platform's entry of the memory base when it ends
+ * green (issue #1121, `TY26`). Refused beside `--only`: a partial run's final
+ * RSS is the high-water of the suites it ran, not of the run the base stands for.
+ */
+const WRITE_MEMORY_BASE = ((): boolean => {
+  const argv = process.argv.slice(2);
+  if (!argv.includes('--memory-base')) return false;
+  if (ONLY !== null) {
+    console.error('selftest: --memory-base writes the final RSS of the FULL run; it cannot be given with --only');
+    process.exit(2);
+  }
+  return true;
+})();
 
 function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
@@ -47099,8 +47118,8 @@ function runPackerSuite(): number {
       });
     };
     const polyInputs = withFootprints(polyParts, honestSkeleton);
-    const shapeOfPack = (r: ReturnType<typeof packAtlas>): string => r.pages.map((p) => `${p.width}x${p.height}`).join('+');
-    const areaOfPack = (r: ReturnType<typeof packAtlas>): number => r.pages.reduce((n, p) => n + p.width * p.height, 0);
+    const shapeOfPack = (r: { pages: ReadonlyArray<{ width: number; height: number }> }): string => r.pages.map((p) => `${p.width}x${p.height}`).join('+');
+    const areaOfPack = (r: { pages: ReadonlyArray<{ width: number; height: number }> }): number => r.pages.reduce((n, p) => n + p.width * p.height, 0);
 
     // PK78: determinism, and the gain it is determinism OF. Two packs of the set,
     // the second handed its parts reversed, under both page edges; and against
@@ -47915,15 +47934,29 @@ function runPackerSuite(): number {
       { name: genRows[1].what, inputs: gainShaped, skeleton: polySkeletonOf(polypackShapes(POLYPACK_GAIN_SEED)), pageSize: DEFAULT_PAGE_SIZE },
       ...galleryRows.map((r) => ({ name: `gallery/${r.name}`, inputs: r.inputs, skeleton: r.skeleton, pageSize: DEFAULT_PAGE_SIZE })),
     ];
+    // 🧮 Each row keeps the FIGURES its controls compare — every page's size and
+    // the candidate kept — and never a pack's decoded pages (issue #1121): held
+    // whole, five packs per set and page edge put about 140 packs of pages in
+    // memory at once, the packer suite's +1.3 GB peak. The two readings that
+    // need a pack's pixels are taken here, while its pages are still in hand:
+    // PK99's sameness, and PK98's brute force over the polygon pack.
+    const figuresOf = (r: ReturnType<typeof packAtlas>): { pages: Array<{ width: number; height: number }>; candidate: typeof r.candidate } => ({
+      pages: r.pages.map((p) => ({ width: p.width, height: p.height })),
+      candidate: r.candidate,
+    });
     const anchorRows = anchorSets.flatMap((set) =>
       (['pot', 'free'] as const).map((pageEdges) => {
         const base = { pageEdges, pageSize: set.pageSize };
-        const rect = packAtlas(set.inputs, base);
-        const box = packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' });
-        const poly = packAtlas(set.inputs, { ...base, shape: 'polygon' });
-        const again = packAtlas(set.inputs, { ...base, shape: 'polygon' });
-        const reversed = packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' });
-        return { ...set, name: `${set.name}/${pageEdges}`, pageEdges, rect, box, poly, same: samePack(poly, again) && samePack(poly, reversed) };
+        const name = `${set.name}/${pageEdges}`;
+        const rect = figuresOf(packAtlas(set.inputs, base));
+        const box = figuresOf(packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' }));
+        const packed = packAtlas(set.inputs, { ...base, shape: 'polygon' });
+        const same = samePack(packed, packAtlas(set.inputs, { ...base, shape: 'polygon' })) && samePack(packed, packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' }));
+        const texels =
+          packed.candidate === 'rect'
+            ? null
+            : footprintTexelsWrong(packed.pages.map((p) => p.plate), packed.atlasText, set.skeleton, set.inputs, packed.padding);
+        return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
       }),
     );
 
@@ -47996,7 +48029,7 @@ function runPackerSuite(): number {
     // PK98: every sampled texel its own, on every polygon pack above that kept
     // a footprint candidate — PK79's brute force against the hull loops each
     // set's skeleton states (a skeleton written for the generated sets).
-    const texelRows = anchorRows.filter((r) => r.poly.candidate !== 'rect').map((r) => ({ name: r.name, reading: footprintTexelsWrong(r.poly.pages.map((p) => p.plate), r.poly.atlasText, r.skeleton, r.inputs, r.poly.padding) }));
+    const texelRows = anchorRows.flatMap((r) => (r.texels === null ? [] : [{ name: r.name, reading: r.texels }]));
     const texelProbes = [
       ...texelRows.flatMap((r) => r.reading.wrong.map((w) => `${r.name}: ${w}`)),
       ...(texelRows.some((r) => r.name === `${genRows[0].what}/free`) ? [] : ['the replica-shaped set\'s free pack kept rect, so its two-anchor page was never read']),
@@ -48481,12 +48514,17 @@ function runAtlasReaderSuite(): number | null {
       const mine = parseAtlasText(text);
       const theirs = new TextureAtlas(text);
       if (mine.regions.length !== theirs.regions.length) continue;
+      // 🧮 Each page decoded once per atlas and dropped with it (issue #1121):
+      // decoding the whole page again for every region on it was this suite's
+      // +450 MB peak, one 2048² page at a time faster than the collector ran.
+      const decoded = new Map<string, Plate>();
       for (let i = 0; i < mine.regions.length; i++) {
         const region = mine.regions[i];
         const runtime = theirs.regions[i];
         const pagePath = join(dirname(path), runtime.page.name);
         if (!existsSync(pagePath)) continue;
-        const page = readPlate(pagePath);
+        const page = decoded.get(pagePath) ?? readPlate(pagePath);
+        decoded.set(pagePath, page);
         let lifted: Plate;
         let unturned: Plate;
         try {
@@ -48502,28 +48540,29 @@ function runAtlasReaderSuite(): number | null {
         if (region.degrees !== 0) turned.push(`${basename(path)}/${region.name.trim()}@${region.degrees}`);
         const top = region.originalHeight - region.offsetY - region.height;
         const uvIn: number[] = [];
-        const want: Array<[number, number]> = [];
         for (let y = top; y < top + region.height; y++) {
           for (let x = region.offsetX; x < region.offsetX + region.width; x++) {
             uvIn.push((x + 0.5) / region.originalWidth, (y + 0.5) / region.originalHeight);
-            want.push([x, y]);
           }
         }
+        // The drawing pixel of sample `k`, in the order the loop above wrote them.
+        const wantAt = (k: number): [number, number] => [region.offsetX + (k % region.width), top + Math.floor(k / region.width)];
         const uvOut = new Array<number>(uvIn.length).fill(0);
         MeshAttachment.computeUVs(runtime, uvIn, uvOut);
         let blindHere = 0;
-        for (let k = 0; k < want.length; k++) {
+        for (let k = 0; k < uvIn.length / 2; k++) {
+          const want = wantAt(k);
           const px = Math.floor(uvOut[2 * k] * runtime.page.width);
           const py = Math.floor(uvOut[2 * k + 1] * runtime.page.height);
           const runtimeTexel = page.get(px, py).join();
           texels++;
-          if (runtimeTexel !== lifted.get(want[k][0], want[k][1]).join() && wrong.length < 5) {
+          if (runtimeTexel !== lifted.get(want[0], want[1]).join() && wrong.length < 5) {
             wrong.push(
-              `${basename(path)} "${region.name.trim()}" (rotate: ${region.degrees}) at ${want[k][0]},${want[k][1]}: ` +
-                `the lift says [${lifted.get(want[k][0], want[k][1])}] and the runtime samples page ${px},${py} = [${page.get(px, py)}]`,
+              `${basename(path)} "${region.name.trim()}" (rotate: ${region.degrees}) at ${want[0]},${want[1]}: ` +
+                `the lift says [${lifted.get(want[0], want[1])}] and the runtime samples page ${px},${py} = [${page.get(px, py)}]`,
             );
           }
-          if (runtimeTexel !== unturned.get(want[k][0], want[k][1]).join()) blindHere++;
+          if (runtimeTexel !== unturned.get(want[0], want[1]).join()) blindHere++;
         }
         if (region.degrees !== 0 && blindHere === 0) {
           blind.push(
@@ -62118,6 +62157,65 @@ function runCurrencySuite(): number {
           'generated source, or a URL doing a URL\'s job is one every author learns to work around',
       );
     }
+
+    // --- CUR116: the blanker's bounded look-behind is the whole-prefix one ----
+    //
+    // Issue #1121. The blanker used to copy and trim the whole prefix before
+    // every `/` to ask what precedes it — on this file, 41 s and an 879 MB
+    // high-water per call, the `currency` suite's peak. It now reads the last
+    // `REGEX_LOOK_BEHIND` characters. That is equal by argument (the regex is
+    // anchored at the end and its longest alternative is that long, `\b`
+    // included), and this holds the argument by measurement: on every file
+    // CUR32 scanned except this one, the bounded reading against the reading it
+    // replaced, verbatim; on this one — where the old reading costs what the
+    // card was opened over — against a window four times as wide, which can only
+    // differ if the bound is too short. Plants: a window one character short on
+    // a probe whose keyword is glued to a word, which must differ from the whole
+    // prefix, and every keyword written both ways, which must not.
+    {
+      const self = relative(root, import.meta.path);
+      const faults: string[] = [];
+      let compared = 0;
+      for (const rel of scanned) {
+        if (rel === self) continue;
+        const text = readFileSync(join(root, rel), 'utf8');
+        if (blankCommentsAndStrings(text) !== blankCommentsAndStrings(text, Infinity)) faults.push(`${rel}: the bounded look-behind blanks it differently from the whole prefix`);
+        compared++;
+      }
+      const selfScanned = scanned.includes(self);
+      if (!selfScanned) faults.push(`${self} was not among the files CUR32 scanned, so the largest population was not read`);
+      else {
+        const text = readFileSync(join(root, self), 'utf8');
+        if (blankCommentsAndStrings(text) !== blankCommentsAndStrings(text, 4 * REGEX_LOOK_BEHIND)) {
+          faults.push(`${self}: a window of ${REGEX_LOOK_BEHIND} blanks it differently from one of ${4 * REGEX_LOOK_BEHIND}, so the bound is too short`);
+        }
+      }
+      const longest = REGEX_OPENING_KEYWORDS.reduce((a, b) => (b.length > a.length ? b : a));
+      const glued = `const a = x${longest} /'/;\nconst b = 'kept';\n`;
+      const short = blankCommentsAndStrings(glued, REGEX_LOOK_BEHIND - 1) !== blankCommentsAndStrings(glued, Infinity);
+      if (!short) faults.push(`a window of ${REGEX_LOOK_BEHIND - 1} on "x${longest} /'/" blanks it as the whole prefix does, so the probe cannot see a bound that is too short`);
+      for (const word of REGEX_OPENING_KEYWORDS) {
+        for (const probe of [`v = ${word} /'/;\nw = 'q';\n`, `v = z${word} /'/;\nw = 'q';\n`, `v = ${word}\t /x/;\n`]) {
+          if (blankCommentsAndStrings(probe) !== blankCommentsAndStrings(probe, Infinity)) faults.push(`the probe ${JSON.stringify(probe)} blanks differently under the bound`);
+        }
+      }
+      if (compared === 0) faults.push('no file was compared against the whole-prefix reading');
+      const held = faults.length === 0;
+      say(
+        'CUR116_THE_BLANKERS_BOUNDED_LOOK_BEHIND_BLANKS_EXACTLY_AS_THE_WHOLE_PREFIX_DID',
+        held,
+        probeDetail(
+          held,
+          faults,
+          `${compared} scanned file(s) blank identically under the ${REGEX_LOOK_BEHIND}-character look-behind and the whole prefix; ` +
+            `${self} identically under ${REGEX_LOOK_BEHIND} and ${4 * REGEX_LOOK_BEHIND}; a window of ${REGEX_LOOK_BEHIND - 1} on ` +
+            `"x${longest} /'/" differs from the whole prefix, and all ${REGEX_OPENING_KEYWORDS.length} keyword(s), spaced, glued and ` +
+            'tab-separated, do not',
+        ),
+        'issue #1121: the whole-prefix reading made one call on this file cost 41 s and an 879 MB high-water, and the ' +
+          'currency suite\'s peak was that call; a bound is only a fix if it decides every `/` the way the whole prefix did',
+      );
+    }
   }
 
   // --- CUR35-38: the authoring guide against the keys the parsers accept ----
@@ -65757,6 +65855,26 @@ function runCurrencySuite(): number {
   return bad;
 }
 
+/** The keywords after which a `/` opens a regex rather than divides. */
+const REGEX_OPENING_KEYWORDS = ['return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'case', 'do', 'else', 'yield', 'await'];
+
+/** What a `/` may follow and still open a regex rather than be division. */
+const BEFORE_REGEX = new RegExp(`[([{,;:!&|?+\\-*/%~^=<>]$|\\b(?:${REGEX_OPENING_KEYWORDS.join('|')})$`);
+
+/**
+ * How many characters before a `/` (trailing blanks dropped) `BEFORE_REGEX`
+ * has to see to answer as it would over the whole prefix (issue #1121): the
+ * longest keyword, plus the one character before it that decides its `\b`.
+ * Derived from the keyword list, so a longer keyword widens it.
+ *
+ * ⚠️ The whole prefix is what the blanker used to copy and trim for EVERY `/`
+ * in the file — quadratic in time and in garbage. On this file (6.8 MB) that
+ * was 41 s and an 879 MB RSS high-water for one call, called twice per file by
+ * `CUR32`, and it set the `currency` suite's peak at +1,466 MB. `CUR116` holds
+ * the bounded reading to the whole-prefix one.
+ */
+const REGEX_LOOK_BEHIND = Math.max(...REGEX_OPENING_KEYWORDS.map((word) => word.length)) + 1;
+
 /**
  * `source` with every comment and every string literal — single-quoted,
  * double-quoted and template — blanked to spaces, leaving newlines alone.
@@ -65779,13 +65897,20 @@ function runCurrencySuite(): number {
  * unusual-path case, which RUNS it from a path with a space in it rather than
  * reading it.
  */
-function blankCommentsAndStrings(source: string): string {
+function blankCommentsAndStrings(source: string, lookBehind: number = REGEX_LOOK_BEHIND): string {
   const out = source.split('');
   const blank = (from: number, to: number): void => {
     for (let k = from; k < to && k < out.length; k++) if (out[k] !== '\n') out[k] = ' ';
   };
-  /** What a `/` may follow and still open a regex rather than be division. */
-  const BEFORE_REGEX = /[([{,;:!&|?+\-*/%~^=<>]$|\b(?:return|typeof|instanceof|in|of|new|delete|void|case|do|else|yield|await)$/;
+  // What precedes a `/`, trailing blanks dropped. `Infinity` is the reading
+  // this replaced — the whole prefix, copied and trimmed per `/` — kept only so
+  // `CUR116` can hold the bounded reading to it.
+  const before = (i: number): string => {
+    if (lookBehind === Infinity) return source.slice(0, i).replace(/[ \t]+$/, '');
+    let k = i;
+    while (k > 0 && (source[k - 1] === ' ' || source[k - 1] === '\t')) k--;
+    return source.slice(Math.max(0, k - lookBehind), k);
+  };
   let i = 0;
   while (i < source.length) {
     const c = source[i];
@@ -65799,7 +65924,7 @@ function blankCommentsAndStrings(source: string): string {
       while (j < source.length && !(source[j] === '*' && source[j + 1] === '/')) j++;
       blank(i, Math.min(j + 2, source.length));
       i = j + 2;
-    } else if (c === '/' && BEFORE_REGEX.test(source.slice(0, i).replace(/[ \t]+$/, ''))) {
+    } else if (c === '/' && BEFORE_REGEX.test(before(i))) {
       let j = i + 1;
       let inClass = false;
       while (j < source.length && source[j] !== '\n' && (inClass || source[j] !== '/')) {
@@ -103601,6 +103726,101 @@ function durationFaults(
   return faults;
 }
 
+// ---------------------------------------------------------------------------
+// the run's memory ceiling (issue #1121)
+// ---------------------------------------------------------------------------
+//
+// What is bounded is the run's FINAL RSS, and only that, for a measured reason:
+// on Bun the resident set is the run's high-water mark — freed JS-heap pages
+// are not handed back — so a suite's own growth is zero whenever an earlier
+// suite already raised the mark higher, and a bound per suite would be a bound
+// on the order the suites run in. The final figure is stable: whatever suite
+// raises the mark, it is the mark. The base it is held to is per platform and
+// tracked, written by the run itself (`--memory-base`), never typed — the
+// pattern `tools/emit_hashes.base.json` and `EH06` set.
+
+/** The tracked base, relative to this file. */
+const MEMORY_BASE_PATH = 'tools/selftest_memory.base.json';
+/** The base document's format word. */
+const MEMORY_BASE_SPEC = 'selftest-memory/1';
+/**
+ * How far above its platform's base a run's final RSS may end before the run is
+ * red. Not a figure anybody chose: the same high-water — the `currency` suite's
+ * growth from a fresh process, the one quantity measured six times on one
+ * machine before this landed — read 2,252, 2,288, 2,570, 2,723, 2,997 and
+ * 3,094 MB on unchanged code, a spread of 3,094 / 2,252 = 1.37 between its
+ * lowest and highest reading. The margin is that spread rounded up to the next
+ * tenth, so a run as far above its base as the noisiest reading was above the
+ * quietest stays green, and a retention that adds four tenths of the whole
+ * run's memory does not.
+ */
+const MEMORY_MARGIN = 1.4;
+
+/** One platform's base: what a green full run on it ended at. */
+interface MemoryBaseEntry {
+  /** The final RSS, in whole MB, as the run's `the process ended at rss` line prints it. */
+  finalRss: number;
+  /** How many suites that run called — a base from a run with fewer suites is a different run. */
+  suites: number;
+  /** The Bun that ran it: the allocator is the runtime's, and a new one can move the figure. */
+  bun: string;
+}
+
+/** The base document, keyed by `process.platform`. */
+interface MemoryBase {
+  spec: string;
+  platforms: Record<string, MemoryBaseEntry>;
+}
+
+/** The base as it is on disk, or `null` with no file; a file that is not a base throws, by name. */
+function readMemoryBase(root: string): MemoryBase | null {
+  const path = join(root, MEMORY_BASE_PATH);
+  if (!existsSync(path)) return null;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<MemoryBase>;
+  if (parsed.spec !== MEMORY_BASE_SPEC || parsed.platforms === undefined || typeof parsed.platforms !== 'object') {
+    throw new Error(`${MEMORY_BASE_PATH} is not a "${MEMORY_BASE_SPEC}" document; write it again with \`bun selftest.ts --memory-base\``);
+  }
+  return { spec: parsed.spec, platforms: parsed.platforms };
+}
+
+/** The base document with this platform's entry replaced, every other platform kept, keys in order. */
+function memoryBaseText(base: MemoryBase | null, platform: string, entry: MemoryBaseEntry): string {
+  const platforms: Record<string, MemoryBaseEntry> = { ...(base?.platforms ?? {}), [platform]: entry };
+  const ordered = Object.fromEntries(Object.keys(platforms).sort().map((key) => [key, platforms[key]]));
+  return `${JSON.stringify({ spec: MEMORY_BASE_SPEC, platforms: ordered }, null, 2)}\n`;
+}
+
+/** What the ceiling says about one run: held, over, or nothing to hold it to. */
+interface MemoryCeiling {
+  verdict: 'held' | 'over' | 'no base';
+  bound: number | null;
+  faults: string[];
+}
+
+/**
+ * The run's final RSS against its platform's base × `MEMORY_MARGIN`. Over the
+ * bound, the fault names the suite that raised the high-water most — the same
+ * reading the RSS table prints above it — because "the run is too big" with no
+ * suite named is a search rather than a fix.
+ */
+function memoryCeiling(rss: ReadonlyMap<string, SuiteRss>, finalRss: number, entry: MemoryBaseEntry | undefined, platform: string): MemoryCeiling {
+  if (entry === undefined) return { verdict: 'no base', bound: null, faults: [] };
+  const bound = Math.floor(entry.finalRss * MEMORY_MARGIN);
+  if (finalRss <= bound) return { verdict: 'held', bound, faults: [] };
+  const heaviest = [...rss].sort((a, b) => (b[1].delta !== a[1].delta ? b[1].delta - a[1].delta : a[0] < b[0] ? -1 : 1))[0];
+  return {
+    verdict: 'over',
+    bound,
+    faults: [
+      `the run ended at rss ${finalRss} MB, over the ${platform} bound of ${bound} MB (base ${entry.finalRss} MB × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
+        (heaviest === undefined
+          ? 'no suite was measured'
+          : `the suite that raised the high-water most is "${heaviest[0]}" (${signedMegabytes(heaviest[1].delta)} MB, ${heaviest[1].after} MB after)`) +
+        ' — the RSS table above names the rest. If the growth is intended, write the base again with `bun selftest.ts --memory-base`',
+    ],
+  };
+}
+
 /** True for the section header every suite opens with. */
 function isSectionHeader(line: string): boolean {
   return /^\n?── .+ ──$/.test(line);
@@ -105972,6 +106192,119 @@ function runRunTallySuite(live: RunTally): number {
         'which left pages with the allocator; the heap after a forced collection bounds what is still reachable, so a ' +
         'suite whose heap falls back while its RSS stays is not retaining, and one whose heap stays high is the suspect',
     );
+
+    // --- TY25: the memory ceiling names a run that retains, by suite ---------
+    //
+    // Issue #1121. The plant has to RETAIN, in a process whose high-water is
+    // its own, so it runs in two children rather than in this run — retaining
+    // pages here would raise the live run's own mark for every suite after it.
+    // Each child runs three "suites": two decode the same page again and again,
+    // and in the second of them a module-level array the plant fills keeps every
+    // decoded page; the third allocates nothing. The child that keeps nothing is
+    // the base, the planted one is held to it through `memoryCeiling`, and the
+    // fault has to name the planted suite. ⚠️ The third is idle on purpose, and
+    // the reason is measured: with a third suite decoding as the first did, the
+    // fault named THAT suite (+111 MB) — churn after a retention cannot reuse the
+    // retained pages, so it raises the mark again. The fault names the largest
+    // growth, which is the retainer when nothing after it churns past it; the
+    // RSS table above the fault is where the run says the rest.
+    const plantChild = (retain: boolean): { rows: Array<{ key: string; rss: number }> } | string => {
+      const code = [
+        `import { Plate, encodePng, decodePng } from ${JSON.stringify(join(import.meta.dir, 'tools', 'plate.ts'))};`,
+        'const PLANTED_RETAINED_PAGES: Plate[] = [];',
+        'const side = 1024;',
+        'const png = encodePng(side, side, new Plate(side, side).data);',
+        'const rows: Array<{ key: string; rss: number }> = [];',
+        "for (const key of ['decode-before', 'decode-planted', 'idle-after']) {",
+        "  for (let i = 0; i < (key === 'idle-after' ? 0 : 24); i++) {",
+        '    const page = decodePng(png);',
+        `    if (${retain ? 'true' : 'false'} && key === 'decode-planted') PLANTED_RETAINED_PAGES.push(page);`,
+        '  }',
+        '  Bun.gc(true);',
+        '  rows.push({ key, rss: Math.round(process.memoryUsage().rss / (1024 * 1024)) });',
+        '}',
+        'console.log(JSON.stringify({ rows, held: PLANTED_RETAINED_PAGES.length }));',
+      ].join('\n');
+      const ran = spawnSync(process.execPath, ['-e', code], { cwd: import.meta.dir, encoding: 'utf8' });
+      if (ran.status !== 0) return `the ${retain ? 'planted' : 'base'} child exited ${String(ran.status)}: ${(ran.stderr ?? '').trim().slice(0, 300)}`;
+      return JSON.parse(ran.stdout.trim().split('\n').pop() ?? '{}') as { rows: Array<{ key: string; rss: number }> };
+    };
+    const rssOf = (rows: Array<{ key: string; rss: number }>): Map<string, SuiteRss> =>
+      new Map(rows.map((row, i) => [row.key, { after: row.rss, delta: row.rss - (i === 0 ? row.rss : rows[i - 1].rss) }]));
+    const baseChild = plantChild(false);
+    const plantedChild = plantChild(true);
+    const ty25Probes: string[] = [];
+    let ty25Words = '';
+    if (typeof baseChild === 'string') ty25Probes.push(baseChild);
+    if (typeof plantedChild === 'string') ty25Probes.push(plantedChild);
+    if (typeof baseChild !== 'string' && typeof plantedChild !== 'string') {
+      const baseFinal = baseChild.rows[baseChild.rows.length - 1].rss;
+      const plantedFinal = plantedChild.rows[plantedChild.rows.length - 1].rss;
+      const entry: MemoryBaseEntry = { finalRss: baseFinal, suites: baseChild.rows.length, bun: Bun.version };
+      const clean = memoryCeiling(rssOf(baseChild.rows), baseFinal, entry, 'plant');
+      const planted = memoryCeiling(rssOf(plantedChild.rows), plantedFinal, entry, 'plant');
+      const none = memoryCeiling(rssOf(plantedChild.rows), plantedFinal, undefined, 'plant');
+      const kept = memoryBaseText({ spec: MEMORY_BASE_SPEC, platforms: { zeta: entry } }, 'alpha', entry);
+      const keptRead = JSON.parse(kept) as MemoryBase;
+      ty25Probes.push(
+        ...(clean.verdict === 'held' ? [] : [`the base child held to its own figure reads ${clean.verdict}: ${clean.faults.join('; ')}`]),
+        ...(planted.verdict === 'over' && planted.faults.length === 1 && planted.faults[0].includes('"decode-planted"')
+          ? []
+          : [`the child that kept every decoded page of one suite (final ${plantedFinal} MB against the bound ${planted.bound ?? 'none'} MB) is not named by suite: ${planted.verdict} ${planted.faults.join('; ')}`]),
+        ...(none.verdict === 'no base' && none.faults.length === 0 ? [] : [`no base reads ${none.verdict}, where it is no verdict at all`]),
+        ...(Object.keys(keptRead.platforms).join() === 'alpha,zeta' && keptRead.spec === MEMORY_BASE_SPEC
+          ? []
+          : [`writing one platform's base did not keep the other's, in key order: ${Object.keys(keptRead.platforms).join(', ')}`]),
+      );
+      ty25Words =
+        `a child decoding the same 1024² page 24 times in each of two suites and idle in a third ends at ${baseFinal} MB and is held under its own ` +
+        `bound (${clean.bound ?? '?'} MB, × ${MEMORY_MARGIN}); the same child keeping every page of one suite in a module-level array ` +
+        `ends at ${plantedFinal} MB and is named — ${planted.faults[0] ?? 'nothing'} — while no base gives no verdict and writing one ` +
+        "platform's base keeps every other platform's";
+    }
+    const ty25Held = ty25Probes.length === 0;
+    say(
+      'TY25_THE_MEMORY_CEILING_NAMES_A_RUN_THAT_RETAINS_ONE_SUITES_DECODED_PAGES_BY_THE_SUITE',
+      ty25Held,
+      probeDetail(ty25Held, ty25Probes, ty25Words),
+      'issue #1121: the run reached 4.5 GB resident and nothing turned it red, so a suite added later that retains its ' +
+        'pages would have made the machine slow rather than the run red; a ceiling nobody has seen fire is not a ceiling',
+    );
+
+    // --- TY26: this run is under its platform's ceiling so far ---------------
+    //
+    // The live half. The run's final RSS is held at its end, after the tables
+    // (`memoryCeiling` in `main`); here the high-water every suite so far has
+    // printed is held to the same bound, so a run that is already over says so
+    // inside the suite that measures the run. No base for this platform is a
+    // SKIP naming the command that writes one, never a pass.
+    {
+      const base = readMemoryBase(import.meta.dir);
+      const entry = base?.platforms[process.platform];
+      const sofar = Math.max(0, ...[...live.printedRss.values()].map((r) => r.after));
+      if (entry === undefined) {
+        console.log(
+          `  SKIP  TY26_THIS_RUN_IS_UNDER_ITS_PLATFORMS_MEMORY_CEILING: ${MEMORY_BASE_PATH} holds no base for ${process.platform}, so ` +
+            `this run's high-water (${sofar} MB so far) is held to nothing — write one with \`bun selftest.ts --memory-base\` on a green full run`,
+        );
+      } else {
+        const bound = Math.floor(entry.finalRss * MEMORY_MARGIN);
+        const ty26Probes = sofar <= bound ? [] : [`the high-water so far is ${sofar} MB, over the ${process.platform} bound of ${bound} MB (base ${entry.finalRss} MB × ${MEMORY_MARGIN})`];
+        const ty26Held = ty26Probes.length === 0;
+        say(
+          'TY26_THIS_RUN_IS_UNDER_ITS_PLATFORMS_MEMORY_CEILING',
+          ty26Held,
+          probeDetail(
+            ty26Held,
+            ty26Probes,
+            `the ${process.platform} base is ${entry.finalRss} MB over ${entry.suites} suite(s) on bun ${entry.bun}, so the bound is ${bound} MB ` +
+              `(× ${MEMORY_MARGIN}); the high-water every suite so far printed is ${sofar} MB, and the final RSS is held to the same bound after the tables`,
+          ),
+          'issue #1121: a per-suite bound would bound the order suites run in, since a suite grows the resident set only past ' +
+            'the mark an earlier one left; the final figure is that mark whichever suite set it',
+        );
+      }
+    }
   }
 
   return bad;
@@ -108034,6 +108367,8 @@ function main(): void {
   // partial run carries it too. The overhead is the run's wall time less every
   // suite's own: module load, fixture generation and the harness between calls.
   const timedSum = [...tally.seconds.values()].reduce((sum, s) => sum + s, 0);
+  // 🧮 Read once: the figure the run line prints is the figure the ceiling holds.
+  const finalRss = megabytes(process.memoryUsage().rss);
   console.log(heaviestHeading(tally.seconds));
   for (const line of heaviestLines(tally.seconds)) console.log(line);
   console.log(rssGrowthHeading(tally.rss));
@@ -108043,7 +108378,7 @@ function main(): void {
   console.log(
     `the run: ${wallSeconds.toFixed(1)} s of wall time, ${timedSum.toFixed(1)} s of it inside the ${tally.seconds.size} ` +
       `suite(s) timed and ${(wallSeconds - timedSum).toFixed(1)} s of harness overhead outside every suite; ` +
-      `the process ended at rss ${megabytes(process.memoryUsage().rss)} MB`,
+      `the process ended at rss ${finalRss} MB`,
   );
   // 🔒 The verdict, off the same blocks the floor above just reconciled against
   // the log (issue #533). There is no second sum to keep in step with this one:
@@ -108064,6 +108399,25 @@ function main(): void {
   if (bad > 0) {
     console.error(`rigc selftest: ${bad} control(s) failed`);
     process.exit(1);
+  }
+  // 🧮 The memory ceiling (issue #1121), on the full run only — a partial run
+  // has left above. Held after the tables so a red run has the RSS table that
+  // names the suite on screen; written instead of held when `--memory-base`
+  // asks for this run to become the base. No base for the platform is `TY26`'s
+  // SKIP, printed in the run, and never a pass.
+  const memoryBase = readMemoryBase(import.meta.dir);
+  if (WRITE_MEMORY_BASE) {
+    writeFileSync(
+      join(import.meta.dir, MEMORY_BASE_PATH),
+      memoryBaseText(memoryBase, process.platform, { finalRss, suites: tally.blocks.length, bun: Bun.version }),
+    );
+    console.log(`selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: final rss ${finalRss} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`);
+  } else {
+    const ceiling = memoryCeiling(tally.rss, finalRss, memoryBase?.platforms[process.platform], process.platform);
+    if (ceiling.verdict === 'over') {
+      for (const fault of ceiling.faults) console.error(`rigc selftest: ${fault}`);
+      process.exit(1);
+    }
   }
   /**
    * How many cases a suite took — or one phase of one, as `diff/identity` —

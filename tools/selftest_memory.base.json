@@ -1,0 +1,10 @@
+{
+  "spec": "selftest-memory/1",
+  "platforms": {
+    "darwin": {
+      "finalRss": 3211,
+      "suites": 69,
+      "bun": "1.3.11"
+    }
+  }
+}
