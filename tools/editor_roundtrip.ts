@@ -968,31 +968,95 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * it was and every line after this prints as it did.
  */
 function readBuildSkeleton(source: string): { skeleton: Record<string, unknown> } | { refusal: string } {
-  const required =
+  return readSkeletonObject(
+    source,
+    "the build's skeleton.json",
     'The round trip imports that file into the editor, so it has to be one skeleton JSON object — `skeleton`, ' +
-    '`bones`, `slots`, … — which is what `rigc build` writes there.';
-  let text: string;
+      '`bones`, `slots`, … — which is what `rigc build` writes there.',
+  );
+}
+
+/**
+ * One skeleton file read and parsed, with its bytes — or the sentence the tool
+ * refuses it with, naming `what` it is, its path, what was found there and the
+ * `required` sentence. The one body behind `readBuildSkeleton` and the
+ * `--exported` read (issue #1107), so the two files are refused in one shape.
+ *
+ * The bytes are handed back because the `--exported` file is written into the
+ * candidate from them: the file step 3 measures is then the file this parsed,
+ * byte for byte, rather than whatever is at the path by the time step 3 runs.
+ */
+function readSkeletonObject(
+  path: string,
+  what: string,
+  required: string,
+): { skeleton: Record<string, unknown>; bytes: Buffer } | { refusal: string } {
+  let bytes: Buffer;
   try {
-    text = readFileSync(source, 'utf8');
+    bytes = readFileSync(path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'EISDIR') return { refusal: `the build's skeleton.json at ${source} is a directory, not a file. ${required}` };
-    return { refusal: `the build's skeleton.json at ${source} could not be read (${code ?? String(err)}). ${required}` };
+    if (code === 'EISDIR') return { refusal: `${what} at ${path} is a directory, not a file. ${required}` };
+    return { refusal: `${what} at ${path} could not be read (${code ?? String(err)}). ${required}` };
   }
+  const text = bytes.toString('utf8');
   if (text.trim() === '') {
-    return { refusal: `the build's skeleton.json at ${source} is empty (${text.length} byte(s), no JSON value in them). ${required}` };
+    return { refusal: `${what} at ${path} is empty (${text.length} byte(s), no JSON value in them). ${required}` };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
     const said = err instanceof Error ? err.message : String(err);
-    return { refusal: `the build's skeleton.json at ${source} is not JSON — the parser stopped with "${said}". ${required}` };
+    return { refusal: `${what} at ${path} is not JSON — the parser stopped with "${said}". ${required}` };
   }
   if (!isRecord(parsed)) {
-    return { refusal: `the build's skeleton.json at ${source} is JSON, but it holds ${jsonKind(parsed)} rather than an object. ${required}` };
+    return { refusal: `${what} at ${path} is JSON, but it holds ${jsonKind(parsed)} rather than an object. ${required}` };
   }
-  return { skeleton: parsed };
+  return { skeleton: parsed, bytes };
+}
+
+/**
+ * The build's atlas, read once before step 1, or the sentence the tool refuses
+ * it with (issue #1107): its name and the page names it lists.
+ *
+ * 🚨 This read used to sit at step 3, after the editor had imported and
+ * exported. So a build with no atlas was refused by name only after a licensed
+ * editor had spent an import and an export on it, and a directory named
+ * `*.atlas` beside the build threw `EISDIR` there as a stack. Neither needs the
+ * editor to answer: the atlas is rigc's input to step 3, not the editor's.
+ *
+ * ⭐ Every `*.atlas` entry is read, not only the one whose pages are listed,
+ * because step 3 copies every one of them beside the export, and a directory
+ * among them throws at that copy. The first entry is the atlas, as it always was.
+ *
+ * ⚠️ "Read" is all this can mean. The tool's own reader of an atlas is the line
+ * filter below, which accepts any text, so there is no malformed atlas for it to
+ * refuse; what the atlas SAYS is the gate's to judge at step 3 (`A08`, `A17`).
+ */
+function readBuildAtlas(build: string): { pageNames: string[] } | { refusal: string } {
+  const atlases = readdirSync(build).filter((f) => f.endsWith('.atlas'));
+  if (atlases.length === 0) return { refusal: `no .atlas in the build directory ${build}` };
+  const required =
+    'Step 3 copies the build\'s atlas and pages beside the export so the export can be loaded and measured, so ' +
+    'every `.atlas` there has to be a file — the one `rigc build` writes.';
+  let first: string | null = null;
+  for (const name of atlases) {
+    const path = join(build, name);
+    try {
+      const text = readFileSync(path, 'utf8');
+      if (first === null) first = text;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EISDIR') return { refusal: `the build's atlas at ${path} is a directory, not a file. ${required}` };
+      return { refusal: `the build's atlas at ${path} could not be read (${code ?? String(err)}). ${required}` };
+    }
+  }
+  const pageNames = (first ?? '')
+    .split('\n')
+    .filter((line) => /\.(png|jpg|jpeg)\s*$/i.test(line.trim()) && !line.startsWith(' ') && !line.startsWith('\t'))
+    .map((line) => line.trim());
+  return { pageNames };
 }
 
 /**
@@ -1111,10 +1175,14 @@ function main(): void {
   // makes — and `--pack --copy-images` is refused by `cli.ts`, correctly,
   // because a packed atlas does not reference loose parts.
   //
-  // ⛔ It is checked HERE, before step 1, rather than beside the atlas check
-  // further down, because each precondition sits before the step it protects:
-  // the atlas's page names matter to the harness's own copy in step 3, and this
-  // matters to the editor's import in step 1.
+  // ⛔ It is checked HERE, before step 1, because it matters to the editor's
+  // import in step 1. The atlas and an `--exported` file are read before step 1
+  // as well, just below, although nothing before step 3 uses them (issue #1107):
+  // they are rigc's inputs and not the editor's, so reading them first costs the
+  // editor nothing and refuses before a licensed editor is started on a trip
+  // that cannot finish — the reason `readBuildSkeleton` reads the build's
+  // skeleton first (#1090). So the order is: every input rigc reads is read
+  // before the editor starts, and only what the editor writes is read after it.
   {
     interface ImagesProbe {
       skeleton?: { images?: string };
@@ -1167,6 +1235,48 @@ function main(): void {
     }
   }
 
+  // The export is a skeleton only; it needs the build's atlas and pages beside
+  // it to be a candidate anything can load — so the atlas is step 3's, and it is
+  // read here, before step 1, for the reason the sentence above gives.
+  //
+  // 🚨 Which is why the build has to be SELF-CONTAINED, and this refuses when it
+  // is not. An ordinary build's atlas names its pages by a relative path back to
+  // the art directory; copy that atlas to a directory at another depth and every
+  // page name resolves to nothing. Found by running this tool — it reported four
+  // `A17_ATLAS_PAGE_FILES_EXIST` failures that were the harness's fault and not
+  // the editor's, which is the worst kind of red: a real assertion, correctly
+  // fired, pointing at the wrong culprit.
+  const atlas = readBuildAtlas(opts.build);
+  if ('refusal' in atlas) return fail(atlas.refusal);
+  const wandering = atlas.pageNames.filter((n) => n.includes('/'));
+  if (wandering.length > 0) {
+    fail(
+      `the build's atlas names its pages by path, not by filename — the first is "${wandering[0]}". ` +
+        'The round trip copies the atlas beside the export, at a different depth, so every one of those ' +
+        `${wandering.length} page name(s) would resolve to nothing and A17 would blame the editor for it. ` +
+        'Rebuild with `--copy-images`, which puts the pages beside the skeleton and names them plainly.',
+    );
+  }
+
+  // 🔒 The `--exported` file, read and parsed here for the same reason (issue
+  // #1107): one skeleton JSON object, in `readBuildSkeleton`'s shape, or refused
+  // by name. It used to be read first by step 4's `skinsDeclaredBy`, bare, so a
+  // file that was not JSON was gated and diffed by steps 3–4 and then left the
+  // tool as a `SyntaxError` stack. Step 3's candidate is written from these
+  // bytes, so what is measured is what was parsed.
+  let exportedBytes: Buffer | null = null;
+  if (opts.exported !== null) {
+    if (!existsSync(opts.exported)) fail(`no such export: ${opts.exported}`);
+    const got = readSkeletonObject(
+      opts.exported,
+      'the --exported file',
+      'Steps 3-6 measure that file as the editor\'s JSON export of this build, so it has to be one skeleton JSON ' +
+        'object — `skeleton`, `bones`, `slots`, … — which is what the editor\'s `-e json` export writes.',
+    );
+    if ('refusal' in got) return fail(got.refusal);
+    exportedBytes = got.bytes;
+  }
+
   rmSync(opts.out, { recursive: true, force: true });
   mkdirSync(join(opts.out, 'export'), { recursive: true });
   mkdirSync(join(opts.out, 'export-cand'), { recursive: true });
@@ -1177,7 +1287,6 @@ function main(): void {
 
   let exportedJson: string;
   if (opts.exported !== null) {
-    if (!existsSync(opts.exported)) fail(`no such export: ${opts.exported}`);
     exportedJson = opts.exported;
     emit(`  editor   NOT RUN — measuring an export the editor already made: ${opts.exported}`);
     emit('');
@@ -1246,33 +1355,12 @@ function main(): void {
     exportedJson = join(opts.out, 'export', written[0]);
   }
 
-  // The export is a skeleton only; it needs the build's atlas and pages beside
-  // it to be a candidate anything can load.
-  //
-  // 🚨 Which is why the build has to be SELF-CONTAINED, and this refuses when it
-  // is not. An ordinary build's atlas names its pages by a relative path back to
-  // the art directory; copy that atlas to a directory at another depth and every
-  // page name resolves to nothing. Found by running this tool — it reported four
-  // `A17_ATLAS_PAGE_FILES_EXIST` failures that were the harness's fault and not
-  // the editor's, which is the worst kind of red: a real assertion, correctly
-  // fired, pointing at the wrong culprit.
+  // The candidate: the export beside the build's atlas and pages, which were
+  // read before step 1 (see `readBuildAtlas`). An `--exported` file is written
+  // from the bytes parsed there; the editor's own export is copied from disk.
   const cand = join(opts.out, 'export-cand');
-  const atlasName = readdirSync(opts.build).find((f) => f.endsWith('.atlas'));
-  if (atlasName === undefined) fail(`no .atlas in the build directory ${opts.build}`);
-  const pageNames = readFileSync(join(opts.build, atlasName!), 'utf8')
-    .split('\n')
-    .filter((line) => /\.(png|jpg|jpeg)\s*$/i.test(line.trim()) && !line.startsWith(' ') && !line.startsWith('\t'))
-    .map((line) => line.trim());
-  const wandering = pageNames.filter((n) => n.includes('/'));
-  if (wandering.length > 0) {
-    fail(
-      `the build's atlas names its pages by path, not by filename — the first is "${wandering[0]}". ` +
-        'The round trip copies the atlas beside the export, at a different depth, so every one of those ' +
-        `${wandering.length} page name(s) would resolve to nothing and A17 would blame the editor for it. ` +
-        'Rebuild with `--copy-images`, which puts the pages beside the skeleton and names them plainly.',
-    );
-  }
-  copyFileSync(exportedJson, join(cand, 'skeleton.json'));
+  if (exportedBytes !== null) writeFileSync(join(cand, 'skeleton.json'), exportedBytes);
+  else copyFileSync(exportedJson, join(cand, 'skeleton.json'));
   for (const f of readdirSync(opts.build)) {
     if (f.endsWith('.atlas') || f.endsWith('.png')) copyFileSync(join(opts.build, f), join(cand, f));
   }

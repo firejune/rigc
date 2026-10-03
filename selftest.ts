@@ -54291,12 +54291,15 @@ function runEditorRoundtripSuite(): number {
   };
 
   const root = mkdtempSync(join(tmpdir(), 'rigc-ert-'));
-  // A build directory is only a precondition here: the tool checks for
-  // skeleton.json before it looks at the editor at all, and every case below
-  // stops long before anything reads it.
+  // A build directory is only a precondition here: the tool reads skeleton.json
+  // and the atlas before it looks at the editor at all (the atlas since issue
+  // #1107), and every case below stops long before anything else reads them.
+  // The atlas's bytes are never parsed as one; the tool lists its page names and
+  // copies it, and this one names a plain page so that read passes.
   const build = join(root, 'build');
   mkdirSync(build, { recursive: true });
   writeFileSync(join(build, 'skeleton.json'), '{}\n');
+  writeFileSync(join(build, 'skeleton.atlas'), 'skeleton.png\nsize: 64, 64\n');
   const invoke = (editor: string): { status: number | null; stdout: string; stderr: string } =>
     runRoundtrip(['--build', build, '--out', join(root, 'out'), '--editor', editor]);
 
@@ -54996,6 +54999,9 @@ function runEditorRoundtripSuite(): number {
       const dir = join(nj, `b${i}`);
       mkdirSync(dir, { recursive: true });
       input.write(dir);
+      // A readable atlas beside every one, so an input the plant lets past the
+      // skeleton read reaches the editor rather than the atlas read (#1107).
+      writeFileSync(join(dir, 'skeleton.atlas'), 'skeleton.png\nsize: 64, 64\n');
       return { input, dir };
     });
     /**
@@ -55115,6 +55121,227 @@ function runEditorRoundtripSuite(): number {
       "ERT81's \"no stack\" clause is a predicate over stderr, and one that has never read a stack could be " +
         'reading nothing; the inputs the plant does not reach staying refused is the half that says the plant is ' +
         'the bare parse and not a broken tool',
+    );
+
+    // --- ERT84-86: the atlas and the `--exported` file — issue #1107 --------
+    //
+    // 🚨 Both were read late. The atlas at step 3, after the editor had imported
+    // and exported: a missing one was refused by name only then, and a directory
+    // named `*.atlas` threw `EISDIR` there as a stack. The `--exported` file
+    // first at step 4, bare, by `skinsDeclaredBy`: `not json` was gated and
+    // diffed by steps 3-4 and then left as a `SyntaxError` stack, and `[]` was
+    // not refused at all but measured through to step 6. Neither file is the
+    // editor's input, so both are now read before step 1 and refused by name.
+    //
+    // ⭐ ERT86 plants the two late reads back into a copy of the tool and
+    // requires ERT84's own reading to call each input red for what the plant
+    // does to it — the editor started, a stack, or no refusal at all — which is
+    // what keeps ERT84's "before the stub, no stack" from reading nothing.
+    const late = join(root, 'late');
+    let lateRuns = 0;
+    /** Run `tool` on `build` with `extra` arguments against a fresh stub with a sentinel. */
+    const runLate = (tool: string, build: string, extra: string[]): { status: number | null; stdout: string; stderr: string; ran: boolean } => {
+      const ran = join(root, `ert84-ran-${lateRuns++}`);
+      writeStubEditor(njEditor, ran, ['Spine Launcher 4.3.06 (macOS Apple Silicon)']);
+      const r = spawnSync(
+        process.execPath,
+        [tool, '--build', build, '--out', join(root, `out-ert84-${lateRuns}`), '--editor', njEditor, ...extra],
+        { cwd: import.meta.dir, encoding: 'utf8' },
+      );
+      return { status: r.status, stdout: r.stdout, stderr: r.stderr, ran: existsSync(ran) };
+    };
+    const ATLAS = 'skeleton.png\nsize: 64, 64\n';
+    const lateInputs: Array<{
+      label: string;
+      write: (dir: string) => void;
+      exported: boolean;
+      named: (dir: string) => string;
+      says: string;
+      plantBreaks: 'stack' | 'editor' | 'no refusal';
+    }> = [
+      {
+        label: 'the atlas is a directory',
+        write: (d) => mkdirSync(join(d, 'skeleton.atlas')),
+        exported: false,
+        named: (d) => join(d, 'skeleton.atlas'),
+        says: 'is a directory, not a file',
+        plantBreaks: 'editor',
+      },
+      {
+        label: 'no atlas',
+        write: () => undefined,
+        exported: false,
+        named: (d) => d,
+        says: 'no .atlas in the build directory',
+        plantBreaks: 'editor',
+      },
+      {
+        label: 'a second atlas is a directory',
+        write: (d) => {
+          writeFileSync(join(d, 'skeleton.atlas'), ATLAS);
+          mkdirSync(join(d, 'zz.atlas'));
+        },
+        exported: false,
+        named: (d) => join(d, 'zz.atlas'),
+        says: 'is a directory, not a file',
+        plantBreaks: 'editor',
+      },
+      {
+        label: 'a page named by path',
+        write: (d) => writeFileSync(join(d, 'skeleton.atlas'), `../pages/${ATLAS}`),
+        exported: false,
+        named: () => '"../pages/skeleton.png"',
+        says: 'names its pages by path, not by filename',
+        plantBreaks: 'editor',
+      },
+      {
+        label: '--exported not json',
+        write: (d) => {
+          writeFileSync(join(d, 'skeleton.atlas'), ATLAS);
+          writeFileSync(join(d, 'export.json'), 'not json\n');
+        },
+        exported: true,
+        named: (d) => join(d, 'export.json'),
+        says: 'is not JSON — the parser stopped with "',
+        plantBreaks: 'stack',
+      },
+      {
+        label: '--exported []',
+        write: (d) => {
+          writeFileSync(join(d, 'skeleton.atlas'), ATLAS);
+          writeFileSync(join(d, 'export.json'), '[]\n');
+        },
+        exported: true,
+        named: (d) => join(d, 'export.json'),
+        says: 'it holds an array rather than an object',
+        plantBreaks: 'no refusal',
+      },
+      {
+        label: '--exported a directory',
+        write: (d) => {
+          writeFileSync(join(d, 'skeleton.atlas'), ATLAS);
+          mkdirSync(join(d, 'export.json'));
+        },
+        exported: true,
+        named: (d) => join(d, 'export.json'),
+        says: 'is a directory, not a file',
+        plantBreaks: 'stack',
+      },
+    ];
+    const lateBuilds = lateInputs.map((input, i) => {
+      const dir = join(late, `b${i}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'skeleton.json'), '{}\n');
+      input.write(dir);
+      return { input, dir, extra: input.exported ? ['--exported', join(dir, 'export.json')] : [] };
+    });
+    /**
+     * ERT84's reading of one run: null when it is a refusal by name before the
+     * stub — exit 1, nothing on stdout, ONE stderr line in the tool's refusal
+     * shape naming the object and what was found, the stub never started — else
+     * the first thing that is not. Nothing on stderr at all is its own reading,
+     * because a run that measured a file to the end refused nothing.
+     */
+    const lateReading = (
+      r: { status: number | null; stdout: string; stderr: string; ran: boolean },
+      named: string,
+      says: string,
+    ): string | null => {
+      const lines = r.stderr.split('\n').filter((l) => l.trim() !== '');
+      if (lines.length === 0) {
+        return `no refusal: exit=${String(r.status)}, ${r.stdout.split('\n').filter((l) => l.startsWith('## ')).length} step heading(s) printed`;
+      }
+      const stray = lines.find((l) => !l.startsWith('rigc editor_roundtrip: '));
+      if (stray !== undefined || lines.length !== 1) {
+        const thrown = lines.find((l) => /^(\w*Error|E[A-Z]+)\b[^\n]*:/.test(l.trim()));
+        return `stack: ${JSON.stringify((thrown ?? stray ?? lines[1] ?? '').trim().slice(0, 100))}`;
+      }
+      if (r.ran) return 'the editor was started';
+      if (r.status !== 1) return `exit=${String(r.status)}`;
+      if (r.stdout !== '') return `stdout printed ${JSON.stringify(r.stdout.trim().split('\n')[0])}`;
+      if (!lines[0].includes(named)) return `the refusal does not name ${named}`;
+      if (!lines[0].includes(says)) return `the refusal does not say ${JSON.stringify(says)}`;
+      return null;
+    };
+    const lateVerdicts = lateBuilds.map(({ input, dir, extra }) => ({
+      input,
+      why: lateReading(runLate(tool, dir, extra), input.named(dir), input.says),
+    }));
+    const lateRed = lateVerdicts.filter((v) => v.why !== null);
+    say(
+      'ERT84_AN_UNREADABLE_ATLAS_OR_EXPORTED_FILE_IS_REFUSED_BY_NAME_BEFORE_THE_EDITOR_WITH_NO_STACK',
+      lateRed.length === 0,
+      `${lateVerdicts.length - lateRed.length}/${lateVerdicts.length} input(s) refused by name, exit 1, nothing on ` +
+        'stdout, one stderr line, stub never started' +
+        `${lateRed.length === 0 ? ` (${lateInputs.map((i) => i.label).join(', ')})` : ` — not refused: ${lateRed.map((v) => `${v.input.label}: ${v.why}`).join('; ')}`}`,
+      'the atlas and the `--exported` file are rigc\'s inputs and not the editor\'s, so a fault in either can be ' +
+        'refused before a licensed editor spends an import and an export on a trip that cannot finish — and was ' +
+        'instead refused after it, thrown as a stack after it, or measured through to the end',
+    );
+
+    // ERT85 — the positive control, in the two halves the tool has. A build
+    // with a readable atlas reaches the stub and fails on the ordinary refusal
+    // (ERT82's run, read again for the atlas); and the same build with a
+    // readable `--exported` file gets past both reads and runs steps 3-6 to a
+    // green exit, measuring the very bytes that file holds.
+    const okOut = join(root, 'out-ert85');
+    const okExported = built.status === 0 ? runRoundtrip(['--build', okBuild, '--out', okOut, '--exported', okSkeleton]) : null;
+    const candBytes = join(okOut, 'export-cand', 'skeleton.json');
+    const sameBytes = existsSync(candBytes) && existsSync(okSkeleton) && readFileSync(candBytes).equals(readFileSync(okSkeleton));
+    const okProbes = [
+      ...(built.status === 0 ? [] : [`the build was refused (exit ${String(built.status)})`]),
+      ...(reached ? [] : ['the build with a readable atlas did not reach the stub and fail on "the editor wrote no project file"']),
+      ...(okExported !== null && okExported.status === 0 ? [] : [`the --exported run exited ${String(okExported?.status)}: ${JSON.stringify(okExported?.stderr.trim().split('\n').pop()?.slice(0, 160) ?? '')}`]),
+      ...(okExported !== null && okExported.stderr.trim() === '' ? [] : ['the --exported run printed on stderr']),
+      ...['## 3 validate', '## 4 diff', '## 6 what the editor rewrote'].flatMap((h) =>
+        okExported !== null && okExported.stdout.includes(h) ? [] : [`the --exported run printed no "${h}"`],
+      ),
+      ...(sameBytes ? [] : ["the candidate's skeleton.json is not byte-identical to the --exported file"]),
+    ];
+    say(
+      'ERT85_A_READABLE_ATLAS_AND_EXPORTED_FILE_GET_PAST_THE_READS_TO_THE_EDITOR_AND_TO_STEP_6',
+      okProbes.length === 0,
+      probeDetail(
+        okProbes.length === 0,
+        okProbes,
+        'a rigc build with its atlas reached the stub and failed on "the editor wrote no project file"; with its own ' +
+          `skeleton as --exported it ran steps 3-6 to exit ${String(okExported?.status)}, and the candidate step 3 ` +
+          'measured is byte-identical to that file',
+      ),
+      'reads that refused everything would turn ERT84 green and the tool useless, and a read that handed the ' +
+        'candidate anything but the bytes it parsed would measure a different file from the one it checked',
+    );
+
+    // ERT86 — the plant: both reads made to pass everything, in a copy, which
+    // is the tool as it was — the atlas read only at step 3's copy, the
+    // `--exported` file only by step 4's `skinsDeclaredBy`.
+    const latePlants: Array<[string, string]> = [
+      ['const atlas = readBuildAtlas(opts.build);', 'const atlas = { pageNames: [] as string[] };'],
+      ["if ('refusal' in got) return fail(got.refusal);", "if ('refusal' in got) exportedBytes = null; else"],
+    ];
+    const lateAnchors = latePlants.map(([anchor]) => ({ anchor, count: original.split(anchor).length - 1 }));
+    const lateAnchored = lateAnchors.every((a) => a.count === 1);
+    const latePlanted = join(root, 'planted-late', 'editor_roundtrip.ts');
+    mkdirSync(dirname(latePlanted), { recursive: true });
+    writeFileSync(latePlanted, latePlants.reduce((text, [anchor, plant]) => text.replace(anchor, plant), original));
+    const latePlantVerdicts = lateAnchored
+      ? lateBuilds.map(({ input, dir, extra }) => ({ input, why: lateReading(runLate(latePlanted, dir, extra), input.named(dir), input.says) }))
+      : [];
+    const lateMisread = latePlantVerdicts.filter(({ input, why }) => {
+      if (input.plantBreaks === 'stack') return why === null || !why.startsWith('stack: ');
+      if (input.plantBreaks === 'editor') return why !== 'the editor was started';
+      return why === null || !why.startsWith('no refusal: ');
+    });
+    say(
+      'ERT86_THE_LATE_READS_PLANTED_BACK_ARE_READ_AS_THE_EDITOR_STARTED_A_STACK_OR_NO_REFUSAL',
+      lateAnchored && latePlantVerdicts.length === lateInputs.length && lateMisread.length === 0,
+      !lateAnchored
+        ? `the plant's anchors occur ${lateAnchors.map((a) => `${JSON.stringify(a.anchor)} ${a.count} time(s)`).join(', ')} in ` +
+            'tools/editor_roundtrip.ts, not once each — nothing was planted'
+        : latePlantVerdicts.map(({ input, why }) => `${input.label}: ${why ?? 'refused'}`).join('; ') +
+            `${lateMisread.length === 0 ? '' : ` — misread: ${lateMisread.map((m) => m.input.label).join(', ')}`}`,
+      "ERT84's reading is a predicate over the run, and one that has never seen the editor started, a stack or a " +
+        'file measured to the end could be reading nothing',
     );
   }
 
@@ -106836,7 +107063,11 @@ function main(): void {
     'place is named; and a build whose `skeleton.json` is not one JSON object (issue #1090) — not JSON, empty, ' +
     'a directory, `[]`, `null`, or a field the images check walks of the wrong kind — refused by its path and ' +
     'what was found there before the editor starts and with no stack, held against the bare parse planted back ' +
-    'into a copy of the tool, and a skeleton `rigc build` wrote still reaching the editor)';
+    'into a copy of the tool, and a skeleton `rigc build` wrote still reaching the editor; and the build\'s atlas ' +
+    'and an `--exported` file read before the editor as well (issue #1107) — no atlas, an atlas that is a ' +
+    'directory, a page named by path, an `--exported` file that is not one JSON object — each refused by name ' +
+    'before the stub starts, held against the late reads planted back, and a readable pair still reaching the ' +
+    'editor and, as `--exported`, step 6 on the very bytes it holds)';
   const shippedDocs =
     ", + " + n('shipped-doc') + " shipped-doc link controls (issue #333 — every relative link in every `.md` the `files` allowlist " +
     'ships, plus the README npm forces in beside it, resolving to a path that ALSO ships: the class found three ' +
