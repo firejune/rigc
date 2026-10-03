@@ -109,7 +109,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pageFootprint, parseAtlasText, type AtlasPage, type AtlasRegion } from '../src/atlas.ts';
-import { CONTOUR_MIN_COVERAGE, findSelfIntersection, MeshError, prunePolygon, signedArea, traceAlphaOutline, type AlphaMask } from '../src/mesh.ts';
+import { findSelfIntersection, prunePolygon, signedArea, type AlphaMask } from '../src/mesh.ts';
+import { traceOutline } from './trace_footprint.ts';
 import { readPlate, type Plate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
@@ -134,14 +135,9 @@ export type ContourReader = (mask: AlphaMask) => { area: number; islands: number
  * `CONTOUR_MIN_COVERAGE` of the art, which the mesher refuses).
  */
 export const traceContour: ContourReader = (mask) => {
-  let traced: ReturnType<typeof traceAlphaOutline>;
-  try {
-    traced = traceAlphaOutline(mask, 1);
-  } catch (err) {
-    if (err instanceof MeshError) return { refused: err.message.startsWith('the alpha silhouette pinches') ? 'pinch' : err.message.startsWith('no pixel') ? 'empty' : 'trace' };
-    throw err;
-  }
-  if (traced.islandPixels / traced.artPixels < CONTOUR_MIN_COVERAGE) return { refused: 'islands' };
+  // The outline `tools/pack_anchor.ts --trace-regions` packs by (`traceOutline`), so the ceiling and the realised figure read one polygon.
+  const traced = traceOutline(mask);
+  if ('refused' in traced) return { refused: traced.refused };
   return { area: Math.abs(signedArea(traced.outline)), islands: traced.islands };
 };
 
