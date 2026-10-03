@@ -123,11 +123,12 @@
  * ## What `--jobs` does
  *
  * A suite's independent units — `render-hashes`' `render_hashes.ts` runs and
- * CLI batches, `packer`'s packs by set — run up to `--jobs` at once through
- * `inParallel` (issue #1128), and the suite prints its case lines after every
- * unit has finished, in the sequential order, so the log is one text at any
- * `--jobs`. `TY32` holds the flag's refusals, `TY33` the order and a plant that
- * interleaves units' lines, `RH08` and `PK105` the two suites' units.
+ * CLI batches, `packer`'s packs by set, `core`'s posing-heavy controls — run up
+ * to `--jobs` at once through `inParallel` (issues #1128, #1133), and the suite
+ * prints its case lines after every unit has finished, in the sequential order,
+ * so the log is one text at any `--jobs`. `TY32` holds the flag's refusals,
+ * `TY33` the order and a plant that interleaves units' lines, `RH08`, `PK105`
+ * and `CO41`–`CO42` the three suites' units.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -926,11 +927,12 @@ function parseJobs(value: string): number | string {
 /**
  * `--jobs <n>` (or `RIGC_JOBS`): how many of a suite's independent units run
  * at once (issue #1128) — the units `inParallel` is handed, today the heavy
- * subprocesses of `render-hashes` and the packs by set of `packer`. Absent, the
+ * subprocesses of `render-hashes`, the packs by set of `packer` and the
+ * posing-heavy controls of `core` (issue #1133). Absent, the
  * machine's cores as Bun reports them, never under 1. `--jobs 1` is the run as
  * it was before the flag existed: every unit in order, in this process's turn.
  *
- * 🔒 Whatever `n`, the printed log is the same text (`TY33`, `RH08`, `PK105`):
+ * 🔒 Whatever `n`, the printed log is the same text (`TY33`, `RH08`, `PK105`, `CO41`):
  * a unit prints nothing, the suite prints its case lines after every unit it
  * reads has finished, in the order the sequential run prints them.
  */
@@ -45525,11 +45527,13 @@ function anchorRowOf(set: AnchorSet, pageEdges: 'pot' | 'free'): AnchorRow {
   return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
 }
 
-/** The work a unit process can be handed (issue #1128): its kind and its input, both values. */
-type SelftestUnitSpec = { kind: 'anchor-row'; set: AnchorSet; pageEdges: 'pot' | 'free' };
+/** A pack row's unit (issue #1128): the set and the page edges, both values. */
+type AnchorUnitSpec = { kind: 'anchor-row'; set: AnchorSet; pageEdges: 'pot' | 'free' };
+/** The work a unit process can be handed (issues #1128, #1133): its kind and its input, both values. */
+type SelftestUnitSpec = AnchorUnitSpec | { kind: 'core'; input: CoreUnitInput } | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] };
 
 /** A unit's work, run in whichever process holds it — the one function both paths call. */
-function selftestUnitWork(spec: SelftestUnitSpec): AnchorRow {
+function selftestUnitWork(spec: AnchorUnitSpec): AnchorRow {
   if (spec.kind === 'anchor-row') return anchorRowOf(spec.set, spec.pageEdges);
   throw new Error(`selftest --unit: unknown unit kind ${JSON.stringify((spec as { kind?: unknown }).kind)}`);
 }
@@ -45548,8 +45552,18 @@ function selftestUnitWork(spec: SelftestUnitSpec): AnchorRow {
  * `null`, `null`) — `PK105` holds a unit's answer equal to this process's on
  * the same rows, which is where such a value would show.
  */
-function inUnits(specs: readonly SelftestUnitSpec[], jobs: number = JOBS): AnchorRow[] {
+function inUnits(specs: readonly AnchorUnitSpec[], jobs: number = JOBS): AnchorRow[] {
   if (jobs === 1) return specs.map((spec) => selftestUnitWork(spec));
+  return unitValues(specs, jobs) as AnchorRow[];
+}
+
+/**
+ * The process half of `inUnits` (issues #1128, #1133): each spec run by a
+ * `bun selftest.ts --unit` process through `inParallel`, up to `jobs` at once
+ * — one after another at `jobs` 1 — and the values they wrote, in the specs'
+ * order, as JSON read them.
+ */
+function unitValues(specs: readonly SelftestUnitSpec[], jobs: number): unknown[] {
   const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-unit-specs-'));
   try {
     const files = specs.map((spec, k) => {
@@ -45562,7 +45576,7 @@ function inUnits(specs: readonly SelftestUnitSpec[], jobs: number = JOBS): Ancho
       if (run.status !== 0 || !existsSync(files[k].output)) {
         throw new Error(`selftest --unit: unit ${k} (${specs[k].kind}) exited ${String(run.status)} and wrote ${existsSync(files[k].output) ? 'its value' : 'nothing'}: ${run.stderr.trim().slice(0, 400)}`);
       }
-      return JSON.parse(readFileSync(files[k].output, 'utf8')) as AnchorRow;
+      return JSON.parse(readFileSync(files[k].output, 'utf8')) as unknown;
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -48730,7 +48744,7 @@ function runPackerSuite(): number {
     // (issue #1128): in this process at `--jobs 1`, through `inUnits` above it.
     // They come back in this order either way, and the controls below read only
     // what came back.
-    const anchorSpecs = anchorSets.flatMap((set) => (['pot', 'free'] as const).map((pageEdges): SelftestUnitSpec => ({ kind: 'anchor-row', set, pageEdges })));
+    const anchorSpecs = anchorSets.flatMap((set) => (['pot', 'free'] as const).map((pageEdges): AnchorUnitSpec => ({ kind: 'anchor-row', set, pageEdges })));
     const anchorRows = inUnits(anchorSpecs);
 
     // PK96: Σ page area, over every page a pack writes, is never above `rect`'s
@@ -74471,8 +74485,230 @@ function noSkinSeedSkeleton(rnd: () => number, mode: 'none' | 'plain' | 'members
   return { skeleton: { spine: '4.3.13' }, bones, slots, skins: [...(fallback === null ? [] : [fallback]), ...named], constraints, animations: { a: animation } };
 }
 
-function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
+// ---------------------------------------------------------------------------
+// core's units (issue #1133) — the posing-heavy controls run up to --jobs at once
+// ---------------------------------------------------------------------------
+
+/**
+ * The `core` controls that run as units at `--jobs` above 1 (issue #1133), in
+ * the order the suite prints them. A name joined by `+` is a group: controls
+ * that read the same suite-level objects — a population built once above the
+ * first, its clean walks, its spine-core dumps — so they run in one process,
+ * the objects built there and nowhere else.
+ *
+ * ⚡ Chosen by measurement, not by family: each holds at least half a second
+ * of the suite on its own (or as its group) and reads nothing a control kept
+ * in the parent writes. Kept in the parent, and why:
+ * - every control that READS one of `CORE_UNIT_LISTS` (CC11, CQ11, CK11, CP11,
+ *   CD12, CR10, CR11, CR13, CR14, CR15, CR16) — the list at its position is
+ *   what every control above it pushed, which no unit can know when the batch
+ *   starts;
+ * - every control above the corpus build (CO01–CO05, CO21–CO24): the batch
+ *   starts once the build its units read exists;
+ * - the rest, which are cheaper than a unit process's own load.
+ *
+ * 🔒 Whatever `--jobs`, the suite prints the same text and leaves the same run
+ * state: a unit prints nothing to this process, and the parent prints each
+ * unit's lines and applies its shares at that control's own position, in the
+ * sequential order (`unit` in `runCoreSuite`). `CO41` holds the lines, `CO42`
+ * the corpus cases' order.
+ */
+const CORE_UNITS = [
+  'CO08', 'CO14', 'CO18', 'CL04', 'CA06', 'CA08', 'CO19', 'CC09', 'CC10', 'CQ10', 'CK07', 'CK09', 'CP10',
+  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO29+CO30', 'CO31+CO32',
+] as const;
+type CoreUnitName = (typeof CORE_UNITS)[number];
+
+/**
+ * The order a batch's workers claim units in (`coreUnitBatch`): heaviest first,
+ * by each unit's seconds in the suite's own process, measured 2026-10-04 on
+ * one machine. Scheduling only — a stale order moves when a unit finishes and
+ * never what the suite prints (`CO41`) — and `CO41` holds it to be `CORE_UNITS`
+ * exactly, each once.
+ */
+const CORE_UNITS_HEAVIEST_FIRST: CoreUnitName[] = [
+  'CO31+CO32', 'CO25+CO26', 'CO27', 'CD11', 'CO08', 'CO29+CO30', 'CA08', 'CU04', 'CR06', 'CD06', 'CK09', 'CO14',
+  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10',
+];
+
+/**
+ * The suite-local lists of probe documents controls push onto and later
+ * controls read (`drewTheSame`, the HOLE coverage). A unit's pushes are one of
+ * its shares: handed back as strings and appended at its position.
+ */
+const CORE_UNIT_LISTS = ['probeModels', 'cqModels', 'ckModels', 'pathProbeModels', 'cdModels'] as const;
+type CoreUnitList = (typeof CORE_UNIT_LISTS)[number];
+
+/**
+ * What a core unit is handed (issue #1133), all values: which unit, and the
+ * suite's objects above the batch — the gallery builds (their model texts,
+ * which the unit reads again), the build's problems and the corpus notes, and
+ * the corpus build's rows and their unplanted gate verdicts. A plant never
+ * crosses: the unit's process runs the same suite code, which builds its own.
+ */
+interface CoreUnitInput {
+  unit: CoreUnitName;
+  builds: Array<{ name: string; out: string; text: string }>;
+  buildProblems: string[];
+  notes: string[];
+  built: BuiltRow[];
+  rows: ReturnType<typeof gateBuilt>;
+}
+
+/**
+ * What a core unit hands back (issue #1133): the lines its controls printed,
+ * exactly as they would have printed them, its FAIL count, and its shares —
+ * of the run state (`runStates()`, in that order), of `CORE_UNIT_LISTS` (in
+ * that order) and the corpus floors it wrote.
+ */
+interface CoreUnitResult {
+  unit: CoreUnitName;
+  lines: string[];
+  bad: number;
+  states: unknown[];
+  lists: string[][];
+  floors: string[];
+}
+
+/** The suite run inside a unit's process: the input it was handed, and where it leaves its result. */
+interface CoreUnitChild {
+  input: CoreUnitInput;
+  result: CoreUnitResult | null;
+}
+
+/** One core unit's work, in whichever process holds it: the suite run for that unit alone. */
+function coreUnitWork(input: CoreUnitInput): CoreUnitResult {
+  const child: CoreUnitChild = { input, result: null };
+  runCoreSuite(child);
+  if (child.result === null) throw new Error(`selftest --unit: the core suite reached no unit named ${JSON.stringify(input.unit)}`);
+  return child.result;
+}
+
+/**
+ * Every leaf where `x` and `y` differ by `Object.is`, by path — PK105's
+ * comparison, at module level so a batch can hold its input to the trip: a
+ * value JSON flattens (`-0`, `NaN`, `±Infinity`, `undefined` in an array)
+ * would reach the unit as another value and the unit would print a verdict
+ * about another input.
+ */
+function sameLeaves(x: unknown, y: unknown, at: string, out: string[] = []): string[] {
+  if (typeof x === 'object' && x !== null && typeof y === 'object' && y !== null) {
+    const keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].sort();
+    for (const key of keys) sameLeaves((x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], `${at}.${key}`, out);
+  } else if (!Object.is(x, y)) {
+    const spell = (v: unknown): string => (Object.is(v, -0) ? '-0' : String(v));
+    out.push(`${at}: ${spell(x)} against ${spell(y)}`);
+  }
+  return out;
+}
+
+/**
+ * The core units `inputs` names, run in `--unit` processes, and their results
+ * in the inputs' order (issue #1133). Refuses by name an input JSON would not
+ * carry back as itself.
+ *
+ * `jobs` 1 is one process per unit, one after another — what `CO41` holds a
+ * unit's lines against. Above it, `min(jobs, units)` workers run at once
+ * through `inParallel`, each claiming the next unclaimed unit, heaviest first
+ * (`CORE_UNITS_HEAVIEST_FIRST`), until none is left — so a lane is busy until
+ * the batch is done, whichever units are heavy on the machine that runs it.
+ *
+ * ⚡ Why a worker takes several units rather than a process per unit, measured
+ * on one shared machine: a unit is slower out of the suite's process than in
+ * it — CO08 alone in a fresh process took 6.4–6.9 s, the same control in place
+ * 4.1 s — so a process per unit pays that on every unit, and a worker pays it
+ * on fewer. Even in a worker a unit ran 1.3–2.4 times its seconds in place
+ * (116 s of units against 70 s, the same 25 units, adjacent runs).
+ *
+ * 🔒 Which worker ran a unit decides nothing it hands back: each unit is the
+ * suite run anew for that unit alone (`coreUnitWork`), its shares taken as the
+ * difference across it, so a unit sharing a process with another reads what
+ * it reads alone — `CO41` compares a unit run alone to the batch's, to every
+ * leaf. With `RIGC_UNIT_PEAKS` each unit's seconds and its worker's peak RSS
+ * after it are appended to that file, beside the workers' own lines.
+ */
+function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnitResult[] {
+  for (const input of inputs.slice(0, 1)) {
+    const faults = sameLeaves(input, JSON.parse(JSON.stringify(input)) as unknown, 'input');
+    if (faults.length > 0) throw new Error(`a core unit's input does not survive JSON, so a unit would read another value: ${faults.slice(0, 5).join('; ')}`);
+  }
+  if (jobs === 1 || inputs.length <= 1) return unitValues(inputs.map((input): SelftestUnitSpec => ({ kind: 'core', input })), 1) as CoreUnitResult[];
+  const names = inputs.map((input) => input.unit);
+  const claimOrder = CORE_UNITS_HEAVIEST_FIRST.filter((name) => names.includes(name));
+  for (const name of names) if (!claimOrder.includes(name)) claimOrder.push(name);
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-core-units-'));
+  try {
+    const worker: SelftestUnitSpec = { kind: 'core-worker', dir, shared: inputs[0], units: claimOrder };
+    const workers = unitValues(Array.from({ length: Math.min(jobs, inputs.length) }, () => worker), jobs) as CoreWorkerRun[][];
+    const peaks = process.env.RIGC_UNIT_PEAKS;
+    if (peaks !== undefined && peaks !== '') {
+      workers.forEach((runs, w) => {
+        for (const run of runs) appendFileSync(peaks, `${JSON.stringify({ jobs, worker: w, of: workers.length, unit: run.unit, maxRss: run.maxRss, seconds: run.seconds })}\n`);
+      });
+    }
+    return names.map((name) => {
+      const path = join(dir, `result-${name}.json`);
+      if (!existsSync(path)) throw new Error(`selftest --unit: no core worker handed back unit ${name}`);
+      return JSON.parse(readFileSync(path, 'utf8')) as CoreUnitResult;
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** What a core worker ran: each unit it claimed, its seconds, and the worker's peak RSS after it, in bytes. */
+interface CoreWorkerRun {
+  unit: CoreUnitName;
+  seconds: number;
+  maxRss: number;
+}
+
+/** One worker of a core batch (issue #1133): it claims units in `units`' order until none is left, and writes each one's result beside the claims. */
+function coreUnitWorker(spec: { dir: string; shared: CoreUnitInput; units: CoreUnitName[] }): CoreWorkerRun[] {
+  const ran: CoreWorkerRun[] = [];
+  for (const name of spec.units) {
+    try {
+      // The claim: created only if absent, so exactly one worker runs each unit.
+      writeFileSync(join(spec.dir, `claim-${name}`), '', { flag: 'wx' });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+    const began = performance.now();
+    const result = coreUnitWork({ ...spec.shared, unit: name });
+    writeFileSync(join(spec.dir, `result-${name}.json`), JSON.stringify(result));
+    ran.push({ unit: name, seconds: (performance.now() - began) / 1000, maxRss: process.resourceUsage().maxRSS });
+  }
+  return ran;
+}
+
+/** The order the corpus controls print in, read off `runCoreSuite`'s `sayCorpus` calls in source order (`CO42`). */
+function corpusControlOrder(source: string): string[] {
+  const tree = ts.createSourceFile('selftest.ts', source, ts.ScriptTarget.Latest, true);
+  const fn = tree.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === 'runCoreSuite');
+  const names: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'sayCorpus' && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])) names.push(n.arguments[0].text);
+    ts.forEachChild(n, visit);
+  };
+  if (fn?.body !== undefined) visit(fn.body);
+  return names;
+}
+
+/** What `TY22`'s live half reads of the core's corpus cases: how many, and each verdict's count with the HOLEs named. */
+function coreCorpusReading(cases: ReadonlyArray<{ name: string; verdict: CorpusCaseVerdict }>): string {
+  const holes = cases.filter((c) => c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
+  return (
+    `${cases.length} core control(s) hold a corpus floor, ` +
+    `${cases.filter((c) => c.verdict === 'PASS').length} PASS, ${cases.filter((c) => c.verdict === 'FAIL').length} FAIL, ` +
+    `${holes.length} HOLE${holes.length > 0 ? ` [${holes.join(', ')}]` : ''}`
+  );
+}
+
+function runCoreSuite(child: CoreUnitChild | null = null): number {
+  /** Issue #1133: false in a core unit's own process, which runs that unit alone and skips every control kept in the parent. */
+  const parent = child === null;
+  if (parent) console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
@@ -74486,9 +74722,11 @@ function runCoreSuite(): number {
   // admitted, so no rig is held back and the controls that read one say so
   // (NOTHING_HELD).
   const galleryRoot = join(root, 'gallery');
-  const names = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
+  const names = parent && existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
   const builds: Array<{ name: string; out: string; model: CompiledDocument; text: string }> = [];
-  const buildProblems: string[] = [];
+  const buildProblems: string[] = child?.input.buildProblems.slice() ?? [];
+  // A unit's process reads the gallery builds the parent made, rather than building them again.
+  for (const b of child?.input.builds ?? []) builds.push({ ...b, model: readModel(b.text, join(b.out, MODEL_DOCUMENT_FILE)) });
   for (const [i, name] of names.entries()) {
     const built = runRecipe(galleryRecipe(root, name).recipe, join(work, `g${i}`), root);
     const modelPath = join(work, `g${i}`, 'out', MODEL_DOCUMENT_FILE);
@@ -74503,13 +74741,13 @@ function runCoreSuite(): number {
   const free = builds.find((b) => b.model.constraints.length === 0) ?? null;
   // The rig held back is one declaring a later kind — and only while a later kind exists.
   const held = LATER_KINDS.length === 0 ? null : builds.find((b) => b.model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind))) ?? null;
-  if (free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
-  if (LATER_KINDS.length > 0 && held === null) buildProblems.push(`no gallery rig built a model that declares a ${LATER_KINDS.join(', ')} constraint`);
+  if (parent && free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
+  if (parent && LATER_KINDS.length > 0 && held === null) buildProblems.push(`no gallery rig built a model that declares a ${LATER_KINDS.join(', ')} constraint`);
   /** What a control that reads the held-back rig says when there is none to read. */
   const NOTHING_HELD = LATER_KINDS.length === 0 ? '; no later kind: nothing is held back' : '';
 
   // --- CO01: readModel reads a built document and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let count = 0;
     if (free !== null) {
@@ -74553,7 +74791,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO02: the core dump poses the setup bones and names every block it leaves out --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let detail = '';
     if (free !== null) {
@@ -74618,7 +74856,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO03: compare SKIPs a block one side leaves out and refuses one neither carries --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     if (free !== null) {
@@ -74694,7 +74932,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO04: the core imports nothing from spine-core and nothing impure --
-  {
+  if (parent) {
     const probes: string[] = [];
     const population = srcPopulation(root);
     const live = coreTreeProblems(population);
@@ -74739,7 +74977,7 @@ function runCoreSuite(): number {
   // read every entry exactly (`Object.is`). The plants are the two readings the
   // spelling guards against: a running total restarted per curve, and one entry a
   // single ulp away, which only a comparison at tolerance 0 can see.
-  {
+  if (parent) {
     const probes: string[] = [];
     const json = {
       skeleton: {},
@@ -74826,7 +75064,7 @@ function runCoreSuite(): number {
   // answers `getPath` for every frame. The defaults are read off that series, not
   // stated here. Plants: the padding one digit wide, and an unstated `start` read
   // as 0.
-  {
+  if (parent) {
     const probes: string[] = [];
     const STARTS: ReadonlyArray<number | undefined> = [undefined, -10, -3, -1, 0, 1, 2, 5, 9, 10, 99, 100, 999, 1000, 12345];
     const DIGITS: ReadonlyArray<number | undefined> = [undefined, 0, 1, 2, 3, 4, 6, 10];
@@ -74939,7 +75177,7 @@ function runCoreSuite(): number {
   // identifiers spelling a member of an exported class's prototype are the
   // language's and the format's words (`get`, `set`, `length`, `bone`, `slot`,
   // `mix`) — neither holds without an exception table.
-  {
+  if (parent) {
     const probes: string[] = [];
     const runtimeNames = new Set(Object.keys(SPINE_CORE_EXPORTS));
     const population = srcPopulation(root);
@@ -75025,7 +75263,7 @@ function runCoreSuite(): number {
   // the old arithmetic, and the middle row of the card (the runtime's constant and
   // degree turn with the rotation-only frame kept), each through a copy of the
   // evaluator.
-  {
+  if (parent) {
     const probes: string[] = [];
     const RIGS = 2000;
     const POINTS = 4;
@@ -75131,7 +75369,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO05: the gate names a skipped or refused row, and the census counts by hand --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     if (held !== null) {
       const row = gateBuild(held.name, held.out);
@@ -75168,10 +75406,10 @@ function runCoreSuite(): number {
 
   // The equivalence gate (issue #925): the tree's recipes built once, then
   // gated with the core's evaluator and with each plant.
-  const notes: string[] = [];
-  const recipes = treeRecipes(root, (line) => notes.push(line));
-  const built = buildRecipes(recipes, join(work, 'gate'), root);
-  const rows = gateBuilt(built);
+  const notes: string[] = child?.input.notes.slice() ?? [];
+  const recipes = parent ? treeRecipes(root, (line) => notes.push(line)) : [];
+  const built = child?.input.built ?? buildRecipes(recipes, join(work, 'gate'), root);
+  const rows = child?.input.rows ?? gateBuilt(built);
   const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
   // Issue #1004: a floor only a corpus row can clear is written through
   // `corpusFloor` and its control reports through `sayCorpus`, so an absent
@@ -75209,8 +75447,75 @@ function runCoreSuite(): number {
       return m === mode ? [out[0], -out[1], out[2], -out[3]] : out;
     });
 
+  // ⚡ Issue #1133: the units. Above `--jobs 1` the controls `CORE_UNITS` names
+  // run in `--unit` processes, all started here — the first place every object
+  // they read exists — in one batch the suite waits on. Each control's lines and
+  // shares are then printed and applied at its own position below (`unit`), so
+  // the log and the run state are what `--jobs 1` leaves. In a unit's own
+  // process (`child`) this suite runs that unit alone: every control kept in the
+  // parent is skipped (`if (parent)`), and the unit's lines are taken, not printed.
+  const unitLists: Record<CoreUnitList, string[]> = { probeModels: [], cqModels: [], ckModels: [], pathProbeModels: [], cdModels: [] };
+  const unitInput = (name: CoreUnitName): CoreUnitInput => ({ unit: name, builds: builds.map((b) => ({ name: b.name, out: b.out, text: b.text })), buildProblems, notes, built, rows });
+  /** Where this suite's corpus cases begin in the run's list (`CO42`). */
+  const corpusMark = CORE_CORPUS_CASES.length;
+  const batch = parent && JOBS > 1 ? coreUnitBatch(CORE_UNITS.map(unitInput), JOBS) : null;
+  const dispatched = new Map((batch ?? []).map((r) => [r.unit, r] as const));
+  /** The units this process printed from the batch, in the order it printed them (`CO41`). */
+  const replayed: CoreUnitName[] = [];
+  /** At `--jobs 1`, what each unit's controls printed and left here, run in this process (`CO41`). */
+  const inline = new Map<CoreUnitName, CoreUnitResult>();
+  /** Every argument of a `console.log` call as the run's own wrapper joins it into a line. */
+  const lineOf = (args: unknown[]): string => args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+  /** Run one unit's controls here and take what they printed and left, printing it too when `forward` (`--jobs 1`), or not (a unit's own process). */
+  const taken = (name: CoreUnitName, body: () => void, forward: boolean): CoreUnitResult => {
+    const print = console.log;
+    const states = runStates();
+    const marks = states.map((s) => s.mark());
+    const listMarks = CORE_UNIT_LISTS.map((l) => unitLists[l].length);
+    const floorsBefore = new Set(corpusFloors);
+    const badBefore = bad;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]): void => {
+      lines.push(lineOf(args));
+      if (forward) print(...args);
+    };
+    try {
+      body();
+    } finally {
+      console.log = print;
+    }
+    return {
+      unit: name,
+      lines,
+      bad: bad - badBefore,
+      states: states.map((s, k) => s.since(marks[k])),
+      lists: CORE_UNIT_LISTS.map((l, k) => unitLists[l].slice(listMarks[k])),
+      floors: [...corpusFloors].filter((f) => !floorsBefore.has(f)),
+    };
+  };
+  /** Run one unit's controls, or print and apply what its process handed back, at their own position. */
+  const unit = (name: CoreUnitName, body: () => void): void => {
+    if (child !== null) {
+      if (child.input.unit === name) child.result = taken(name, body, false);
+      return;
+    }
+    const result = dispatched.get(name);
+    if (result === undefined) {
+      // As JSON would carry it, so `CO41` compares like with like.
+      inline.set(name, JSON.parse(JSON.stringify(taken(name, body, true))) as CoreUnitResult);
+      return;
+    }
+    // The order one process makes them in: the shares, then the lines that report on them.
+    runStates().forEach((s, k) => s.apply(result.states[k]));
+    CORE_UNIT_LISTS.forEach((l, k) => unitLists[l].push(...result.lists[k]));
+    for (const f of result.floors) corpusFloors.add(f);
+    for (const line of result.lines) console.log(line);
+    bad += result.bad;
+    replayed.push(name);
+  };
+
   // --- CO06: every recipe without a constraint poses as spine-core does ------
-  {
+  if (parent) {
     const probes: string[] = [];
     for (const r of rows) {
       const bones = r.blocks?.['setup.bones'];
@@ -75239,7 +75544,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO07: a hand-written probe poses all five modes and the skin rule as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
     // Four parents, each a different thing to inherit — a rotation with scale and shear, a reflection on x,
@@ -75301,7 +75606,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO08: one mode's sign flipped in a copy of the evaluator turns exactly the rows using it red --
-  {
+  unit('CO08', () => {
     const probes: string[] = [];
     const reached: string[] = [];
     const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
@@ -75325,10 +75630,10 @@ function runCoreSuite(): number {
       'issue #925\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the mode at all',
     );
     for (const mode of holes) console.log(`          ⚠️ HOLE: no compared recipe has a bone in ${mode}, so its plant has no corpus row to turn red — CO07's probe is the only reading of it`);
-  }
+  });
 
   // --- CO09: readModel reads the slot records and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let count = 0;
     if (free !== null) {
@@ -75389,7 +75694,7 @@ function runCoreSuite(): number {
   const slotCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.slots'].verdict !== 'SKIP');
 
   // --- CO10: every recipe poses its setup slots as spine-core does, the constrained ones included --
-  {
+  if (parent) {
     const probes: string[] = [];
     let exact = 0;
     let constrained = 0;
@@ -75460,7 +75765,7 @@ function runCoreSuite(): number {
   const hex2 = (v: number): string => (v % 256).toString(16).padStart(2, '0');
 
   // --- CO11: a hand-written probe poses the skin rule, the colours and the paths as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // One table, written once as the Spine file and once as the model: per slot its bone, setup placeholder,
     // colours, and per skin the record filling it (Spine keys; the model's are derived below).
@@ -75587,7 +75892,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO12: several skins on one placeholder are the file's order, and a disagreement is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     // The measurement itself: three skins filling one placeholder with three names, in three file orders.
@@ -75646,7 +75951,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO13: a slider keying a slot poses it at setup as the core does, and without bones its slots are left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const sliderSkeleton = (slider: boolean): string => JSON.stringify({
       skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
@@ -75691,7 +75996,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO14: a channel misread and a wrong skin, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CO14', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => slotCompared.some((r) => r.name === b.name));
     const statesRed = (b: BuiltRow): boolean => readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).slots.some((s) => s.color !== undefined && s.color.slice(0, 2) !== '00');
@@ -75723,7 +76028,7 @@ function runCoreSuite(): number {
       'issue #928\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the channel or the skin at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO11's probe is the only reading of it`);
-  }
+  });
 
   // The attachments' world vertices (issue #931). One hand-written skeleton, written once as the Spine file and
   // once as the model, holds every case the corpus does not reach — read by CO15, posed by CO17.
@@ -75812,7 +76117,7 @@ function runCoreSuite(): number {
   };
 
   // --- CO15: readModel reads each record's geometry and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read = coreRefusal(probeModelText);
     if (read !== '') probes.push(`the probe's model was refused: ${read}`);
@@ -75850,7 +76155,7 @@ function runCoreSuite(): number {
   const attachmentsCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.attachments'].verdict !== 'SKIP');
 
   // --- CO16: every recipe without a constraint poses its setup attachments as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let vertices = 0;
     let rowsHeld = 0;
@@ -75901,7 +76206,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO17: a hand-written probe poses every attachment case the corpus does not reach as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -75951,7 +76256,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO18: a scaled weight and rotated corners, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CO18', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => attachmentsCompared.some((r) => r.name === b.name));
     const shows = (b: BuiltRow, test: (kind: string, weightedMesh: boolean) => boolean): boolean => {
@@ -75986,7 +76291,7 @@ function runCoreSuite(): number {
       'issue #931\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the weights or the corner order at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO17's probe is the only reading of it`);
-  }
+  });
 
   // ===========================================================================
   // Construct 6 (issue #964): clipping applied to the draw — the `clipped` block, src/core/clipping.ts.
@@ -76064,7 +76369,7 @@ function runCoreSuite(): number {
   const clipRowsOf = (rows: ReadonlyArray<[string, string, 0 | 1, Array<number | null>, Array<number | null>, number[]]> | null): string => (rows ?? []).map((r) => `${r[0]}:${r[2]}:${r[5].length / 3}`).join(' ');
 
   // --- CL01: a hand-written probe clips every case as spine-core's clipper does, at tolerance 0, with and without the physics step --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -76103,7 +76408,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL02: the rejected readings, each in a copy, are named at exactly the slots they reach --
-  {
+  if (parent) {
     const probes: string[] = [];
     let named = 0;
     try {
@@ -76135,7 +76440,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL03: a clip the core does not clip against leaves the block out by name, and readModel refuses what the clipper would read wrong --
-  {
+  if (parent) {
     const probes: string[] = [];
     try {
       const concave = [0, 0, 100, 0, 100, 100, 50, 40, 0, 100];
@@ -76188,7 +76493,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL04: every row drawing under a clip reads IDENTICAL, and a moved vertex and a flipped winding turn exactly those rows red --
-  {
+  unit('CL04', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     const drawing = rows.filter((r) => (r.clippedCensus?.drawn ?? 0) > 0);
@@ -76216,7 +76521,7 @@ function runCoreSuite(): number {
       'issue #964, construct 6 of #380 §5 admitted: the triangles every region and mesh draws under a strictly convex clip, as spine-core\'s clipper returns them, on the corpus rows that draw under one — the step src/render.ts needs before it can clip through the core (step 3)',
     );
     for (const line of clippedReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
-  }
+  });
 
   // --- CL05: the core's own decomposition of a concave or inverse clip covers what spine-core's clipper covers (issue #964's STOP) --
   //
@@ -76225,7 +76530,7 @@ function runCoreSuite(): number {
   // vertices, none added and every one used, and the triangles it returns covering what spine-core's clipper returns for the same
   // triangles, polygon and flags. Random simple polygons, both windings, `inverse` and `convex` drawn at random; a plant dropping one
   // region of the plan turns the area short.
-  {
+  if (parent) {
     const probes: string[] = [];
     let figures = '';
     try {
@@ -76484,7 +76789,7 @@ function runCoreSuite(): number {
   };
 
   // --- CA01: readModel reads the timelines and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const base = timelinePair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -76529,7 +76834,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA02: the Bézier is the runtime's ten-piece polyline, and each rejected reading misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     // The measurement: one bone, one translatex from (0, 0) to (1, 1000) through handles (0.1, 800) and (0.3, 1000).
@@ -76664,7 +76969,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA03: a hand-written probe holds the key search and each bone kind's rule --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [
@@ -76717,7 +77022,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA04: every bone and slot timeline kind on a hand-written probe poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const seeds = [7919, 15838, 23757];
     let boneSamples = 0;
@@ -76751,7 +77056,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA05: the colour rules — set not blended, clamped, and a two-colour timeline on a slot with no dark colour --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'dur', parent: 'root' }],
@@ -76806,7 +77111,7 @@ function runCoreSuite(): number {
   const animationSlotsCompared = rows.filter((r) => r.blocks !== null && r.blocks['animations.slots'].verdict !== 'SKIP');
 
   // --- CA06: every recipe poses every animation's bones and slots as spine-core does, the constrained ones' bones skipped by construct --
-  {
+  unit('CA06', () => {
     const probes: string[] = [];
     let denseBones = 0;
     let animations = 0;
@@ -76848,10 +77153,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring ${LATER_WORDS}`),
       'issue #936, construct 4 of #380 §5 admitted: every recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig\'s bones are posed by its constraints after the animation (CA07): the ik, transform, path, physics and slider constraints are posed since issue #938, and a rig declaring a kind left to a later cut — none is left — would have its bones left to that cut',
     );
-  }
+  });
 
   // --- CA07: a constrained row posed without its constraints differs, which is why the constraints are posed (construct 5, issue #938) --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     const candidate = built.find((b) => {
@@ -76896,7 +77201,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA08: a Bézier handle moved, a channel's sign flipped and the key search off by one each turn exactly the rows they move red --
-  {
+  unit('CA08', () => {
     const probes: string[] = [];
     const reached: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null && (r.blocks['animations.bones'].verdict !== 'SKIP' || r.blocks['animations.slots'].verdict !== 'SKIP')));
@@ -76926,10 +77231,10 @@ function runCoreSuite(): number {
       probeDetail(ok, judged.length === 0 ? [...probes, 'no row\'s animations were compared'] : probes, `each plant passed as a copy, never in src/: rows red of those compared — ${reached.join(', ')} — exactly the rows where the plant moves the core's own dump, each a row that uses what was planted`),
       'issue #936\'s positive control: a gate nobody has seen fail is not a gate. A plant that reddened every row would not show the gate reads the curve, the channel or the search, and one that reddened a row where it moved nothing would be reading something else',
     );
-  }
+  });
 
   // --- CA09: the sample blocks — absent by name, compared by animation name, over the runtime's duration --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -76986,7 +77291,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA10: the animations' census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'root' }],
@@ -77019,7 +77324,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA11: every kind and curve no compared row reaches is a HOLE by name, and the all-kinds probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = animationReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => /animations (\S+):/.exec(l)?.[1] ?? l);
     const probeCensus = animationCensusOf(allKindsProbe(7919).model, DENSE);
@@ -77040,7 +77345,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO19: the blend mode — a probe stating every mode posed as spine-core does, a bad spelling refused, the plant named on exactly the rows stating it --
-  {
+  unit('CO19', () => {
     const probes: string[] = [];
     let detail = '';
     const MODES: Array<[string, string | undefined, string]> = [
@@ -77103,7 +77408,7 @@ function runCoreSuite(): number {
       detail,
       'issue #933: the slot row gained the blend mode, so the 36 corpus slots stating one are judged; the reader takes the eight spellings the runtime was measured to read as a mode and refuses the rest, and a plant that reddened every row would not show the gate reads the mode at all',
     );
-  }
+  });
 
   // ===========================================================================
   // Construct 5, first cut (issue #938): the update order, and the ik and
@@ -77145,7 +77450,7 @@ function runCoreSuite(): number {
   const constraintCompare = (pair: { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE, plant: CorePlant = {}): ReturnType<typeof compareDumps> =>
     compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the constraint probe'), options), coreDump(readModel(pair.model, 'the constraint probe'), options, plant), { xy: 0, m: 0 });
   /** A probe population: `n` pairs from `make`, each compared; the misses named (the first three) and every model kept for the census. */
-  const probeModels: string[] = [];
+  const probeModels = unitLists.probeModels;
   const population = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE): { exact: number; misses: string[]; samples: number } => {
     const rnd = seededRandom(seed);
     let exact = 0;
@@ -77289,7 +77594,7 @@ function runCoreSuite(): number {
   };
 
   // --- CC01: readModel reads each ik and transform record and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', length: 30 }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 'o', parent: 'root' }, { name: 't', parent: 'root', x: 20, y: 30 }];
     const ik: Obj = { type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', mix: 0.5, softness: 3, bendPositive: false, stretch: true, scaleY: 'Uniform' };
@@ -77345,7 +77650,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC02: a one-bone ik on a hand-written population poses as spine-core does --
-  {
+  if (parent) {
     const r = population(600, 9381, ikOneProbe);
     const ok = r.exact === 600;
     say(
@@ -77357,7 +77662,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC03: a two-bone ik on a hand-written population poses as spine-core does --
-  {
+  if (parent) {
     const r = population(1200, 9382, ikTwoProbe);
     const ok = r.exact === 1200;
     say(
@@ -77369,7 +77674,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC04: the degenerate cases read as measured, and what the runtime would throw on is refused --
-  {
+  if (parent) {
     const probes: string[] = [];
     const g: Obj = { name: 'g', parent: 'root', x: 10, y: 5, rotation: 30 };
     const cases: Array<[string, Obj[], Obj[], Obj[]?]> = [
@@ -77414,7 +77719,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC05: the update order on random rigs of several constraints poses as spine-core does --
-  {
+  if (parent) {
     const r = population(400, 9385, orderProbe);
     const ok = r.exact === 400;
     say(
@@ -77426,7 +77731,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC06: a bone moved in world space is read back into local values the runtime's way, in all five modes --
-  {
+  if (parent) {
     const r = population(400, 9386, readBackProbe);
     const ok = r.exact === 400;
     say(
@@ -77438,7 +77743,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC07: a transform constraint over every property, mapping, flag and mode poses as spine-core does --
-  {
+  if (parent) {
     const r = population(900, 9387, transformProbe);
     const ok = r.exact === 900;
     say(
@@ -77450,7 +77755,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC08: the ik and transform timelines at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [
       { name: 'root' }, { name: 'hip', parent: 'root', x: 10, y: 40, rotation: 5 },
@@ -77504,7 +77809,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC09: every row declaring only ik and transform poses its bones, vertices and samples as spine-core does --
-  {
+  unit('CC09', () => {
     const probes: string[] = [];
     const admittedOnly = (b: BuiltRow): CompiledDocument | null => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -77542,10 +77847,10 @@ function runCoreSuite(): number {
       `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); ${LATER_KINDS.length === 0 ? 'no row skipped, since no kind is left to a later cut' : `every row still skipped names ${LATER_KINDS.join(', ')}`}`,
       'issue #938, construct 5\'s first cut admitted: the rows whose constraints are all ik and transform are judged on every block the core poses, and a row carrying a later kind stays SKIP naming it (#380 §4 — a construct not admitted is SKIP by name, never a pass)',
     );
-  }
+  });
 
   // --- CC10: a mix scaled, a bend flipped and two constraints swapped in a copy each turn exactly the rows using them red --
-  {
+  unit('CC10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -77589,10 +77894,10 @@ function runCoreSuite(): number {
       `over the ${targets.length} rows declaring only ik and transform: ${lines.join('; ')}; no slot row moved`,
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
     );
-  }
+  });
 
   // --- CC11: every constraint field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = constraintReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]);
     const reached = Object.fromEntries(CONSTRAINT_CENSUS_FIELDS.map((f) => [f, 0])) as Record<ConstraintCensusField, number>;
@@ -77618,7 +77923,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC12: the constraints' census and the per-kind lines count a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', scaleX: 2, length: 10 }, { name: 'c', parent: 'p', x: 10, y: 1, length: 10 }, { name: 'n', parent: 'root', inherit: 'noScale' }, { name: 't', parent: 'root' }];
     const constraints: Obj[] = [
@@ -77694,12 +77999,12 @@ function runCoreSuite(): number {
     compareDumps(sliderSpine(pair, options), coreDump(readModel(pair.model, 'the slider probe'), options, plant), { xy: 0, m: 0 });
   /** The blocks the core poses that a comparison skipped — a probe is exact only when none is. */
   const posedSkips = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => /^(setup\.(bones|slots|attachments|clips)|animations\.(bones|slots)):/.test(x));
-  const cqModels: string[] = [];
+  const cqModels = unitLists.cqModels;
   const SIX_IRR: OracleOptions = { phase: 'irr', samples: 6, skin: 'all', physics: 'none', dt: null };
   const hexOf = (rnd: () => number, n: number): string => Array.from({ length: n }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
 
   // --- CQ01: readModel reads each physics and slider record and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'd', parent: 'root', x: 3 }, { name: 'p', parent: 'root' }];
     const base = sliderPair(bones, [{ name: 's', bone: 'p', attachment: 'q' }], [
@@ -77762,7 +78067,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ02: under Physics.none a physics constraint applies nothing, and the core poses it so --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(93802);
     const R = within(rnd);
@@ -77830,7 +78135,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ03: a dial's property maps to the slider's time — clamped at 0, or looped — as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // The keyed bone p is at x = 100 · the time the slider applies (0..2 s), so the dump reads the time off p's worldX.
     const timeOf = (slider: Obj, dial: Obj): { spine: number | null; exact: boolean; first: string | null } => {
@@ -77884,7 +78189,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ04: a slider composes on the current pose by its mix, and additively when it says so, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const PROPS6 = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
     // p's local values read back through six localSource transforms written onto spare bones' x, after the slider.
@@ -77929,7 +78234,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ05: a slider's slot timelines blend from the current slot, clamped, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const slotRow = (slider: Obj, keys: Keyed[string]): { setup: SlotRow; sample: SlotRow; exact: boolean; first: string | null } => {
       const pair = sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'r', color: '80406020', dark: '102030' }], [{ type: 'slider', name: 'sl', animation: 'x', ...slider }], {
@@ -77981,7 +78286,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ06: a random population of sliders over sample animations, with ik, transform and physics among them, poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(93806);
     const R = within(rnd);
@@ -78102,7 +78407,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ07: the slider timelines' time and mix at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 5 }, ...amplify('p')];
     const slots: Obj[] = [{ name: 's', bone: 'p', attachment: 'r', color: '80808080' }];
@@ -78129,7 +78434,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ08: a skin-required slider and one on an inactive dial are not applied, and what this cut does not pose is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const keyed: Keyed = { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 90 }] } };
     const angleOf = (pair: { spine: string }): number => {
@@ -78181,7 +78486,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ09: every row declaring a physics or slider constraint poses every block as spine-core does, or leaves one out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     let judged = 0;
     let denseSamples = 0;
@@ -78216,7 +78521,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ10: a slider dropped, its mix scaled, its additive flipped and a physics constraint applied, each in a copy, turn exactly the rows using them red --
-  {
+  unit('CQ10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -78253,10 +78558,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${targets.length} rows declaring a physics or slider constraint: ${lines.join('; ')}`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it; "applies nothing" is planted by making the physics constraint apply something, and the rows declaring one must be exactly the rows that go red',
     );
-  }
+  });
 
   // --- CQ11: every physics and slider field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines = constraintReachLines(rows);
     const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]).filter((h) => h.startsWith('physics') || h.startsWith('slider'));
@@ -78278,7 +78583,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ12: the physics and slider census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = sliderPair([{ name: 'root' }, { name: 'd', parent: 'root' }, { name: 'p', parent: 'root' }], [{ name: 's', bone: 'p', attachment: 'q' }], [
       { type: 'slider', name: 'world', animation: 'x', bone: 'd', property: 'rotate', additive: true, mix: 0.5 },
@@ -78338,7 +78643,7 @@ function runCoreSuite(): number {
   const stepSpine = (pair: { spine: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, '', 'the step probe'), options);
   const stepCompare = (pair: { spine: string; model: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
     compareDumps(stepSpine(pair, options), coreDump(readModel(pair.model, 'the step probe'), options, plant), { xy: 0, m: 0 });
-  const ckModels: string[] = [];
+  const ckModels = unitLists.ckModels;
   /** A population of step probes: how many read exact (and with `plant`, how many a planted step leaves exact), the first misses named. */
   const stepPopulation = (n: number, seed: number, make: (rnd: () => number) => { pair: { spine: string; model: string }; options: OracleOptions }, plant?: TimelinePlant): { exact: number; planted: number; misses: string[]; samples: number } => {
     const rnd = seededRandom(seed);
@@ -78400,7 +78705,7 @@ function runCoreSuite(): number {
   };
 
   // --- CK01: readModel reads a physics constraint's settings and its timelines, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'b', parent: 'root', length: 10 }];
     const stated: Obj = { type: 'physics', name: 'all', bone: 'b', x: 0.5, y: 1, rotate: 1, scaleX: 0.25, shearX: 2, limit: 40, fps: 45, inertia: 0.3, strength: 70, damping: 0.6, mass: 3, wind: 2, gravity: -4, mix: 0.8, inertiaGlobal: true, mixGlobal: true, scaleY: 'volume' };
@@ -78435,7 +78740,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK02: the simplest spring steps as computed by hand, and as spine-core steps it at three dt --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 50 }];
     const pair = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60, y: 0 }] } } } });
@@ -78467,7 +78772,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK03: the schedule steps as the oracle walks it, counted by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     // A one-second animation, nine grid samples an eighth apart: at dt 1/60 seven steps before each sample and one to it,
     // at 0.05 two and one, at 0.2 none and one; the first sample, at 0, is the reset pose and takes none.
@@ -78488,7 +78793,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK04: each component steps as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     let samples = 0;
@@ -78511,7 +78816,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK05: a probe per setting: each steps as spine-core does, and scaled in a copy reads another pose --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     const SETTINGS: Array<[string, (r: CorePhysicsRecord) => CorePhysicsRecord]> = [
@@ -78542,7 +78847,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK06: each physics timeline, the one naming no constraint and the reset, pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     const KINDS = ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix'];
@@ -78621,7 +78926,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK07: a random population of physics constraints among ik and transform, skins and two animations, steps as spine-core does --
-  {
+  unit('CK07', () => {
     const probes: string[] = [];
     const rnd = seededRandom(95631);
     const R = within(rnd);
@@ -78692,10 +78997,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${exact} of ${N} rigs exact at tolerance 0 (${samples} bone-samples) — one to five constraints each, physics with random components, settings, flags and timelines, some skin-required, ik and world- and local-space transforms among them, the timeline naming no constraint, two animations, parents reflecting and sheared, bones normal or onlyTranslation; ${N - planted} red with the remainder dropped in a copy`),
       'issue #956: the rules hold together in the update order, a physics constraint re-posing what later ones read. The bones are normal or onlyTranslation because the other three modes are posed by ./world.ts to the grid but not to the bit, and a step amplifies a last-bit difference (src/core/constraints_physics.ts, *What is not exact*)',
     );
-  }
+  });
 
   // --- CK08: every row stepped poses its bones as spine-core does, and every row declaring physics is among them --
-  {
+  if (parent) {
     const probes: string[] = [];
     const declaring: string[] = [];
     let dense = 0;
@@ -78725,7 +79030,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK09: a setting scaled, or the remainder dropped, in a copy turns exactly the rows declaring physics red --
-  {
+  unit('CK09', () => {
     const probes: string[] = [];
     const declares = (b: BuiltRow): boolean => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics');
     const using = built.filter(declares).map((b) => b.name).sort();
@@ -78747,10 +79052,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${built.length} tree rows, ${using.length} declaring physics: ${lines.join('; ')}`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on exactly the rows using it — one setting scaled, and the fixed step\'s remainder not carried from one update to the next',
     );
-  }
+  });
 
   // --- CK10: the stepped census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = stepPair([{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'a' }], [
       { type: 'physics', name: 'one', bone: 'a', x: 1, rotate: -1, strength: 50, mass: 2 },
@@ -78776,7 +79081,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK11: every stepped field no compared row reaches is a HOLE by name, and a CK probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines = steppedReachLines(rows);
     const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  stepped '.length).split(':')[0]);
@@ -78799,7 +79104,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK12: the stepped core dump is written twice to the byte from the command line --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = NOTHING_HELD;
     const physicsRow = built.find((b) => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics'));
@@ -78826,7 +79131,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK13: a skin-required physics constraint steps exactly when a skin lists it, and the unlisted reading in a copy goes red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KINDS = ['ik', 'transform', 'path', 'physics', 'slider'];
     const listed = (skins: Array<{ name: string; bones?: string[]; physics?: string[] }>, boneSkin: boolean): { spine: string; model: string } => {
@@ -78968,7 +79273,7 @@ function runCoreSuite(): number {
     });
     return { spine: JSON.stringify(spine), model };
   };
-  const pathProbeModels: string[] = [];
+  const pathProbeModels = unitLists.pathProbeModels;
   /** The two dumps of a path pair compared at tolerance 0 — the whole document, the `paths` and `pathAttachments` blocks included. */
   const pathCompare = (pair: { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE, plant: CorePlant = {}): ReturnType<typeof compareDumps> => {
     pathProbeModels.push(pair.model);
@@ -79082,7 +79387,7 @@ function runCoreSuite(): number {
     });
 
   // --- CP01: readModel reads each path record, attachment and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const base = pathPair({
@@ -79141,7 +79446,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP02: the walk — one bone over a grid of positions on three and four knots, open and closed, at constant speed and off the stated lengths, percent and fixed --
-  {
+  if (parent) {
     const probes: string[] = [];
     let exact = 0;
     let total = 0;
@@ -79165,7 +79470,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP03: a random population over every mode, setting, mix and curve poses as spine-core does --
-  {
+  if (parent) {
     const r = pathPopulation(600, 93803, pathProbe);
     const ok = r.exact === 600;
     say(
@@ -79177,7 +79482,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP04: the walk's edge cases read as measured --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 100, 0, 110, 0, 180, 0, 210, 0, 240, 0, 270, 0, 300, 0];
     const chain = (c: Obj, att: Partial<PathAttachmentSpec> = {}): { spine: string; model: string } =>
@@ -79219,7 +79524,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP05: a stated lengths is read off the stated table, and constant speed reads none (issue #804) --
-  {
+  if (parent) {
     const probes: string[] = [];
     let held = 0;
     const rnd = mix32(80405);
@@ -79255,7 +79560,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP06: which slot bone the offset reads — the runtime's update order, and the previous pose's --
-  {
+  if (parent) {
     const probes: string[] = [];
     const local = [-30, 0, 0, 0, 30, 40, 60, 40, 90, 40, 120, -20, 150, 0, 180, 0, 210, 0];
     const weighted = (bone: string): Array<Array<{ bone: string; x: number; y: number; w: number }>> => {
@@ -79307,7 +79612,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP07: the update order with path, ik and transform constraints on random rigs poses as spine-core does --
-  {
+  if (parent) {
     const rnd = mix32(70707);
     const R = within(rnd);
     const pick = pickOf(rnd);
@@ -79386,7 +79691,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP08: the path timelines at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = [-30, 0, 0, 0, 30, 40, 60, 40, 90, 40, 120, -20, 150, 0, 180, 0, 210, 0];
     const timelines: Array<[string, Record<string, Obj[]>]> = [
@@ -79428,7 +79733,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP09: every row declaring path constraints (and nothing not admitted) poses its bones, vertices and samples as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let judged = 0;
     let denseSamples = 0;
@@ -79459,7 +79764,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP10: a position moved, a mix scaled and a mode swapped in a copy each turn exactly the rows using a path red --
-  {
+  unit('CP10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -79491,10 +79796,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${targets.length} rows declaring only admitted kinds, ${using.length} of them a path: ${lines.join('; ')}; no slot row moved`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
     );
-  }
+  });
 
   // --- CP11: every path field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = pathReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  paths '.length).split(':')[0]);
     const reached = Object.fromEntries(PATH_CENSUS_FIELDS.map((f) => [f, 0])) as Record<PathCensusField, number>;
@@ -79515,7 +79820,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP12: the paths' census counts a hand-made document as computed by hand, and each path the core cannot pose is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const local = WALK_POINTS[3];
@@ -79576,7 +79881,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP13: a physics constraint and a slider before a weighted path set its slot bone in the update order as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // One weighted path (bound to w1, not to its slot bone sb) with an offset: its sign reads sb as the update order last set it —
     // fresh, the offset turns one way ('turned'); from the previous pass (zeros at setup) or reflected, the other ('negated').
@@ -79651,7 +79956,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK14: a stepped physics constraint and a deformed walked path pose in the runtime's order, before and after the path --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const deform = { slot: 'o', attachment: 'q', keys: [{ time: 0, offset: 2, vertices: [3, -4, 5, 6] }, { time: 1 }] };
@@ -79694,7 +79999,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK15: the step reads the document's referenceScale, and a document stating 50 against a file read as 100 goes red (#958) --
-  {
+  unit('CK15', () => {
     const probes: string[] = [];
     const OTHER = UNSTATED_REFERENCE_SCALE / 2;
     /** The pair with both spellings stating `spine` and `model` as the reference scale (`undefined`: the Spine header omits it). */
@@ -79766,7 +80071,7 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${N} wind-and-gravity probes exact with both spellings stating ${OTHER} (${samples} bone-samples), ${moved} of ${N} red with the document alone stating it against a file read as ${UNSTATED_REFERENCE_SCALE} and ${constant} of ${N} with the step reading ${UNSTATED_REFERENCE_SCALE} as a constant in a copy, and ${still} of ${N} without wind or gravity exact under the same plant; over the ${built.length} tree rows with every document stating ${OTHER}: ${tree}; declaring physics and reading neither, exact: [${quiet.join(', ')}]`),
       'issue #958: the core stepped wind and gravity over the parser\'s 100 as a constant; the document now states the skeleton\'s reference scale and the step reads it, so a document disagreeing with the file it came from turns red exactly where wind or gravity reads it — a row declaring physics that reads neither is untouched by it',
     );
-  }
+  });
 
   // ===========================================================================
   // The stepped schedule (issue #960): a physics `reset` key is crossed once,
@@ -79871,7 +80176,7 @@ function runCoreSuite(): number {
   const scList = (xs: readonly number[]): string => `[${xs.join(', ')}]`;
 
   // --- SC01: the probe under the player's schedule — the oracle is spine-core's player to the bit, both dumpers IDENTICAL, and the old schedule and a key crossed twice go red after the key --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = scPair([SC_KEY]);
     ckModels.push(pair.model);
@@ -79919,7 +80224,7 @@ function runCoreSuite(): number {
   }
 
   // --- SC02: without a reset key the schedule change moves nothing — the probe and every tree row stepped read the same bytes under either reading --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bare = scPair([]);
     ckModels.push(bare.model);
@@ -79958,7 +80263,7 @@ function runCoreSuite(): number {
   }
 
   // --- SC03: the raw walk and the stepped grid agree on the probe — the same schedule at two precisions — and the raw walk crosses the key once as render's AnimationState recipe does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = scPair([SC_KEY]);
     const model = readModel(pair.model, 'the #960 probe');
@@ -80138,7 +80443,7 @@ function runCoreSuite(): number {
     compareDumps(remainderSpine(pair, options), coreDump(readModel(pair.model, 'the remainder probe'), options, plant, uvSourceOf(pair.atlas, pair.model)), { xy: 0, m: 0 });
   /** Every block a comparison skipped but the physics parameters' — a probe is exact only when none is. */
   const blocksSkipped = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => !x.startsWith('physics:'));
-  const cdModels: string[] = [];
+  const cdModels = unitLists.cdModels;
   /** Five decimals, not float32: the stored float32 of a key and the double the document states differ. */
   const dec5 = (rnd: () => number) => (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
   const FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null };
@@ -80236,7 +80541,7 @@ function runCoreSuite(): number {
   };
 
   // --- CD01: readModel reads the attachment, draw-order and event timelines and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const base: RSpec = {
       bones: [{ name: 'root' }],
@@ -80289,7 +80594,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD02: the deform Bézier runs its recurrence to 0.99999999, a bone channel's to its key — each on a population, each rejected reading missing --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9551);
     const D = dec5(rnd);
@@ -80331,7 +80636,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD03: an unweighted deform population poses as spine-core does, and the double sum misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9553);
     const D = dec5(rnd);
@@ -80365,7 +80670,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD04: a weighted deform population poses as spine-core does, and a key held as positions misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9554);
     const D = dec5(rnd);
@@ -80401,7 +80706,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD05: a slider's deform blends from the current deform, additive and not, at setup and at a sample, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9555);
     const D = dec5(rnd);
@@ -80448,7 +80753,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD06: every row carrying a deform, sequence, draw-order or event timeline reads IDENTICAL on the block it changes, at 200 dense samples too --
-  {
+  unit('CD06', () => {
     const probes: string[] = [];
     const kindLines = timelineKindLines(rows);
     for (const line of kindLines) if (!/ 0 SKIP$/.test(line) || / DIFF/.test(line)) probes.push(`a kind line names a SKIP or a DIFF: ${line.trim()}`);
@@ -80479,10 +80784,10 @@ function runCoreSuite(): number {
       'issue #955, the remainder of construct 4 admitted per kind: the block each kind changes IDENTICAL on every corpus row carrying it — a deform the attachments (and gallery/look\'s setup, where a slider applies one), a draw-order key the draw order, an event key the events. No public row keys a sequence: CD08\'s probe is its only reading',
     );
     for (const line of kindLines) console.log(`          ${line.trim()}`);
-  }
+  });
 
   // --- CD07: a deformed clipping polygon, a linked mesh playing its source's deform or not, and a deform keyed on an attachment not shown pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tri = [0, 0, 30, 0, 0, 30];
     const keys = [{ time: 0, vertices: [1, 2, 3, 4] }, { time: 1, offset: 2, vertices: [-5, 6, 7] }];
@@ -80538,7 +80843,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD08: a sequence steps its frames by mode, index and delay as spine-core does, and the step without its epsilon misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9558);
     const pick = pickOf(rnd);
@@ -80597,7 +80902,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD09: the draw order at a sample — a key's moves over the setup order, a restore, a slider's key — as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9559);
     let exact = 0;
@@ -80652,7 +80957,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD10: the events a sample lists are the keys in (previous t, t], each field the key's, else the definition's, else the parser's --
-  {
+  if (parent) {
     const probes: string[] = [];
     const events: Record<string, Obj> = { e: { int: 7, float: 1.5, string: 'hi' }, g: {}, au: { audio: 'x.ogg', volume: 0.5, balance: -0.2, int: 3, float: 0.1000065 } };
     const cases: Array<[string, Obj[], OracleOptions]> = [
@@ -80685,7 +80990,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD11: a vertex offset scaled, a frame index shifted, two slots swapped and an event's int moved, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CD11', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     const uses = (b: BuiltRow, field: AnimationCensusField): boolean => {
@@ -80718,10 +81023,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `each plant passed as a copy, never in src/: ${reached.join('; ')} — exactly the rows keying the kind, on the block it changes and no other`),
       'issue #955\'s positive control, one plant per kind: a gate nobody has seen fail is not a gate. A plant reddening a row that does not key the kind would be reading something else, and one reddening none would show the gate reads nothing',
     );
-  }
+  });
 
   // --- CD12: the remainder's census counts a hand-made document as computed by hand, and each field no row reaches is a HOLE a probe reaches --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = remainderPair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -80771,7 +81076,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD13: what the core cannot pose exactly is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tri: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
     const absences: Array<[string, RSpec, string, string]> = [
@@ -80807,7 +81112,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD14: a slider switching a slot to another attachment clears the deform and the frame the sample set, and naming the one shown keeps them --
-  {
+  if (parent) {
     const probes: string[] = [];
     const m: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
     const n: RAtt = { kind: 'mesh', xy: [10, 10, 11, 10, 10, 11] };
@@ -80947,7 +81252,7 @@ function runCoreSuite(): number {
   const uvSlotsNamed = (c: ReturnType<typeof compareDumps>): string[] => [...new Set([...c.document, ...c.rows.flatMap((r) => r.findings)].map((f) => /uvs "([^/"]+)\//.exec(f)?.[1] ?? `(not a uvs finding) ${f}`))].sort();
 
   // --- CU01: the hand-written probe draws every page-UV case as spine-core holds it, on the grid and bit for bit --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -81016,7 +81321,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU02: each rejected reading, in a copy, is named at exactly the slots it reaches --
-  {
+  if (parent) {
     const probes: string[] = [];
     const reached: string[] = [];
     try {
@@ -81054,7 +81359,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU03: computeUvs is MeshAttachment.computeUVs — texture substitution's call — bit for bit, into a plain array and a Float32Array --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9671);
     const spellings = ['0', '90', '180', '270', 'true', 'false', '45', '-90', '360', '450'];
@@ -81111,7 +81416,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU04: every corpus row reads IDENTICAL on both uvs blocks at tolerance 0, and each reading turns exactly the rows using it red --
-  {
+  unit('CU04', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     for (const r of rows) for (const block of ['setup.uvs', 'animations.uvs'] as const) if (r.blocks !== null && r.blocks[block].verdict !== 'IDENTICAL') probes.push(`${r.name}: ${block} ${r.blocks[block].verdict} — ${r.blocks[block].why}`);
@@ -81147,10 +81452,10 @@ function runCoreSuite(): number {
       'issue #967, the gate at tolerance 0: every drawn attachment\'s page and page UVs on every corpus row, from the build\'s own atlas beside the model, against the arrays the runtime holds — the draw\'s last input the core lacked',
     );
     for (const line of lines) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
-  }
+  });
 
   // --- CU05: without an atlas the blocks are absent by name; a missing region, a stale spec, a bad series and a slider under the step are refused or left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     try {
       const pair = uvPair();
@@ -81235,7 +81540,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU06: rigc's atlas lookup finds the region and page spine-core's does, on every corpus atlas and the probe's edge cases --
-  {
+  if (parent) {
     const probes: string[] = [];
     const texts: Array<[string, string]> = built.map((b) => [b.name, readFileSync(join(b.out, 'skeleton.atlas'), 'utf8')]);
     const exportRoot = join(root, 'examples');
@@ -81314,7 +81619,7 @@ function runCoreSuite(): number {
   };
 
   // --- CN01: under --skin <name> a slot shows the named skin's record, else the default skin's, and only the named skin's bones activate --
-  {
+  if (parent) {
     const probes: string[] = [];
     const region = (path: string): RAtt => ({ kind: 'region', path });
     const tri = (d: number): RAtt => ({ kind: 'mesh', xy: [d, 0, d + 1, 0, d, 1] });
@@ -81381,7 +81686,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN02: a skin-required constraint of each kind is applied exactly when an applied skin's list for its kind names it (card #961) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KINDS = CORE_CONSTRAINT_KINDS;
     const constraintOf = (kind: (typeof KINDS)[number], mixZero: boolean): Obj => {
@@ -81461,7 +81766,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN03: both dumpers pose --skin <name> from the command line, and the core refuses a skin the model does not declare by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = withSkinLists(remainderPair({
       bones: [{ name: 'root' }, { name: 'r1', parent: 'root', skin: true, x: 3 }],
@@ -81508,7 +81813,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN04: the gate runs every skin of a row declaring several, judges what the merged view leaves out per skin, and a per-skin plant turns it red --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     const out = join(work, 'skin-order', 'out');
@@ -81541,7 +81846,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN05: on a row declaring one skin, that skin's dump is the merged dump, so the gate does not run it twice --
-  {
+  if (parent) {
     const probes: string[] = [];
     let one = 0;
     let dumps = 0;
@@ -81575,7 +81880,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN06: a slot on a bone the applied skin leaves inactive is not animated; one on an active bone showing nothing is (the commander's private finding) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KEYS: Record<string, Obj[]> = {
       rgba: [{ time: 0, color: 'ffffff00' }],
@@ -81743,7 +82048,7 @@ function runCoreSuite(): number {
   };
 
   // --- CC13: a constraint over a bone the posed skin leaves unposed poses as spine-core does, signed zeros included (issue #979) --
-  {
+  unit('CC13', () => {
     const probes: string[] = [];
     const population: UnposedProbe[] = [];
     const add = (label: string, pair: { spine: string; model: string; atlas: string }, physics: 'none' | 'step' = 'none'): void => {
@@ -81829,10 +82134,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${population.length} probes under --skin default, which leaves the skin-required "arm" inactive and "hand", "tip", "side" below it unposed — one- and two-bone iks on them in every inherit mode, iks aimed at them, transforms onto and from them in six flag sets and five modes, paths on them and walking a slot on one, physics under none and step, a later constraint moving their posed ancestor, a transform naming a posed and an inactive bone, and one- and two-bone iks naming the inactive bone (its frame zero or brought up to date first) — each bone's local values read onto posed rows: every bone row of every pose equal to spine-core's by Object.is where spine-core's two readings — sample after sample and on a fresh skeleton — agree (${unposedSamples} unposed bone-samples among them, through pose_oracle's unposed reading; ${historySamples} bone-samples where they disagree are HISTORY, compared with nothing); ${planted.join(', ')}, each only on probes reaching it`),
       'issue #979: the core wrote NaN into a bone an ik moved under an inactive parent where spine-core writes zeros, and an active constraint reading such a bone carried it on. The rules are measured on these rows, not on the grid compare reads — it excludes every unposed bone and spells -0 as 0',
     );
-  }
+  });
 
   // --- CC14: a posed bone under a collapsed frame poses as spine-core does (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     type Posed = { label: string; pair: { spine: string; model: string; atlas: string } };
     const population: Posed[] = [];
@@ -81895,7 +82200,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC15: a posed bone reading a value the runtime makes depend on its previous pass is refused by name (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const writers: Record<string, Obj> = {
       'one-bone ik on arm': { type: 'ik', name: 'w', bones: ['arm'], target: 't' },
@@ -81963,7 +82268,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO20: pose_oracle unposed compares the bones compare leaves out, to the bit and the sign of zero (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const row = (name: string, v: number[], active: 0 | 1, parent: string | null): BoneRow => [name, v[0], v[1], v[2], v[3], v[4], v[5], active, parent];
     const docOf = (bones: BoneRow[]): OracleDocument => ({ spec: ORACLE_RAW_SPEC, dumper: 'hand', source: { spine: null, hash: null }, options: signedOf('default'), bones: bones.map((b) => b[0]), slots: [], skins: ['default'], constraints: [], physics: [], paths: [], pathAttachments: [], setup: { bones, slots: [], drawOrder: [], attachments: [], clips: [], clipped: [], uvs: [] }, animations: [] });
@@ -82064,7 +82369,7 @@ function runCoreSuite(): number {
   };
 
   // --- CR01: every constraint population reads bit-exact through --raw, or misses only inside a HOLE named by its construct --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // The read-back, update-order and transform populations carried two HOLEs until issue #966's second cut (localFromWorld, an additive world-space shearY); both are closed (CW01–CW04), so every probe of every population must now read exact.
@@ -82087,7 +82392,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR02: every inherit mode reads bit-exact under a 1e9 amplifier, and each rejected operation order is named --
-  {
+  if (parent) {
     const probes: string[] = [];
     const modeProbe = (mode: string) => (rnd: () => number): { spine: string; model: string } => {
       const R = within(rnd);
@@ -82156,7 +82461,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR03: the raw walk poses every built row as spine-core's render and deform-measure recipes do, bit for bit --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tally = { frames: 0, bones: 0, drawn: 0, events: 0, jumps: 0, setups: 0 };
     let redSum = 0;
@@ -82291,7 +82596,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR04: the raw entry and the model reader refuse by name, and retain the colour, hull and sequence frame --
-  {
+  if (parent) {
     const probes: string[] = [];
     if (free !== null) {
       const refusal = (f: () => unknown): string => {
@@ -82346,7 +82651,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR05: pose_oracle --raw writes full doubles under its own spec, and compare reads them in ulps at tolerance 0 --
-  {
+  if (parent) {
     const probes: string[] = [];
     if (free !== null) {
       const text = (options: OracleOptions): string => dumpText(dumpSkeleton(loadOracleData(readFileSync(join(free.out, 'skeleton.json'), 'utf8'), readFileSync(join(free.out, 'skeleton.atlas'), 'utf8'), free.out), options));
@@ -82395,7 +82700,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR06: core_gate --raw reads every built row bit-exact, and a rejected corner order planted in a copy turns the rows drawing regions red --
-  {
+  unit('CR06', () => {
     const probes: string[] = [];
     const rawRows = gateBuilt(built, {}, undefined, true);
     for (const r of rawRows) if (r.verdict === 'DIFF' || r.verdict === 'REFUSED' || r.stepped?.verdict === 'DIFF') probes.push(`${r.name}: ${r.verdict}, stepped ${r.stepped?.verdict} — ${r.why ?? r.stepped?.why}`);
@@ -82436,10 +82741,10 @@ function runCoreSuite(): number {
       'issue #966: `core_gate --raw` is the census of last-bit gaps on every corpus; a plant only the raw reading sees is what shows the raw reading sees more than the grid',
     );
     if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the raw gate read the gallery's rows alone`);
-  }
+  });
 
   // --- CR07: the stepped physics population with every inherit mode reads bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(96631);
     const R = within(rnd);
@@ -82492,7 +82797,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR08: the bone channels' Bézier, the deform curve, the weighted sum and the region corners read bit-exact at a 1e9 amplifier --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(96681);
     const D = dec5(rnd);
@@ -82573,7 +82878,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR09: a deform segment, linear or Bézier, reads bit-exact whatever the key vertices' float32-ness; each end piece's form planted back is red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const counts: Record<string, number> = {};
     const N = 60;
@@ -82772,7 +83077,7 @@ function runCoreSuite(): number {
   const PLANT_PREFIX = 40;
 
   // --- CR10: CD05's slider-deform population reads bit-exact through --raw — additive at mix 1 over no current deform is the target, and each rejected form planted back is red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9555);
     const D = dec5(rnd);
@@ -82850,7 +83155,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR11: the slider populations read bit-exact through --raw — CQ06's and CQ02's rigs redrawn, and CQ03–CQ05's and CQ07's typed rigs --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // CQ06's generator, from its seed.
@@ -83104,7 +83409,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR12: a slider population keying mix on 85 % and time on 70 % of bone-less sliders reads bit-exact through --raw, and issue #991's reading planted back is red --
-  {
+  unit('CR12', () => {
     const probes: string[] = [];
     // Issue #991's scratch generator, brought in: one or two sliders, each a looped dial, an unlooped dial, a bone-less slider or a looped
     // bone-less one; every numeric bone timeline kind in their animations; the sample animation keying the dial and each slider's mix on
@@ -83231,10 +83536,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${exact} of ${N} rigs drawn in turn from seed 99101, bit-exact under --raw at tolerance 0 at 8 irrational, offset or grid samples, on setup and sampled bones, slots and region vertices — one or two sliders each, looped and unlooped dials on every property and bone-less sliders, every numeric bone timeline kind, mix and time keyed; issue #991's time and mix as keyed, planted, red on ${red} of the ${keyedRigs} rigs keying either (red of rigs, by shape and key: ${tagLine})`),
       'issue #993 ask 4: the population issue #991 was closed on, brought into the tree — richer than CQ06\'s (mix keyed on 85 % of sliders, time on 70 % of the bone-less), the rigs where #991\'s rule is about one in three',
     );
-  }
+  });
 
   // --- CR13: the path populations read bit-exact through --raw — CP02's walk, CP03's and CP06's probes, CP07's rigs, CP08's timelines and CP13's orders --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     const tally = (what: string, n: number, each: (i: number) => { pair: { spine: string; model: string }; options: OracleOptions }): void => {
@@ -83430,7 +83735,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR14: the ik and transform timelines at a sample and CK07's stepped physics population read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // CC08's keyed skeleton, at its 200 dense samples and at the grid.
@@ -83557,7 +83862,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR15: the deform, sequence and draw-order populations and CP05's stated lengths read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     /** A deform timeline's array one ulp out on every value — planted, a gap only the raw reading sees. */
@@ -83692,7 +83997,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR16: the stepped per-component, per-setting and per-timeline probes read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     const MIX_ULP_STEP = plantedRecord((r) => ({ ...r, mix: ulpOut(r.mix) }));
@@ -83751,7 +84056,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW01: localFromWorld reads a reflected bone's shear to the bit — the right angle taken off the other way, not the y angle turned by 180 --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const r = readBackRun(['normal', 'onlyTranslation'], N, 96621, { readBackReflectedShear: false });
@@ -83767,7 +84072,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW02: localFromWorld in noRotationOrReflection inverts the conformal frame as its axes over their lengths --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 200;
     const r = readBackRun(['noRotationOrReflection'], N, 96622, { readBackConformalInverse: false });
@@ -83783,7 +84088,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW03: localFromWorld in the noScale modes reads the columns in the frame of the rotation it reads first, the residual kept as shearX --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const r = readBackRun(['noScale', 'noScaleOrReflection'], N, 96623, { readBackNoScaleFrame: false });
@@ -83799,7 +84104,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW04: an additive world-space shearY turns the y column by (v + 90)·RAD − 90·RAD --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const rnd = seededRandom(96624);
@@ -83833,7 +84138,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW05: a transform timeline's keyed mixes reach the pose through the setup blend --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 60;
     const MIXES = ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'];
@@ -83892,7 +84197,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW06: a two-bone ik over a parent whose scale is 0 poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const rnd = seededRandom(96626);
@@ -83932,7 +84237,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW07: the ik thresholds the zero-scale probes found, each held at its edge --
-  {
+  if (parent) {
     const probes: string[] = [];
     const RAW_STRICT = signedOf('all', 'none', 1);
     const judge = (pair: { spine: string; model: string }, solver: Partial<SolverRules> = {}): string | null => strictBones(dumpSkeleton(loadOracleData(pair.spine, '', 'the cw07 probe'), RAW_STRICT), coreDump(readModel(pair.model, 'the cw07 probe'), RAW_STRICT, { solver }));
@@ -83976,7 +84281,7 @@ function runCoreSuite(): number {
   // negative x, so the drawn child sits at negative x. Both bones are in normal mode (the two-bone solver skips any
   // other) and the ik's mix is above 0. Measured before this was stated: a drawn population of scaleX or scaleY 0 at
   // any x and any mode put the plant red on 3 of 40.
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 400;
     const M = 40;
@@ -84045,7 +84350,7 @@ function runCoreSuite(): number {
   // corpus row decided it, so this population does.
   // ===========================================================================
   // --- CY01: a path timeline's keyed position, spacing and mixes reach the pose through the setup blend --
-  {
+  unit('CY01', () => {
     const probes: string[] = [];
     const N = 60;
     const RAW_FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
@@ -84165,10 +84470,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `path constraints keying position, spacing or mix (and all three) by Bézier segments over setup values that include 0 and negatives, every position, spacing and rotate mode, one to three bones, bit-exact under --raw at 40 irrational samples: ${read.join('; ')} — the value as keyed planted at every sample in place of setup + (value − setup)·1, for every field the population keys and for each mix channel alone`),
       'issue #984: the path timelines were read as keyed, as the transform timeline\'s mixes were before CW05, and no corpus row separates the two readings; measured, each of the three timelines and each mix channel alone goes through the setup blend at alpha 1',
     );
-  }
+  });
 
   // --- CZ01: a slider poses again every bone its animation keys, a timeline before its first key included --
-  {
+  if (parent) {
     const probes: string[] = [];
     // The three rigs of CQ06's population the old lcg never drew (issue #989), reduced to a world-space transform on b2 and one
     // slider after it that keys b2 or its parent before the timeline's first key — so it writes nothing, and b2 is still posed again.
@@ -84225,7 +84530,7 @@ function runCoreSuite(): number {
   }
 
   // --- CZ02: a slider's scale keys blend to the bit — additive as v·setup − setup, and the target itself at mix 1 --
-  {
+  if (parent) {
     const probes: string[] = [];
     // Typed in, no generator: five setup scales, five key values, five mixes, additive or not, over the setup or over a current an earlier slider moved.
     const SETUPS = [-1.7, -0.35, 0.4, 1.3, 2];
@@ -84277,7 +84582,7 @@ function runCoreSuite(): number {
   }
 
   // --- CZ03: a slider timeline's keyed time and mix reach the slider through the setup blend --
-  {
+  if (parent) {
     const probes: string[] = [];
     const RAW_SIX_IRR: OracleOptions = { ...SIX_IRR, raw: true };
     // Typed in, no generator: the rig issue #991 was reduced to (CQ06's probe 213 under the new sequence) — a looped dial on world
@@ -84363,7 +84668,7 @@ function runCoreSuite(): number {
   // against the object spine-core loaded, the two tables' spellings against
   // each other, and a row of the runtime's table misspelled turns red only that
   // row's timelines.
-  {
+  unit('CO27', () => {
     const probes: string[] = [];
     let builds: ReturnType<typeof additiveSeedBuilds> = [];
     try {
@@ -84489,7 +84794,7 @@ function runCoreSuite(): number {
       ),
       'issue #1025, cut 4c-5: A40 needs what each timeline does when applied additively, which only the runtime\'s probe answered; measured, it is not a function of the kind alone, so the core computes it from the document and is held cell by cell to the runtime it replaces',
     );
-  }
+  });
 
   // --- CO28: whom a physics timeline naming no constraint reaches, the core's reading against the runtime's --
   //
@@ -84503,7 +84808,7 @@ function runCoreSuite(): number {
   // the first, the values spread across the three, and every value global on
   // every one. Plants: a value read off its neighbour's flag, and `reset`
   // reading a flag.
-  {
+  if (parent) {
     const probes: string[] = [];
     const flagSets: Array<[string, Array<Record<string, boolean>>]> = [
       ['none global', [{}, {}, {}]],
@@ -84566,654 +84871,660 @@ function runCoreSuite(): number {
     );
   }
 
-  // ===========================================================================
-  // A10's looping walk through the core (issue #1025, cut 4c-5a): the walk
-  // `A10_NO_NAN_AFTER_STEPPING` takes — the setup pose reset, then every
-  // animation on a LOOPING track stepped 120 times by max(duration, 1) / 120 —
-  // posed by `src/core/walk.ts` and by spine-core, every number compared at
-  // tolerance 0, a non-finite one included (`compareWalkDocuments`).
-  // ===========================================================================
-  type WalkObj = Record<string, unknown>;
-  /** A bones-only skeleton spelled twice — the Spine file and the model — for the walk's seeded population. */
-  const loopingWalkPair = (rnd: () => number, durations: readonly number[], kinds: { physics: boolean; ik: boolean; transform: boolean; resets: boolean }): { spine: string; model: string; resetsAt: number[] } => {
-    const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
-    const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
-    const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
-    const bones: WalkObj[] = [{ name: 'root' }];
-    for (let j = 1; j <= 6; j++) {
-      const b: WalkObj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
-      if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
-      if (rnd() < 0.3) b.inherit = pick(MODES);
-      bones.push(b);
-    }
-    bones.push({ name: 't', parent: 'root', x: R(-100, 100), y: R(-100, 100) });
-    const names = bones.slice(1, 7).map((b) => b.name as string);
-    const constraints: WalkObj[] = [];
-    if (kinds.ik) constraints.push({ type: 'ik', name: 'ik', bones: [pick(names)], target: 't', mix: pick([1, R(0, 1)]) });
-    if (kinds.transform) constraints.push({ type: 'transform', name: 'tr', bones: [names[5]], source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1) });
-    const physics: string[] = [];
-    if (kinds.physics) {
-      for (let k = 0, n = 1 + Math.floor(rnd() * 2); k < n; k++) {
-        const c: WalkObj = { type: 'physics', name: `p${k}`, bone: pick(names) };
-        for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
-        if (!['x', 'y', 'rotate', 'scaleX', 'shearX'].some((f) => f in c)) c.rotate = 1;
-        for (const [f, lo, hi] of [['inertia', 0, 1], ['strength', 1, 300], ['damping', 0, 1], ['mass', 0.2, 3]] as const) if (rnd() < 0.4) c[f] = R(lo, hi);
-        constraints.push(c);
-        physics.push(c.name as string);
+  unit('CO25+CO26', () => {
+    // ===========================================================================
+    // A10's looping walk through the core (issue #1025, cut 4c-5a): the walk
+    // `A10_NO_NAN_AFTER_STEPPING` takes — the setup pose reset, then every
+    // animation on a LOOPING track stepped 120 times by max(duration, 1) / 120 —
+    // posed by `src/core/walk.ts` and by spine-core, every number compared at
+    // tolerance 0, a non-finite one included (`compareWalkDocuments`).
+    // ===========================================================================
+    type WalkObj = Record<string, unknown>;
+    /** A bones-only skeleton spelled twice — the Spine file and the model — for the walk's seeded population. */
+    const loopingWalkPair = (rnd: () => number, durations: readonly number[], kinds: { physics: boolean; ik: boolean; transform: boolean; resets: boolean }): { spine: string; model: string; resetsAt: number[] } => {
+      const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
+      const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+      const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+      const bones: WalkObj[] = [{ name: 'root' }];
+      for (let j = 1; j <= 6; j++) {
+        const b: WalkObj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+        if (rnd() < 0.3) b.inherit = pick(MODES);
+        bones.push(b);
       }
-    }
-    const spineAnims: WalkObj = {};
-    const modelAnims: WalkObj[] = [];
-    const resetsAt: number[] = [];
-    durations.forEach((d, ai) => {
-      const keyed = pick(names);
-      const later = (keys: WalkObj[]): WalkObj[] => keys.filter((k, i, a) => i === 0 || (k.time as number) > (a[i - 1].time as number));
-      const group: WalkObj = { [keyed]: { rotate: later([{ time: 0, value: R(-90, 90) }, { time: Math.round(d * 500) / 1000, value: R(-90, 90) }, { time: d, value: R(-90, 90) }]) }, t: { translate: later([{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: d, x: R(-30, 30), y: R(-30, 30) }]) } };
-      const anim: WalkObj = { bones: group };
-      const physicsTimelines: WalkObj[] = [];
-      if (kinds.physics && kinds.resets) {
-        const keyedPhysics: WalkObj = {};
-        for (const name of physics) {
-          const times = [...new Set([pick([0, d, R(0, d)]), pick([0, d, R(0, d)])])].sort((x, y) => x - y);
-          resetsAt.push(...times);
-          const resets = times.map((time) => ({ time }));
-          const mix = [{ time: 0, value: R(0.2, 1) }, ...(d > 0 ? [{ time: d, value: R(0.2, 1) }] : [])];
-          keyedPhysics[name] = { reset: resets, mix };
-          physicsTimelines.push({ name, timelines: [{ name: 'reset', keys: resets }, { name: 'mix', keys: mix }] });
+      bones.push({ name: 't', parent: 'root', x: R(-100, 100), y: R(-100, 100) });
+      const names = bones.slice(1, 7).map((b) => b.name as string);
+      const constraints: WalkObj[] = [];
+      if (kinds.ik) constraints.push({ type: 'ik', name: 'ik', bones: [pick(names)], target: 't', mix: pick([1, R(0, 1)]) });
+      if (kinds.transform) constraints.push({ type: 'transform', name: 'tr', bones: [names[5]], source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1) });
+      const physics: string[] = [];
+      if (kinds.physics) {
+        for (let k = 0, n = 1 + Math.floor(rnd() * 2); k < n; k++) {
+          const c: WalkObj = { type: 'physics', name: `p${k}`, bone: pick(names) };
+          for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
+          if (!['x', 'y', 'rotate', 'scaleX', 'shearX'].some((f) => f in c)) c.rotate = 1;
+          for (const [f, lo, hi] of [['inertia', 0, 1], ['strength', 1, 300], ['damping', 0, 1], ['mass', 0.2, 3]] as const) if (rnd() < 0.4) c[f] = R(lo, hi);
+          constraints.push(c);
+          physics.push(c.name as string);
         }
-        anim.physics = keyedPhysics;
       }
-      const ikKeys: WalkObj[] = kinds.ik ? [{ time: 0, mix: R(0, 1) }, ...(d > 0 ? [{ time: d, mix: R(0, 1) }] : [])] : [];
-      if (kinds.ik) anim.ik = { ik: ikKeys };
-      spineAnims[`a${ai}`] = anim;
-      modelAnims.push({
-        name: `a${ai}`, duration: 0,
-        bones: Object.entries(group).map(([name, tls]) => ({ name, timelines: Object.entries(tls as WalkObj).map(([k, keys]) => ({ name: k, keys })) })),
-        slots: [], constraints: { ik: kinds.ik ? [{ name: 'ik', keys: ikKeys }] : [], transform: [], path: [], physics: physicsTimelines, slider: [] }, attachments: [], drawOrder: [], events: [],
+      const spineAnims: WalkObj = {};
+      const modelAnims: WalkObj[] = [];
+      const resetsAt: number[] = [];
+      durations.forEach((d, ai) => {
+        const keyed = pick(names);
+        const later = (keys: WalkObj[]): WalkObj[] => keys.filter((k, i, a) => i === 0 || (k.time as number) > (a[i - 1].time as number));
+        const group: WalkObj = { [keyed]: { rotate: later([{ time: 0, value: R(-90, 90) }, { time: Math.round(d * 500) / 1000, value: R(-90, 90) }, { time: d, value: R(-90, 90) }]) }, t: { translate: later([{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: d, x: R(-30, 30), y: R(-30, 30) }]) } };
+        const anim: WalkObj = { bones: group };
+        const physicsTimelines: WalkObj[] = [];
+        if (kinds.physics && kinds.resets) {
+          const keyedPhysics: WalkObj = {};
+          for (const name of physics) {
+            const times = [...new Set([pick([0, d, R(0, d)]), pick([0, d, R(0, d)])])].sort((x, y) => x - y);
+            resetsAt.push(...times);
+            const resets = times.map((time) => ({ time }));
+            const mix = [{ time: 0, value: R(0.2, 1) }, ...(d > 0 ? [{ time: d, value: R(0.2, 1) }] : [])];
+            keyedPhysics[name] = { reset: resets, mix };
+            physicsTimelines.push({ name, timelines: [{ name: 'reset', keys: resets }, { name: 'mix', keys: mix }] });
+          }
+          anim.physics = keyedPhysics;
+        }
+        const ikKeys: WalkObj[] = kinds.ik ? [{ time: 0, mix: R(0, 1) }, ...(d > 0 ? [{ time: d, mix: R(0, 1) }] : [])] : [];
+        if (kinds.ik) anim.ik = { ik: ikKeys };
+        spineAnims[`a${ai}`] = anim;
+        modelAnims.push({
+          name: `a${ai}`, duration: 0,
+          bones: Object.entries(group).map(([name, tls]) => ({ name, timelines: Object.entries(tls as WalkObj).map(([k, keys]) => ({ name: k, keys })) })),
+          slots: [], constraints: { ik: kinds.ik ? [{ name: 'ik', keys: ikKeys }] : [], transform: [], path: [], physics: physicsTimelines, slider: [] }, attachments: [], drawOrder: [], events: [],
+        });
       });
-    });
-    return {
-      spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
-      model: JSON.stringify({
-        spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
-        bones: bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
-        slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
-        constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
-        events: [], animations: modelAnims,
-        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
-      }),
-      resetsAt,
+      return {
+        spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
+        model: JSON.stringify({
+          spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
+          bones: bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
+          slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
+          constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+          events: [], animations: modelAnims,
+          images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+        }),
+        resetsAt,
+      };
     };
-  };
-  /** The walk's seeded population: durations under, at and over a second (and 0), physics with reset keys anywhere in the animation, ik and transform. */
-  const WALK_DURATIONS = [0, 0.25, 0.4, 0.5, 0.77, 0.9, 1, 1.2, 2.5];
-  const walkPopulation = (n: number, seed: number): Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> => {
-    const rnd = seededRandom(seed);
-    const out: Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> = [];
-    for (let i = 0; i < n; i++) {
-      const durations = [WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)], WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)]];
-      const kinds = { physics: rnd() < 0.85, ik: rnd() < 0.4, transform: rnd() < 0.4, resets: rnd() < 0.8 };
-      const pair = loopingWalkPair(rnd, durations, kinds);
-      out.push({ i, spine: pair.spine, model: pair.model, physics: kinds.physics, resets: kinds.physics && kinds.resets && pair.resetsAt.length > 0, wraps: durations.some((d) => d < 1) });
-    }
-    return out;
-  };
-  const WALK_N = 60;
-  const walkProbes = walkPopulation(WALK_N, 102505);
-  /** A Spine file and its model document, both forged by `edit` — the walk's non-finite injections, on a built row. */
-  type WalkForge = (spine: WalkObj, model: WalkObj) => boolean;
-  const leafOfBones = (bones: WalkObj[]): WalkObj | undefined => {
-    const parents = new Set(bones.map((b) => b.parent));
-    return [...bones].reverse().find((b) => typeof b.parent === 'string' && !parents.has(b.name));
-  };
-  const firstAnimationOfBoth = (spine: WalkObj, model: WalkObj): { s: WalkObj; m: WalkObj; d: number } | null => {
-    const name = Object.keys((spine.animations ?? {}) as WalkObj)[0];
-    if (name === undefined) return null;
-    const s = (spine.animations as Record<string, WalkObj>)[name];
-    const m = (model.animations as WalkObj[]).find((a) => a.name === name);
-    if (m === undefined) return null;
-    let d = 0;
-    JSON.stringify(s, (k, v: unknown) => {
-      if (k === 'time' && typeof v === 'number') d = Math.max(d, v);
-      return v;
-    });
-    return { s, m, d: d > 0 ? d : 1 };
-  };
-  /** One bone timeline set on both sides: the Spine group's entry, and the document's `{ name, timelines }` list. */
-  const keyBoneOnBoth = (a: { s: WalkObj; m: WalkObj }, bone: string, timeline: string, keys: WalkObj[]): void => {
-    const group = (a.s.bones ??= {}) as Record<string, WalkObj>;
-    group[bone] = { ...(group[bone] ?? {}), [timeline]: keys };
-    const list = a.m.bones as Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }>;
-    let entry = list.find((b) => b.name === bone);
-    if (entry === undefined) {
-      entry = { name: bone, timelines: [] };
-      list.push(entry);
-    }
-    entry.timelines = [...entry.timelines.filter((t) => t.name !== timeline), { name: timeline, keys }];
-  };
-  const ROOT_OF_MAX = Math.sqrt(Number.MAX_VALUE);
-  const scaleChain = (factor: number): WalkForge => (spine, model) => {
-    const leaf = leafOfBones(spine.bones as WalkObj[]);
-    if (leaf === undefined) return false;
-    for (const name of [leaf.name, leaf.parent]) {
-      for (const bones of [spine.bones, model.bones] as WalkObj[][]) {
-        const b = bones.find((x) => x.name === name);
-        if (b !== undefined) b.scaleX = factor;
+    /** The walk's seeded population: durations under, at and over a second (and 0), physics with reset keys anywhere in the animation, ik and transform. */
+    const WALK_DURATIONS = [0, 0.25, 0.4, 0.5, 0.77, 0.9, 1, 1.2, 2.5];
+    const walkPopulation = (n: number, seed: number): Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> => {
+      const rnd = seededRandom(seed);
+      const out: Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> = [];
+      for (let i = 0; i < n; i++) {
+        const durations = [WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)], WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)]];
+        const kinds = { physics: rnd() < 0.85, ik: rnd() < 0.4, transform: rnd() < 0.4, resets: rnd() < 0.8 };
+        const pair = loopingWalkPair(rnd, durations, kinds);
+        out.push({ i, spine: pair.spine, model: pair.model, physics: kinds.physics, resets: kinds.physics && kinds.resets && pair.resetsAt.length > 0, wraps: durations.some((d) => d < 1) });
       }
-    }
-    return true;
-  };
-  const WALK_FORGES: Array<[string, WalkForge]> = [
-    // M95b's shape: a parent and its leaf each at twice the square root of the largest double — the leaf's a past it.
-    ['a scale chain past the largest double at the bone', scaleChain(2 * ROOT_OF_MAX)],
-    // M96's shape: nine tenths of it — every bone finite, the leaf's vertices not.
-    ['a scale chain past the largest double at the vertices', scaleChain(0.9 * ROOT_OF_MAX)],
-    // A translate key on a leaf at 2^128, the first number past float32's largest: Infinity once the key is read as float32, from the key on.
-    ['a translate key past float32 halfway through the first animation', (spine, model) => {
-      const leaf = leafOfBones(spine.bones as WalkObj[]);
-      const a = firstAnimationOfBoth(spine, model);
-      if (leaf === undefined || a === null) return false;
-      keyBoneOnBoth(a, leaf.name as string, 'translate', [{ time: 0, x: 0, y: 0 }, { time: a.d / 2, x: 2 ** 128, y: 0 }]);
-      return true;
-    }],
-    // A physics constraint's mass keyed to 0: its inverse Infinity, every offset it integrates NaN.
-    ['a physics mass keyed to 0', (spine, model) => {
-      const c = ((spine.constraints ?? []) as WalkObj[]).find((x) => x.type === 'physics');
-      const a = firstAnimationOfBoth(spine, model);
-      if (c === undefined || a === null) return false;
-      const keys = [{ time: 0, value: 0 }];
-      const group = (a.s.physics ??= {}) as Record<string, WalkObj>;
-      group[c.name as string] = { ...(group[c.name as string] ?? {}), mass: keys };
-      const list = (a.m.constraints as { physics: Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }> }).physics;
-      let entry = list.find((e) => e.name === c.name);
+      return out;
+    };
+    const WALK_N = 60;
+    const walkProbes = walkPopulation(WALK_N, 102505);
+    /** A Spine file and its model document, both forged by `edit` — the walk's non-finite injections, on a built row. */
+    type WalkForge = (spine: WalkObj, model: WalkObj) => boolean;
+    const leafOfBones = (bones: WalkObj[]): WalkObj | undefined => {
+      const parents = new Set(bones.map((b) => b.parent));
+      return [...bones].reverse().find((b) => typeof b.parent === 'string' && !parents.has(b.name));
+    };
+    const firstAnimationOfBoth = (spine: WalkObj, model: WalkObj): { s: WalkObj; m: WalkObj; d: number } | null => {
+      const name = Object.keys((spine.animations ?? {}) as WalkObj)[0];
+      if (name === undefined) return null;
+      const s = (spine.animations as Record<string, WalkObj>)[name];
+      const m = (model.animations as WalkObj[]).find((a) => a.name === name);
+      if (m === undefined) return null;
+      let d = 0;
+      JSON.stringify(s, (k, v: unknown) => {
+        if (k === 'time' && typeof v === 'number') d = Math.max(d, v);
+        return v;
+      });
+      return { s, m, d: d > 0 ? d : 1 };
+    };
+    /** One bone timeline set on both sides: the Spine group's entry, and the document's `{ name, timelines }` list. */
+    const keyBoneOnBoth = (a: { s: WalkObj; m: WalkObj }, bone: string, timeline: string, keys: WalkObj[]): void => {
+      const group = (a.s.bones ??= {}) as Record<string, WalkObj>;
+      group[bone] = { ...(group[bone] ?? {}), [timeline]: keys };
+      const list = a.m.bones as Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }>;
+      let entry = list.find((b) => b.name === bone);
       if (entry === undefined) {
-        entry = { name: c.name as string, timelines: [] };
+        entry = { name: bone, timelines: [] };
         list.push(entry);
       }
-      entry.timelines = [...entry.timelines.filter((t) => t.name !== 'mass'), { name: 'mass', keys }];
-      return true;
-    }],
-  ];
-  /** Every forge on every gallery row it applies to: the forged pair, both walks, the forge's label. */
-  const forgedWalks = (): Array<{ label: string; row: string; spine: string; atlas: string; model: string }> => {
-    const out: Array<{ label: string; row: string; spine: string; atlas: string; model: string }> = [];
-    for (const b of built.filter((r) => r.name.startsWith('gallery/') && r.exits.every((e) => e === 0))) {
-      const spineText = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
-      const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
-      const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
-      for (const [label, forge] of WALK_FORGES) {
-        const spine = JSON.parse(spineText) as WalkObj;
-        const model = JSON.parse(modelText) as WalkObj;
-        if (forge(spine, model)) out.push({ label, row: b.name, spine: JSON.stringify(spine), atlas, model: JSON.stringify(model) });
-      }
-    }
-    return out;
-  };
-  const forged = forgedWalks();
-  /** A seeded probe or a forged row, both walks, compared — `walkPlant` in the core's walk when a plant asks. */
-  const walkOf = (spine: string, atlas: string, model: string, where: string, walkPlant: WalkPlant = {}): WalkComparison | string => {
-    try {
-      return compareWalkDocuments(spineWalkDocument(loadOracleData(spine, atlas, where)), coreWalkDocument(readModel(model, where), undefined, {}, walkPlant));
-    } catch (err) {
-      if (err instanceof CoreInputError) return `${where}: the core refused it — ${err.message}`;
-      throw err;
-    }
-  };
-
-  // --- CO25: A10's looping walk through the core poses every built row, a seeded population and every non-finite injection as spine-core does --
-  {
-    const probes: string[] = [];
-    const sum = { poses: 0, numbers: 0, wrapped: 0, wrappedAnimations: 0, nonFinite: 0 };
-    const add = (c: WalkComparison): void => {
-      for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+      entry.timelines = [...entry.timelines.filter((t) => t.name !== timeline), { name: timeline, keys }];
     };
-    const rows = walkBuilt(built);
-    for (const r of rows) {
-      if (r.comparison !== null) add(r.comparison);
-      if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    }
-    let seededExact = 0;
-    let seededResets = 0;
-    for (const p of walkProbes) {
-      const c = walkOf(p.spine, '', p.model, `walk probe ${p.i}`);
-      if (typeof c === 'string') probes.push(c);
-      else {
-        add(c);
-        if (c.first === null) seededExact++;
-        else if (probes.length < 12) probes.push(`walk probe ${p.i}: ${c.first}`);
-        if (p.resets && p.wraps) seededResets++;
-      }
-    }
-    let forgedExact = 0;
-    let forgedNonFinite = 0;
-    for (const f of forged) {
-      const c = walkOf(f.spine, f.atlas, f.model, `${f.row} with ${f.label}`);
-      if (typeof c === 'string') probes.push(c);
-      else {
-        add(c);
-        if (c.first === null) forgedExact++;
-        else if (probes.length < 12) probes.push(`${f.row} with ${f.label}: ${c.first}`);
-        if (c.nonFinite > 0) forgedNonFinite++;
-      }
-    }
-    // The inactive-bone probes (the production corpus's sign-of-zero rig, rebuilt in public): bones the view leaves inactive that a
-    // transform constraint writes into hold the runtime's previous step — HISTORY (issue #979), counted apart and compared with nothing.
-    const inactiveRows = inactiveWalkProbes();
-    let history = 0;
-    let historySign = 0;
-    for (const r of inactiveRows) {
-      if (r.verdict !== 'IDENTICAL' || r.comparison === null) probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-      else {
-        add(r.comparison);
-        history += r.comparison.historyNumbers;
-        historySign += r.comparison.historySignOnly;
-      }
-    }
-    // Its plants, on the −150° probe (every applied step's four cells of four bones differ in sign alone, as on the production rig):
-    // the HISTORY class taken away, a value off on the inactive bone no constraint writes, and a value off on a HISTORY bone.
-    const pair = inactiveHistoryProbe(-150, 1, false);
-    const spineSide = spineWalkDocument(loadOracleData(pair.spine, '', 'the inactive-bone probe'));
-    const coreSide = (edit: (doc: ReturnType<typeof coreWalkDocument>) => void = () => {}): WalkComparison => {
-      const doc = coreWalkDocument(readModel(pair.model, 'the inactive-bone probe'));
-      edit(doc);
-      return compareWalkDocuments(spineSide, doc);
-    };
-    const offAt = (doc: ReturnType<typeof coreWalkDocument>, bone: string): void => {
-      const row = doc.animations[0].poses[0].bones.find((b) => b[0] === bone);
-      if (row !== undefined) row[5] += 1;
-    };
-    const clean = coreSide();
-    const noClass = coreSide((doc) => void delete doc.history);
-    const freeOff = coreSide((doc) => offAt(doc, 'free'));
-    const historyOff = coreSide((doc) => offAt(doc, 'k0'));
-    if (clean.first !== null || clean.historySignOnly === 0) probes.push(`the −150° probe unplanted: ${clean.first ?? `${clean.historySignOnly} sign-only number(s)`}`);
-    if (noClass.first === null) probes.push('with the HISTORY class taken away the −150° probe still read identical, so the class is not what holds it');
-    if (freeOff.first === null) probes.push('a value off on the inactive bone no constraint writes read identical — the class reaches past the bones a constraint writes');
-    if (historyOff.first !== null || historyOff.historyNumbers - historyOff.historySignOnly !== clean.historyNumbers - clean.historySignOnly + 1) probes.push(`a value off on a HISTORY bone read ${historyOff.first ?? `${historyOff.historyNumbers - historyOff.historySignOnly} value difference(s)`}, not one more value difference counted apart`);
-    probes.push(
-      ...floorProbes(
-        [
-          [sum.wrapped, 1, `${sum.wrapped} step(s) at or past the duration`],
-          [seededResets, 1, `${seededResets} seeded rig(s) keying a physics reset on an animation the walk wraps`],
-          [forgedNonFinite, WALK_FORGES.length, `${forgedNonFinite} forged walk(s) holding a non-finite value`],
-          [historySign, 1, `${historySign} HISTORY number(s) differing only in the sign of zero on the inactive-bone probes`],
-          [history - historySign, 1, `${history - historySign} HISTORY number(s) differing in value on the inactive-bone probes`],
-        ],
-        'so the walk was not held where it differs from the raw entry\'s',
-      ),
-    );
-    const ok = probes.length === 0;
-    say(
-      'CO25_A10S_LOOPING_WALK_THROUGH_THE_CORE_POSES_EVERY_ROW_A_SEEDED_POPULATION_AND_EVERY_NON_FINITE_INJECTION_AS_SPINE_CORE_DOES',
-      ok,
-      probeDetail(
-        ok,
-        probes.slice(0, 12),
-        `${rows.length} built row(s) walked identical (${rows.filter((r) => r.verdict === 'IDENTICAL').length}), ${seededExact} of ${walkProbes.length} seeded rig(s) (durations ${WALK_DURATIONS.join(', ')} s; physics, ik and transform; ${seededResets} keying a physics reset on a walk that wraps) and ${forgedExact} of ${forged.length} forged gallery walk(s) (${WALK_FORGES.map(([label]) => label).join('; ')}) exact: ` +
-          `${sum.poses} pose(s), ${sum.numbers} number(s) at tolerance 0, ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s), ${sum.nonFinite} pose(s) holding a non-finite value, kept in place on both sides; ` +
-          `${inactiveRows.length} inactive-bone probe(s) identical with ${history} HISTORY number(s) counted apart (${historySign} only in the sign of zero, ${history - historySign} in value) on bones a transform constraint writes while the view leaves them inactive; ` +
-          `the class taken away reads ${noClass.first === null ? 'identical' : 'DIFF'}, a value off on the inactive bone nothing writes ${freeOff.first === null ? 'identical' : 'DIFF'}, and one off on a HISTORY bone one more value counted apart`,
-      ),
-      'issue #1025, cut 4c-5a: A10 steps a LOOPING track past the duration and reads the value that is not finite — the two things the raw entry refuses on purpose — so the core walks it in its own entry, held to spine-core taking A10\'s own steps',
-    );
-    if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows, the seeded rigs and the forged walks alone`);
-  }
-
-  // --- CO26: each reading the looping walk rejected, planted in a copy, turns exactly the walks it reads red --
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    // Every walk the plants run on: the seeded rigs, and the forged gallery walks — with what each reaches.
-    const population = [
-      ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, spine: p.spine, atlas: '', model: p.model, physics: p.physics, resets: p.resets, forged: false })),
-      ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, spine: f.spine, atlas: f.atlas, model: f.model, physics: readModel(f.model).constraints.some((c) => c.kind === 'physics'), resets: false, forged: true })),
-    ];
-    const clean = new Map(population.map((p) => [p.where, walkOf(p.spine, p.atlas, p.model, p.where)]));
-    const plants: Array<[string, WalkPlant, (p: (typeof population)[number], c: WalkComparison) => boolean]> = [
-      // The wrap a step late: the first step past each duration applied at the duration, as a holding track would.
-      ['the wrap one step late', { time: (t, d, before) => (d > 0 && Math.floor(before / d) < Math.floor(t / d) ? d : loopedTime(t, d)) }, (_p, c) => c.wrapped > 0],
-      // The physics clock moved by how far the animation time moved rather than by the step: the two differ at the wrap.
-      ['the physics clock moved by the animation time', { clock: (_dt, moved) => moved }, (p) => p.physics],
-      // A non-finite value swallowed as 0, the way a walk reading the raw entry's nulls as numbers would.
-      ['a non-finite value swallowed as 0', { number: (v) => (Number.isFinite(v) ? v : 0) }, (_p, c) => c.nonFinite > 0],
-      // No reset key fired across the wrap — the reading this cut's measurement rejected.
-      ['no physics reset fired across the wrap', { wrapResets: false }, (p) => p.resets],
-    ];
-    for (const [label, plant, reads] of plants) {
-      const red: string[] = [];
-      const outside: string[] = [];
-      for (const p of population) {
-        const base = clean.get(p.where);
-        if (base === undefined || typeof base === 'string') continue;
-        const c = walkOf(p.spine, p.atlas, p.model, p.where, plant);
-        if (typeof c === 'string' || c.first === null) continue;
-        red.push(p.where);
-        if (!reads(p, base)) outside.push(p.where);
-      }
-      if (red.length === 0) probes.push(`${label}: no walk turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
-      read.push(`${label} → ${red.length} walk(s) red`);
-    }
-    // The non-finite plant reaches the forged walks and nothing else: every forged walk holding one turns red.
-    const swallowed = population.filter((p) => p.forged).filter((p) => {
-      const base = clean.get(p.where);
-      if (base === undefined || typeof base === 'string' || base.nonFinite === 0) return false;
-      const c = walkOf(p.spine, p.atlas, p.model, p.where, { number: (v) => (Number.isFinite(v) ? v : 0) });
-      return typeof c !== 'string' && c.first === null;
-    });
-    if (swallowed.length > 0) probes.push(`a non-finite value swallowed left [${swallowed.map((p) => p.where).slice(0, 4).join(', ')}] green`);
-    const ok = probes.length === 0;
-    say(
-      'CO26_EACH_READING_THE_LOOPING_WALK_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_WALKS_READING_IT_RED',
-      ok,
-      probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
-      'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
-    );
-  }
-
-  // ===========================================================================
-  // No skin set (issue #1051): what a fresh skeleton whose `setSkin` was never
-  // called shows over a document with skins and no `default` one, and over a
-  // `default` skin naming skin-required members — `underNoSkin`, posed through
-  // `noSkinView` by `render`, A10's walk and the model side of `validate()`.
-  // ===========================================================================
-  const noSkinWork = join(work, 'noskin');
-  const NOSKIN_MODES = ['none', 'plain', 'members'] as const;
-  const NOSKIN_N = 90;
-  const noSkinRnd = seededRandom(105101);
-  const noSkinPopulation: BuiltRow[] = [
-    ...noSkinProbeBuilds(join(noSkinWork, 'probes')),
-    ...Array.from({ length: NOSKIN_N }, (_v, i) => buildSpineSkeleton(`noskin seed ${i} (${NOSKIN_MODES[i % 3]})`, noSkinSeedSkeleton(noSkinRnd, NOSKIN_MODES[i % 3]), NOSKIN_SEED_ATLAS, join(noSkinWork, `seed${i}`))),
-  ];
-  const noSkinDocs = new Map(noSkinPopulation.filter((b) => b.exits.every((e) => e === 0)).map((b) => [b.name, readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)] as const));
-
-  // --- CO29: the no-skin view poses the probes and a seeded population as spine-core does, grid, raw, stepped, unposed and walked --
-  {
-    const probes: string[] = [];
-    for (const b of noSkinPopulation) if (b.exits.some((e) => e !== 0)) probes.push(`${b.name} did not build: ${readFileSync(join(b.out, '..', 'refused.txt'), 'utf8').trim().slice(0, 200)}`);
-    const rows = [...noSkinPopulation.filter((b) => noSkinDocs.has(b.name)).map((b) => noSkinRun(b.name, b.out, true))];
-    for (const r of rows) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    const walks = walkBuilt(noSkinPopulation.filter((b) => noSkinDocs.has(b.name)));
-    for (const w of walks) if (w.verdict !== 'IDENTICAL') probes.push(`${w.name} walked: ${w.verdict} — ${w.why}`);
-    // The tree's own rows in the class, posed the same way — none on a corpus whose every row has a plain default skin, which is said, not passed.
-    const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null);
-    for (const r of corpus.map((b) => noSkinRun(b.name, b.out, true))) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    // What the population reaches, off the documents: each class, and each construct the rule separates.
-    const docs = [...noSkinDocs.values()];
-    const byClass = (k: string | null): number => docs.filter((d) => noSkinClass(d) === k).length;
-    const fallback = (d: CompiledDocument): CompiledDocument['skins'][number] | undefined => d.skins.find((k) => k.name === 'default');
-    const writers = (d: CompiledDocument): Set<string> => new Set(d.constraints.flatMap((c) => (c.record !== undefined && 'bones' in c.record ? (c.record.bones as string[]) : [])));
-    const reach = {
-      defaultBones: docs.reduce((n, d) => n + (fallback(d)?.bones.length ?? 0), 0),
-      defaultConstraints: docs.reduce((n, d) => n + Object.values(fallback(d)?.constraints ?? {}).reduce((m, l) => m + l.length, 0), 0),
-      written: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && writers(d).has(b.name)).length, 0),
-      unwritten: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && !writers(d).has(b.name)).length, 0),
-      parents: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired !== true && d.bones.some((p) => p.name === b.parent && p.skinRequired === true)).length, 0),
-      namedOnly: docs.reduce((n, d) => n + d.slots.filter((sl) => sl.setup !== null && fallback(d)?.attachments[sl.name]?.[sl.setup] === undefined && d.skins.some((k) => k.attachments[sl.name]?.[sl.setup as string] !== undefined)).length, 0),
-    };
-    const sum = (f: (r: (typeof rows)[number]) => number): number => rows.reduce((n, r) => n + f(r), 0);
-    const walked = walks.reduce((n, w) => n + (w.comparison?.poses ?? 0), 0);
-    const history = walks.reduce((n, w) => n + (w.comparison?.historyNumbers ?? 0), 0);
-    probes.push(
-      ...floorProbes(
-        [
-          [byClass('no default skin'), NOSKIN_N / 3, `${byClass('no default skin')} document(s) with skins and no default one`],
-          [byClass('a default skin naming skin-required members'), NOSKIN_N / 3, `${byClass('a default skin naming skin-required members')} with a default skin naming skin-required members`],
-          [byClass(null), NOSKIN_N / 3, `${byClass(null)} with a plain default skin`],
-          [reach.defaultBones, 1, `${reach.defaultBones} skin-required bone(s) a default skin names`],
-          [reach.defaultConstraints, 1, `${reach.defaultConstraints} skin-required constraint(s) a default skin lists`],
-          [reach.written, 1, `${reach.written} skin-required bone(s) a constraint writes`],
-          [reach.unwritten, 1, `${reach.unwritten} skin-required bone(s) no constraint writes`],
-          [reach.parents, 1, `${reach.parents} bone(s) that are not skin-required under one that is`],
-          [reach.namedOnly, 1, `${reach.namedOnly} slot(s) whose setup placeholder only a named skin fills`],
-          [sum((r) => r.unposed?.boneSamples ?? 0), 1, 'unposed bone-samples compared to the bit'],
-          [history, 1, `${history} HISTORY number(s) on the walk (issue #979's class, counted apart)`],
-        ],
-        'so the no-skin rule was not held where it separates one reading from another',
-      ),
-    );
-    const ok = probes.length === 0;
-    say(
-      'CO29_THE_NO_SKIN_VIEW_POSES_THE_PROBES_AND_A_SEEDED_POPULATION_AS_SPINE_CORE_DOES_WITH_NO_SKIN_SET',
-      ok,
-      probeDetail(
-        ok,
-        probes.slice(0, 12),
-        `${rows.length} build(s) — the three probes and ${NOSKIN_N} seeded skeletons rebuilt through ingest and compile, ${byClass('no default skin')} with skins and no default one, ${byClass('a default skin naming skin-required members')} whose default names skin-required members, ${byClass(null)} with a plain default — ` +
-          `posed with no skin set by both dumpers under --raw at tolerance 0: every block, the stepped run and the unposed bones IDENTICAL over ${sum((r) => r.boneSamples)} bone-sample(s), ${sum((r) => r.slotRows)} slot row(s), ${sum((r) => r.attachmentRows)} setup attachment row(s), ${sum((r) => r.unposed?.boneSamples ?? 0)} unposed bone-sample(s) to the bit (${sum((r) => r.inactive)} bone(s) inactive at setup); ` +
-          `A10's walk identical on every one over ${walked} pose(s), ${history} HISTORY number(s) counted apart; reached: ${reach.defaultBones} skin-required bone(s) and ${reach.defaultConstraints} constraint(s) a default skin names, ${reach.written} skin-required bone(s) a constraint writes and ${reach.unwritten} none does, ${reach.parents} bone(s) under a skin-required one, ${reach.namedOnly} slot(s) only a named skin fills; ` +
-          `${corpus.length} tree row(s) in the class${corpus.length === 0 ? ' (every tree row has a plain default skin, so the probes and the seeds are the reading)' : ''}`,
-      ),
-      'issue #1051: the core refused to pose with no skin set over a document with skins and no default one, and over a default skin naming skin-required members, because that view was not measured; measured, a fresh skeleton applies no skin\'s bones or constraints — the default skin\'s included — and resolves every slot through the default skin alone, or through nothing',
-    );
-  }
-
-  // --- CO30: each reading the no-skin measurement rejected, planted in the view, turns exactly the builds it reads red --
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    const emptied = (k: CompiledDocument['skins'][number], what: 'bones' | 'constraints' | 'both'): CompiledDocument['skins'][number] => ({
-      ...k,
-      bones: what === 'constraints' ? k.bones : [],
-      constraints: what === 'bones' ? k.constraints : { ik: [], transform: [], path: [], physics: [], slider: [] },
-    });
-    const fallbackOf = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name === 'default');
-    /** The document's default skin with `what` kept and the rest emptied, posed as the named skin it is — or the measured view where there is no default skin. */
-    const asDefault = (what: 'bones' | 'constraints' | 'both') => (m: CompiledDocument): CompiledDocument => {
-      if (fallbackOf(m) === undefined) return underNoSkin(m);
-      const keep = what === 'both' ? null : what === 'bones' ? 'constraints' : 'bones';
-      return underSkin({ ...m, skins: m.skins.map((k) => (k.name === 'default' && keep !== null ? emptied(k, keep) : k)) }, 'default');
-    };
-    const firstNamed = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name !== 'default');
-    const plants: Array<[string, (m: CompiledDocument) => CompiledDocument, (d: CompiledDocument) => boolean, boolean]> = [
-      // Every skin-required bone posed as active, as if the flag were not read with no skin set.
-      ['a skin-required bone posed as active', (m) => underNoSkin({ ...m, bones: m.bones.map(({ skinRequired: _flag, ...b }) => b) }), (d) => d.bones.some((b) => b.skinRequired === true), true],
-      // The default skin's bones applied with no skin set, its constraints not.
-      ["the default skin's bones activated", asDefault('bones'), (d) => (fallbackOf(d)?.bones.length ?? 0) > 0, true],
-      // The default skin's constraints applied with no skin set, its bones not — red only where an applied one moves the pose.
-      ["the default skin's constraints applied", asDefault('constraints'), (d) => Object.values(fallbackOf(d)?.constraints ?? {}).some((l) => l.length > 0), false],
-      // The reading the refusal stood in for: no skin set read as the default skin, both lists applied.
-      ['no skin set read as the default skin', asDefault('both'), (d) => noSkinClass(d) === 'a default skin naming skin-required members', true],
-      // A slot resolved through the first named skin as well, as if the runtime fell back to the first skin where there is no default.
-      ['a slot showing what the first named skin gives it', (m) => {
-        const first = firstNamed(m);
-        return first === undefined ? underNoSkin(m) : underSkin({ ...m, skins: m.skins.map((k) => (k === first ? emptied(k, 'both') : k)) }, first.name);
-      }, (d) => {
-        const first = firstNamed(d);
-        return first !== undefined && d.slots.some((sl) => sl.setup !== null && first.attachments[sl.name]?.[sl.setup] !== undefined);
-      }, true],
-    ];
-    const population = noSkinPopulation.filter((b) => noSkinDocs.has(b.name));
-    for (const [label, view, reads, exact] of plants) {
-      const red: string[] = [];
-      const predicted = population.filter((b) => reads(noSkinDocs.get(b.name) as CompiledDocument)).map((b) => b.name);
-      for (const b of population) {
-        const r = noSkinRun(b.name, b.out, true, (m) => view(m));
-        if (r.verdict !== 'IDENTICAL') red.push(b.name);
-      }
-      const outside = red.filter((n) => !predicted.includes(n));
-      const quiet = predicted.filter((n) => !red.includes(n));
-      if (red.length === 0) probes.push(`${label}: no build turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
-      if (exact && quiet.length > 0) probes.push(`${label}: [${quiet.slice(0, 4).join(', ')}] read it and stayed green`);
-      read.push(`${label} → ${red.length} of ${predicted.length} reading it red`);
-    }
-    // The walk under the reading the refusal stood in for: red only on the documents whose default skin names members.
-    const walkRed: string[] = [];
-    for (const b of population) {
-      const pair = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => readFileSync(join(b.out, f), 'utf8'));
-      const c = compareWalkDocuments(spineWalkDocument(loadOracleData(pair[0], pair[1], b.name)), coreWalkDocument(readModel(pair[2], b.name), undefined, {}, {}, asDefault('both')));
-      if (c.first !== null) walkRed.push(b.name);
-    }
-    const walkOutside = walkRed.filter((n) => noSkinClass(noSkinDocs.get(n) as CompiledDocument) !== 'a default skin naming skin-required members');
-    if (walkRed.length === 0) probes.push('no skin set read as the default skin, on the walk: no walk turned red');
-    if (walkOutside.length > 0) probes.push(`no skin set read as the default skin, on the walk: red on [${walkOutside.slice(0, 4).join(', ')}], whose default skin names nothing`);
-    read.push(`the same on A10's walk → ${walkRed.length} walk(s) red, every one a default skin naming members`);
-    const ok = probes.length === 0;
-    say(
-      'CO30_EACH_NO_SKIN_READING_THE_MEASUREMENT_REJECTED_PLANTED_IN_THE_VIEW_TURNS_ONLY_THE_BUILDS_READING_IT_RED',
-      ok,
-      probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
-      'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
-    );
-  }
-
-  // --- CO31 and CO32: a slider's physics keys under the step (issue #1049) --
-  //
-  // Until issue #1049 the core applied none of a slider's physics keys, and on the selftest's own
-  // builds where a dial's animation keys `wind` or `gravity` of a constraint after it the bones left
-  // spine-core from the third step; a probe with a slot on the physics bone drew wrong frames through
-  // `render` with no refusal. The rule (`./src/core/constraints_slider.ts`, *Its physics timelines*)
-  // is held here on the core_gate probe rows and a seeded population, on all three stepped entries:
-  // A10's looping walk, `render`'s recipe on the raw entry (60 and 12 fps), and the oracle's stepped
-  // grid under `--raw`, every number at tolerance 0.
-  const SLIDER_PHYSICS_N = 150;
-  const sliderPhysicsRigs = (() => {
-    const rnd = seededRandom(104901);
-    return [
-      ...SLIDER_PHYSICS_PROBES.map(([label, shape]) => ({ where: `probe "${label}"`, shape })),
-      ...Array.from({ length: SLIDER_PHYSICS_N }, (_v, i) => ({ where: `slider-physics rig ${i}`, shape: sliderPhysicsShape(rnd) })),
-    ].map((r) => ({ ...r, pair: sliderPhysicsPair(r.shape) }));
-  })();
-  /** Every key a slider's animation holds on a physics timeline, with the slider's own flags. */
-  const sliderPhysicsKeys = (shape: SliderPhysicsShape): Array<{ slider: string; additive: boolean; kind: string; target: string; before: boolean }> =>
-    shape.sliders.flatMap((s) =>
-      (shape.animations.find((a) => a.name === s.animation)?.physics ?? []).map((k) => ({
-        slider: s.name,
-        additive: s.fields.additive === true,
-        kind: k.kind,
-        target: k.name,
-        // A named constraint updating before the slider: what the slider writes is not read this pass.
-        before: k.name !== '*' && shape.order.indexOf(k.name) < shape.order.indexOf(s.name),
-      })),
-    );
-  const STEPPED_RAW: OracleOptions = { ...STEPPED_OPTIONS, raw: true };
-  const PHYSICS_FIELDS = ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const;
-  /** spine-core's side of one rig on the three entries, taken once: the walk, each render frame's bones, the stepped grid. */
-  const sliderPhysicsSpine = sliderPhysicsRigs.map((r) => {
-    const data = loadOracleData(r.pair.spine, '', r.where);
-    const frames: Array<{ animation: string; fps: number; bones: number[][] }> = [];
-    for (const fps of [60, 12]) {
-      for (const anim of data.animations) {
-        const n = Math.round(anim.duration * fps) + 3;
-        const skeleton = new Skeleton(data);
-        const state = new AnimationState(new AnimationStateData(data));
-        state.setAnimation(0, anim.name, false);
-        skeleton.setupPose();
-        const bones: number[][] = [];
-        for (let i = 0; i <= n; i++) {
-          if (i > 0) {
-            state.update(1 / fps);
-            state.apply(skeleton);
-            skeleton.update(1 / fps);
-            skeleton.updateWorldTransform(Physics.update);
-          } else {
-            state.apply(skeleton);
-            skeleton.update(0);
-            skeleton.updateWorldTransform(Physics.reset);
-          }
-          bones.push(skeleton.bones.flatMap((b) => PHYSICS_FIELDS.map((f) => b.appliedPose[f])));
+    const ROOT_OF_MAX = Math.sqrt(Number.MAX_VALUE);
+    const scaleChain = (factor: number): WalkForge => (spine, model) => {
+      const leaf = leafOfBones(spine.bones as WalkObj[]);
+      if (leaf === undefined) return false;
+      for (const name of [leaf.name, leaf.parent]) {
+        for (const bones of [spine.bones, model.bones] as WalkObj[][]) {
+          const b = bones.find((x) => x.name === name);
+          if (b !== undefined) b.scaleX = factor;
         }
-        frames.push({ animation: anim.name, fps, bones });
       }
-    }
-    return { walk: spineWalkDocument(data), frames, grid: dumpSkeleton(data, STEPPED_RAW) };
-  });
-  /** The core's side of rig `k` against spine-core's, under `plant`: the first difference on any entry, or null, with what was compared. */
-  const sliderPhysicsRun = (k: number, plant: TimelinePlant = {}): { first: string | null; walkPoses: number; frames: number; numbers: number } => {
-    const r = sliderPhysicsRigs[k];
-    const spine = sliderPhysicsSpine[k];
-    const model = readModel(r.pair.model, r.where);
-    const walk = compareWalkDocuments(spine.walk, coreWalkDocument(model, undefined, plant));
-    let first = walk.first === null ? null : `${r.where} walk: ${walk.first}`;
-    let numbers = walk.numbers;
-    const doc = underSkin(model, 'default');
-    for (const f of spine.frames) {
-      const poses = poseRawAnimation(doc, f.animation, new Array<number>(f.bones.length - 1).fill(1 / f.fps), plant);
-      poses.forEach((p, i) => {
-        const ours = p.bones.flatMap((b) => PHYSICS_FIELDS.map((x) => b[x]));
-        numbers += ours.length;
-        const at = ours.findIndex((v, j) => !Object.is(v, f.bones[i][j]));
-        if (at >= 0) first ??= `${r.where} render ${f.fps} fps "${f.animation}" frame ${i}: bone "${p.bones[Math.floor(at / 6)].name}" ${PHYSICS_FIELDS[at % 6]} ${f.bones[i][at]} in spine-core, ${ours[at]} in the core`;
-      });
-    }
-    const grid = compareDumps(spine.grid, coreDump(model, STEPPED_RAW, plant, uvSourceOf('', r.pair.model)), { xy: 0, m: 0 });
-    if (!grid.identical) first ??= `${r.where} stepped grid: ${grid.first}`;
-    return { first, walkPoses: walk.poses, frames: spine.frames.reduce((n, f) => n + f.bones.length, 0), numbers };
-  };
-  const sliderPhysicsClean = sliderPhysicsRigs.map((_r, k) => sliderPhysicsRun(k));
-  {
-    const probes: string[] = [];
-    let exact = 0;
-    const sum = { walkPoses: 0, frames: 0, numbers: 0 };
-    sliderPhysicsClean.forEach((c) => {
-      for (const key of Object.keys(sum) as Array<keyof typeof sum>) sum[key] += c[key];
-      if (c.first === null) exact++;
-      else if (probes.length < 12) probes.push(c.first);
-    });
-    const keys = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
-    const rigsWith = (f: (k: ReturnType<typeof sliderPhysicsKeys>[number], shape: SliderPhysicsShape) => boolean): number => keys.filter((list, i) => list.some((k) => f(k, sliderPhysicsRigs[i].shape))).length;
-    const reach: Array<[number, string]> = [
-      [rigsWith((k) => k.kind !== 'reset' && !k.before), 'a slider keying a constraint that updates after it'],
-      [rigsWith((k) => k.kind !== 'reset' && k.before), 'a slider keying a constraint that updates before it'],
-      [rigsWith((k) => k.additive && (k.kind === 'wind' || k.kind === 'gravity')), 'an additive slider keying wind or gravity'],
-      [rigsWith((k) => k.additive && !['wind', 'gravity', 'reset'].includes(k.kind)), 'an additive slider keying a value that does not add'],
-      [rigsWith((k) => !k.additive && k.kind !== 'reset'), 'a slider that is not additive'],
-      [rigsWith((k) => k.kind === 'mass'), 'a mass key'],
-      [rigsWith((k) => k.kind === 'mix'), 'a mix key'],
-      [rigsWith((k) => k.kind === 'reset'), 'a reset key'],
-      [rigsWith((k) => k.target === '*'), 'the timeline naming no constraint'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.mix !== undefined)), 'a slider at a mix other than 1'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.loop === true)), 'a looping slider'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.bone === undefined)), 'a bone-less slider'],
-      [rigsWith((_k, s) => s.animations.some((a) => a.name === 'sway' && a.sliders.length > 0)), 'a track keying a slider\'s time or mix'],
+      return true;
+    };
+    const WALK_FORGES: Array<[string, WalkForge]> = [
+      // M95b's shape: a parent and its leaf each at twice the square root of the largest double — the leaf's a past it.
+      ['a scale chain past the largest double at the bone', scaleChain(2 * ROOT_OF_MAX)],
+      // M96's shape: nine tenths of it — every bone finite, the leaf's vertices not.
+      ['a scale chain past the largest double at the vertices', scaleChain(0.9 * ROOT_OF_MAX)],
+      // A translate key on a leaf at 2^128, the first number past float32's largest: Infinity once the key is read as float32, from the key on.
+      ['a translate key past float32 halfway through the first animation', (spine, model) => {
+        const leaf = leafOfBones(spine.bones as WalkObj[]);
+        const a = firstAnimationOfBoth(spine, model);
+        if (leaf === undefined || a === null) return false;
+        keyBoneOnBoth(a, leaf.name as string, 'translate', [{ time: 0, x: 0, y: 0 }, { time: a.d / 2, x: 2 ** 128, y: 0 }]);
+        return true;
+      }],
+      // A physics constraint's mass keyed to 0: its inverse Infinity, every offset it integrates NaN.
+      ['a physics mass keyed to 0', (spine, model) => {
+        const c = ((spine.constraints ?? []) as WalkObj[]).find((x) => x.type === 'physics');
+        const a = firstAnimationOfBoth(spine, model);
+        if (c === undefined || a === null) return false;
+        const keys = [{ time: 0, value: 0 }];
+        const group = (a.s.physics ??= {}) as Record<string, WalkObj>;
+        group[c.name as string] = { ...(group[c.name as string] ?? {}), mass: keys };
+        const list = (a.m.constraints as { physics: Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }> }).physics;
+        let entry = list.find((e) => e.name === c.name);
+        if (entry === undefined) {
+          entry = { name: c.name as string, timelines: [] };
+          list.push(entry);
+        }
+        entry.timelines = [...entry.timelines.filter((t) => t.name !== 'mass'), { name: 'mass', keys }];
+        return true;
+      }],
     ];
-    probes.push(...floorProbes(reach.map(([n, what]): [number, number, string] => [n, 1, `${n} rig(s) with ${what}`]), 'so the population does not reach every part of the rule'));
-    const ok = probes.length === 0;
-    say(
-      'CO31_A_SLIDERS_PHYSICS_KEYS_POSE_UNDER_THE_STEP_AS_SPINE_CORE_POSES_THEM_ON_THE_WALK_THE_RAW_ENTRY_AND_THE_STEPPED_GRID',
-      ok,
-      probeDetail(
+    /** Every forge on every gallery row it applies to: the forged pair, both walks, the forge's label. */
+    const forgedWalks = (): Array<{ label: string; row: string; spine: string; atlas: string; model: string }> => {
+      const out: Array<{ label: string; row: string; spine: string; atlas: string; model: string }> = [];
+      for (const b of built.filter((r) => r.name.startsWith('gallery/') && r.exits.every((e) => e === 0))) {
+        const spineText = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
+        const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
+        const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
+        for (const [label, forge] of WALK_FORGES) {
+          const spine = JSON.parse(spineText) as WalkObj;
+          const model = JSON.parse(modelText) as WalkObj;
+          if (forge(spine, model)) out.push({ label, row: b.name, spine: JSON.stringify(spine), atlas, model: JSON.stringify(model) });
+        }
+      }
+      return out;
+    };
+    const forged = forgedWalks();
+    /** A seeded probe or a forged row, both walks, compared — `walkPlant` in the core's walk when a plant asks. */
+    const walkOf = (spine: string, atlas: string, model: string, where: string, walkPlant: WalkPlant = {}): WalkComparison | string => {
+      try {
+        return compareWalkDocuments(spineWalkDocument(loadOracleData(spine, atlas, where)), coreWalkDocument(readModel(model, where), undefined, {}, walkPlant));
+      } catch (err) {
+        if (err instanceof CoreInputError) return `${where}: the core refused it — ${err.message}`;
+        throw err;
+      }
+    };
+
+    // --- CO25: A10's looping walk through the core poses every built row, a seeded population and every non-finite injection as spine-core does --
+    {
+      const probes: string[] = [];
+      const sum = { poses: 0, numbers: 0, wrapped: 0, wrappedAnimations: 0, nonFinite: 0 };
+      const add = (c: WalkComparison): void => {
+        for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+      };
+      const rows = walkBuilt(built);
+      for (const r of rows) {
+        if (r.comparison !== null) add(r.comparison);
+        if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      }
+      let seededExact = 0;
+      let seededResets = 0;
+      for (const p of walkProbes) {
+        const c = walkOf(p.spine, '', p.model, `walk probe ${p.i}`);
+        if (typeof c === 'string') probes.push(c);
+        else {
+          add(c);
+          if (c.first === null) seededExact++;
+          else if (probes.length < 12) probes.push(`walk probe ${p.i}: ${c.first}`);
+          if (p.resets && p.wraps) seededResets++;
+        }
+      }
+      let forgedExact = 0;
+      let forgedNonFinite = 0;
+      for (const f of forged) {
+        const c = walkOf(f.spine, f.atlas, f.model, `${f.row} with ${f.label}`);
+        if (typeof c === 'string') probes.push(c);
+        else {
+          add(c);
+          if (c.first === null) forgedExact++;
+          else if (probes.length < 12) probes.push(`${f.row} with ${f.label}: ${c.first}`);
+          if (c.nonFinite > 0) forgedNonFinite++;
+        }
+      }
+      // The inactive-bone probes (the production corpus's sign-of-zero rig, rebuilt in public): bones the view leaves inactive that a
+      // transform constraint writes into hold the runtime's previous step — HISTORY (issue #979), counted apart and compared with nothing.
+      const inactiveRows = inactiveWalkProbes();
+      let history = 0;
+      let historySign = 0;
+      for (const r of inactiveRows) {
+        if (r.verdict !== 'IDENTICAL' || r.comparison === null) probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+        else {
+          add(r.comparison);
+          history += r.comparison.historyNumbers;
+          historySign += r.comparison.historySignOnly;
+        }
+      }
+      // Its plants, on the −150° probe (every applied step's four cells of four bones differ in sign alone, as on the production rig):
+      // the HISTORY class taken away, a value off on the inactive bone no constraint writes, and a value off on a HISTORY bone.
+      const pair = inactiveHistoryProbe(-150, 1, false);
+      const spineSide = spineWalkDocument(loadOracleData(pair.spine, '', 'the inactive-bone probe'));
+      const coreSide = (edit: (doc: ReturnType<typeof coreWalkDocument>) => void = () => {}): WalkComparison => {
+        const doc = coreWalkDocument(readModel(pair.model, 'the inactive-bone probe'));
+        edit(doc);
+        return compareWalkDocuments(spineSide, doc);
+      };
+      const offAt = (doc: ReturnType<typeof coreWalkDocument>, bone: string): void => {
+        const row = doc.animations[0].poses[0].bones.find((b) => b[0] === bone);
+        if (row !== undefined) row[5] += 1;
+      };
+      const clean = coreSide();
+      const noClass = coreSide((doc) => void delete doc.history);
+      const freeOff = coreSide((doc) => offAt(doc, 'free'));
+      const historyOff = coreSide((doc) => offAt(doc, 'k0'));
+      if (clean.first !== null || clean.historySignOnly === 0) probes.push(`the −150° probe unplanted: ${clean.first ?? `${clean.historySignOnly} sign-only number(s)`}`);
+      if (noClass.first === null) probes.push('with the HISTORY class taken away the −150° probe still read identical, so the class is not what holds it');
+      if (freeOff.first === null) probes.push('a value off on the inactive bone no constraint writes read identical — the class reaches past the bones a constraint writes');
+      if (historyOff.first !== null || historyOff.historyNumbers - historyOff.historySignOnly !== clean.historyNumbers - clean.historySignOnly + 1) probes.push(`a value off on a HISTORY bone read ${historyOff.first ?? `${historyOff.historyNumbers - historyOff.historySignOnly} value difference(s)`}, not one more value difference counted apart`);
+      probes.push(
+        ...floorProbes(
+          [
+            [sum.wrapped, 1, `${sum.wrapped} step(s) at or past the duration`],
+            [seededResets, 1, `${seededResets} seeded rig(s) keying a physics reset on an animation the walk wraps`],
+            [forgedNonFinite, WALK_FORGES.length, `${forgedNonFinite} forged walk(s) holding a non-finite value`],
+            [historySign, 1, `${historySign} HISTORY number(s) differing only in the sign of zero on the inactive-bone probes`],
+            [history - historySign, 1, `${history - historySign} HISTORY number(s) differing in value on the inactive-bone probes`],
+          ],
+          'so the walk was not held where it differs from the raw entry\'s',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO25_A10S_LOOPING_WALK_THROUGH_THE_CORE_POSES_EVERY_ROW_A_SEEDED_POPULATION_AND_EVERY_NON_FINITE_INJECTION_AS_SPINE_CORE_DOES',
         ok,
-        probes.slice(0, 12),
-        `${exact} of ${sliderPhysicsRigs.length} rig(s) exact — the ${SLIDER_PHYSICS_PROBES.length} core_gate probe rows and ${SLIDER_PHYSICS_N} seeded — on A10's looping walk (${sum.walkPoses} pose(s)), render's recipe on the raw entry at 60 and 12 fps (${sum.frames} frame(s)) and the oracle's stepped grid under --raw: ${sum.numbers} walk and frame number(s) at tolerance 0; the population reaches ${reach.map(([n, what]) => `${what} (${n})`).join(', ')}`,
-      ),
-      'issue #1049: a slider applies its animation\'s physics keys to the pass\'s physics records at its place in the update order — the core applied none of them, and a constraint after the slider integrated without the wind or gravity it wrote: render drew a wrong frame with no refusal and A10\'s walk refused the class by name',
-    );
-  }
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    const keysOf = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
-    const plants: Array<[string, Partial<SolverRules>, (keys: ReturnType<typeof sliderPhysicsKeys>) => boolean]> = [
-      ['a slider\'s physics keys write nothing (the core before issue #1049)', { sliderWritesPhysics: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before)],
-      ['a key that does not add blends from the setup value, not the current one', { sliderPhysicsFromCurrent: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before && !(k.additive && (k.kind === 'wind' || k.kind === 'gravity')))],
-      ['every value kind adds under an additive slider', { sliderPhysicsAddsWindGravityOnly: false }, (keys) => keys.some((k) => k.additive && !k.before && !['wind', 'gravity', 'reset'].includes(k.kind))],
-      ['a mass key blends the inverse mass', { sliderPhysicsBlendsMass: false }, (keys) => keys.some((k) => k.kind === 'mass' && !k.before)],
-      // A write that outlasts its pass reaches a constraint before the slider too, on the next step.
-      ['what a slider wrote stands on the next step', { sliderPhysicsLastsOnePass: false }, (keys) => keys.some((k) => k.kind !== 'reset')],
-      ['a reset key at or before the slider\'s time fires on every pass', { sliderPhysicsResetIsDead: false }, (keys) => keys.some((k) => k.kind === 'reset')],
-    ];
-    for (const [label, solver, reads] of plants) {
-      const red: string[] = [];
-      const outside: string[] = [];
-      sliderPhysicsRigs.forEach((r, k) => {
-        if (sliderPhysicsClean[k].first !== null || sliderPhysicsRun(k, { solver }).first === null) return;
-        red.push(r.where);
-        if (!reads(keysOf[k])) outside.push(r.where);
-      });
-      if (red.length === 0) probes.push(`${label}: no rig turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which key nothing it reads`);
-      read.push(`${label} → ${red.length} rig(s) red${red.some((w) => w.startsWith('probe')) ? ` (${red.filter((w) => w.startsWith('probe')).length} probe row(s))` : ''}`);
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${rows.length} built row(s) walked identical (${rows.filter((r) => r.verdict === 'IDENTICAL').length}), ${seededExact} of ${walkProbes.length} seeded rig(s) (durations ${WALK_DURATIONS.join(', ')} s; physics, ik and transform; ${seededResets} keying a physics reset on a walk that wraps) and ${forgedExact} of ${forged.length} forged gallery walk(s) (${WALK_FORGES.map(([label]) => label).join('; ')}) exact: ` +
+            `${sum.poses} pose(s), ${sum.numbers} number(s) at tolerance 0, ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s), ${sum.nonFinite} pose(s) holding a non-finite value, kept in place on both sides; ` +
+            `${inactiveRows.length} inactive-bone probe(s) identical with ${history} HISTORY number(s) counted apart (${historySign} only in the sign of zero, ${history - historySign} in value) on bones a transform constraint writes while the view leaves them inactive; ` +
+            `the class taken away reads ${noClass.first === null ? 'identical' : 'DIFF'}, a value off on the inactive bone nothing writes ${freeOff.first === null ? 'identical' : 'DIFF'}, and one off on a HISTORY bone one more value counted apart`,
+        ),
+        'issue #1025, cut 4c-5a: A10 steps a LOOPING track past the duration and reads the value that is not finite — the two things the raw entry refuses on purpose — so the core walks it in its own entry, held to spine-core taking A10\'s own steps',
+      );
+      if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows, the seeded rigs and the forged walks alone`);
     }
-    const ok = probes.length === 0;
-    say(
-      'CO32_EACH_READING_A_SLIDERS_PHYSICS_KEYS_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_RIGS_KEYING_WHAT_IT_CHANGES_RED',
-      ok,
-      probeDetail(ok, probes, `over ${sliderPhysicsRigs.length} rig(s) — the probe rows and the seeded population of CO31: ${read.join('; ')}; each red only on a rig whose sliders key what the plant changes on a constraint that updates after them (a reset key, and a write that outlasts its pass, wherever the constraint stands)`),
-      'issue #1049: the rule held on a population is a measurement only while each reading it rejected is seen to differ there — that the keys write, from which value, which kinds add, how a mass blends, how long a write lasts and whether a reset key fires',
-    );
-  }
+
+    // --- CO26: each reading the looping walk rejected, planted in a copy, turns exactly the walks it reads red --
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      // Every walk the plants run on: the seeded rigs, and the forged gallery walks — with what each reaches.
+      const population = [
+        ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, spine: p.spine, atlas: '', model: p.model, physics: p.physics, resets: p.resets, forged: false })),
+        ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, spine: f.spine, atlas: f.atlas, model: f.model, physics: readModel(f.model).constraints.some((c) => c.kind === 'physics'), resets: false, forged: true })),
+      ];
+      const clean = new Map(population.map((p) => [p.where, walkOf(p.spine, p.atlas, p.model, p.where)]));
+      const plants: Array<[string, WalkPlant, (p: (typeof population)[number], c: WalkComparison) => boolean]> = [
+        // The wrap a step late: the first step past each duration applied at the duration, as a holding track would.
+        ['the wrap one step late', { time: (t, d, before) => (d > 0 && Math.floor(before / d) < Math.floor(t / d) ? d : loopedTime(t, d)) }, (_p, c) => c.wrapped > 0],
+        // The physics clock moved by how far the animation time moved rather than by the step: the two differ at the wrap.
+        ['the physics clock moved by the animation time', { clock: (_dt, moved) => moved }, (p) => p.physics],
+        // A non-finite value swallowed as 0, the way a walk reading the raw entry's nulls as numbers would.
+        ['a non-finite value swallowed as 0', { number: (v) => (Number.isFinite(v) ? v : 0) }, (_p, c) => c.nonFinite > 0],
+        // No reset key fired across the wrap — the reading this cut's measurement rejected.
+        ['no physics reset fired across the wrap', { wrapResets: false }, (p) => p.resets],
+      ];
+      for (const [label, plant, reads] of plants) {
+        const red: string[] = [];
+        const outside: string[] = [];
+        for (const p of population) {
+          const base = clean.get(p.where);
+          if (base === undefined || typeof base === 'string') continue;
+          const c = walkOf(p.spine, p.atlas, p.model, p.where, plant);
+          if (typeof c === 'string' || c.first === null) continue;
+          red.push(p.where);
+          if (!reads(p, base)) outside.push(p.where);
+        }
+        if (red.length === 0) probes.push(`${label}: no walk turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+        read.push(`${label} → ${red.length} walk(s) red`);
+      }
+      // The non-finite plant reaches the forged walks and nothing else: every forged walk holding one turns red.
+      const swallowed = population.filter((p) => p.forged).filter((p) => {
+        const base = clean.get(p.where);
+        if (base === undefined || typeof base === 'string' || base.nonFinite === 0) return false;
+        const c = walkOf(p.spine, p.atlas, p.model, p.where, { number: (v) => (Number.isFinite(v) ? v : 0) });
+        return typeof c !== 'string' && c.first === null;
+      });
+      if (swallowed.length > 0) probes.push(`a non-finite value swallowed left [${swallowed.map((p) => p.where).slice(0, 4).join(', ')}] green`);
+      const ok = probes.length === 0;
+      say(
+        'CO26_EACH_READING_THE_LOOPING_WALK_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_WALKS_READING_IT_RED',
+        ok,
+        probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
+        'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
+      );
+    }
+  });
+
+  unit('CO29+CO30', () => {
+    // ===========================================================================
+    // No skin set (issue #1051): what a fresh skeleton whose `setSkin` was never
+    // called shows over a document with skins and no `default` one, and over a
+    // `default` skin naming skin-required members — `underNoSkin`, posed through
+    // `noSkinView` by `render`, A10's walk and the model side of `validate()`.
+    // ===========================================================================
+    const noSkinWork = join(work, 'noskin');
+    const NOSKIN_MODES = ['none', 'plain', 'members'] as const;
+    const NOSKIN_N = 90;
+    const noSkinRnd = seededRandom(105101);
+    const noSkinPopulation: BuiltRow[] = [
+      ...noSkinProbeBuilds(join(noSkinWork, 'probes')),
+      ...Array.from({ length: NOSKIN_N }, (_v, i) => buildSpineSkeleton(`noskin seed ${i} (${NOSKIN_MODES[i % 3]})`, noSkinSeedSkeleton(noSkinRnd, NOSKIN_MODES[i % 3]), NOSKIN_SEED_ATLAS, join(noSkinWork, `seed${i}`))),
+    ];
+    const noSkinDocs = new Map(noSkinPopulation.filter((b) => b.exits.every((e) => e === 0)).map((b) => [b.name, readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)] as const));
+
+    // --- CO29: the no-skin view poses the probes and a seeded population as spine-core does, grid, raw, stepped, unposed and walked --
+    {
+      const probes: string[] = [];
+      for (const b of noSkinPopulation) if (b.exits.some((e) => e !== 0)) probes.push(`${b.name} did not build: ${readFileSync(join(b.out, '..', 'refused.txt'), 'utf8').trim().slice(0, 200)}`);
+      const rows = [...noSkinPopulation.filter((b) => noSkinDocs.has(b.name)).map((b) => noSkinRun(b.name, b.out, true))];
+      for (const r of rows) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      const walks = walkBuilt(noSkinPopulation.filter((b) => noSkinDocs.has(b.name)));
+      for (const w of walks) if (w.verdict !== 'IDENTICAL') probes.push(`${w.name} walked: ${w.verdict} — ${w.why}`);
+      // The tree's own rows in the class, posed the same way — none on a corpus whose every row has a plain default skin, which is said, not passed.
+      const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null);
+      for (const r of corpus.map((b) => noSkinRun(b.name, b.out, true))) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      // What the population reaches, off the documents: each class, and each construct the rule separates.
+      const docs = [...noSkinDocs.values()];
+      const byClass = (k: string | null): number => docs.filter((d) => noSkinClass(d) === k).length;
+      const fallback = (d: CompiledDocument): CompiledDocument['skins'][number] | undefined => d.skins.find((k) => k.name === 'default');
+      const writers = (d: CompiledDocument): Set<string> => new Set(d.constraints.flatMap((c) => (c.record !== undefined && 'bones' in c.record ? (c.record.bones as string[]) : [])));
+      const reach = {
+        defaultBones: docs.reduce((n, d) => n + (fallback(d)?.bones.length ?? 0), 0),
+        defaultConstraints: docs.reduce((n, d) => n + Object.values(fallback(d)?.constraints ?? {}).reduce((m, l) => m + l.length, 0), 0),
+        written: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && writers(d).has(b.name)).length, 0),
+        unwritten: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && !writers(d).has(b.name)).length, 0),
+        parents: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired !== true && d.bones.some((p) => p.name === b.parent && p.skinRequired === true)).length, 0),
+        namedOnly: docs.reduce((n, d) => n + d.slots.filter((sl) => sl.setup !== null && fallback(d)?.attachments[sl.name]?.[sl.setup] === undefined && d.skins.some((k) => k.attachments[sl.name]?.[sl.setup as string] !== undefined)).length, 0),
+      };
+      const sum = (f: (r: (typeof rows)[number]) => number): number => rows.reduce((n, r) => n + f(r), 0);
+      const walked = walks.reduce((n, w) => n + (w.comparison?.poses ?? 0), 0);
+      const history = walks.reduce((n, w) => n + (w.comparison?.historyNumbers ?? 0), 0);
+      probes.push(
+        ...floorProbes(
+          [
+            [byClass('no default skin'), NOSKIN_N / 3, `${byClass('no default skin')} document(s) with skins and no default one`],
+            [byClass('a default skin naming skin-required members'), NOSKIN_N / 3, `${byClass('a default skin naming skin-required members')} with a default skin naming skin-required members`],
+            [byClass(null), NOSKIN_N / 3, `${byClass(null)} with a plain default skin`],
+            [reach.defaultBones, 1, `${reach.defaultBones} skin-required bone(s) a default skin names`],
+            [reach.defaultConstraints, 1, `${reach.defaultConstraints} skin-required constraint(s) a default skin lists`],
+            [reach.written, 1, `${reach.written} skin-required bone(s) a constraint writes`],
+            [reach.unwritten, 1, `${reach.unwritten} skin-required bone(s) no constraint writes`],
+            [reach.parents, 1, `${reach.parents} bone(s) that are not skin-required under one that is`],
+            [reach.namedOnly, 1, `${reach.namedOnly} slot(s) whose setup placeholder only a named skin fills`],
+            [sum((r) => r.unposed?.boneSamples ?? 0), 1, 'unposed bone-samples compared to the bit'],
+            [history, 1, `${history} HISTORY number(s) on the walk (issue #979's class, counted apart)`],
+          ],
+          'so the no-skin rule was not held where it separates one reading from another',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO29_THE_NO_SKIN_VIEW_POSES_THE_PROBES_AND_A_SEEDED_POPULATION_AS_SPINE_CORE_DOES_WITH_NO_SKIN_SET',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${rows.length} build(s) — the three probes and ${NOSKIN_N} seeded skeletons rebuilt through ingest and compile, ${byClass('no default skin')} with skins and no default one, ${byClass('a default skin naming skin-required members')} whose default names skin-required members, ${byClass(null)} with a plain default — ` +
+            `posed with no skin set by both dumpers under --raw at tolerance 0: every block, the stepped run and the unposed bones IDENTICAL over ${sum((r) => r.boneSamples)} bone-sample(s), ${sum((r) => r.slotRows)} slot row(s), ${sum((r) => r.attachmentRows)} setup attachment row(s), ${sum((r) => r.unposed?.boneSamples ?? 0)} unposed bone-sample(s) to the bit (${sum((r) => r.inactive)} bone(s) inactive at setup); ` +
+            `A10's walk identical on every one over ${walked} pose(s), ${history} HISTORY number(s) counted apart; reached: ${reach.defaultBones} skin-required bone(s) and ${reach.defaultConstraints} constraint(s) a default skin names, ${reach.written} skin-required bone(s) a constraint writes and ${reach.unwritten} none does, ${reach.parents} bone(s) under a skin-required one, ${reach.namedOnly} slot(s) only a named skin fills; ` +
+            `${corpus.length} tree row(s) in the class${corpus.length === 0 ? ' (every tree row has a plain default skin, so the probes and the seeds are the reading)' : ''}`,
+        ),
+        'issue #1051: the core refused to pose with no skin set over a document with skins and no default one, and over a default skin naming skin-required members, because that view was not measured; measured, a fresh skeleton applies no skin\'s bones or constraints — the default skin\'s included — and resolves every slot through the default skin alone, or through nothing',
+      );
+    }
+
+    // --- CO30: each reading the no-skin measurement rejected, planted in the view, turns exactly the builds it reads red --
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const emptied = (k: CompiledDocument['skins'][number], what: 'bones' | 'constraints' | 'both'): CompiledDocument['skins'][number] => ({
+        ...k,
+        bones: what === 'constraints' ? k.bones : [],
+        constraints: what === 'bones' ? k.constraints : { ik: [], transform: [], path: [], physics: [], slider: [] },
+      });
+      const fallbackOf = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name === 'default');
+      /** The document's default skin with `what` kept and the rest emptied, posed as the named skin it is — or the measured view where there is no default skin. */
+      const asDefault = (what: 'bones' | 'constraints' | 'both') => (m: CompiledDocument): CompiledDocument => {
+        if (fallbackOf(m) === undefined) return underNoSkin(m);
+        const keep = what === 'both' ? null : what === 'bones' ? 'constraints' : 'bones';
+        return underSkin({ ...m, skins: m.skins.map((k) => (k.name === 'default' && keep !== null ? emptied(k, keep) : k)) }, 'default');
+      };
+      const firstNamed = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name !== 'default');
+      const plants: Array<[string, (m: CompiledDocument) => CompiledDocument, (d: CompiledDocument) => boolean, boolean]> = [
+        // Every skin-required bone posed as active, as if the flag were not read with no skin set.
+        ['a skin-required bone posed as active', (m) => underNoSkin({ ...m, bones: m.bones.map(({ skinRequired: _flag, ...b }) => b) }), (d) => d.bones.some((b) => b.skinRequired === true), true],
+        // The default skin's bones applied with no skin set, its constraints not.
+        ["the default skin's bones activated", asDefault('bones'), (d) => (fallbackOf(d)?.bones.length ?? 0) > 0, true],
+        // The default skin's constraints applied with no skin set, its bones not — red only where an applied one moves the pose.
+        ["the default skin's constraints applied", asDefault('constraints'), (d) => Object.values(fallbackOf(d)?.constraints ?? {}).some((l) => l.length > 0), false],
+        // The reading the refusal stood in for: no skin set read as the default skin, both lists applied.
+        ['no skin set read as the default skin', asDefault('both'), (d) => noSkinClass(d) === 'a default skin naming skin-required members', true],
+        // A slot resolved through the first named skin as well, as if the runtime fell back to the first skin where there is no default.
+        ['a slot showing what the first named skin gives it', (m) => {
+          const first = firstNamed(m);
+          return first === undefined ? underNoSkin(m) : underSkin({ ...m, skins: m.skins.map((k) => (k === first ? emptied(k, 'both') : k)) }, first.name);
+        }, (d) => {
+          const first = firstNamed(d);
+          return first !== undefined && d.slots.some((sl) => sl.setup !== null && first.attachments[sl.name]?.[sl.setup] !== undefined);
+        }, true],
+      ];
+      const population = noSkinPopulation.filter((b) => noSkinDocs.has(b.name));
+      for (const [label, view, reads, exact] of plants) {
+        const red: string[] = [];
+        const predicted = population.filter((b) => reads(noSkinDocs.get(b.name) as CompiledDocument)).map((b) => b.name);
+        for (const b of population) {
+          const r = noSkinRun(b.name, b.out, true, (m) => view(m));
+          if (r.verdict !== 'IDENTICAL') red.push(b.name);
+        }
+        const outside = red.filter((n) => !predicted.includes(n));
+        const quiet = predicted.filter((n) => !red.includes(n));
+        if (red.length === 0) probes.push(`${label}: no build turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+        if (exact && quiet.length > 0) probes.push(`${label}: [${quiet.slice(0, 4).join(', ')}] read it and stayed green`);
+        read.push(`${label} → ${red.length} of ${predicted.length} reading it red`);
+      }
+      // The walk under the reading the refusal stood in for: red only on the documents whose default skin names members.
+      const walkRed: string[] = [];
+      for (const b of population) {
+        const pair = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => readFileSync(join(b.out, f), 'utf8'));
+        const c = compareWalkDocuments(spineWalkDocument(loadOracleData(pair[0], pair[1], b.name)), coreWalkDocument(readModel(pair[2], b.name), undefined, {}, {}, asDefault('both')));
+        if (c.first !== null) walkRed.push(b.name);
+      }
+      const walkOutside = walkRed.filter((n) => noSkinClass(noSkinDocs.get(n) as CompiledDocument) !== 'a default skin naming skin-required members');
+      if (walkRed.length === 0) probes.push('no skin set read as the default skin, on the walk: no walk turned red');
+      if (walkOutside.length > 0) probes.push(`no skin set read as the default skin, on the walk: red on [${walkOutside.slice(0, 4).join(', ')}], whose default skin names nothing`);
+      read.push(`the same on A10's walk → ${walkRed.length} walk(s) red, every one a default skin naming members`);
+      const ok = probes.length === 0;
+      say(
+        'CO30_EACH_NO_SKIN_READING_THE_MEASUREMENT_REJECTED_PLANTED_IN_THE_VIEW_TURNS_ONLY_THE_BUILDS_READING_IT_RED',
+        ok,
+        probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
+        'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
+      );
+    }
+  });
+
+  unit('CO31+CO32', () => {
+    // --- CO31 and CO32: a slider's physics keys under the step (issue #1049) --
+    //
+    // Until issue #1049 the core applied none of a slider's physics keys, and on the selftest's own
+    // builds where a dial's animation keys `wind` or `gravity` of a constraint after it the bones left
+    // spine-core from the third step; a probe with a slot on the physics bone drew wrong frames through
+    // `render` with no refusal. The rule (`./src/core/constraints_slider.ts`, *Its physics timelines*)
+    // is held here on the core_gate probe rows and a seeded population, on all three stepped entries:
+    // A10's looping walk, `render`'s recipe on the raw entry (60 and 12 fps), and the oracle's stepped
+    // grid under `--raw`, every number at tolerance 0.
+    const SLIDER_PHYSICS_N = 150;
+    const sliderPhysicsRigs = (() => {
+      const rnd = seededRandom(104901);
+      return [
+        ...SLIDER_PHYSICS_PROBES.map(([label, shape]) => ({ where: `probe "${label}"`, shape })),
+        ...Array.from({ length: SLIDER_PHYSICS_N }, (_v, i) => ({ where: `slider-physics rig ${i}`, shape: sliderPhysicsShape(rnd) })),
+      ].map((r) => ({ ...r, pair: sliderPhysicsPair(r.shape) }));
+    })();
+    /** Every key a slider's animation holds on a physics timeline, with the slider's own flags. */
+    const sliderPhysicsKeys = (shape: SliderPhysicsShape): Array<{ slider: string; additive: boolean; kind: string; target: string; before: boolean }> =>
+      shape.sliders.flatMap((s) =>
+        (shape.animations.find((a) => a.name === s.animation)?.physics ?? []).map((k) => ({
+          slider: s.name,
+          additive: s.fields.additive === true,
+          kind: k.kind,
+          target: k.name,
+          // A named constraint updating before the slider: what the slider writes is not read this pass.
+          before: k.name !== '*' && shape.order.indexOf(k.name) < shape.order.indexOf(s.name),
+        })),
+      );
+    const STEPPED_RAW: OracleOptions = { ...STEPPED_OPTIONS, raw: true };
+    const PHYSICS_FIELDS = ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const;
+    /** spine-core's side of one rig on the three entries, taken once: the walk, each render frame's bones, the stepped grid. */
+    const sliderPhysicsSpine = sliderPhysicsRigs.map((r) => {
+      const data = loadOracleData(r.pair.spine, '', r.where);
+      const frames: Array<{ animation: string; fps: number; bones: number[][] }> = [];
+      for (const fps of [60, 12]) {
+        for (const anim of data.animations) {
+          const n = Math.round(anim.duration * fps) + 3;
+          const skeleton = new Skeleton(data);
+          const state = new AnimationState(new AnimationStateData(data));
+          state.setAnimation(0, anim.name, false);
+          skeleton.setupPose();
+          const bones: number[][] = [];
+          for (let i = 0; i <= n; i++) {
+            if (i > 0) {
+              state.update(1 / fps);
+              state.apply(skeleton);
+              skeleton.update(1 / fps);
+              skeleton.updateWorldTransform(Physics.update);
+            } else {
+              state.apply(skeleton);
+              skeleton.update(0);
+              skeleton.updateWorldTransform(Physics.reset);
+            }
+            bones.push(skeleton.bones.flatMap((b) => PHYSICS_FIELDS.map((f) => b.appliedPose[f])));
+          }
+          frames.push({ animation: anim.name, fps, bones });
+        }
+      }
+      return { walk: spineWalkDocument(data), frames, grid: dumpSkeleton(data, STEPPED_RAW) };
+    });
+    /** The core's side of rig `k` against spine-core's, under `plant`: the first difference on any entry, or null, with what was compared. */
+    const sliderPhysicsRun = (k: number, plant: TimelinePlant = {}): { first: string | null; walkPoses: number; frames: number; numbers: number } => {
+      const r = sliderPhysicsRigs[k];
+      const spine = sliderPhysicsSpine[k];
+      const model = readModel(r.pair.model, r.where);
+      const walk = compareWalkDocuments(spine.walk, coreWalkDocument(model, undefined, plant));
+      let first = walk.first === null ? null : `${r.where} walk: ${walk.first}`;
+      let numbers = walk.numbers;
+      const doc = underSkin(model, 'default');
+      for (const f of spine.frames) {
+        const poses = poseRawAnimation(doc, f.animation, new Array<number>(f.bones.length - 1).fill(1 / f.fps), plant);
+        poses.forEach((p, i) => {
+          const ours = p.bones.flatMap((b) => PHYSICS_FIELDS.map((x) => b[x]));
+          numbers += ours.length;
+          const at = ours.findIndex((v, j) => !Object.is(v, f.bones[i][j]));
+          if (at >= 0) first ??= `${r.where} render ${f.fps} fps "${f.animation}" frame ${i}: bone "${p.bones[Math.floor(at / 6)].name}" ${PHYSICS_FIELDS[at % 6]} ${f.bones[i][at]} in spine-core, ${ours[at]} in the core`;
+        });
+      }
+      const grid = compareDumps(spine.grid, coreDump(model, STEPPED_RAW, plant, uvSourceOf('', r.pair.model)), { xy: 0, m: 0 });
+      if (!grid.identical) first ??= `${r.where} stepped grid: ${grid.first}`;
+      return { first, walkPoses: walk.poses, frames: spine.frames.reduce((n, f) => n + f.bones.length, 0), numbers };
+    };
+    const sliderPhysicsClean = sliderPhysicsRigs.map((_r, k) => sliderPhysicsRun(k));
+    {
+      const probes: string[] = [];
+      let exact = 0;
+      const sum = { walkPoses: 0, frames: 0, numbers: 0 };
+      sliderPhysicsClean.forEach((c) => {
+        for (const key of Object.keys(sum) as Array<keyof typeof sum>) sum[key] += c[key];
+        if (c.first === null) exact++;
+        else if (probes.length < 12) probes.push(c.first);
+      });
+      const keys = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+      const rigsWith = (f: (k: ReturnType<typeof sliderPhysicsKeys>[number], shape: SliderPhysicsShape) => boolean): number => keys.filter((list, i) => list.some((k) => f(k, sliderPhysicsRigs[i].shape))).length;
+      const reach: Array<[number, string]> = [
+        [rigsWith((k) => k.kind !== 'reset' && !k.before), 'a slider keying a constraint that updates after it'],
+        [rigsWith((k) => k.kind !== 'reset' && k.before), 'a slider keying a constraint that updates before it'],
+        [rigsWith((k) => k.additive && (k.kind === 'wind' || k.kind === 'gravity')), 'an additive slider keying wind or gravity'],
+        [rigsWith((k) => k.additive && !['wind', 'gravity', 'reset'].includes(k.kind)), 'an additive slider keying a value that does not add'],
+        [rigsWith((k) => !k.additive && k.kind !== 'reset'), 'a slider that is not additive'],
+        [rigsWith((k) => k.kind === 'mass'), 'a mass key'],
+        [rigsWith((k) => k.kind === 'mix'), 'a mix key'],
+        [rigsWith((k) => k.kind === 'reset'), 'a reset key'],
+        [rigsWith((k) => k.target === '*'), 'the timeline naming no constraint'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.mix !== undefined)), 'a slider at a mix other than 1'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.loop === true)), 'a looping slider'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.bone === undefined)), 'a bone-less slider'],
+        [rigsWith((_k, s) => s.animations.some((a) => a.name === 'sway' && a.sliders.length > 0)), 'a track keying a slider\'s time or mix'],
+      ];
+      probes.push(...floorProbes(reach.map(([n, what]): [number, number, string] => [n, 1, `${n} rig(s) with ${what}`]), 'so the population does not reach every part of the rule'));
+      const ok = probes.length === 0;
+      say(
+        'CO31_A_SLIDERS_PHYSICS_KEYS_POSE_UNDER_THE_STEP_AS_SPINE_CORE_POSES_THEM_ON_THE_WALK_THE_RAW_ENTRY_AND_THE_STEPPED_GRID',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${exact} of ${sliderPhysicsRigs.length} rig(s) exact — the ${SLIDER_PHYSICS_PROBES.length} core_gate probe rows and ${SLIDER_PHYSICS_N} seeded — on A10's looping walk (${sum.walkPoses} pose(s)), render's recipe on the raw entry at 60 and 12 fps (${sum.frames} frame(s)) and the oracle's stepped grid under --raw: ${sum.numbers} walk and frame number(s) at tolerance 0; the population reaches ${reach.map(([n, what]) => `${what} (${n})`).join(', ')}`,
+        ),
+        'issue #1049: a slider applies its animation\'s physics keys to the pass\'s physics records at its place in the update order — the core applied none of them, and a constraint after the slider integrated without the wind or gravity it wrote: render drew a wrong frame with no refusal and A10\'s walk refused the class by name',
+      );
+    }
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const keysOf = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+      const plants: Array<[string, Partial<SolverRules>, (keys: ReturnType<typeof sliderPhysicsKeys>) => boolean]> = [
+        ['a slider\'s physics keys write nothing (the core before issue #1049)', { sliderWritesPhysics: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before)],
+        ['a key that does not add blends from the setup value, not the current one', { sliderPhysicsFromCurrent: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before && !(k.additive && (k.kind === 'wind' || k.kind === 'gravity')))],
+        ['every value kind adds under an additive slider', { sliderPhysicsAddsWindGravityOnly: false }, (keys) => keys.some((k) => k.additive && !k.before && !['wind', 'gravity', 'reset'].includes(k.kind))],
+        ['a mass key blends the inverse mass', { sliderPhysicsBlendsMass: false }, (keys) => keys.some((k) => k.kind === 'mass' && !k.before)],
+        // A write that outlasts its pass reaches a constraint before the slider too, on the next step.
+        ['what a slider wrote stands on the next step', { sliderPhysicsLastsOnePass: false }, (keys) => keys.some((k) => k.kind !== 'reset')],
+        ['a reset key at or before the slider\'s time fires on every pass', { sliderPhysicsResetIsDead: false }, (keys) => keys.some((k) => k.kind === 'reset')],
+      ];
+      for (const [label, solver, reads] of plants) {
+        const red: string[] = [];
+        const outside: string[] = [];
+        sliderPhysicsRigs.forEach((r, k) => {
+          if (sliderPhysicsClean[k].first !== null || sliderPhysicsRun(k, { solver }).first === null) return;
+          red.push(r.where);
+          if (!reads(keysOf[k])) outside.push(r.where);
+        });
+        if (red.length === 0) probes.push(`${label}: no rig turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which key nothing it reads`);
+        read.push(`${label} → ${red.length} rig(s) red${red.some((w) => w.startsWith('probe')) ? ` (${red.filter((w) => w.startsWith('probe')).length} probe row(s))` : ''}`);
+      }
+      const ok = probes.length === 0;
+      say(
+        'CO32_EACH_READING_A_SLIDERS_PHYSICS_KEYS_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_RIGS_KEYING_WHAT_IT_CHANGES_RED',
+        ok,
+        probeDetail(ok, probes, `over ${sliderPhysicsRigs.length} rig(s) — the probe rows and the seeded population of CO31: ${read.join('; ')}; each red only on a rig whose sliders key what the plant changes on a constraint that updates after them (a reset key, and a write that outlasts its pass, wherever the constraint stands)`),
+        'issue #1049: the rule held on a population is a measurement only while each reading it rejected is seen to differ there — that the keys write, from which value, which kinds add, how a mass blends, how long a write lasts and whether a reset key fires',
+      );
+    }
+  });
 
   // --- CO33, CO34: issue #1039 — the order of an animation's bone timelines, and whether it reaches a pose --------
   // The core applies an animation's bone timelines bone by bone in the document's order and, on one bone, timeline by timeline
@@ -85231,7 +85542,7 @@ function runCoreSuite(): number {
     edit(doc);
     return `${JSON.stringify(doc, null, 2)}\n`;
   };
-  {
+  if (parent) {
     const probes: string[] = [];
     const rows: string[] = [];
     let apart = 0;
@@ -85281,7 +85592,7 @@ function runCoreSuite(): number {
       'issue #1039: the file keys an animation\'s bones by name, so it lists an integer-like bone first and the core applies the document\'s order — each bone\'s timelines write that bone alone, so the order is one lines are printed in and not a posed value',
     );
   }
-  {
+  if (parent) {
     const probes: string[] = [];
     const rows: string[] = [];
     let boneSamples = 0;
@@ -85343,7 +85654,7 @@ function runCoreSuite(): number {
   // `ingest` and `compile` against a two-region atlas, reads the three boxes
   // `tools/core_gate.ts`'s bounds row reads — the core's, spine-core's
   // `getBounds`, the header's — and plants the one misreading it exists to see.
-  {
+  if (parent) {
     const boxRoot = mkdtempSync(join(tmpdir(), 'rigc-bounds-'));
     const boxAtlas = join(boxRoot, 'p.atlas');
     writeFileSync(boxAtlas, ['p.png', 'size: 64, 32', 'filter: Linear, Linear', 'a', 'bounds: 0, 0, 20, 20', 'b', 'bounds: 20, 0, 20, 20', ''].join('\n'));
@@ -85511,6 +85822,98 @@ function runCoreSuite(): number {
       );
     }
     rmSync(boxRoot, { recursive: true, force: true });
+  }
+
+  // --- CO41: a unit's lines are the lines --jobs 1 prints, in the units' order (issue #1133) --
+  // The units above ran at this run's --jobs, and the log is one text at any
+  // --jobs exactly when each unit hands back what its controls print in this
+  // process and the parent prints the units in their order. Held on the two
+  // cheapest units, in `RH08`'s shape: run here at --jobs 1 against the same
+  // two in `--unit` processes, or, above it, one process after another against
+  // the batch's, to every leaf — lines, FAIL count and every share. Planted: a
+  // parent that interleaves the two units' lines, which must be read.
+  if (parent) {
+    const probes: string[] = [];
+    const cheap: CoreUnitName[] = ['CQ10', 'CK07'];
+    const alone = coreUnitBatch(cheap.map(unitInput), 1);
+    const compared: string[] = [];
+    cheap.forEach((name, k) => {
+      const ran = inline.get(name) ?? dispatched.get(name);
+      if (ran === undefined) {
+        probes.push(`${name} neither ran here nor came back from the batch`);
+        return;
+      }
+      const differ = sameLeaves(alone[k], ran, name);
+      if (differ.length > 0) probes.push(`${name} alone in a --unit process and in this run: ${differ.slice(0, 3).join('; ')}`);
+      compared.push(`${name} (${ran.lines.length} line(s))`);
+    });
+    const printed = batch === null ? [...inline.keys()] : replayed;
+    if (JSON.stringify(printed) !== JSON.stringify(CORE_UNITS)) probes.push(`the units printed in the order [${printed.join(', ')}], not [${CORE_UNITS.join(', ')}]`);
+    if (JSON.stringify([...CORE_UNITS_HEAVIEST_FIRST].sort()) !== JSON.stringify([...CORE_UNITS].sort())) probes.push(`the claim order [${CORE_UNITS_HEAVIEST_FIRST.join(', ')}] is not the units [${CORE_UNITS.join(', ')}], each once`);
+    // The plant: the two units' lines interleaved, as a parent printing each line when it arrived would.
+    const inOrder = [...alone[0].lines, ...alone[1].lines];
+    const interleaved = alone[0].lines.flatMap((line, k) => [line, ...(k < alone[1].lines.length ? [alone[1].lines[k]] : [])]).concat(alone[1].lines.slice(alone[0].lines.length));
+    const plantAt = inOrder.findIndex((line, k) => line !== interleaved[k]);
+    if (plantAt < 0) probes.push('the interleaved plant printed the units\' lines in their order, so it cannot be told apart');
+    const sent = JSON.stringify(unitInput(cheap[0])).length;
+    const back = alone.reduce((n, r) => n + JSON.stringify(r).length, 0);
+    const held = probes.length === 0;
+    say(
+      'CO41_A_CORE_UNITS_LINES_AND_SHARES_ARE_WHAT_JOBS_1_LEAVES_IN_THE_UNITS_ORDER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${CORE_UNITS.length} unit(s), printed in the units' order; ${compared.join(' and ')}, each run alone in a --unit process, against this run's — in this process at --jobs 1, the batch's above it: equal at every leaf of the lines, the FAIL count and every share — ` +
+          `${sent} character(s) of input per unit crossed as JSON, ${back} came back from the two; the plant (their lines interleaved) is read at line ${plantAt + 1}`,
+      ),
+      'issue #1133: --jobs decides when a core unit runs and never what the suite prints, which holds only while a unit hands back what its controls print in one process and the parent prints the units in their order',
+    );
+  }
+
+  // --- CO42: a unit's corpus cases are applied at its own position (issue #1133) --
+  // `TY22` reads every core control's corpus verdict, and a shard or a merge
+  // reads the run state in order. The cases this suite left are its `sayCorpus`
+  // controls in source order exactly when each unit's share was applied at its
+  // control's position. Planted: a unit's cases dropped, which `TY22`'s reading
+  // counts, and the units' cases applied at the end, which it does not — its
+  // reading is a count, so the order is read here, by name.
+  if (parent) {
+    const probes: string[] = [];
+    const order = corpusControlOrder(readFileSync(join(root, 'selftest.ts'), 'utf8'));
+    const cases = CORE_CORPUS_CASES.slice(corpusMark);
+    const firstApart = (list: ReadonlyArray<{ name: string }>): string | null => {
+      const at = order.findIndex((name, k) => list[k]?.name !== name);
+      return at < 0 && list.length === order.length ? null : `case ${at < 0 ? order.length + 1 : at + 1}: ${list[at < 0 ? order.length : at]?.name ?? 'nothing'} where ${order[at] ?? 'nothing'} belongs`;
+    };
+    const unitOf = (name: string): CoreUnitName | undefined => CORE_UNITS.find((u) => u.split('+').includes(name.split('_')[0]));
+    const fromUnits = cases.filter((c) => unitOf(c.name) !== undefined);
+    const real = firstApart(cases);
+    if (order.length === 0) probes.push('no sayCorpus control was read off runCoreSuite, so the order holds nothing');
+    if (real !== null) probes.push(`the corpus cases this suite left are not its sayCorpus controls in source order — ${real}`);
+    const dropUnit = fromUnits.length === 0 ? undefined : unitOf(fromUnits[0].name);
+    const dropped = cases.filter((c) => unitOf(c.name) !== dropUnit);
+    const atEnd = [...cases.filter((c) => unitOf(c.name) === undefined), ...fromUnits];
+    const reading = coreCorpusReading(cases);
+    const droppedRead = firstApart(dropped);
+    const atEndRead = firstApart(atEnd);
+    if (dropUnit === undefined) probes.push('no corpus case is a unit\'s, so the plants move nothing');
+    if (coreCorpusReading(dropped) === reading) probes.push(`${dropUnit ?? 'a unit'}'s cases dropped left TY22's reading as it was: ${reading}`);
+    if (droppedRead === null) probes.push(`${dropUnit ?? 'a unit'}'s cases dropped read in source order`);
+    if (atEndRead === null) probes.push('the units\' cases applied at the end read in source order');
+    const held = probes.length === 0;
+    say(
+      'CO42_A_CORE_UNITS_CORPUS_CASES_ARE_APPLIED_AT_ITS_OWN_POSITION',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${cases.length} corpus case(s), ${fromUnits.length} of them a unit's, in the order of the ${order.length} sayCorpus control(s) in runCoreSuite; ` +
+          `planted, ${dropUnit ?? 'a unit'}'s dropped: TY22 reads "${coreCorpusReading(dropped)}" for "${reading}", and the order is read at ${droppedRead ?? 'nothing'}; ` +
+          `the units' cases applied at the end: TY22 reads "${coreCorpusReading(atEnd)}", a count, and the order is read at ${atEndRead ?? 'nothing'}`,
+      ),
+      'issue #1133: a unit\'s run state crosses as a share the parent applies at the control\'s own position, so TY22, RG01 and a merge read the run one process leaves; applied anywhere else the share is the same rows in another order, which only the order can show',
+    );
   }
 
   rmSync(work, { recursive: true, force: true });
@@ -107666,8 +108069,21 @@ function runRunTallySuite(live: RunTally): number {
         return out;
       };
       const mentions = (node: ts.Node, name: string): boolean => (ts.isIdentifier(node) && node.text === name) || (ts.forEachChild(node, (n) => mentions(n, name) || undefined) ?? false);
-      for (const statement of fn.body.statements) {
-        if (!ts.isBlock(statement)) continue;
+      /**
+       * The suite's controls: each top-level block, the block of an `if` (issue
+       * #1133's `if (parent)`), the callback of a `unit(…)` naming one control,
+       * and the controls inside one naming a group (`CO25+CO26`).
+       */
+      const controlsOf = (statements: readonly ts.Statement[]): ts.Block[] =>
+        statements.flatMap((s): ts.Block[] => {
+          if (ts.isBlock(s)) return [s];
+          if (ts.isIfStatement(s) && ts.isBlock(s.thenStatement)) return [s.thenStatement];
+          if (!ts.isExpressionStatement(s) || !ts.isCallExpression(s.expression) || !ts.isIdentifier(s.expression.expression) || s.expression.expression.text !== 'unit') return [];
+          const [named, body] = s.expression.arguments;
+          if (named === undefined || !ts.isStringLiteral(named) || body === undefined || !ts.isArrowFunction(body) || !ts.isBlock(body.body)) return [];
+          return named.text.includes('+') ? controlsOf(body.body.statements) : [body.body];
+        });
+      for (const statement of controlsOf(fn.body.statements)) {
         const floorsHere = callsTo(statement, 'corpusFloor');
         count += floorsHere.length;
         const line = tree.getLineAndCharacterOfPosition(statement.getStart()).line + 1;
@@ -107690,18 +108106,30 @@ function runRunTallySuite(live: RunTally): number {
     const routed = floorScan(miniature("    probes.push(corpusFloor('x'));\n    sayCorpus('ZZ01_A', probes, 'c', 'w');"), 'aSuite');
     const oldPush = floorScan(miniature("    probes.push(`x${examplesHole === null ? '' : examplesHole}`);\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
     const plainSay = floorScan(miniature("    probes.push(corpusFloor('x'));\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
+    // Issue #1133: a control kept in the parent sits under `if (parent)`, and a unit's inside `unit(…)`; a floor reported through plain say is named in each.
+    const wrapped = (open: string, close: string): string =>
+      `function aSuite(): number {\n  ${open}\n    const probes: string[] = [];\n    probes.push(corpusFloor('x'));\n    say('ZZ01_A', probes.length === 0, 'd', 'w');\n  ${close}\n  return 0;\n}\n`;
+    const shapes: Array<[string, string, string]> = [
+      ['under if (parent)', 'if (parent) {', '}'],
+      ['inside a unit of one control', "unit('ZZ01', () => {", '});'],
+      ['inside a group of units', "unit('ZZ01+ZZ02', () => {\n  {", '}\n  });'],
+    ];
+    const shapeProbes = shapes.flatMap(([label, open, close]) => {
+      const read = floorScan(wrapped(open, close), 'aSuite');
+      return read.problems.length === 1 && read.floors === 1 ? [] : [`a floor reported through plain say ${label} read as ${read.floors} floor(s) and [${read.problems.join('; ')}]`];
+    });
     const real = floorScan(source, 'runCoreSuite');
     const scanProbes = [
       ...(routed.problems.length === 0 && routed.floors === 1 ? [] : [`a floor routed through both helpers read as ${routed.floors} floor(s) and [${routed.problems.join('; ')}]`]),
       ...(oldPush.problems.length === 1 ? [] : [`a floor pushed with the hole note by hand read as [${oldPush.problems.join('; ')}]`]),
       ...(plainSay.problems.length === 1 ? [] : [`a floor reported through plain say read as [${plainSay.problems.join('; ')}]`]),
+      ...shapeProbes,
       ...real.problems.map((p) => `runCoreSuite: ${p}`),
       ...floorProbes([[real.floors, 1, `${real.floors} corpus floor(s) were found in runCoreSuite`]], 'a scan that stopped matching would report the suite clean over nothing'),
     ];
 
     const coreRan = live.blocks.some((b) => b.key === 'core' && b.ran);
     const corpusAbsent = CORE_CORPUS_CASES.some((c) => c.absent);
-    const holes = CORE_CORPUS_CASES.filter((c) => c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
     const onDiskHoles = CORE_CORPUS_CASES.filter((c) => !c.absent && c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
     const liveProbes = [
       ...(coreRan && CORE_CORPUS_CASES.length === 0 ? ['the core suite ran and no control reported through sayCorpus'] : []),
@@ -107711,9 +108139,7 @@ function runRunTallySuite(live: RunTally): number {
     ];
     const liveWords = !coreRan
       ? 'the core suite did not run in this run, so the live half read nothing'
-      : `this run, with examples/ ${corpusAbsent ? 'absent' : 'on disk'}: ${CORE_CORPUS_CASES.length} core control(s) hold a corpus floor, ` +
-        `${CORE_CORPUS_CASES.filter((c) => c.verdict === 'PASS').length} PASS, ${CORE_CORPUS_CASES.filter((c) => c.verdict === 'FAIL').length} FAIL, ` +
-        `${holes.length} HOLE${holes.length > 0 ? ` [${holes.join(', ')}]` : ''}`;
+      : `this run, with examples/ ${corpusAbsent ? 'absent' : 'on disk'}: ${coreCorpusReading(CORE_CORPUS_CASES)}`;
 
     const ty22Probes = [...verdictProbes, ...lineProbes, ...scanProbes, ...liveProbes];
     const ty22Held = ty22Probes.length === 0;
@@ -107727,7 +108153,7 @@ function runRunTallySuite(live: RunTally): number {
           'without it, and a DIFF beside it is FAIL either way; a HOLE prints one SKIP line and the HOLE sentence and no ' +
           `case line; runCoreSuite writes ${real.floors} corpus floor(s), every one through corpusFloor inside a control ` +
           'reporting through sayCorpus, while a floor pushed with the hole note by hand and one reported through plain ' +
-          `say are each named; TY20 lists runCoreSuite; ${liveWords}`,
+          `say are each named, the second at the top level, ${shapes.map(([label]) => label).join(', ').replace(/, ([^,]*)$/, ' and $1')}; TY20 lists runCoreSuite; ${liveWords}`,
       ),
       'issue #1004: two states printed the same FAIL — a corpus on the machine that reaches nothing, which is the ' +
         "tree's fault, and a corpus not on the machine, which is the run's state and a HOLE in every other corpus " +
@@ -110515,7 +110941,8 @@ function main(): void {
   // `--unit` (issue #1128): this process is one of `inUnits`' units — it runs the
   // one unit its spec names, writes the value, and runs no suite.
   if (UNIT !== null) {
-    writeFileSync(UNIT.output, JSON.stringify(selftestUnitWork(JSON.parse(readFileSync(UNIT.input, 'utf8')) as SelftestUnitSpec)));
+    const spec = JSON.parse(readFileSync(UNIT.input, 'utf8')) as SelftestUnitSpec;
+    writeFileSync(UNIT.output, JSON.stringify(spec.kind === 'core' ? coreUnitWork(spec.input) : spec.kind === 'core-worker' ? coreUnitWorker(spec) : selftestUnitWork(spec)));
     return;
   }
   let breaks = 0;
