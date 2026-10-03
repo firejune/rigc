@@ -87,7 +87,7 @@
  * growth and by heap growth, and its wall time less every suite's own as the
  * harness's overhead. `TY23` holds every suite the run called to a printed
  * line of the time and the RSS, and `TY24` to the heap and external figures.
- * The run's final RSS is then held under its platform's tracked base
+ * The run's high-water RSS is then held under its platform's tracked base
  * (`tools/selftest_memory.base.json`, written by `--memory-base`) times a
  * stated margin; `TY25` plants a retaining suite against it and `TY26` holds
  * the live run, as a SKIP naming the command where the platform has no base.
@@ -722,7 +722,7 @@ const WRITE_MEMORY_BASE = ((): boolean => {
   const argv = process.argv.slice(2);
   if (!argv.includes('--memory-base')) return false;
   if (ONLY !== null) {
-    console.error('selftest: --memory-base writes the final RSS of the FULL run; it cannot be given with --only');
+    console.error('selftest: --memory-base writes the high-water RSS of the FULL run; it cannot be given with --only');
     process.exit(2);
   }
   return true;
@@ -103730,29 +103730,37 @@ function durationFaults(
 // the run's memory ceiling (issue #1121)
 // ---------------------------------------------------------------------------
 //
-// What is bounded is the run's FINAL RSS, and only that, for a measured reason:
-// on Bun the resident set is the run's high-water mark — freed JS-heap pages
-// are not handed back — so a suite's own growth is zero whenever an earlier
-// suite already raised the mark higher, and a bound per suite would be a bound
-// on the order the suites run in. The final figure is stable: whatever suite
-// raises the mark, it is the mark. The base it is held to is per platform and
+// What is bounded is the run's HIGH-WATER — the largest RSS any suite line of
+// the run printed — and only that, for two measured reasons. A suite's own
+// growth is zero whenever an earlier suite already raised the mark higher, so
+// a bound per suite would be a bound on the order the suites run in; the mark
+// itself is the same whichever suite sets it. And the FINAL RSS, which this
+// first held, is the allocator's word rather than the run's: on macOS Bun keeps
+// freed pages and the final sits near the mark, but on Linux they are handed
+// back and three CI runs of one tree ended at 599–604 MB under marks of 1,209,
+// 1,241 and 1,324 MB — a base of final figures held a live high-water to the
+// wrong quantity and went red on a correct run. The base is per platform and
 // tracked, written by the run itself (`--memory-base`), never typed — the
 // pattern `tools/emit_hashes.base.json` and `EH06` set.
 
 /**
  * The tracked base, relative to this file — one entry per platform, because the
  * figure is the allocator's as much as the run's: on the same tree the macOS
- * full run ended at rss 3,211 MB and the Linux CI run at 599 MB, its own TY26
- * line having read 1,324 MB mid-run — Linux's allocator hands pages back where
- * macOS's does not. One shared figure would be either useless on one platform
- * or red on the other.
+ * full run's high-water was 3,454 MB (it ended at 3,211) and Linux CI's
+ * 1,209–1,324 MB (it ended at 599–604) — Linux's allocator hands pages back
+ * where macOS's does not. One shared figure would be either useless on one
+ * platform or red on the other. The darwin entry was written by
+ * `--memory-base`'s reading of a full run's own column; the linux entry,
+ * 1,324 MB, was written by the commander from CI's logs — the largest of three
+ * runs' high-waters (1,324, 1,241, 1,209 MB: a spread of 1.10, inside the
+ * margin), Bun 1.4.2, 69 suites.
  */
 const MEMORY_BASE_PATH = 'tools/selftest_memory.base.json';
 /** The base document's format word. */
 const MEMORY_BASE_SPEC = 'selftest-memory/1';
 /**
- * How far above its platform's base a run's final RSS may end before the run is
- * red. Not a figure anybody chose: the same high-water — the `currency` suite's
+ * How far above its platform's base a run's high-water may reach before the run
+ * is red. Not a figure anybody chose: the same high-water — the `currency` suite's
  * growth from a fresh process, the one quantity measured six times on one
  * machine before this landed — read 2,252, 2,288, 2,570, 2,723, 2,997 and
  * 3,094 MB on unchanged code, a spread of 3,094 / 2,252 = 1.37 between its
@@ -103763,10 +103771,10 @@ const MEMORY_BASE_SPEC = 'selftest-memory/1';
  */
 const MEMORY_MARGIN = 1.4;
 
-/** One platform's base: what a green full run on it ended at. */
+/** One platform's base: the high-water a green full run on it reached. */
 interface MemoryBaseEntry {
-  /** The final RSS, in whole MB, as the run's `the process ended at rss` line prints it. */
-  finalRss: number;
+  /** The largest RSS any suite line of that run printed, in whole MB. */
+  highWater: number;
   /** How many suites that run called — a base from a run with fewer suites is a different run. */
   suites: number;
   /** The Bun that ran it: the allocator is the runtime's, and a new one can move the figure. */
@@ -103787,6 +103795,11 @@ function readMemoryBase(root: string): MemoryBase | null {
   if (parsed.spec !== MEMORY_BASE_SPEC || parsed.platforms === undefined || typeof parsed.platforms !== 'object') {
     throw new Error(`${MEMORY_BASE_PATH} is not a "${MEMORY_BASE_SPEC}" document; write it again with \`bun selftest.ts --memory-base\``);
   }
+  for (const [platform, entry] of Object.entries(parsed.platforms)) {
+    if (typeof entry?.highWater !== 'number') {
+      throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry states no "highWater"; write it again with \`bun selftest.ts --memory-base\``);
+    }
+  }
   return { spec: parsed.spec, platforms: parsed.platforms };
 }
 
@@ -103804,22 +103817,28 @@ interface MemoryCeiling {
   faults: string[];
 }
 
+/** The run's high-water: the largest RSS any suite line printed, in whole MB (0 with none). */
+function highWaterOf(rss: ReadonlyMap<string, SuiteRss>): number {
+  return Math.max(0, ...[...rss.values()].map((r) => r.after));
+}
+
 /**
- * The run's final RSS against its platform's base × `MEMORY_MARGIN`. Over the
+ * The run's high-water against its platform's base × `MEMORY_MARGIN`. Over the
  * bound, the fault names the suite that raised the high-water most — the same
  * reading the RSS table prints above it — because "the run is too big" with no
  * suite named is a search rather than a fix.
  */
-function memoryCeiling(rss: ReadonlyMap<string, SuiteRss>, finalRss: number, entry: MemoryBaseEntry | undefined, platform: string): MemoryCeiling {
+function memoryCeiling(rss: ReadonlyMap<string, SuiteRss>, entry: MemoryBaseEntry | undefined, platform: string): MemoryCeiling {
   if (entry === undefined) return { verdict: 'no base', bound: null, faults: [] };
-  const bound = Math.floor(entry.finalRss * MEMORY_MARGIN);
-  if (finalRss <= bound) return { verdict: 'held', bound, faults: [] };
+  const bound = Math.floor(entry.highWater * MEMORY_MARGIN);
+  const highWater = highWaterOf(rss);
+  if (highWater <= bound) return { verdict: 'held', bound, faults: [] };
   const heaviest = [...rss].sort((a, b) => (b[1].delta !== a[1].delta ? b[1].delta - a[1].delta : a[0] < b[0] ? -1 : 1))[0];
   return {
     verdict: 'over',
     bound,
     faults: [
-      `the run ended at rss ${finalRss} MB, over the ${platform} bound of ${bound} MB (base ${entry.finalRss} MB × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
+      `the run's high-water was rss ${highWater} MB, over the ${platform} bound of ${bound} MB (base high-water ${entry.highWater} MB × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
         (heaviest === undefined
           ? 'no suite was measured'
           : `the suite that raised the high-water most is "${heaviest[0]}" (${signedMegabytes(heaviest[1].delta)} MB, ${heaviest[1].after} MB after)`) +
@@ -106221,7 +106240,7 @@ function runRunTallySuite(live: RunTally): number {
     // retained 1024² pages (96 MB) ended macOS's planted child at 238 MB against
     // a base of 130 (bound 182), and Linux CI's at 181 MB against a base of 136
     // (bound 191) — red. So the base child runs first and the planted one keeps
-    // pages until what it holds exceeds twice the base child's final RSS; with
+    // pages until what it holds exceeds twice the base child's high-water; with
     // a margin of 1.4 that leaves the planted final above the bound by at least
     // 0.6 × base on any allocator that keeps live pages resident at all.
     const PAGE_SIDE = 1024;
@@ -106251,36 +106270,39 @@ function runRunTallySuite(live: RunTally): number {
     const rssOf = (rows: Array<{ key: string; rss: number }>): Map<string, SuiteRss> =>
       new Map(rows.map((row, i) => [row.key, { after: row.rss, delta: row.rss - (i === 0 ? row.rss : rows[i - 1].rss) }]));
     const baseChild = plantChild(0);
-    const plantPages = typeof baseChild === 'string' ? 0 : Math.ceil((2 * baseChild.rows[baseChild.rows.length - 1].rss) / pageMegabytes) + 1;
+    const plantPages = typeof baseChild === 'string' ? 0 : Math.ceil((2 * highWaterOf(rssOf(baseChild.rows))) / pageMegabytes) + 1;
     const plantedChild = typeof baseChild === 'string' ? 'the planted child was not run: the base child it is sized from failed' : plantChild(plantPages);
     const ty25Probes: string[] = [];
     let ty25Words = '';
     if (typeof baseChild === 'string') ty25Probes.push(baseChild);
     if (typeof plantedChild === 'string') ty25Probes.push(plantedChild);
     if (typeof baseChild !== 'string' && typeof plantedChild !== 'string') {
-      const baseFinal = baseChild.rows[baseChild.rows.length - 1].rss;
-      const plantedFinal = plantedChild.rows[plantedChild.rows.length - 1].rss;
-      const entry: MemoryBaseEntry = { finalRss: baseFinal, suites: baseChild.rows.length, bun: Bun.version };
-      const clean = memoryCeiling(rssOf(baseChild.rows), baseFinal, entry, 'plant');
-      const planted = memoryCeiling(rssOf(plantedChild.rows), plantedFinal, entry, 'plant');
-      const none = memoryCeiling(rssOf(plantedChild.rows), plantedFinal, undefined, 'plant');
+      // Each child prints one row per suite, so its high-water is the largest
+      // row — read the way the live run's is, through `highWaterOf`; with
+      // nothing freed after the planted suite it is also the child's final.
+      const baseFinal = highWaterOf(rssOf(baseChild.rows));
+      const plantedFinal = highWaterOf(rssOf(plantedChild.rows));
+      const entry: MemoryBaseEntry = { highWater: baseFinal, suites: baseChild.rows.length, bun: Bun.version };
+      const clean = memoryCeiling(rssOf(baseChild.rows), entry, 'plant');
+      const planted = memoryCeiling(rssOf(plantedChild.rows), entry, 'plant');
+      const none = memoryCeiling(rssOf(plantedChild.rows), undefined, 'plant');
       const kept = memoryBaseText({ spec: MEMORY_BASE_SPEC, platforms: { zeta: entry } }, 'alpha', entry);
       const keptRead = JSON.parse(kept) as MemoryBase;
       ty25Probes.push(
         ...(clean.verdict === 'held' ? [] : [`the base child held to its own figure reads ${clean.verdict}: ${clean.faults.join('; ')}`]),
         ...(planted.verdict === 'over' && planted.faults.length === 1 && planted.faults[0].includes('"decode-planted"')
           ? []
-          : [`the child that kept every decoded page of one suite (final ${plantedFinal} MB against the bound ${planted.bound ?? 'none'} MB) is not named by suite: ${planted.verdict} ${planted.faults.join('; ')}`]),
+          : [`the child that kept every decoded page of one suite (high-water ${plantedFinal} MB against the bound ${planted.bound ?? 'none'} MB) is not named by suite: ${planted.verdict} ${planted.faults.join('; ')}`]),
         ...(none.verdict === 'no base' && none.faults.length === 0 ? [] : [`no base reads ${none.verdict}, where it is no verdict at all`]),
         ...(Object.keys(keptRead.platforms).join() === 'alpha,zeta' && keptRead.spec === MEMORY_BASE_SPEC
           ? []
           : [`writing one platform's base did not keep the other's, in key order: ${Object.keys(keptRead.platforms).join(', ')}`]),
       );
       ty25Words =
-        `a child decoding the same ${PAGE_SIDE}² page 24 times in each of two suites and idle in a third ends at ${baseFinal} MB and is held under its own ` +
+        `a child decoding the same ${PAGE_SIDE}² page 24 times in each of two suites and idle in a third reaches ${baseFinal} MB and is held under its own ` +
         `bound (${clean.bound ?? '?'} MB, × ${MEMORY_MARGIN}); the same child keeping ${plantPages} page(s) (${plantPages * pageMegabytes} MB, over twice the base) ` +
         'of one suite in a module-level array ' +
-        `ends at ${plantedFinal} MB and is named — ${planted.faults[0] ?? 'nothing'} — while no base gives no verdict and writing one ` +
+        `reaches ${plantedFinal} MB and is named — ${planted.faults[0] ?? 'nothing'} — while no base gives no verdict and writing one ` +
         "platform's base keeps every other platform's";
     }
     const ty25Held = ty25Probes.length === 0;
@@ -106294,7 +106316,7 @@ function runRunTallySuite(live: RunTally): number {
 
     // --- TY26: this run is under its platform's ceiling so far ---------------
     //
-    // The live half. The run's final RSS is held at its end, after the tables
+    // The live half. The whole run's high-water is held at its end, after the tables
     // (`memoryCeiling` in `main`); here the high-water every suite so far has
     // printed is held to the same bound, so a run that is already over says so
     // inside the suite that measures the run. No base for this platform is a
@@ -106309,8 +106331,8 @@ function runRunTallySuite(live: RunTally): number {
             `this run's high-water (${sofar} MB so far) is held to nothing — write one with \`bun selftest.ts --memory-base\` on a green full run`,
         );
       } else {
-        const bound = Math.floor(entry.finalRss * MEMORY_MARGIN);
-        const ty26Probes = sofar <= bound ? [] : [`the high-water so far is ${sofar} MB, over the ${process.platform} bound of ${bound} MB (base ${entry.finalRss} MB × ${MEMORY_MARGIN})`];
+        const bound = Math.floor(entry.highWater * MEMORY_MARGIN);
+        const ty26Probes = sofar <= bound ? [] : [`the high-water so far is ${sofar} MB, over the ${process.platform} bound of ${bound} MB (base high-water ${entry.highWater} MB × ${MEMORY_MARGIN})`];
         const ty26Held = ty26Probes.length === 0;
         say(
           'TY26_THIS_RUN_IS_UNDER_ITS_PLATFORMS_MEMORY_CEILING',
@@ -106318,8 +106340,8 @@ function runRunTallySuite(live: RunTally): number {
           probeDetail(
             ty26Held,
             ty26Probes,
-            `the ${process.platform} base is ${entry.finalRss} MB over ${entry.suites} suite(s) on bun ${entry.bun}, so the bound is ${bound} MB ` +
-              `(× ${MEMORY_MARGIN}); the high-water every suite so far printed is ${sofar} MB, and the final RSS is held to the same bound after the tables`,
+            `the ${process.platform} base high-water is ${entry.highWater} MB over ${entry.suites} suite(s) on bun ${entry.bun}, so the bound is ${bound} MB ` +
+              `(× ${MEMORY_MARGIN}); the high-water every suite so far printed is ${sofar} MB, and the whole run's is held to the same bound after the tables`,
           ),
           'issue #1121: a per-suite bound would bound the order suites run in, since a suite grows the resident set only past ' +
             'the mark an earlier one left; the final figure is that mark whichever suite set it',
@@ -108430,11 +108452,13 @@ function main(): void {
   if (WRITE_MEMORY_BASE) {
     writeFileSync(
       join(import.meta.dir, MEMORY_BASE_PATH),
-      memoryBaseText(memoryBase, process.platform, { finalRss, suites: tally.blocks.length, bun: Bun.version }),
+      memoryBaseText(memoryBase, process.platform, { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version }),
     );
-    console.log(`selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: final rss ${finalRss} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`);
+    console.log(
+      `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${highWaterOf(tally.rss)} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`,
+    );
   } else {
-    const ceiling = memoryCeiling(tally.rss, finalRss, memoryBase?.platforms[process.platform], process.platform);
+    const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
     if (ceiling.verdict === 'over') {
       for (const fault of ceiling.faults) console.error(`rigc selftest: ${fault}`);
       process.exit(1);
