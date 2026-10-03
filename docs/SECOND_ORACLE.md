@@ -1,12 +1,13 @@
 # The second oracle — rigc's own core, admitted construct by construct against spine-core
 
-**Status: started 2026-09-29 by the owner's call** (issue #380, the start gate of its
-2026-09-17 comment); steps 0a–3 landed by 2026-10-01 and shipped in 1.6.1 (1.6.0 was
-tagged and never served, #1003); step 4 is the owner's and has not started (§6). This
-page is the design. #380 carries the history of the argument,
-including the two shapes it rejected on 2026-09-04, which stay rejected;
-[ROADMAP.md](../ROADMAP.md) *What changes the frame* is the frame — *the milestone is
-not the second backend, it is the second oracle.*
+**Status: shipped — a record, as of 2026-10-04, of a design that has landed.** Started
+2026-09-29 by the owner's call (issue #380, the start gate of its 2026-09-17 comment);
+steps 0a–3 landed by 2026-10-01 and shipped in 1.6.1 (1.6.0 was tagged and never
+served, #1003); step 4 landed 2026-10-01 to 10-02 over 1.7.0–1.9.3 and shipped as
+**2.0.0** (2026-10-02, #1071), which closed #380 (§6). #380 carries the history of the
+argument, including the two shapes it rejected on 2026-09-04 and what has become of
+each since (§7); [ROADMAP.md](../ROADMAP.md) *What changes the frame* is the frame —
+*the milestone is not the second backend, it is the second oracle.*
 
 ---
 
@@ -19,17 +20,18 @@ objects directly — 14 `Spine*` types, 111 references, the 4.3 spellings applie
 constructors, and 24 sites that read those objects back
 ([COMPILED_MODEL.md](COMPILED_MODEL.md), §1.4 and *The finding*) — and step 1 changed
 how `compile` builds, in six cuts, each landing under byte identity of every Spine file
-on every corpus (§6). `build` now writes `skeleton.model.json` (`rigc-compiled/1`)
-beside the Spine pair, the Spine emitter (`src/emit_spine.ts`) is the one writer of
+on every corpus (§6). `build` now writes `skeleton.model.json` beside the Spine pair
+(`rigc-compiled/1` at step 1; `/3` since 1.9.0, #1037), the Spine emitter (`src/emit_spine.ts`) is the one writer of
 Spine data, and `compile.ts` names no Spine shape, held by `MD02`/`MD03`. The core
 poses that document — since step 2 a description of `src/core/` rather than a target,
 shipped in 1.6.1 (§5, §6): bones with their inherit modes, slots and colours, every attachment kind's
 world vertices, deform, draw order, clipping, events, and the five constraint kinds; such
 that for **every spec in every corpus**, the pose our core produces from the compiled
 model equals the pose spine-core produces from the Spine backend's emission of the same
-spec, at the oracle's reading of *identical* (§4). The Spine backend does not change.
-spine-core stays the oracle it is today, and becomes in addition the yardstick our core
-is measured against.
+spec, at the oracle's reading of *identical* (§4). The Spine backend's output does not
+change. spine-core stays the oracle — the round trip wherever it is installed — and is
+in addition the yardstick our core and, since 2.0.0, rigc's own validator are measured
+against (§7).
 
 ## 2. Two readings of "our own core", and the one taken
 
@@ -150,7 +152,8 @@ gate nobody has seen fail is not a gate.
   fresh-skeleton readings disagree. `pose_oracle unposed` classes such a bone-sample
   HISTORY by measurement — never IDENTICAL, never DIFF — and where such a value reaches a
   posed bone the core refuses the pose by name (`CC15`) and `render` poses through
-  spine-core instead. 0 of 19 public rows are refused; one private rig carries HISTORY
+  spine-core instead where the runtime is installed, and refuses by name where it is
+  not (the published package since 2.0.0). 0 of 19 public rows are refused; one private rig carries HISTORY
   rows on 18 of its 19 skins, and no refusal fires on any private skin.
 - **Unposed bones** (#980, #983). A bone the posed skin leaves unposed — inactive, or
   below an inactive bone, which the runtime may still flag active — holds no pose in
@@ -165,7 +168,7 @@ gate nobody has seen fail is not a gate.
 | the selftest's core suite | hand-written probe documents and seeded random rigs, every population read `--raw` since #1001; not the four rigs `fixtures/public.ts` generates | directly |
 | the public example corpus (`examples/`, spine-runtimes branch `4.3`) | 12 exports | `ingest` |
 | this repository's gallery | 7 rigs (with the 12 exports, the 19 rows `core_gate` runs); the ladder's bench candidates are not among them | directly |
-| a private production corpus | 14 production rigs, 48 per-skin runs; steps 1, 2 and 3 were each read on it | `ingest`, under `core_gate --recipes`; figures only, no content |
+| a private production corpus | 14 production rigs, 48 per-skin runs; steps 1, 2, 3 and 4 were each read on it | `ingest`, under `core_gate --recipes`; figures only, no content |
 
 The larger private population this page first named — the 1.0 exam's 67 rigs' 4.3
 exports and the 42 byte-round-trip rigs — has not been run through the gate; it remains
@@ -240,8 +243,8 @@ corpus — a trimmed region, a linked mesh, rotate 180 and 270, several pages (#
 | **0b** | the oracle promoted from scratch into `tools/pose_oracle.ts`: dump, compare, phases, the ill-conditioned rule, and the *Not yet* list (mesh world vertices, deform, draw order, events, physics stepping, per-skin posing); the JSON shape written so a second dumper can produce it | the exam's 14/14 IDENTICAL reproduced on the public examples' rigc rebuilds; three rows held by the selftest the way `pose_floor` is; its own mutant | squad | #911 — 12 of 12 public exports IDENTICAL (`POR08`); the PR notes their rebuilds are value-identical to the exports, so that population cannot fail it |
 | **1** | the split: `compile` builds the compiled model — a serialisable, deterministic document (`rigc-compiled/1`, fixed key order) written beside the Spine files — and the Spine emitter becomes its first consumer. 0a's census is the map: 144 neutral rows are the model's (the `f32`/`keyTime` quantisation included — spelling a fraction as its full double moved the pose on 19 of 19 builds, so which decimal is named is a value), 72 Spine-shape rows are the emitter's, and every one of the 24 read-back sites needs a model-side source, eleven of them a by-name form of the weighted run that nothing keeps today | **byte identity**: every build in every corpus emits the same bytes before and after — `A18`'s discipline applied across the refactor. #379's invariant becomes checkable: `compile.ts` names no Spine shape | judgement-heavy: the coupling is measured, not hidden, but the model-side source of each read-back site is a design choice per site; the commander briefs it from the census | #916 #918 #920 #923 #924 #927, + #939 (the atlas rectangle each region record carries) |
 | **2** | the core, one construct at a time in §5's order, each its own card and squad | §5's three conditions | squad per construct | the construct PRs in §5's table: #929 #934 #945 #943 #962 #951 #954 #953 #963 #971 #982, with #947 and #973 extending the oracle |
-| **3** | consumers switch: `render.ts` and `deformmeasure.ts` pose through our core once every construct they use is admitted. `validate.ts`'s round trip stays on spine-core | the same renders, bit-identical, on every corpus; the three link points in CLAUDE.md become two — they stayed three, as `CUR07` reads the tree: both consumers pose a rigc build through the core and keep spine-core for what is not one — a Spine export, a skeleton whose bytes no longer match its model's `spine.sha256` (#980), `validate`'s own A39 survey (#978) — and `render.ts` also links it for the atlas pages and texture substitution (CLAUDE.md *Conventions*) | squad | #972 #976 #974 #980 #978 #987, + #977 #981 #982 #983 #985 #986 #988 #992 #995 #1001 |
-| **4** | the owner's three, in this order: whether the shipped package's round trip stays per-file (spine-core in the package, as today) or becomes population-proven (spine-core a dev dependency; the 🔒 invariant amended, and its per-file guarantee replaced by §4's per-population one — a weaker guarantee about any one file, stated as such); the packaging and the name if the licence line splits the package; the web player, which is a renderer over the core and lives where renderers live | — | owner | not started |
+| **3** | consumers switch: `render.ts` and `deformmeasure.ts` pose through our core once every construct they use is admitted. `validate.ts`'s round trip stays on spine-core | the same renders, bit-identical, on every corpus; the three link points in CLAUDE.md become two — they stayed three, as `CUR07` reads the tree: at step 3's landing both consumers pose a rigc build through the core and keep spine-core for what is not one — a Spine export, a skeleton whose bytes no longer match its model's `spine.sha256` (#980), `validate`'s own A39 survey (#978) — and `render.ts` also links it for the atlas pages and texture substitution (CLAUDE.md *Conventions* states what each links it for today) | squad | #972 #976 #974 #980 #978 #987, + #977 #981 #982 #983 #985 #986 #988 #992 #995 #1001 |
+| **4** | decided by the owner and landed in cuts 4a–4f: **one package** (`spine-rigc`) with `@esotericsoftware/spine-core` a devDependency. A clone, CI, or an install with the runtime beside it runs `cli.ts`, whose `build` is gated by the round trip; the published package runs `cli_core.ts`, whose `build` is gated by rigc's own validator over the model document and the emitted text (CLAUDE.md, *Validation is not optional*). The 🔒 invariant now names one body of assertions with two suppliers (§7). The web player this row first listed as the owner's third is not part of it | the second supplier admitted on measurement: of the 50 assertions, the 41 the model side runs held to the round trip's verdict lines by `verdict_gate` (19 public recipes 1,520 of 1,520 line sets; 14 production rigs 1,120 of 1,120); the 8 restated over the emitted text by `RC28` (152 of 152); `A00_ROUNDTRIP_PARSE` a SKIP that says so; `core_gate` holding the core's poses to spine-core's at tolerance 0; the full entry's emitted bytes and renders unchanged on both corpora across every cut (#380's closing comment) | owner, then squads | 1.7.0 (#1017 #1022 #1023 #1024), 1.8.0 (#1027 #1029 #1030 #1031), 1.9.0 (#1032 #1036 #1037), 1.9.1 (#1044 #1045), 1.9.2 (#1050 #1053), 1.9.3 (#1056 #1059 #1062); **2.0.0** (#1066 spine-core a devDependency, #1069 the core entry's `build`, #1070 the documents) |
 
 Estimates, carried from #380's 2026-09-04 text: a posing core of 5–8k lines; the split
 1–2 squad-days; 0a was to refine both. Measured instead, after step 3: `src/core/` is
@@ -277,17 +280,28 @@ a card of its own.
 
 ## 7. What this page does not change
 
-- **The Spine backend.** Spine data is emitted only through the spine-core round trip.
-  The 🔒 invariant in [CLAUDE.md](../CLAUDE.md) — what it requires is that everything
-  written to disk was read back by a parser rigc did not write, and spine-core is what
-  supplies that today — is not touched by this page; step 4 is where the owner decides
-  whether it is amended, and with what.
+- **The Spine backend's output.** The full entry's emitted bytes and renders stayed
+  identical on both corpora across every cut of step 4 (#380's closing comment). What
+  gates them did change, in step 4, and the 🔒 invariant in [CLAUDE.md](../CLAUDE.md)
+  was re-worded in the same change (#1070): the gate is one body of assertions with
+  two suppliers — the round trip through spine-core wherever the runtime is installed,
+  and rigc's own validator over the model document and the emitted text where it is
+  not (the published package since 2.0.0), the second admitted on `verdict_gate`,
+  `RC28` and `core_gate`, with `A00_ROUNDTRIP_PARSE` a SKIP that says so. What it
+  requires is that everything written to disk was gated by a reader held to a parser
+  rigc did not write; the no-bypass rule (no `--no-validate`, no escape, no API handing
+  back ungated artifacts) is unchanged.
 - **The licence posture** in [README.md](../README.md), *Licensing, stated plainly*.
+  Step 4 brought that section's text to what the package links and where the Spine
+  Runtimes License applies (#1070); this page states nothing about it.
 - **The generation policy** ([GENERATIONS.md](GENERATIONS.md)): our core reads our
   model at 4.3 semantics; data from another generation reaches it the way it reaches
   rigc today.
-- **The rejected shapes on #380**: a Spine emitter with no runtime dependency, and a new
-  format plus a new runtime built without an oracle.
+- **The rejected shapes on #380**, and what the tree records of each since. A Spine
+  emitter with no runtime dependency: its stated reason was retired on 2026-09-05
+  (#398, recorded in CLAUDE.md), and the published package has been one since 2.0.0 —
+  with an oracle behind it, which CLAUDE.md still requires of every emit path. A new
+  format plus a new runtime built without an oracle: still rejected.
 
 ## 8. Rejected on this page, with the reason
 
@@ -300,6 +314,11 @@ a card of its own.
 - **glTF as the second backend.** Rejected on #380 on 2026-09-04: a container for
   contents it cannot carry (live constraints, skins, draw order, two-colour tint,
   clipping), each a silent drop or a named absence; stays rejected.
+- **Splitting the package along the licence line.** #380's 2026-09-04 sequencing named a
+  packaging split, and step 4 as this page first stated it left the packaging and the
+  name open "if the licence line splits the package". Step 4 landed as one package,
+  `spine-rigc`, with spine-core a devDependency (2.0.0, 2026-10-02, #1066) — the
+  owner's shape, as #380's closing comment records it.
 - **Reading R1 into the owner's words.** The owner asked for the spine-core oracle to be
   *replaced*; the shape on the card since 2026-09-04 is R2, and this page keeps it. If
   the owner meant R1, the correction is one line on #380 and §2 is rewritten; nothing in
