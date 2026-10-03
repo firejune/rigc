@@ -1559,7 +1559,9 @@ const MODEL_AND_TEXT_GATE: BuildGate = {
       passed: [...model.passed, ...text.passed],
       skipped: [...model.skipped, ...text.skipped],
       profileSkipped: [...model.profileSkipped, ...text.profileSkipped],
-      stats: { ...model.stats, ...text.stats },
+      // The emitted text's figures first: they are the pair's (`pages` … `version`), which `validate()` writes
+      // before any other, and the model side's follow in its order — one line, keyed and ordered as `cli.ts build`'s (issue #1114, `RC39`).
+      stats: { ...text.stats, ...model.stats },
       profile,
     };
     for (const line of reportLines(report)) console.log(line);

@@ -45,7 +45,7 @@ import { a11NoClippingAttachments } from '../bodies/a11.ts';
 import { a17AtlasPageFilesExist } from '../bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from '../bodies/a45.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND, modelRead, modelRegionsOnPages, SKIP_NO_MODEL_DOCUMENT, SKIP_NO_MODEL_PAGES, type ReadDocument } from './parse.ts';
-import { modelSkinEntries } from './skin_entries.ts';
+import { fileOrderedEntries, modelSkinEntries } from './skin_entries.ts';
 import { modelAtlasPages } from './atlas_pages.ts';
 import { modelSlotColour } from './slot_colour.ts';
 import type { SkinEntryFacts } from '../facts/skin_entries.ts';
@@ -333,6 +333,44 @@ function parse(h: VerdictHarness, modelText: string): { read: ReadDocument | nul
 }
 
 /**
+ * The row the rig's two figures are written before (issue #1114): `validate()`
+ * sets `rig` and `profile` where its archetype assertions begin, after every
+ * figure the bodies above them write and before A29's and A30's, so the figures
+ * line lists them in that place on both entries. `RC39` in `selftest.ts`
+ * compares the two lines key by key.
+ */
+const RIG_FIGURES_BEFORE = 'A24_AXIS_SPACE_STROKE';
+if (!MOVED_ASSERTIONS.some((m) => m.code === RIG_FIGURES_BEFORE)) throw new Error(`internal: the model side writes the rig's figures before ${RIG_FIGURES_BEFORE}, which it no longer runs`);
+
+/**
+ * The attachment figures `validate()` counts over the skins it loaded (issue
+ * #1114), counted over the document's skins in the file's walk order: a
+ * `region` record is a region attachment, and a `mesh` or `linkedmesh` record
+ * a mesh attachment — the runtime loads a linked mesh as a mesh. Written only
+ * where the document read and its regions held, as the round trip writes them
+ * only where it loaded the skeleton, and before any body's figure, which is
+ * where `validate()` writes them.
+ */
+function attachmentFigures(stats: Record<string, number | string>, read: ReadDocument): void {
+  const kinds = fileOrderedEntries(read).map((entry) => entry.record.kind);
+  stats.regionAttachments = kinds.filter((kind) => kind === 'region').length;
+  stats.meshAttachments = kinds.filter((kind) => kind === 'mesh' || kind === 'linkedmesh').length;
+}
+
+/**
+ * `rig` — the archetype the document's rig section states (`validate()` prints
+ * its caller's; the model side reads the document's, issue #1054 — read
+ * directly rather than through `supply.rigInfo`, whose refusal of a caller's
+ * `rig` beside the document is the rules' line to print, not this figure's),
+ * left out where there is no document to state one — and `profile`, the profile this
+ * run was handed: the same argument both entries read off `--profile`.
+ */
+function rigFigures(stats: Record<string, number | string>, read: ReadDocument | null, input: ModelValidateInput): void {
+  if (read !== null) stats.rig = modelRigInfo(read).archetype;
+  stats.profile = input.profile;
+}
+
+/**
  * Run the model side: the parse, then every moved assertion — each over the
  * document, or skipped naming the parse when there is none — and return the
  * report in `validate()`'s shape, which `reportLines` in `src/validate.ts`
@@ -343,7 +381,9 @@ export function validateModel(input: ModelValidateInput, plant: Partial<ModelSup
   const supply: ModelSupply = { ...MODEL_SUPPLY, ...plant };
   const h = verdictHarness(input.profile, { ...ASSERTION_KIND, ...MODEL_PARSE_KIND }, 'the model side');
   const { read, held } = parse(h, input.modelText);
+  if (read !== null && held) attachmentFigures(h.stats, read);
   for (const moved of MOVED_ASSERTIONS) {
+    if (moved.code === RIG_FIGURES_BEFORE) rigFigures(h.stats, read, input);
     const doc = read !== null && (held || moved.beforeTheParse === true) ? read : null;
     h.check(moved.code, () => (doc === null ? h.skip(moved.code, moved.unread) : moved.run(h.verdicts, doc, input, supply)));
   }
