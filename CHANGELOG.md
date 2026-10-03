@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.5.1](https://github.com/firejune/rigc/compare/v2.5.0...v2.5.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **selftest:** builds of a fixture or probe land inside its own directory, so no page name spells a temp directory and VF09 counts the same builds in any process ([#1131](https://github.com/firejune/rigc/issues/1131)) ([cf1b125](https://github.com/firejune/rigc/commit/cf1b125a96c887dad4b3b976ac14b75aa9abce44)), closes [#1127](https://github.com/firejune/rigc/issues/1127)
+
 ## [2.5.0](https://github.com/firejune/rigc/compare/v2.4.0...v2.5.0) (2026-10-03)
 
 
