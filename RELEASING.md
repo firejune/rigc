@@ -140,8 +140,11 @@ workflow's.
 before npm packs anything, so a tree that fails its own gates cannot be
 published — by the workflow or by hand. It is the same three commands CI runs on
 every push, and they run over the same corpus: the publish job runs
-`bun run fetch-examples` before `npm publish`, exactly as `ci.yml`'s `test` job
-runs it before the selftest. Without `examples/` the core suite's corpus
+`bun run fetch-examples` before `npm publish`, exactly as each of `ci.yml`'s
+`shard` jobs runs it before its share of the selftest. (CI runs the selftest as
+six shards whose merge, the `test` job, is the verdict — issue #1116; the
+publish gate runs it in one process, and `TY28` holds that a merge ends as the
+one-process run does.) Without `examples/` the core suite's corpus
 controls are red rather than HOLEs — a construct no row reaches is never a pass
 — so a publish gate with no corpus measures a different environment from the
 one CI admitted every commit in, and v1.6.0 was tagged and then refused by it on exactly those

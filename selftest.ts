@@ -17,6 +17,12 @@
  *   bun selftest.ts --only <suite>[,<suite>…]
  *                                        a PARTIAL run for iterating: only the
  *                                        named suites; never a verdict on the tree
+ *   bun selftest.ts --shard <i>/<n> [--tally-out <file>]
+ *                                        one shard of the run, every n-th suite
+ *                                        by registration order; never a verdict
+ *   bun selftest.ts --merge <file>…      every shard's document merged: the verdict
+ *   RIGC_SHARD=<i>/<n> RIGC_TALLY_OUT=<file> bun selftest.ts
+ *                                        the two shard flags through the environment
  *   RIGC_CUTS=<cuts.json> bun selftest.ts
  *   RIGC_EMIT_HASHES_BASE=<hashes.json> bun selftest.ts
  *                                        the step-1 gates (MB07, MV09, MS12, MA12,
@@ -91,6 +97,25 @@
  * (`tools/selftest_memory.base.json`, written by `--memory-base`) times a
  * stated margin; `TY25` plants a retaining suite against it and `TY26` holds
  * the live run, as a SKIP naming the command where the platform has no base.
+ *
+ * ## What `--shard` and `--merge` do
+ *
+ * `--shard i/n` runs the suites whose 0-based index in `main`'s registration
+ * order is `i − 1` modulo `n`, exactly as the full run runs them, prints one
+ * `SKIP … — --shard` line for each of the rest, and ends like `--only`: exit 2
+ * when green, 1 when red, never the summary. With `--tally-out` it writes a
+ * document of every suite it ran — the block the floor holds, the gutter, the
+ * printed time and memory, the value the suite handed back, its FAIL lines and
+ * its share of the run state later suites read. `--merge` refuses by name a set
+ * of documents that is not one run's shards each once, then replays the run:
+ * each registration reads its block off the shard that ran it, and the three
+ * suites that read the whole run (`whole: true` where they are registered —
+ * `seeded-random`, `run-tally`, `verdict-suppliers`) are called by the merge
+ * after every earlier suite's share has been applied. The floor, the tables,
+ * the verdict and the summary are then this file's one-process code over the
+ * replayed numbers; each shard's high-water is held to the memory ceiling as
+ * its own process. `TY27`–`TY31` hold the shard, the merge's equality with one
+ * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -727,6 +752,125 @@ const WRITE_MEMORY_BASE = ((): boolean => {
   }
   return true;
 })();
+
+/** One shard of a sharded run (issue #1116): the `i`th of `n`, 1-based, as `--shard i/n` names it. */
+interface ShardSpec {
+  i: number;
+  n: number;
+}
+
+/**
+ * `--shard`'s value read as `i/n`, or the refusal naming what is wrong with it.
+ * Pure, so `TY27` can hold every refusal by name without starting a process.
+ *
+ * ⚠️ Read strictly, for `readOnlyList`'s reason: `0/3`, `4/3`, `1/0`, `1.5/3`,
+ * `+1/3`, `1/3/2` and ` 1/3` are each a caller who meant something, and a
+ * generous reading would decide which suites a shard covers by guessing.
+ */
+function parseShardSpec(value: string): ShardSpec | string {
+  const match = /^([1-9]\d*)\/([1-9]\d*)$/.exec(value);
+  if (match === null) {
+    return `--shard ${JSON.stringify(value)} is not <i>/<n> with i and n whole numbers from 1, e.g. --shard 2/3`;
+  }
+  const i = Number(match[1]);
+  const n = Number(match[2]);
+  if (i > n) return `--shard ${value} names shard ${i} of ${n}; a shard's i runs from 1 to n`;
+  return { i, n };
+}
+
+/**
+ * The value a flag names, from the command line or else from its environment
+ * variable — `RIGC_CUTS`'s precedent, and the reason CI's step can stay
+ * `bun run selftest` (`CUR112` holds that exact line) while each matrix job
+ * names its own shard. `null` when neither names one; a flag with no value
+ * exits 2.
+ */
+function flagOrEnvironment(argv: readonly string[], flag: string, variable: string): string | null {
+  const at = argv.indexOf(flag);
+  if (at !== -1) {
+    if (argv.indexOf(flag, at + 1) !== -1) {
+      console.error(`selftest: ${flag} was given twice`);
+      process.exit(2);
+    }
+    const value = argv[at + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`selftest: ${flag} needs a value`);
+      process.exit(2);
+    }
+    return value;
+  }
+  const fromEnvironment = process.env[variable];
+  return fromEnvironment === undefined || fromEnvironment === '' ? null : fromEnvironment;
+}
+
+/**
+ * `--shard <i>/<n>` (or `RIGC_SHARD`): this process runs the suites whose
+ * 0-based registration index is `i − 1` modulo `n`, exactly as the full run
+ * runs them, and none of the rest (issue #1116). Refused beside `--only` (two
+ * ways of choosing suites, and a run choosing by both would be choosing by
+ * neither) and beside `--memory-base` (a shard's high-water is not the run's).
+ */
+const SHARD = ((): ShardSpec | null => {
+  const value = flagOrEnvironment(process.argv.slice(2), '--shard', 'RIGC_SHARD');
+  if (value === null) return null;
+  const read = parseShardSpec(value);
+  if (typeof read === 'string') {
+    console.error(`selftest: ${read}`);
+    process.exit(2);
+  }
+  if (ONLY !== null) {
+    console.error('selftest: --shard and --only both choose which suites run; give one of them');
+    process.exit(2);
+  }
+  if (WRITE_MEMORY_BASE) {
+    console.error("selftest: --memory-base writes the high-water RSS of the FULL run; a shard's is the high-water of the suites it ran");
+    process.exit(2);
+  }
+  return read;
+})();
+
+/**
+ * `--tally-out <file>` (or `RIGC_TALLY_OUT`): where a shard writes its tally
+ * document, the one thing `--merge` reads. Refused without `--shard`: the
+ * document is a shard's, and a full run's tally is its summary.
+ */
+const TALLY_OUT = ((): string | null => {
+  const value = flagOrEnvironment(process.argv.slice(2), '--tally-out', 'RIGC_TALLY_OUT');
+  if (value === null) return null;
+  if (SHARD === null) {
+    console.error('selftest: --tally-out writes a shard\'s tally document; it needs --shard <i>/<n> (or RIGC_SHARD)');
+    process.exit(2);
+  }
+  return resolve(value);
+})();
+
+/**
+ * `--merge <file>…`: the shard documents whose merge is the verdict (issue
+ * #1116) — every argument after the flag up to the next `--` flag. Refused
+ * beside any flag that chooses or measures suites in this process: the merge
+ * reads what the shards ran, and runs only the suites that read the whole run.
+ */
+const MERGE = ((): string[] | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--merge');
+  if (at === -1) return null;
+  const files: string[] = [];
+  for (let k = at + 1; k < argv.length && !argv[k].startsWith('--'); k++) files.push(resolve(argv[k]));
+  if (files.length === 0) {
+    console.error('selftest: --merge needs the shard documents, e.g. --merge shard-1.json shard-2.json shard-3.json');
+    process.exit(2);
+  }
+  for (const [flag, given] of [['--only', ONLY !== null], ['--shard', SHARD !== null], ['--memory-base', WRITE_MEMORY_BASE]] as const) {
+    if (given) {
+      console.error(`selftest: --merge reads the shards' documents and cannot be given with ${flag}`);
+      process.exit(2);
+    }
+  }
+  return files;
+})();
+// Read once, above; a child this run starts is not a shard of it.
+delete process.env.RIGC_SHARD;
+delete process.env.RIGC_TALLY_OUT;
 
 function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
@@ -1383,6 +1527,42 @@ const documentsOwnSlotKeyWalk: SlotKeyWalk = (skins) => skins.map((skin) => ({ s
 /** The first double-quoted name in a sentence — the object a FAIL line is about (`region "x"`, `animation "x"`, `page "x"`). */
 const firstQuoted = (sentence: string): string | null => /"([^"]*)"/.exec(sentence)?.[1] ?? null;
 
+/**
+ * A build the supplier check walked for the first time in its process, and what
+ * that walk added (issue #1116) — `null` where the walk added nothing (no
+ * runtime facts, or no family answered). What the merge needs to add a build
+ * two shards both walked exactly once.
+ */
+type SupplierSighting =
+  | { kind: 'walk'; key: string; walk: { equal: boolean; documentOrderDiffers: boolean } | null }
+  | {
+      kind: 'family';
+      key: string;
+      family: { walked: FamilyTally[]; identical: FactCut[]; derivations: DerivationTally[] | null; multiSkin: boolean; documentOrderDiffers: boolean } | null;
+    };
+
+/** Where a supplier check stood before a suite (`journalMark`). */
+interface SupplierMark {
+  counts: Record<string, number>;
+  linesByCode: Map<string, number>;
+  measuredByCode: Map<string, number>;
+  lengths: number[];
+}
+
+/** One suite's share of a supplier check, as a shard's document carries it to the merge (`journalSince`, `journalApply`). */
+interface SupplierDelta {
+  counts: Record<string, number>;
+  linesByCode: Array<[string, number]>;
+  measuredByCode: Array<[string, number]>;
+  faults: Array<{ case: string; fault: string; build?: string }>;
+  coreRefused: Array<{ case: string; code: string; why: string; route: string }>;
+  twinOutcomes: TwinOutcome[];
+  withheld: Array<{ case: string; withheld: DeclaredValue[]; codes: string[] }>;
+  unthreaded: Array<{ case: string; codes: string[] }>;
+  unwritable: string[];
+  sightings: SupplierSighting[];
+}
+
 class SupplierCheck {
   /** `plant` replaces a model supplier on every comparison this check makes — `VF04`'s plants; the run's check passes none. */
   constructor(private readonly plant: Partial<ModelSupply> = {}) {}
@@ -1466,10 +1646,153 @@ class SupplierCheck {
   }
 
   /** A record, kept now — so a figure read before the case line counts it — and named by the case line that follows. */
-  private keep<T extends { case: string }>(list: T[], record: Omit<T, 'case'>): void {
+  private keep<T extends { case: string }>(list: T[], record: Omit<T, 'case'>): T {
     const kept = { ...record, case: UNNAMED_CASE } as T;
     list.push(kept);
     this.awaiting.push(kept);
+    return kept;
+  }
+
+  /**
+   * Every distinct build this check walked, in the order it first saw each, with
+   * what that first sighting added (issue #1116). Nothing here reads it in a
+   * one-process run; a shard hands it to the merge, which is how the merge adds
+   * a build two shards both walked ONCE, as one process would have — the
+   * per-build figures (`walks`, `familyWalk.builds`, `families`, `derivations`,
+   * the joins) and the faults a first sighting raised are a fact about distinct
+   * builds, and a sum of two shards' would count a shared build twice.
+   */
+  private sightings: SupplierSighting[] = [];
+  /** The faults a first sighting raised, by the build it was the first sighting of. */
+  private faultBuild = new Map<object, string>();
+
+  /**
+   * Every field this class holds, by how a shard's record carries it. A field
+   * added to the class and not here makes `journalMark` throw by name: a field
+   * the record does not carry is a figure the merge would silently lose.
+   */
+  private static readonly JOURNAL_FIELDS: Record<string, 'per call' | 'per build' | 'journal'> = {
+    plant: 'journal', awaiting: 'journal', sightings: 'journal', faultBuild: 'journal',
+    calls: 'per call', withModel: 'per call', own: 'per call', compared: 'per call', lines: 'per call',
+    bothRefused: 'per call', beforeParse: 'per call', beforeParseLines: 'per call', linesByCode: 'per call',
+    measuredByCode: 'per call', afterEmit: 'per call', firing: 'per call', withoutModel: 'per call',
+    faults: 'per call', coreRefused: 'per call', twinOutcomes: 'per call', withheld: 'per call', unthreaded: 'per call',
+    unwritable: 'per call',
+    familyWalk: 'per build', families: 'per build', identicalByCut: 'per build', familyBuilt: 'per build',
+    joinsDocumentOrderDiffers: 'per build', joinsMultiSkin: 'per build', derivations: 'per build', walks: 'per build',
+    walked: 'per build',
+  };
+
+  /** Where this check stands now, for `journalSince` to read one suite's share off (issue #1116). */
+  journalMark(): SupplierMark {
+    const unknown = Object.keys(this).filter((key) => !(key in SupplierCheck.JOURNAL_FIELDS));
+    if (unknown.length > 0) {
+      throw new Error(`SupplierCheck holds ${unknown.map((k) => `"${k}"`).join(', ')}, which a shard's record does not carry — add each to JOURNAL_FIELDS and to journalSince/journalApply`);
+    }
+    return {
+      counts: this.perCallCounts(),
+      linesByCode: new Map(this.linesByCode),
+      measuredByCode: new Map(this.measuredByCode),
+      lengths: [this.faults.length, this.coreRefused.length, this.twinOutcomes.length, this.withheld.length, this.unthreaded.length, this.unwritable.length, this.sightings.length],
+    };
+  }
+
+  /** The per-call counters, by name. */
+  private perCallCounts(): Record<string, number> {
+    return {
+      calls: this.calls, withModel: this.withModel, own: this.own, compared: this.compared, lines: this.lines,
+      bothRefused: this.bothRefused, beforeParse: this.beforeParse, beforeParseLines: this.beforeParseLines,
+      afterEmit: this.afterEmit, firing: this.firing, withoutModel: this.withoutModel, familyWalkCalls: this.familyWalk.calls,
+    };
+  }
+
+  /**
+   * What this check gained since `mark`: the per-call figures as differences and
+   * slices, and the builds first seen since, each with what it added. The
+   * records are the live objects, so a case line printed after the suite still
+   * names them before the shard writes its document.
+   */
+  journalSince(mark: SupplierMark): SupplierDelta {
+    const now = this.perCallCounts();
+    const counts: Record<string, number> = {};
+    for (const [key, value] of Object.entries(now)) counts[key] = value - (mark.counts[key] ?? 0);
+    const mapDelta = (live: Map<string, number>, was: Map<string, number>): Array<[string, number]> =>
+      [...live].map(([k, v]): [string, number] => [k, v - (was.get(k) ?? 0)]).filter(([, v]) => v !== 0);
+    const [f, c, t, w, u, x, s] = mark.lengths;
+    return {
+      counts,
+      linesByCode: mapDelta(this.linesByCode, mark.linesByCode),
+      measuredByCode: mapDelta(this.measuredByCode, mark.measuredByCode),
+      faults: this.faults.slice(f).map((record) => {
+        const build = this.faultBuild.get(record);
+        return build === undefined ? record : { ...record, build };
+      }),
+      coreRefused: this.coreRefused.slice(c),
+      twinOutcomes: this.twinOutcomes.slice(t),
+      withheld: this.withheld.slice(w),
+      unthreaded: this.unthreaded.slice(u),
+      unwritable: this.unwritable.slice(x),
+      sightings: this.sightings.slice(s),
+    };
+  }
+
+  /**
+   * One suite's share, read back into this check in the order the one-process
+   * run would have made it (issue #1116). A build this check has already seen
+   * adds nothing and its faults are dropped — that sighting was not the first
+   * in the run order, so in one process it would have been a repeat.
+   */
+  journalApply(delta: SupplierDelta): void {
+    this.calls += delta.counts.calls ?? 0;
+    this.withModel += delta.counts.withModel ?? 0;
+    this.own += delta.counts.own ?? 0;
+    this.compared += delta.counts.compared ?? 0;
+    this.lines += delta.counts.lines ?? 0;
+    this.bothRefused += delta.counts.bothRefused ?? 0;
+    this.beforeParse += delta.counts.beforeParse ?? 0;
+    this.beforeParseLines += delta.counts.beforeParseLines ?? 0;
+    this.afterEmit += delta.counts.afterEmit ?? 0;
+    this.firing += delta.counts.firing ?? 0;
+    this.withoutModel += delta.counts.withoutModel ?? 0;
+    this.familyWalk.calls += delta.counts.familyWalkCalls ?? 0;
+    for (const [k, v] of delta.linesByCode) this.linesByCode.set(k, (this.linesByCode.get(k) ?? 0) + v);
+    for (const [k, v] of delta.measuredByCode) this.measuredByCode.set(k, (this.measuredByCode.get(k) ?? 0) + v);
+    const repeats = new Set<string>();
+    for (const sighting of delta.sightings) {
+      const seen = sighting.kind === 'walk' ? this.walked : this.familyBuilt;
+      if (seen.has(sighting.key)) {
+        repeats.add(sighting.key);
+        continue;
+      }
+      seen.add(sighting.key);
+      this.sightings.push(sighting);
+      if (sighting.kind === 'walk') {
+        if (sighting.walk === null) continue;
+        this.walks.compared++;
+        if (sighting.walk.documentOrderDiffers) this.walks.documentOrderDiffers++;
+        if (sighting.walk.equal) this.walks.equal++;
+        continue;
+      }
+      const added = sighting.family;
+      if (added === null) continue;
+      this.familyWalk.builds++;
+      sumPosedTallies(this.families, added.walked);
+      for (const cut of added.identical) this.identicalByCut.set(cut, (this.identicalByCut.get(cut) ?? 0) + 1);
+      if (added.derivations !== null) sumTallies(this.derivations, added.derivations);
+      if (added.multiSkin) this.joinsMultiSkin++;
+      if (added.documentOrderDiffers) this.joinsDocumentOrderDiffers++;
+    }
+    for (const record of delta.faults) {
+      if (record.build !== undefined && repeats.has(record.build)) continue;
+      const kept = { case: record.case, fault: record.fault };
+      this.faults.push(kept);
+      if (record.build !== undefined) this.faultBuild.set(kept, record.build);
+    }
+    this.coreRefused.push(...delta.coreRefused);
+    this.twinOutcomes.push(...delta.twinOutcomes);
+    this.withheld.push(...delta.withheld);
+    this.unthreaded.push(...delta.unthreaded);
+    this.unwritable.push(...delta.unwritable);
   }
 
   observe(input: ValidateInput, spine: ValidateReport, twin: ModelTwin | undefined): void {
@@ -1559,6 +1882,8 @@ class SupplierCheck {
     const build = `${spineFileSha256(input.skeletonText)} ${spineFileSha256(input.atlasText)}`;
     if (this.walked.has(build)) return;
     this.walked.add(build);
+    const sighting: SupplierSighting = { kind: 'walk', key: build, walk: null };
+    this.sightings.push(sighting);
     const runtime = runtimeFacts(input.skeletonText, input.atlasText);
     if (runtime === null) return;
     const model = modelSkinEntries({ doc: readModel(modelText), json: doc as Record<string, unknown> });
@@ -1566,9 +1891,12 @@ class SupplierCheck {
     this.walks.compared++;
     // What the document's own order would have printed — the walk the census measured unequal on 3 of 52.
     const read = { doc: readModel(modelText), json: doc as Record<string, unknown> };
-    if (spell(modelSkinEntries(read, (skins) => [...skins])) !== spell(runtime.skinEntries)) this.walks.documentOrderDiffers++;
-    if (spell(runtime.skinEntries) === spell(model)) this.walks.equal++;
-    else this.keep(this.faults, { fault: `the skins walk in another order on the two sides — spine-core ${spell(runtime.skinEntries).slice(0, 240)}; model ${spell(model).slice(0, 240)}` });
+    const documentOrderDiffers = spell(modelSkinEntries(read, (skins) => [...skins])) !== spell(runtime.skinEntries);
+    if (documentOrderDiffers) this.walks.documentOrderDiffers++;
+    const equal = spell(runtime.skinEntries) === spell(model);
+    sighting.walk = { equal, documentOrderDiffers };
+    if (equal) this.walks.equal++;
+    else this.faultBuild.set(this.keep(this.faults, { fault: `the skins walk in another order on the two sides — spine-core ${spell(runtime.skinEntries).slice(0, 240)}; model ${spell(model).slice(0, 240)}` }), build);
   }
 
   /**
@@ -1583,28 +1911,40 @@ class SupplierCheck {
     const build = [input.skeletonText, input.atlasText, modelText, JSON.stringify(input.rig ?? null), JSON.stringify(input.declaredDurations ?? null)].map(spineFileSha256).join(' ');
     if (this.familyBuilt.has(build)) return;
     this.familyBuilt.add(build);
+    const sighting: SupplierSighting = { kind: 'family', key: build, family: null };
+    this.sightings.push(sighting);
     const walked = compareFactFamilies(input.skeletonText, input.atlasText, modelText, { rig: input.rig, declaredDurations: input.declaredDurations }, this.plant);
     if (walked === null) return;
     this.familyWalk.builds++;
     sumPosedTallies(this.families, walked);
+    const identical: FactCut[] = [];
     for (const cut of FACT_CUTS) {
       const ofCut = walked.filter((t) => t.cut === cut);
-      if (ofCut.length > 0 && ofCut.every((t) => t.differing.length === 0)) this.identicalByCut.set(cut, (this.identicalByCut.get(cut) ?? 0) + 1);
+      if (ofCut.length > 0 && ofCut.every((t) => t.differing.length === 0)) {
+        this.identicalByCut.set(cut, (this.identicalByCut.get(cut) ?? 0) + 1);
+        identical.push(cut);
+      }
     }
+    const raised = (fault: string): void => void this.faultBuild.set(this.keep(this.faults, { fault }), build);
     for (const t of walked) {
-      for (const d of t.differing) this.keep(this.faults, { fault: `${FACT_FAULT} "${t.family}" (cut ${t.cut}) differ at ${d.question.slice(0, 160)} — spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}` });
-      if (t.cut === '4c-1' || t.cut === '4c-2') for (const r of t.refused) this.keep(this.faults, { fault: `${FACT_FAULT} "${t.family}" (cut ${t.cut}) differ: the core refused the model side's reading by name — ${r.why.slice(0, 240)}` });
+      for (const d of t.differing) raised(`${FACT_FAULT} "${t.family}" (cut ${t.cut}) differ at ${d.question.slice(0, 160)} — spine-core ${d.spine.slice(0, 240)}; model ${d.model.slice(0, 240)}`);
+      if (t.cut === '4c-1' || t.cut === '4c-2') for (const r of t.refused) raised(`${FACT_FAULT} "${t.family}" (cut ${t.cut}) differ: the core refused the model side's reading by name — ${r.why.slice(0, 240)}`);
     }
     const derivations = rigFactsDerivationsOf(input.skeletonText, input.atlasText, modelText);
     if (derivations !== null) sumTallies(this.derivations, derivations);
     // What the document's own skin and slot-key order would have joined — the measurement that says the emitter's order is the one that matters.
     const doc = JSON.parse(modelText) as { skins?: unknown[] };
+    let multiSkin = false;
+    let documentOrderDiffers = false;
     if (Array.isArray(doc.skins) && doc.skins.length > 1) {
+      multiSkin = true;
       this.joinsMultiSkin++;
       const read = { doc: readModel(modelText), json: doc as Record<string, unknown> };
       const own = JSON.stringify(modelRegionJoinsWith(read, documentsOwnSlotKeyWalk));
-      if (own !== JSON.stringify(modelRegionJoinsWith(read))) this.joinsDocumentOrderDiffers++;
+      documentOrderDiffers = own !== JSON.stringify(modelRegionJoinsWith(read));
+      if (documentOrderDiffers) this.joinsDocumentOrderDiffers++;
     }
+    sighting.family = { walked, identical, derivations, multiSkin, documentOrderDiffers };
   }
 
   private settleTwin(input: ValidateInput, spine: ValidateReport, modelText: string, firing: string[], whole: ModelTwin | undefined): Array<Omit<TwinOutcome, 'case'>> {
@@ -103907,6 +104247,16 @@ interface SuiteReads<T> {
    * trace; with this set it is skipped by name, with the reason, instead.
    */
   live?: boolean;
+  /**
+   * The suite reads what EVERY suite before it left in the process — the whole
+   * run's blocks (`run-tally`), its seeded draws (`seeded-random`), its supplier
+   * check (`verdict-suppliers`) — so a shard, which ran only some of them,
+   * would hand it part of what it reads and get a verdict about part of the run
+   * (issue #1116). No shard runs it; the merge does, after applying every
+   * earlier suite's share off the shards' documents. Unchanged everywhere else:
+   * the full run and `--only` call it where it is registered.
+   */
+  whole?: boolean;
 }
 
 /**
@@ -104129,6 +104479,8 @@ class RunTally {
   readonly skipped: SuiteBlock[] = [];
   /** Every key `of` was called with, in call order: the registry `--only` is checked against. */
   readonly registered: string[] = [];
+  /** The suites a shard left to the merge because they read the whole run (issue #1116), in registration order. */
+  readonly leftToMerge: string[] = [];
   /**
    * What each suite this tally CALLED took, in seconds, off the clock around
    * the call (issue #1116). Held apart from `blocks` for `RT04`'s reason: two
@@ -104163,11 +104515,111 @@ class RunTally {
   collects = false;
 
   /**
+   * `--shard`: which shard of the registration list this tally runs, or `null`
+   * (issue #1116). A suite whose 0-based registration index is not `i − 1`
+   * modulo `n` prints its header and one `SKIP … — --shard` line, as `--only`'s
+   * skipped suites do, and so does every suite that reads the whole run — the
+   * merge runs those.
+   */
+  shard: ShardSpec | null = null;
+  /**
+   * `--merge`: the shard documents this tally replays, or `null` (issue #1116).
+   * A suite a shard ran is not called: its block, its counts, its printed
+   * figures and the value it handed back are read off that shard's document in
+   * registration order, so everything after it — a suite that reads the whole
+   * run, the floor, the summary — reads exactly what one process would have.
+   */
+  replay: MergeReplay | null = null;
+  /**
+   * What suites leave in this process for later suites to read (issue #1116):
+   * the seeded draws `RG01` reads, the core's corpus cases `TY22` reads and the
+   * supplier check `verdict-suppliers` reads. Empty in a one-process run. A
+   * shard marks each around every suite it runs and writes the suite's share
+   * into its document; the merge applies the shares in registration order, so
+   * a suite that reads the whole run reads the share of every suite before it.
+   */
+  states: RunState[] = [];
+  /** Per suite this tally called (a shard's), what its document carries beyond the block (issue #1116). */
+  readonly records: ShardRecord[] = [];
+  /** Per suite a shard skipped, the gutter words its SKIP section printed — subtracted from the shard's outside lines. */
+  private readonly skippedGutter = new Map<string, number>();
+  /** Where each block of a merged tally came from: a shard document's index, or -1 for a suite the merge ran itself. */
+  readonly origin = new Map<string, number>();
+  /** Every FAIL line this tally observed, in order — what a shard's document names a red by. */
+  private readonly failText: string[] = [];
+
+  /**
    * `only` is the set `--only` named, or `null` for the full run — which is the
    * default, so every tally this file builds for a miniature is a full run
    * unless it says otherwise.
    */
   constructor(readonly only: ReadonlySet<string> | null = null) {}
+
+  /** Every FAIL line observed so far. */
+  get fails(): readonly string[] {
+    return this.failText;
+  }
+
+  /**
+   * The lines this tally observed outside every suite — header, case and quiet
+   * lines and their gutter words — which a merge has to add back exactly once
+   * per shard (issue #1116). On a correct tree every figure here is 0.
+   */
+  outside(): ShardOutside {
+    const all = this.everyBlock;
+    const sum = (field: 'controls' | 'fails' | 'quiet' | 'headers'): number => all.reduce((total, block) => total + block[field], 0);
+    const gutter = new Map(this.gutter);
+    const take = (word: string, count: number): void => {
+      const left = (gutter.get(word) ?? 0) - count;
+      if (left === 0) gutter.delete(word);
+      else gutter.set(word, left);
+    };
+    for (const record of this.records) for (const [word, count] of Object.entries(record.gutter)) take(word, count);
+    for (const [word, count] of this.skippedGutter) take(word, count);
+    return {
+      controls: this.controlLines - sum('controls'),
+      fails: this.failLines - sum('fails'),
+      quiet: this.quietLines - sum('quiet'),
+      headers: this.headerLines - sum('headers'),
+      gutter: Object.fromEntries([...gutter].sort(([a], [b]) => (a < b ? -1 : 1))),
+    };
+  }
+
+  /** A shard's lines outside every suite, added once as that shard printed them (issue #1116). */
+  absorbOutside(outside: ShardOutside): void {
+    this.controlLines += outside.controls;
+    this.failLines += outside.fails;
+    this.quietLines += outside.quiet;
+    this.headerLines += outside.headers;
+    for (const [word, count] of Object.entries(outside.gutter)) this.gutter.set(word, (this.gutter.get(word) ?? 0) + count);
+  }
+
+  /**
+   * The block a shard ran, read off its document instead of called (issue
+   * #1116): every count the floor and the summary read is added as if the
+   * suite had printed its lines here, and the value it handed back is returned
+   * for the summary to read. Its share of each run state is applied after it,
+   * in registration order.
+   */
+  private replayed(record: ShardRecord, from: number): unknown {
+    const block: SuiteBlock = { ...record.block, names: [...record.block.names] };
+    this.controlLines += block.controls;
+    this.quietLines += block.quiet;
+    this.headerLines += block.headers;
+    this.failLines += block.fails;
+    this.named.push(...block.names);
+    this.failText.push(...record.failLines);
+    for (const [word, count] of Object.entries(record.gutter)) this.gutter.set(word, (this.gutter.get(word) ?? 0) + count);
+    this.parts.push(...record.parts);
+    this.blocks.push(block);
+    this.seconds.set(block.key, record.seconds);
+    this.rss.set(block.key, record.rss);
+    if (record.printedSeconds !== null) this.printedSeconds.set(block.key, record.printedSeconds);
+    if (record.printedRss !== null) this.printedRss.set(block.key, record.printedRss);
+    this.origin.set(block.key, from);
+    for (const state of this.states) state.apply(record.state[state.name]);
+    return record.value;
+  }
 
   /** The run's suites and the ones `--only` skipped, which is what the floor holds. */
   get everyBlock(): SuiteBlock[] {
@@ -104194,7 +104646,10 @@ class RunTally {
       this.controlLines++;
       const name = caseName(line);
       if (name !== null) this.named.push(name);
-      if (word === FAIL_GUTTER) this.failLines++;
+      if (word === FAIL_GUTTER) {
+        this.failLines++;
+        this.failText.push(line);
+      }
     } else if (QUIET_GUTTER.includes(word)) this.quietLines++;
   }
 
@@ -104221,7 +104676,40 @@ class RunTally {
     const headers = this.headerLines;
     const fails = this.failLines;
     const named = this.named.length;
+    const index = this.registered.length;
     this.registered.push(key);
+    // ⚠️ The suite is not called in either branch below, so there is no value of
+    // its type to hand back except the one its shard recorded — see the cast's
+    // comment further down, which holds for the same reason.
+    if (this.replay !== null) {
+      const recorded = this.replay.expect(index, key, reads.whole === true);
+      if (recorded !== null) return this.replayed(recorded.record, recorded.from) as T;
+    }
+    if (this.shard !== null && (reads.whole === true || index % this.shard.n !== this.shard.i - 1)) {
+      const gutterBefore = new Map(this.gutter);
+      console.log(`\n── ${key} ──`);
+      console.log(
+        reads.whole === true
+          ? `  SKIP  ${key}: not run — --shard; it reads what every suite before it left in the run, so the merge runs it over every shard's record`
+          : `  SKIP  ${key}: not run — --shard ${this.shard.i}/${this.shard.n} (registration index ${index} is shard ${(index % this.shard.n) + 1}'s)`,
+      );
+      for (const [word, count] of this.gutter) {
+        const added = count - (gutterBefore.get(word) ?? 0);
+        if (added > 0) this.skippedGutter.set(word, (this.skippedGutter.get(word) ?? 0) + added);
+      }
+      if (reads.whole === true) this.leftToMerge.push(key);
+      this.skipped.push({
+        key,
+        ran: false,
+        controls: this.controlLines - controls,
+        quiet: this.quietLines - quiet,
+        headers: this.headerLines - headers,
+        fails: this.failLines - fails,
+        returned: 0,
+        names: this.named.slice(named),
+      });
+      return undefined as unknown as T;
+    }
     const blind = this.only !== null && reads.live === true && !this.blocks.some((block) => block.controls > 0);
     if (this.only !== null && (!this.only.has(key) || blind)) {
       // ⚠️ The suite is not called, so there is no value of its type to hand
@@ -104255,6 +104743,14 @@ class RunTally {
     // 🧮 The memory is read once at each boundary, outside the clock, so the
     // collection a timed tally forces there is harness overhead and not the
     // suite's seconds (issue #1121).
+    // 🧭 A shard's record of the suite (issue #1116), taken outside the clock
+    // like the memory: the gutter words and FAIL lines it printed, its phases,
+    // and each run state's mark before it.
+    const keeping = this.shard !== null;
+    const gutterBefore = keeping ? new Map(this.gutter) : null;
+    const partsBefore = this.parts.length;
+    const failsBefore = this.failText.length;
+    const marks = keeping ? this.states.map((state) => state.mark()) : [];
     const memoryBefore = readMemory(this.collects);
     const began = performance.now();
     const value = suite();
@@ -104273,7 +104769,28 @@ class RunTally {
     this.blocks.push(block);
     this.seconds.set(key, seconds);
     this.rss.set(key, rss);
+    if (this.replay !== null) this.origin.set(key, -1);
     if (this.timed) console.log(durationLine(key, block.controls, seconds, rss));
+    if (gutterBefore !== null) {
+      const gutter: Record<string, number> = {};
+      for (const [word, count] of this.gutter) {
+        const added = count - (gutterBefore.get(word) ?? 0);
+        if (added > 0) gutter[word] = added;
+      }
+      this.records.push({
+        index,
+        block,
+        gutter,
+        parts: this.parts.slice(partsBefore),
+        seconds,
+        printedSeconds: null,
+        rss,
+        printedRss: null,
+        value,
+        failLines: this.failText.slice(failsBefore),
+        state: Object.fromEntries(this.states.map((state, at) => [state.name, state.since(marks[at])])),
+      });
+    }
     return value;
   }
 
@@ -104329,6 +104846,462 @@ class RunTally {
     }
     return counted.controls;
   }
+}
+
+// ---------------------------------------------------------------------------
+// the run as n shards whose merge is the verdict (#1116)
+// ---------------------------------------------------------------------------
+//
+// `--shard i/n` runs the suites whose 0-based registration index is `i − 1`
+// modulo `n` — the order `main` calls `tally.of` in, which is the same in every
+// process because it is code — prints every case line and one `SKIP` per suite
+// it leaves, and exits like `--only`: 2 when green, never 0, because a shard is
+// a true statement about its suites and none about the tree. `--tally-out`
+// writes what it ran as a document. `--merge` reads every shard's document,
+// refuses by name a set that is not the registration list exactly once, and
+// then REPLAYS the run: `main` registers every suite as it always does, and
+// each `tally.of` either reads the block off the shard that ran it or, for a
+// suite that reads the whole run, calls it — after every earlier suite's share
+// of the run state has been applied. So the floor, the tables, the verdict and
+// the summary are the one-process run's own code over the same numbers, and
+// there is no second summary to keep in step with the first.
+//
+// ⚠️ Why three suites are the merge's rather than a shard's, measured off the
+// code rather than assumed: `run-tally` reads the blocks of every suite before
+// it, `seeded-random`'s RG01 reads the draws every earlier population took
+// (`SEEDED_DRAWS`), and `verdict-suppliers` reads the supplier check every
+// earlier `validate` call fed (`SUPPLIERS`). Run in a shard, each would read
+// that shard's share and print a verdict about part of the run — `RG01` a
+// SKIP, the supplier check blind to every other shard's calls — so each says
+// `whole: true` where it is registered and the merge runs it.
+
+/** What suites leave in their process for later suites to read, and one suite's share of it as a shard carries it to the merge. */
+interface RunState {
+  /** The key a shard's record stores this state's share under. */
+  name: string;
+  /** Where the state stands now, in memory only. */
+  mark(): unknown;
+  /** What it gained since `mark`, as JSON can carry it. */
+  since(mark: unknown): unknown;
+  /** One suite's share, added back in registration order. */
+  apply(share: unknown): void;
+}
+
+/**
+ * The run states, each with the suite that reads it — read off the module's
+ * own state rather than listed by suite, because the writers are every
+ * population that draws, every core corpus control and every `validate` call.
+ */
+function runStates(): RunState[] {
+  const listShare = <T>(name: string, list: T[]): RunState => ({
+    name,
+    mark: () => list.length,
+    since: (mark) => list.slice(mark as number),
+    apply: (share) => {
+      if (!Array.isArray(share)) throw new Error(`a shard record carries no "${name}" share`);
+      list.push(...(share as T[]));
+    },
+  });
+  return [
+    // RG01 (`seeded-random`) reads every generator the run made and the draws it took.
+    listShare('seeded-draws', SEEDED_DRAWS),
+    // TY22's live half (`run-tally`) reads every core control's corpus verdict.
+    listShare('core-corpus-cases', CORE_CORPUS_CASES),
+    // `verdict-suppliers` reads what every `validate` call before it compared.
+    {
+      name: 'suppliers',
+      mark: () => SUPPLIERS.journalMark(),
+      since: (mark) => SUPPLIERS.journalSince(mark as SupplierMark),
+      apply: (share) => {
+        if (share === null || typeof share !== 'object') throw new Error('a shard record carries no "suppliers" share');
+        SUPPLIERS.journalApply(share as SupplierDelta);
+      },
+    },
+  ];
+}
+
+/** One suite a shard ran, as its document carries it: the block the floor holds, and everything else the merge reads. */
+interface ShardRecord {
+  /** Its 0-based registration index. */
+  index: number;
+  block: SuiteBlock;
+  /** The gutter words its lines reported under, and how often. */
+  gutter: Record<string, number>;
+  /** Its phases (`diff/identity` …), which the summary states. */
+  parts: SuitePart[];
+  /** Off the clock around its call, and as its duration line printed it. */
+  seconds: number;
+  printedSeconds: number | null;
+  rss: SuiteRss;
+  printedRss: SuiteRss | null;
+  /** What it handed back — the value the summary reads (`motion.cases`, `docsQuotes.holes`, a corpus suite's `null` …). */
+  value: unknown;
+  /** Its FAIL lines, verbatim: what a red merge names. */
+  failLines: string[];
+  /** Its share of each run state, by `RunState.name`. */
+  state: Record<string, unknown>;
+}
+
+/** What a process printed outside every suite. 0 everywhere on a correct tree. */
+interface ShardOutside {
+  controls: number;
+  fails: number;
+  quiet: number;
+  headers: number;
+  gutter: Record<string, number>;
+}
+
+/** The format word of a shard's document. */
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/1';
+
+/** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
+interface ShardDocument {
+  spec: string;
+  shard: ShardSpec;
+  /** sha256 of the `selftest.ts` that wrote it: a merge of two trees' shards is two runs, not one. */
+  source: string;
+  /** The registration list it saw, in order — the shard key. */
+  registered: string[];
+  /** The suites it ran, in order. */
+  run: ShardRecord[];
+  /** The suites it left to other shards, and those it left to the merge. */
+  others: string[];
+  merge: string[];
+  outside: ShardOutside;
+  /** The process's wall, its final RSS, and the largest RSS any suite line of it printed. */
+  wallSeconds: number;
+  finalRss: number;
+  highWater: number;
+  /** Its own floor's faults; a shard that cannot account for itself is no part of a verdict. */
+  floorFaults: string[];
+  exit: number;
+  platform: string;
+  bun: string;
+}
+
+/** sha256 of this file as it is on disk — what every shard document and the merge compare. */
+function selftestSource(): string {
+  return createHash('sha256').update(readFileSync(join(import.meta.dir, 'selftest.ts'))).digest('hex');
+}
+
+/** A shard's document, off the tally that ran it. */
+function shardDocument(
+  tally: RunTally,
+  shard: ShardSpec,
+  source: string,
+  wallSeconds: number,
+  finalRss: number,
+  floorFaults: readonly string[],
+  exit: number,
+): ShardDocument {
+  const merge = new Set(tally.leftToMerge);
+  return {
+    spec: SHARD_DOCUMENT_SPEC,
+    shard,
+    source,
+    registered: [...tally.registered],
+    run: tally.records.map((record) => ({
+      ...record,
+      printedSeconds: tally.printedSeconds.get(record.block.key) ?? null,
+      printedRss: tally.printedRss.get(record.block.key) ?? null,
+    })),
+    others: tally.skipped.map((block) => block.key).filter((key) => !merge.has(key)),
+    merge: [...tally.leftToMerge],
+    outside: tally.outside(),
+    wallSeconds,
+    finalRss,
+    highWater: highWaterOf(tally.rss),
+    floorFaults: [...floorFaults],
+    exit,
+    platform: process.platform,
+    bun: Bun.version,
+  };
+}
+
+/** How a shard ends: its last line says it is one shard and is not a verdict, and it exits 2 when green, 1 when red. */
+function shardVerdict(tally: RunTally): RunVerdict | null {
+  if (tally.shard === null) return null;
+  const { i, n } = tally.shard;
+  const ran = tally.blocks.map((block) => block.key);
+  const merge = new Set(tally.leftToMerge);
+  const others = tally.skipped.filter((block) => !merge.has(block.key)).length;
+  const line =
+    `rigc selftest: SHARD ${i}/${n} — not a verdict on the tree. ${ran.length} suite(s) ran [${ran.join(', ')}] over ` +
+    `${tally.total} case line(s); ${others} suite(s) are other shards' and ${merge.size} read the whole run, so the merge ` +
+    `runs them [${tally.leftToMerge.join(', ')}]. The verdict is \`bun selftest.ts --merge <file>…\` over every shard's --tally-out document.`;
+  const bad = tally.failures;
+  return bad > 0 ? { code: 1, lines: [`rigc selftest: ${bad} control(s) failed`, line] } : { code: 2, lines: [line] };
+}
+
+/** A document as given to `--merge`: the file it came from, and the document or why it is not one. */
+interface GivenDocument {
+  file: string;
+  doc: ShardDocument;
+}
+
+/** Each file read as a shard document, and a refusal by name for every one that is not. */
+function readShardDocuments(files: readonly string[]): { given: GivenDocument[]; refusals: string[] } {
+  const given: GivenDocument[] = [];
+  const refusals: string[] = [];
+  for (const file of files) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (err) {
+      refusals.push(`${file} is not a readable JSON document: ${(err as Error).message}`);
+      continue;
+    }
+    const doc = parsed as Partial<ShardDocument>;
+    if (doc === null || typeof doc !== 'object' || doc.spec !== SHARD_DOCUMENT_SPEC) {
+      refusals.push(`${file} is not a "${SHARD_DOCUMENT_SPEC}" document — write one with \`bun selftest.ts --shard <i>/<n> --tally-out ${basename(file)}\``);
+      continue;
+    }
+    given.push({ file, doc: doc as ShardDocument });
+  }
+  return { given, refusals };
+}
+
+/**
+ * Everything that keeps a set of shard documents from being ONE run, each by
+ * name (issue #1116). Empty means: one document per shard of one `n`, written
+ * by this `selftest.ts` over one registration list, together running every
+ * suite exactly once — its own shard's — and leaving the whole-run readers to
+ * the merge. Pure, so `TY29`–`TY31` drive it over miniature documents.
+ */
+function mergeRefusals(given: readonly GivenDocument[], source: string): string[] {
+  const refusals: string[] = [];
+  if (given.length === 0) return ['no shard document was given, so there is nothing to merge'];
+  const label = (g: GivenDocument): string => `${basename(g.file)} (shard ${g.doc.shard?.i}/${g.doc.shard?.n})`;
+  const ns = [...new Set(given.map((g) => g.doc.shard?.n))];
+  if (ns.length !== 1) {
+    refusals.push(`the documents are shards of runs cut into different counts: ${given.map(label).join(', ')} — every shard of one run has the same n`);
+    return refusals;
+  }
+  const n = ns[0];
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) return [`${label(given[0])} states no shard count`];
+  const byShard = new Map<number, GivenDocument[]>();
+  for (const g of given) byShard.set(g.doc.shard.i, [...(byShard.get(g.doc.shard.i) ?? []), g]);
+  for (const [i, docs] of [...byShard].sort(([a], [b]) => a - b)) {
+    if (i < 1 || i > n) refusals.push(`${label(docs[0])} names a shard outside 1..${n}`);
+    if (docs.length > 1) refusals.push(`shard ${i}/${n} was given ${docs.length} times: ${docs.map((g) => basename(g.file)).join(', ')} — a suite it ran would be counted once per copy`);
+  }
+  for (let i = 1; i <= n; i++) {
+    if (!byShard.has(i)) refusals.push(`shard ${i}/${n} is missing: no document was given for it, so the suites it runs were measured by nothing`);
+  }
+  for (const g of given) {
+    if (g.doc.source !== source) {
+      refusals.push(`${label(g)} was written by a selftest.ts whose sha256 is ${String(g.doc.source).slice(0, 12)}…, and this one's is ${source.slice(0, 12)}… — shards of two trees are two runs`);
+    }
+  }
+  const first = given[0];
+  for (const g of given.slice(1)) {
+    const a = first.doc.registered;
+    const b = g.doc.registered;
+    if (a.join('\n') !== b.join('\n')) {
+      const at = a.findIndex((key, k) => key !== b[k]);
+      const k = at === -1 ? Math.min(a.length, b.length) : at;
+      refusals.push(
+        `${label(first)} registers ${a.length} suite(s) and ${label(g)} ${b.length}; they first differ at registration index ${k}: ` +
+          `${JSON.stringify(a[k] ?? null)} against ${JSON.stringify(b[k] ?? null)}`,
+      );
+    }
+    if (first.doc.merge.join('\n') !== g.doc.merge.join('\n')) {
+      refusals.push(`${label(first)} leaves [${first.doc.merge.join(', ')}] to the merge and ${label(g)} [${g.doc.merge.join(', ')}]`);
+    }
+  }
+  if (refusals.length > 0) return refusals;
+  const registered = first.doc.registered;
+  const toMerge = new Set(first.doc.merge);
+  for (const g of given) {
+    const accounted = new Map<string, number>();
+    for (const key of [...g.doc.run.map((r) => r.block.key), ...g.doc.others, ...g.doc.merge]) accounted.set(key, (accounted.get(key) ?? 0) + 1);
+    for (const key of registered) {
+      const times = accounted.get(key) ?? 0;
+      if (times !== 1) refusals.push(`${label(g)} accounts for the suite "${key}" ${times} time(s) — as run, as another shard's, or as the merge's — where a shard accounts for each suite once`);
+    }
+    for (const record of g.doc.run) {
+      if (registered[record.index] !== record.block.key) {
+        refusals.push(`${label(g)} ran "${record.block.key}" under registration index ${record.index}, which is "${registered[record.index] ?? 'nothing'}"`);
+      }
+    }
+  }
+  registered.forEach((key, index) => {
+    const runners = given.filter((g) => g.doc.run.some((r) => r.index === index));
+    if (toMerge.has(key)) {
+      for (const g of runners) refusals.push(`${label(g)} ran "${key}", which reads the whole run and is the merge's to run`);
+      return;
+    }
+    const owner = (index % n) + 1;
+    if (runners.length === 0) {
+      refusals.push(`the suite "${key}" (registration index ${index}) was run by no shard — it is shard ${owner}/${n}'s, and that document does not carry it`);
+    } else if (runners.length > 1) {
+      refusals.push(`the suite "${key}" (registration index ${index}) was run by ${runners.length} shards: ${runners.map(label).join(', ')} — it is shard ${owner}/${n}'s alone`);
+    } else if (runners[0].doc.shard.i !== owner) {
+      refusals.push(`the suite "${key}" (registration index ${index}) was run by ${label(runners[0])}; it is shard ${owner}/${n}'s`);
+    }
+  });
+  return refusals;
+}
+
+/** What `--merge` refuses mid-replay — a registration this merge makes that the documents did not see. */
+class MergeRefusal extends Error {}
+
+/**
+ * The shard documents a merged tally replays (issue #1116), checked by
+ * `mergeRefusals` first. `expect` is asked once per `tally.of`, in order, and
+ * answers with the record of the shard that ran the suite — or `null` for a
+ * suite that reads the whole run, which the merge calls itself.
+ */
+class MergeReplay {
+  readonly docs: ShardDocument[];
+  readonly files: string[];
+  private readonly toMerge: Set<string>;
+
+  /** `exit`: refuse by printing and exiting 2, as `main` does; otherwise throw `MergeRefusal`, which the miniatures read. */
+  constructor(given: readonly GivenDocument[], private readonly exit = false) {
+    const ordered = [...given].sort((a, b) => a.doc.shard.i - b.doc.shard.i);
+    this.docs = ordered.map((g) => g.doc);
+    this.files = ordered.map((g) => g.file);
+    this.toMerge = new Set(this.docs[0]?.merge ?? []);
+  }
+
+  /** A refusal, the way this replay was asked to make one. */
+  refuse(message: string): never {
+    if (this.exit) {
+      console.error(`rigc selftest: --merge refused: ${message}`);
+      process.exit(2);
+    }
+    throw new MergeRefusal(message);
+  }
+
+  get registered(): readonly string[] {
+    return this.docs[0]?.registered ?? [];
+  }
+
+  /** The record of registration `index`, or `null` when the merge runs it; a registration the shards did not see is refused. */
+  expect(index: number, key: string, whole: boolean): { record: ShardRecord; from: number } | null {
+    const seen = this.registered[index];
+    if (seen !== key) {
+      this.refuse(
+        `this merge registers "${key}" at registration index ${index}, where the shards registered ${JSON.stringify(seen ?? null)} — the documents were written by another registration list`,
+      );
+    }
+    if (whole !== this.toMerge.has(key)) {
+      this.refuse(
+        whole
+          ? `"${key}" reads the whole run here, and the shards ran it as one of theirs`
+          : `"${key}" was left to the merge by the shards, and this merge registers it as a shard's`,
+      );
+    }
+    if (whole) return null;
+    const n = this.docs.length;
+    const from = index % n;
+    const record = this.docs[from].run.find((r) => r.index === index);
+    if (record === undefined) this.refuse(`the suite "${key}" (registration index ${index}) is in no shard's record`);
+    return { record, from };
+  }
+
+  /** `shard i/n` for document `from`. */
+  label(from: number): string {
+    const doc = this.docs[from];
+    return `shard ${doc.shard.i}/${doc.shard.n}`;
+  }
+}
+
+/**
+ * `durationFaults`, per process (issue #1116). A merged tally's suites ran in
+ * several processes, each with its own wall, so the sum is held to each
+ * shard's wall over that shard's suites and to the merge's over the suites it
+ * ran itself; a one-process tally is held exactly as before.
+ */
+function originDurationFaults(t: RunTally, wallNow: number): string[] {
+  if (t.replay === null) return durationFaults(t.blocks, t.seconds, t.printedSeconds, wallNow, t.rss, t.printedRss);
+  const replay = t.replay;
+  const faults: string[] = [];
+  for (let from = -1; from < replay.docs.length; from++) {
+    const blocks = t.blocks.filter((block) => (t.origin.get(block.key) ?? -1) === from);
+    const keys = new Set(blocks.map((block) => block.key));
+    const only = <V>(map: ReadonlyMap<string, V>): Map<string, V> => new Map([...map].filter(([key]) => keys.has(key)));
+    const wall = from === -1 ? wallNow : replay.docs[from].wallSeconds;
+    const where = from === -1 ? 'the merge' : replay.label(from);
+    faults.push(...durationFaults(blocks, only(t.seconds), only(t.printedSeconds), wall, only(t.rss), only(t.printedRss)).map((f) => `${where}: ${f}`));
+  }
+  const unknown = [...t.printedSeconds.keys()].filter((key) => !t.blocks.some((block) => block.key === key));
+  for (const key of unknown) faults.push(`a duration line names the suite "${key}", which this run never called`);
+  return faults;
+}
+
+/**
+ * What a merge holds of each shard beyond its suites (issue #1116): a shard
+ * whose own floor faulted is no part of a verdict, and a shard whose exit
+ * disagrees with its own record — red with no failure in it, or green over one
+ * — is a document that does not describe the run that wrote it.
+ */
+function replayFaults(replay: MergeReplay): string[] {
+  const faults: string[] = [];
+  replay.docs.forEach((doc, from) => {
+    for (const fault of doc.floorFaults) faults.push(`${replay.label(from)} could not account for itself: ${fault}`);
+    const failed = doc.run.reduce((sum, record) => sum + (record.block.returned ?? 0), 0);
+    const expected = doc.floorFaults.length > 0 ? 2 : failed > 0 ? 1 : 2;
+    if (doc.exit !== expected) {
+      faults.push(`${replay.label(from)} exited ${doc.exit}, and its own record — ${failed} failure(s), ${doc.floorFaults.length} floor fault(s) — says ${expected}`);
+    }
+  });
+  return faults;
+}
+
+/** The wall a tally's suites could have spent: every shard process's and the merge's own so far, or the one process's. */
+function wallSoFar(t: RunTally, wallNow: number): number {
+  return (t.replay?.docs ?? []).reduce((sum, doc) => sum + doc.wallSeconds, wallNow);
+}
+
+/**
+ * The merged run's line in place of `the run: …` (issue #1116): the longest
+ * shard's wall — what the run took, with the shards side by side — the walls
+ * summed over every process, and the memory as each shard's own process held
+ * it, since there is no one process to have ended anywhere.
+ */
+function mergedRunLine(t: RunTally, replay: MergeReplay, mergeWall: number, mergeRss: number): string {
+  const docs = replay.docs;
+  const at = (pick: (doc: ShardDocument) => number): { value: number; from: number } =>
+    docs.reduce((best, doc, from) => (pick(doc) > best.value ? { value: pick(doc), from } : best), { value: -Infinity, from: 0 });
+  const longest = at((doc) => doc.wallSeconds);
+  const final = at((doc) => doc.finalRss);
+  const high = at((doc) => doc.highWater);
+  const summed = docs.reduce((sum, doc) => sum + doc.wallSeconds, 0);
+  const timed = [...t.seconds.values()].reduce((sum, s) => sum + s, 0);
+  const live = t.blocks.filter((block) => t.origin.get(block.key) === -1).map((block) => block.key);
+  return (
+    `the run: ${docs.length} shard(s) and the merge — the longest shard ${longest.value.toFixed(1)} s of wall time ` +
+    `(${replay.label(longest.from)}), ${summed.toFixed(1)} s summed over the shards' processes and ${mergeWall.toFixed(1)} s in the merge's, ` +
+    `${timed.toFixed(1)} s of it inside the ${t.seconds.size} suite(s) timed and ${(summed + mergeWall - timed).toFixed(1)} s of harness ` +
+    `overhead outside every suite; the merge ran [${live.join(', ')}] itself; the shards ended at rss up to ${final.value} MB ` +
+    `(${replay.label(final.from)}) with a high-water up to ${high.value} MB (${replay.label(high.from)}), and the merge at rss ${mergeRss} MB`
+  );
+}
+
+/**
+ * The memory ceiling over a merged run (issue #1116): every shard is a process,
+ * so each shard's high-water is held to the bound of the platform it ran on,
+ * and so is the merge's own. The one-process base bounds a shard because a
+ * shard runs a subset of the same suites in a fresh process; a base per shard
+ * count would be tighter, and is a later card's if the shards' marks fall so
+ * far under the bound that a retention could hide beneath it.
+ */
+function mergedCeilingFaults(t: RunTally, replay: MergeReplay, base: MemoryBase | null): { faults: string[]; held: string[] } {
+  const faults: string[] = [];
+  const held: string[] = [];
+  for (let from = -1; from < replay.docs.length; from++) {
+    const keys = t.blocks.filter((block) => (t.origin.get(block.key) ?? -1) === from).map((block) => block.key);
+    const rss = new Map([...t.rss].filter(([key]) => keys.includes(key)));
+    if (rss.size === 0) continue;
+    const platform = from === -1 ? process.platform : replay.docs[from].platform;
+    const where = from === -1 ? 'the merge' : replay.label(from);
+    const ceiling = memoryCeiling(rss, base?.platforms[platform], platform);
+    if (ceiling.verdict === 'over') faults.push(...ceiling.faults.map((fault) => `${where}: ${fault}`));
+    else held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}`);
+  }
+  return { faults, held };
 }
 
 // ---------------------------------------------------------------------------
@@ -104513,7 +105486,7 @@ function runPartialRunSuite(live: RunTally): number {
     ...(full.lines.join('\n') === longhand.lines.join('\n') && JSON.stringify(full.tally.blocks) === JSON.stringify(longhand.tally.blocks)
       ? []
       : ['--only naming every suite printed or tallied differently from no flag at all']),
-    ...(live.only !== null || live.skipped.length === 0 ? [] : [`the live full run skipped [${live.skipped.map((one) => one.key).join(', ')}]`]),
+    ...(live.only !== null || live.shard !== null || live.skipped.length === 0 ? [] : [`the live full run skipped [${live.skipped.map((one) => one.key).join(', ')}]`]),
   ];
   say(
     'RT04_THE_FULL_RUN_IS_THE_SAME_RUN_WITH_THE_FLAG_ABSENT_OR_NAMING_EVERY_SUITE',
@@ -104523,7 +105496,11 @@ function runPartialRunSuite(live: RunTally): number {
       rt04Probes,
       `no flag and --only ${KEYS.join(',')} print the same ${full.lines.length} line(s), tally the same blocks, skip ` +
         'nothing and end through the full summary; the live run is ' +
-        (live.only === null ? `full, with ${live.skipped.length} suite(s) skipped` : `partial (--only ${[...live.only].join(',')})`),
+        (live.shard !== null
+          ? `shard ${live.shard.i}/${live.shard.n}, with ${live.skipped.length} suite(s) left to the other shards and the merge`
+          : live.only === null
+            ? `full, with ${live.skipped.length} suite(s) skipped`
+            : `partial (--only ${[...live.only].join(',')})`),
     ),
     'the negative control RT01 needs: a harness that skipped or went partial on every run would pass RT01 and ' +
       'fail here, and the live half is what says the run reading this line is the one its summary describes',
@@ -106117,8 +107094,10 @@ function runRunTallySuite(live: RunTally): number {
     const doubled = durationFaults(whole.tally.blocks, forged, forged, 4, forgedRss, forgedRss);
     const sample = durationLine('a suite (with a spaced key)', 3, 1.25, { after: 512, delta: -3 });
     const sampleRead = DURATION_LINE.exec(sample);
-    const wallNow = performance.now() / 1000;
-    const liveFaults = durationFaults(live.blocks, live.seconds, live.printedSeconds, wallNow, live.rss, live.printedRss);
+    // On a merge (issue #1116) the suites so far ran in several processes, each held to its own wall, and the
+    // wall they could have spent is every shard's and the merge's own so far.
+    const wallNow = wallSoFar(live, performance.now() / 1000);
+    const liveFaults = originDurationFaults(live, performance.now() / 1000);
     const liveRss = [...live.rss.values()];
     const liveSum = [...live.seconds.values()].reduce((sum, s) => sum + s, 0);
     const probes = [
@@ -106147,7 +107126,7 @@ function runRunTallySuite(live: RunTally): number {
         probes,
         `the ${live.blocks.length} suite(s) this run has called so far each printed a duration the clock agrees with ` +
           `and the RSS the process read after it (${liveRss.length === 0 ? 'none' : `${Math.min(...liveRss.map((r) => r.after))}–${Math.max(...liveRss.map((r) => r.after))} MB`}), ` +
-          `summing to ${liveSum.toFixed(1)} s of the ${wallNow.toFixed(1)} s the process has run, so ` +
+          `summing to ${liveSum.toFixed(1)} s of the ${wallNow.toFixed(1)} s ${live.replay === null ? 'the process has' : "the shards' processes and the merge's have"} run, so ` +
           `${(wallNow - liveSum).toFixed(1)} s so far lies outside every finished suite — this one's own time included; a miniature with one ` +
           `suite's duration line taken out of its log is named — ${droppedFaults[0] ?? 'nothing'} — one with a line cut ` +
           `before its RSS is named — ${rsslessFaults[0] ?? 'nothing'} — and durations ` +
@@ -106347,6 +107326,277 @@ function runRunTallySuite(live: RunTally): number {
             'the mark an earlier one left; the final figure is that mark whichever suite set it',
         );
       }
+    }
+  }
+
+  // --- TY27–TY31: the run as n shards whose merge is the verdict (#1116) ----
+  //
+  // Driven through real tallies with `console.log` routed into them, the way
+  // `main` routes it, over a miniature of six suites: five that each leave one
+  // entry in a run state and print one case, and `omega`, which reads the whole
+  // run — the state every suite before it left — and so is the merge's. Each
+  // shard's document is the one `shardDocument` writes, and the merge replays
+  // them through the same `RunTally.of` the live merge does.
+  {
+    const KEYS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'omega'];
+    const SOURCE = 'miniature-source';
+    const miniature = (opts: { shard?: ShardSpec; given?: GivenDocument[]; failing?: string }): { tally: RunTally; lines: string[]; called: string[]; refusal: string | null } => {
+      const tally = new RunTally(null);
+      tally.timed = true;
+      const left: string[] = [];
+      tally.states = [
+        {
+          name: 'left',
+          mark: () => left.length,
+          since: (mark) => left.slice(mark as number),
+          apply: (share) => void left.push(...(share as string[])),
+        },
+      ];
+      if (opts.shard !== undefined) tally.shard = opts.shard;
+      if (opts.given !== undefined) {
+        tally.replay = new MergeReplay(opts.given);
+        for (const doc of tally.replay.docs) tally.absorbOutside(doc.outside);
+      }
+      const lines: string[] = [];
+      const called: string[] = [];
+      let refusal: string | null = null;
+      const real = console.log;
+      console.log = (...args: unknown[]): void => {
+        const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+        lines.push(line);
+        tally.observe(line);
+      };
+      try {
+        for (const key of KEYS) {
+          tally.of(
+            key,
+            () => {
+              called.push(key);
+              console.log(`\n── ${key} ──`);
+              if (key === 'omega') {
+                return reportCase('PROBE_omega', left.join() === KEYS.slice(0, 5).join(), `the run left [${left.join(', ')}]`, 'an origin line');
+              }
+              left.push(key);
+              return reportCase(`PROBE_${key}`, key !== opts.failing, `a detail line for ${key}`, 'an origin line');
+            },
+            { whole: key === 'omega' },
+          );
+        }
+      } catch (err) {
+        if (!(err instanceof MergeRefusal)) throw err;
+        refusal = err.message;
+      } finally {
+        console.log = real;
+      }
+      return { tally, lines, called, refusal };
+    };
+    /** What a run ends on, with every figure off a clock or the allocator masked: the floor, the counts, the verdict. */
+    const end = (t: RunTally): string[] => {
+      const wall = performance.now() / 1000;
+      const verdict = shardVerdict(t);
+      return [
+        ...tallyFaults(t.everyBlock, t.gutter, t.total, t.parts).map((f) => `floor: ${f}`),
+        ...originDurationFaults(t, wall).map((f) => `floor: ${f}`),
+        ...(t.replay === null ? [] : replayFaults(t.replay).map((f) => `floor: ${f}`)),
+        `blocks: ${JSON.stringify(t.blocks)}`,
+        `counts: ${t.blocks.map((block) => `${block.key}=${t.countOf(block.key)}`).join(' ')}`,
+        `gutter: ${JSON.stringify([...t.gutter].sort())} over ${t.total} case line(s)`,
+        `timed: ${[...t.seconds.keys()].join(' ')}; printed: ${[...t.printedSeconds.keys()].join(' ')}`,
+        `verdict: ${verdict === null ? (t.failures > 0 ? 1 : 0) : verdict.code}`,
+      ];
+    };
+    const document = (run: { tally: RunTally }, spec: ShardSpec, file = `shard-${spec.i}.json`): GivenDocument => {
+      const verdict = shardVerdict(run.tally);
+      const doc = shardDocument(run.tally, spec, SOURCE, performance.now() / 1000, 0, [], verdict?.code ?? 0);
+      return { file, doc: JSON.parse(JSON.stringify(doc)) as ShardDocument };
+    };
+    const shardsOf = (n: number, failing?: string): GivenDocument[] =>
+      Array.from({ length: n }, (_, k) => document(miniature({ shard: { i: k + 1, n }, failing }), { i: k + 1, n }));
+    const one = miniature({});
+    const oneEnd = end(one.tally);
+    const omegaLine = (lines: readonly string[]): string => lines.find((line) => line.includes('PROBE_omega')) ?? 'no omega line';
+
+    // --- TY27: a shard runs exactly its own indices and exits 2 when green ----
+    {
+      const probes: string[] = [];
+      const n = 3;
+      for (let i = 1; i <= n; i++) {
+        const run = miniature({ shard: { i, n } });
+        const own = KEYS.filter((key, index) => key !== 'omega' && index % n === i - 1);
+        if (run.called.join() !== own.join()) probes.push(`shard ${i}/${n} called [${run.called.join(', ')}] where its indices are [${own.join(', ')}]`);
+        for (const key of KEYS.filter((k) => !own.includes(k))) {
+          if (!run.lines.some((line) => line.startsWith(`  SKIP  ${key}: not run — --shard`))) probes.push(`shard ${i}/${n} printed no "SKIP  ${key}: not run — --shard" line`);
+        }
+        const floor = end(run.tally).filter((line) => line.startsWith('floor: '));
+        if (floor.length > 0) probes.push(`shard ${i}/${n}'s floor faulted: ${floor.join('; ')}`);
+        const verdict = shardVerdict(run.tally);
+        if (verdict?.code !== 2 || !verdict.lines[verdict.lines.length - 1].includes(`SHARD ${i}/${n} — not a verdict`)) {
+          probes.push(`shard ${i}/${n} would end with exit ${verdict?.code ?? 'none'} on ${verdict?.lines.join(' | ') ?? 'nothing'}`);
+        }
+        if (!run.tally.leftToMerge.includes('omega') || run.called.includes('omega')) probes.push(`shard ${i}/${n} did not leave omega, the whole-run reader, to the merge`);
+      }
+      const refused = ['0/3', '4/3', '1/0', '1.5/3', '+1/3', '1/3/2', ' 1/3', '', '3'];
+      for (const value of refused) if (typeof parseShardSpec(value) !== 'string') probes.push(`--shard ${JSON.stringify(value)} was accepted`);
+      const accepted = parseShardSpec('3/3');
+      if (typeof accepted === 'string' || accepted.i !== 3 || accepted.n !== 3) probes.push(`--shard 3/3 was refused: ${String(accepted)}`);
+      const held = probes.length === 0;
+      say(
+        'TY27_A_SHARD_RUNS_EXACTLY_ITS_OWN_REGISTRATION_INDICES_LEAVES_THE_WHOLE_RUN_READERS_TO_THE_MERGE_AND_EXITS_2_WHEN_GREEN',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `over [${KEYS.join(', ')}] each of 3 shards called exactly the suites whose index is i − 1 modulo 3, printed one SKIP for every other ` +
+            `suite and for omega, which reads the whole run, kept a clean floor and ends with exit 2 on a line saying it is one shard; ` +
+            `--shard refuses ${refused.map((v) => JSON.stringify(v)).join(', ')} by name and accepts "3/3"`,
+        ),
+        'issue #1116: a shard is a true statement about its suites and none about the tree, so it ends like --only; and a suite ' +
+          "that reads every earlier suite's state would read a shard's share of it and print a verdict about part of the run",
+      );
+    }
+
+    // --- TY28: the merge of 1 shard and of 3 is the one-process run ----------
+    {
+      const probes: string[] = [];
+      for (const n of [1, 3]) {
+        const given = shardsOf(n);
+        const refusals = mergeRefusals(given, SOURCE);
+        if (refusals.length > 0) {
+          probes.push(`n = ${n}: the merge refused its own shards: ${refusals.join('; ')}`);
+          continue;
+        }
+        const merged = miniature({ given });
+        if (merged.refusal !== null) probes.push(`n = ${n}: the replay refused: ${merged.refusal}`);
+        const mergedEnd = end(merged.tally);
+        oneEnd.forEach((line, k) => {
+          if (mergedEnd[k] !== line) probes.push(`n = ${n}: line ${k + 1} of the end reads ${JSON.stringify(mergedEnd[k] ?? null)} where the one-process run's reads ${JSON.stringify(line)}`);
+        });
+        if (mergedEnd.length !== oneEnd.length) probes.push(`n = ${n}: the end is ${mergedEnd.length} line(s) and the one-process run's ${oneEnd.length}`);
+        if (merged.called.join() !== 'omega') probes.push(`n = ${n}: the merge called [${merged.called.join(', ')}] where it calls only omega`);
+        if (omegaLine(merged.lines) !== omegaLine(one.lines)) probes.push(`n = ${n}: omega read ${omegaLine(merged.lines)} where one process reads ${omegaLine(one.lines)}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY28_THE_MERGE_OF_ONE_SHARD_AND_OF_THREE_ENDS_LINE_FOR_LINE_AS_THE_ONE_PROCESS_RUN',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the merges of n = 1 and n = 3 documents end on the ${oneEnd.length} line(s) the one-process run ends on — the floor, every block, ` +
+            "every count, the gutter, which suites were timed and printed, and the verdict — with the clock's figures the only " +
+            `difference, and omega, run by the merge after every shard's share of the run state, reads ${omegaLine(one.lines).trim()}`,
+        ),
+        'issue #1116: the merge is the verdict only if it is the one-process run read off n processes, so the floor and the summary ' +
+          'are that run\'s own code over the replayed numbers rather than a second summary kept in step with it',
+      );
+    }
+
+    // --- TY29: a merge missing a shard, or given one twice, is refused -------
+    {
+      const three = shardsOf(3);
+      const otherList = (): GivenDocument[] => {
+        const forged = shardsOf(3);
+        forged[1] = { ...forged[1], doc: { ...forged[1].doc, registered: forged[1].doc.registered.map((key) => (key === 'gamma' ? 'gamma2' : key)) } };
+        return forged;
+      };
+      const cases: Array<[string, GivenDocument[], string]> = [
+        ['shard 2 of 3 missing', [three[0], three[2]], 'shard 2/3 is missing'],
+        ['shard 1 given twice', [three[0], { ...three[0], file: 'copy.json' }, three[1], three[2]], 'shard 1/3 was given 2 times'],
+        ['a shard of another count', [three[0], three[1], shardsOf(4)[2]], 'different counts'],
+        ['another registration list', otherList(), 'first differ at registration index 2'],
+        ['another selftest.ts', [three[0], { ...three[1], doc: { ...three[1].doc, source: 'another-source' } }, three[2]], 'sha256'],
+      ];
+      const probes: string[] = [];
+      const read: string[] = [];
+      for (const [what, given, words] of cases) {
+        const refusals = mergeRefusals(given, SOURCE);
+        if (!refusals.some((r) => r.includes(words))) probes.push(`${what}: refused as [${refusals.join('; ') || 'nothing'}], not by "${words}"`);
+        else read.push(`${what} -> ${refusals.find((r) => r.includes(words))}`);
+      }
+      if (mergeRefusals(three, SOURCE).length > 0) probes.push(`the three shards themselves were refused: ${mergeRefusals(three, SOURCE).join('; ')}`);
+      const held = probes.length === 0;
+      say(
+        'TY29_A_MERGE_MISSING_A_SHARD_GIVEN_ONE_TWICE_OR_MIXING_RUNS_IS_REFUSED_BY_NAME',
+        held,
+        probeDetail(held, probes, `${read.join('; ')}; the three shards of one run are accepted`),
+        "issue #1116: a merge is the verdict only over one run's shards each once — a missing shard is suites measured by nothing, a " +
+          'duplicate counts its suites twice, and shards of two runs or two trees are two verdicts added together',
+      );
+    }
+
+    // --- TY30: a merge of a red shard is red ---------------------------------
+    {
+      const given = shardsOf(3, 'beta');
+      const merged = miniature({ given });
+      const mergedEnd = end(merged.tally);
+      const red = given[1].doc;
+      const probes = [
+        ...(red.exit === 1 ? [] : [`the shard that ran beta wrote exit ${red.exit}, not 1`]),
+        ...(red.run.some((r) => r.failLines.some((line) => line.startsWith('  FAIL  PROBE_beta'))) ? [] : ["the shard's document does not carry beta's FAIL line"]),
+        ...(mergeRefusals(given, SOURCE).length === 0 ? [] : [`a red shard was refused rather than merged: ${mergeRefusals(given, SOURCE).join('; ')}`]),
+        ...(merged.tally.failures === 1 ? [] : [`the merge counts ${merged.tally.failures} failure(s), not 1`]),
+        ...(mergedEnd.includes('verdict: 1') ? [] : [`the merge ends on ${mergedEnd[mergedEnd.length - 1]}, not a red verdict`]),
+        ...(mergedEnd.some((line) => line.startsWith('floor: ')) ? [`the merge's floor faulted on a red shard: ${mergedEnd.filter((l) => l.startsWith('floor: ')).join('; ')}`] : []),
+      ];
+      // The exit a shard wrote is held to its own record: a document claiming green over a failure is named.
+      const forged = shardsOf(3, 'beta');
+      forged[1] = { ...forged[1], doc: { ...forged[1].doc, exit: 2 } };
+      const forgedFaults = replayFaults(new MergeReplay(forged));
+      if (!forgedFaults.some((f) => f.includes('shard 2/3 exited 2') && f.includes('says 1'))) probes.push(`a red shard whose document says exit 2 is not named: ${forgedFaults.join('; ') || 'nothing'}`);
+      const held = probes.length === 0;
+      say(
+        'TY30_A_MERGE_OF_A_RED_SHARD_IS_RED_AND_NAMES_ITS_FAIL_LINE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `with PROBE_beta failing in shard 2/3 the shard wrote exit 1 and beta's FAIL line, the merge counts 1 failure and ends red with a ` +
+            `clean floor, and the same document forged to exit 2 is named: ${forgedFaults[0] ?? 'nothing'}`,
+        ),
+        'issue #1116: a red found in one shard is a red in the whole, and the merge is where CI reads it, so it has to reach the merge ' +
+          'by name rather than as a shard job somebody has to open',
+      );
+    }
+
+    // --- TY31: a merge with a suite unrun is refused, and the plant is read ---
+    {
+      const unrun = (): GivenDocument[] => {
+        const forged = shardsOf(3);
+        const owner = forged[1].doc;
+        // The plant: shard 2 writes beta as another shard's rather than running it — what a shard that skipped in silence writes.
+        forged[1] = { ...forged[1], doc: { ...owner, run: owner.run.filter((r) => r.block.key !== 'beta'), others: [...owner.others, 'beta'] } };
+        return forged;
+      };
+      const leftToMerge = (): GivenDocument[] =>
+        shardsOf(3).map((g) => ({
+          ...g,
+          doc: { ...g.doc, run: g.doc.run.filter((r) => r.block.key !== 'beta'), others: g.doc.others.filter((key) => key !== 'beta'), merge: [...g.doc.merge, 'beta'] },
+        }));
+      const plantRefusals = mergeRefusals(unrun(), SOURCE);
+      // Past the documents' check — the plant a merge with that clause taken out would let through — the replay itself refuses.
+      const replayed = miniature({ given: unrun() });
+      const mergedPlant = mergeRefusals(leftToMerge(), SOURCE);
+      const claimed = miniature({ given: leftToMerge() });
+      const probes = [
+        ...(plantRefusals.some((r) => r.includes('"beta" (registration index 1) was run by no shard')) ? [] : [`a shard that left beta unrun was refused as [${plantRefusals.join('; ') || 'nothing'}]`]),
+        ...(replayed.refusal?.includes('"beta"') === true ? [] : [`replayed past that check, beta's absence was not refused: ${replayed.refusal ?? 'the replay ran to its end'}`]),
+        ...(mergedPlant.length === 0 ? [] : [`documents agreeing that the merge runs beta were refused before the replay: ${mergedPlant.join('; ')}`]),
+        ...(claimed.refusal?.includes('"beta" was left to the merge by the shards') === true ? [] : [`documents leaving beta to a merge that registers it as a shard's were not refused: ${claimed.refusal ?? 'the replay ran to its end'}`]),
+      ];
+      const held = probes.length === 0;
+      say(
+        'TY31_A_MERGE_WITH_A_SUITE_NO_SHARD_RAN_IS_REFUSED_BY_NAME_AND_THE_PLANT_IS_READ_PAST_THE_DOCUMENT_CHECK',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `a shard that writes beta as another shard's is refused — ${plantRefusals[0] ?? 'nothing'} — and replayed past that check the ` +
+            `replay refuses it too — ${replayed.refusal ?? 'nothing'} — while documents that all leave beta to the merge pass the document ` +
+            `check and are refused by the merge that registers beta as a shard's — ${claimed.refusal ?? 'nothing'}`,
+        ),
+        "issue #1116: nothing in the one-process floor counts the registration list, because one process has a block for every suite " +
+          'by construction; a merge does not, so a suite no shard ran would leave the summary short with every figure still derived',
+      );
     }
   }
 
@@ -108290,6 +109540,34 @@ function main(): void {
   const tally = new RunTally(ONLY);
   tally.timed = true;
   tally.collects = true;
+  // 🧩 Issue #1116: a shard records each suite's share of the run state; a merge
+  // reads the shards' documents, refuses a set that is not one run, and replays.
+  const source = SHARD !== null || MERGE !== null ? selftestSource() : '';
+  if (SHARD !== null) {
+    tally.shard = SHARD;
+    tally.states = runStates();
+  }
+  if (MERGE !== null) {
+    const read = readShardDocuments(MERGE);
+    const refusals = [...read.refusals, ...(read.refusals.length === 0 ? mergeRefusals(read.given, source) : [])];
+    if (refusals.length > 0) {
+      console.error(`rigc selftest: --merge refused ${MERGE.length} document(s) — they are not one run's shards:`);
+      for (const refusal of refusals) console.error(`  ${refusal}`);
+      process.exit(2);
+    }
+    const replay = new MergeReplay(read.given, true);
+    tally.replay = replay;
+    tally.states = runStates();
+    for (const doc of replay.docs) tally.absorbOutside(doc.outside);
+    replay.docs.forEach((doc, from) => {
+      const fails = doc.run.reduce((sum, record) => sum + record.block.fails, 0);
+      const cases = doc.run.reduce((sum, record) => sum + record.block.controls, 0);
+      console.log(
+        `merge: ${replay.label(from)} — ${basename(replay.files[from])}: ${doc.run.length} suite(s) run over ${cases} case line(s), ` +
+          `${fails} FAIL, wall ${doc.wallSeconds.toFixed(1)} s, final rss ${doc.finalRss} MB, high-water ${doc.highWater} MB, exit ${doc.exit} (${doc.platform}, bun ${doc.bun})`,
+      );
+    });
+  }
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
     const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
@@ -108351,7 +109629,7 @@ function main(): void {
   const emitHashesBad = tally.of('emit-hashes', runEmitHashesSuite, { ran: ranIt });
   const renderHashesBad = tally.of('render-hashes', runRenderHashesSuite, { ran: ranIt });
   tally.of('deform-core', runDeformCoreSuite, { ran: ranIt });
-  tally.of('seeded-random', runSeededRandomSuite);
+  tally.of('seeded-random', runSeededRandomSuite, { whole: true });
   const modelBones = tally.of('model-bones', runModelBonesSuite, { failures: (value) => value.failures });
   const modelVertices = tally.of('model-vertices', runModelVerticesSuite, { failures: (value) => value.failures });
   const modelRecords = tally.of('model-records', runModelRecordsSuite, { failures: (value) => value.failures });
@@ -108371,7 +109649,7 @@ function main(): void {
   tally.of('generation', runGenerationSuite);
   tally.of('ingest', runIngestSuite);
   tally.of('loop-seam', runLoopSeamSuite);
-  tally.of('run-tally', () => runRunTallySuite(tally), { live: true });
+  tally.of('run-tally', () => runRunTallySuite(tally), { live: true, whole: true });
   tally.of('partial-run', () => runPartialRunSuite(tally));
   tally.of('gate-helper', runGateHelperSuite);
   const gallery = tally.of('gallery-example', runGallerySuite, {
@@ -108380,8 +109658,21 @@ function main(): void {
   });
   const cuts = tally.of('registered-cut', runCutsSuite, { ran: (value) => value.cuts > 0, failures: (value) => value.failures });
   // Last, because it reads what the supplier check saw across every suite before it (issue #1025).
-  tally.of('verdict-suppliers', runVerdictSuppliersSuite);
+  tally.of('verdict-suppliers', runVerdictSuppliersSuite, { whole: true });
   console.log = printLine;
+  if (tally.replay !== null && tally.registered.length !== tally.replay.registered.length) {
+    tally.replay.refuse(`this merge registers ${tally.registered.length} suite(s) and the shards registered ${tally.replay.registered.length}`);
+  }
+  // A shard's document, written on every way a shard ends: a merge reads its
+  // floor faults and its exit, so a shard that cannot account for itself still
+  // says so to the merge rather than leaving a hole the merge would name as missing.
+  const writeShard = (exit: number, faults: readonly string[], wall: number): void => {
+    if (tally.shard === null || TALLY_OUT === null) return;
+    const doc = shardDocument(tally, tally.shard, source, wall, megabytes(process.memoryUsage().rss), faults, exit);
+    mkdirSync(dirname(TALLY_OUT), { recursive: true });
+    writeFileSync(TALLY_OUT, `${JSON.stringify(doc)}\n`);
+    console.log(`selftest: wrote ${TALLY_OUT}: shard ${tally.shard.i}/${tally.shard.n}, ${doc.run.length} suite(s) run, exit ${exit}`);
+  };
 
   // A name `--only` gave that no `tally.of` above registers (issue #937). Read
   // off the calls that just ran rather than off a list kept beside them.
@@ -108399,11 +109690,14 @@ function main(): void {
   const wallSeconds = performance.now() / 1000;
   const floorFaults = [
     ...tallyFaults(tally.everyBlock, tally.gutter, tally.total, tally.parts),
-    ...durationFaults(tally.blocks, tally.seconds, tally.printedSeconds, wallSeconds, tally.rss, tally.printedRss),
+    // Per process on a merge (issue #1116): each shard's suites against its own wall.
+    ...originDurationFaults(tally, wallSeconds),
+    ...(tally.replay === null ? [] : replayFaults(tally.replay)),
   ];
   if (floorFaults.length > 0) {
     console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const fault of floorFaults) console.error(`  ${fault}`);
+    writeShard(2, floorFaults, wallSeconds);
     process.exit(2);
   }
   // ⏱️ Where the time went (issue #1116), before the verdict line so a red or
@@ -108419,9 +109713,11 @@ function main(): void {
   console.log(heapGrowthHeading(tally.rss));
   for (const line of heapGrowthLines(tally.rss)) console.log(line);
   console.log(
-    `the run: ${wallSeconds.toFixed(1)} s of wall time, ${timedSum.toFixed(1)} s of it inside the ${tally.seconds.size} ` +
-      `suite(s) timed and ${(wallSeconds - timedSum).toFixed(1)} s of harness overhead outside every suite; ` +
-      `the process ended at rss ${finalRss} MB`,
+    tally.replay !== null
+      ? mergedRunLine(tally, tally.replay, wallSeconds, finalRss)
+      : `the run: ${wallSeconds.toFixed(1)} s of wall time, ${timedSum.toFixed(1)} s of it inside the ${tally.seconds.size} ` +
+          `suite(s) timed and ${(wallSeconds - timedSum).toFixed(1)} s of harness overhead outside every suite; ` +
+          `the process ended at rss ${finalRss} MB`,
   );
   // 🔒 The verdict, off the same blocks the floor above just reconciled against
   // the log (issue #533). There is no second sum to keep in step with this one:
@@ -108433,13 +109729,26 @@ function main(): void {
   // ⚠️ A run with `--only` that skipped anything leaves here, before the summary
   // reads a single value a suite handed back — which is what makes the skipped
   // suites' missing values safe (see `RunTally.of`) — and never with exit 0.
-  const partial = partialVerdict(tally);
+  const partial = partialVerdict(tally) ?? shardVerdict(tally);
   if (partial !== null) {
+    writeShard(partial.code, [], wallSeconds);
     for (const line of partial.lines) console.error(line);
     process.exit(partial.code);
   }
   const bad = tally.failures;
   if (bad > 0) {
+    // A merge names each red where it was found: the shard and its FAIL lines,
+    // which that shard's log carries with their detail (issue #1116).
+    const replay = tally.replay;
+    if (replay !== null) {
+      for (const block of tally.blocks) {
+        const from = tally.origin.get(block.key) ?? -1;
+        if (from === -1 || block.fails === 0) continue;
+        const record = replay.docs[from].run.find((r) => r.block.key === block.key);
+        console.error(`rigc selftest: ${replay.label(from)}'s suite "${block.key}" failed:`);
+        for (const line of record?.failLines ?? []) console.error(`  ${line.trim()}`);
+      }
+    }
     console.error(`rigc selftest: ${bad} control(s) failed`);
     process.exit(1);
   }
@@ -108457,6 +109766,14 @@ function main(): void {
     console.log(
       `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${highWaterOf(tally.rss)} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`,
     );
+  } else if (tally.replay !== null) {
+    // Every shard is a process with its own high-water (issue #1116).
+    const merged = mergedCeilingFaults(tally, tally.replay, memoryBase);
+    if (merged.faults.length > 0) {
+      for (const fault of merged.faults) console.error(`rigc selftest: ${fault}`);
+      process.exit(1);
+    }
+    console.log(`the memory ceiling, per process: ${merged.held.join('; ')}`);
   } else {
     const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
     if (ceiling.verdict === 'over') {
