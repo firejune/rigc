@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.2.0](https://github.com/firejune/rigc/compare/v2.1.3...v2.2.0) (2026-10-03)
+
+
+### Features
+
+* **tools:** `pack_anchor --trace-regions <tolerance>` packs every region-kind region by the contour rigc's tracer states for its art, converted in memory, at tolerance 0 and at the contour mesher — the stage-2 realised figure, measured before any attachment is converted ([#1118](https://github.com/firejune/rigc/issues/1118)) ([60f52a8](https://github.com/firejune/rigc/commit/60f52a88d50f1f48ca05eec64f34cfaffc439b41)), closes [#1115](https://github.com/firejune/rigc/issues/1115)
+
+
+### Bug Fixes
+
+* **cli:** the entry without spine-core prints the build's figures line with the full entry's keys, order and values — pages, regions, bones, slots, animations and the version read off the emitted pair, the attachment kinds, rig and profile off the model document — where it printed the constraint counts alone ([#1119](https://github.com/firejune/rigc/issues/1119)) ([8a2ed96](https://github.com/firejune/rigc/commit/8a2ed96c7688cb6eac8e6e1a3dd00c515be597c0)), closes [#1114](https://github.com/firejune/rigc/issues/1114) [#1097](https://github.com/firejune/rigc/issues/1097)
+* **emit:** the Spine header carries the setup-pose bounding box, computed by rigc's core and held to spine-core's getBounds at tolerance 0, and the stage stays the model document's ([#1117](https://github.com/firejune/rigc/issues/1117)) ([49bd779](https://github.com/firejune/rigc/commit/49bd77981aff37bb0c7003815a289cd0f02689d8)), closes [#907](https://github.com/firejune/rigc/issues/907)
+
 ## [2.1.3](https://github.com/firejune/rigc/compare/v2.1.2...v2.1.3) (2026-10-03)
 
 
