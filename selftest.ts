@@ -1281,6 +1281,10 @@ function compareSuppliers(input: ValidateInput, spine: ValidateReport, modelText
     if (a.join('\n') !== b.join('\n')) differing.push({ code, spine: a, model: b });
   }
   for (const [key, value] of Object.entries(model.stats)) {
+    // `rig` is the declaration's figure (issue #1114): the model side reads the document's archetype and `validate()` its
+    // caller's, so a call that withheld the declaration has `rig=absent` on one side by construction — left out with the
+    // rules that read it, as `excluded` leaves them out.
+    if (key === 'rig' && withheld.includes('rig')) continue;
     lines++;
     if (spine.stats[key] !== value) differing.push({ code: `stats.${key}`, spine: [String(spine.stats[key])], model: [String(value)] });
   }
@@ -89262,8 +89266,8 @@ function runRenderHashesSuite(): number | null {
     const row1060 = [...galleryBuilds].sort((x, y) => statSync(join(x.out, 'skeleton.json')).size - statSync(join(y.out, 'skeleton.json')).size || (x.name < y.name ? -1 : 1))[0];
     const spec1060 = row1060 === undefined ? '' : join(import.meta.dir, row1060.name);
     const ready = row1060 !== undefined && existsSync(join(spec1060, 'rig.json')) && existsSync(join(spec1060, 'parts'));
-    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [], RC33: [], RC34: [], RC35: [], RC36: [], RC37: [], RC38: [] };
-    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '', RC33: '', RC34: '', RC35: '', RC36: '', RC37: '', RC38: '' };
+    const probes: Record<string, string[]> = { RC27: [], RC28: [], RC29: [], RC30: [], RC31: [], RC32: [], RC33: [], RC34: [], RC35: [], RC36: [], RC37: [], RC38: [], RC39: [], RC40: [], RC41: [] };
+    const figures: Record<string, string> = { RC27: '', RC28: '', RC29: '', RC30: '', RC31: '', RC32: '', RC33: '', RC34: '', RC35: '', RC36: '', RC37: '', RC38: '', RC39: '', RC40: '', RC41: '' };
     const firstErr = (r: { stderr: string }): string => r.stderr.split('\n').find((l) => l.trim() !== '') ?? '';
     const stacked = (r: { stderr: string }): boolean => /^\s+at \S/m.test(r.stderr);
     if (!ready) {
@@ -89765,6 +89769,94 @@ function runRenderHashesSuite(): number | null {
         }
         if (reds38.length !== 3 && probes.RC38.length === 0) probes.RC38.push(`${reds38.length} of 3 plants read red`);
         figures.RC38 = `in copies of the tree: ${reds38.join('; ')}`;
+
+        // RC39–RC41 — the figures line (issue #1114). A consumer building with the published package read the build's closing
+        // `..` line as the summary of what was written, and on the entry without spine-core it carried the four constraint
+        // counts alone. RC39 holds the two entries' figures lines on every gallery build to the same keys, in the same order,
+        // with the same values — profile included, since both entries read it off the one `--profile` argument. RC40 plants
+        // a key dropped from the core side's stats, and the old merge order, each in its own copy, and reads RC39's
+        // comparison name the fault. RC41 is the consumer's case: a build with no constraint at all (the contained probe,
+        // physicsConstraints=0) under the profile that runs its archetype rules, whose figures follow `rig` and `profile`.
+        const figuresOf = (stdout: string): Array<Array<[string, string]>> =>
+          stdout
+            .split('\n')
+            .filter((line) => /^ {2}\.\. {4}[A-Za-z]\w*=/.test(line))
+            .map((line) => line.slice('  ..    '.length).split(' ').map((pair): [string, string] => [pair.slice(0, pair.indexOf('=')), pair.slice(pair.indexOf('=') + 1)]));
+        const figuresFaults = (label: string, full: string, core: string): string[] => {
+          const a = figuresOf(full);
+          const b = figuresOf(core);
+          if (a.length === 0) return [`${label}: cli.ts build printed no figures line, so there is nothing to compare`];
+          if (a.length !== b.length) return [`${label}: cli.ts build printed ${a.length} figures line(s) and cli_core.ts ${b.length}`];
+          const out: string[] = [];
+          a.forEach((lineA, i) => {
+            const keysA = lineA.map(([k]) => k);
+            const keysB = b[i].map(([k]) => k);
+            const valueB = new Map(b[i]);
+            const missing = lineA.filter(([k]) => !valueB.has(k));
+            const extra = keysB.filter((k) => !keysA.includes(k));
+            if (missing.length > 0) out.push(`${label}: cli_core.ts's figures line has no ${missing.map(([k, v]) => `${k} (cli.ts: ${k}=${v})`).join(', ')}`);
+            if (extra.length > 0) out.push(`${label}: cli_core.ts's figures line has ${extra.join(', ')}, which cli.ts's does not`);
+            for (const [k, v] of lineA) if (valueB.has(k) && valueB.get(k) !== v) out.push(`${label}: ${k}=${v} on cli.ts and ${k}=${String(valueB.get(k))} on cli_core.ts`);
+            if (missing.length === 0 && extra.length === 0 && keysA.join(' ') !== keysB.join(' ')) out.push(`${label}: the same keys in another order — cli.ts [${keysA.join(' ')}], cli_core.ts [${keysB.join(' ')}]`);
+          });
+          return out;
+        };
+        const fullOf = (name: string, out: string): ReturnType<typeof runCli> =>
+          runCli(['build', '--rig', join(import.meta.dir, name, 'rig.json'), '--motion', join(import.meta.dir, name, 'motion.json'), '--images', join(import.meta.dir, name, 'parts'), '--out', out]);
+        const coreOf = (root: string, name: string, out: string): ReturnType<typeof runCli> =>
+          runEntryIn(root, 'cli_core.ts', ['build', '--rig', join(import.meta.dir, name, 'rig.json'), '--motion', join(import.meta.dir, name, 'motion.json'), '--images', join(import.meta.dir, name, 'parts'), '--out', out], work);
+        const rows39 = [...galleryBuilds].filter((g) => existsSync(join(import.meta.dir, g.name, 'rig.json')) && existsSync(join(import.meta.dir, g.name, 'parts'))).sort((x, y) => (x.name < y.name ? -1 : 1));
+        const keys39: number[] = [];
+        for (const [i, g] of rows39.entries()) {
+          const pairRun = g.name === row1060.name ? { full: fullRun, core: coreRun } : { full: fullOf(g.name, join(work, `rc39-full-${i}`)), core: coreOf(tree, g.name, join(work, `rc39-core-${i}`)) };
+          if (pairRun.full.status !== 0 || pairRun.core.status !== 0) {
+            probes.RC39.push(`${g.name}: cli.ts exited ${pairRun.full.status} and cli_core.ts ${pairRun.core.status} — ${JSON.stringify(firstErr(pairRun.core).slice(0, 200))}`);
+            continue;
+          }
+          probes.RC39.push(...figuresFaults(g.name, pairRun.full.stdout, pairRun.core.stdout));
+          keys39.push(figuresOf(pairRun.core.stdout)[0]?.length ?? 0);
+        }
+        if (keys39.length === 0) probes.RC39.push('no gallery build with its spec and parts beside it was compared');
+        figures.RC39 =
+          `${keys39.length} gallery build(s) [${rows39.map((g) => g.name).join(', ')}], each by both entries with the package absent for cli_core.ts: ` +
+          `the figures line the same keys in the same order with the same values, ${Math.min(...keys39)} to ${Math.max(...keys39)} key(s) per line, profile included`;
+
+        const reds40: string[] = [];
+        const plants40: Array<{ label: string; file: string; from: string; to: string; names: string }> = [
+          { label: 'version dropped from the emitted side', file: join('src', 'assertions', 'emitted', 'index.ts'), from: '  stats.version = ', to: '  void ', names: 'has no version' },
+          { label: 'the model side merged first', file: join('src', 'cli', 'core_commands.ts'), from: 'stats: { ...text.stats, ...model.stats },', to: 'stats: { ...model.stats, ...text.stats },', names: 'the same keys in another order' },
+        ];
+        for (const [i, plant] of plants40.entries()) {
+          const root = absentTree(join(work, `rc40-${i}`));
+          const text = readFileSync(join(root, plant.file), 'utf8');
+          const n = text.split(plant.from).length - 1;
+          if (n !== 1) {
+            probes.RC40.push(`the plant "${plant.label}" found its text ${n} time(s) in ${plant.file}, not once`);
+            continue;
+          }
+          writeFileSync(join(root, plant.file), text.split(plant.from).join(plant.to));
+          const planted = coreOf(root, row1060.name, join(work, `rc40-core-${i}`));
+          const read = planted.status === 0 ? figuresFaults(row1060.name, fullRun.stdout, planted.stdout) : [`cli_core.ts exited ${planted.status}`];
+          if (read.length === 0) probes.RC40.push(`the plant "${plant.label}" left RC39's comparison green`);
+          else if (!read.some((fault) => fault.includes(plant.names))) probes.RC40.push(`the plant "${plant.label}" read red for another reason: ${read[0].slice(0, 200)}`);
+          else reds40.push(`${plant.label}: RC39 red on "${read.find((fault) => fault.includes(plant.names))?.slice(0, 120)}"`);
+        }
+        if (reds40.length !== plants40.length && probes.RC40.length === 0) probes.RC40.push(`${reds40.length} of ${plants40.length} plants read red`);
+        figures.RC40 = `in copies of the tree, ${row1060.name} built by cli_core.ts against cli.ts's: ${reds40.join('; ')}`;
+
+        const containedArgs = (out: string): string[] => ['build', '--rig', CONTAINED.rigPath, '--motion', CONTAINED.motionPath, '--manifest', CONTAINED.manifestPath, '--profile', 'spine-html', '--out', out];
+        const fullBare = runCli(containedArgs(join(work, 'rc41-full')));
+        const coreBare = runEntryIn(tree, 'cli_core.ts', containedArgs(join(work, 'rc41-core')), work);
+        const bareLine = figuresOf(coreBare.stdout)[0] ?? [];
+        const bareKeys = bareLine.map(([k]) => k);
+        if (fullBare.status !== 0 || coreBare.status !== 0) probes.RC41.push(`${CONTAINED.rig} (contained cut): cli.ts exited ${fullBare.status} and cli_core.ts ${coreBare.status} — ${JSON.stringify(firstErr(coreBare).slice(0, 200))}`);
+        else {
+          const constraintCounts = bareKeys.filter((k) => /Constraints$|TimelineKeys$|SharedTargets$/.test(k));
+          if (new Map(bareLine).get('physicsConstraints') !== '0') probes.RC41.push(`the contained probe's cli_core.ts line reads physicsConstraints=${String(new Map(bareLine).get('physicsConstraints'))}, not 0 — it is not the build with no constraints`);
+          if (bareKeys.length <= constraintCounts.length) probes.RC41.push(`cli_core.ts's figures line on the contained probe is the constraint counts alone: [${bareKeys.join(' ')}]`);
+          probes.RC41.push(...figuresFaults(`${CONTAINED.rig} (contained cut)`, fullBare.stdout, coreBare.stdout));
+        }
+        figures.RC41 = `the contained probe (no constraints), --profile spine-html, by both entries: cli_core.ts prints [${bareKeys.join(' ')}], cli.ts's line key for key`;
       }
     }
     const cases: Array<[string, string, string]> = [
@@ -89780,6 +89872,9 @@ function runRenderHashesSuite(): number | null {
       ['RC36', 'RC36_VALIDATE_REFUSED_ON_A_RIGC_BUILD_SAYS_THE_BUILD_RAN_THE_GATE_AND_ON_AN_EXPORT_SAYS_WHAT_IT_SAID', 'issue #1097: a consumer ran validate after every build, met the refusal on the entry without spine-core and read it as a gate the install could not run (#1095), because the refusal said only what validate needs; the one fact that ends the question is in the directory, and an export, which carries no record, keeps the sentence it had'],
       ['RC37', 'RC37_RC33S_WALK_READS_THE_GATED_ON_WRITE_SENTENCE_WHOLE_BEFORE_THE_INSTALL_ROUTE', 'issue #1097: RC33 holds every sentence the entry prints to the install route, so a sentence added to a refusal is in its population only if the walk reads a refusal that carries it — and reads it as one sentence, not split on a path'],
       ['RC38', 'RC38_THE_SENTENCE_ON_AN_EXPORT_THE_MARK_REMOVED_OR_CLI_TS_WITHOUT_THE_ROUTE_TURNS_RC36_OR_RC33_RED', 'RC36 and RC37 read green on a tree that prints the sentence nowhere if they read nothing; the plants show each sees the fault it is about'],
+      ['RC39', 'RC39_BOTH_ENTRIES_PRINT_ONE_FIGURES_LINE_THE_SAME_KEYS_IN_THE_SAME_ORDER_WITH_THE_SAME_VALUES', 'issue #1114: the closing figures line is what a consumer without the runtime reads as the summary of what the build wrote, and on that entry it carried four constraint counts where cli.ts prints pages, regions, bones, slots, animations and the version — every one of them readable from what the entry already parses, so the line differing is a fault, and only a comparison of the two lines on the same builds shows it'],
+      ['RC40', 'RC40_A_KEY_DROPPED_FROM_THE_CORE_SIDES_STATS_OR_THE_OLD_MERGE_ORDER_TURNS_RC39_RED_BY_NAME', 'RC39 reads green on two lines that print nothing if it reads nothing; the plants are a figure dropped and the merge order this issue changed, and each must be named by what it broke'],
+      ['RC41', 'RC41_A_BUILD_WITH_NO_CONSTRAINTS_PRINTS_THE_WHOLE_FIGURES_LINE_ON_THE_CORE_ENTRY', 'issue #1114: the consumer\'s build had no constraint, so the core entry\'s line was physicsConstraints=0 alone; the build with nothing for the constraint rules to count is the case the report was about, under the profile whose archetype rules write figures after rig and profile'],
     ];
     for (const [key, code, why] of cases) {
       const held = probes[key].length === 0;

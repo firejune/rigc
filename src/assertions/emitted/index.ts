@@ -26,7 +26,7 @@ import { ASSERTION_KIND, type AssertionProfile } from '../kinds.ts';
 import { verdictHarness, type VerdictLists } from '../harness.ts';
 import { MOVED_ASSERTIONS } from '../model/index.ts';
 import type { Verdicts } from '../harness.ts';
-import type { Json } from '../values.ts';
+import { isObj, type Json } from '../values.ts';
 import { a01NoLegacyToplevelConstraintArrays } from '../bodies/a01.ts';
 import { a02NoBoneTransformKey } from '../bodies/a02.ts';
 import { a05CurveArrayLength } from '../bodies/a05.ts';
@@ -35,6 +35,7 @@ import { a16SkeletonVersion43 } from '../bodies/a16.ts';
 import { a18DeterministicEmit } from '../bodies/a18.ts';
 import { a31DrawOrderOffsetsResolve } from '../bodies/a31.ts';
 import { a35DeformKeysFitTheAttachment } from '../bodies/a35.ts';
+import { parseAtlasText } from '../../atlas.ts';
 
 /** What the restated rules read: the emitted texts, the document written beside them, and a second compile's three. */
 export interface EmittedTextInput {
@@ -92,6 +93,31 @@ export const EMITTED_TEXT_RULES: ReadonlyArray<{ code: string; run: (v: Verdicts
   },
 ];
 
+/**
+ * The figures `validate()` reads off the pair it loaded, read off the same two
+ * texts here (issue #1114), into `stats` first — the order the round trip's
+ * report holds them in: `pages` and `regions` from the atlas text by rigc's own
+ * reader (`parseAtlasText`, whose pages and regions are the runtime atlas's in
+ * file order), then `bones`, `slots`, `animations` and `version` from the
+ * skeleton JSON — the arrays and the animation map the runtime loads them
+ * from, and `skeleton.spine` as it states it, `(none)` where it states none.
+ * The skeleton's four are left out where its JSON does not parse, as the round
+ * trip leaves them out where it loaded nothing; nothing here is a value the
+ * texts do not state.
+ */
+function pairFigures(stats: Record<string, number | string>, raw: Json | null, atlasText: string): void {
+  const atlas = parseAtlasText(atlasText);
+  stats.pages = atlas.pages.length;
+  stats.regions = atlas.regions.length;
+  if (!isObj(raw)) return;
+  const listed = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+  stats.bones = listed(raw.bones);
+  stats.slots = listed(raw.slots);
+  stats.animations = isObj(raw.animations) ? Object.keys(raw.animations).length : 0;
+  const declared = isObj(raw.skeleton) ? raw.skeleton.spine : undefined;
+  stats.version = declared === undefined || declared === null ? '(none)' : typeof declared === 'string' ? declared : JSON.stringify(declared);
+}
+
 /** Every code the model side does not run, read off the registry — what this file must account for. */
 export function roundTripOnlyCodes(): string[] {
   const moved = new Set(MOVED_ASSERTIONS.map((m) => m.code));
@@ -112,6 +138,7 @@ export function validateEmittedText(input: EmittedTextInput): VerdictLists & { p
   } catch (err) {
     h.fail(A00, `skeleton JSON is not parseable: ${(err as Error).message}`);
   }
+  pairFigures(h.stats, raw, input.atlasText);
   for (const rule of EMITTED_TEXT_RULES) {
     if (rule.code === A00 && raw === null) continue;
     h.check(rule.code, () => rule.run(h.verdicts, { raw, input }));
