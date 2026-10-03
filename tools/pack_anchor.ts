@@ -58,9 +58,23 @@
  *     parts handed over reversed, byte-identical — atlas text and every page's
  *     pixels — under both edge modes.
  *
- * Exit codes: 0 every set measured; 1 a recipe refused or unreadable (named in
- * the table and on stderr); 2 a bad input by name. The wall time is printed on
- * stderr only, so two runs print the same table.
+ * `--padding` and `--page-size` apply to every set of the run, generated,
+ * `--regions` and recipe alike: a set with one region whose cell does not fit
+ * a `--page-size` page is a refused row, so a corpus with a drawing past 2048
+ * is measured with `--page-size 4096` (every set of the run then at 4096).
+ *
+ * ## Refused rows
+ *
+ * A set nothing can be measured on is a **REFUSED** row carrying the sentence
+ * that refused it — a build chain that exited non-zero, an atlas the lift
+ * cannot read, or the packer's own refusal (a region whose cell does not fit
+ * the page: the packer cannot split one drawing across two pages, and is right
+ * to refuse). Every other set is measured; the Σ rows are over the measured
+ * sets and say how many were refused, as `hull_ceiling` prints its rows.
+ *
+ * Exit codes: 0 at least one set measured (refused rows, if any, are named in
+ * the table and on stderr); 2 no set measured, or a bad input by name. The wall
+ * time is printed on stderr only, so two runs print the same table.
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -83,6 +97,7 @@ import {
   type PageEdges,
   type PassTally,
 } from '../src/atlas.ts';
+import { CompileError } from '../src/errors.ts';
 import { readPlate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
@@ -202,6 +217,20 @@ export function anchorRow(name: string, inputs: readonly PackInput[], padding: n
   };
 }
 
+/**
+ * A set's row, or its REFUSED row when the packer refuses the set — the
+ * packer's sentence as the reason. `refusals: 'throw'` lets the refusal
+ * escape instead, which is the selftest's plant (`PK100`) and nothing else.
+ */
+export function measuredRow(name: string, inputs: () => readonly PackInput[], padding: number, pageSize: number, duplicates = 0, refusals: 'row' | 'throw' = 'row'): AnchorRow {
+  try {
+    return anchorRow(name, inputs(), padding, pageSize, duplicates);
+  } catch (err) {
+    if (refusals === 'row' && (err instanceof CompileError || err instanceof AnchorInputError)) return refusedRow(name, err.message);
+    throw err;
+  }
+}
+
 function refusedRow(name: string, why: string): AnchorRow {
   return { name, refused: why, cells: 0, meshCells: 0, insets: [], duplicates: 0, firstPass: { refused: 0, missed: 0, placed: 0 }, free: null, pot: null, cost: null, deterministic: null };
 }
@@ -319,7 +348,9 @@ export function anchorTable(rows: readonly AnchorRow[]): string[] {
       out.push(`| ${r.name} | ${edges} | ${e.rect.pages} = ${count(e.rect.area)} | ${cells.join(' | ')} |`);
     }
   }
-  for (const edges of ['free', 'pot'] as const) out.push(`| **Σ** | ${edges} | ${count(sums[edges].rect)} | ${ANCHOR_COLUMNS.map((a) => count(sums[edges].polygon[a] ?? 0)).join(' | ')} |`);
+  const measured = rows.filter((r) => r.refused === null).length;
+  const refusedNote = `over ${measured} measured set(s); ${rows.length - measured} refused`;
+  for (const edges of ['free', 'pot'] as const) out.push(`| **Σ** ${refusedNote} | ${edges} | ${count(sums[edges].rect)} | ${ANCHOR_COLUMNS.map((a) => count(sums[edges].polygon[a] ?? 0)).join(' | ')} |`);
   out.push('');
   out.push(`| set | rect splits | ${ANCHOR_COLUMNS.map((a) => `${a === 'polygon' ? 'polygon (every candidate)' : a} splits (x rect)`).join(' | ')} | deterministic |`);
   out.push(`| --- | ---: | ${ANCHOR_COLUMNS.map(() => '---:').join(' | ')} | --- |`);
@@ -362,22 +393,23 @@ function positiveInt(flag: string, value: string | undefined, fallback: number, 
 }
 
 /** Every recipe built into `work` and measured, in name order. */
-export function recipeRows(recipes: readonly Recipe[], work: string, root: string, padding: number, pageSize: number, progress: (line: string) => void = () => {}): AnchorRow[] {
+export function recipeRows(recipes: readonly Recipe[], work: string, root: string, padding: number, pageSize: number, progress: (line: string) => void = () => {}, refusals: 'row' | 'throw' = 'row'): AnchorRow[] {
   const built = buildRecipes(recipes, join(work, 'build'), root, progress);
   return built.map((b, i) => {
     if (b.exits.some((e) => e !== 0)) return refusedRow(b.name, `the build chain exited ${JSON.stringify(b.exits)}`);
+    let lifted: { inputs: PackInput[]; duplicates: number };
     try {
-      const { inputs, duplicates } = inputsOfBuild(b.out, join(work, 'lift', String(i).padStart(3, '0')));
-      return anchorRow(b.name, inputs, padding, pageSize, duplicates);
+      lifted = inputsOfBuild(b.out, join(work, 'lift', String(i).padStart(3, '0')));
     } catch (err) {
       if (err instanceof AnchorInputError) return refusedRow(b.name, err.message);
       throw err;
     }
+    return measuredRow(b.name, () => lifted.inputs, padding, pageSize, lifted.duplicates, refusals);
   });
 }
 
 /** The command; returns the exit code. */
-export function anchorMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
+export function anchorMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error, refusals: 'row' | 'throw' = 'row'): number {
   try {
     const flags = parseFlags(argv, ['--recipes', '--root', '--regions', '--seeds', '--padding', '--page-size', '--work', '--json'], ['--regions']);
     const one = (flag: string): string | undefined => flags.get(flag)?.[0];
@@ -411,16 +443,20 @@ export function anchorMain(argv: readonly string[], print: (line: string) => voi
     warn(`pack_anchor: ${seeds.length} seed(s), ${sets.length} region set(s), ${recipes.length} recipe(s), padding ${padding}, page size ${pageSize}, work directory ${work}`);
     const started = performance.now();
     const rows: AnchorRow[] = [];
-    for (const seed of seeds) rows.push(anchorRow(`seed ${seed}`, writePolypackInputs(join(work, 'seeds', String(seed)), polypackShapes(seed)), padding, pageSize));
-    sets.forEach(({ path, shapes }, i) => rows.push(anchorRow(`regions ${i + 1} (${shapes.length} regions)`, writePolypackInputs(join(work, 'regions', String(i)), shapes), padding, pageSize)));
-    if (recipes.length > 0) rows.push(...recipeRows(recipes, work, root, padding, pageSize, warn));
+    for (const seed of seeds) rows.push(measuredRow(`seed ${seed}`, () => writePolypackInputs(join(work, 'seeds', String(seed)), polypackShapes(seed)), padding, pageSize, 0, refusals));
+    sets.forEach(({ shapes }, i) => rows.push(measuredRow(`regions ${i + 1} (${shapes.length} regions)`, () => writePolypackInputs(join(work, 'regions', String(i)), shapes), padding, pageSize, 0, refusals)));
+    if (recipes.length > 0) rows.push(...recipeRows(recipes, work, root, padding, pageSize, warn, refusals));
     for (const line of anchorTable(rows)) print(line);
     const json = one('--json');
     if (json !== undefined) writeFileSync(json, anchorText(rows));
     const refused = rows.filter((r) => r.refused !== null);
     for (const r of refused) warn(`pack_anchor: ${r.name} REFUSED — ${r.refused}`);
     warn(`pack_anchor: wall time ${((performance.now() - started) / 1000).toFixed(1)} s`);
-    return refused.length > 0 ? 1 : 0;
+    if (refused.length === rows.length) {
+      warn(`pack_anchor: no set measured — ${rows.length} refused`);
+      return 2;
+    }
+    return 0;
   } catch (err) {
     if (err instanceof AnchorInputError || err instanceof HashesInputError) {
       warn(`pack_anchor: ${err.message}`);

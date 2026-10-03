@@ -47980,6 +47980,58 @@ function runPackerSuite(): number {
       probeDetail(detHeld, detProbes, `${anchorRows.length} polygon pack(s), each identical made again and from its parts reversed — atlas text and every page's pixels`),
       'A18 compares two compiles byte for byte; a choice between three whole packs is three chances to depend on input order',
     );
+
+    // PK100: the instrument's reaction to a set the packer refuses (issue
+    // #1104, the production run). `tools/pack_anchor.ts` over two region sets
+    // at --page-size 256, the second holding one region whose cell does not fit
+    // the page: the packer refuses that set by name, and the instrument must
+    // print it as a REFUSED row carrying the packer's sentence, measure the
+    // other, sum over the measured one saying one was refused, and exit 0; over
+    // the refused set alone it exits 2. Planted: the refusal let through — the
+    // instrument as it was, where one recipe's refusal escaped `map` and the
+    // other thirteen printed nothing.
+    const square = (w: number, h: number): number[] => [0, 0, w, 0, w, h, 0, h];
+    const goodSet = join(polyDir, 'anchor-good.json');
+    const badSet = join(polyDir, 'anchor-bad.json');
+    writeFileSync(goodSet, JSON.stringify([{ region: 'a', w: 60, h: 40, hull: [30, 4, 56, 36, 4, 36] }, { region: 'b', w: 30, h: 30, hull: square(30, 30) }]));
+    writeFileSync(badSet, JSON.stringify([{ region: 'big', w: 300, h: 300, hull: square(300, 300) }, { region: 'c', w: 20, h: 20, hull: square(20, 20) }]));
+    const runAnchor = (sets: string[], work: string, refusals: 'row' | 'throw' = 'row'): { code: number | string; out: string[]; err: string[] } => {
+      const out: string[] = [];
+      const err: string[] = [];
+      try {
+        const code = anchorMain([...sets.flatMap((p) => ['--regions', p]), '--page-size', '256', '--work', join(polyDir, work)], (l) => out.push(l), (l) => err.push(l), refusals);
+        return { code, out, err };
+      } catch (e) {
+        return { code: `threw ${(e as Error).constructor.name}: ${(e as Error).message.split('\n')[0]}`, out, err };
+      }
+    };
+    const both = runAnchor([goodSet, badSet], 'anchor-both');
+    const badOnly = runAnchor([badSet], 'anchor-bad-only');
+    const planted = runAnchor([goodSet, badSet], 'anchor-plant', 'throw');
+    const refusedLine = both.out.find((l) => l.startsWith('| regions 2 ') && l.includes('REFUSED:')) ?? null;
+    const measuredLine = both.out.find((l) => l.startsWith('| regions 1 ') && !l.includes('REFUSED')) ?? null;
+    const sumLine = both.out.find((l) => l.startsWith('| **Σ**')) ?? null;
+    const anchorProbes = [
+      ...(both.code === 0 ? [] : [`two sets, one refused: exit ${String(both.code)}, not 0`]),
+      ...(refusedLine !== null && refusedLine.includes('does not fit a 256x256 page') && refusedLine.includes('"big"') ? [] : [`no REFUSED row carrying the packer's sentence for the set holding "big" (${refusedLine ?? 'none'})`]),
+      ...(measuredLine !== null ? [] : ['the set the packer accepts was not measured']),
+      ...(sumLine !== null && sumLine.includes('over 1 measured set(s); 1 refused') ? [] : [`the Σ row does not say it is over 1 measured set with 1 refused (${sumLine ?? 'none'})`]),
+      ...(badOnly.code === 2 ? [] : [`the refused set alone: exit ${String(badOnly.code)}, not 2`]),
+      ...(typeof planted.code === 'string' && planted.code.startsWith('threw CompileError') ? [] : [`the plant (refusal let through) did not throw: ${String(planted.code)}`]),
+    ];
+    const anchorHeld = anchorProbes.length === 0;
+    say(
+      'PK100_THE_ANCHOR_INSTRUMENT_PRINTS_A_SET_THE_PACKER_REFUSES_AS_A_REFUSED_ROW_AND_MEASURES_THE_REST',
+      anchorHeld,
+      probeDetail(
+        anchorHeld,
+        anchorProbes,
+        `two sets at --page-size 256: exit ${String(both.code)}; regions 2 REFUSED: ${((refusedLine ?? '').split('REFUSED: ')[1] ?? '').split(' (/')[0]}; Σ row "${(sumLine ?? '').split('|')[1]?.trim() ?? ''}"; ` +
+          `the refused set alone exit ${String(badOnly.code)}; planted (the refusal let through): ${String(planted.code).split(' (/')[0]}`,
+      ),
+      'issue #1104: an instrument that dies on one refused set measures nothing — the production run lost thirteen ' +
+        'recipes to one drawing past the page — and the packer\'s refusal is the reason a reader needs, so it is the row',
+    );
   }
   return bad;
 }
@@ -84813,6 +84865,7 @@ function runDeformCoreSuite(): number | null {
 // ---------------------------------------------------------------------------
 
 import { CeilingInputError, ceilingTable, measureBuild, regionWindow, rowOf, type ContourReader, type RegionResolver } from './tools/hull_ceiling.ts';
+import { anchorMain } from './tools/pack_anchor.ts';
 
 /** The hashes command in a child process, as a caller runs it. */
 function runHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
