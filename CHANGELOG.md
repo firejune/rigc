@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0](https://github.com/firejune/rigc/compare/v2.2.0...v2.3.0) (2026-10-03)
+
+
+### Features
+
+* **selftest:** each suite states its time and the process RSS after it, and the run ends with the ten heaviest suites by time and by RSS growth ([#1122](https://github.com/firejune/rigc/issues/1122)) ([b951c86](https://github.com/firejune/rigc/commit/b951c868db35626e89779f1e197192adae2162a8)), closes [#1116](https://github.com/firejune/rigc/issues/1116)
+
+
+### Bug Fixes
+
+* **selftest:** the full run's memory — heap and external beside RSS per suite, the three controls that set the high-water cut to a fraction of their peak, and the final RSS held under a tracked per-platform base ([#1124](https://github.com/firejune/rigc/issues/1124)) ([1c36d4d](https://github.com/firejune/rigc/commit/1c36d4d60ce6b93a378abb651673c047dbba44a4))
+
 ## [2.2.0](https://github.com/firejune/rigc/compare/v2.1.3...v2.2.0) (2026-10-03)
 
 
