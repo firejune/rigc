@@ -1094,6 +1094,46 @@ function optsForFixture(fixture: Fixture): Options {
   };
 }
 
+/**
+ * A fresh directory for a build to land in, made INSIDE the directory its art
+ * lives in (issue #1127) — `<artDir>/<prefix>XXXXXX` — so a build of a fixture
+ * or a probe never spells another temp directory's name.
+ *
+ * ⭐ Why it has to be inside, measured rather than tidy: a page name is the art's
+ * path seen from the atlas file (`relative(outDir, …)` in `src/compile.ts`), and
+ * so are `skeleton.images` and the model document's `pages`. A build whose
+ * output directory sat in a temp directory of its own, beside the art's, wrote
+ * `../../rigc-fixtures-XXXXXX/…` into all three — a name chosen at random by
+ * whichever process made the directory. `VF09` keys a build on those texts, so
+ * one set of inputs counted once per directory it was built from. From inside,
+ * the spelling is `../../plates/x.png` wherever the fixture root is — the way
+ * `tools/emit_hashes.ts` stages a recipe.
+ *
+ * 🔒 The prefix is a NAME, never a path: one carrying a separator could put the
+ * root anywhere, and is refused by name before anything is made (`TY37`).
+ */
+function buildRootIn(artDir: string, prefix: string): string {
+  if (prefix === '' || /[\\/]/.test(prefix)) {
+    throw new Error(`buildRootIn: the prefix ${JSON.stringify(prefix)} is not a plain directory name, so the build root it makes need not be inside ${artDir}`);
+  }
+  return mkdtempSync(join(artDir, prefix));
+}
+
+/**
+ * `buildRootIn(home, prefix)` where the art has a home this run made, and a temp directory of its own where it has none —
+ * the art is the checkout's (a gallery example, the corpus), which no build here writes into.
+ */
+function buildRootFor(home: string | undefined, prefix: string): string {
+  return home === undefined ? mkdtempSync(join(tmpdir(), prefix)) : buildRootIn(home, prefix);
+}
+
+/** The static probe's motion spec (`STATIC_MOTION`) written beside a probe's rig, and its path — what `gateProbe` writes. */
+function staticMotionIn(dir: string): string {
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  return motionPath;
+}
+
 /** The four fields a setup stage is, as the editor and `compile` write them. */
 const STAGE_BOX_FIELDS = ['x', 'y', 'width', 'height'] as const;
 
@@ -1740,6 +1780,8 @@ type SupplierSighting =
   | {
       kind: 'family';
       key: string;
+      /** Where the build's paths point, read at its first sighting (issue #1127, `TY36`). */
+      place: BuildPlace;
       family: { walked: FamilyTally[]; identical: FactCut[]; derivations: DerivationTally[] | null; multiSkin: boolean; documentOrderDiffers: boolean } | null;
     };
 
@@ -1763,6 +1805,93 @@ interface SupplierDelta {
   unthreaded: Array<{ case: string; codes: string[] }>;
   unwritable: string[];
   sightings: SupplierSighting[];
+}
+
+/**
+ * `VF09`'s key for one build (issues #1054, #1127): its pair, its document and
+ * the declarations its bodies were handed, each hashed — so two builds are one
+ * build exactly when every text the walk reads is the same. `VF23` holds it
+ * over two directories, which is why it is a function rather than a line.
+ */
+function familyBuildKey(input: Pick<ValidateInput, 'skeletonText' | 'atlasText' | 'rig' | 'declaredDurations'>, modelText: string): string {
+  return [input.skeletonText, input.atlasText, modelText, JSON.stringify(input.rig ?? null), JSON.stringify(input.declaredDurations ?? null)].map(spineFileSha256).join(' ');
+}
+
+/** A path component a harness temp directory carries: a `rigc-…-` prefix and the six characters `mkdtemp` appends (issue #1127). */
+const HARNESS_TEMP_COMPONENT = /^rigc-.+-[A-Za-z0-9]{6}$/;
+
+/** The system temp directory as given and as resolved — macOS hands out `/var/…` and resolves it to `/private/var/…`. */
+const TEMP_ROOTS = [...new Set([resolve(tmpdir()), realpathSync(tmpdir())])];
+
+/**
+ * Where one recorded build's paths point (issue #1127, `TY36`): the paths it
+ * spells that carry a harness temp directory's name or climb out of the temp
+ * directory the pair sits in into another, each named; and how many of its
+ * page and image paths reach art outside the system temp directory — the
+ * checkout's gallery and corpus, which no build here writes into, counted
+ * rather than faulted because their spelling is a function of the checkout's
+ * path and the temp directory's, not of the process that built them.
+ */
+interface BuildPlace {
+  faults: string[];
+  checkout: number;
+}
+
+function buildPlaceOf(input: { skeletonText: string; atlasText: string; atlasDir: string }, modelText: string): BuildPlace {
+  const faults: string[] = [];
+  let checkout = 0;
+  const tempRootOf = (path: string): string | null => {
+    for (const temp of TEMP_ROOTS) {
+      const from = relative(temp, path);
+      if (from !== '' && !from.startsWith('..') && !isAbsolute(from)) return join(temp, from.split(/[\\/]/)[0]);
+    }
+    return null;
+  };
+  const pairRoot = tempRootOf(resolve(input.atlasDir));
+  const strings = (text: string): string[] => {
+    const out: string[] = [];
+    const walk = (node: unknown): void => {
+      if (typeof node === 'string') out.push(node);
+      else if (Array.isArray(node)) node.forEach(walk);
+      else if (typeof node === 'object' && node !== null) Object.values(node).forEach(walk);
+    };
+    try {
+      walk(JSON.parse(text));
+    } catch {
+      // A forged pair that does not parse spells nothing this reading can name.
+    }
+    return out;
+  };
+  let pages: string[] = [];
+  try {
+    pages = pagesOfAtlas(input.atlasText).map((page) => page.name);
+  } catch {
+    pages = [];
+  }
+  let images: string[] = [];
+  try {
+    const header = (JSON.parse(input.skeletonText) as { skeleton?: { images?: unknown } }).skeleton;
+    images = typeof header?.images === 'string' ? [header.images] : [];
+  } catch {
+    images = [];
+  }
+  const spelled: Array<[string, string]> = [
+    ...pages.map((name): [string, string] => ['atlas page', name]),
+    ...strings(input.skeletonText).map((value): [string, string] => ['skeleton string', value]),
+    ...strings(modelText).map((value): [string, string] => ['document string', value]),
+  ];
+  for (const [where, value] of spelled) {
+    const component = value.split(/[\\/]/).find((part) => HARNESS_TEMP_COMPONENT.test(part));
+    if (component !== undefined) faults.push(`${where} ${JSON.stringify(value)} spells the temp directory "${component}"`);
+  }
+  for (const [where, value] of [...pages.map((name): [string, string] => ['atlas page', name]), ...images.map((path): [string, string] => ['skeleton.images', path])]) {
+    if (isAbsolute(value)) continue;
+    const landed = resolve(input.atlasDir, value);
+    const root = tempRootOf(landed);
+    if (root === null) checkout++;
+    else if (pairRoot !== null && root !== pairRoot) faults.push(`${where} ${JSON.stringify(value)} climbs out of the pair's temp directory into another`);
+  }
+  return { faults, checkout };
 }
 
 class SupplierCheck {
@@ -1865,6 +1994,11 @@ class SupplierCheck {
    * builds, and a sum of two shards' would count a shared build twice.
    */
   private sightings: SupplierSighting[] = [];
+  /** Every distinct build this check recorded, first sightings only and in run order, with where its paths point (issue #1127, `TY36`). */
+  recordedPlaces(): Array<{ key: string; place: BuildPlace }> {
+    return this.sightings.flatMap((sighting) => (sighting.kind === 'family' ? [{ key: sighting.key, place: sighting.place }] : []));
+  }
+
   /** The faults a first sighting raised, by the build it was the first sighting of. */
   private faultBuild = new Map<object, string>();
 
@@ -2110,10 +2244,10 @@ class SupplierCheck {
    */
   private walkFamiliesOf(input: ValidateInput, modelText: string): void {
     this.familyWalk.calls++;
-    const build = [input.skeletonText, input.atlasText, modelText, JSON.stringify(input.rig ?? null), JSON.stringify(input.declaredDurations ?? null)].map(spineFileSha256).join(' ');
+    const build = familyBuildKey(input, modelText);
     if (this.familyBuilt.has(build)) return;
     this.familyBuilt.add(build);
-    const sighting: SupplierSighting = { kind: 'family', key: build, family: null };
+    const sighting: SupplierSighting = { kind: 'family', key: build, place: buildPlaceOf(input, modelText), family: null };
     this.sightings.push(sighting);
     const walked = compareFactFamilies(input.skeletonText, input.atlasText, modelText, { rig: input.rig, declaredDurations: input.declaredDurations }, this.plant);
     if (walked === null) return;
@@ -7159,7 +7293,9 @@ function compileTranscription(
   motionText: string | null,
   imagesDir = CHECK_IMAGES,
 ): { skeletonText: string; atlasText: string; atlasDir: string; modelText: string | undefined } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-check-'));
+  // Art this run wrote (`padImagesSideways`) builds inside its own directory (issue #1127); the corpus's art is the checkout's,
+  // which no build here writes into.
+  const outDir = buildRootFor(imagesDir === CHECK_IMAGES ? undefined : imagesDir, 'rigc-check-');
   let motionPath = join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json');
   if (motionText !== null) {
     motionPath = join(outDir, 'rewritten.motion.json');
@@ -17333,7 +17469,7 @@ function runStaticRigSuite(): number {
   // states no stage of its own, so its crop IS its stage — which makes it the
   // one rig here where the precedence decides a byte.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-stageless-crop-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-stageless-crop-');
     const crop = (JSON.parse(readFileSync(ARTICULATED.manifestPath, 'utf8')) as { crop?: { w?: unknown; h?: unknown } }).crop;
     const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
     mkdirSync(stagedOpts.outDir, { recursive: true });
@@ -17806,9 +17942,8 @@ function runStaticRigSuite(): number {
   // read the corpus against the exports themselves, which is where the table's
   // own correctness is decided.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-keyorder-'));
     const builds = [OVERLAY, ARTICULATED, CONTAINED].map((fixture) => {
-      const outDir = join(root, fixture.rig);
+      const outDir = join(buildRootIn(fixture.dir, 'rigc-keyorder-'), fixture.rig);
       mkdirSync(outDir, { recursive: true });
       return { label: fixture.rig, skeleton: JSON.parse(compile({ ...optsForFixture(fixture), outDir }).skeletonText) as Record<string, unknown> };
     });
@@ -18653,16 +18788,19 @@ function omissionBuilds(): OmissionBuild[] {
   if (omissionBuildsHeld !== null) return omissionBuildsHeld;
   const root = mkdtempSync(join(tmpdir(), 'rigc-omitdefaults-'));
   const galleryRoot = resolve(import.meta.dir, 'gallery');
-  const sources: Array<{ label: string; opts: Omit<Options, 'outDir'> }> = [
+  // A fixture builds inside its own directory (`buildRootIn`, issue #1127); a gallery example's art is the checkout's, which
+  // no build here writes into, so it builds under the one temp root and its page names spell the checkout's path.
+  const sources: Array<{ label: string; opts: Omit<Options, 'outDir'>; artDir: string | null }> = [
     // Labelled by directory: two of the three fixtures share a rig `name`.
-    ...[OVERLAY, ARTICULATED, CONTAINED].map((fixture) => ({ label: basename(fixture.dir), opts: optsForFixture(fixture) })),
+    ...[OVERLAY, ARTICULATED, CONTAINED].map((fixture) => ({ label: basename(fixture.dir), opts: optsForFixture(fixture), artDir: fixture.dir })),
     ...galleryExampleNames(galleryRoot).map((name) => ({
       label: `gallery/${name}`,
       opts: { rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') },
+      artDir: null,
     })),
   ];
-  omissionBuildsHeld = sources.map(({ label, opts }, i) => {
-    const outDir = join(root, String(i));
+  omissionBuildsHeld = sources.map(({ label, opts, artDir }, i) => {
+    const outDir = join(artDir === null ? root : buildRootIn(artDir, 'rigc-omitdefaults-'), String(i));
     mkdirSync(outDir, { recursive: true });
     const built = compile({ ...opts, outDir });
     return { label, skeletonText: built.skeletonText, atlasText: built.atlasText };
@@ -19372,7 +19510,7 @@ function runPngTransparencySuite(): number {
       trns: false,
     });
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-baseplate-overlay-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-baseplate-overlay-out-'), 'loose'),
       'spine-html',
     );
     const probes = opaqueOverlayProbes(gated);
@@ -19399,7 +19537,7 @@ function runPngTransparencySuite(): number {
     });
     const rig = JSON.parse(readFileSync(copy.rigPath, 'utf8')) as Record<string, unknown>;
     rig.skeleton = { ...((rig.skeleton ?? {}) as Record<string, unknown>), x: 0, y: 0, width: fromManifest.overlay.w, height: fromManifest.overlay.h };
-    const root = mkdtempSync(join(tmpdir(), 'rigc-baseplate-precedence-out-'));
+    const root = buildRootIn(copy.dir, 'rigc-baseplate-precedence-out-');
     const rigPath = join(root, 'stated.rig.json');
     writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
     const outDir = join(root, 'loose');
@@ -19439,7 +19577,7 @@ function runPngTransparencySuite(): number {
 
   {
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(ARTICULATED, mkdtempSync(join(tmpdir(), 'rigc-baseplate-norig-')), 'loose'),
+      stagelessOptionsFor(ARTICULATED, buildRootIn(ARTICULATED.dir, 'rigc-baseplate-norig-'), 'loose'),
       'spine-html',
     );
     const run = runCli(['validate', gated.packedDir, '--profile', 'spine-html']);
@@ -19488,7 +19626,7 @@ function runPngTransparencySuite(): number {
     writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, null);
     writeSolidRgbaPng(basePath, fromManifest.base.w, fromManifest.base.h, null);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseopaque-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseopaque-out-'), 'loose'),
       'spine-html',
     );
     const loose = a19Details(gated.loose);
@@ -19542,7 +19680,7 @@ function runPngTransparencySuite(): number {
     const last: [number, number] = [fromManifest.overlay.w - 1, fromManifest.overlay.h - 1];
     writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, last);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseclear-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseclear-out-'), 'loose'),
       'spine-html',
     );
     const clear = clearTexels(overlayPath);
@@ -44912,6 +45050,7 @@ function turnedPack(
   parts: ReadonlyArray<{ region: string; absPath: string }>,
   degrees: number,
   label: number = degrees,
+  under?: string,
 ): { dir: string; atlasPath: string; pageName: string } {
   const gap = DEFAULT_PADDING * 2;
   const laid = parts.map((part) => {
@@ -44967,7 +45106,10 @@ function turnedPack(
     );
     at += p.footH + gap;
   }
-  const dir = mkdtempSync(join(tmpdir(), `rigc-turned${degrees}-`));
+  // `under`: the rig's own directory, for a caller that builds through the pack from beside it — the pack is written to a
+  // directory named by its turn and label inside it, so the page name spells no temp directory (issue #1127).
+  const dir = under === undefined ? mkdtempSync(join(tmpdir(), `rigc-turned${degrees}-`)) : join(under, `turned${degrees}_${label}`);
+  mkdirSync(dir, { recursive: true });
   page.writePng(join(dir, 'turned.png'));
   const atlasPath = join(dir, 'turned.atlas');
   writeFileSync(atlasPath, `${lines.join('\n')}\n`);
@@ -46349,7 +46491,7 @@ function runPackerSuite(): number {
   const authoredParts = [{ region: 'blob', absPath: authored.artPath }];
   const looseFit = authored.result.meshes.find((m) => m.slot === 'blob');
   const fitAt = (degrees: number, label: number): { coverage?: number; overshoot?: number } | string => {
-    const pack = turnedPack(authoredParts, degrees, label);
+    const pack = turnedPack(authoredParts, degrees, label, authored.dir);
     try {
       const built = compile({
         ...authored.opts,
@@ -46410,7 +46552,7 @@ function runPackerSuite(): number {
   const contourParts = [{ region: 'blob', absPath: contourLoose.artPath }];
   const contourApart: string[] = [];
   for (const degrees of TURNS) {
-    const pack = turnedPack(contourParts, degrees);
+    const pack = turnedPack(contourParts, degrees, degrees, contourLoose.dir);
     let turnedText: string;
     try {
       turnedText = compile({
@@ -47266,7 +47408,7 @@ function runPackerSuite(): number {
   // same atlas and the same page bytes, and the packed pair gates green with no
   // box in its header.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-stageless-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-pack-stageless-');
     const stagedResult = compile(optsForFixture(ARTICULATED));
     const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'packed');
     const stagelessResult = compile(stagelessOpts);
@@ -47321,7 +47463,7 @@ function runPackerSuite(): number {
   {
     const { base } = manifestBaseAndOverlay(ARTICULATED);
     const baseRegion = basename(base.image, '.png');
-    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-baseplate-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-pack-baseplate-');
     const stageless = gateLooseAndPacked(stagelessOptionsFor(ARTICULATED, root, 'stageless'), 'spine-html');
     const stagedOut = join(root, 'staged');
     mkdirSync(stagedOut, { recursive: true });
@@ -47946,7 +48088,7 @@ function runPackerSuite(): number {
     // reader takes the line whole — and a polygon build passes A18 on its packed
     // atlas, the second independent compile+pack.
     const lineOf = (run: { stdout: string }): string => run.stdout.split('\n').find((line) => line.includes('  pack: ')) ?? '(no pack line)';
-    const meshBase = ['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, ...(OVERLAY.manifestPath === undefined ? [] : ['--manifest', OVERLAY.manifestPath]), '--out', join(polyDir, 'cli')];
+    const meshBase = ['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, ...(OVERLAY.manifestPath === undefined ? [] : ['--manifest', OVERLAY.manifestPath]), '--out', join(buildRootIn(OVERLAY.dir, 'rigc-polygon-pack-'), 'cli')];
     const lineRuns = [
       ['--pack', runCli([...edgesBase, '--pack']), /, padding \d+, shape rect$/],
       ['--pack --pack-shape rect', runCli([...edgesBase, '--pack', '--pack-shape', 'rect']), /, padding \d+, shape rect$/],
@@ -50117,7 +50259,8 @@ function runAtlasReaderSuite(): number | null {
     );
 
     // PKR50 — up front, where `build --atlas-in` opens the pack.
-    const pressRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-build-'));
+    // Inside the pack's own directory (issue #1127): the build re-anchors the pack's page names to its output directory.
+    const pressRoot = buildRootIn(honestPack.dir, 'rigc-page-bytes-build-');
     const pressWith = (pack: ReturnType<typeof packWithFirstPageReplaced>, out: string): { status: number | null; stdout: string; stderr: string } =>
       runCli(['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, '--manifest', OVERLAY.manifestPath, '--atlas-in', pack.atlasPath, '--out', out]);
     const honestOut = join(pressRoot, 'honest');
@@ -53467,7 +53610,7 @@ function runCliSuite(): number {
         : [`the line for "${name}" does not end in "${want}": ${JSON.stringify(line)}`];
     };
 
-    const quarter = turnedPack(parts, 90);
+    const quarter = turnedPack(parts, 90, 90, dirs.dir);
     const quarterRun = buildThrough(quarter, 'out_quarter');
     const quarterRegions = regionsOf(quarter);
     const clauseProbes: string[] = [];
@@ -53536,7 +53679,7 @@ function runCliSuite(): number {
         'and two derived it wrongly',
     );
 
-    const flat = turnedPack(parts, 0);
+    const flat = turnedPack(parts, 0, 0, dirs.dir);
     const flatRun = buildThrough(flat, 'out_flat');
     const flatProbes: string[] = [];
     if (flatRun.status !== 0) {
@@ -53889,7 +54032,7 @@ function runCliSuite(): number {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const root = mkdtempSync(join(tmpdir(), 'rigc-cli-stageless-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-cli-stageless-');
     const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
     mkdirSync(stagedOpts.outDir, { recursive: true });
     const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'stageless');
@@ -65416,7 +65559,7 @@ function runCurrencySuite(): number {
     const copy = privateFixtureCopy(ARTICULATED, 'rigc-loosequote-');
     writeSolidRgbaPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, null);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-loosequote-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-loosequote-out-'), 'loose'),
       'spine-html',
     );
     const live =
@@ -70120,7 +70263,7 @@ function runGeometryExportSuite(): number {
 
   // GY04 — two exports are byte-identical, and --geometry changes no other file.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-geometry-'));
+    const work = buildRootIn(turn.dir, 'rigc-geometry-');
     const candidate = join(work, 'turn');
     const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
     const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
@@ -70282,7 +70425,7 @@ function runGeometryExportSuite(): number {
   // one number edited, the way GY08 plants it — the rig spec route is not used,
   // because a motion key of 1e309 is refused by the compiler by name.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-nonfinite-'));
+    const work = buildRootIn(turn.dir, 'rigc-nonfinite-');
     const candidate = join(work, 'turn');
     const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
     const skeletonPath = join(candidate, 'skeleton.json');
@@ -72839,7 +72982,6 @@ function runPoseOracleSuite(): number {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-pose-oracle-'));
   const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
 
   // The build every generated row reads: the ingest coverage probe, through
@@ -72848,6 +72990,8 @@ function runPoseOracleSuite(): number {
   // and a linked mesh, a clipping attachment, an event, a draw-order key, two
   // dark colours, a physics constraint and a second skin.
   const probe = writeIngestProbe();
+  // Inside the probe's own directory (issue #1127), so the build's page names spell no temp directory.
+  const work = buildRootFor(probe.home, 'rigc-pose-oracle-');
   const buildDir = join(work, 'build');
   const built = runCli(['build', '--rig', probe.rigPath, '--motion', probe.motionPath, '--out', buildDir, ...(probe.imagesDir === undefined ? [] : ['--images', probe.imagesDir])]);
   const buildOk = built.status === 0 && existsSync(join(buildDir, 'skeleton.json')) && existsSync(join(buildDir, 'skeleton.atlas'));
@@ -90923,8 +91067,10 @@ function runRenderHashesSuite(): number | null {
         figures.RC40 = `in copies of the tree, ${row1060.name} built by cli_core.ts against cli.ts's: ${reds40.join('; ')}`;
 
         const containedArgs = (out: string): string[] => ['build', '--rig', CONTAINED.rigPath, '--motion', CONTAINED.motionPath, '--manifest', CONTAINED.manifestPath, '--profile', 'spine-html', '--out', out];
-        const fullBare = runCli(containedArgs(join(work, 'rc41-full')));
-        const coreBare = runEntryIn(tree, 'cli_core.ts', containedArgs(join(work, 'rc41-core')), work);
+        // Built inside the fixture's own directory (issue #1127), so neither entry's pages spell a temp directory.
+        const rc41Root = buildRootIn(CONTAINED.dir, 'rigc-rc41-');
+        const fullBare = runCli(containedArgs(join(rc41Root, 'rc41-full')));
+        const coreBare = runEntryIn(tree, 'cli_core.ts', containedArgs(join(rc41Root, 'rc41-core')), work);
         const bareLine = figuresOf(coreBare.stdout)[0] ?? [];
         const bareKeys = bareLine.map(([k]) => k);
         if (fullBare.status !== 0 || coreBare.status !== 0) probes.RC41.push(`${CONTAINED.rig} (contained cut): cli.ts exited ${fullBare.status} and cli_core.ts ${coreBare.status} — ${JSON.stringify(firstErr(coreBare).slice(0, 200))}`);
@@ -94750,7 +94896,8 @@ function runModelAtlasSuite(): number {
       let named = '';
       let regions = 0;
       routes.forEach(([label, args, gates], i) => {
-        const out = join(work, 'routes', String(i));
+        // The probe's routes build inside the probe's own directory (issue #1127); the gallery's art is the checkout's.
+        const out = join(args.includes(probe.trimmed) ? buildRootIn(probe.dirs.dir, 'rigc-routes-') : join(work, 'routes'), String(i));
         const run = runCli(['build', ...args, '--out', out]);
         if (run.status !== 0) {
           probes.push(`${label}: build exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
@@ -97698,6 +97845,11 @@ interface IngestCandidate {
   motionPath: string;
   manifestPath?: string;
   imagesDir?: string;
+  /**
+   * The directory a build of this candidate lands inside (`buildRootIn`, issue #1127): a fixture's or a probe's own. Absent
+   * for a gallery example, whose art is the checkout's and which no build here writes into.
+   */
+  home?: string;
 }
 
 /** What one round trip produced, and everything a case reads off it. */
@@ -98027,7 +98179,7 @@ function writeIngestProbe(): IngestCandidate {
   const dirs = writeProbeRig(INGEST_PROBE_RIG);
   const motionPath = join(dirs.dir, 'ingest_probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(INGEST_PROBE_MOTION, null, 2)}\n`);
-  return { name: 'ingest_probe', rigPath: dirs.rigPath, motionPath, imagesDir: dirs.dir };
+  return { name: 'ingest_probe', rigPath: dirs.rigPath, motionPath, imagesDir: dirs.dir, home: dirs.dir };
 }
 
 /** Every rig this run can round-trip: the gallery, the three probes, the coverage probe. */
@@ -98044,7 +98196,7 @@ function ingestCandidates(): IngestCandidate[] {
     ['articulated_probe', ARTICULATED],
     ['contained_probe', CONTAINED],
   ] as const) {
-    out.push({ name, rigPath: fixture.rigPath, motionPath: fixture.motionPath, manifestPath: fixture.manifestPath });
+    out.push({ name, rigPath: fixture.rigPath, motionPath: fixture.motionPath, manifestPath: fixture.manifestPath, home: fixture.dir });
   }
   out.push(writeIngestProbe());
   return out;
@@ -98071,7 +98223,8 @@ function ingestRoundTrip(
   art: 'loose' | 'none',
   mutate?: (rig: Record<string, unknown>, motion: Record<string, unknown>) => number,
 ): IngestTrip | null {
-  const root = mkdtempSync(join(tmpdir(), `rigc-ingest-${candidate.name}-`));
+  const prefix = `rigc-ingest-${candidate.name}-`;
+  const root = buildRootFor(candidate.home, prefix);
   const aDir = join(root, 'A');
   const bDir = join(root, 'B');
   const specDir = join(root, 'S');
@@ -98961,7 +99114,7 @@ function runIngestSuite(): number {
     const imagesTrip = (
       writeImages: boolean,
     ): { specDir: string; artDir: string; images?: string; unflagged?: CompileResult; refusal?: string; flagged: CompileResult } => {
-      const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-'));
+      const root = buildRootFor(probeCandidate.home, 'rigc-ingest-images-');
       const [aDir, bDir, fDir, specDir] = ['A', 'B', 'F', 'S'].map((leaf) => join(root, leaf));
       // Every output directory a sibling of every other, for the reason
       // `ingestRoundTrip` says: a path written `relative(outDir, …)` is a
@@ -99675,7 +99828,7 @@ function runIngestSuite(): number {
     // mutates the SPEC and this mutates the SOURCE, which is the one thing it
     // cannot be asked for.
     const probeCandidate = candidates.find((c) => c.name === 'ingest_probe')!;
-    const originRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-origin-'));
+    const originRoot = buildRootFor(probeCandidate.home, 'rigc-ingest-origin-');
     const originA = join(originRoot, 'A');
     const originB = join(originRoot, 'B');
     for (const dir of [originA, originB]) mkdirSync(dir, { recursive: true });
@@ -100277,7 +100430,7 @@ function runIngestSuite(): number {
   const rebuildForged = (
     mutate?: (motion: Record<string, unknown>) => number,
   ): { findings: IngestFinding[]; motion: Record<string, unknown>; built: CompileResult | null; refusal: string; edits: number } => {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-pathdeform-'));
+    const root = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-ingest-pathdeform-');
     const specDir = join(root, 'S');
     const outDir = join(root, 'B');
     for (const dir of [specDir, outDir]) mkdirSync(dir, { recursive: true });
@@ -101029,7 +101182,7 @@ function runIngestSuite(): number {
       source: 'skeleton.json',
       version: '0',
     });
-    const rebuiltDir = mkdtempSync(join(tmpdir(), 'rigc-linkgeom-'));
+    const rebuiltDir = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-linkgeom-');
     const rebuiltRigPath = join(rebuiltDir, 'rig.json');
     const rebuiltMotionPath = join(rebuiltDir, 'motion.json');
     writeFileSync(rebuiltRigPath, `${JSON.stringify(forgedResult.rig, null, 2)}\n`);
@@ -101142,7 +101295,7 @@ function runIngestSuite(): number {
     let tripRefusal: string | null = null;
     try {
       sharedTrip = ingestRoundTrip(
-        { name: 'sharedskin', rigPath: sharedDirs.rigPath, motionPath: sharedMotionPath, imagesDir: sharedDirs.dir },
+        { name: 'sharedskin', rigPath: sharedDirs.rigPath, motionPath: sharedMotionPath, imagesDir: sharedDirs.dir, home: sharedDirs.dir },
         'none',
       );
     } catch (err) {
@@ -101305,7 +101458,7 @@ function runIngestSuite(): number {
       return `${JSON.stringify(forged, null, 2)}\n`;
     };
     const rebuildText = (text: string): { findings: IngestFinding[]; built: CompileResult | null; refusal: string } => {
-      const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-separable-'));
+      const root = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-ingest-separable-');
       const specDir = join(root, 'S');
       const outDir = join(root, 'B');
       for (const dir of [specDir, outDir]) mkdirSync(dir, { recursive: true });
@@ -101579,7 +101732,7 @@ function runIngestSuite(): number {
     // IG59: the rebuild. The forged file's specs are the clean file's, so the
     // rebuild is the clean file byte for byte and gates green; the two ways of
     // carrying the constraint through are each refused, by name, where they are.
-    const rebuildDir = mkdtempSync(join(tmpdir(), 'rigc-inertphysics-'));
+    const rebuildDir = buildRootIn(ARTICULATED.dir, 'rigc-inertphysics-');
     const atlasInPath = join(physicsTrip.aDir, 'skeleton.atlas');
     /** Write a rig and motion spec, compile them, and gate the result; the refusal as text when there is one. */
     const buildSpecs = (tag: string, rig: unknown, motion: unknown): { text: string | null; refusal: string; failures: string[] } => {
@@ -102082,7 +102235,7 @@ function runIngestSuite(): number {
   // `bounds_box` has no two boxes to compare.
   {
     const probe = candidates.find((c) => c.name === 'ingest_probe')!;
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-stageless-'));
+    const root = buildRootFor(probe.home, 'rigc-ingest-stageless-');
     const dirA = join(root, 'A');
     const dirB = join(root, 'B');
     for (const dir of [dirA, dirB]) mkdirSync(dir, { recursive: true });
@@ -102201,7 +102354,7 @@ function runIngestSuite(): number {
   // be a rule `spine` does not run, read off `profileSkipped` rather than listed.
   {
     const probe = candidates.find((c) => c.name === 'ingest_probe')!;
-    const outDir = mkdtempSync(join(tmpdir(), 'rigc-ingest-own-'));
+    const outDir = buildRootFor(probe.home, 'rigc-ingest-own-');
     const built = compile({
       rigPath: probe.rigPath,
       motionPath: probe.motionPath,
@@ -102773,7 +102926,6 @@ function runIngestSuite(): number {
   // declaration back off the written spec is the control that it is the
   // declaration, and not something else, that turns the rebuild green.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-consumer-'));
     const dirs = writeProbeRig({
       bones: [
         { name: 'root' },
@@ -102788,6 +102940,7 @@ function runIngestSuite(): number {
         { name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
       ],
     });
+    const root = buildRootIn(dirs.dir, 'rigc-ingest-consumer-');
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
       motionPath,
@@ -103090,7 +103243,7 @@ function runIngestSuite(): number {
         )}\n`,
       );
       writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: name, cut: name }, null, 2)}\n`);
-      return { name, rigPath, motionPath, imagesDir: nameDir };
+      return { name, rigPath, motionPath, imagesDir: nameDir, home: nameDir };
     };
     /** Compile a candidate on its own, for a forge to start from. */
     const emitOf = (candidate: IngestCandidate): { skeletonText: string; atlasText: string } => {
@@ -108314,6 +108467,44 @@ function runRunTallySuite(live: RunTally): number {
           'is its own; the merge reads who owns a suite off the documents and refuses them when they disagree',
       );
     }
+
+    // --- TY37: the build-root helper refuses a prefix that could leave the art's directory, by name (issue #1127) --
+    {
+      const probes: string[] = [];
+      const art = mkdtempSync(join(tmpdir(), 'rigc-ty37-art-'));
+      const refusalOf = (prefix: string): string | null => {
+        try {
+          buildRootIn(art, prefix);
+          return null;
+        } catch (err) {
+          return (err as Error).message;
+        }
+      };
+      const refused: string[] = [];
+      for (const prefix of ['../rigc-ty37-escape-', 'nested/rigc-ty37-', '..\\rigc-ty37-escape-', '']) {
+        const said = refusalOf(prefix);
+        if (said === null) probes.push(`the prefix ${JSON.stringify(prefix)} was accepted`);
+        else if (!said.includes(`the prefix ${JSON.stringify(prefix)} is not a plain directory name`) || !said.includes(art)) probes.push(`the prefix ${JSON.stringify(prefix)} was refused without naming itself and the art directory: ${JSON.stringify(said)}`);
+        else refused.push(JSON.stringify(prefix));
+      }
+      const strays = [...readdirSync(art), ...readdirSync(dirname(art)).filter((name) => name.startsWith('rigc-ty37-escape-'))];
+      if (strays.length > 0) probes.push(`a refused prefix still made [${strays.join(', ')}]`);
+      // The tolerance: a plain name is a fresh directory one level inside the art's.
+      const made = buildRootIn(art, 'rigc-ty37-');
+      const from = relative(art, made);
+      if (dirname(made) !== art || !from.startsWith('rigc-ty37-')) probes.push(`the plain prefix made ${made}, not a directory directly inside ${art}`);
+      const held = probes.length === 0;
+      say(
+        'TY37_THE_BUILD_ROOT_HELPER_REFUSES_A_PREFIX_THAT_COULD_LEAVE_THE_ART_DIRECTORY_BY_NAME',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `buildRootIn refuses ${refused.join(', ')} before making anything, each naming the prefix and the art directory; a plain prefix makes ${JSON.stringify(from.replace(/[A-Za-z0-9]{6}$/, 'XXXXXX'))} directly inside it`,
+        ),
+        "issue #1127: every fixture build now lands inside its art's directory so its page names spell no temp directory, and that holds only while the helper cannot be handed a path that leaves it — a prefix is a name, and anything else is refused where it is given",
+      );
+    }
   }
 
   return bad;
@@ -108384,8 +108575,8 @@ function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[];
   const refused: string[] = [];
   type Spec = Record<string, unknown>;
   const read = (name: string, file: string): Spec => JSON.parse(readFileSync(join(galleryRoot, name, file), 'utf8')) as Spec;
-  const build = (name: string, carries: string, rig: Spec, motion: Spec, imagesDir?: string, rigText: (text: string) => string = (text) => text): void => {
-    const at = join(dir, name.replace(/\W+/g, '_'));
+  const build = (name: string, carries: string, rig: Spec, motion: Spec, imagesDir?: string, rigText: (text: string) => string = (text) => text, base = dir): void => {
+    const at = join(base, name.replace(/\W+/g, '_'));
     mkdirSync(at, { recursive: true });
     const specText = rigText(`${JSON.stringify(rig, null, 2)}\n`);
     writeFileSync(join(at, 'rig.json'), specText);
@@ -108452,7 +108643,8 @@ function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[];
     const art = (i: number): string => (i % 2 === 0 ? 'block.png' : 'marker.png');
     const probe = writeProbeRig({ skins: { default: { ...PROBE_BLOCK_ONLY_SKIN }, ...Object.fromEntries(INTEGER_LIKE_NAMES.map((n, i) => [n, { marker: { marker: { image: art(i) } } }])) } });
     const rig = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as Spec;
-    build('the skins probe', 'the skins', rig, STATIC_MOTION, probe.dir);
+    // Built inside the probe's own directory (issue #1127): from a temp root beside it, every page name spelled the probe's.
+    build('the skins probe', 'the skins', rig, STATIC_MOTION, probe.dir, undefined, buildRootIn(probe.dir, 'rigc-integer-named-'));
     return { builds, refused, dirs: [dir, probe.dir] };
   }
 }
@@ -110237,6 +110429,84 @@ function runVerdictSuppliersSuite(): number {
     ['the same stream re-cut into three IDAT chunks', streamInThreeIdats],
     "issue #1074: a page with an intact header over a broken stream passed A06 and was named only by A19's `threw: cannot decode PNG …`; A06 now names it in a sentence carrying the decoder's words, and A19 SKIPs",
   );
+
+  // --- VF23: one set of inputs is one build of VF09's wherever its art was written, once it builds inside its own directory --
+  // Two copies of the static probe stand for one probe written by two processes, each into a temp directory of its own —
+  // which is what a shard's fixtures are. Built inside their own directories (`buildRootIn`), they are one key of `VF09`'s;
+  // built from a temp directory beside the art, as the harness built before issue #1127, the same inputs are two.
+  {
+    const probes: string[] = [];
+    const copies = [writeProbeRig(), writeProbeRig()];
+    const keyOf = (outDir: string, rigPath: string, imagesDir: string): { key: string; atlasText: string } => {
+      mkdirSync(outDir, { recursive: true });
+      const built = compile({ rigPath, motionPath: staticMotionIn(imagesDir), outDir, imagesDir });
+      return { key: familyBuildKey({ ...built, rig: built.rig }, modelDocument(built.model, built.skeletonText, built.atlasText)), atlasText: built.atlasText };
+    };
+    const inside = copies.map((dirs) => keyOf(join(buildRootIn(dirs.dir, 'rigc-vf23-'), 'spine'), dirs.rigPath, dirs.dir));
+    const beside = copies.map((dirs) => keyOf(join(mkdtempSync(join(tmpdir(), 'rigc-vf23-beside-')), 'spine'), dirs.rigPath, dirs.dir));
+    const twice = [0, 1].map(() => keyOf(join(buildRootIn(copies[0].dir, 'rigc-vf23-twice-'), 'spine'), copies[0].rigPath, copies[0].dir));
+    const distinct = (rows: ReadonlyArray<{ key: string }>): number => new Set(rows.map((row) => row.key)).size;
+    const besidePage = firstPageLine(beside[0].atlasText);
+    const insidePage = firstPageLine(inside[0].atlasText);
+    if (distinct(inside) !== 1) probes.push(`the two copies built inside their own directories are ${distinct(inside)} key(s), not 1`);
+    if (inside[0].atlasText !== inside[1].atlasText) probes.push('the two copies built inside their own directories wrote two atlas texts');
+    if (distinct(twice) !== 1) probes.push(`one copy built into two directories under its own root is ${distinct(twice)} key(s), not 1`);
+    if (distinct(beside) !== 2) probes.push(`the two copies built from a temp directory beside them are ${distinct(beside)} key(s), not 2, so nothing here shows the location moved the key`);
+    if (!besidePage.includes(basename(copies[0].dir))) probes.push(`the beside build's page line ${JSON.stringify(besidePage)} does not name its copy's directory "${basename(copies[0].dir)}"`);
+    const held = probes.length === 0;
+    say(
+      'VF23_ONE_SET_OF_INPUTS_IS_ONE_BUILD_OF_VF09S_WHEREVER_ITS_ART_WAS_WRITTEN',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `two copies of the static probe, each in a temp directory of its own as two processes write it: built inside their own directories, ${distinct(inside)} key and one atlas text (page ${JSON.stringify(insidePage)}); ` +
+          `one copy built into two directories under its root, ${distinct(twice)} key; the same copies built from a temp directory beside them, ${distinct(beside)} keys, the page line naming the copy's directory`,
+      ),
+      "issue #1127: VF09 counts distinct builds by the texts it reads, and a page name is the art's path from the atlas — so a fixture built beside its own temp directory counted once per process that wrote it (407 in one process, 410 and 411 in two merges of the same tree). The key is held over two directories, and the old shape is built beside it to show the key can move",
+    );
+  }
+
+  // --- TY36: no build this run recorded spells a harness temp directory, or climbs out of its pair's (issue #1127) --
+  // Last in the suite, so it reads every build every suite before it fed the supplier check — the record VF09 counts.
+  {
+    const probes: string[] = [];
+    const recorded = SUPPLIERS.recordedPlaces();
+    const faulted = recorded.filter((row) => row.place.faults.length > 0);
+    const fromCheckout = recorded.filter((row) => row.place.checkout > 0).length;
+    probes.push(...firstFew(faulted.flatMap((row) => row.place.faults.map((fault) => `build ${row.key.slice(0, 16)}: ${fault}`)), 'path(s)'));
+    // The plant: the static probe built from a sibling temp directory, the way the harness built a fixture before #1127.
+    const planted = writeProbeRig();
+    const siblingOut = join(mkdtempSync(join(tmpdir(), 'rigc-ty36-sibling-')), 'spine');
+    mkdirSync(siblingOut, { recursive: true });
+    const plantedBuild = compile({ rigPath: planted.rigPath, motionPath: staticMotionIn(planted.dir), outDir: siblingOut, imagesDir: planted.dir });
+    const plantedPlace = buildPlaceOf({ ...plantedBuild, atlasDir: siblingOut }, modelDocument(plantedBuild.model, plantedBuild.skeletonText, plantedBuild.atlasText));
+    const named = plantedPlace.faults.filter((fault) => fault.includes(`"${basename(planted.dir)}"`));
+    const climbed = plantedPlace.faults.filter((fault) => fault.includes("climbs out of the pair's temp directory"));
+    if (named.length === 0) probes.push(`the plant built from a sibling temp directory was not named by its directory "${basename(planted.dir)}": [${plantedPlace.faults.join('; ') || 'nothing'}]`);
+    if (climbed.length === 0) probes.push(`the plant's pages were not read as climbing out of its pair's temp directory: [${plantedPlace.faults.join('; ') || 'nothing'}]`);
+    // The tolerance: the same probe built inside its own directory reads clean.
+    const ownOut = join(buildRootIn(planted.dir, 'rigc-ty36-own-'), 'spine');
+    mkdirSync(ownOut, { recursive: true });
+    const ownBuild = compile({ rigPath: planted.rigPath, motionPath: staticMotionIn(planted.dir), outDir: ownOut, imagesDir: planted.dir });
+    const ownPlace = buildPlaceOf({ ...ownBuild, atlasDir: ownOut }, modelDocument(ownBuild.model, ownBuild.skeletonText, ownBuild.atlasText));
+    if (ownPlace.faults.length > 0) probes.push(`the same probe built inside its own directory was named: ${ownPlace.faults.join('; ')}`);
+    probes.push(...floorProbes([[recorded.length - fromCheckout, 1, `${recorded.length - fromCheckout} recorded build(s) read art this run wrote`]], 'so nothing here read a build the harness placed'));
+    const held = probes.length === 0;
+    say(
+      'TY36_NO_RECORDED_BUILD_SPELLS_A_HARNESS_TEMP_DIRECTORY_OR_CLIMBS_OUT_OF_ITS_PAIRS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${recorded.length} distinct build(s) the supplier check recorded — the builds VF09 counts — read for a path component of a harness temp directory in their page names, skeleton and document, ` +
+          `and for a page or images path that leaves the pair's temp directory for another: none; ${fromCheckout} of them read art from the checkout (the gallery and the corpus, which no build writes into, so their paths spell the checkout's location — the same in every process on one machine); ` +
+          `the probe built from a sibling temp directory is named by its directory and as climbing out (${plantedPlace.faults.length} path(s)), and built inside its own directory reads clean`,
+        (count) => `${count} thing(s) the recorded builds' paths did:`,
+      ),
+      "issue #1127: a build placed beside its art's temp directory wrote that directory's name into its page names, its skeleton.images and its document, so VF09's count of distinct builds moved with the process that counted it; every build site now lands inside its art's directory, and this reads every recorded build for the name",
+    );
+  }
 
   return bad;
 }

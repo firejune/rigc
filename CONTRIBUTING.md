@@ -34,7 +34,12 @@ bun run selftest     # the validator's own negative controls
 ```
 
 `bun run selftest` needs no arguments and no assets — it generates its own
-fixtures. If you have not run `bun run fetch-examples`, the suites that read the
+fixtures. A build of a generated fixture or probe lands inside that fixture's
+own directory, never in a temp directory beside it: a page name is the art's
+path seen from the atlas, so a build from beside it would write a temp
+directory's random name into the pair and its document, and the same inputs
+would count as a different build in every process that built them (`TY36`
+reads every recorded build for that name). If you have not run `bun run fetch-examples`, the suites that read the
 corpus will report a hole rather than a result — `TY20` prints them by name, so
 the run says which — and a run where nothing substantive executed exits 2 rather
 than printing green. That includes the core suite's corpus half: a control there
