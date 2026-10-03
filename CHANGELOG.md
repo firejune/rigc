@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.3](https://github.com/firejune/rigc/compare/v2.1.2...v2.1.3) (2026-10-03)
+
+
+### Bug Fixes
+
+* **tools:** the editor round trip reads the build's atlas and an `--exported` file before the editor starts, and refuses a missing atlas, an atlas that is a directory and an `--exported` file that is not one JSON object by name there — where it used to refuse the first only after the editor ran, and throw the other two as stacks at steps 3 and 4 ([#1112](https://github.com/firejune/rigc/issues/1112)) ([02a3813](https://github.com/firejune/rigc/commit/02a38139cb88685cc7d93a70b0f9dd5d3be31267)), closes [#1107](https://github.com/firejune/rigc/issues/1107)
+
 ## [2.1.2](https://github.com/firejune/rigc/compare/v2.1.1...v2.1.2) (2026-10-03)
 
 
