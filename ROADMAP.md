@@ -266,6 +266,9 @@ number for this cut and is not how the next one is chosen.
   point — it is not — but because the sequencing was ruled: the feature work
   first, the core split after. See *What changes the frame*: the emitting is
   the easy half.
+  **Started 2026-09-29 on the owner's call and shipped in 2.0.0**
+  (2026-10-02); the design, the equivalence gate and the steps as they landed
+  are in [docs/SECOND_ORACLE.md](docs/SECOND_ORACLE.md).
 - **Full coverage of the Spine 4.3 format.** 1.0 is not *everything works*, it
   is **the boundary is honest and stable**: what rigc emits, it emits
   correctly, and what it does not, it refuses by name. Coverage follows from
