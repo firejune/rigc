@@ -100,8 +100,10 @@
  *
  * ## What `--shard` and `--merge` do
  *
- * `--shard i/n` runs the suites whose 0-based index in `main`'s registration
- * order is `i − 1` modulo `n`, exactly as the full run runs them, prints one
+ * `--shard i/n` runs the suites dealt to shard `i` — longest-first over the
+ * per-suite seconds in `tools/selftest_shards.base.json` (written by `--merge …
+ * --shards-base`), and round-robin by registration index for a suite the base
+ * has no entry for (issue #1128) — exactly as the full run runs them, prints one
  * `SKIP … — --shard` line for each of the rest, and ends like `--only`: exit 2
  * when green, 1 when red, never the summary. With `--tally-out` it writes a
  * document of every suite it ran — the block the floor holds, the gutter, the
@@ -115,11 +117,22 @@
  * the verdict and the summary are then this file's one-process code over the
  * replayed numbers; each shard's high-water is held to the memory ceiling as
  * its own process. `TY27`–`TY31` hold the shard, the merge's equality with one
- * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite.
+ * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite;
+ * `TY34`–`TY35` the deal and shards dealt two ways.
+ *
+ * ## What `--jobs` does
+ *
+ * A suite's independent units — `render-hashes`' `render_hashes.ts` runs and
+ * CLI batches, `packer`'s packs by set — run up to `--jobs` at once through
+ * `inParallel` (issue #1128), and the suite prints its case lines after every
+ * unit has finished, in the sequential order, so the log is one text at any
+ * `--jobs`. `TY32` holds the flag's refusals, `TY33` the order and a plant that
+ * interleaves units' lines, `RH08` and `PK105` the two suites' units.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   cpSync,
@@ -804,9 +817,10 @@ function flagOrEnvironment(argv: readonly string[], flag: string, variable: stri
 }
 
 /**
- * `--shard <i>/<n>` (or `RIGC_SHARD`): this process runs the suites whose
- * 0-based registration index is `i − 1` modulo `n`, exactly as the full run
- * runs them, and none of the rest (issue #1116). Refused beside `--only` (two
+ * `--shard <i>/<n>` (or `RIGC_SHARD`): this process runs the suites dealt to
+ * shard `i` — longest-first over `SHARDS_BASE_PATH`, round-robin by
+ * registration index where the base has no entry (issue #1128) — exactly as
+ * the full run runs them, and none of the rest (issue #1116). Refused beside `--only` (two
  * ways of choosing suites, and a run choosing by both would be choosing by
  * neither) and beside `--memory-base` (a shard's high-water is not the run's).
  */
@@ -868,9 +882,197 @@ const MERGE = ((): string[] | null => {
   }
   return files;
 })();
+/**
+ * `--shards-base [<file>]` (issue #1128): a green merge writes the durations
+ * base off its own per-suite seconds — the durations the next `--shard` deals
+ * from — to `<file>`, or to `SHARDS_BASE_PATH` when no file follows the flag
+ * (CI names a file under its temp directory and uploads it, so the tracked base
+ * can be rewritten from CI's own seconds). Refused without `--merge`: one
+ * process's or one shard's seconds are not the run's. It changes nothing else:
+ * the file is written after the verdict and the memory ceiling, so a red merge
+ * exits red before it and writes nothing.
+ */
+const WRITE_SHARDS_BASE = ((): string | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--shards-base');
+  if (at === -1) return null;
+  if (MERGE === null) {
+    console.error("selftest: --shards-base writes the durations base off a merged run's per-suite seconds; it needs --merge <file>…");
+    process.exit(2);
+  }
+  if (argv.indexOf('--shards-base', at + 1) !== -1) {
+    console.error('selftest: --shards-base was given twice');
+    process.exit(2);
+  }
+  const named = argv[at + 1];
+  // '' stands for the tracked path, resolved where it is written (`SHARDS_BASE_PATH` is declared further down).
+  return named === undefined || named.startsWith('--') ? '' : resolve(named);
+})();
 // Read once, above; a child this run starts is not a shard of it.
 delete process.env.RIGC_SHARD;
 delete process.env.RIGC_TALLY_OUT;
+
+/**
+ * `--jobs`'s value read as a whole number from 1, or the refusal naming what is
+ * wrong with it (issue #1128). Pure, so `TY32` holds every refusal by name.
+ * Read strictly for `parseShardSpec`'s reason: `0`, `-1`, `x`, `1.5`, `+2` and
+ * ` 2` are each a caller who meant something a generous reading would guess.
+ */
+function parseJobs(value: string): number | string {
+  if (!/^[1-9]\d*$/.test(value)) return `--jobs ${JSON.stringify(value)} is not a whole number of concurrent units from 1, e.g. --jobs 2`;
+  return Number(value);
+}
+
+/**
+ * `--jobs <n>` (or `RIGC_JOBS`): how many of a suite's independent units run
+ * at once (issue #1128) — the units `inParallel` is handed, today the heavy
+ * subprocesses of `render-hashes` and the packs by set of `packer`. Absent, the
+ * machine's cores as Bun reports them, never under 1. `--jobs 1` is the run as
+ * it was before the flag existed: every unit in order, in this process's turn.
+ *
+ * 🔒 Whatever `n`, the printed log is the same text (`TY33`, `RH08`, `PK105`):
+ * a unit prints nothing, the suite prints its case lines after every unit it
+ * reads has finished, in the order the sequential run prints them.
+ */
+const JOBS = ((): number => {
+  const value = flagOrEnvironment(process.argv.slice(2), '--jobs', 'RIGC_JOBS');
+  if (value === null) return Math.max(1, Math.floor(navigator.hardwareConcurrency || 1));
+  const read = parseJobs(value);
+  if (typeof read === 'string') {
+    console.error(`selftest: ${read}`);
+    process.exit(2);
+  }
+  return read;
+})();
+
+/**
+ * `--unit <spec.json> <out.json>`: this process is one unit `inUnits` handed
+ * out (issue #1128) — it runs that unit's work and writes its value, and runs
+ * no suite. Not a flag for a person; it is how a pack in another process is
+ * the same code as a pack in this one.
+ */
+const UNIT = ((): { input: string; output: string } | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--unit');
+  if (at === -1) return null;
+  const input = argv[at + 1];
+  const output = argv[at + 2];
+  if (input === undefined || output === undefined || input.startsWith('--') || output.startsWith('--')) {
+    console.error('selftest: --unit needs <spec.json> <out.json>; it is how a suite hands one of its units to another process');
+    process.exit(2);
+  }
+  return { input, output };
+})();
+
+/** One independent unit of a suite: a command, the directory it runs from, and the output its sequential call could hold. */
+interface ParallelUnit {
+  argv: readonly string[];
+  cwd: string;
+  /** The `maxBuffer` the unit's sequential `spawnSync` was given; past it the two paths would differ, so it is refused. */
+  maxBuffer?: number;
+}
+
+/** What one unit left: what `spawnSync` would have handed back. */
+interface UnitResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** `spawnSync`'s own default `maxBuffer`, which every sequential call here that names none was held to. */
+const SPAWN_MAX_BUFFER = 1024 * 1024;
+
+/**
+ * The child that runs a batch of units concurrently (issue #1128). This file is
+ * synchronous from `main` down — every suite returns its count, and `tally.of`
+ * brackets a call — so the one way to wait on several processes from inside a
+ * suite is to wait on ONE process that waits on them: `inParallel` starts this
+ * with `spawnSync`, it starts up to `jobs` units with `Bun.spawn`, takes each
+ * unit's stdout, stderr, exit and peak RSS, and writes them in the units' order
+ * to the file its spec names. Plain JavaScript, because `bun -e` reads it.
+ */
+const UNIT_DRIVER = [
+  'const spec = JSON.parse(await Bun.file(process.argv[process.argv.length - 1]).text());',
+  'const results = new Array(spec.units.length);',
+  'let next = 0;',
+  'const lane = async () => {',
+  '  while (next < spec.units.length) {',
+  '    const k = next++;',
+  '    const unit = spec.units[k];',
+  '    const began = performance.now();',
+  "    const child = Bun.spawn(unit.argv, { cwd: unit.cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });",
+  '    const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);',
+  '    await child.exited;',
+  '    const usage = child.resourceUsage();',
+  '    results[k] = { status: child.exitCode, stdout, stderr, maxRss: usage === undefined ? null : Number(usage.maxRSS), seconds: (performance.now() - began) / 1000 };',
+  '  }',
+  '};',
+  'await Promise.all(Array.from({ length: Math.min(spec.jobs, spec.units.length) }, lane));',
+  'await Bun.write(spec.out, JSON.stringify(results));',
+].join('\n');
+
+/**
+ * Run a suite's independent units, up to `jobs` at once, and hand back what
+ * each left in the units' own order (issue #1128).
+ *
+ * 🔒 Why the log cannot interleave: a unit prints nothing to this process — its
+ * stdout and stderr come back as values — and the caller prints its case lines
+ * only after this returns, which is after EVERY unit has finished, in the order
+ * its sequential code already prints them. So `jobs` decides when a unit ran and
+ * never what anybody printed. ⚠️ The caller's half of that is to hand over only
+ * units whose result does not depend on another unit having run first — each in
+ * its own work directory, none reading what another writes — which is the
+ * condition `inParallel` cannot check and the call sites state.
+ *
+ * `jobs` 1, or one unit, is the sequential path: `spawnSync` per unit, in
+ * order, exactly the call each site made before. Above that one driver child
+ * runs them (`UNIT_DRIVER`). With `RIGC_UNIT_PEAKS=<file>` each unit's peak RSS,
+ * as the driver's child reported it, is appended to that file — the reading the
+ * parent's own column cannot take (`TY26` reads this process), never printed in
+ * the log, because a peak differs run to run and the log may not.
+ */
+// `driverSource` is `UNIT_DRIVER` everywhere but `TY33`, which hands in the
+// plant — a driver that interleaves its units' lines — to see it read.
+function inParallel(units: readonly ParallelUnit[], jobs: number = JOBS, driverSource: string = UNIT_DRIVER): UnitResult[] {
+  if (jobs < 1 || !Number.isInteger(jobs)) throw new Error(`inParallel: jobs ${jobs} is not a whole number from 1`);
+  if (jobs === 1 || units.length <= 1) {
+    return units.map((unit) => {
+      const result = spawnSync(unit.argv[0], unit.argv.slice(1), { cwd: unit.cwd, encoding: 'utf8', maxBuffer: unit.maxBuffer ?? SPAWN_MAX_BUFFER });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    });
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-units-'));
+  try {
+    const specPath = join(dir, 'units.json');
+    const out = join(dir, 'results.json');
+    writeFileSync(specPath, JSON.stringify({ jobs, out, units: units.map((unit) => ({ argv: unit.argv, cwd: unit.cwd })) }));
+    const driver = spawnSync(process.execPath, ['-e', driverSource, specPath], { encoding: 'utf8' });
+    if (driver.status !== 0 || !existsSync(out)) {
+      throw new Error(`inParallel: the unit driver exited ${String(driver.status)} over ${units.length} unit(s) and wrote ${existsSync(out) ? 'its results' : 'nothing'}: ${driver.stderr.trim().slice(0, 300)}`);
+    }
+    const results = JSON.parse(readFileSync(out, 'utf8')) as Array<UnitResult & { maxRss: number | null; seconds: number }>;
+    const peaks = process.env.RIGC_UNIT_PEAKS;
+    return results.map((result, k) => {
+      const unit = units[k];
+      const limit = unit.maxBuffer ?? SPAWN_MAX_BUFFER;
+      for (const [stream, text] of [['stdout', result.stdout], ['stderr', result.stderr]] as const) {
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > limit) {
+          throw new Error(
+            `inParallel: unit ${k} (${unit.argv.slice(1, 4).join(' ')} …) wrote ${bytes} byte(s) to ${stream}, past the ${limit} its sequential spawnSync allowed — ` +
+              '--jobs 1 would have cut it off and this path would not, so the two runs would differ',
+          );
+        }
+      }
+      if (peaks !== undefined && peaks !== '') {
+        appendFileSync(peaks, `${JSON.stringify({ jobs, unit: k, of: units.length, argv: unit.argv.slice(1).map((a) => basename(a)).join(' '), maxRss: result.maxRss, seconds: result.seconds })}\n`);
+      }
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
@@ -45118,6 +45320,113 @@ function runSamplingSuite(): number {
   return bad;
 }
 
+/** Two packs that are one pack: the same atlas text and every page's pixels. */
+function packsSame(a: ReturnType<typeof packAtlas>, b: ReturnType<typeof packAtlas>): boolean {
+  return a.atlasText === b.atlasText && a.pages.length === b.pages.length && a.pages.every((p, i) => p.plate.data.every((v, k) => v === b.pages[i].plate.data[k]));
+}
+
+/** One set PK96–PK99 pack: values only, so it crosses a process boundary as JSON (issue #1128). */
+interface AnchorSet {
+  name: string;
+  inputs: PackInput[];
+  skeleton: string;
+  pageSize: number;
+}
+
+/** What a pack is reduced to for PK96–PK99: every page's size and the candidate kept. */
+interface PackFigures {
+  pages: Array<{ width: number; height: number }>;
+  candidate: ReturnType<typeof packAtlas>['candidate'];
+}
+
+/** One (set, page edges) row of PK96–PK99, as the controls read it. */
+interface AnchorRow {
+  name: string;
+  pageEdges: 'pot' | 'free';
+  rect: PackFigures;
+  box: PackFigures;
+  poly: PackFigures;
+  same: boolean;
+  texels: { checked: number; texels: number; wrong: string[] } | null;
+}
+
+/**
+ * One row of PK96–PK99 (issue #1104): the set packed `rect`, `polygon` under the
+ * owned box's anchor alone, and `polygon` as it packs — made again and from its
+ * parts reversed for PK99, and the brute force over the polygon pack for PK98.
+ *
+ * ⚡ Module-level and over values (issue #1128) so the same code runs in this
+ * process at `--jobs 1` and in a unit process above it (`selftestUnit`): it
+ * reads nothing but its arguments and the part PNGs their `absPath`s name,
+ * writes nothing, records no seeded draw and makes no `validate` call — the
+ * three things a child's process would keep from the parent's run state.
+ *
+ * 🧮 Each row keeps the FIGURES its controls compare — every page's size and
+ * the candidate kept — and never a pack's decoded pages (issue #1121): held
+ * whole, five packs per set and page edge put about 140 packs of pages in
+ * memory at once, the packer suite's +1.3 GB peak. The two readings that need
+ * a pack's pixels are taken here, while its pages are still in hand: PK99's
+ * sameness, and PK98's brute force over the polygon pack.
+ */
+function anchorRowOf(set: AnchorSet, pageEdges: 'pot' | 'free'): AnchorRow {
+  const figuresOf = (r: ReturnType<typeof packAtlas>): PackFigures => ({
+    pages: r.pages.map((p) => ({ width: p.width, height: p.height })),
+    candidate: r.candidate,
+  });
+  const base = { pageEdges, pageSize: set.pageSize };
+  const name = `${set.name}/${pageEdges}`;
+  const rect = figuresOf(packAtlas(set.inputs, base));
+  const box = figuresOf(packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' }));
+  const packed = packAtlas(set.inputs, { ...base, shape: 'polygon' });
+  const same = packsSame(packed, packAtlas(set.inputs, { ...base, shape: 'polygon' })) && packsSame(packed, packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' }));
+  const texels = packed.candidate === 'rect' ? null : footprintTexelsWrong(packed.pages.map((p) => p.plate), packed.atlasText, set.skeleton, set.inputs, packed.padding);
+  return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
+}
+
+/** The work a unit process can be handed (issue #1128): its kind and its input, both values. */
+type SelftestUnitSpec = { kind: 'anchor-row'; set: AnchorSet; pageEdges: 'pot' | 'free' };
+
+/** A unit's work, run in whichever process holds it — the one function both paths call. */
+function selftestUnitWork(spec: SelftestUnitSpec): AnchorRow {
+  if (spec.kind === 'anchor-row') return anchorRowOf(spec.set, spec.pageEdges);
+  throw new Error(`selftest --unit: unknown unit kind ${JSON.stringify((spec as { kind?: unknown }).kind)}`);
+}
+
+/**
+ * Run in-process JS units through `inParallel` (issue #1128): each spec is
+ * written as JSON, a `bun selftest.ts --unit <spec> <out>` process runs
+ * `selftestUnitWork` over it and writes its value as JSON, and the values come
+ * back in the specs' order. `--jobs 1` runs every unit in this process instead
+ * — the run as it was before the flag.
+ *
+ * ⚠️ A process rather than a `Worker`: a worker would load this file to reach
+ * `footprintTexelsWrong`, and loading it runs `main`; a process is told by
+ * `--unit` to run one unit instead. What crosses is JSON both ways, so the
+ * input has to be values: no `-0`, `NaN` or `Infinity` (JSON spells them `0`,
+ * `null`, `null`) — `PK105` holds a unit's answer equal to this process's on
+ * the same rows, which is where such a value would show.
+ */
+function inUnits(specs: readonly SelftestUnitSpec[], jobs: number = JOBS): AnchorRow[] {
+  if (jobs === 1) return specs.map((spec) => selftestUnitWork(spec));
+  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-unit-specs-'));
+  try {
+    const files = specs.map((spec, k) => {
+      const input = join(dir, `unit-${k}.json`);
+      writeFileSync(input, JSON.stringify(spec));
+      return { input, output: join(dir, `unit-${k}.out.json`) };
+    });
+    const runs = inParallel(files.map((f) => ({ argv: [process.execPath, 'selftest.ts', '--unit', f.input, f.output], cwd: import.meta.dir })), jobs);
+    return runs.map((run, k) => {
+      if (run.status !== 0 || !existsSync(files[k].output)) {
+        throw new Error(`selftest --unit: unit ${k} (${specs[k].kind}) exited ${String(run.status)} and wrote ${existsSync(files[k].output) ? 'its value' : 'nothing'}: ${run.stderr.trim().slice(0, 400)}`);
+      }
+      return JSON.parse(readFileSync(files[k].output, 'utf8')) as AnchorRow;
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function runPackerSuite(): number {
   console.log('\n── atlas packer + importer (issue #4) ──');
   let bad = 0;
@@ -48263,7 +48572,7 @@ function runPackerSuite(): number {
           },
         ],
       });
-    const anchorSets: Array<{ name: string; inputs: PackInput[]; skeleton: string; pageSize: number }> = [
+    const anchorSets: AnchorSet[] = [
       { name: 'wedge set', inputs: polyInputs, skeleton: honestSkeleton, pageSize: DEFAULT_PAGE_SIZE },
       ...PACK_FIXTURES.map(([name, fixture]) => {
         const result = compile(optsForFixture(fixture));
@@ -48274,31 +48583,13 @@ function runPackerSuite(): number {
       { name: genRows[1].what, inputs: gainShaped, skeleton: polySkeletonOf(polypackShapes(POLYPACK_GAIN_SEED)), pageSize: DEFAULT_PAGE_SIZE },
       ...galleryRows.map((r) => ({ name: `gallery/${r.name}`, inputs: r.inputs, skeleton: r.skeleton, pageSize: DEFAULT_PAGE_SIZE })),
     ];
-    // 🧮 Each row keeps the FIGURES its controls compare — every page's size and
-    // the candidate kept — and never a pack's decoded pages (issue #1121): held
-    // whole, five packs per set and page edge put about 140 packs of pages in
-    // memory at once, the packer suite's +1.3 GB peak. The two readings that
-    // need a pack's pixels are taken here, while its pages are still in hand:
-    // PK99's sameness, and PK98's brute force over the polygon pack.
-    const figuresOf = (r: ReturnType<typeof packAtlas>): { pages: Array<{ width: number; height: number }>; candidate: typeof r.candidate } => ({
-      pages: r.pages.map((p) => ({ width: p.width, height: p.height })),
-      candidate: r.candidate,
-    });
-    const anchorRows = anchorSets.flatMap((set) =>
-      (['pot', 'free'] as const).map((pageEdges) => {
-        const base = { pageEdges, pageSize: set.pageSize };
-        const name = `${set.name}/${pageEdges}`;
-        const rect = figuresOf(packAtlas(set.inputs, base));
-        const box = figuresOf(packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' }));
-        const packed = packAtlas(set.inputs, { ...base, shape: 'polygon' });
-        const same = samePack(packed, packAtlas(set.inputs, { ...base, shape: 'polygon' })) && samePack(packed, packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' }));
-        const texels =
-          packed.candidate === 'rect'
-            ? null
-            : footprintTexelsWrong(packed.pages.map((p) => p.plate), packed.atlasText, set.skeleton, set.inputs, packed.padding);
-        return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
-      }),
-    );
+    // ⚡ Each (set, page edges) row is `anchorRowOf` over values — the pack of
+    // one set reads nothing another row wrote — so the rows run as units
+    // (issue #1128): in this process at `--jobs 1`, through `inUnits` above it.
+    // They come back in this order either way, and the controls below read only
+    // what came back.
+    const anchorSpecs = anchorSets.flatMap((set) => (['pot', 'free'] as const).map((pageEdges): SelftestUnitSpec => ({ kind: 'anchor-row', set, pageEdges })));
+    const anchorRows = inUnits(anchorSpecs);
 
     // PK96: Σ page area, over every page a pack writes, is never above `rect`'s
     // nor above the owned box's anchor alone on any set — by construction, since
@@ -48624,6 +48915,46 @@ function runPackerSuite(): number {
         `${plantRows.filter((r) => GAIN_SETS.includes(`${r.name}/${r.label}/${r.pageEdges}`)).map(traceLine).join('; ')}`,
       'a gate nobody has seen fail is not a gate: the count of regions packed by contour is the instrument\'s own word, ' +
         'and only the pack can show that the word was kept',
+    );
+
+    // PK105 (issue #1128): what crosses the unit boundary. PK96–PK99 read rows
+    // that came from `inUnits` — in this process at --jobs 1, from `--unit`
+    // processes above it, as JSON both ways. The first four rows (the wedge
+    // set and the first fixture, under both page edges) made here and made by
+    // two unit processes are the same values, compared by `Object.is` at every
+    // leaf, so a `-0` or a `NaN` JSON flattened on the way would be named.
+    // Planted: the comparison over a `-0` sent through JSON, which it must see.
+    const sameValue = (x: unknown, y: unknown, at: string, out: string[]): void => {
+      if (typeof x === 'object' && x !== null && typeof y === 'object' && y !== null) {
+        const keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].sort();
+        for (const key of keys) sameValue((x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], `${at}.${key}`, out);
+      } else if (!Object.is(x, y)) {
+        const spell = (v: unknown): string => (Object.is(v, -0) ? '-0' : String(v));
+        out.push(`${at}: ${spell(x)} here, ${spell(y)} from the unit`);
+      }
+    };
+    const crossing = anchorSpecs.slice(0, 4);
+    const here = crossing.map((spec) => selftestUnitWork(spec));
+    const there = inUnits(crossing, 2);
+    const boundary: string[] = [];
+    here.forEach((row, k) => sameValue(row, there[k], `row ${row.name}`, boundary));
+    const jsonPlant: string[] = [];
+    sameValue({ x: -0 }, JSON.parse(JSON.stringify({ x: -0 })) as unknown, 'plant', jsonPlant);
+    const crossProbes = [...boundary, ...(jsonPlant.length === 1 ? [] : ['a -0 sent through JSON compared equal, so the comparison cannot see what JSON flattens'])];
+    const crossHeld = crossProbes.length === 0;
+    const sent = crossing.reduce((n, spec) => n + JSON.stringify(spec).length, 0);
+    const back = there.reduce((n, row) => n + JSON.stringify(row).length, 0);
+    say(
+      'PK105_AN_ANCHOR_ROW_MADE_IN_A_UNIT_PROCESS_IS_THE_ROW_MADE_HERE_TO_EVERY_LEAF',
+      crossHeld,
+      probeDetail(
+        crossHeld,
+        crossProbes,
+        `${crossing.length} row(s) [${here.map((r) => r.name).join(', ')}] made here and by two \`--unit\` processes: equal at every leaf by Object.is — ` +
+          `${sent} character(s) of input crossed as JSON and ${back} came back; the plant (a -0 through JSON) is named: ${jsonPlant[0] ?? 'nothing'}`,
+      ),
+      'issue #1128: a pack run in another process is the same code over the same values only if the values survive the trip; ' +
+        'JSON spells -0 as 0 and NaN as null, and a row that changed on the way would print a verdict about another input',
     );
   }
   return bad;
@@ -87172,8 +87503,11 @@ function runCliStubbed(stub: string, root: string, args: string[]): { status: nu
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
+/** The output a `render_hashes.ts` run may hand back, sequential or through `inParallel`. */
+const RENDER_HASHES_MAX_BUFFER = 64 * 1024 * 1024;
+
 function runRenderHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: RENDER_HASHES_MAX_BUFFER });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -87205,7 +87539,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC23 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH08, RC01–RC23 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -87217,9 +87551,11 @@ function runRenderHashesSuite(): number | null {
   const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
   const recipesPath = join(work, 'recipes.json');
   writeFileSync(recipesPath, recipesText(recipes));
-  const runAt = (label: string, workDir: string, root?: string): { run: ReturnType<typeof runRenderHashes>; out: string; doc: RenderHashesDocument | null } => {
+  const runArgs = (label: string, workDir: string, root?: string): string[] => [
+    'run', '--recipes', recipesPath, '--out', join(work, `${label}.json`), '--work', workDir, ...(root === undefined ? [] : ['--root', root]),
+  ];
+  const runRead = (label: string, run: ReturnType<typeof runRenderHashes>): { run: ReturnType<typeof runRenderHashes>; out: string; doc: RenderHashesDocument | null } => {
     const out = join(work, `${label}.json`);
-    const run = runRenderHashes(['run', '--recipes', recipesPath, '--out', out, '--work', workDir, ...(root === undefined ? [] : ['--root', root])]);
     let doc: RenderHashesDocument | null = null;
     try {
       doc = existsSync(out) ? readRenderHashes(out) : null;
@@ -87233,10 +87569,63 @@ function runRenderHashesSuite(): number | null {
     for (const name of pair) cpSync(join(galleryRoot, name), join(root, 'gallery', name), { recursive: true });
     return root;
   };
+  /** A spec edit made before the runs, and the probe its control prints if it could not be made — in the place the control printed it. */
+  const plantBones = (path: string, edit: (bones: SpecBone[]) => string): { what: string; failed: string | null } => {
+    try {
+      return { what: editSpecBones(path, edit), failed: null };
+    } catch (err) {
+      return { what: '', failed: `the plant could not be made: ${(err as Error).message}` };
+    }
+  };
+  const moveLastX = (bones: SpecBone[]): string => {
+    const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+    if (bone === undefined) return '';
+    bone.x = (bone.x as number) + 1;
+    return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+  };
+  const trackedBase = resolve(import.meta.dir, RENDER_BASE_FILE);
+
+  // ⚡ The eight `render_hashes.ts` runs RH01–RH06 read (issue #1128) — four
+  // `run`s over the pair and four `base` runs over the gallery's seven, the
+  // bulk of this suite's time — each with its own work directory and its own
+  // output, none reading what another writes. Their inputs are prepared first
+  // (the plants are copies under `work`), the runs go through `inParallel`,
+  // and the controls below read the results in the order they always printed.
+  // `--jobs 1` runs them one after another before RH01, which is the only
+  // thing it changes: when they ran, never what a control saw.
+  const movedRoot = plantRoot('moved');
+  const movedPlant = plantBones(join(movedRoot, 'gallery', pair[1], 'rig.json'), moveLastX);
+  const refusedRoot = plantRoot('refused');
+  const refusedPlant = plantBones(join(refusedRoot, 'gallery', pair[0], 'rig.json'), (bones) => {
+    const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
+    if (bone === undefined) return '';
+    bone.parent = '__render_hashes_no_such_bone';
+    return `bone "${bone.name}"'s parent renamed to a bone that does not exist`;
+  });
+  const freshBase = join(work, 'fresh-base.json');
+  const editedBase = join(work, 'hand-edited-base.json');
+  if (existsSync(trackedBase)) writeFileSync(editedBase, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
+  const baseMovedRoot = join(work, 'base-moved-root');
+  const builtInGallery = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
+  cpSync(galleryRoot, join(baseMovedRoot, 'gallery'), { recursive: true, filter: (from) => !builtInGallery.test(from) });
+  const baseMovedPlant = plantBones(join(baseMovedRoot, 'gallery', pair[1], 'rig.json'), moveLastX);
+  const hashesUnit = (args: string[]): ParallelUnit => ({ argv: [process.execPath, 'tools/render_hashes.ts', ...args], cwd: import.meta.dir, maxBuffer: RENDER_HASHES_MAX_BUFFER });
+  // Longest first — the four `base` runs render seven recipes each, the four
+  // `run`s two — so the last lane to finish is not a seven-recipe run started late.
+  const [wroteRun, checkRun, handRun, baseMovedRun, aRun, bRun, movedRun, refusedRun] = inParallel([
+    hashesUnit(['base', '--file', freshBase, '--work', join(work, 'wf')]),
+    hashesUnit(['base', '--check', '--work', join(work, 'wk')]),
+    hashesUnit(['base', '--check', '--file', editedBase, '--work', join(work, 'wh')]),
+    hashesUnit(['base', '--check', '--root', baseMovedRoot, '--work', join(work, 'wbm')]),
+    hashesUnit(runArgs('a', join(work, 'wa'))),
+    hashesUnit(runArgs('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'))),
+    hashesUnit(runArgs('moved', join(work, 'wm'), movedRoot)),
+    hashesUnit(runArgs('refused', join(work, 'wr'), refusedRoot)),
+  ]);
 
   // --- RH01: two runs of one recipe set, at two work depths, are byte-identical --
-  const a = runAt('a', join(work, 'wa'));
-  const b = runAt('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'));
+  const a = runRead('a', aRun);
+  const b = runRead('b', bRun);
   {
     const probes: string[] = [];
     for (const [label, r] of [['A', a], ['B', b]] as const) {
@@ -87278,20 +87667,10 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[1];
-    const root = plantRoot('moved');
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
-        if (bone === undefined) return '';
-        bone.x = (bone.x as number) + 1;
-        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
+    const what = movedPlant.what;
+    if (movedPlant.failed !== null) probes.push(movedPlant.failed);
     if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a numeric x to move`);
-    const moved = runAt('moved', join(work, 'wm'), root);
+    const moved = runRead('moved', movedRun);
     const run = runRenderHashes(['compare', a.out, moved.out]);
     let named: string[] = [];
     let geometry = 0;
@@ -87320,19 +87699,9 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[0];
-    const root = plantRoot('refused');
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
-        if (bone === undefined) return '';
-        bone.parent = '__render_hashes_no_such_bone';
-        return `bone "${bone.name}"'s parent renamed to a bone that does not exist`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
-    const refused = runAt('refused', join(work, 'wr'), root);
+    const what = refusedPlant.what;
+    if (refusedPlant.failed !== null) probes.push(refusedPlant.failed);
+    const refused = runRead('refused', refusedRun);
     const row = refused.doc?.recipes.find((r) => r.name === `gallery/${target}`);
     if (refused.run.status !== 0) probes.push(`the run exited ${refused.run.status} over a refusing recipe; a refusal is data, not a failed run`);
     if (row === undefined) probes.push(`the planted document has no row for gallery/${target} — the refusal was dropped`);
@@ -87402,14 +87771,13 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
-  const trackedBase = resolve(import.meta.dir, RENDER_BASE_FILE);
   const staleLines = (run: ReturnType<typeof runRenderHashes>): string[] => run.stdout.split('\n').filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY') || l.startsWith('STALE') || l.startsWith('          '));
 
   // --- RH05: the tracked base is what `base` writes on this tree, PNGs only --
   {
     const probes: string[] = [];
-    const fresh = join(work, 'fresh-base.json');
-    const wrote = runRenderHashes(['base', '--file', fresh, '--work', join(work, 'wf')]);
+    const fresh = freshBase;
+    const wrote = wroteRun;
     if (wrote.status !== 0) probes.push(`\`${RENDER_BASE_COMMAND} --file …\` exited ${wrote.status}: ${wrote.stderr.trim().slice(0, 300)}`);
     if (!existsSync(trackedBase)) probes.push(`there is no ${RENDER_BASE_FILE}; write it with \`${RENDER_BASE_COMMAND}\``);
     else if (existsSync(fresh) && !readFileSync(fresh).equals(readFileSync(trackedBase))) probes.push(`${RENDER_BASE_FILE} is not byte-identical to a fresh \`${RENDER_BASE_COMMAND}\` on this tree`);
@@ -87419,12 +87787,11 @@ function runRenderHashesSuite(): number | null {
     const notPixels = doc?.recipes.flatMap((r) => r.files.filter((f) => f.pixels === undefined || f.sha256 !== undefined || f.size !== undefined).map((f) => `${r.name} ${f.path}`)) ?? [];
     if (notPixels.length > 0) probes.push(`${notPixels.length} base entr(ies) carry file bytes or no pixel hash, e.g. ${notPixels[0]} — the PNG encoder's bytes differ between macOS and Linux (PR #972)`);
     if (doc?.recipes.some((r) => r.framing !== null)) probes.push('the base records a framing box, whose numbers carry full doubles off libm');
-    const check = runRenderHashes(['base', '--check', '--work', join(work, 'wk')]);
+    const check = checkRun;
     const verdict = check.stdout.trim().split('\n').pop() ?? '';
     if (check.status !== 0 || !verdict.startsWith('CURRENT')) probes.push(`\`${RENDER_BASE_COMMAND} --check\` exited ${check.status}: ${staleLines(check).join(' | ') || JSON.stringify(verdict)}`);
-    const edited = join(work, 'hand-edited-base.json');
-    if (existsSync(trackedBase)) writeFileSync(edited, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
-    const hand = runRenderHashes(['base', '--check', '--file', edited, '--work', join(work, 'wh')]);
+    const edited = editedBase;
+    const hand = handRun;
     if (hand.status !== 1 || !hand.stdout.includes('but not in its bytes') || !staleLines(hand).some((l) => l.startsWith('STALE') && l.includes(`\`${RENDER_BASE_COMMAND} --file ${edited}\``))) {
       probes.push(`a hand-edited copy of the base exited ${hand.status} and printed ${JSON.stringify(staleLines(hand))}, not a STALE naming its bytes and the command`);
     }
@@ -87451,21 +87818,9 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[1];
-    const root = join(work, 'base-moved-root');
-    const built = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
-    cpSync(galleryRoot, join(root, 'gallery'), { recursive: true, filter: (from) => !built.test(from) });
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
-        if (bone === undefined) return '';
-        bone.x = (bone.x as number) + 1;
-        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
-    const check = runRenderHashes(['base', '--check', '--root', root, '--work', join(work, 'wbm')]);
+    const what = baseMovedPlant.what;
+    if (baseMovedPlant.failed !== null) probes.push(baseMovedPlant.failed);
+    const check = baseMovedRun;
     const lines = staleLines(check);
     const rows = lines.filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY'));
     if (check.status !== 1) probes.push(`\`--check\` over the moved copy exited ${check.status}, not 1: ${check.stderr.trim().slice(0, 200)}`);
@@ -87544,6 +87899,44 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
+  // --- RH08: this suite's units hand back at any --jobs what --jobs 1 does (issue #1128) --
+  // The eight runs above went through `inParallel` at this run's --jobs; the
+  // controls read only what came back, so the log is the same text at any
+  // --jobs exactly when every unit's result is. Held here on five cheap
+  // `render_hashes.ts` units of the same kind — three compares, a refusal and
+  // an unknown command, each answering differently — run sequentially and at
+  // max(2, --jobs): the same status, stdout and stderr, unit for unit, in the
+  // units' order. The whole log at --jobs 1, 2 and 4 is the PR's measurement;
+  // a second full pass of this suite here would double its cost to say it.
+  {
+    const probes: string[] = [];
+    const parallel = Math.max(2, JOBS);
+    const units = [
+      ['compare', a.out, b.out],
+      ['compare', a.out, join(work, 'moved.json')],
+      ['compare', a.out, join(work, 'refused.json')],
+      ['compare', join(work, 'absent.json'), a.out],
+      ['hash'],
+    ].map((args) => hashesUnit(args));
+    const one = inParallel(units, 1);
+    const many = inParallel(units, parallel);
+    const statuses = one.map((r) => String(r.status)).join(' ');
+    one.forEach((r, k) => {
+      const m = many[k];
+      if (m === undefined || m.status !== r.status || m.stdout !== r.stdout || m.stderr !== r.stderr) {
+        probes.push(`unit ${k} (${units[k].argv.slice(2, 3).join(' ')}): --jobs 1 read exit ${String(r.status)} over ${r.stdout.length}+${r.stderr.length} character(s), --jobs ${parallel} exit ${String(m?.status)} over ${m?.stdout.length ?? 0}+${m?.stderr.length ?? 0}`);
+      }
+    });
+    if (new Set(one.map((r) => `${r.status}|${r.stdout}|${r.stderr}`)).size !== units.length) probes.push('two of the units answered alike, so an order swapped between them would not be seen');
+    const held = probes.length === 0;
+    say(
+      'RH08_THE_RENDER_HASHES_UNITS_HAND_BACK_AT_ANY_JOBS_WHAT_JOBS_1_HANDS_BACK_IN_THE_UNITS_ORDER',
+      held,
+      probeDetail(held, probes, `${units.length} render_hashes.ts unit(s), each answering differently (exits ${statuses}), run one after another and max(2, --jobs) at a time: the same status, stdout and stderr, unit for unit, in order`),
+      'issue #1128: the units run at --jobs at once and the controls print after every one has finished, so the log is the same text ' +
+        'at any --jobs exactly when each unit hands back what it handed back alone, in its own place',
+    );
+  }
 
   // --- RC01–RC05: the core poser behind the seam (issue #968, step 3d of #380) --
   //
@@ -89779,14 +90172,35 @@ function runRenderHashesSuite(): number | null {
         { name: 'chainfit', args: (dir) => ['chainfit', '--candidate', row.out, '--images', parts, '--frame', frame, '--anchor', anchor, '--hinge', '-10,10', '--passes', '1', '--out', join(dir, 'chainfit.json')] },
       ];
       let files = 0;
+      // ⚡ Issue #1128: each case's two runs write into their own directories and
+      // read only what is already on disk — except `chainfit`, whose --anchor is
+      // the pose the `pose` case's cli.ts run wrote. So every case but chainfit
+      // runs through `inParallel`, the anchor is copied, then chainfit's pair
+      // does; the loop below reads them in the order it always ran them.
+      const caseDir = (side: 'full' | 'core', i: number): string => join(work, `rc24-${side}-${i}`);
+      for (const i of cases.keys()) {
+        mkdirSync(caseDir('full', i), { recursive: true });
+        mkdirSync(caseDir('core', i), { recursive: true });
+      }
+      const pairUnits = (i: number): ParallelUnit[] => [
+        { argv: [process.execPath, 'cli.ts', ...cases[i].args(caseDir('full', i))], cwd: import.meta.dir },
+        { argv: [process.execPath, join(tree, 'cli_core.ts'), ...cases[i].args(caseDir('core', i))], cwd: work, maxBuffer: 64 * 1024 * 1024 },
+      ];
+      const caseRuns = new Map<number, UnitResult[]>();
+      const before = [...cases.keys()].filter((i) => cases[i].name !== 'chainfit');
+      const firstRuns = inParallel(before.flatMap(pairUnits));
+      before.forEach((i, k) => caseRuns.set(i, firstRuns.slice(2 * k, 2 * k + 2)));
+      const poseAt = cases.findIndex((c) => c.name === 'pose');
+      if (poseAt >= 0 && existsSync(join(caseDir('full', poseAt), 'pose.json'))) cpSync(join(caseDir('full', poseAt), 'pose.json'), anchor);
+      const after = [...cases.keys()].filter((i) => cases[i].name === 'chainfit');
+      const lastRuns = inParallel(after.flatMap(pairUnits));
+      after.forEach((i, k) => caseRuns.set(i, lastRuns.slice(2 * k, 2 * k + 2)));
       for (const [i, c] of cases.entries()) {
-        const a = join(work, `rc24-full-${i}`);
-        const b = join(work, `rc24-core-${i}`);
-        mkdirSync(a, { recursive: true });
-        mkdirSync(b, { recursive: true });
-        const twin = runCli(c.args(a));
-        const run = runEntryIn(tree, 'cli_core.ts', c.args(b), work);
-        if (c.name === 'pose' && existsSync(join(a, 'pose.json'))) cpSync(join(a, 'pose.json'), anchor);
+        const a = caseDir('full', i);
+        const b = caseDir('core', i);
+        const pair = caseRuns.get(i);
+        if (pair === undefined || pair.length !== 2) throw new Error(`RC24: case ${c.name} was handed to no batch`);
+        const [twin, run] = pair;
         const fa = dirDigests(a);
         const fb = dirDigests(b);
         const differ = digestDifferences(fb, fa);
@@ -89973,10 +90387,16 @@ function runRenderHashesSuite(): number | null {
           ['a path with nothing at it', absent, absent],
         ] as const;
         let refused27 = 0;
+        // ⚡ Issue #1128: the 30 refusals are independent — each its own --out, each
+        // expected to write nothing, none reading another's — so they run through
+        // `inParallel` and are read below in the order the loop always read them.
+        const runs27 = inParallel(
+          takes.flatMap((c, i) => states.map(([, x], k) => ({ argv: [process.execPath, 'cli.ts', ...c.args(x, join(work, `rc27-o-${i}-${k}`))], cwd: import.meta.dir }))),
+        );
         for (const [i, c] of takes.entries()) {
-          for (const [k, [state, x, said]] of states.entries()) {
+          for (const [k, [state, , said]] of states.entries()) {
             const o = join(work, `rc27-o-${i}-${k}`);
-            const r = runCli(c.args(x, o));
+            const r = runs27[i * states.length + k];
             if (r.status !== 2 || firstErr(r) !== `rigc: nothing at ${said}` || stacked(r)) probes.RC27.push(`${c.name} on ${state} exited ${r.status} saying ${JSON.stringify(firstErr(r).slice(0, 160))}${stacked(r) ? ' with a stack' : ''}, not "rigc: nothing at ${said}"`);
             else if (existsSync(o)) probes.RC27.push(`${c.name} on ${state} wrote ${o}`);
             else refused27++;
@@ -104516,12 +104936,19 @@ class RunTally {
 
   /**
    * `--shard`: which shard of the registration list this tally runs, or `null`
-   * (issue #1116). A suite whose 0-based registration index is not `i − 1`
-   * modulo `n` prints its header and one `SKIP … — --shard` line, as `--only`'s
+   * (issue #1116). A suite not dealt to shard `i` (`ownerOf`, issue #1128)
+   * prints its header and one `SKIP … — --shard` line, as `--only`'s
    * skipped suites do, and so does every suite that reads the whole run — the
    * merge runs those.
    */
   shard: ShardSpec | null = null;
+  /**
+   * `--shard`'s deal (issue #1128): the shard each suite in the durations base
+   * belongs to, by longest-first bin packing (`shardPlan`). A suite with no
+   * entry is dealt round-robin by its registration index, as every suite was
+   * before the base existed — so an empty plan is #1116's deal exactly.
+   */
+  plan: ReadonlyMap<string, number> = new Map();
   /**
    * `--merge`: the shard documents this tally replays, or `null` (issue #1116).
    * A suite a shard ran is not called: its block, its counts, its printed
@@ -104554,6 +104981,12 @@ class RunTally {
    * unless it says otherwise.
    */
   constructor(readonly only: ReadonlySet<string> | null = null) {}
+
+  /** The 1-based shard a suite belongs to under `--shard`: its entry in the plan, or round-robin by registration index. */
+  ownerOf(index: number, key: string): number {
+    if (this.shard === null) throw new Error(`ownerOf("${key}") asked of a tally that is not a shard`);
+    return shardOwner(this.plan, index, key, this.shard.n);
+  }
 
   /** Every FAIL line observed so far. */
   get fails(): readonly string[] {
@@ -104685,13 +105118,14 @@ class RunTally {
       const recorded = this.replay.expect(index, key, reads.whole === true);
       if (recorded !== null) return this.replayed(recorded.record, recorded.from) as T;
     }
-    if (this.shard !== null && (reads.whole === true || index % this.shard.n !== this.shard.i - 1)) {
+    if (this.shard !== null && (reads.whole === true || this.ownerOf(index, key) !== this.shard.i)) {
       const gutterBefore = new Map(this.gutter);
       console.log(`\n── ${key} ──`);
       console.log(
         reads.whole === true
           ? `  SKIP  ${key}: not run — --shard; it reads what every suite before it left in the run, so the merge runs it over every shard's record`
-          : `  SKIP  ${key}: not run — --shard ${this.shard.i}/${this.shard.n} (registration index ${index} is shard ${(index % this.shard.n) + 1}'s)`,
+          : `  SKIP  ${key}: not run — --shard ${this.shard.i}/${this.shard.n} (registration index ${index} is shard ${this.ownerOf(index, key)}'s, ` +
+              `${this.plan.has(key) ? `dealt longest-first by ${SHARDS_BASE_PATH}` : `round-robin: ${SHARDS_BASE_PATH} has no entry for it`})`,
       );
       for (const [word, count] of this.gutter) {
         const added = count - (gutterBefore.get(word) ?? 0);
@@ -104852,8 +105286,8 @@ class RunTally {
 // the run as n shards whose merge is the verdict (#1116)
 // ---------------------------------------------------------------------------
 //
-// `--shard i/n` runs the suites whose 0-based registration index is `i − 1`
-// modulo `n` — the order `main` calls `tally.of` in, which is the same in every
+// `--shard i/n` runs the suites dealt to shard `i` (the deal, below: issue
+// #1128) over the order `main` calls `tally.of` in, which is the same in every
 // process because it is code — prints every case line and one `SKIP` per suite
 // it leaves, and exits like `--only`: 2 when green, never 0, because a shard is
 // a true statement about its suites and none about the tree. `--tally-out`
@@ -104920,6 +105354,82 @@ function runStates(): RunState[] {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// the deal: which shard runs which suite (#1128)
+// ---------------------------------------------------------------------------
+//
+// #1116 dealt suites by registration index modulo n, which put CI's two
+// heaviest suites' shards at 344 and 364 s beside one of 45 s (n = 4). The deal
+// is now longest-first bin packing over a tracked durations base — each suite,
+// heaviest first, to the shard holding the least so far; ties by the base's
+// order, which is registration order; equal loads to the lowest shard — and a
+// suite the base has no entry for is dealt round-robin as before. The base is
+// WRITTEN, by `--merge … --shards-base` off a merged run's own per-suite
+// seconds, never typed: a typed duration is a guess wearing a measurement. The
+// merge does not re-derive the deal — each shard's document carries the owner
+// it dealt every suite to, the merge refuses documents that disagree, and it
+// reads "every suite exactly once" off those owners and the records.
+
+/** The durations base `--shard` deals from, relative to this file. */
+const SHARDS_BASE_PATH = 'tools/selftest_shards.base.json';
+/** The base document's format word. */
+const SHARDS_BASE_SPEC = 'selftest-shards/1';
+
+/** Per suite a shard ran in the merged run that wrote it, its seconds — in registration order. */
+interface ShardsBase {
+  spec: string;
+  suites: Array<{ suite: string; seconds: number }>;
+}
+
+/** The base as it is on disk, or `null` with no file; a file that is not a base throws, by name. */
+function readShardsBase(root: string): ShardsBase | null {
+  const path = join(root, SHARDS_BASE_PATH);
+  if (!existsSync(path)) return null;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<ShardsBase>;
+  const again = 'write it again with `bun selftest.ts --merge <file>… --shards-base`';
+  if (parsed.spec !== SHARDS_BASE_SPEC || !Array.isArray(parsed.suites)) throw new Error(`${SHARDS_BASE_PATH} is not a "${SHARDS_BASE_SPEC}" document; ${again}`);
+  const seen = new Set<string>();
+  for (const entry of parsed.suites) {
+    if (typeof entry?.suite !== 'string' || typeof entry.seconds !== 'number' || !Number.isFinite(entry.seconds) || entry.seconds < 0) {
+      throw new Error(`${SHARDS_BASE_PATH}: the entry ${JSON.stringify(entry)} is not a suite name with a duration of 0 seconds or more; ${again}`);
+    }
+    if (seen.has(entry.suite)) throw new Error(`${SHARDS_BASE_PATH} names the suite "${entry.suite}" twice; ${again}`);
+    seen.add(entry.suite);
+  }
+  return { spec: parsed.spec, suites: parsed.suites };
+}
+
+/**
+ * The deal over a base, for `n` shards: longest-first bin packing. Pure, so
+ * `TY34` holds a stated base to a stated packing. Every entry of the base is
+ * dealt — the caller never asks it of a suite the merge runs, because the base
+ * is written without them.
+ */
+function shardPlan(base: ShardsBase | null, n: number): Map<string, number> {
+  const plan = new Map<string, number>();
+  if (base === null) return plan;
+  const load = new Array<number>(n).fill(0);
+  const order = base.suites.map((entry, k) => ({ ...entry, k })).sort((a, b) => b.seconds - a.seconds || a.k - b.k);
+  for (const entry of order) {
+    let lightest = 0;
+    for (let s = 1; s < n; s++) if (load[s] < load[lightest]) lightest = s;
+    load[lightest] += entry.seconds;
+    plan.set(entry.suite, lightest + 1);
+  }
+  return plan;
+}
+
+/** The 1-based shard a suite is dealt to: its entry in the plan, or round-robin by its 0-based registration index. */
+function shardOwner(plan: ReadonlyMap<string, number>, index: number, key: string, n: number): number {
+  return plan.get(key) ?? (index % n) + 1;
+}
+
+/** The base a merged run writes: every suite a shard ran, in registration order, its seconds to the tenth. */
+function shardsBaseText(t: RunTally): string {
+  const suites = t.blocks.filter((block) => (t.origin.get(block.key) ?? -1) !== -1).map((block) => ({ suite: block.key, seconds: Math.round((t.seconds.get(block.key) ?? 0) * 10) / 10 }));
+  return `${JSON.stringify({ spec: SHARDS_BASE_SPEC, suites }, null, 2)}\n`;
+}
+
 /** One suite a shard ran, as its document carries it: the block the floor holds, and everything else the merge reads. */
 interface ShardRecord {
   /** Its 0-based registration index. */
@@ -104952,7 +105462,7 @@ interface ShardOutside {
 }
 
 /** The format word of a shard's document. */
-const SHARD_DOCUMENT_SPEC = 'selftest-shard/1';
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/2';
 
 /** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
 interface ShardDocument {
@@ -104962,6 +105472,12 @@ interface ShardDocument {
   source: string;
   /** The registration list it saw, in order — the shard key. */
   registered: string[];
+  /**
+   * The shard it dealt each registration to, by index — 0 for a suite the merge
+   * runs (issue #1128). Every shard of one run deals alike or the merge refuses
+   * them; the merge reads who owns a suite here, never off a rule of its own.
+   */
+  owners: number[];
   /** The suites it ran, in order. */
   run: ShardRecord[];
   /** The suites it left to other shards, and those it left to the merge. */
@@ -105000,6 +105516,7 @@ function shardDocument(
     shard,
     source,
     registered: [...tally.registered],
+    owners: tally.registered.map((key, index) => (merge.has(key) ? 0 : tally.ownerOf(index, key))),
     run: tally.records.map((record) => ({
       ...record,
       printedSeconds: tally.printedSeconds.get(record.block.key) ?? null,
@@ -105018,6 +105535,14 @@ function shardDocument(
   };
 }
 
+/** How a shard's suites were dealt (issue #1128): how many off the durations base, how many round-robin. */
+function shardDealSentence(tally: RunTally): string {
+  const merge = new Set(tally.leftToMerge);
+  const dealt = tally.registered.filter((key) => !merge.has(key));
+  const based = dealt.filter((key) => tally.plan.has(key)).length;
+  return `Of the ${dealt.length} suite(s) the shards run, ${based} were dealt longest-first by ${SHARDS_BASE_PATH} and ${dealt.length - based} round-robin.`;
+}
+
 /** How a shard ends: its last line says it is one shard and is not a verdict, and it exits 2 when green, 1 when red. */
 function shardVerdict(tally: RunTally): RunVerdict | null {
   if (tally.shard === null) return null;
@@ -105028,7 +105553,7 @@ function shardVerdict(tally: RunTally): RunVerdict | null {
   const line =
     `rigc selftest: SHARD ${i}/${n} — not a verdict on the tree. ${ran.length} suite(s) ran [${ran.join(', ')}] over ` +
     `${tally.total} case line(s); ${others} suite(s) are other shards' and ${merge.size} read the whole run, so the merge ` +
-    `runs them [${tally.leftToMerge.join(', ')}]. The verdict is \`bun selftest.ts --merge <file>…\` over every shard's --tally-out document.`;
+    `runs them [${tally.leftToMerge.join(', ')}]. ${shardDealSentence(tally)} The verdict is \`bun selftest.ts --merge <file>…\` over every shard's --tally-out document.`;
   const bad = tally.failures;
   return bad > 0 ? { code: 1, lines: [`rigc selftest: ${bad} control(s) failed`, line] } : { code: 2, lines: [line] };
 }
@@ -105109,6 +105634,23 @@ function mergeRefusals(given: readonly GivenDocument[], source: string): string[
       refusals.push(`${label(first)} leaves [${first.doc.merge.join(', ')}] to the merge and ${label(g)} [${g.doc.merge.join(', ')}]`);
     }
   }
+  // The deal (issue #1128): read off the documents, held equal across them.
+  for (const g of given) {
+    const owners = g.doc.owners;
+    if (!Array.isArray(owners) || owners.length !== g.doc.registered.length || owners.some((o) => !Number.isInteger(o) || o < 0 || o > n)) {
+      refusals.push(`${label(g)} states no deal of its ${g.doc.registered.length} registration(s) to shards 1..${n} — write it again with this selftest.ts`);
+    }
+  }
+  if (refusals.length > 0) return refusals;
+  for (const g of given.slice(1)) {
+    const k = first.doc.owners.findIndex((owner, at) => owner !== g.doc.owners[at]);
+    if (k !== -1) {
+      refusals.push(
+        `${label(first)} deals "${first.doc.registered[k]}" (registration index ${k}) to shard ${first.doc.owners[k]} and ${label(g)} to shard ${g.doc.owners[k]} — ` +
+          `shards dealt from two durations bases can run a suite twice or not at all`,
+      );
+    }
+  }
   if (refusals.length > 0) return refusals;
   const registered = first.doc.registered;
   const toMerge = new Set(first.doc.merge);
@@ -105131,7 +105673,7 @@ function mergeRefusals(given: readonly GivenDocument[], source: string): string[
       for (const g of runners) refusals.push(`${label(g)} ran "${key}", which reads the whole run and is the merge's to run`);
       return;
     }
-    const owner = (index % n) + 1;
+    const owner = first.doc.owners[index];
     if (runners.length === 0) {
       refusals.push(`the suite "${key}" (registration index ${index}) was run by no shard — it is shard ${owner}/${n}'s, and that document does not carry it`);
     } else if (runners.length > 1) {
@@ -105194,8 +105736,10 @@ class MergeReplay {
       );
     }
     if (whole) return null;
-    const n = this.docs.length;
-    const from = index % n;
+    // The shard the documents dealt it to (issue #1128); `docs` is ordered by shard, one each.
+    const owner = this.docs[0]?.owners?.[index];
+    if (owner === undefined || owner < 1 || owner > this.docs.length) this.refuse(`the suite "${key}" (registration index ${index}) is dealt to no shard by the documents`);
+    const from = owner - 1;
     const record = this.docs[from].run.find((r) => r.index === index);
     if (record === undefined) this.refuse(`the suite "${key}" (registration index ${index}) is in no shard's record`);
     return { record, from };
@@ -107340,9 +107884,10 @@ function runRunTallySuite(live: RunTally): number {
   {
     const KEYS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'omega'];
     const SOURCE = 'miniature-source';
-    const miniature = (opts: { shard?: ShardSpec; given?: GivenDocument[]; failing?: string }): { tally: RunTally; lines: string[]; called: string[]; refusal: string | null } => {
+    const miniature = (opts: { shard?: ShardSpec; given?: GivenDocument[]; failing?: string; plan?: ReadonlyMap<string, number> }): { tally: RunTally; lines: string[]; called: string[]; refusal: string | null } => {
       const tally = new RunTally(null);
       tally.timed = true;
+      if (opts.plan !== undefined) tally.plan = opts.plan;
       const left: string[] = [];
       tally.states = [
         {
@@ -107410,8 +107955,8 @@ function runRunTallySuite(live: RunTally): number {
       const doc = shardDocument(run.tally, spec, SOURCE, performance.now() / 1000, 0, [], verdict?.code ?? 0);
       return { file, doc: JSON.parse(JSON.stringify(doc)) as ShardDocument };
     };
-    const shardsOf = (n: number, failing?: string): GivenDocument[] =>
-      Array.from({ length: n }, (_, k) => document(miniature({ shard: { i: k + 1, n }, failing }), { i: k + 1, n }));
+    const shardsOf = (n: number, failing?: string, plan?: ReadonlyMap<string, number>): GivenDocument[] =>
+      Array.from({ length: n }, (_, k) => document(miniature({ shard: { i: k + 1, n }, failing, plan }), { i: k + 1, n }));
     const one = miniature({});
     const oneEnd = end(one.tally);
     const omegaLine = (lines: readonly string[]): string => lines.find((line) => line.includes('PROBE_omega')) ?? 'no omega line';
@@ -107596,6 +108141,177 @@ function runRunTallySuite(live: RunTally): number {
         ),
         "issue #1116: nothing in the one-process floor counts the registration list, because one process has a block for every suite " +
           'by construction; a merge does not, so a suite no shard ran would leave the summary short with every figure still derived',
+      );
+    }
+
+    // --- TY32–TY35: concurrent units and the time-balanced deal (#1128) ------
+
+    // --- TY32: --jobs is a whole number from 1; anything else is refused by name --
+    {
+      const probes: string[] = [];
+      const refused = ['0', '-1', 'x', '1.5', '+2', ' 2', '2 ', ''];
+      for (const value of refused) {
+        const read = parseJobs(value);
+        if (typeof read !== 'string' || !read.startsWith(`--jobs ${JSON.stringify(value)} is not a whole number`)) probes.push(`--jobs ${JSON.stringify(value)} read as ${JSON.stringify(read)}`);
+      }
+      for (const [value, want] of [['1', 1], ['4', 4], ['16', 16]] as const) if (parseJobs(value) !== want) probes.push(`--jobs ${value} read as ${JSON.stringify(parseJobs(value))}`);
+      // The door itself: a process given a bad --jobs, or RIGC_JOBS, refuses before it runs a suite.
+      // 🔒 Each door also names a suite no registration has, under --only: a --jobs that is wrongly
+      // ACCEPTED then walks the registry as SKIPs and is refused for the unknown name, rather than
+      // starting a whole selftest inside this one — measured, the day this control was planted.
+      const NO_SUITE = 'ty32-no-such-suite';
+      const doors: string[] = [];
+      for (const [how, args, env] of [
+        ['--jobs 0', ['--jobs', '0'], {}],
+        ['--jobs -1', ['--jobs', '-1'], {}],
+        ['--jobs x', ['--jobs', 'x'], {}],
+        ['RIGC_JOBS=0', [], { RIGC_JOBS: '0' }],
+      ] as const) {
+        const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE, ...args], { cwd: import.meta.dir, encoding: 'utf8', env: { ...process.env, RIGC_JOBS: '', ...env } });
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 2 || !said.startsWith('selftest: --jobs "') || !said.includes('is not a whole number of concurrent units from 1') || run.stdout.includes('──')) {
+          probes.push(`${how}: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 160))}${run.stdout.includes('──') ? ', after walking the registry' : ''}`);
+        } else doors.push(`${how} -> ${said}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY32_JOBS_IS_A_WHOLE_NUMBER_FROM_1_AND_EVERY_OTHER_SPELLING_IS_REFUSED_BY_NAME_BEFORE_ANY_SUITE_RUNS',
+        held,
+        probeDetail(held, probes, `--jobs refuses ${refused.map((v) => JSON.stringify(v)).join(', ')} by name and reads "1", "4", "16"; at the door, exit 2 before any suite: ${doors.join('; ')}`),
+        'issue #1128: a --jobs read generously would decide how many units run at once by guessing, and 0 would either hang ' +
+          'the helper or quietly mean something else',
+      );
+    }
+
+    // --- TY33: units come back in their own order; a driver that interleaves their lines is read --
+    // Three units that each print two lines with a pause between them, the
+    // first pausing longest. Sequentially and three at a time, `inParallel`
+    // hands back what each printed, in the units' order, so the log a suite
+    // makes from them is one text. The plant is the hazard the helper exists to
+    // remove: a driver that streams every unit's stdout into one shared log as
+    // it arrives — what printing straight to the terminal does — so the lines
+    // of three running units interleave, and the log differs.
+    {
+      const probes: string[] = [];
+      const units: ParallelUnit[] = [0, 1, 2].map((k) => ({
+        argv: [process.execPath, '-e', `console.log("unit ${k} line 1"); await Bun.sleep(${(3 - k) * 250}); console.log("unit ${k} line 2"); console.error("unit ${k} stderr"); process.exit(${k});`],
+        cwd: import.meta.dir,
+      }));
+      const logOf = (results: readonly UnitResult[]): string => results.map((r, k) => `  unit ${k} exit ${String(r.status)}\n${r.stdout}${r.stderr}`).join('');
+      const one = logOf(inParallel(units, 1));
+      const three = logOf(inParallel(units, 3));
+      if (three !== one) probes.push(`three at a time the units' log reads ${JSON.stringify(three)} where one at a time it reads ${JSON.stringify(one)}`);
+      const interleaving = [
+        'const spec = JSON.parse(await Bun.file(process.argv[process.argv.length - 1]).text());',
+        'const shared = [];',
+        'let next = 0;',
+        'const lane = async () => {',
+        '  while (next < spec.units.length) {',
+        '    const unit = spec.units[next++];',
+        "    const child = Bun.spawn(unit.argv, { cwd: unit.cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });",
+        '    const decoder = new TextDecoder();',
+        '    for await (const chunk of child.stdout) shared.push(decoder.decode(chunk));',
+        '    await child.exited;',
+        '  }',
+        '};',
+        'await Promise.all(Array.from({ length: spec.jobs }, lane));',
+        "await Bun.write(spec.out, JSON.stringify(spec.units.map((_, k) => ({ status: 0, stdout: k === 0 ? shared.join('') : '', stderr: '', maxRss: null }))));",
+      ].join('\n');
+      const lines = (results: readonly UnitResult[]): string => results.map((r) => r.stdout).join('');
+      const planted = lines(inParallel(units, 3, interleaving));
+      const ordered = lines(inParallel(units, 1));
+      if (planted === ordered) probes.push(`the interleaving driver's log read ${JSON.stringify(planted)}, the units' own order — the plant interleaved nothing`);
+      const held = probes.length === 0;
+      say(
+        'TY33_UNITS_COME_BACK_IN_THEIR_OWN_ORDER_AT_ANY_JOBS_AND_A_DRIVER_THAT_INTERLEAVES_THEIR_LINES_IS_READ',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `three units, the first pausing longest between its two lines: one at a time and three at a time the log is the same ${one.split('\n').length - 1} line(s); ` +
+            `the planted driver streaming every unit into one log hands back the same ${planted.split('\n').filter(Boolean).length} line(s) in another order, and the difference is read`,
+        ),
+        'issue #1128: --jobs decides when a unit runs and never what a suite prints, which holds only because no unit prints to the ' +
+          'run and the suite prints after every unit has finished; a unit printing as it ran is exactly the interleaving planted here',
+      );
+    }
+
+    // --- TY34: the deal over a stated base is longest-first; without one, round-robin --
+    {
+      const probes: string[] = [];
+      // In registration order and NOT heaviest first, so a deal in the base's order is a different deal.
+      const base: ShardsBase = { spec: SHARDS_BASE_SPEC, suites: [{ suite: 'alpha', seconds: 4 }, { suite: 'beta', seconds: 9 }, { suite: 'gamma', seconds: 5 }, { suite: 'delta', seconds: 10 }] };
+      // Stated, not derived: delta 10 to shard 1; beta 9 to shard 2 (0 < 10); gamma 5 to shard 2 (9 < 10); alpha 4 to shard 1 (10 < 14).
+      // Dealt in the base's order instead it would be alpha 1, beta 2, gamma 1, delta 1 — loads 19 and 9.
+      const want: Array<[string, number]> = [['alpha', 1], ['beta', 2], ['gamma', 2], ['delta', 1]];
+      const plan = shardPlan(base, 2);
+      const got = want.map(([key]) => [key, plan.get(key) ?? 0]);
+      if (JSON.stringify(got) !== JSON.stringify(want) || plan.size !== want.length) probes.push(`the plan of 4/9/5/10 s over 2 shards is ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+      const ties = shardPlan({ spec: SHARDS_BASE_SPEC, suites: [{ suite: 'x', seconds: 5 }, { suite: 'y', seconds: 5 }, { suite: 'z', seconds: 5 }] }, 2);
+      if (JSON.stringify([...ties]) !== JSON.stringify([['x', 1], ['y', 2], ['z', 1]])) probes.push(`three equal suites over 2 shards were dealt ${JSON.stringify([...ties])}, not in registration order to the lowest shard`);
+      // A suite the base does not name — epsilon, index 4 — is dealt round-robin: shard (4 mod 2) + 1 = 1.
+      if (shardOwner(plan, 4, 'epsilon', 2) !== 1 || shardOwner(new Map(), 1, 'beta', 2) !== 2) probes.push('a suite with no entry was not dealt round-robin by its registration index');
+      // Through real shards: each calls exactly its dealt suites, and the merge of the two ends as one process does.
+      const dealt = (i: number): string[] => KEYS.filter((key, index) => key !== 'omega' && shardOwner(plan, index, key, 2) === i);
+      for (const i of [1, 2]) {
+        const run = miniature({ shard: { i, n: 2 }, plan });
+        if (run.called.join() !== dealt(i).join()) probes.push(`shard ${i}/2 over the plan called [${run.called.join(', ')}], dealt [${dealt(i).join(', ')}]`);
+      }
+      const given = shardsOf(2, undefined, plan);
+      const refusals = mergeRefusals(given, SOURCE);
+      if (refusals.length > 0) probes.push(`the merge refused shards dealt by one plan: ${refusals.join('; ')}`);
+      else {
+        const merged = miniature({ given });
+        const mergedEnd = end(merged.tally);
+        if (merged.refusal !== null || mergedEnd.join('\n') !== oneEnd.join('\n')) probes.push(`the merge of the planned shards ends ${JSON.stringify(mergedEnd.find((l, k) => l !== oneEnd[k]) ?? merged.refusal)}, not as the one-process run`);
+      }
+      const without = shardsOf(2);
+      if (JSON.stringify(without[0].doc.owners) !== JSON.stringify(KEYS.map((key, index) => (key === 'omega' ? 0 : (index % 2) + 1)))) probes.push(`with no base the shards dealt ${JSON.stringify(without[0].doc.owners)}, not round-robin`);
+      const held = probes.length === 0;
+      say(
+        'TY34_THE_DEAL_OVER_A_STATED_BASE_IS_LONGEST_FIRST_AND_A_SUITE_WITH_NO_ENTRY_IS_DEALT_ROUND_ROBIN',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `alpha/beta/gamma/delta at 4/9/5/10 s over 2 shards dealt ${got.map(([k, v]) => `${k}→${v}`).join(', ')} (loads 14 and 14, where their own order would give 19 and 9); three equal suites x, y, z dealt 1, 2, 1; ` +
+            `epsilon, absent from the base, round-robin to shard 1; each planned shard called exactly its suites and their merge ends as the one-process run; with no base, owners ${JSON.stringify(without[0].doc.owners)}`,
+        ),
+        "issue #1128: CI's wall is the heaviest shard, and dealing by registration index put two heavy suites on one shard beside a " +
+          '45 s one; the deal is read off measured seconds and falls back to the old rule only where there is no measurement',
+      );
+    }
+
+    // --- TY35: shards dealt two ways, or a suite run by two shards, is refused by the merge --
+    {
+      const probes: string[] = [];
+      const one = new Map([['alpha', 1], ['beta', 1], ['gamma', 2], ['delta', 2], ['epsilon', 1]]);
+      const other = new Map([['alpha', 1], ['beta', 2], ['gamma', 2], ['delta', 2], ['epsilon', 1]]);
+      // The plant: shard 1 dealt by one base, shard 2 by another — both claim beta.
+      const mixed = [document(miniature({ shard: { i: 1, n: 2 }, plan: one }), { i: 1, n: 2 }), document(miniature({ shard: { i: 2, n: 2 }, plan: other }), { i: 2, n: 2 })];
+      const ranBeta = mixed.filter((g) => g.doc.run.some((r) => r.block.key === 'beta')).length;
+      const mixedRefusals = mergeRefusals(mixed, SOURCE);
+      if (ranBeta !== 2) probes.push(`the plant ran beta in ${ranBeta} shard(s), not 2, so it assigns nothing twice`);
+      if (!mixedRefusals.some((r) => r.includes('deals "beta" (registration index 1) to shard 1') && r.includes('to shard 2'))) probes.push(`shards dealt two ways were refused as [${mixedRefusals.join('; ') || 'nothing'}]`);
+      // The same twice-run suite under one deal, forged: shard 2's document also carries beta's record.
+      const fair = shardsOf(2, undefined, one);
+      const betaRecord = fair[0].doc.run.find((r) => r.block.key === 'beta');
+      const forged = [fair[0], { ...fair[1], doc: { ...fair[1].doc, run: [...fair[1].doc.run, ...(betaRecord === undefined ? [] : [betaRecord])].sort((x, y) => x.index - y.index), others: fair[1].doc.others.filter((k) => k !== 'beta') } }];
+      const forgedRefusals = mergeRefusals(forged, SOURCE);
+      if (!forgedRefusals.some((r) => r.includes('"beta" (registration index 1) was run by 2 shards'))) probes.push(`a suite run by two shards under one deal was refused as [${forgedRefusals.join('; ') || 'nothing'}]`);
+      if (mergeRefusals(fair, SOURCE).length > 0) probes.push(`the fair shards were refused: ${mergeRefusals(fair, SOURCE).join('; ')}`);
+      const held = probes.length === 0;
+      say(
+        'TY35_SHARDS_DEALT_TWO_WAYS_OR_A_SUITE_RUN_BY_TWO_SHARDS_IS_REFUSED_BY_THE_MERGE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `two shards dealt from two bases both ran beta and the merge refuses them — ${mixedRefusals.find((r) => r.includes('deals "beta"')) ?? 'nothing'}; ` +
+            `under one deal, beta's record forged into the other shard too — ${forgedRefusals.find((r) => r.includes('was run by 2 shards')) ?? 'nothing'}; the fair pair is accepted`,
+        ),
+        'issue #1128: the deal now depends on a file, and two shards that read two versions of it would each run what it believes ' +
+          'is its own; the merge reads who owns a suite off the documents and refuses them when they disagree',
       );
     }
   }
@@ -109526,6 +110242,12 @@ function runVerdictSuppliersSuite(): number {
 }
 
 function main(): void {
+  // `--unit` (issue #1128): this process is one of `inUnits`' units — it runs the
+  // one unit its spec names, writes the value, and runs no suite.
+  if (UNIT !== null) {
+    writeFileSync(UNIT.output, JSON.stringify(selftestUnitWork(JSON.parse(readFileSync(UNIT.input, 'utf8')) as SelftestUnitSpec)));
+    return;
+  }
   let breaks = 0;
   let tolerances = 0;
   // Every case that actually looked at something, counted off the lines the
@@ -109546,6 +110268,8 @@ function main(): void {
   if (SHARD !== null) {
     tally.shard = SHARD;
     tally.states = runStates();
+    // Issue #1128: dealt longest-first over the tracked durations base; a suite it lacks, round-robin.
+    tally.plan = shardPlan(readShardsBase(import.meta.dir), SHARD.n);
   }
   if (MERGE !== null) {
     const read = readShardDocuments(MERGE);
@@ -109774,6 +110498,14 @@ function main(): void {
       process.exit(1);
     }
     console.log(`the memory ceiling, per process: ${merged.held.join('; ')}`);
+    // Issue #1128: the next deal's durations, off this merged run's own seconds — written, never typed.
+    if (WRITE_SHARDS_BASE !== null) {
+      const text = shardsBaseText(tally);
+      const file = WRITE_SHARDS_BASE === '' ? join(import.meta.dir, SHARDS_BASE_PATH) : WRITE_SHARDS_BASE;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      console.log(`selftest: wrote ${WRITE_SHARDS_BASE === '' ? SHARDS_BASE_PATH : file}: ${(JSON.parse(text) as ShardsBase).suites.length} suite(s) the shards ran, off this merge's ${tally.replay.docs.length} shard document(s)`);
+    }
   } else {
     const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
     if (ceiling.verdict === 'over') {

@@ -46,15 +46,30 @@ exits 2 naming every suite it skipped — it is never a verdict, so run the whol
 `bun run selftest` before you open a pull request.
 
 The whole run can also be cut into shards and merged, which is how CI runs it:
-`bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites whose
-registration index is `i − 1` modulo `n` and writes what it ran, exiting 2 when
-green like `--only`; `bun selftest.ts --merge <file>…` over every shard's
-document refuses by name a set that is not one run's shards each once, runs the
-three suites that read the whole run, and prints the full run's summary and
-verdict. `RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
+`bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites dealt to
+shard `i` and writes what it ran, exiting 2 when green like `--only`. The deal
+is longest-first over the per-suite seconds in `tools/selftest_shards.base.json`
+— each suite, heaviest first, to the shard holding the least so far — and a
+suite the base has no entry for is dealt round-robin by its registration index.
+`bun selftest.ts --merge <file>…` over every shard's document refuses by name a
+set that is not one run's shards each once (including shards that were dealt
+two different ways), runs the three suites that read the whole run, and prints
+the full run's summary and verdict; add `--shards-base [<file>]` and a green
+merge writes the base again from its own seconds (to `<file>`, or over the
+tracked base when none is named). CI's merge writes it and uploads it as the
+`selftest-shards-base` artifact, which is where the tracked base comes from.
+Never edit the base by hand.
+`RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
 environment. CI's `shard` jobs are the six shards side by side and its `test`
 job is the merge. On a machine you share, run the shards one after another, not
 together: each is a whole process with its own memory high-water.
+
+Inside a suite, independent units run concurrently: `render-hashes`' eight
+`render_hashes.ts` runs and two batches of its CLI runs, and `packer`'s packs
+by set. `--jobs <n>` (or `RIGC_JOBS`) is how many run at once; the default is
+the machine's cores, and `--jobs 1` runs them one after another as the run did
+before the flag. The printed log is the same text at any `--jobs`. On a machine
+you share, pass `--jobs 2`.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
