@@ -78,11 +78,15 @@
  * ## What every suite prints at its end
  *
  * One line under the suite's last case — `suite <key>: <n> case line(s), <t> s,
- * rss <MB> MB (<±MB> MB)` — its seconds off a clock around its call and the
- * process's resident set after it with the suite's own change to it (issue
- * #1116). Before the verdict line the run prints the heaviest suites by time
- * and by RSS growth, and its wall time less every suite's own as the harness's
- * overhead. `TY23` holds every suite the run called to a printed line of both.
+ * rss <MB> MB (<±MB> MB), heap <MB> MB (<±MB> MB), ext <MB> MB` — its seconds
+ * off a clock around its call and the process's resident set after it with the
+ * suite's own change to it (issue #1116), then the JS heap and the external
+ * buffers after a forced collection (issue #1121) — an upper bound on what the
+ * suite RETAINED, which is what tells retention from pages the allocator holds.
+ * Before the verdict line the run prints the heaviest suites by time, by RSS
+ * growth and by heap growth, and its wall time less every suite's own as the
+ * harness's overhead. `TY23` holds every suite the run called to a printed
+ * line of the time and the RSS, and `TY24` to the heap and external figures.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -103369,12 +103373,70 @@ function prefixOpeningCollisions(blocks: readonly SuiteBlock[]): string[] {
  * upper-case word there as a case line, so this line can never be counted as
  * one, and `TY23` holds that it is not.
  */
-const DURATION_LINE = /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\))?$/;
+const DURATION_LINE =
+  /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\)(?:, heap (\d+) MB \(([+-]\d+) MB\), ext (\d+) MB)?)?$/;
 
-/** What the process's resident set was after one suite, and how far the suite moved it, in whole megabytes. */
+/**
+ * What the process held after one suite and how far the suite moved it, in
+ * whole megabytes: the resident set (issue #1116), and the JS heap and the
+ * external buffers after a forced collection (issue #1121). The heap figures
+ * are absent on a line that does not carry them, which `durationFaults` names.
+ *
+ * ⚠️ Why the heap beside the RSS: the RSS is what the machine pays, but it
+ * cannot tell an object the suite still references from a page the allocator
+ * kept after the object died — and measured on Bun 1.3.11, freed JS-heap pages
+ * are not handed back at all (a dropped 384 MB churn left RSS at 636 MB with a
+ * heap of 0 after ten seconds), so the RSS is the run's high-water mark rather
+ * than what it holds. `heap` is read after `Bun.gc(true)`, and it is an UPPER
+ * bound on what is reachable, not an exact count: in a synchronous stretch the
+ * collection leaves dead objects counted until the event loop has turned for
+ * about a second and a half (a dropped 2-million-object churn read 374 MB
+ * through three forced collections and 0 after 1.5 s), and this run never
+ * yields. So a heap figure that falls back is proof the memory was not
+ * retained; one that stays high is a suspect, not a verdict.
+ */
 interface SuiteRss {
   after: number;
   delta: number;
+  heap?: number;
+  heapDelta?: number;
+  ext?: number;
+}
+
+/** One reading of the process's memory, in bytes: what a suite boundary reads, once. */
+interface MemoryReading {
+  rss: number;
+  heapUsed: number;
+  external: number;
+}
+
+/**
+ * The process's memory at a suite boundary, read once. The live run collects
+ * first, so the heap figure is bounded by what is still reachable plus what
+ * the collection has not yet released (see `SuiteRss`); the miniatures this file drives
+ * a tally over do not, because a forced collection per probe suite would cost
+ * the run seconds for figures nobody reads.
+ */
+function readMemory(collect: boolean): MemoryReading {
+  if (collect) Bun.gc(true);
+  const usage = process.memoryUsage();
+  return { rss: usage.rss, heapUsed: usage.heapUsed, external: usage.external };
+}
+
+/** The figures one suite's line prints, off the two readings around its call. */
+function suiteMemory(before: MemoryReading, after: MemoryReading): SuiteRss {
+  return {
+    after: megabytes(after.rss),
+    delta: megabytes(after.rss) - megabytes(before.rss),
+    heap: megabytes(after.heapUsed),
+    heapDelta: megabytes(after.heapUsed) - megabytes(before.heapUsed),
+    ext: megabytes(after.external),
+  };
+}
+
+/** A signed whole-MB figure as the duration line prints it: `+3`, `-12`. */
+function signedMegabytes(value: number): string {
+  return `${value < 0 ? '-' : '+'}${Math.abs(value)}`;
 }
 
 /** Bytes as whole megabytes — the unit a duration line prints its RSS in. */
@@ -103388,8 +103450,23 @@ function megabytes(bytes: number): number {
  * it (issue #1116 — the run's memory grows, and this is where it is read).
  */
 function durationLine(key: string, controls: number, seconds: number, rss: SuiteRss): string {
-  const sign = rss.delta < 0 ? '-' : '+';
-  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${sign}${Math.abs(rss.delta)} MB)`;
+  const heap =
+    rss.heap === undefined || rss.heapDelta === undefined || rss.ext === undefined
+      ? ''
+      : `, heap ${rss.heap} MB (${signedMegabytes(rss.heapDelta)} MB), ext ${rss.ext} MB`;
+  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${signedMegabytes(rss.delta)} MB)${heap}`;
+}
+
+/** The figures a duration line printed, read back off `DURATION_LINE`'s groups; `null` when it printed no RSS. */
+function printedMemory(match: RegExpExecArray): SuiteRss | null {
+  if (match[4] === undefined || match[5] === undefined) return null;
+  const read: SuiteRss = { after: Number(match[4]), delta: Number(match[5]) };
+  if (match[6] !== undefined && match[7] !== undefined && match[8] !== undefined) {
+    read.heap = Number(match[6]);
+    read.heapDelta = Number(match[7]);
+    read.ext = Number(match[8]);
+  }
+  return read;
 }
 
 /** How many suites the heaviest-suites table names. */
@@ -103428,6 +103505,31 @@ function rssGrowthLines(rss: ReadonlyMap<string, SuiteRss>): string[] {
 /** The heading over `rssGrowthLines`. */
 function rssGrowthHeading(rss: ReadonlyMap<string, SuiteRss>): string {
   return `the ${Math.min(HEAVIEST_SHOWN, rss.size)} heaviest of the ${rss.size} suite(s) by RSS growth — the change across the suite, and the RSS it left:`;
+}
+
+/**
+ * The suites that grew the live heap most, largest growth first, each with the
+ * heap and the RSS it left (issue #1121) — the third table, and the one that
+ * says what a suite KEPT: a suite high here and in the RSS table retains, one
+ * high in the RSS table alone left pages with the allocator. Ties break on the
+ * key, as the other two tables' do.
+ */
+function heapGrowthLines(rss: ReadonlyMap<string, SuiteRss>): string[] {
+  const ranked = [...rss].filter(([, r]) => r.heapDelta !== undefined && r.heap !== undefined);
+  ranked.sort((a, b) => {
+    const da = a[1].heapDelta ?? 0;
+    const db = b[1].heapDelta ?? 0;
+    return db !== da ? db - da : a[0] < b[0] ? -1 : 1;
+  });
+  return ranked
+    .slice(0, HEAVIEST_SHOWN)
+    .map(([key, r]) => `  ${signedMegabytes(r.heapDelta ?? 0).padStart(8)} MB  ${String(r.heap ?? 0).padStart(6)} MB heap  ${String(r.after).padStart(6)} MB rss after  ${key}`);
+}
+
+/** The heading over `heapGrowthLines`. */
+function heapGrowthHeading(rss: ReadonlyMap<string, SuiteRss>): string {
+  const read = [...rss.values()].filter((r) => r.heapDelta !== undefined).length;
+  return `the ${Math.min(HEAVIEST_SHOWN, read)} heaviest of the ${read} suite(s) by heap growth — the heap after a forced collection, and the RSS beside it:`;
 }
 
 /**
@@ -103471,6 +103573,17 @@ function durationFaults(
         `the suite "${block.key}" printed rss ${stated.after} MB (${stated.delta} MB) while the process read ` +
           (measured === undefined ? 'nothing' : `${measured.after} MB (${measured.delta} MB)`),
       );
+    } else if (stated !== undefined && measured?.heap !== undefined) {
+      // Issue #1121: the heap and external figures are read the same way, and a
+      // line that stops at its RSS says nothing about what the suite retained.
+      if (stated.heap === undefined || stated.heapDelta === undefined || stated.ext === undefined) {
+        faults.push(`the suite "${block.key}" printed its RSS and no heap, so the log does not say what it retained`);
+      } else if (stated.heap !== measured.heap || stated.heapDelta !== measured.heapDelta || stated.ext !== measured.ext) {
+        faults.push(
+          `the suite "${block.key}" printed heap ${stated.heap} MB (${stated.heapDelta} MB), ext ${stated.ext} MB while the ` +
+            `process read heap ${measured.heap} MB (${measured.heapDelta ?? '?'} MB), ext ${measured.ext ?? '?'} MB`,
+        );
+      }
     }
   }
   for (const key of printed.keys()) {
@@ -103795,6 +103908,13 @@ class RunTally {
    * they compare are the lines their suites printed.
    */
   timed = false;
+  /**
+   * Whether `of` forces a collection before each memory reading, so the heap
+   * it prints bounds what is still reachable (issue #1121). `main` turns it on; the
+   * timed miniatures leave it off, because a full collection of a heap the run
+   * has grown costs seconds per call and their figures are read for shape only.
+   */
+  collects = false;
 
   /**
    * `only` is the set `--only` named, or `null` for the full run — which is the
@@ -103817,7 +103937,8 @@ class RunTally {
     const timed = DURATION_LINE.exec(line);
     if (timed !== null) {
       this.printedSeconds.set(timed[1], Number(timed[3]));
-      if (timed[4] !== undefined && timed[5] !== undefined) this.printedRss.set(timed[1], { after: Number(timed[4]), delta: Number(timed[5]) });
+      const memory = printedMemory(timed);
+      if (memory !== null) this.printedRss.set(timed[1], memory);
       return;
     }
     const word = gutterWord(line);
@@ -103885,12 +104006,14 @@ class RunTally {
     // ⏱️ The one clock in this file (issue #1116), around the suite's call and
     // nothing else. `src/` stays clock-free and `CO04` holds that over the core;
     // this file is a harness, and what it times is a suite, never an artifact.
+    // 🧮 The memory is read once at each boundary, outside the clock, so the
+    // collection a timed tally forces there is harness overhead and not the
+    // suite's seconds (issue #1121).
+    const memoryBefore = readMemory(this.collects);
     const began = performance.now();
-    const rssBefore = process.memoryUsage().rss;
     const value = suite();
     const seconds = (performance.now() - began) / 1000;
-    const rssAfter = process.memoryUsage().rss;
-    const rss: SuiteRss = { after: megabytes(rssAfter), delta: megabytes(rssAfter) - megabytes(rssBefore) };
+    const rss = suiteMemory(memoryBefore, readMemory(this.collects));
     const block: SuiteBlock = {
       key,
       ran: reads.ran === undefined ? true : reads.ran(value),
@@ -105703,7 +105826,11 @@ function runRunTallySuite(live: RunTally): number {
   // thing the tally PRINTS and then reads, and a table of synthetic durations
   // would assert the reading without the printing.
   {
-    const timedMiniature = (drop: string | null, unmeasured: string | null = null): { tally: RunTally; lines: string[] } => {
+    const timedMiniature = (
+      drop: string | null,
+      unmeasured: string | null = null,
+      rewrite: { key: string; edit: (line: string) => string } | null = null,
+    ): { tally: RunTally; lines: string[] } => {
       const tally = new RunTally();
       tally.timed = true;
       const lines: string[] = [];
@@ -105712,7 +105839,9 @@ function runRunTallySuite(live: RunTally): number {
         const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
         if (drop !== null && line.startsWith(`  suite ${drop}:`)) return;
         // The RSS plant: the duration line printed with its RSS clause cut off.
-        const printed = unmeasured !== null && line.startsWith(`  suite ${unmeasured}:`) ? line.replace(/, rss .*$/, '') : line;
+        const cut = unmeasured !== null && line.startsWith(`  suite ${unmeasured}:`) ? line.replace(/, rss .*$/, '') : line;
+        // TY24's plants: one suite's line edited after it was measured (issue #1121).
+        const printed = rewrite !== null && cut.startsWith(`  suite ${rewrite.key}:`) ? rewrite.edit(cut) : cut;
         lines.push(printed);
         tally.observe(printed);
       };
@@ -105782,6 +105911,66 @@ function runRunTallySuite(live: RunTally): number {
         'change meant to lighten the run could not be measured. The sum is held to the wall because suites run one after ' +
         'another in one process, so their seconds are disjoint slices of it; the remainder is the overhead, printed ' +
         'rather than bounded, because a bound on it would be a figure nobody derived',
+    );
+
+    // --- TY24: every suite this run called printed its heap and external ----
+    //
+    // Issue #1121. The RSS alone cannot say whether a suite kept what it grew or
+    // left the pages with the allocator, so each line carries the live heap and
+    // the external buffers too, read back off the line and held to the reading
+    // exactly as the RSS is. Plants through the same timed miniature: one line
+    // cut after its RSS clause, one line whose heap figure is edited after it
+    // was measured.
+    const heapless = timedMiniature(null, null, { key: 'beta', edit: (line) => line.replace(/, heap .*$/, '') });
+    const heaplessFaults = faultsOf(heapless.tally);
+    const forgedHeap = timedMiniature(null, null, {
+      key: 'alpha',
+      edit: (line) => line.replace(/, heap (\d+) MB/, (_whole, mb: string) => `, heap ${Number(mb) + 1} MB`),
+    });
+    const forgedHeapFaults = faultsOf(forgedHeap.tally);
+    const heapSample = durationLine('a suite (with a spaced key)', 3, 1.25, { after: 512, delta: -3, heap: 140, heapDelta: -7, ext: 9 });
+    const heapRead = DURATION_LINE.exec(heapSample);
+    const heapReadBack = heapRead === null ? null : printedMemory(heapRead);
+    const liveHeaps = [...live.printedRss.values()].filter((r) => r.heap !== undefined);
+    const ty24Probes = [
+      ...(gutterWord(heapSample) === null &&
+      heapRead?.[1] === 'a suite (with a spaced key)' &&
+      heapReadBack?.heap === 140 &&
+      heapReadBack.heapDelta === -7 &&
+      heapReadBack.ext === 9 &&
+      heapReadBack.after === 512
+        ? []
+        : [`the duration line "${heapSample}" is read as a case line, or not read back to its heap and external figures`]),
+      ...(wholeFaults.length === 0 && whole.lines.filter((line) => DURATION_LINE.exec(line)?.[6] !== undefined).length === 2
+        ? []
+        : ['a timed miniature of two suites did not print a heap clause on both duration lines']),
+      ...(heaplessFaults.length === 1 && heaplessFaults[0].includes('"beta"') && heaplessFaults[0].includes('no heap')
+        ? []
+        : [`the miniature with beta's heap cut off its duration line is not named by it: ${heaplessFaults.join('; ') || 'nothing'}`]),
+      ...(forgedHeapFaults.length === 1 && forgedHeapFaults[0].includes('"alpha"') && forgedHeapFaults[0].includes('printed heap')
+        ? []
+        : [`the miniature with alpha's heap edited after it was measured is not named by it: ${forgedHeapFaults.join('; ') || 'nothing'}`]),
+      ...(!live.timed || liveHeaps.length === live.blocks.length
+        ? []
+        : [`this run: ${live.blocks.length - liveHeaps.length} of the ${live.blocks.length} suite(s) called printed no heap`]),
+      ...(live.collects || !live.timed ? [] : ['the live run does not collect before it reads the heap, so the heap it prints counts garbage']),
+    ];
+    const ty24Held = ty24Probes.length === 0;
+    say(
+      'TY24_EVERY_SUITE_THIS_RUN_CALLED_PRINTED_ITS_HEAP_AND_EXTERNAL_BESIDE_ITS_RSS',
+      ty24Held,
+      probeDetail(
+        ty24Held,
+        ty24Probes,
+        `the ${liveHeaps.length} suite(s) this run has called so far each printed the heap after a forced collection ` +
+          `(${liveHeaps.length === 0 ? 'none' : `${Math.min(...liveHeaps.map((r) => r.heap ?? 0))}–${Math.max(...liveHeaps.map((r) => r.heap ?? 0))} MB`}) ` +
+          `and the external buffers beside the RSS, each agreeing with the reading; a miniature with one line cut after ` +
+          `its RSS is named — ${heaplessFaults[0] ?? 'nothing'} — and one whose heap was edited after it was measured is ` +
+          `named — ${forgedHeapFaults[0] ?? 'nothing'}`,
+      ),
+      'issue #1121: the run ended near 6 GB resident and the RSS column could not say which suites kept that memory and ' +
+        'which left pages with the allocator; the heap after a forced collection bounds what is still reachable, so a ' +
+        'suite whose heap falls back while its RSS stays is not retaining, and one whose heap stays high is the suspect',
     );
   }
 
@@ -107724,6 +107913,7 @@ function main(): void {
   // The floor is now one per suite and it is checked by `tallyFaults`.
   const tally = new RunTally(ONLY);
   tally.timed = true;
+  tally.collects = true;
   const printLine = console.log;
   console.log = (...args: unknown[]): void => {
     const line = args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
@@ -107848,6 +108038,8 @@ function main(): void {
   for (const line of heaviestLines(tally.seconds)) console.log(line);
   console.log(rssGrowthHeading(tally.rss));
   for (const line of rssGrowthLines(tally.rss)) console.log(line);
+  console.log(heapGrowthHeading(tally.rss));
+  for (const line of heapGrowthLines(tally.rss)) console.log(line);
   console.log(
     `the run: ${wallSeconds.toFixed(1)} s of wall time, ${timedSum.toFixed(1)} s of it inside the ${tally.seconds.size} ` +
       `suite(s) timed and ${(wallSeconds - timedSum).toFixed(1)} s of harness overhead outside every suite; ` +
