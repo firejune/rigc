@@ -318,9 +318,13 @@ a card of its own.
   the same as rejected.** #380's 2026-09-04 sequencing named a packaging split, and step
   4 as this page first stated it left the packaging and the name open "if the licence
   line splits the package". 2.0.0 kept the single `spine-rigc` package and moved
-  spine-core to a development dependency (#1066, 2026-10-02); the split was not taken,
-  and no reason against it is recorded here — it sits in this section only because the
-  page first stated it as an open option, and the option was not exercised.
+  spine-core to a development dependency (#1066, 2026-10-02). The shape and its grounds
+  are recorded in `CLAUDE.md`'s *Validation is not optional* bullet: one body of
+  assertions with two suppliers — the round trip where the runtime is installed, rigc's
+  own validator in the published package — and the fact about what the code links
+  (this repository links `spine-core` as a devDependency; the published package links
+  none; `NOTICE.md` states it). The split was not taken; this page does not call it
+  rejected.
 - **Reading R1 into the owner's words.** The owner asked for the spine-core oracle to be
   *replaced*; the shape on the card since 2026-09-04 is R2, and this page keeps it. If
   the owner meant R1, the correction is one line on #380 and §2 is rewritten; nothing in
