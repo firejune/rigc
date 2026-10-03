@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/firejune/rigc/compare/v2.3.0...v2.4.0) (2026-10-03)
+
+
+### Features
+
+* **selftest:** the full run as n shards whose merge is the verdict — `--shard i/n` + `--tally-out`, `--merge` replaying the run off the shards' documents, and CI as six shards and a merge ([#1125](https://github.com/firejune/rigc/issues/1125)) ([557e879](https://github.com/firejune/rigc/commit/557e8799544d9b779c5bf8f399206c683b9dfa24)), closes [#1116](https://github.com/firejune/rigc/issues/1116)
+
 ## [2.3.0](https://github.com/firejune/rigc/compare/v2.2.0...v2.3.0) (2026-10-03)
 
 
