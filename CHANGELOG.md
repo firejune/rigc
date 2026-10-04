@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.7.0](https://github.com/firejune/rigc/compare/v2.6.1...v2.7.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** every --unit child's peak RSS reaches the parent in its result, the suite line names its children's high-water and the unit that set it, and TY40 holds that figure under a per-platform base — with the scale read through Bun.spawn by ([#1148](https://github.com/firejune/rigc/issues/1148)) ([bcf7777](https://github.com/firejune/rigc/commit/bcf777717f86aa51f2d4b88da035d621673bde24))
+* **selftest:** every --unit child's peak RSS reaches the parent in its result, the suite line names its children's high-water and the unit that set it, and TY40 holds that figure under a per-platform base ([#1145](https://github.com/firejune/rigc/issues/1145)) ([af9af3f](https://github.com/firejune/rigc/commit/af9af3fc24ac158b0ed20b1431dac672205070d3))
+
 ## [2.6.1](https://github.com/firejune/rigc/compare/v2.6.0...v2.6.1) (2026-10-04)
 
 
