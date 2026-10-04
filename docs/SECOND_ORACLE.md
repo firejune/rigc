@@ -73,9 +73,15 @@ The working rule, until the owner states another: the core is written from the c
 model's own semantics and from **measured behaviour**. A squad writing it may run
 spine-core and read what it outputs, may read the public format and runtime
 documentation, and may read this repository's own [SPEC_COVERAGE.md](SPEC_COVERAGE.md);
-it does not open spine-core's source to write from. The brief says so, and the landing
-review greps the new code for spine-core's identifiers and comment text the way `TY04`
-greps for names that may not appear.
+it does not open spine-core's source to write from. The brief says so, and two controls
+hold what a machine can hold of it: `CO04`, that `src/core/` imports nothing from
+spine-core and nothing impure, and `CO23`, that the core cites no runtime source file,
+that no comment under `src/` claims a routine copies a runtime routine, and that no core
+string names a runtime export (#1023, #1062). Identifiers are not held, and that is
+measured rather than omitted (#1011): the ones spelling a runtime export are rigc's own
+seam types or the format's and the language's words (`bone`, `slot`, `mix`, `get`,
+`length`), which no scan tells apart without an exception table — so that half of the
+rule stays the brief's.
 
 The mathematics of a 2D bone hierarchy, a Bézier curve, an IK solver or a path follower
 belongs to nobody; what the rule protects is that the *text* is ours.
@@ -328,4 +334,5 @@ a card of its own.
 - **Reading R1 into the owner's words.** The owner asked for the spine-core oracle to be
   *replaced*; the shape on the card since 2026-09-04 is R2, and this page keeps it. If
   the owner meant R1, the correction is one line on #380 and §2 is rewritten; nothing in
-  steps 0a–0b depends on the reading.
+  steps 0a–0b depends on the reading. The owner approved this page as written, R2 with
+  it, on PR #910 (2026-10-04).
