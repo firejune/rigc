@@ -123,7 +123,10 @@
  * replayed numbers; each shard's high-water is held to the memory ceiling as
  * its own process. `TY27`–`TY31` hold the shard, the merge's equality with one
  * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite;
- * `TY34`–`TY35` the deal and shards dealt two ways.
+ * `TY34`–`TY35` the deal and shards dealt two ways. `--memory-base-children
+ * [<file>]` has a green merge write the children's half of its platform's
+ * memory-base entry off the shards' documents, leaving the parent's (issue
+ * #1144); `TY41` holds that write to the documents and a red merge to none.
  *
  * ## What `--jobs` does
  *
@@ -883,7 +886,9 @@ const MERGE = ((): string[] | null => {
   }
   for (const [flag, given] of [['--only', ONLY !== null], ['--shard', SHARD !== null], ['--memory-base', WRITE_MEMORY_BASE]] as const) {
     if (given) {
-      console.error(`selftest: --merge reads the shards' documents and cannot be given with ${flag}`);
+      // Issue #1144: the children's half is a merge's to write, under its own flag; the parent's is not.
+      const children = flag === '--memory-base' ? " — a merge writes only the children's half of the memory base, with --memory-base-children [<file>]" : '';
+      console.error(`selftest: --merge reads the shards' documents and cannot be given with ${flag}${children}`);
       process.exit(2);
     }
   }
@@ -913,6 +918,45 @@ const WRITE_SHARDS_BASE = ((): string | null => {
   }
   const named = argv[at + 1];
   // '' stands for the tracked path, resolved where it is written (`SHARDS_BASE_PATH` is declared further down).
+  return named === undefined || named.startsWith('--') ? '' : resolve(named);
+})();
+/**
+ * `--memory-base-children [<file>]` (issue #1144): a green merge writes the
+ * CHILDREN'S half of its platform's memory-base entry — `children: {highWater,
+ * jobs}`, the largest child any suite of the merged run measured and the
+ * `--jobs` the processes that measured it ran at — to `<file>`, or over
+ * `MEMORY_BASE_PATH` when no file follows the flag (CI names a file under its
+ * temp directory and uploads it). The entry's parent half — `highWater`,
+ * `suites`, `bun` — is kept as the one-process run wrote it, because a shard's
+ * high-water is not the run's; a child's peak is the same whichever process
+ * started it, so the largest over the shards' documents is the run's.
+ *
+ * Its own flag rather than `--memory-base` under `--merge`, because that
+ * refusal stays true: `--memory-base` writes both halves off ONE process, and
+ * a merge has no one process whose high-water is the run's. Refused without
+ * `--merge`: a one-process run writes both halves with `--memory-base`, and a
+ * shard's children are a share of the run. It changes nothing else: the file
+ * is written after the verdict and the memory ceiling, so a red merge exits red
+ * before it and writes nothing, and `mergedChildrenBase` refuses a red tally
+ * itself as well (`TY41`).
+ */
+const WRITE_CHILDREN_BASE = ((): string | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--memory-base-children');
+  if (at === -1) return null;
+  if (MERGE === null) {
+    console.error(
+      "selftest: --memory-base-children writes the children's half of the memory base off a merged run's shard documents; it needs --merge <file>… " +
+        '(a one-process full run writes both halves with --memory-base)',
+    );
+    process.exit(2);
+  }
+  if (argv.indexOf('--memory-base-children', at + 1) !== -1) {
+    console.error('selftest: --memory-base-children was given twice');
+    process.exit(2);
+  }
+  const named = argv[at + 1];
+  // '' stands for the tracked path, resolved where it is written (`MEMORY_BASE_PATH` is declared further down).
   return named === undefined || named.startsWith('--') ? '' : resolve(named);
 })();
 // Read once, above; a child this run starts is not a shard of it.
@@ -106511,11 +106555,14 @@ interface ShardOutside {
 /**
  * The format word of a shard's document. `/3` since issue #1143: a record's
  * `rss` may carry `children` — the suite's heaviest child — which the merge
- * holds per shard. Nothing older reads a newer document anyway (the merge
- * refuses any document whose `source` is another `selftest.ts`), so the word
- * moved because a field was added, not to keep an old reader out.
+ * holds per shard. `/4` since issue #1144: the document states the `--jobs`
+ * its process ran at, which a children's figure is a reading at and which
+ * `--memory-base-children` writes beside it. Nothing older reads a newer
+ * document anyway (the merge refuses any document whose `source` is another
+ * `selftest.ts`), so the word moved because a field was added, not to keep an
+ * old reader out.
  */
-const SHARD_DOCUMENT_SPEC = 'selftest-shard/3';
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/4';
 
 /** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
 interface ShardDocument {
@@ -106546,6 +106593,8 @@ interface ShardDocument {
   exit: number;
   platform: string;
   bun: string;
+  /** The `--jobs` it ran at (issue #1144): a `core` worker's share of the units is the batch over it, so its children's figure is a reading AT it. */
+  jobs: number;
 }
 
 /** sha256 of this file as it is on disk — what every shard document and the merge compare. */
@@ -106585,6 +106634,7 @@ function shardDocument(
     exit,
     platform: process.platform,
     bun: Bun.version,
+    jobs: JOBS,
   };
 }
 
@@ -106909,6 +106959,75 @@ function mergedCeilingFaults(t: RunTally, replay: MergeReplay, base: MemoryBase 
     }
   }
   return { faults, held };
+}
+
+/** What `--memory-base-children` writes: the whole base document, and the line that says what was written. */
+interface ChildrenBaseWrite {
+  text: string;
+  /** The entry written for the platform, which `TY41` reads against the documents. */
+  entry: MemoryBaseEntry;
+  /** The suite, unit and process whose child set the figure. */
+  from: string;
+  /** The `--jobs` every process that measured a child ran at. */
+  jobs: number;
+}
+
+/**
+ * The base `--memory-base-children` writes over a merged run (issue #1144), or
+ * the refusal naming why it cannot be written. Pure, so `TY41` drives it over
+ * the miniature's documents.
+ *
+ * The figure is `childrenHighWaterOf` over the merged tally's replayed `rss` —
+ * every shard record's `children` and the merge's own suites' — which is the
+ * largest over the documents because a child's peak is its own process's
+ * reading, whichever process started it. Measured, not assumed: on Linux CI
+ * (run 37179080837) the merge's `run-tally` read a `bun -e` child at 23 MB
+ * while the merge itself stood at 739 MB, and `TY42`'s 256 MiB child at
+ * 278.3 MiB, so a child's figure carries nothing of its parent's memory. What
+ * it does depend on is `--jobs`, which deals a `core` worker its batch — so
+ * every process whose child entered the figure must have run at one `--jobs`,
+ * and that is the figure's `jobs`.
+ *
+ * Only the children's half moves: the entry's `highWater`, `suites` and `bun`
+ * stay as the one-process run wrote them, and an entry that does not exist is
+ * refused rather than made, since a merge has no parent's figure to put in it.
+ * A red tally is refused here too, beside `main` exiting before the write.
+ */
+function mergedChildrenBase(t: RunTally, replay: MergeReplay, base: MemoryBase | null, platform: string, mergeJobs: number): ChildrenBaseWrite | string {
+  const nothing = 'so nothing is written';
+  const faults = replayFaults(replay);
+  if (t.failures > 0 || faults.length > 0) {
+    return `the merged run is red — ${t.failures} failure(s)${faults.length > 0 ? `, ${faults.join('; ')}` : ''} — and a red run's children are no base, ${nothing}`;
+  }
+  const elsewhere = replay.docs.map((doc, from) => ({ doc, from })).filter(({ doc }) => doc.platform !== platform);
+  if (elsewhere.length > 0) {
+    return `${elsewhere.map(({ doc, from }) => `${replay.label(from)} ran on ${doc.platform}`).join(', ')}, and this merge writes the ${platform} entry — ${nothing}`;
+  }
+  const entry = base?.platforms[platform];
+  if (entry === undefined) {
+    return `${MEMORY_BASE_PATH} holds no ${platform} entry, and a merge writes only an entry's children's half — the parent's high-water is a one-process run's; write the entry with \`bun selftest.ts --memory-base\` first, ${nothing}`;
+  }
+  const top = childrenHighWaterOf(t.rss);
+  if (top === null) return `no suite of the merged run measured a child's peak (a shard at --jobs 1 reads none), ${nothing}`;
+  const measured: Array<{ where: string; jobs: unknown }> = [];
+  for (let from = -1; from < replay.docs.length; from++) {
+    const measuredHere = t.blocks.some((block) => (t.origin.get(block.key) ?? -1) === from && t.rss.get(block.key)?.children !== undefined);
+    if (measuredHere) measured.push(from === -1 ? { where: 'the merge', jobs: mergeJobs } : { where: replay.label(from), jobs: replay.docs[from].jobs });
+  }
+  const unstated = measured.filter((m) => typeof m.jobs !== 'number' || !Number.isInteger(m.jobs) || m.jobs < 1);
+  if (unstated.length > 0) return `${unstated.map((m) => m.where).join(', ')} measured a child and states no --jobs it ran at, ${nothing}`;
+  const jobs = [...new Set(measured.map((m) => m.jobs as number))];
+  if (jobs.length !== 1) {
+    return `the processes that measured a child ran at different --jobs — ${measured.map((m) => `${m.where} at ${String(m.jobs)}`).join(', ')} — and a children's figure is a reading at one, ${nothing}`;
+  }
+  const origin = t.origin.get(top.suite) ?? -1;
+  const written: MemoryBaseEntry = { ...entry, children: { highWater: top.highWater, jobs: jobs[0] } };
+  return {
+    text: memoryBaseText(base, platform, written),
+    entry: written,
+    from: `"${top.unit}", suite "${top.suite}", ${origin === -1 ? 'the merge' : replay.label(origin)}`,
+    jobs: jobs[0],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -109487,6 +109606,110 @@ function runRunTallySuite(live: RunTally): number {
         ),
         "issue #1116: nothing in the one-process floor counts the registration list, because one process has a block for every suite " +
           'by construction; a merge does not, so a suite no shard ran would leave the summary short with every figure still derived',
+      );
+    }
+
+    // --- TY41: the merge writes the children's half off the documents it read, and a red merge writes nothing (#1144) --
+    //
+    // `--memory-base-children` writes what `mergedChildrenBase` hands back, after
+    // `main`'s every exit. The miniature's shards carry forged children's peaks
+    // in their records — the field a live shard's `rss` carries — and the write
+    // has to be the largest over the documents, at the `--jobs` they state, with
+    // the entry's parent half and every other platform as the base held them.
+    // The plant is a red shard: the same documents with `beta` failing, and the
+    // same forged to claim exit 2 over the failure (`TY30`'s forgery).
+    {
+      const PLATFORM = 'zeta';
+      const PEAKS: Record<string, SuiteChildren> = {
+        alpha: { highWater: 300, unit: 'unit a' },
+        beta: { highWater: 700, unit: 'unit b' },
+        gamma: { highWater: 500, unit: 'unit c' },
+        delta: { highWater: 650, unit: 'unit d' },
+      };
+      const forge = (given: GivenDocument[], peaks: Record<string, SuiteChildren>, jobsOf: (i: number) => number = () => 2, platform = PLATFORM): GivenDocument[] =>
+        given.map((g) => ({
+          ...g,
+          doc: {
+            ...g.doc,
+            platform,
+            jobs: jobsOf(g.doc.shard.i),
+            run: g.doc.run.map((r) => (peaks[r.block.key] === undefined ? r : { ...r, rss: { ...r.rss, children: peaks[r.block.key] } })),
+          },
+        }));
+      const entry: MemoryBaseEntry = { highWater: 2000, suites: 6, bun: 'x', children: { highWater: 100, jobs: 2 } };
+      const other: MemoryBaseEntry = { highWater: 9, suites: 1, bun: 'y' };
+      const base: MemoryBase = { spec: MEMORY_BASE_SPEC, platforms: { [PLATFORM]: entry, eta: other } };
+      const write = (given: GivenDocument[], over: MemoryBase | null = base, platform = PLATFORM): ChildrenBaseWrite | string => {
+        const merged = miniature({ given });
+        if (merged.tally.replay === null) return 'the miniature replayed nothing';
+        return mergedChildrenBase(merged.tally, merged.tally.replay, over, platform, 2);
+      };
+      const probes: string[] = [];
+      // The positive control: the write is the max over the documents, read off them here independently.
+      const given = forge(shardsOf(3), PEAKS);
+      const docMax = Math.max(...given.flatMap((g) => g.doc.run.map((r) => r.rss.children?.highWater ?? -Infinity)));
+      const green = write(given);
+      let greenWords = 'nothing';
+      if (typeof green === 'string') probes.push(`a green merge of three shards was refused: ${green}`);
+      else {
+        const parsed = JSON.parse(green.text) as MemoryBase;
+        const got = parsed.platforms[PLATFORM];
+        if (got?.children?.highWater !== docMax || got.children.jobs !== 2) {
+          probes.push(`the merge wrote children ${JSON.stringify(got?.children ?? null)} where the documents' largest is ${docMax} MB at --jobs 2`);
+        }
+        if (got?.highWater !== entry.highWater || got.suites !== entry.suites || got.bun !== entry.bun) {
+          probes.push(`the merge moved the parent's half: ${JSON.stringify(got)} where the base held ${JSON.stringify(entry)}`);
+        }
+        if (JSON.stringify(parsed.platforms.eta) !== JSON.stringify(other)) probes.push(`the merge moved another platform's entry: ${JSON.stringify(parsed.platforms.eta)}`);
+        if (!green.from.includes('"unit b"') || !green.from.includes('shard 2/3')) probes.push(`the write names its child as ${green.from}, not "unit b" in shard 2/3`);
+        greenWords = `children ${got?.children?.highWater} MB at --jobs ${got?.children?.jobs} from ${green.from}, the parent's ${got?.highWater} MB kept`;
+      }
+      // A shard that measured no child may have run at another --jobs: only the processes whose children entered the figure must agree.
+      const quiet = write(forge(shardsOf(3), { alpha: PEAKS.alpha, beta: PEAKS.beta }, (i) => (i === 3 ? 4 : 2)));
+      if (typeof quiet === 'string') probes.push(`a shard that measured no child, at another --jobs, refused the write: ${quiet}`);
+      // The plant and every refusal: each must write nothing, by name.
+      const forgedExit = forge(shardsOf(3, 'beta'), PEAKS);
+      forgedExit[1] = { ...forgedExit[1], doc: { ...forgedExit[1].doc, exit: 2 } };
+      const refusals: Array<[string, ChildrenBaseWrite | string, string]> = [
+        ['a red shard (beta failing in shard 2/3)', write(forge(shardsOf(3, 'beta'), PEAKS)), 'the merged run is red — 1 failure(s)'],
+        ['the red shard forged to exit 2', write(forgedExit), 'shard 2/3 exited 2'],
+        ['shards at two --jobs', write(forge(shardsOf(3), PEAKS, (i) => (i === 3 ? 4 : 2))), 'shard 3/3 at 4'],
+        ['a platform with no entry', write(given, { spec: MEMORY_BASE_SPEC, platforms: { eta: other } }), `holds no ${PLATFORM} entry`],
+        ['shards of another platform', write(given, base, 'eta'), `shard 1/3 ran on ${PLATFORM}`],
+        ['no child measured', write(forge(shardsOf(3), {})), "measured a child's peak"],
+      ];
+      const read: string[] = [];
+      for (const [what, got, words] of refusals) {
+        if (typeof got !== 'string') probes.push(`${what}: the merge wrote children ${JSON.stringify(got.entry.children)} rather than nothing`);
+        else if (!got.includes(words) || !got.includes('so nothing is written')) probes.push(`${what}: refused as ${JSON.stringify(got)}, not by "${words}"`);
+        else read.push(`${what} -> ${got}`);
+      }
+      // The doors, before any suite: the flag without --merge, given twice, and --memory-base under --merge pointing at it.
+      const NO_SUITE = 'ty41-no-such-suite';
+      const doors: string[] = [];
+      for (const [how, args, words] of [
+        ['no --merge', ['--only', NO_SUITE, '--memory-base-children', 'x.json'], 'selftest: --memory-base-children writes the children\'s half of the memory base off a merged run\'s shard documents; it needs --merge'],
+        ['given twice', ['--merge', 'ty41-absent.json', '--memory-base-children', 'a.json', '--memory-base-children', 'b.json'], 'selftest: --memory-base-children was given twice'],
+        ['--memory-base under --merge', ['--merge', 'ty41-absent.json', '--memory-base'], "selftest: --merge reads the shards' documents and cannot be given with --memory-base — a merge writes only the children's half of the memory base, with --memory-base-children"],
+      ] as const) {
+        const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', env: { ...process.env, RIGC_JOBS: '', RIGC_SHARD: '', RIGC_TALLY_OUT: '' } });
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 2 || !said.startsWith(words) || run.stdout.includes('──')) {
+          probes.push(`${how}: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 200))}${run.stdout.includes('──') ? ', after walking the registry' : ''}`);
+        } else doors.push(`${how} -> exit 2`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY41_THE_MERGE_WRITES_THE_CHILDRENS_HALF_AS_THE_MAX_OVER_THE_DOCUMENTS_IT_READ_AND_A_RED_MERGE_WRITES_NOTHING',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `over three shards carrying forged children's peaks the merge wrote ${greenWords}, the documents' largest being ${docMax} MB; ` +
+            `a shard with no child at another --jobs does not refuse it; and each of these writes nothing: ${read.join('; ')}; at the door: ${doors.join(', ')}`,
+        ),
+        "issue #1144: CI runs the full selftest only as shards and a merge, and the merge refused --memory-base, so Linux's children's figure " +
+          "had no writer and TY40 read SKIP on every CI run; a child's peak is its own process's, so the max over the shards is the run's",
       );
     }
 
@@ -112076,6 +112299,12 @@ function main(): void {
       process.exit(1);
     }
     console.log(`the memory ceiling, per process: ${merged.held.join('; ')}`);
+    // Issue #1144: decided before either file is written, so a refused children's write leaves both unwritten.
+    const childrenWrite = WRITE_CHILDREN_BASE === null ? null : mergedChildrenBase(tally, tally.replay, memoryBase, process.platform, JOBS);
+    if (typeof childrenWrite === 'string') {
+      console.error(`rigc selftest: --memory-base-children refused: ${childrenWrite}`);
+      process.exit(2);
+    }
     // Issue #1128: the next deal's durations, off this merged run's own seconds — written, never typed.
     if (WRITE_SHARDS_BASE !== null) {
       const text = shardsBaseText(tally);
@@ -112083,6 +112312,19 @@ function main(): void {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, text);
       console.log(`selftest: wrote ${WRITE_SHARDS_BASE === '' ? SHARDS_BASE_PATH : file}: ${(JSON.parse(text) as ShardsBase).suites.length} suite(s) the shards ran, off this merge's ${tally.replay.docs.length} shard document(s)`);
+    }
+    // Issue #1144: the children's half of this platform's memory base, off the shards' documents — written, never typed.
+    if (WRITE_CHILDREN_BASE !== null && childrenWrite !== null) {
+      const write = childrenWrite;
+      const file = WRITE_CHILDREN_BASE === '' ? join(import.meta.dir, MEMORY_BASE_PATH) : WRITE_CHILDREN_BASE;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, write.text);
+      const was = memoryBase?.platforms[process.platform]?.children;
+      console.log(
+        `selftest: wrote ${WRITE_CHILDREN_BASE === '' ? MEMORY_BASE_PATH : file} for ${process.platform}: children's high-water ${write.entry.children?.highWater} MB (${write.from}) at --jobs ${write.jobs}, ` +
+          `the largest over this merge's ${tally.replay.docs.length} shard document(s) and its own suites` +
+          `${was === undefined ? '' : ` (the base held ${was.highWater} MB at --jobs ${was.jobs})`}; the parent's high-water, ${write.entry.highWater} MB, is left as the one-process run wrote it`,
+      );
     }
   } else {
     const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
