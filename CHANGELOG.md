@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.0](https://github.com/firejune/rigc/compare/v2.7.0...v2.8.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** a green merge writes the children's half of its platform's memory base with --memory-base-children, CI's test job writes it and uploads it as selftest-memory-base, and TY41 holds the write to the max over the shard documents and a red merge to none ([#1149](https://github.com/firejune/rigc/issues/1149)) ([342ae0c](https://github.com/firejune/rigc/commit/342ae0c5f89fd488104a91840abd0d18fc7ba596)), closes [#1144](https://github.com/firejune/rigc/issues/1144)
+
 ## [2.7.0](https://github.com/firejune/rigc/compare/v2.6.1...v2.7.0) (2026-10-04)
 
 
