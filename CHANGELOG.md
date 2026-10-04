@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.10.0](https://github.com/firejune/rigc/compare/v2.9.0...v2.10.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** every run removes the rigc-selftest- roots that killed runs left once nothing has touched them for 24 h, claiming each by rename so concurrent sweepers never collide, and TY44 holds what it removes and what it must not ([#1160](https://github.com/firejune/rigc/issues/1160)) ([985d538](https://github.com/firejune/rigc/commit/985d5380472b68e8f4d0ecb9944a1e75439d9bd8))
+
+
+### Performance Improvements
+
+* **core:** the core poser's excess over spine-core, accounted cause by cause with paired runs, and ten substitutions that change no byte (−38.5 %, 6.79x → 4.31x) ([#1159](https://github.com/firejune/rigc/issues/1159)) ([2ca93ab](https://github.com/firejune/rigc/commit/2ca93ab4190dff67fe037b3c7e198a227f8265c2)), closes [#1134](https://github.com/firejune/rigc/issues/1134)
+
 ## [2.9.0](https://github.com/firejune/rigc/compare/v2.8.0...v2.9.0) (2026-10-04)
 
 
