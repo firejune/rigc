@@ -1111,8 +1111,26 @@ export const NOT_ADMITTED: ReadonlyArray<readonly [string, string]> = [];
 /** The setup blocks the core poses, in the document's order. */
 const POSED_BLOCKS = ['setup.bones', 'setup.slots', 'setup.drawOrder', 'setup.attachments', 'setup.clips', 'setup.clipped'] as const;
 
-/** Bones active under the skin view posed — the rule measured in the header (`all`) and in `./skins.ts` (a named skin). */
-export function activeBones(doc: CompiledDocument): Set<string> {
+/** Each view's active bones, kept for the view (`activeBones`). */
+const activeOfView = new WeakMap<CompiledDocument, ReadonlySet<string>>();
+
+/**
+ * Bones active under the skin view posed — the rule measured in the header
+ * (`all`) and in `./skins.ts` (a named skin). Derived once per view object and
+ * kept with it (issue #1134): the answer reads the view's bones and skins
+ * only, a view is never written once it is posed, and every pose of a walk
+ * asked again. Read-only to every caller; a view built anew (`underSkin`,
+ * `underNoSkin`, a plant's) derives its own.
+ */
+export function activeBones(doc: CompiledDocument): ReadonlySet<string> {
+  const kept = activeOfView.get(doc);
+  if (kept !== undefined) return kept;
+  const made = deriveActiveBones(doc);
+  activeOfView.set(doc, made);
+  return made;
+}
+
+function deriveActiveBones(doc: CompiledDocument): ReadonlySet<string> {
   const named = new Set(appliedSkins(doc).flatMap((s) => s.bones));
   const parentOf = new Map(doc.bones.map((b) => [b.name, b.parent]));
   const reached = new Set<string>();
@@ -1150,26 +1168,50 @@ export function shownRow(shown: CoreShown): { name: string; path: string | null 
   return { name, path: CORE_REGION_KINDS.has(shown.record.kind) ? (shown.record.path ?? name) : null };
 }
 
+/** Each view's resolutions, by slot and placeholder, kept for the view (`shownAttachment`). */
+const shownOfView = new WeakMap<CompiledDocument, Map<string, Map<string, ShownResolution>>>();
+
 /**
  * What a slot shows at setup under every skin at once — the header's rule:
  * nothing for a `null` placeholder or one no skin fills; the one record where
  * every skin filling the placeholder gives the same row; a `conflict`, naming
  * each skin in the model's order, where they differ.
+ *
+ * The answer reads the view's skins and the slot's name and placeholder only,
+ * so it is resolved once per view, slot and placeholder and kept (issue
+ * #1134: every sample of a walk resolved every slot again). Read-only to every
+ * caller; a view built anew resolves its own.
  */
 export function shownAttachment(doc: CompiledDocument, slot: ModelSlot): ShownResolution {
   if (slot.setup === null) return null;
-  const placeholder = slot.setup;
+  let bySlot = shownOfView.get(doc);
+  if (bySlot === undefined) {
+    bySlot = new Map();
+    shownOfView.set(doc, bySlot);
+  }
+  let byPlaceholder = bySlot.get(slot.name);
+  if (byPlaceholder === undefined) {
+    byPlaceholder = new Map();
+    bySlot.set(slot.name, byPlaceholder);
+  }
+  if (byPlaceholder.has(slot.setup)) return byPlaceholder.get(slot.setup) as ShownResolution;
+  const resolved = resolveShown(doc, slot.name, slot.setup);
+  byPlaceholder.set(slot.setup, resolved);
+  return resolved;
+}
+
+function resolveShown(doc: CompiledDocument, slotName: string, placeholder: string): ShownResolution {
   // Under a named skin: that skin's record, else the default skin's, else nothing (`./skins.ts`).
   if (doc.skin !== CORE_ALL_SKINS) {
     for (const skin of lookupSkins(doc)) {
-      const record = skin.attachments[slot.name]?.[placeholder];
+      const record = skin.attachments[slotName]?.[placeholder];
       if (record !== undefined) return { skin: skin.name, placeholder, record };
     }
     return null;
   }
   const filling: CoreShown[] = [];
   for (const skin of doc.skins) {
-    const record = skin.attachments[slot.name]?.[placeholder];
+    const record = skin.attachments[slotName]?.[placeholder];
     if (record !== undefined) filling.push({ skin: skin.name, placeholder, record });
   }
   if (filling.length === 0) return null;

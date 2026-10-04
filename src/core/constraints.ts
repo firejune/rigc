@@ -1518,7 +1518,12 @@ export type ConstraintPlant = (records: CoreConstraintRecord[]) => CoreConstrain
  * `./constraints_physics.ts`); without it, it applies nothing.
  */
 export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap<string, CoreWorld>, active: ReadonlySet<string>, records: readonly CoreConstraintRecord[], previous: ReadonlyMap<string, CoreWorld> | null = null, applied?: SliderApplication[], physics?: PhysicsStepContext, settled?: (state: SolverState) => void, rules: Readonly<SolverRules> = RUNTIME_SOLVER_RULES): Map<string, CoreWorld> {
-  const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: new Map(bones.map((b, i) => [b.name, i])), world: new Map(world), active, rules };
+  // No record: nothing to solve, so the world as given, copied (issue #1134) — and what `sliderPhysicsTarget` leaves on the step's context with no record, an empty carry, under the plant that carries one.
+  if (records.length === 0 && settled === undefined) {
+    if (physics !== undefined && !rules.sliderPhysicsLastsOnePass) physics.carried = new Map();
+    return new Map(world);
+  }
+  const state: SolverState = { bones: bones.map((b) => ({ ...b })), index: boneIndex(bones, active), world: new Map(world), active, rules };
   const skipped = new Set<number>();
   records.forEach((c, i) => {
     if (inactiveWhy(state, c) !== null) skipped.add(i);
@@ -1573,19 +1578,45 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
   return state.world;
 }
 
+/** The last bone index each view's active set was asked for, with the names it was built over (`boneIndex`). */
+const indexOfView = new WeakMap<ReadonlySet<string>, { names: string[]; index: Map<string, number> }>();
+
+/**
+ * Each bone's position in `bones`, by name — the solver's index. Every pose of
+ * a view lists the same bones in the same order (issue #1134: a walk built it
+ * anew on each of its passes), so the index last built under the view's
+ * active set (`activeBones`, one object per view) is reused when the names
+ * agree position by position, and built again otherwise. Read, never written.
+ */
+function boneIndex(bones: readonly ModelBone[], active: ReadonlySet<string>): Map<string, number> {
+  const kept = indexOfView.get(active);
+  if (kept !== undefined && kept.names.length === bones.length && bones.every((b, i) => b.name === kept.names[i])) return kept.index;
+  const index = new Map(bones.map((b, i) => [b.name, i]));
+  indexOfView.set(active, { names: bones.map((b) => b.name), index });
+  return index;
+}
+
 /** After a constraint: the bones it moved in world space read back into local values, and every bone below one it moved posed again (the header's update order). */
 function repose(state: SolverState, changed: readonly string[], inWorld: readonly string[]): void {
   for (const name of inWorld) {
     const b = bone(state, name);
     localFromWorld(b, parentWorld(state, b), state.world.get(name) as CoreWorld, state.rules);
   }
-  const moved = new Set(changed);
+  // `changed` and `inWorld` are a constraint's few bones: read as they are rather than copied into sets on each of a walk's passes (issue #1134).
+  const moved = changed;
   const below = new Set(changed);
-  const keep = new Set(inWorld);
-  for (const b of state.bones) {
+  const keep = inWorld;
+  // Bones are parents first (`readModel` refuses any other order) and a bone joins `below` only through its parent, so none before the first bone moved can: the walk starts there (issue #1134).
+  let from = state.bones.length;
+  for (const name of changed) {
+    const at = state.index.get(name);
+    if (at !== undefined && at < from) from = at;
+  }
+  for (let k = from; k < state.bones.length; k++) {
+    const b = state.bones[k];
     // Not through an inactive bone the constraint did not move itself (issue #979): the bones below it keep what the constraints wrote into them.
-    if (b.parent !== undefined && below.has(b.parent) && (!state.rules.inactiveHoldsItsWorld || state.active.has(b.parent) || moved.has(b.parent))) below.add(b.name);
-    if (below.has(b.name) && !keep.has(b.name)) poseBone(state, b);
+    if (b.parent !== undefined && below.has(b.parent) && (!state.rules.inactiveHoldsItsWorld || state.active.has(b.parent) || moved.includes(b.parent))) below.add(b.name);
+    if (below.has(b.name) && !keep.includes(b.name)) poseBone(state, b);
   }
 }
 

@@ -600,15 +600,33 @@ export function keyIndexAt(keys: ReadonlyArray<{ time: number }>, t: number): nu
   return found;
 }
 
+/**
+ * Each Bézier segment's polylines, one per channel, kept with the key that
+ * starts the segment and the key that ends it (issue #1134): a polyline is a
+ * function of those two keys' stated numbers and handles only, and a walk
+ * evaluated the same segment's on every step. A key read is never written; a
+ * plant that changes a key passes a copy, which keeps polylines of its own.
+ */
+const segmentPolylines = new WeakMap<CoreKey, { end: CoreKey; channels: Array<number[] | undefined> }>();
+
 /** Channel `channel` of the segment starting at key `index` (not the last), at `t` — the header's three curves. */
 export function channelAt(keys: readonly CoreKey[], index: number, channel: number, t: number): number {
   const a = keys[index];
   const b = keys[index + 1];
   if (b === undefined || a.curve === 'stepped') return a.values[channel];
   if (a.curve === 'linear') return a.values[channel] + ((t - a.time) / (b.time - a.time)) * (b.values[channel] - a.values[channel]);
-  const c = a.curve.slice(channel * 4, channel * 4 + 4);
-  const inner = bezierPolyline(a.stated.time, a.stated.values[channel], c[0], c[1], c[2], c[3], b.stated.time, b.stated.values[channel]);
-  const points = [a.time, a.values[channel], ...inner, b.time, b.values[channel]];
+  let kept = segmentPolylines.get(a);
+  if (kept === undefined || kept.end !== b) {
+    kept = { end: b, channels: [] };
+    segmentPolylines.set(a, kept);
+  }
+  let points = kept.channels[channel];
+  if (points === undefined) {
+    const c = a.curve.slice(channel * 4, channel * 4 + 4);
+    const inner = bezierPolyline(a.stated.time, a.stated.values[channel], c[0], c[1], c[2], c[3], b.stated.time, b.stated.values[channel]);
+    points = [a.time, a.values[channel], ...inner, b.time, b.values[channel]];
+    kept.channels[channel] = points;
+  }
   let i = 2;
   while (i < points.length - 2 && points[i] < t) i += 2;
   const [x0, y0, x1, y1] = [points[i - 2], points[i - 1], points[i], points[i + 1]];
@@ -635,9 +653,22 @@ function keyAt(keys: readonly CoreKey[], t: number, plant: TimelinePlant): CoreK
   return index < 0 ? null : keys[index];
 }
 
+/** Each animation's bone timelines by bone name, kept with the timelines they index (`posedBones`). */
+const boneTimelinesByName = new WeakMap<CoreAnimationTimelines, ReadonlyMap<string, CoreTarget<BoneTimelineKind>>>();
+
+/** The animation's bone timelines by bone name, built once per timelines object (issue #1134: a walk built it again on every step); timelines read are never written. */
+function boneTimelinesOf(timelines: CoreAnimationTimelines): ReadonlyMap<string, CoreTarget<BoneTimelineKind>> {
+  let byName = boneTimelinesByName.get(timelines);
+  if (byName === undefined) {
+    byName = new Map(timelines.bones.map((b) => [b.name, b]));
+    boneTimelinesByName.set(timelines, byName);
+  }
+  return byName;
+}
+
 /** The bones posed by the animation's bone timelines at `t`: copies of the setup bones with the posed fields — the header's rules. */
 export function posedBones(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}): ModelBone[] {
-  const byName = new Map(timelines.bones.map((b) => [b.name, b]));
+  const byName = boneTimelinesOf(timelines);
   return doc.bones.map((setup) => {
     const target = byName.get(setup.name);
     if (target === undefined) return setup;
@@ -762,6 +793,38 @@ export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTim
 
 /** `posedBoneRows`, with the world transforms the rows were read off — what the sample's attachments are posed through. */
 export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[], step?: { ctx: PhysicsStepContext; before: number }): { rows: CoreBoneRow[]; world: Map<string, CoreWorld> } {
+  const posed = posedBoneStep(doc, timelines, t, plant, constraints, sliders, step);
+  return { rows: stepRows(posed), world: posed.world };
+}
+
+/**
+ * One pose of the bones before its rows are read: the world transforms, and
+ * what the rows are rounded from. A stepped walk reads rows only off the step
+ * that lands on a sample (issue #1134: of the stepped run's poses, nine in ten
+ * are steps between samples), so `stepRows` rounds them when they are read,
+ * once; every bone's transform is required here, at every step.
+ */
+interface PosedStep {
+  bones: ModelBone[];
+  world: Map<string, CoreWorld>;
+  active: ReadonlySet<string>;
+  round: (v: number) => number | null;
+  rows?: CoreBoneRow[];
+}
+
+/** A step's bone rows, in the oracle's shape and rounding, rounded the first time they are read. */
+function stepRows(posed: PosedStep): CoreBoneRow[] {
+  if (posed.rows !== undefined) return posed.rows;
+  const { world, active, round } = posed;
+  posed.rows = posed.bones.map((b): CoreBoneRow => {
+    const w = world.get(b.name) as CoreWorld;
+    return [b.name, round(w.worldX), round(w.worldY), round(w.a), round(w.b), round(w.c), round(w.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
+  });
+  return posed.rows;
+}
+
+/** `posedBoneWorld` up to its rows, refusing a bone the evaluator gave no transform (`PosedStep`). */
+function posedBoneStep(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: { ctx: PhysicsStepContext; before: number } | undefined): PosedStep {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
@@ -777,14 +840,8 @@ export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTi
     const previous = setupRecords.some((r) => r.kind === 'path') ? applyConstraints(doc.bones, (plant.evaluate ?? worldTransforms)(doc.bones, active), active, plant.constraints ? plant.constraints(setupRecords) : setupRecords, null, undefined, undefined, undefined, solverRules(plant.solver)) : null;
     world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, previous, sliders, undefined, undefined, solverRules(plant.solver));
   }
-  const posed = world;
-  const round = plant.round ?? gridRound;
-  const rows = bones.map((b): CoreBoneRow => {
-    const w = posed.get(b.name);
-    if (w === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
-    return [b.name, round(w.worldX), round(w.worldY), round(w.a), round(w.b), round(w.c), round(w.d), active.has(b.name) ? 1 : 0, b.parent ?? null];
-  });
-  return { rows, world: posed };
+  for (const b of bones) if (world.get(b.name) === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
+  return { bones, world, active, round: plant.round ?? gridRound };
 }
 
 /** Each path record with the curve its slot shows deformed by the sample's own deform timelines at `t` (`./deform.ts`), or as it was. */
@@ -904,9 +961,9 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
     const samples: CoreSample[] = [];
     let last = -1;
     // Under `--physics step` (issue #956): one walk per animation — reset at 0, then the oracle's schedule, each sample posed off its last step (`./constraints_physics.ts`).
-    const walk = dt === undefined || bonesReason !== null ? null : { ctx: freshStepContext(plant.physicsStep), now: 0, schedule: stepSchedule(phase, d, n, dt), sliders: [] as SliderApplication[], posed: null as { rows: CoreBoneRow[]; world: Map<string, CoreWorld> } | null };
+    const walk = dt === undefined || bonesReason !== null ? null : { ctx: freshStepContext(plant.physicsStep), now: 0, schedule: stepSchedule(phase, d, n, dt), sliders: [] as SliderApplication[], posed: null as PosedStep | null };
     if (walk !== null) {
-      walk.posed = posedBoneWorld(doc, anim.timelines, 0, plant, anim.constraints, walk.sliders, { ctx: walk.ctx, before: 0 });
+      walk.posed = posedBoneStep(doc, anim.timelines, 0, plant, anim.constraints, walk.sliders, { ctx: walk.ctx, before: 0 });
       walk.ctx.phase = 'update';
     }
     for (let i = 0; i < n; i++) {
@@ -918,11 +975,11 @@ export function poseAnimations(doc: CompiledDocument, phase: SamplePhase, n: num
           const before = walk.ctx.time;
           walk.ctx.time += s - walk.now;
           walk.sliders = [];
-          walk.posed = posedBoneWorld(doc, anim.timelines, s, plant, anim.constraints, walk.sliders, { ctx: walk.ctx, before });
+          walk.posed = posedBoneStep(doc, anim.timelines, s, plant, anim.constraints, walk.sliders, { ctx: walk.ctx, before });
           walk.now = s;
         }
         sliders = walk.sliders;
-        posed = walk.posed;
+        posed = walk.posed === null ? null : { rows: stepRows(walk.posed), world: walk.posed.world };
       } else posed = bonesReason === null ? posedBoneWorld(doc, anim.timelines, t, plant, anim.constraints, sliders) : null;
       const placeholders = new Map<string, string | null>();
       const slots = posedSlots(doc, anim.timelines, t, plant, sliders, placeholders);
