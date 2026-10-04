@@ -3,10 +3,10 @@
  * such documents compared across commits (issue #965, step 3a of issue #380).
  *
  *   bun tools/render_hashes.ts run --recipes <recipes.json> --out <hashes.json>
- *                                  [--work <dir>] [--root <dir>]
+ *                                  [--work <dir> | --keep-work] [--root <dir>]
  *   bun tools/render_hashes.ts compare <a.json> <b.json>
  *   bun tools/render_hashes.ts base [--check] [--file <hashes.json>]
- *                                   [--work <dir>] [--root <dir>]
+ *                                   [--work <dir> | --keep-work] [--root <dir>]
  *
  * ⭐ Why this exists. Step 3 of issue #380 moves `src/render.ts` from posing
  * through spine-core to posing through rigc's own core, and its gate is "the
@@ -118,8 +118,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { decodePng } from './plate.ts';
 import {
@@ -135,6 +134,7 @@ import {
   type FramesSidecar,
 } from '../src/render.ts';
 import { galleryRecipes, HashesInputError, readRecipes, recipesOfValue, runRecipe, TREE_ROOT, type Recipe, type StageEntry } from './emit_hashes.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
 export const RENDER_HASHES_SPEC = 'render-hashes/1';
 const CLI = join(TREE_ROOT, 'cli.ts');
@@ -570,9 +570,10 @@ export function renderBaseVerdict(file: string, shown: string, fresh: RenderHash
 
 export const RENDER_HASHES_USAGE = [
   'usage:',
-  '  bun tools/render_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--work <dir>] [--root <dir>]',
+  '  bun tools/render_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--work <dir> | --keep-work] [--root <dir>]',
   '  bun tools/render_hashes.ts compare <a.json> <b.json>',
-  '  bun tools/render_hashes.ts base [--check] [--file <hashes.json>] [--work <dir>] [--root <dir>]',
+  '  bun tools/render_hashes.ts base [--check] [--file <hashes.json>] [--work <dir> | --keep-work] [--root <dir>]',
+  '  (a work directory made without --work is removed when the command ends; --keep-work keeps it and names it)',
   '  (the tree\'s 19 recipes: bun tools/emit_hashes.ts recipes --out <recipes.json>)',
 ].join('\n');
 
@@ -600,14 +601,6 @@ function parseFlags(args: readonly string[], known: readonly string[], switches:
   return { positional, flags };
 }
 
-function freshWork(named: string | undefined, prefix: string): string {
-  if (named === undefined) return mkdtempSync(join(tmpdir(), prefix));
-  const work = resolve(named);
-  if (existsSync(work) && readdirSync(work).length > 0) throw new HashesInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-  mkdirSync(work, { recursive: true });
-  return work;
-}
-
 function rootOf(flags: Map<string, string>): string {
   const root = resolve(flags.get('--root') ?? TREE_ROOT);
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new HashesInputError(`--root ${root} is not a directory`);
@@ -616,8 +609,11 @@ function rootOf(flags: Map<string, string>): string {
 
 /** The command; returns the exit code. */
 export function renderHashesMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
-  const [command, ...rest] = argv;
+  const [command, ...args] = argv;
+  const scope = new WorkDirectory('render_hashes');
   try {
+    // `--keep-work` is read only where a work directory is made; elsewhere the parser refuses it as unknown.
+    const { argv: rest, keep } = command === 'run' || command === 'base' ? readKeepWork(args, ['--check'], (m) => new HashesInputError(m)) : { argv: args, keep: false };
     if (command === 'run') {
       const { positional, flags } = parseFlags(rest, ['--recipes', '--out', '--work', '--root']);
       if (positional.length > 0) throw new HashesInputError(`run takes no path, got ${positional.join(' ')}`);
@@ -631,7 +627,7 @@ export function renderHashesMain(argv: readonly string[], print: (line: string) 
         r.stage.filter((e) => !existsSync(resolve(root, e.from))).map((e) => `recipe ${JSON.stringify(r.name)} stages ${JSON.stringify(e.from)}, and nothing is at ${resolve(root, e.from)}`),
       );
       if (unstaged.length > 0) throw new HashesInputError(`${unstaged.length} input(s) missing before anything ran: ${unstaged.join('; ')}`);
-      const work = freshWork(flags.get('--work'), 'rigc-render-hashes-');
+      const work = scope.open(flags.get('--work'), keep, 'rigc-render-hashes-', (m) => new HashesInputError(m));
       warn(`render_hashes: ${recipes.length} recipe(s), work directory ${work}`);
       const started = performance.now();
       const doc = renderRows(recipes, work, root, print);
@@ -649,7 +645,7 @@ export function renderHashesMain(argv: readonly string[], print: (line: string) 
       const shown = flags.has('--file') ? file : RENDER_BASE_FILE;
       const root = rootOf(flags);
       const recipes = galleryRecipes(root, warn);
-      const work = freshWork(flags.get('--work'), 'rigc-render-hashes-base-');
+      const work = scope.open(flags.get('--work'), keep, 'rigc-render-hashes-base-', (m) => new HashesInputError(m));
       warn(`render_hashes: ${recipes.length} gallery recipe(s), work directory ${work}`);
       const started = performance.now();
       const doc = pixelsOnly(renderRows(recipes, work, root, print));
@@ -663,7 +659,7 @@ export function renderHashesMain(argv: readonly string[], print: (line: string) 
       if (refused.length > 0) {
         throw new HashesInputError(
           `${refused.length} gallery row(s) did not render, and a base is a record of green renders — nothing written: ` +
-            refused.map((r) => `${r.name} build exits ${JSON.stringify(r.exits)}, render exit ${String(r.renderExit)} (logs beside ${work})`).join('; '),
+            refused.map((r) => `${r.name} build exits ${JSON.stringify(r.exits)}, render exit ${String(r.renderExit)} (logs beside ${work}${scope.removalNote()})`).join('; '),
         );
       }
       writeFileSync(file, renderHashesText(doc));
@@ -686,6 +682,8 @@ export function renderHashesMain(argv: readonly string[], print: (line: string) 
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 

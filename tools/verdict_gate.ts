@@ -6,7 +6,7 @@
  * over the document and rigc's core, and every moved assertion's lines
  * compared, under both profiles.
  *
- *   bun tools/verdict_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>]
+ *   bun tools/verdict_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir> | --keep-work]
  *
  * With no `--recipes`, the tree's own: `tools/emit_hashes.ts`'s `treeRecipes`
  * (every fetched editor export and every gallery rig — nineteen when
@@ -88,8 +88,7 @@
  * identical, 1 when any differs, 2 when the input is bad by name — or when the
  * run compared nothing at all, which is no verdict.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC } from '../src/model.ts';
 import { parseAtlasText } from '../src/atlas.ts';
@@ -124,6 +123,7 @@ import type { RigInfo } from '../src/types.ts';
 import { RIG_FACT_FAMILIES, rigFactsDerivationsOf, rigFactsSpelling, spineRigFacts, sumTallies, type DerivationTally, type RigFactFamily } from './rig_facts.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes, type BuiltRow } from './core_gate.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
 /** The profiles a row is gated under: `spine` runs the validity rules, `spine-html` every rule. */
 export const VERDICT_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
@@ -976,21 +976,17 @@ function parseFlags(args: readonly string[], known: readonly string[]): Map<stri
 
 /** The command; returns the exit code. */
 export function verdictMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
+  const scope = new WorkDirectory('verdict_gate');
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--work']);
+    const { argv: args, keep } = readKeepWork(argv, [], (m) => new VerdictInputError(m));
+    const flags = parseFlags(args, ['--recipes', '--root', '--work']);
     const root = resolve(flags.get('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new VerdictInputError(`--root ${root} is not a directory`);
     const named = flags.get('--recipes');
     const recipes: Recipe[] = named === undefined ? treeRecipes(root, warn) : readRecipes(named);
     if (recipes.length === 0) throw new VerdictInputError('no recipes to run');
     const workFlag = flags.get('--work');
-    let work: string;
-    if (workFlag === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-verdict-gate-'));
-    else {
-      work = resolve(workFlag);
-      if (existsSync(work) && readdirSync(work).length > 0) throw new VerdictInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-      mkdirSync(work, { recursive: true });
-    }
+    const work = scope.open(workFlag, keep, 'rigc-verdict-gate-', (m) => new VerdictInputError(m));
     warn(`verdict_gate: ${recipes.length} recipe(s), work directory ${work}`);
     const verdict = verdictLines(verdictRows(buildRecipes(recipes, work, root, warn)));
     for (const line of verdict.lines) print(line);
@@ -1001,6 +997,8 @@ export function verdictMain(argv: readonly string[], print: (line: string) => vo
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 

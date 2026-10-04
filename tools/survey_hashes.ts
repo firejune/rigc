@@ -4,7 +4,7 @@
  * #380).
  *
  *   bun tools/survey_hashes.ts run --recipes <recipes.json> --out <hashes.json>
- *                                  [--source auto|spine-core|model] [--work <dir>] [--root <dir>]
+ *                                  [--source auto|spine-core|model] [--work <dir> | --keep-work] [--root <dir>]
  *   bun tools/survey_hashes.ts compare <a.json> <b.json>
  *
  * ⭐ Why this exists. Step 3e of issue #380 moves `src/deformmeasure.ts` from
@@ -127,8 +127,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { deformPosers, surveyOfBuild, type DeformSurveyInput, type DeformSurveySource, type ShownReading, type SurveyPose } from '../src/deformmeasure.ts';
 import type { SurveyAnimation, SurveyDeformTimeline, SurveyMesh, SurveyStructure } from '../src/deformstructure.ts';
@@ -136,6 +135,7 @@ import { CoreInputError, readModel } from '../src/core/index.ts';
 import { DIAL_BONE_FIELDS } from '../src/core/hooks.ts';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
 import { HashesInputError, readRecipes, recipesOfValue, runRecipe, TREE_ROOT, type Recipe, type StageEntry } from './emit_hashes.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
 export const SURVEY_HASHES_SPEC = 'survey-hashes/1';
 const CLI = join(TREE_ROOT, 'cli.ts');
@@ -776,10 +776,11 @@ export function structureLines(rows: ReadonlyArray<{ name: string; census: Struc
 
 export const SURVEY_HASHES_USAGE = [
   'usage:',
-  '  bun tools/survey_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--source auto|spine-core|model] [--work <dir>] [--root <dir>]',
+  '  bun tools/survey_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--source auto|spine-core|model] [--work <dir> | --keep-work] [--root <dir>]',
   '  bun tools/survey_hashes.ts compare <a.json> <b.json>',
-  '  bun tools/survey_hashes.ts hooks --recipes <recipes.json> [--work <dir>] [--root <dir>]',
-  '  bun tools/survey_hashes.ts structure --recipes <recipes.json> [--work <dir>] [--root <dir>]',
+  '  bun tools/survey_hashes.ts hooks --recipes <recipes.json> [--work <dir> | --keep-work] [--root <dir>]',
+  '  bun tools/survey_hashes.ts structure --recipes <recipes.json> [--work <dir> | --keep-work] [--root <dir>]',
+  '  (a work directory made without --work is removed when the command ends; --keep-work keeps it and names it)',
   '  (the tree\'s 19 recipes: bun tools/emit_hashes.ts recipes --out <recipes.json>)',
 ].join('\n');
 
@@ -802,18 +803,14 @@ function parseFlags(args: readonly string[], known: readonly string[]): { positi
   return { positional, flags };
 }
 
-function freshWork(named: string | undefined): string {
-  if (named === undefined) return mkdtempSync(join(tmpdir(), 'rigc-survey-hashes-'));
-  const work = resolve(named);
-  if (existsSync(work) && readdirSync(work).length > 0) throw new HashesInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-  mkdirSync(work, { recursive: true });
-  return work;
-}
-
 /** The command; returns the exit code. */
 export function surveyHashesMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
-  const [command, ...rest] = argv;
+  const [command, ...args] = argv;
+  const scope = new WorkDirectory('survey_hashes');
   try {
+    // `--keep-work` is read only where a work directory is made; elsewhere the parser refuses it as unknown.
+    const { argv: rest, keep } = command === 'run' || command === 'structure' || command === 'hooks' ? readKeepWork(args, [], (m) => new HashesInputError(m)) : { argv: args, keep: false };
+    const freshWork = (named: string | undefined): string => scope.open(named, keep, 'rigc-survey-hashes-', (m) => new HashesInputError(m));
     if (command === 'run') {
       const { positional, flags } = parseFlags(rest, ['--recipes', '--out', '--source', '--work', '--root']);
       if (positional.length > 0) throw new HashesInputError(`run takes no path, got ${positional.join(' ')}`);
@@ -907,6 +904,8 @@ export function surveyHashesMain(argv: readonly string[], print: (line: string) 
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 
