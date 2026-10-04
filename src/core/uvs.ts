@@ -369,7 +369,8 @@ export function shownAtSetup(doc: CompiledDocument): { shown: ShownGeometry[]; w
  */
 export function shownAtSample(doc: CompiledDocument, anim: CoreAnimation, t: number): { shown: ShownGeometry[]; why: string[] } {
   const sliders: SliderApplication[] = [];
-  posedBoneWorld(doc, anim.timelines, t, {}, anim.constraints, sliders);
+  // The bones are posed for what the sliders apply, and only a slider constraint applies one (`applySlider`): with none, the list stays empty and the pose would be read for nothing (issue #1134).
+  if (doc.constraints.some((c) => c.kind === 'slider')) posedBoneWorld(doc, anim.timelines, t, {}, anim.constraints, sliders);
   const placeholders = new Map<string, string | null>();
   posedSlots(doc, anim.timelines, t, {}, sliders, placeholders);
   return attachmentStates(doc, shownAttachment, placeholders, { timelines: anim.timelines, t }, sliders);
