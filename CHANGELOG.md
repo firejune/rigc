@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.10.1](https://github.com/firejune/rigc/compare/v2.10.0...v2.10.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **tools:** a tool that made its own work directory removes it when its command ends, unless --keep-work, through one helper that EH08 and RH09 hold on every exit path ([#1164](https://github.com/firejune/rigc/issues/1164)) ([a2d86cb](https://github.com/firejune/rigc/commit/a2d86cbe35700b11c85a0d5effd634bfc9745afe))
+* **tools:** hull_ceiling counts a region a conversion cannot make as its rectangle, not its silhouette — a page with no alpha no longer reads as a saving of its whole area ([#1162](https://github.com/firejune/rigc/issues/1162)) ([5e09793](https://github.com/firejune/rigc/commit/5e097939fb5e6605b85081f87a6d7e6bffc5fbd2)), closes [#1157](https://github.com/firejune/rigc/issues/1157)
+
 ## [2.10.0](https://github.com/firejune/rigc/compare/v2.9.0...v2.10.0) (2026-10-04)
 
 
