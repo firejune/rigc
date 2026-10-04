@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.1](https://github.com/firejune/rigc/compare/v2.6.0...v2.6.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **selftest:** every directory a selftest process makes lives in one rigc-selftest- root that its exit removes, so a run leaves tmpdir() as it found it, and TY39 counts it ([#1141](https://github.com/firejune/rigc/issues/1141)) ([cec559d](https://github.com/firejune/rigc/commit/cec559df6ece104aa01b63db515b1c8c898ea9ab)), closes [#1137](https://github.com/firejune/rigc/issues/1137)
+
 ## [2.6.0](https://github.com/firejune/rigc/compare/v2.5.1...v2.6.0) (2026-10-04)
 
 
