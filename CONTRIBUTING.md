@@ -105,7 +105,23 @@ one-process run can read (`--memory-base` under `--merge` stays refused). The
 darwin entry is written by `--memory-base` on a laptop; the linux entry's
 children's figure by CI's merge, which uploads it as the `selftest-memory-base`
 artifact, and the tracked linux figure is committed from that artifact, as the
-durations base is from `selftest-shards-base`. The ceiling holds the
+durations base is from `selftest-shards-base`. Neither writer takes the run's
+children's figure as measured: one run's largest child is not the figure (which
+units a `core` worker claims is decided by timing, and CI read 506 to 720 MB on
+the same code), so both write the larger of the tracked figure and the run's,
+and their line says which — `kept 547 MB (this run 506 MB) at --jobs 4`,
+`raised 547 → 720 MB at --jobs 4`, or `wrote … (the base held no children's
+figure)`. The figure ratcheted against is always the tracked file's entry, the
+one the ceiling reads, never the file named after `--memory-base-children`,
+which is overwritten unread. A run that measured no child keeps the tracked
+figure. Lowering it is a deliberate act with its own spelling: add
+`--reset-children-base` to either writer, and the line says `lowered 547 →
+506 MB … (--reset-children-base)`. The same spelling is the only way to
+replace a figure read at another `--jobs`, which is otherwise refused by name
+rather than compared, because a figure is a reading at one `--jobs`. Without
+either writer the spelling is refused, since it would write nothing. The
+parent's high-water is still written as the one-process run measured it. The
+ceiling holds the
 largest child, not the sum alive at once, because the sum is a reading of
 one schedule; the sum is at most `--jobs` times the largest. To read every
 unit's figure, set `RIGC_UNIT_PEAKS=<file>`: one line per unit with its peak,
