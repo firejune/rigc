@@ -61,16 +61,32 @@
  *   from the footprint's border). The row counts that over EVERY island of the
  *   art (`silhouetteOf`), because a packer must protect strays too.
  *
- *   ⚠️ `traceAlphaOutline` itself traces one island and refuses a diagonal
- *   pinch, and the mesher refuses art whose largest island is under
- *   `CONTOUR_MIN_COVERAGE` of it — 18 of this corpus's 240 region-kind regions
- *   are refused one way or the other. Counting those as their rectangle put the
- *   traced row ABOVE the convex one on six recipes, which no polygon inside a
- *   convex hull can be. So the tracer is not the row's arithmetic; it is the
- *   row's witness: on every region it traces as ONE island, its outline's
- *   shoelace area must equal `silhouetteOf`'s count to the texel, and a region
- *   where they differ refuses the row by name (`checked` in the JSON says on
- *   how many regions the two agreed).
+ *   `traceAlphaOutline` itself traces one island and refuses a diagonal
+ *   pinch and art with no texel of alpha > 0 (`empty`), and the mesher refuses
+ *   art whose largest island is under `CONTOUR_MIN_COVERAGE` of it (`islands`).
+ *   **A region the tracer refuses counts as its RECTANGLE in the traced
+ *   column**, because that is what a conversion does with it: no contour mesh
+ *   is built, so the region attachment stays and packs by its quad
+ *   (`tools/trace_footprint.ts` keeps it so, and `pack_anchor --trace-regions`
+ *   — the realised figure this column is the ceiling of — packs it so). The
+ *   column is therefore *what converting region attachments to their traced
+ *   contour can reach*, and not the alpha's silhouette: a refused region's
+ *   silhouette is area no conversion reaches, and on a page with no alpha it is
+ *   0, which made a corpus whose pages carry none read a ceiling nothing could
+ *   reach (issue #1157). The rejected reading — leaving refused regions out of
+ *   both sides of the ratio — is a ratio over a different rectangle from the
+ *   row's other ratios, so its gap to *meshes only* stops being a saving, and
+ *   the realised figure it is weighed against packs every region. Each refusal is counted by reason and the texels kept
+ *   as rectangles are stated beside them (`fallbacks.refusedRect`); the
+ *   per-region silhouette stays in `--json`.
+ *
+ *   ⚠️ So the traced row can stand ABOVE the convex one, and does on public
+ *   recipes whose regions the tracer refuses: the convex conversion refuses only art with no texel at all, while
+ *   the tracer also refuses islands and pinches. The tracer is still the
+ *   row's witness as well: on every region it traces as ONE island, its
+ *   outline's shoelace area must equal `silhouetteOf`'s count to the texel,
+ *   and a region where they differ refuses the row by name (`checked` in the
+ *   JSON says on how many regions the two agreed).
  * - **opaque texels** — texels in the rectangle with alpha > 0, and beside
  *   them the **floor**: the opaque texels that are DRAWN — inside the hull
  *   (texel centre in the polygon) for a mesh-kind region, all of them for a
@@ -90,7 +106,9 @@
  *
  * Per recipe the row states Σ rectangle; Σ hull with meshes only (region-kind
  * regions counted as their rectangle); Σ hull with regions converted, once by
- * trace and once by convex hull (mesh-kind regions keep their mesh hull); Σ
+ * trace and once by convex hull (mesh-kind regions keep their mesh hull; a
+ * region a conversion cannot make — refused by the tracer, or with no art for
+ * a convex hull — keeps its rectangle, `conversionReach`); Σ
  * drawn opaque (the floor) and Σ opaque; each hull and the floor over Σ
  * rectangle; and **covered** — Σ rectangle of every region
  * on the pages over the pages' area, the figure `build --pack` prints. A
@@ -100,6 +118,11 @@
  * given, whose packer (the editor, for the fetched exports) is named in the
  * row, because its whitespace strip and its rotation are in its rectangles and
  * not in rigc's.
+ *
+ * `--json` is `hull-ceiling/2`. Against `/1`: `hullTraced` counts a region
+ * the tracer refuses as its rectangle rather than its silhouette, `hullConvex`
+ * counts a region with no art as its rectangle rather than 0, and
+ * `fallbacks.refusedRect` is new; every other field reads as before.
  *
  * Exit codes: 0 every recipe measured; 1 a recipe refused or unreadable (named
  * in the table and on stderr); 2 a bad input by name. The wall time is printed
@@ -115,7 +138,7 @@ import { readPlate, type Plate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
 
-export const CEILING_SPEC = 'hull-ceiling/1';
+export const CEILING_SPEC = 'hull-ceiling/2';
 
 /** A refusal about an input — the command exits 2 on it. */
 export class CeilingInputError extends Error {}
@@ -204,8 +227,12 @@ export interface CeilingRow {
   hullConvex: number;
   opaque: number;
   opaqueDrawn: number;
-  /** Counts behind the fallbacks: regions counted as their rectangle, and why. */
-  fallbacks: { selfIntersecting: number; hullsDiffer: number; traceRefused: Record<string, number> };
+  /**
+   * Counts behind the fallbacks: regions counted as their rectangle, and why —
+   * `traceRefused` by the tracer's reason, and `refusedRect` the Σ rectangle
+   * of those region-kind regions, which the traced column counts as kept.
+   */
+  fallbacks: { selfIntersecting: number; hullsDiffer: number; traceRefused: Record<string, number>; refusedRect: number };
   /** Regions the tracer traced as one island, whose outline area equalled the silhouette to the texel. */
   checked: number;
   /** Regions with a rectangle and no texel of alpha > 0, by the 1-based index of their page. */
@@ -577,8 +604,27 @@ export function measureBuild(out: string, opts: MeasureOptions = {}): BuildMeasu
   return { measures, pages, attachments };
 }
 
+/**
+ * What a region-kind region counts in the two converted columns: its traced
+ * contour and its convex hull, or — where that conversion cannot be made —
+ * its rectangle. A parameter so a control can plant the arithmetic it replaced.
+ */
+export type ConversionReading = (m: RegionMeasure) => { traced: number; convex: number };
+
+/**
+ * A region the tracer refuses (`empty`, `pinch`, `islands`, …) is not
+ * converted, so it keeps its rectangle; a region with no texel of alpha > 0
+ * has no convex hull to convert to, and keeps it too. Never its silhouette,
+ * which for a refused region is area no conversion reaches and for an
+ * alpha-less page is 0 (issue #1157).
+ */
+export const conversionReach: ConversionReading = (m) => ({
+  traced: 'refused' in m.traced ? m.rect : m.silhouette,
+  convex: m.opaque === 0 ? m.rect : m.convex,
+});
+
 /** A build's measures summed into a row. */
-export function rowOf(name: string, packer: string, measured: BuildMeasure, covered: CeilingRow['covered']): CeilingRow {
+export function rowOf(name: string, packer: string, measured: BuildMeasure, covered: CeilingRow['covered'], reach: ConversionReading = conversionReach): CeilingRow {
   const row: CeilingRow = {
     name,
     packer,
@@ -591,7 +637,7 @@ export function rowOf(name: string, packer: string, measured: BuildMeasure, cove
     hullConvex: 0,
     opaque: 0,
     opaqueDrawn: 0,
-    fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {} },
+    fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {}, refusedRect: 0 },
     checked: 0,
     emptyRegions: {},
     emptyPages: measured.pages.flatMap((p, i) => (p.opaque === 0 ? [i + 1] : [])),
@@ -609,6 +655,7 @@ export function rowOf(name: string, packer: string, measured: BuildMeasure, cove
     if ('area' in m.traced && m.traced.islands === 1) row.checked++;
     if ('refused' in m.traced && m.kind === 'region') {
       row.fallbacks.traceRefused[m.traced.refused] = (row.fallbacks.traceRefused[m.traced.refused] ?? 0) + 1;
+      row.fallbacks.refusedRect += m.rect;
     }
     if (m.kind === 'mesh') {
       const hull = m.meshHull ?? m.rect;
@@ -618,9 +665,10 @@ export function rowOf(name: string, packer: string, measured: BuildMeasure, cove
       row.hullTraced += hull;
       row.hullConvex += hull;
     } else {
+      const converted = reach(m);
       row.hullMeshes += m.rect;
-      row.hullTraced += m.silhouette;
-      row.hullConvex += m.convex;
+      row.hullTraced += converted.traced;
+      row.hullConvex += converted.convex;
     }
   }
   return row;
@@ -677,7 +725,7 @@ export function ceilingRows(recipes: readonly Recipe[], work: string, root: stri
       hullConvex: 0,
       opaque: 0,
       opaqueDrawn: 0,
-      fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {} },
+      fallbacks: { selfIntersecting: 0, hullsDiffer: 0, traceRefused: {}, refusedRect: 0 },
       checked: 0,
       emptyRegions: {},
       emptyPages: [],
@@ -730,9 +778,10 @@ function fallbackNote(row: CeilingRow): string {
   return parts.length === 0 ? '' : parts.join('; ');
 }
 
-function tracerNote(row: CeilingRow): string {
-  const refused = Object.entries(row.fallbacks.traceRefused).sort(([a], [b]) => (a < b ? -1 : 1));
-  return `${row.checked} = silhouette${refused.length === 0 ? '' : `; refuses ${refused.map(([why, n]) => `${n} ${why}`).join(', ')}`}`;
+/** How many regions the tracer agreed with, and the ones it refused by reason with the texels they keep as rectangles. */
+function tracerNote(checked: number, traceRefused: Record<string, number>, refusedRect: number): string {
+  const refused = Object.entries(traceRefused).sort(([a], [b]) => (a < b ? -1 : 1));
+  return `${checked} = silhouette${refused.length === 0 ? '' : `; refuses ${refused.map(([why, n]) => `${n} ${why}`).join(', ')}, kept as ${count(refusedRect)} texels of rectangle`}`;
 }
 
 /** The table as markdown lines: one row per recipe, then the sums. */
@@ -745,9 +794,9 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
     'Σ rectangle',
     'Σ hull, meshes only',
     'ratio',
-    'Σ hull, regions traced',
+    'Σ hull, regions traced (refused: rectangle)',
     'ratio',
-    'Σ hull, regions convex',
+    'Σ hull, regions convex (no art: rectangle)',
     'ratio',
     'Σ opaque, drawn',
     'floor: drawn opaque / rectangle',
@@ -757,7 +806,7 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
     'notes',
   ];
   const out = [`| ${head.join(' | ')} |`, `| ${head.map((_h, i) => (i < 4 || i >= head.length - 2 ? '---' : '---:')).join(' | ')} |`];
-  const sum = { checked: 0, opaqueDrawn: 0, rect: 0, hullMeshes: 0, hullTraced: 0, hullConvex: 0, opaque: 0, a: [0, 0, 0], r: [0, 0, 0] };
+  const sum = { checked: 0, opaqueDrawn: 0, rect: 0, hullMeshes: 0, hullTraced: 0, hullConvex: 0, opaque: 0, a: [0, 0, 0], r: [0, 0, 0], refused: {} as Record<string, number>, refusedRect: 0 };
   for (const row of rows) {
     if (row.refused !== null) {
       out.push(`| ${row.name} | ${row.packer} | REFUSED: ${row.refused} |${' |'.repeat(head.length - 3)}`);
@@ -770,6 +819,8 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
     sum.opaque += row.opaque;
     sum.opaqueDrawn += row.opaqueDrawn;
     sum.checked += row.checked;
+    sum.refusedRect += row.fallbacks.refusedRect;
+    for (const [why, n] of Object.entries(row.fallbacks.traceRefused)) sum.refused[why] = (sum.refused[why] ?? 0) + n;
     [row.attachments.region, row.attachments.mesh, row.attachments.linked].forEach((v, i) => (sum.a[i] += v));
     [row.regions.region, row.regions.mesh, row.regions.rotated].forEach((v, i) => (sum.r[i] += v));
     out.push(
@@ -789,7 +840,7 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
         ratio(row.opaqueDrawn, row.rect),
         count(row.opaque),
         row.covered === null ? '—' : `${(row.covered.value * 100).toFixed(1)} %`,
-        tracerNote(row),
+        tracerNote(row.checked, row.fallbacks.traceRefused, row.fallbacks.refusedRect),
         fallbackNote(row),
       ].join(' | ')} |`,
     );
@@ -797,7 +848,7 @@ export function ceilingTable(rows: readonly CeilingRow[]): string[] {
   out.push(
     `| **all rows** | | ${sum.a.join(' / ')} | ${sum.r.join(' / ')} | ${count(sum.rect)} | ${count(sum.hullMeshes)} | ${ratio(sum.hullMeshes, sum.rect)} | ` +
       `${count(sum.hullTraced)} | ${ratio(sum.hullTraced, sum.rect)} | ${count(sum.hullConvex)} | ${ratio(sum.hullConvex, sum.rect)} | ` +
-      `${count(sum.opaqueDrawn)} | ${ratio(sum.opaqueDrawn, sum.rect)} | ${count(sum.opaque)} | | ${sum.checked} = silhouette | |`,
+      `${count(sum.opaqueDrawn)} | ${ratio(sum.opaqueDrawn, sum.rect)} | ${count(sum.opaque)} | | ${tracerNote(sum.checked, sum.refused, sum.refusedRect)} | |`,
   );
   return out;
 }
@@ -825,6 +876,7 @@ export function ceilingText(rows: readonly CeilingRow[]): string {
         selfIntersecting: row.fallbacks.selfIntersecting,
         hullsDiffer: row.fallbacks.hullsDiffer,
         traceRefused: Object.fromEntries(Object.entries(row.fallbacks.traceRefused).sort(([a], [b]) => (a < b ? -1 : 1))),
+        refusedRect: row.fallbacks.refusedRect,
       },
       checked: row.checked,
       covered: row.covered === null ? null : { value: r6(row.covered.value), of: row.covered.of },
