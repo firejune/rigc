@@ -97,6 +97,11 @@
  * (`tools/selftest_memory.base.json`, written by `--memory-base`) times a
  * stated margin; `TY25` plants a retaining suite against it and `TY26` holds
  * the live run, as a SKIP naming the command where the platform has no base.
+ * A suite that ran units through `inParallel` ends its line with `children
+ * high-water <MB> MB (<unit>)` — the largest peak of any child it started, as
+ * the driver read it of the child (issue #1143) — and the run's largest is held
+ * under the same base's children's figure by the same margin: `TY40` holds the
+ * live run and its plant, a unit holding a stated amount, is named by label.
  *
  * ## What `--shard` and `--merge` do
  *
@@ -1065,13 +1070,155 @@ interface ParallelUnit {
   cwd: string;
   /** The `maxBuffer` the unit's sequential `spawnSync` was given; past it the two paths would differ, so it is refused. */
   maxBuffer?: number;
+  /**
+   * What the suite line calls this unit when it is the heaviest (issue #1143).
+   * Deterministic text: absent, it is the script's file name, the word after
+   * it and the unit's place in its batch (`unitLabel`), which no temp
+   * directory's name can reach.
+   */
+  label?: string;
 }
 
-/** What one unit left: what `spawnSync` would have handed back. */
+/**
+ * What one unit left: what `spawnSync` would have handed back, and what the
+ * driver read of the child (issue #1143) — its peak resident set in BYTES,
+ * normalised by the factor its driver's calibration child read through the
+ * same call (`spawnMaxRssScale`, carried as `scale`), and its seconds.
+ * `peakBytes` and `scale` are `null` on the sequential path (`--jobs 1`, or a
+ * batch of one): `spawnSync` hands back no resource usage, so that child's
+ * peak is not read rather than guessed — and `null` too when the calibration
+ * read neither unit.
+ */
 interface UnitResult {
   status: number | null;
   stdout: string;
   stderr: string;
+  peakBytes: number | null;
+  scale: 1 | 1024 | null;
+  /** What the driver's calibration child read, or `null` on the sequential path and from a driver that wrote none. */
+  calibration: UnitCalibration | null;
+  seconds: number;
+}
+
+/**
+ * One measured child of the run (issue #1143): its label and its peak, as
+ * `inParallel` took them. `UNIT_PEAKS_TAKEN` holds every one in the order the
+ * run took them, and `RunTally.of` reads the ones a suite's call added — which
+ * is how the suite line names its heaviest unit with no call site having to
+ * remember to report one.
+ */
+interface UnitPeak {
+  label: string;
+  peakBytes: number;
+  /** The factor the raw `maxRSS` was multiplied by, as the driver's calibration read it. */
+  scale: 1 | 1024;
+  seconds: number;
+}
+
+/** Every child this process measured, in the order it measured them — appended by `inParallel`, read by `RunTally.of` (issue #1143). */
+const UNIT_PEAKS_TAKEN: UnitPeak[] = [];
+
+/**
+ * The factor that turns a process's OWN `process.resourceUsage().maxRSS` into
+ * bytes, read off that same process (issue #1143): `1` when the reading is
+ * bytes, `1024` when it is KiB, `null` when it is neither. It is for a process
+ * reading itself and for nothing else — a `--unit` child's peak, which the
+ * driver reads through another API, is scaled by `spawnMaxRssScale`.
+ *
+ * ⚠️ There are two APIs and they do not agree on every platform:
+ * - `process.resourceUsage().maxRSS` (the Node API, a process reading itself):
+ *   bytes on darwin, measured (a `bun -e` child that touched 64 MiB read
+ *   92,864,512 beside an `rss` of 92,880,896; Bun 1.3.11) — and KiB on Linux,
+ *   as Node documents it and CI showed (below).
+ * - `Bun.spawn(...).resourceUsage().maxRSS` (Bun's API, a parent reading a
+ *   child that exited): bytes on darwin, measured (the same child read
+ *   93,175,808 — 300-odd KiB above its own last reading, the exit's tail) —
+ *   and bytes on Linux, which CI showed.
+ *
+ * On darwin both are bytes, so nothing measured there could tell them apart.
+ * PR #1145 scaled every child by the DRIVER's own Node reading, and on Linux
+ * CI the suite lines printed `core` children high-water 736924 MB: a ~720 MB
+ * worker read in bytes and multiplied by the 1024 the driver's KiB reading
+ * asked for. The rule since: a figure's unit is read through the call that
+ * produced the figure, never through a neighbour.
+ *
+ * Here the unit is decided by the reading itself, a process's own `maxRSS`
+ * beside its own `process.memoryUsage().rss`, which is bytes on every
+ * platform. A peak is never below the resident set it peaked over, and the two
+ * candidate units are 1024 apart, so the ratio's distance from 1 decides it at
+ * the geometric middle, 32. (Not exactly 1: on darwin a fresh process read
+ * `maxRSS` 21,725,184 beside an `rss` of 21,741,568 — the peak is refreshed
+ * lazily — so the reading is a ratio, never an inequality.)
+ */
+function maxRssScale(rawMaxRss: number, rssBytes: number): 1 | 1024 | null {
+  if (!(rawMaxRss > 0) || !(rssBytes > 0)) return null;
+  const ratio = rssBytes / rawMaxRss;
+  if (ratio < 32 && ratio > 1 / 32) return 1;
+  if (ratio / 1024 < 32 && ratio / 1024 > 1 / 32) return 1024;
+  return null;
+}
+
+/**
+ * What the unit driver's calibration child allocates and touches before the
+ * driver's first unit (issue #1143): 64 MiB, enough that a `bun -e` process's
+ * own load (22 MB on darwin, measured) cannot carry the reading out of its
+ * window, and small enough to cost the driver ~11 ms (darwin, measured).
+ */
+const CALIBRATION_BYTES = 64 * 1024 * 1024;
+
+/**
+ * What the driver read of its calibration child: the bytes it was asked to
+ * hold, the `maxRSS` `Bun.spawn`'s `resourceUsage()` reported for it (`null`
+ * when the child failed or no usage came back), its exit, and what it cost.
+ */
+interface UnitCalibration {
+  bytes: number;
+  maxRss: number | null;
+  exit: number | null;
+  ms: number;
+}
+
+/**
+ * The factor that turns `Bun.spawn(...).resourceUsage().maxRSS` into bytes,
+ * read through that same call (issue #1143): the driver's calibration child
+ * held `bytes` and reported `maxRss`, and a peak is never below what the
+ * process touched, so in bytes the ratio `maxRss / bytes` is at least 1, in
+ * KiB at least 1/1024 — the two windows 1,024 apart and split at their
+ * geometric middle, 1/32: `[1, 32)` is bytes, `[1/1024, 1/32)` is KiB, and
+ * anything else (a ratio under 1/1024, one in `[1/32, 1)` — a peak below the
+ * allocation, which no unit reads — or one 32 times the allocation) is
+ * neither, `null` with the reason, never a guess. Measured on darwin: 64 MiB
+ * read 93,126,656–93,208,576 (ratio 1.388–1.389), 256 MiB 294,518,784–
+ * 294,535,168 (1.097). The driver's own `process.resourceUsage()` is not
+ * consulted: that is the Node API, and it is the one that differs (see
+ * `maxRssScale`).
+ */
+function spawnMaxRssScale(calibration: UnitCalibration | undefined): { scale: 1 | 1024 | null; why: string } {
+  if (calibration === undefined) return { scale: null, why: 'the driver wrote no calibration, so no child of it has a unit' };
+  const { bytes, maxRss, exit } = calibration;
+  if (maxRss === null || !(maxRss > 0) || !(bytes > 0)) {
+    return { scale: null, why: `the calibration child holding ${bytes} bytes exited ${String(exit)} and reported maxRSS ${String(maxRss)}, so its unit is not read` };
+  }
+  const ratio = maxRss / bytes;
+  if (ratio >= 1 && ratio < 32) return { scale: 1, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss}: bytes (ratio ${ratio.toFixed(4)})` };
+  if (ratio >= 1 / 1024 && ratio < 1 / 32) return { scale: 1024, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss}: KiB (ratio ${ratio.toFixed(6)})` };
+  return { scale: null, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss} (ratio ${ratio.toFixed(6)}), inside neither bytes' window [1, 32) nor KiB's [1/1024, 1/32)` };
+}
+
+/**
+ * What a unit is called with no `label` of its own: its script, the command
+ * word after it, and its place in the batch — `render_hashes.ts base, unit 1
+ * of 8` — all read off the command and none off a path, so no temp directory's
+ * name reaches the line. Inline code (`bun -e …`) is called `bun -e`, never by
+ * its text.
+ */
+function unitLabel(unit: ParallelUnit, k: number, of: number): string {
+  if (unit.label !== undefined) return unit.label;
+  const inline = unit.argv[1] === '-e';
+  const script = inline ? 'bun -e' : unit.argv[1] === undefined ? basename(unit.argv[0] ?? '?') : basename(unit.argv[1]);
+  const after = unit.argv[2];
+  const word = !inline && after !== undefined && /^[A-Za-z][\w-]*$/.test(after) ? ` ${after}` : '';
+  return `${script}${word}, unit ${k + 1} of ${of}`;
 }
 
 /** `spawnSync`'s own default `maxBuffer`, which every sequential call here that names none was held to. */
@@ -1088,6 +1235,22 @@ const SPAWN_MAX_BUFFER = 1024 * 1024;
  */
 const UNIT_DRIVER = [
   'const spec = JSON.parse(await Bun.file(process.argv[process.argv.length - 1]).text());',
+  // Issue #1143: the unit of a child's `maxRSS` is read through the call that
+  // reads the children — `Bun.spawn`'s `resourceUsage()` — off one child that
+  // holds a stated amount, once per driver and before its first unit, and
+  // handed back beside every unit's figure (`spawnMaxRssScale` decides it).
+  // A spec with no `calibrationBytes` gets no calibration, and then the parent
+  // reads no child's peak rather than assuming a unit.
+  'let calibration;',
+  "if (typeof spec.calibrationBytes === 'number') {",
+  '  const began = performance.now();',
+  "  const hold = 'const b = Buffer.alloc(' + spec.calibrationBytes + '); let t = 0; for (let i = 0; i < b.length; i += 4096) { b[i] = 1; t += b[i]; } if (t !== Math.ceil(b.length / 4096)) process.exit(3);';",
+  "  const child = Bun.spawn([process.execPath, '-e', hold], { stdin: 'ignore', stdout: 'ignore', stderr: 'pipe' });",
+  '  await new Response(child.stderr).text();',
+  '  await child.exited;',
+  '  const usage = child.resourceUsage();',
+  '  calibration = { bytes: spec.calibrationBytes, maxRss: child.exitCode === 0 && usage !== undefined ? Number(usage.maxRSS) : null, exit: child.exitCode, ms: performance.now() - began };',
+  '}',
   'const results = new Array(spec.units.length);',
   'let next = 0;',
   'const lane = async () => {',
@@ -1099,7 +1262,8 @@ const UNIT_DRIVER = [
   '    const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);',
   '    await child.exited;',
   '    const usage = child.resourceUsage();',
-  '    results[k] = { status: child.exitCode, stdout, stderr, maxRss: usage === undefined ? null : Number(usage.maxRSS), seconds: (performance.now() - began) / 1000 };',
+  '    const ended = performance.now();',
+  '    results[k] = { status: child.exitCode, stdout, stderr, maxRss: usage === undefined ? null : Number(usage.maxRSS), calibration, seconds: (ended - began) / 1000, began: began / 1000, ended: ended / 1000 };',
   '  }',
   '};',
   'await Promise.all(Array.from({ length: Math.min(spec.jobs, spec.units.length) }, lane));',
@@ -1121,10 +1285,18 @@ const UNIT_DRIVER = [
  *
  * `jobs` 1, or one unit, is the sequential path: `spawnSync` per unit, in
  * order, exactly the call each site made before. Above that one driver child
- * runs them (`UNIT_DRIVER`). With `RIGC_UNIT_PEAKS=<file>` each unit's peak RSS,
- * as the driver's child reported it, is appended to that file — the reading the
- * parent's own column cannot take (`TY26` reads this process), never printed in
- * the log, because a peak differs run to run and the log may not.
+ * runs them (`UNIT_DRIVER`), and every unit's peak RSS, as the driver read it of
+ * the child, comes back in its result and is appended to `UNIT_PEAKS_TAKEN`
+ * (issue #1143) — the reading the parent's own column cannot take (`TY26`
+ * reads this process), which the suite's line states as its children's
+ * high-water and `TY40` holds under the platform's base. No flag asks for it.
+ *
+ * `RIGC_UNIT_PEAKS=<file>` stays as the per-unit JOURNAL: one line per unit
+ * with its command, peak, seconds and when in the batch it started and ended.
+ * The log carries one figure per suite — the largest child and its name —
+ * because a line per unit would print 100-odd figures that differ run to run;
+ * the journal is where the overlap of a batch's children is read from
+ * (the sum alive at once, which the log does not state — see `TY40`).
  */
 // `driverSource` is `UNIT_DRIVER` everywhere but `TY33`, which hands in the
 // plant — a driver that interleaves its units' lines — to see it read.
@@ -1132,20 +1304,33 @@ function inParallel(units: readonly ParallelUnit[], jobs: number = JOBS, driverS
   if (jobs < 1 || !Number.isInteger(jobs)) throw new Error(`inParallel: jobs ${jobs} is not a whole number from 1`);
   if (jobs === 1 || units.length <= 1) {
     return units.map((unit) => {
+      const began = performance.now();
       const result = spawnSync(unit.argv[0], unit.argv.slice(1), { cwd: unit.cwd, encoding: 'utf8', maxBuffer: unit.maxBuffer ?? SPAWN_MAX_BUFFER });
-      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, peakBytes: null, scale: null, calibration: null, seconds: (performance.now() - began) / 1000 };
     });
   }
   const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-units-'));
   try {
     const specPath = join(dir, 'units.json');
     const out = join(dir, 'results.json');
-    writeFileSync(specPath, JSON.stringify({ jobs, out, units: units.map((unit) => ({ argv: unit.argv, cwd: unit.cwd })) }));
+    writeFileSync(specPath, JSON.stringify({ jobs, out, calibrationBytes: CALIBRATION_BYTES, units: units.map((unit) => ({ argv: unit.argv, cwd: unit.cwd })) }));
     const driver = spawnSync(process.execPath, ['-e', driverSource, specPath], { encoding: 'utf8' });
     if (driver.status !== 0 || !existsSync(out)) {
       throw new Error(`inParallel: the unit driver exited ${String(driver.status)} over ${units.length} unit(s) and wrote ${existsSync(out) ? 'its results' : 'nothing'}: ${driver.stderr.trim().slice(0, 300)}`);
     }
-    const results = JSON.parse(readFileSync(out, 'utf8')) as Array<UnitResult & { maxRss: number | null; seconds: number }>;
+    // What the driver wrote per unit. Every field past the three `spawnSync`
+    // would hand back is optional: `TY33`'s planted driver writes none of them,
+    // and a unit with no reading is a unit whose peak is not known, never 0.
+    const results = JSON.parse(readFileSync(out, 'utf8')) as Array<{
+      status: number | null;
+      stdout: string;
+      stderr: string;
+      maxRss?: number | null;
+      calibration?: UnitCalibration;
+      seconds?: number;
+      began?: number;
+      ended?: number;
+    }>;
     const peaks = process.env.RIGC_UNIT_PEAKS;
     return results.map((result, k) => {
       const unit = units[k];
@@ -1159,10 +1344,21 @@ function inParallel(units: readonly ParallelUnit[], jobs: number = JOBS, driverS
           );
         }
       }
+      // The scale comes from the calibration this driver read through the
+      // call that read the unit; a calibration that read neither unit leaves
+      // the peak unread (the journal says why) rather than guessed.
+      const { scale, why } = spawnMaxRssScale(result.calibration);
+      const peakBytes = typeof result.maxRss === 'number' && scale !== null ? result.maxRss * scale : null;
+      const seconds = result.seconds ?? 0;
+      const label = unitLabel(unit, k, units.length);
+      if (peakBytes !== null && scale !== null) UNIT_PEAKS_TAKEN.push({ label, peakBytes, scale, seconds });
       if (peaks !== undefined && peaks !== '') {
-        appendFileSync(peaks, `${JSON.stringify({ jobs, unit: k, of: units.length, argv: unit.argv.slice(1).map((a) => basename(a)).join(' '), maxRss: result.maxRss, seconds: result.seconds })}\n`);
+        appendFileSync(
+          peaks,
+          `${JSON.stringify({ jobs, unit: k, of: units.length, label, argv: unit.argv.slice(1).map((a) => basename(a)).join(' '), maxRss: result.maxRss ?? null, calibration: result.calibration ?? null, scale, why, peakBytes, seconds, began: result.began ?? null, ended: result.ended ?? null })}\n`,
+        );
       }
-      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, peakBytes, scale, calibration: result.calibration ?? null, seconds };
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -45636,7 +45832,50 @@ function anchorRowOf(set: AnchorSet, pageEdges: 'pot' | 'free'): AnchorRow {
 /** A pack row's unit (issue #1128): the set and the page edges, both values. */
 type AnchorUnitSpec = { kind: 'anchor-row'; set: AnchorSet; pageEdges: 'pot' | 'free' };
 /** The work a unit process can be handed (issues #1128, #1133): its kind and its input, both values. */
-type SelftestUnitSpec = AnchorUnitSpec | { kind: 'core'; input: CoreUnitInput } | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] };
+/**
+ * `TY40`'s scratch unit (issue #1143): a `--unit` process that touches
+ * `megabytes` MiB and holds them to its end, so its peak is the unit's
+ * load plus a stated amount. Not a suite's work — `TY40` runs a pair of them,
+ * one holding nothing, to see the run's own path carry a child's peak to the
+ * parent and the ceiling name the unit that went over.
+ */
+type AllocateUnitSpec = { kind: 'ty40-allocate'; megabytes: number; label: string };
+type SelftestUnitSpec =
+  | AnchorUnitSpec
+  | AllocateUnitSpec
+  | { kind: 'core'; input: CoreUnitInput }
+  | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] };
+
+/**
+ * What `TY40`'s scratch unit hands back: how many MiB it held and the first
+ * byte of each, so the pages cannot be skipped — or, when the allocation was
+ * refused, `refused` with what refused it, so the parent names the plant's
+ * fault rather than dying of it.
+ */
+interface AllocateUnitValue {
+  megabytes: number;
+  touched: number;
+  refused?: string;
+}
+
+/** `TY40`'s scratch unit's work: `megabytes` MiB allocated and every page written, held until the value is returned. */
+function allocateUnitWork(spec: AllocateUnitSpec): AllocateUnitValue {
+  let held: Buffer;
+  try {
+    // Issue #1143: on main a plant sized 1,024x too large threw `RangeError`
+    // here and the merge job died of it. A refused allocation is the plant's
+    // fault and comes back as a value naming it.
+    held = Buffer.alloc(spec.megabytes * 1024 * 1024);
+  } catch (err) {
+    return { megabytes: spec.megabytes, touched: 0, refused: `${(err as Error).name}: ${(err as Error).message}` };
+  }
+  let touched = 0;
+  for (let at = 0; at < held.length; at += 4096) {
+    held[at] = 1;
+    touched += held[at];
+  }
+  return { megabytes: spec.megabytes, touched };
+}
 
 /** A unit's work, run in whichever process holds it — the one function both paths call. */
 function selftestUnitWork(spec: AnchorUnitSpec): AnchorRow {
@@ -45663,6 +45902,14 @@ function inUnits(specs: readonly AnchorUnitSpec[], jobs: number = JOBS): AnchorR
   return unitValues(specs, jobs) as AnchorRow[];
 }
 
+/** What the suite line calls a `--unit` process when it is the heaviest (issue #1143): the work it was handed, never the spec file's temp path. */
+function unitSpecLabel(spec: SelftestUnitSpec, k: number, of: number): string {
+  if (spec.kind === 'anchor-row') return `anchor row ${spec.set.name}/${spec.pageEdges}`;
+  if (spec.kind === 'core') return `core unit ${spec.input.unit}`;
+  if (spec.kind === 'core-worker') return `core worker ${k + 1} of ${of}`;
+  return spec.label;
+}
+
 /**
  * The process half of `inUnits` (issues #1128, #1133): each spec run by a
  * `bun selftest.ts --unit` process through `inParallel`, up to `jobs` at once
@@ -45677,7 +45924,10 @@ function unitValues(specs: readonly SelftestUnitSpec[], jobs: number): unknown[]
       writeFileSync(input, JSON.stringify(spec));
       return { input, output: join(dir, `unit-${k}.out.json`) };
     });
-    const runs = inParallel(files.map((f) => ({ argv: [process.execPath, 'selftest.ts', '--unit', f.input, f.output], cwd: import.meta.dir })), jobs);
+    const runs = inParallel(
+      files.map((f, k) => ({ argv: [process.execPath, 'selftest.ts', '--unit', f.input, f.output], cwd: import.meta.dir, label: unitSpecLabel(specs[k], k, specs.length) })),
+      jobs,
+    );
     return runs.map((run, k) => {
       if (run.status !== 0 || !existsSync(files[k].output)) {
         throw new Error(`selftest --unit: unit ${k} (${specs[k].kind}) exited ${String(run.status)} and wrote ${existsSync(files[k].output) ? 'its value' : 'nothing'}: ${run.stderr.trim().slice(0, 400)}`);
@@ -74745,7 +74995,21 @@ function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnit
   const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-core-units-'));
   try {
     const worker: SelftestUnitSpec = { kind: 'core-worker', dir, shared: inputs[0], units: claimOrder };
+    const taken = UNIT_PEAKS_TAKEN.length;
     const workers = unitValues(Array.from({ length: Math.min(jobs, inputs.length) }, () => worker), jobs) as CoreWorkerRun[][];
+    // Issue #1143: a worker is the child the driver measured, and what the
+    // suite line should name is the core unit, so each worker's peak is
+    // renamed for the unit it was running when its own peak was first reached
+    // — the reading after which it never rose again. That names where the
+    // mark was SET; the units before it contributed what the worker kept.
+    workers.forEach((runs, w) => {
+      const label = `core worker ${w + 1} of ${workers.length}`;
+      const peak = UNIT_PEAKS_TAKEN.slice(taken).find((p) => p.label === label);
+      const read = runs.filter((run): run is CoreWorkerRun & { maxRss: number } => run.maxRss !== null);
+      const top = Math.max(0, ...read.map((run) => run.maxRss));
+      const setter = read.find((run) => run.maxRss === top);
+      if (peak !== undefined && setter !== undefined) peak.label = `${setter.unit} in ${label}`;
+    });
     const peaks = process.env.RIGC_UNIT_PEAKS;
     if (peaks !== undefined && peaks !== '') {
       workers.forEach((runs, w) => {
@@ -74762,11 +75026,11 @@ function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnit
   }
 }
 
-/** What a core worker ran: each unit it claimed, its seconds, and the worker's peak RSS after it, in bytes. */
+/** What a core worker ran: each unit it claimed, its seconds, and the worker's peak RSS after it, in bytes (`null` where `maxRssScale` could not read the unit). */
 interface CoreWorkerRun {
   unit: CoreUnitName;
   seconds: number;
-  maxRss: number;
+  maxRss: number | null;
 }
 
 /** One worker of a core batch (issue #1133): it claims units in `units`' order until none is left, and writes each one's result beside the claims. */
@@ -74783,7 +75047,9 @@ function coreUnitWorker(spec: { dir: string; shared: CoreUnitInput; units: CoreU
     const began = performance.now();
     const result = coreUnitWork({ ...spec.shared, unit: name });
     writeFileSync(join(spec.dir, `result-${name}.json`), JSON.stringify(result));
-    ran.push({ unit: name, seconds: (performance.now() - began) / 1000, maxRss: process.resourceUsage().maxRSS });
+    const raw = process.resourceUsage().maxRSS;
+    const scale = maxRssScale(raw, process.memoryUsage().rss);
+    ran.push({ unit: name, seconds: (performance.now() - began) / 1000, maxRss: scale === null ? null : raw * scale });
   }
   return ran;
 }
@@ -104921,7 +105187,7 @@ function prefixOpeningCollisions(blocks: readonly SuiteBlock[]): string[] {
  * one, and `TY23` holds that it is not.
  */
 const DURATION_LINE =
-  /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\)(?:, heap (\d+) MB \(([+-]\d+) MB\), ext (\d+) MB)?)?$/;
+  /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\)(?:, heap (\d+) MB \(([+-]\d+) MB\), ext (\d+) MB)?(?:, children high-water (\d+) MB \((.+)\))?)?$/;
 
 /**
  * What the process held after one suite and how far the suite moved it, in
@@ -104948,6 +105214,26 @@ interface SuiteRss {
   heap?: number;
   heapDelta?: number;
   ext?: number;
+  /**
+   * The largest peak of any child process the suite's call measured through
+   * `inParallel`, in whole MB, and that child's label (issue #1143). Absent
+   * when the suite measured none — it ran no units, or ran them on the
+   * sequential path, which reads no child's peak.
+   */
+  children?: SuiteChildren;
+}
+
+/** A suite's children's high-water: the largest child it measured, in whole MB, and what that child was. */
+interface SuiteChildren {
+  highWater: number;
+  unit: string;
+}
+
+/** The heaviest of the children a suite's call measured, or `undefined` with none (issue #1143). The first measured wins a tie, so one run names one unit. */
+function suiteChildren(peaks: readonly UnitPeak[]): SuiteChildren | undefined {
+  let top: UnitPeak | undefined;
+  for (const peak of peaks) if (top === undefined || peak.peakBytes > top.peakBytes) top = peak;
+  return top === undefined ? undefined : { highWater: megabytes(top.peakBytes), unit: top.label };
 }
 
 /** One reading of the process's memory, in bytes: what a suite boundary reads, once. */
@@ -105001,7 +105287,8 @@ function durationLine(key: string, controls: number, seconds: number, rss: Suite
     rss.heap === undefined || rss.heapDelta === undefined || rss.ext === undefined
       ? ''
       : `, heap ${rss.heap} MB (${signedMegabytes(rss.heapDelta)} MB), ext ${rss.ext} MB`;
-  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${signedMegabytes(rss.delta)} MB)${heap}`;
+  const children = rss.children === undefined ? '' : `, children high-water ${rss.children.highWater} MB (${rss.children.unit})`;
+  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${signedMegabytes(rss.delta)} MB)${heap}${children}`;
 }
 
 /** The figures a duration line printed, read back off `DURATION_LINE`'s groups; `null` when it printed no RSS. */
@@ -105013,6 +105300,7 @@ function printedMemory(match: RegExpExecArray): SuiteRss | null {
     read.heapDelta = Number(match[7]);
     read.ext = Number(match[8]);
   }
+  if (match[9] !== undefined && match[10] !== undefined) read.children = { highWater: Number(match[9]), unit: match[10] };
   return read;
 }
 
@@ -105132,6 +105420,13 @@ function durationFaults(
         );
       }
     }
+    // Issue #1143: the children's figure is read back the same way — a line
+    // that drops it, or names another unit or figure, says nothing true about
+    // the processes the suite started.
+    if (stated !== undefined && measured !== undefined && (stated.children?.highWater !== measured.children?.highWater || stated.children?.unit !== measured.children?.unit)) {
+      const spell = (c: SuiteChildren | undefined): string => (c === undefined ? 'no children' : `children high-water ${c.highWater} MB (${c.unit})`);
+      faults.push(`the suite "${block.key}" printed ${spell(stated.children)} while its call measured ${spell(measured.children)}`);
+    }
   }
   for (const key of printed.keys()) {
     if (!blocks.some((block) => block.key === key)) {
@@ -105193,6 +105488,26 @@ const MEMORY_BASE_SPEC = 'selftest-memory/1';
  */
 const MEMORY_MARGIN = 1.4;
 
+/**
+ * How far above the children's bound `TY40`'s plant is sized (issue #1143): a
+ * tenth, so the planted unit's own allocation crosses the bound with no help
+ * from the load it runs over and no rounding between MiB and the line's MB
+ * can put it under.
+ */
+const TY40_PLANT_OVER = 1.1;
+
+/**
+ * The most `TY40`'s plant may ask for, in MB (issue #1143). A plant runs on a
+ * CI runner beside the unit next to it and the parent (whose own high-water
+ * `TY26` holds, per platform, in the same base), and a runner's memory is finite:
+ * GitHub documents its hosted Linux runners at 16 GB for a public repository
+ * and 7 GB for a private one [their documentation, not measured here], so
+ * 4,096 MB leaves the smaller room for the rest. Over it the plant does not
+ * run and `TY40` names why — a plant must never be the thing that kills the
+ * job, which is what a plant sized 1,024x too large did to main's merge job.
+ */
+const TY40_PLANT_LIMIT_MB = 4096;
+
 /** One platform's base: the high-water a green full run on it reached. */
 interface MemoryBaseEntry {
   /** The largest RSS any suite line of that run printed, in whole MB. */
@@ -105201,6 +105516,16 @@ interface MemoryBaseEntry {
   suites: number;
   /** The Bun that ran it: the allocator is the runtime's, and a new one can move the figure. */
   bun: string;
+  /**
+   * The largest peak of any child that run measured (issue #1143, `TY40`), in
+   * whole MB, and the `--jobs` it ran at — a core worker's share of the units
+   * is the batch over `jobs`, so the figure is a reading AT that `jobs`.
+   * Absent from an entry written before #1143, or by a run that measured no
+   * child (`--jobs 1`); then `TY40` is a SKIP that names the command, never a
+   * pass. Optional, so the format word did not change: every reader of
+   * `selftest-memory/1` reads an entry with it exactly as one without.
+   */
+  children?: { highWater: number; jobs: number };
 }
 
 /** The base document, keyed by `process.platform`. */
@@ -105220,6 +105545,9 @@ function readMemoryBase(root: string): MemoryBase | null {
   for (const [platform, entry] of Object.entries(parsed.platforms)) {
     if (typeof entry?.highWater !== 'number') {
       throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry states no "highWater"; write it again with \`bun selftest.ts --memory-base\``);
+    }
+    if (entry.children !== undefined && (typeof entry.children?.highWater !== 'number' || typeof entry.children?.jobs !== 'number')) {
+      throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry's "children" states no "highWater" and "jobs"; write it again with \`bun selftest.ts --memory-base\``);
     }
   }
   return { spec: parsed.spec, platforms: parsed.platforms };
@@ -105242,6 +105570,58 @@ interface MemoryCeiling {
 /** The run's high-water: the largest RSS any suite line printed, in whole MB (0 with none). */
 function highWaterOf(rss: ReadonlyMap<string, SuiteRss>): number {
   return Math.max(0, ...[...rss.values()].map((r) => r.after));
+}
+
+/** The run's children's high-water (issue #1143): the largest child any suite line stated, with its suite and unit, or `null` with none. Ties go to the first suite. */
+function childrenHighWaterOf(rss: ReadonlyMap<string, SuiteRss>): { highWater: number; suite: string; unit: string } | null {
+  let top: { highWater: number; suite: string; unit: string } | null = null;
+  for (const [suite, r] of rss) {
+    if (r.children !== undefined && (top === null || r.children.highWater > top.highWater)) top = { highWater: r.children.highWater, suite, unit: r.children.unit };
+  }
+  return top;
+}
+
+/** What the children's ceiling says about one run (issue #1143): held, over, nothing to hold it to, or no child measured. */
+interface ChildrenCeiling {
+  verdict: 'held' | 'over' | 'no base' | 'no children';
+  bound: number | null;
+  highWater: number | null;
+  faults: string[];
+}
+
+/**
+ * The run's children's high-water against its platform's children's base ×
+ * `MEMORY_MARGIN` — the same factor `TY26`'s ceiling uses, read from the same
+ * constant (issue #1143, `TY40`). Over the bound, the fault names the unit and
+ * the suite that started it, because "a child is too big" with no child named
+ * is a search through 100-odd processes rather than a fix.
+ *
+ * ⚖️ It holds the LARGEST child, not the sum of the children alive at once.
+ * The sum is what a runner dies of, but it is a reading of a schedule: which
+ * units overlap depends on `--jobs`, on the cores and on how long each unit
+ * took that run, so a base of sums written at one `jobs` bounds no other — and
+ * the sum alive at once is at most `jobs` × the largest child, which is the
+ * bound this one figure gives for any `jobs`. What it cannot see: a run whose
+ * units all grew a little, under the bound each, while their sum at the
+ * runner's `jobs` crossed the runner's memory — the per-unit journal
+ * (`RIGC_UNIT_PEAKS`) is where that sum is read.
+ */
+function childrenCeiling(rss: ReadonlyMap<string, SuiteRss>, entry: MemoryBaseEntry | undefined, platform: string): ChildrenCeiling {
+  const top = childrenHighWaterOf(rss);
+  if (entry?.children === undefined) return { verdict: 'no base', bound: null, highWater: top?.highWater ?? null, faults: [] };
+  const bound = Math.floor(entry.children.highWater * MEMORY_MARGIN);
+  if (top === null) return { verdict: 'no children', bound, highWater: null, faults: [] };
+  if (top.highWater <= bound) return { verdict: 'held', bound, highWater: top.highWater, faults: [] };
+  return {
+    verdict: 'over',
+    bound,
+    highWater: top.highWater,
+    faults: [
+      `the run's children's high-water was ${top.highWater} MB — "${top.unit}", started by the suite "${top.suite}" — over the ${platform} bound of ${bound} MB ` +
+        `(base children's high-water ${entry.children.highWater} MB at --jobs ${entry.children.jobs} × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
+        'every suite line names its own heaviest child. If the growth is intended, write the base again with `bun selftest.ts --memory-base`',
+    ],
+  };
 }
 
 /**
@@ -105848,10 +106228,15 @@ class RunTally {
     const failsBefore = this.failText.length;
     const marks = keeping ? this.states.map((state) => state.mark()) : [];
     const memoryBefore = readMemory(this.collects);
+    // Issue #1143: the children this suite's call measured are the ones
+    // `inParallel` added to `UNIT_PEAKS_TAKEN` across it.
+    const unitsBefore = UNIT_PEAKS_TAKEN.length;
     const began = performance.now();
     const value = suite();
     const seconds = (performance.now() - began) / 1000;
     const rss = suiteMemory(memoryBefore, readMemory(this.collects));
+    const children = suiteChildren(UNIT_PEAKS_TAKEN.slice(unitsBefore));
+    if (children !== undefined) rss.children = children;
     const block: SuiteBlock = {
       key,
       ran: reads.ran === undefined ? true : reads.ran(value),
@@ -106123,8 +106508,14 @@ interface ShardOutside {
   gutter: Record<string, number>;
 }
 
-/** The format word of a shard's document. */
-const SHARD_DOCUMENT_SPEC = 'selftest-shard/2';
+/**
+ * The format word of a shard's document. `/3` since issue #1143: a record's
+ * `rss` may carry `children` — the suite's heaviest child — which the merge
+ * holds per shard. Nothing older reads a newer document anyway (the merge
+ * refuses any document whose `source` is another `selftest.ts`), so the word
+ * moved because a field was added, not to keep an old reader out.
+ */
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/3';
 
 /** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
 interface ShardDocument {
@@ -106504,8 +106895,18 @@ function mergedCeilingFaults(t: RunTally, replay: MergeReplay, base: MemoryBase 
     const platform = from === -1 ? process.platform : replay.docs[from].platform;
     const where = from === -1 ? 'the merge' : replay.label(from);
     const ceiling = memoryCeiling(rss, base?.platforms[platform], platform);
-    if (ceiling.verdict === 'over') faults.push(...ceiling.faults.map((fault) => `${where}: ${fault}`));
-    else held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}`);
+    // Issue #1143: each shard's children are held as its own, so the merge
+    // holds the largest over every shard without a second figure for it.
+    const children = childrenCeiling(rss, base?.platforms[platform], platform);
+    if (ceiling.verdict === 'over' || children.verdict === 'over') {
+      faults.push(...[...ceiling.faults, ...children.faults].map((fault) => `${where}: ${fault}`));
+    } else {
+      const childText =
+        children.highWater === null
+          ? ', no child measured'
+          : `, children ${children.highWater} MB${children.bound === null ? ` (no ${platform} children's base)` : ` ≤ ${children.bound}`}`;
+      held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}${childText}`);
+    }
   }
   return { faults, held };
 }
@@ -108555,6 +108956,266 @@ function runRunTallySuite(live: RunTally): number {
             'the mark an earlier one left; the final figure is that mark whichever suite set it',
         );
       }
+    }
+
+    // --- TY40: the children's high-water is held under the platform's base, and a planted child is named (#1143) --
+    //
+    // `TY26` reads this process; since #1129 and #1136 the heaviest work runs in
+    // `--unit` children it cannot see. The live half holds the largest child any
+    // suite so far measured to the base's children's figure × `MEMORY_MARGIN`.
+    // The plant runs the run's own path — `unitValues` → `inParallel` → the
+    // driver — over `TY40`'s scratch unit kind: one unit holding a stated amount
+    // beside one holding nothing. The ceiling has to name the planted unit, with
+    // its figure, by the label the suite line would print.
+    //
+    // 🔒 The plant is sized from the BASE ENTRY alone — `TY40_PLANT_OVER` above
+    // its bound — and bounded by `TY40_PLANT_LIMIT_MB`. With no entry it does
+    // not run and the control is a SKIP that says so. PR #1145 sized it off the
+    // run's own children's reading, and on Linux that reading was 1,024x the
+    // truth: the plant asked for hundreds of GB, `Buffer.alloc` threw, and the
+    // merge job on main died of the control (issue #1143). A refused allocation
+    // and a unit that did not complete are both read as the plant's fault.
+    //
+    // ⚠️ Their peaks are taken back out of `UNIT_PEAKS_TAKEN` once read: the
+    // plant's child is deliberate, and left in it would become `run-tally`'s
+    // own children's high-water — the reading the plant exists to test.
+    {
+      const probes: string[] = [];
+      let plantWords = '';
+      let unitWord = 'not read here: no plant child ran';
+      const jobs = Math.max(2, JOBS);
+      const base = readMemoryBase(import.meta.dir);
+      const entry = base?.platforms[process.platform];
+      const children = entry?.children;
+      const taken = UNIT_PEAKS_TAKEN.length;
+      const peakOf = (label: string): UnitPeak | undefined => UNIT_PEAKS_TAKEN.slice(taken).find((p) => p.label === label);
+      if (entry === undefined || children === undefined) {
+        plantWords = `the plant did not run: it is sized from the ${process.platform} base's children's figure alone, and ${MEMORY_BASE_PATH} holds none`;
+      } else {
+        const ceiling = Math.floor(children.highWater * MEMORY_MARGIN);
+        const plantMegabytes = Math.ceil(ceiling * TY40_PLANT_OVER);
+        const plantLabel = `TY40 plant holding ${plantMegabytes} MB`;
+        const besideLabel = 'TY40 beside the plant holding 0 MB';
+        if (plantMegabytes > TY40_PLANT_LIMIT_MB) {
+          probes.push(
+            `the plant would hold ${plantMegabytes} MB (the ${process.platform} bound of ${ceiling} MB × ${TY40_PLANT_OVER}), over its limit of ${TY40_PLANT_LIMIT_MB} MB, ` +
+              "so it was not run — the base's children's figure has outgrown what a plant may ask a runner for; raise the limit with its reason or lower the children",
+          );
+        } else {
+          try {
+            const values = unitValues(
+              [
+                { kind: 'ty40-allocate', megabytes: plantMegabytes, label: plantLabel },
+                { kind: 'ty40-allocate', megabytes: 0, label: besideLabel },
+              ],
+              jobs,
+            ) as AllocateUnitValue[];
+            const refused = values.flatMap((v, k) => (v.refused === undefined ? [] : [`${k === 0 ? plantLabel : besideLabel}: ${v.refused}`]));
+            const plant = peakOf(plantLabel);
+            const beside = peakOf(besideLabel);
+            if (refused.length > 0) {
+              probes.push(`the plant could not allocate what it states — ${refused.join('; ')}`);
+            } else if (plant === undefined || beside === undefined) {
+              probes.push(`the driver handed back no peak for ${plant === undefined ? 'the planted unit' : 'the unit beside it'}`);
+            } else {
+              unitWord = plant.scale === 1 ? 'bytes' : 'KiB';
+              const suiteOf = (peaks: UnitPeak[]): SuiteRss => {
+                const r: SuiteRss = { after: 0, delta: 0 };
+                const c = suiteChildren(peaks);
+                if (c !== undefined) r.children = c;
+                return r;
+              };
+              const cleanRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-idle', suiteOf([])]]);
+              const plantedRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-planted', suiteOf([beside, plant])]]);
+              const clean = childrenCeiling(cleanRun, entry, 'plant');
+              const planted = childrenCeiling(plantedRun, entry, 'plant');
+              const noBase = childrenCeiling(plantedRun, { highWater: entry.highWater, suites: entry.suites, bun: entry.bun }, 'plant');
+              const noChildren = childrenCeiling(new Map([['ty40-idle', suiteOf([])]]), entry, 'plant');
+              if (clean.verdict !== 'held') probes.push(`the unit holding nothing, held to the ${process.platform} base, read ${clean.verdict}: ${clean.faults.join('; ')}`);
+              if (planted.verdict !== 'over' || planted.faults.length !== 1 || !planted.faults[0].includes(`"${plantLabel}"`) || !planted.faults[0].includes('"ty40-planted"') || !planted.faults[0].includes(`${megabytes(plant.peakBytes)} MB`)) {
+                probes.push(`the unit holding ${plantMegabytes} MB (peak ${megabytes(plant.peakBytes)} MB, bound ${planted.bound ?? 'none'} MB) is not named by unit, suite and figure: ${planted.verdict} ${planted.faults.join('; ')}`);
+              }
+              if (noBase.verdict !== 'no base' || noBase.faults.length > 0) probes.push(`an entry with no children's figure reads ${noBase.verdict}, where it is no verdict at all`);
+              if (noChildren.verdict !== 'no children' || noChildren.faults.length > 0) probes.push(`a run that measured no child reads ${noChildren.verdict}, where it is no verdict at all`);
+              // The line states the figure and the unit, and reads back as what was measured; one that drops them is named.
+              const line = durationLine('ty40-planted', 2, 0.1, plantedRun.get('ty40-planted') ?? { after: 0, delta: 0 });
+              const read = DURATION_LINE.exec(line);
+              const readBack = read === null ? null : printedMemory(read);
+              if (readBack?.children?.highWater !== megabytes(plant.peakBytes) || readBack.children.unit !== plantLabel) {
+                probes.push(`the suite line ${JSON.stringify(line)} reads back as ${JSON.stringify(readBack?.children ?? null)}`);
+              }
+              const block: SuiteBlock = { key: 'ty40-planted', ran: true, controls: 2, quiet: 0, headers: 1, fails: 0, returned: 0, names: [] };
+              const dropped = durationFaults([block], new Map([['ty40-planted', 0.1]]), new Map([['ty40-planted', 0.1]]), 1, plantedRun, new Map([['ty40-planted', { after: 0, delta: 0 }]]));
+              if (!dropped.some((fault) => fault.includes('printed no children') && fault.includes(plantLabel))) {
+                probes.push(`a line that dropped the children's figure was not named: ${dropped.join('; ') || 'no fault'}`);
+              }
+              const kept = JSON.parse(memoryBaseText({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 9, suites: 1, bun: 'x' } } }, 'alpha', entry)) as MemoryBase;
+              if (kept.platforms.alpha?.children?.highWater !== children.highWater || kept.platforms.zeta?.children !== undefined) {
+                probes.push(`writing the children's figure for one platform did not keep it, or touched another's: ${JSON.stringify(kept.platforms)}`);
+              }
+              plantWords =
+                `the plant held — sized from the base alone (${ceiling} MB × ${TY40_PLANT_OVER}, under its limit of ${TY40_PLANT_LIMIT_MB} MB), the unit holding ${plantMegabytes} MB ` +
+                `beside one holding nothing (${megabytes(beside.peakBytes)} MB) peaks at ${megabytes(plant.peakBytes)} MB through the driver at --jobs ${jobs} and is named over the bound ` +
+                `of ${planted.bound ?? '?'} MB — ${planted.faults[0] ?? 'nothing'} — while an entry with no children's figure and a run with no child give no verdict, ` +
+                "the suite line carries the unit and its figure and one that drops them is named, and writing one platform's figure keeps every other platform's";
+            }
+          } catch (err) {
+            probes.push(`the plant's units did not complete, so the plant is at fault rather than the run: ${(err as Error).message.slice(0, 400)}`);
+          } finally {
+            UNIT_PEAKS_TAKEN.length = taken;
+          }
+        }
+      }
+      const scaleProbes = [
+        [294748160, 294404096, 1],
+        [287840, 294404096, 1024],
+        [21725184, 21741568, 1],
+        [1, 1e9, null],
+        [0, 1e8, null],
+      ] as const;
+      for (const [raw, rss, want] of scaleProbes) {
+        if (maxRssScale(raw, rss) !== want) probes.push(`maxRssScale(${raw}, ${rss}) reads ${String(maxRssScale(raw, rss))} where it is ${String(want)}`);
+      }
+      const sofar = childrenHighWaterOf(live.printedRss);
+      const ownRaw = process.resourceUsage().maxRSS;
+      const ownScale = maxRssScale(ownRaw, process.memoryUsage().rss);
+      if (ownScale === null) probes.push(`this process's maxRSS ${ownRaw} beside its rss ${process.memoryUsage().rss} bytes reads as neither bytes nor KiB`);
+      const plantHeld = probes.length === 0;
+      if (plantHeld && (entry?.children === undefined || sofar === null)) {
+        console.log(
+          `  SKIP  TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE: ` +
+            (entry?.children === undefined
+              ? `${MEMORY_BASE_PATH} holds no children's high-water for ${process.platform}, so this run's children` +
+                `${sofar === null ? '' : ` (${sofar.highWater} MB so far, "${sofar.unit}" in suite "${sofar.suite}")`} are held to nothing — ` +
+                'write one with `bun selftest.ts --memory-base` on a green full run at --jobs 2 or more'
+              : `no suite before this one measured a child's peak (--jobs ${JOBS}${JOBS === 1 ? ': the sequential path reads none' : ''}), so the ${process.platform} children's bound ` +
+                `of ${Math.floor(entry.children.highWater * MEMORY_MARGIN)} MB is held over nothing`) +
+            `; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+        );
+      } else {
+        const bound = entry?.children === undefined ? null : Math.floor(entry.children.highWater * MEMORY_MARGIN);
+        if (bound !== null && sofar !== null && sofar.highWater > bound) {
+          probes.push(`the children's high-water so far is ${sofar.highWater} MB ("${sofar.unit}", suite "${sofar.suite}"), over the ${process.platform} bound of ${bound} MB (base children's high-water ${entry?.children?.highWater ?? '?'} MB × ${MEMORY_MARGIN})`);
+        }
+        const held = probes.length === 0;
+        say(
+          'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the ${process.platform} base children's high-water is ${entry?.children?.highWater ?? '?'} MB at --jobs ${entry?.children?.jobs ?? '?'}, so the bound is ${bound ?? '?'} MB ` +
+              `(× ${MEMORY_MARGIN}); the largest child any suite so far measured is ${sofar?.highWater ?? '?'} MB ("${sofar?.unit ?? '?'}", suite "${sofar?.suite ?? '?'}"), ` +
+              `and the whole run's is held to the same bound after the tables; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+          ),
+          "issue #1143: the ceiling read one process while the heaviest work ran in --unit children it could not see (core's workers near 1 GB each), " +
+            'so a unit that doubled its memory passed every control and a CI shard would die of the runner\'s limit with no line naming the unit',
+        );
+      }
+    }
+
+    // --- TY42: a known child reads its known size through the driver, and a driver reporting a wrong scale is named (#1143) --
+    //
+    // The control that was missing when PR #1145 merged: nothing held a child
+    // whose size is KNOWN, so a figure 1,024x the truth printed on Linux and
+    // the only control that could have judged it was a SKIP there. A `bun -e`
+    // child that allocates and touches 256 MiB runs through the real path —
+    // `inParallel`, the driver, its calibration child, the normalisation — and
+    // its peak has to read inside [256 MiB, 1 GiB) on every platform: never
+    // below what it touched, and under four times it, which no `bun -e` load
+    // reaches (darwin, measured: 294,535,168 bytes). The plants are drivers
+    // that report the unit's figure ×1,024 and ÷1,024 — the two ways a scale
+    // read through the wrong API goes wrong — each read by name with the
+    // figure, and a calibration that reads neither unit leaves the peak
+    // unread rather than guessed. No base is read, so it runs everywhere.
+    {
+      const probes: string[] = [];
+      const mib = 1024 * 1024;
+      const low = 256 * mib;
+      const high = 1024 * mib;
+      const known = 'TY42 child holding 256 MiB';
+      const idle = 'TY42 child holding nothing';
+      const hold = (n: number): string =>
+        `const b = Buffer.alloc(${n} * 1024 * 1024); let t = 0; for (let i = 0; i < b.length; i += 4096) { b[i] = 1; t += b[i]; } if (t !== Math.ceil(b.length / 4096)) process.exit(3);`;
+      const units: ParallelUnit[] = [
+        { argv: [process.execPath, '-e', hold(256)], cwd: import.meta.dir, label: known },
+        { argv: [process.execPath, '-e', hold(0)], cwd: import.meta.dir, label: idle },
+      ];
+      const figure = (bytes: number): string => `${bytes} bytes (${(bytes / mib).toFixed(1)} MiB)`;
+      // What the known child read, or `null` when it read inside the window.
+      const knownFault = (results: readonly UnitResult[], driver: string): string | null => {
+        const r = results[0];
+        if (r === undefined) return `${driver}: no result for "${known}"`;
+        if (r.status !== 0) return `${driver}: "${known}" exited ${String(r.status)}: ${r.stderr.trim().slice(0, 200)}`;
+        if (r.peakBytes === null) return `${driver}: "${known}" read no peak (scale ${String(r.scale)})`;
+        if (r.peakBytes < low || r.peakBytes >= high) return `${driver}: "${known}" read ${figure(r.peakBytes)} at scale ${String(r.scale)}, outside [256 MiB, 1 GiB)`;
+        return null;
+      };
+      const planted = (from: string, to: string): string => {
+        const source = UNIT_DRIVER.split(from).join(to);
+        if (source === UNIT_DRIVER) probes.push(`the plant replacing ${JSON.stringify(from)} changed nothing in the driver, so it plants nothing`);
+        return source;
+      };
+      const unitRead = 'maxRss: usage === undefined ? null : Number(usage.maxRSS)';
+      const calibrationRead = 'maxRss: child.exitCode === 0 && usage !== undefined ? Number(usage.maxRSS) : null';
+      const taken = UNIT_PEAKS_TAKEN.length;
+      let realWords = '';
+      const plantWords: string[] = [];
+      try {
+        const real = inParallel(units, Math.max(2, JOBS));
+        const realFault = knownFault(real, 'the driver');
+        if (realFault !== null) probes.push(realFault);
+        const r = real[0];
+        const c = r?.calibration ?? null;
+        if (c === null) probes.push('the driver handed back no calibration');
+        if (real[1]?.status !== 0) probes.push(`"${idle}" exited ${String(real[1]?.status)}`);
+        realWords =
+          `"${known}" read ${r?.peakBytes === null || r?.peakBytes === undefined ? 'nothing' : figure(r.peakBytes)} at scale ${String(r?.scale)} through the driver, ` +
+          `its calibration child holding ${c?.bytes ?? '?'} bytes reported maxRSS ${String(c?.maxRss ?? '?')} in ${c === null ? '?' : c.ms.toFixed(1)} ms`;
+        for (const [name, to] of [
+          ['×1,024', `${unitRead} * 1024`],
+          ['÷1,024', `${unitRead} / 1024`],
+        ] as const) {
+          const fault = knownFault(inParallel(units, 2, planted(unitRead, to)), `the driver reporting ${name}`);
+          if (fault === null || !fault.includes(`"${known}"`) || !fault.includes(' bytes (')) {
+            probes.push(`the driver reporting the unit's figure ${name} was not read by name and figure: ${fault ?? 'it read inside the window'}`);
+          } else {
+            plantWords.push(fault);
+          }
+        }
+        const unread = inParallel(units, 2, planted(calibrationRead, `${calibrationRead.replace(' : null', ' * 64 : null')}`));
+        const unreadFault = knownFault(unread, 'the driver whose calibration reads 64x');
+        if (unread.some((u) => u.peakBytes !== null || u.scale !== null) || unreadFault === null || !unreadFault.includes('read no peak')) {
+          probes.push(`a calibration reading neither unit was not left unread: ${unread.map((u) => `peak ${String(u.peakBytes)} scale ${String(u.scale)}`).join(', ')}`);
+        } else {
+          plantWords.push(unreadFault);
+        }
+      } catch (err) {
+        probes.push(`the known child's batch did not complete: ${(err as Error).message.slice(0, 400)}`);
+      } finally {
+        UNIT_PEAKS_TAKEN.length = taken;
+      }
+      const table: ReadonlyArray<readonly [UnitCalibration | undefined, 1 | 1024 | null]> = [
+        [{ bytes: CALIBRATION_BYTES, maxRss: 93175808, exit: 0, ms: 0 }, 1],
+        [{ bytes: CALIBRATION_BYTES, maxRss: 90992, exit: 0, ms: 0 }, 1024],
+        [{ bytes: CALIBRATION_BYTES, maxRss: CALIBRATION_BYTES / 2, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: CALIBRATION_BYTES * 64, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: 1, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: null, exit: 3, ms: 0 }, null],
+        [undefined, null],
+      ];
+      for (const [calibration, want] of table) {
+        const got = spawnMaxRssScale(calibration).scale;
+        if (got !== want) probes.push(`spawnMaxRssScale(${JSON.stringify(calibration ?? null)}) reads ${String(got)} where it is ${String(want)}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY42_A_KNOWN_256_MIB_CHILD_READS_INSIDE_256_MIB_TO_1_GIB_AND_A_DRIVER_REPORTING_A_WRONG_SCALE_IS_NAMED_BY_ITS_FIGURE',
+        held,
+        probeDetail(held, probes, `${realWords}; planted — ${plantWords.join('; ')}; the calibration's windows read bytes, KiB and the five readings that are neither`),
+        "issue #1143: PR #1145 read a child's maxRSS scale off the driver's own Node reading (KiB on Linux) and applied it to Bun.spawn's (bytes there), " +
+          'so CI printed core children high-water 736924 MB, and the one control that could judge it was a SKIP — this one needs no base and runs everywhere',
+      );
     }
   }
 
@@ -111146,7 +111807,18 @@ function main(): void {
   // one unit its spec names, writes the value, and runs no suite.
   if (UNIT !== null) {
     const spec = JSON.parse(readFileSync(UNIT.input, 'utf8')) as SelftestUnitSpec;
-    writeFileSync(UNIT.output, JSON.stringify(spec.kind === 'core' ? coreUnitWork(spec.input) : spec.kind === 'core-worker' ? coreUnitWorker(spec) : selftestUnitWork(spec)));
+    writeFileSync(
+      UNIT.output,
+      JSON.stringify(
+        spec.kind === 'core'
+          ? coreUnitWork(spec.input)
+          : spec.kind === 'core-worker'
+            ? coreUnitWorker(spec)
+            : spec.kind === 'ty40-allocate'
+              ? allocateUnitWork(spec)
+              : selftestUnitWork(spec),
+      ),
+    );
     return;
   }
   let breaks = 0;
@@ -111384,12 +112056,17 @@ function main(): void {
   // SKIP, printed in the run, and never a pass.
   const memoryBase = readMemoryBase(import.meta.dir);
   if (WRITE_MEMORY_BASE) {
-    writeFileSync(
-      join(import.meta.dir, MEMORY_BASE_PATH),
-      memoryBaseText(memoryBase, process.platform, { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version }),
-    );
+    // Issue #1143: both numbers, off the run's own columns — the children's
+    // only when the run measured a child, which `--jobs 1` does not.
+    const children = childrenHighWaterOf(tally.rss);
+    const entry: MemoryBaseEntry = { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version };
+    if (children !== null) entry.children = { highWater: children.highWater, jobs: JOBS };
+    writeFileSync(join(import.meta.dir, MEMORY_BASE_PATH), memoryBaseText(memoryBase, process.platform, entry));
     console.log(
-      `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${highWaterOf(tally.rss)} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`,
+      `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${entry.highWater} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}; ` +
+        (children === null
+          ? `no child's peak was measured at --jobs ${JOBS}, so the entry holds no children's high-water and TY40 stays a SKIP`
+          : `children's high-water ${children.highWater} MB ("${children.unit}", suite "${children.suite}") at --jobs ${JOBS}`),
     );
   } else if (tally.replay !== null) {
     // Every shard is a process with its own high-water (issue #1116).
@@ -111409,8 +112086,9 @@ function main(): void {
     }
   } else {
     const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
-    if (ceiling.verdict === 'over') {
-      for (const fault of ceiling.faults) console.error(`rigc selftest: ${fault}`);
+    const childCeiling = childrenCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
+    if (ceiling.verdict === 'over' || childCeiling.verdict === 'over') {
+      for (const fault of [...ceiling.faults, ...childCeiling.faults]) console.error(`rigc selftest: ${fault}`);
       process.exit(1);
     }
   }
