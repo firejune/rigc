@@ -590,6 +590,7 @@ import {
   articulatedFixture,
   containedFixture,
   overlayFixture,
+  placeFixturesUnder,
   SEGMENTS_PLATE,
   segmentsFixture,
   type Fixture,
@@ -966,6 +967,98 @@ const UNIT = ((): { input: string; output: string } | null => {
   return { input, output };
 })();
 
+/**
+ * `--keep-temp` (or `RIGC_KEEP_TEMP=1`) read strictly (issue #1137): `true` to
+ * keep this process's temp root, `false` for the default, or the refusal naming
+ * the spelling — `parseJobs`' reason: `--keep-temp=1`, `--keep-temps`,
+ * `RIGC_KEEP_TEMP=yes` are each a caller who meant something, and a generous
+ * reading would decide by guessing whether the run cleans up. Pure, so `TY39`
+ * holds every refusal by name without starting a process.
+ */
+function parseKeepTemp(argv: readonly string[], fromEnvironment: string | undefined): boolean | string {
+  const spelled = argv.filter((arg) => /^--keep[-_]?temp/i.test(arg));
+  for (const arg of spelled) if (arg !== '--keep-temp') return `${JSON.stringify(arg)} is not --keep-temp, which is spelled exactly so and takes no value`;
+  if (spelled.length > 1) return '--keep-temp was given twice';
+  if (fromEnvironment !== undefined && fromEnvironment !== '' && fromEnvironment !== '1') {
+    return `RIGC_KEEP_TEMP=${JSON.stringify(fromEnvironment)} is not 1; set it to 1 to keep this run's temp root, or leave it unset`;
+  }
+  return spelled.length === 1 || fromEnvironment === '1';
+}
+
+/**
+ * Whether this process keeps its temp root when it ends (issue #1137). Read
+ * once and taken out of the environment: a child this run starts — a `--unit`
+ * process, a selftest a control starts — removes its own root unless it is
+ * asked by its own command line.
+ */
+const KEEP_TEMP = ((): boolean => {
+  const read = parseKeepTemp(process.argv.slice(2), process.env.RIGC_KEEP_TEMP);
+  if (typeof read === 'string') {
+    console.error(`selftest: ${read}`);
+    process.exit(2);
+  }
+  return read;
+})();
+delete process.env.RIGC_KEEP_TEMP;
+
+/** The system temp directory as this process found it — where the run root is made, and what `TY39` counts. */
+const SYSTEM_TEMP = tmpdir();
+let harnessTempRoot: string | null = null;
+
+/**
+ * The one directory this process makes under `tmpdir()` (issue #1137):
+ * `rigc-selftest-XXXXXX`, made on first use, and every temp directory the
+ * harness makes is made inside it under its own prefix — so a path still
+ * spells `rigc-static-XXXXXX` where a control reads it, and a site cannot leak
+ * by forgetting its `rmSync`. Removed once, when the process exits, on every
+ * way it exits: a return from `main`, every `process.exit` (the floor's 2, a
+ * partial run's 2, a red run's 1, a refused flag after the root exists) and
+ * an uncaught throw. `--keep-temp` keeps it and names it on stderr instead, so
+ * stdout is the same text either way.
+ *
+ * ⚠️ A run killed by a signal leaves its root: one directory, where it used to
+ * leave every site's. Catching the signal to remove it was measured and
+ * rejected — `main` is synchronous, so a JavaScript handler runs only after it
+ * returns: a `--only path-slider` run sent SIGTERM mid-suite went on to the
+ * end of its suite and exited 2, where without the handler it stopped
+ * at once (143).
+ *
+ * ⚠️ Only this process's own directories live here. A child it starts — a
+ * tool, the CLI, another selftest — makes its directories where its own
+ * `tmpdir()` says, which this process does not redirect: a child that leaks is
+ * a fault of that command, and `TY39`'s count of a child run is how it shows.
+ */
+function harnessTemp(): string {
+  if (harnessTempRoot === null) {
+    const root = mkdtempSync(join(SYSTEM_TEMP, 'rigc-selftest-'));
+    harnessTempRoot = root;
+    process.on('exit', () => {
+      if (KEEP_TEMP) console.error(`selftest: --keep-temp kept this process's temp root: ${root}`);
+      else rmSync(root, { recursive: true, force: true });
+    });
+  }
+  return harnessTempRoot;
+}
+
+/** The `rigc-*` entries directly inside `dir`, by prefix — the name less the six characters `mkdtemp` appends (issue #1137, `TY39`). */
+function tempCensus(dir: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.startsWith('rigc-')) continue;
+    const prefix = /^(.*-)[A-Za-z0-9]{6}$/.exec(name)?.[1] ?? name;
+    counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Every prefix that has more entries `after` than `before`, as `<prefix> +<n>`, in prefix order. */
+function tempGrowth(before: ReadonlyMap<string, number>, after: ReadonlyMap<string, number>): string[] {
+  return [...after]
+    .filter(([prefix, count]) => count > (before.get(prefix) ?? 0))
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([prefix, count]) => `${prefix} +${count - (before.get(prefix) ?? 0)}`);
+}
+
 /** One independent unit of a suite: a command, the directory it runs from, and the output its sequential call could hold. */
 interface ParallelUnit {
   argv: readonly string[];
@@ -1043,7 +1136,7 @@ function inParallel(units: readonly ParallelUnit[], jobs: number = JOBS, driverS
       return { status: result.status, stdout: result.stdout, stderr: result.stderr };
     });
   }
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-units-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-units-'));
   try {
     const specPath = join(dir, 'units.json');
     const out = join(dir, 'results.json');
@@ -1126,7 +1219,7 @@ function buildRootIn(artDir: string, prefix: string): string {
  * the art is the checkout's (a gallery example, the corpus), which no build here writes into.
  */
 function buildRootFor(home: string | undefined, prefix: string): string {
-  return home === undefined ? mkdtempSync(join(tmpdir(), prefix)) : buildRootIn(home, prefix);
+  return home === undefined ? mkdtempSync(join(harnessTemp(), prefix)) : buildRootIn(home, prefix);
 }
 
 /** The static probe's motion spec (`STATIC_MOTION`) written beside a probe's rig, and its path — what `gateProbe` writes. */
@@ -1173,6 +1266,8 @@ function stageFieldsOf(skeletonText: string): string[] {
  * The overlay fixture: a base plate, two slots that fade, and one ring mesh.
  * Everything the region, timeline, atlas, mesh and physics assertions look at.
  */
+// The fixtures live in this process's run root, which the exit removes (issue #1137).
+placeFixturesUnder(harnessTemp());
 const OVERLAY = overlayFixture();
 /**
  * The articulated fixture. Its invariants live on bones the overlay rig does not
@@ -1822,8 +1917,19 @@ function familyBuildKey(input: Pick<ValidateInput, 'skeletonText' | 'atlasText' 
 /** A path component a harness temp directory carries: a `rigc-…-` prefix and the six characters `mkdtemp` appends (issue #1127). */
 const HARNESS_TEMP_COMPONENT = /^rigc-.+-[A-Za-z0-9]{6}$/;
 
-/** The system temp directory as given and as resolved — macOS hands out `/var/…` and resolves it to `/private/var/…`. */
-const TEMP_ROOTS = [...new Set([resolve(tmpdir()), realpathSync(tmpdir())])];
+/**
+ * The directories a harness temp directory sits directly inside, each as given
+ * and as resolved — macOS hands out `/var/…` and resolves it to `/private/var/…`:
+ * this process's run root first (issue #1137), where every one of its own is
+ * made, then the system temp directory, where a child's would be. The run root
+ * has to come first: every pair now sits under it, so reading from the system
+ * temp directory alone would give one root to every build and no climb from
+ * one temp directory into another could be seen.
+ */
+function tempRoots(): string[] {
+  const run = harnessTemp();
+  return [...new Set([resolve(run), realpathSync(run), resolve(SYSTEM_TEMP), realpathSync(SYSTEM_TEMP)])];
+}
 
 /**
  * Where one recorded build's paths point (issue #1127, `TY36`): the paths it
@@ -1843,7 +1949,7 @@ function buildPlaceOf(input: { skeletonText: string; atlasText: string; atlasDir
   const faults: string[] = [];
   let checkout = 0;
   const tempRootOf = (path: string): string | null => {
-    for (const temp of TEMP_ROOTS) {
+    for (const temp of tempRoots()) {
       const from = relative(temp, path);
       if (from !== '' && !from.startsWith('..') && !isAbsolute(from)) return join(temp, from.split(/[\\/]/)[0]);
     }
@@ -5139,7 +5245,7 @@ const DIFF_SLIDER_RENAMES: ReadonlyArray<{ name: string; from: string }> = [
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** #1040's probe as a skeleton's JSON text — see `DIFF_SLIDER_SOURCE` — and the atlas its build wrote. */
 function diffSliderProbe(): { text: string; atlasText: string } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-diff-slider-probe-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-diff-slider-probe-'));
   const built = compile({
     rigPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.rig),
     motionPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.motion),
@@ -6919,7 +7025,7 @@ function runBoneDistSuite(): number | null {
   console.log('\n── rigc bonedist (fixture: 6-arcs-pro, the ladder\'s stage 3) ──');
   const exportDir = dirname(BONEDIST_FIXTURE);
   const text = readFileSync(BONEDIST_FIXTURE, 'utf8');
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-bonedist-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-bonedist-'));
   let bad = 0;
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -7283,7 +7389,7 @@ function repackRotatedTrimmed(atlasText: string, atlasDir: string): { atlasText:
     );
     at += part.width + REPACK_GAP;
   }
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-repack-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-repack-'));
   packed.writePng(join(outDir, 'repacked.png'));
   const text = `${lines.join('\n')}\n`;
   writeFileSync(join(outDir, 'repacked.atlas'), text);
@@ -7324,7 +7430,7 @@ function compileTranscription(
  * measuring and the new one is not.
  */
 function padImagesSideways(pad: number): string {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-padded-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-padded-'));
   mkdirSync(outDir, { recursive: true });
   for (const name of readdirSync(CHECK_IMAGES)) {
     if (!name.endsWith('.png')) continue;
@@ -7490,7 +7596,7 @@ function buildIdentityExample(
   example: string = IDENTITY_EXAMPLE,
   rigText?: string,
 ): ExampleBuild {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-identity-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-identity-'));
   let motionPath = join(example, 'motion.json');
   if (motionText !== null) {
     motionPath = join(outDir, 'motion.json');
@@ -7530,7 +7636,7 @@ function buildIdentityExample(
  * answered by each example's first set as completely as by all of them.
  */
 function renderOwnFrames(build: ExampleBuild, fps: number, only?: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-identity-frames-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-identity-frames-'));
   const posable = posableFromText(build.skeletonText, build.atlasText, build.atlasDir);
   const viewport = framingViewport(posable.data, 256);
   if (viewport === null) throw new Error('the identity fixture posed no drawable attachment');
@@ -7802,7 +7908,7 @@ function buildSheetFixture(
   };
   const set = source.sets.find((s) => s.dir === setDir);
   if (!set) throw new Error(`selftest: no set ${JSON.stringify(setDir)} in ${CHECK_FRAMES}/${FRAMES_SIDECAR}`);
-  const root = mkdtempSync(join(tmpdir(), 'rigc-sheet-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-sheet-'));
   mkdirSync(join(root, setDir), { recursive: true });
 
   // The first and last frames, from the corpus, untouched.
@@ -9036,7 +9142,7 @@ function runCheckSuite(): number | null {
     // the ones it measured. A page checked against a list typed here would be a
     // spelling test; checked against the run, it is a claim that can go stale
     // and be caught going stale.
-    const absentFrames = join(mkdtempSync(join(tmpdir(), 'rigc-identity-absent-')), 'not-a-frame-set');
+    const absentFrames = join(mkdtempSync(join(harnessTemp(), 'rigc-identity-absent-')), 'not-a-frame-set');
     const observed = [
       {
         what: 'a comparison that ran, on the build with every easing reversed',
@@ -9552,7 +9658,7 @@ function runCheckSuite(): number | null {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-subset-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-subset-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
@@ -9691,7 +9797,7 @@ function runCheckSuite(): number | null {
     ): { report: CheckReport; out: string; peak: number } => {
       const plates = new CheckPlates({ allFrames });
       const report = checkAgainstFrames({ ...build, framesDir, plates });
-      const out = mkdtempSync(join(tmpdir(), 'rigc-check-pictures-'));
+      const out = mkdtempSync(join(harnessTemp(), 'rigc-check-pictures-'));
       writeCheckPictures(out, report, plates, { allFrames });
       return { report, out, peak: plates.peakBytes };
     };
@@ -9945,7 +10051,7 @@ function runCheckSuite(): number | null {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-foreign-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-foreign-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const rendered = join(work, 'rendered');
@@ -11068,7 +11174,7 @@ function writeJsonAsAuthored(path: string, spec: unknown): void {
 function runRigSuite(): number {
   const opts = optsForFixture(ARTICULATED);
   const sourceText = readFileSync(opts.rigPath, 'utf8');
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-rigspec-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-rigspec-'));
   const rigPath = join(dir, 'probe.rig.json');
   let bad = 0;
   console.log(`\n── rig spec refusals (${ARTICULATED.rig}) ──`);
@@ -11335,7 +11441,7 @@ function runRigSuite(): number {
 
     // (3) nothing is written: the CLI's `build` refuses before it writes a file.
     {
-      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-finite-'));
       const planted = join(work, 'planted.rig.json');
       writeJsonAsAuthored(planted, edited((rig) => { rootOf(rig).x = Infinity; }));
       const out = join(work, 'out');
@@ -11356,7 +11462,7 @@ function runRigSuite(): number {
     // The manifest and the motion spec: the same walk over the other two files whose numbers are emitted.
     {
       const manifestPath = opts.manifestPath;
-      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-inputs-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-finite-inputs-'));
       let manifestSaid = 'the fixture has no manifest';
       if (manifestPath !== undefined) {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { crop: Record<string, unknown> };
@@ -11434,7 +11540,7 @@ function runRigSuite(): number {
         return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
       }
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-types-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-types-'));
 
     // (e) the motion spec: a field nothing in `parseMotionSpec` reads, refused by
     // its path — and a field it does read keeps its own sentence.
@@ -11682,7 +11788,7 @@ function runRigSuite(): number {
         return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
       }
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-enums-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-enums-'));
 
     // The manifest's `mesh.kind`, planted on a ring part: before the set was
     // stated it was refused as a ribbon missing its rows — a fault it did not have.
@@ -13115,7 +13221,7 @@ function runRigSuite(): number {
   // (RF56). It needs no art at all — a path attachment is geometry — so nothing
   // here depends on a plate, and the atlas it emits is 0 bytes.
   {
-    const kindRoot = mkdtempSync(join(tmpdir(), 'rigc-kindnames-'));
+    const kindRoot = mkdtempSync(join(harnessTemp(), 'rigc-kindnames-'));
     /** The four kinds, named by the caller, so one rig serves the shared and the distinct case. */
     const kindRig = (named: Record<string, string>): Record<string, unknown> => ({
       spec: 'rigc-rig/1',
@@ -13753,7 +13859,7 @@ function runRigSuite(): number {
   // is the only arrangement that can tell a rule that was removed from a rule
   // that was removed along with its neighbours.
   {
-    const sharedRoot = mkdtempSync(join(tmpdir(), 'rigc-sharedskin-'));
+    const sharedRoot = mkdtempSync(join(harnessTemp(), 'rigc-sharedskin-'));
     const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
     /**
      * A rig with no art at all — a path attachment is geometry — carrying one
@@ -15093,7 +15199,7 @@ function writeOpaqueProbeArt(dirs: ProbeDirs): void {
 }
 
 function writeProbeRig(extra: Record<string, unknown> = {}): ProbeDirs {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-static-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-static-'));
   writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
   writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
   const rigPath = join(dir, 'probe.rig.json');
@@ -15144,7 +15250,7 @@ function writeSeriesProbe(
   keys: unknown[] | null = [{ t: 0, mode: 'loop', delay: 0.1 }],
   frames = SERIES_COUNT,
 ): { dirs: ProbeDirs; motionPath: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-series-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-series-'));
   for (let i = 0; i < frames; i++) writeProbePng(join(dir, `${seriesFrame(i)}.png`), 16, 16, [40 * (i + 1), 60, 90, 255]);
   const rigPath = join(dir, 'probe.rig.json');
   writeFileSync(
@@ -17853,7 +17959,7 @@ function runStaticRigSuite(): number {
     // lifted out of a pack declaring `scale:` is `originalWidth / scale` wide,
     // and 2 / 0.3 is 6.666666666666667 in doubles. The file says the float it
     // lands on; six decimals said something else.
-    const packDir = mkdtempSync(join(tmpdir(), 'rigc-float-pack-'));
+    const packDir = mkdtempSync(join(harnessTemp(), 'rigc-float-pack-'));
     writeProbePng(join(packDir, 'pack.png'), 16, 16, [40, 60, 90, 255]);
     const texels = { w: 1, h: 2 };
     const packScale = 0.3;
@@ -18517,7 +18623,7 @@ function runStaticRigSuite(): number {
     );
 
     // S108 — a file beginning with a blank line, on disk, through `validate`.
-    const diskDir = mkdtempSync(join(tmpdir(), 'rigc-leading-blank-'));
+    const diskDir = mkdtempSync(join(harnessTemp(), 'rigc-leading-blank-'));
     for (const name of readdirSync(pack.dir)) {
       if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(diskDir, name));
     }
@@ -18575,7 +18681,7 @@ function runStaticRigSuite(): number {
     const trailingLine = lines.length + 1;
 
     // S110 — a file ending in a blank line, on disk, through `validate`.
-    const tailDir = mkdtempSync(join(tmpdir(), 'rigc-trailing-blank-'));
+    const tailDir = mkdtempSync(join(harnessTemp(), 'rigc-trailing-blank-'));
     for (const name of readdirSync(pack.dir)) {
       if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(tailDir, name));
     }
@@ -18788,7 +18894,7 @@ let omissionBuildsHeld: OmissionBuild[] | null = null;
  */
 function omissionBuilds(): OmissionBuild[] {
   if (omissionBuildsHeld !== null) return omissionBuildsHeld;
-  const root = mkdtempSync(join(tmpdir(), 'rigc-omitdefaults-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-omitdefaults-'));
   const galleryRoot = resolve(import.meta.dir, 'gallery');
   // A fixture builds inside its own directory (`buildRootIn`, issue #1127); a gallery example's art is the checkout's, which
   // no build here writes into, so it builds under the one temp root and its page names spell the checkout's path.
@@ -19266,7 +19372,7 @@ function gatePartImage(write: (path: string) => void): ReturnType<typeof validat
  * rewrites the directory every other suite is reading.
  */
 function privateFixtureCopy(fixture: Fixture, prefix: string): Fixture {
-  const dir = join(mkdtempSync(join(tmpdir(), prefix)), basename(fixture.dir));
+  const dir = join(mkdtempSync(join(harnessTemp(), prefix)), basename(fixture.dir));
   cpSync(fixture.dir, dir, { recursive: true });
   const moved = (path: string): string => join(dir, relative(fixture.dir, path));
   return {
@@ -19456,7 +19562,7 @@ function runPngTransparencySuite(): number {
 
   // Where the defect actually lived: the reader stopped at the IHDR, so a chunk
   // sitting after it could not be seen no matter what the rule above it said.
-  const probe = mkdtempSync(join(tmpdir(), 'rigc-trns-'));
+  const probe = mkdtempSync(join(harnessTemp(), 'rigc-trns-'));
   writeTypedPng(join(probe, 'with.png'), 12, 8, { colourType: 3, trns: true });
   writeTypedPng(join(probe, 'without.png'), 12, 8, { colourType: 3, trns: false });
   const withTrns = readPngInfo(join(probe, 'with.png'));
@@ -34550,7 +34656,7 @@ function buildContourRig(
     attachments?: Record<string, Record<string, unknown>>;
   } = {},
 ): ContourBuild {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-contour-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-contour-'));
   const artPath = join(dir, 'blob.png');
   const art = extra.art ?? contourBlob;
   writeContourArt(artPath, art, extra.width ?? CONTOUR_W, extra.height ?? CONTOUR_H);
@@ -36475,7 +36581,7 @@ function runContourMeshSuite(): number {
           };
         }
         const docs = new Map<string, string>();
-        const work = mkdtempSync(join(tmpdir(), 'rigc-tie-'));
+        const work = mkdtempSync(join(harnessTemp(), 'rigc-tie-'));
         try {
           for (const row of rows) {
             const built = compile({ rigPath: join(galleryRoot, row, 'rig.json'), motionPath: join(galleryRoot, row, 'motion.json'), outDir: join(work, row) });
@@ -37805,7 +37911,7 @@ function buildTurnRig(
     rootRotation?: number;
   } = {},
 ): TurnBuild {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-turn-'));
   const width = TURN_R * 2;
   const height = 380;
   writeOverlayProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
@@ -43621,7 +43727,7 @@ function compileMeshTranscription(
   rig: CompileResult['rig'];
   modelText: string | undefined;
 } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-mesh-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-mesh-'));
   let rigPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json');
   if (rigText !== null) {
     rigPath = join(outDir, 'rewritten.rig.json');
@@ -44308,7 +44414,7 @@ function runCopyImagesSuite(): number {
   );
 
   // --- a basename collision is disambiguated, deterministically ---------------
-  const collideRoot = mkdtempSync(join(tmpdir(), 'rigc-collide-'));
+  const collideRoot = mkdtempSync(join(harnessTemp(), 'rigc-collide-'));
   const dirA = join(collideRoot, 'a');
   const dirB = join(collideRoot, 'b');
   mkdirSync(dirA, { recursive: true });
@@ -44419,7 +44525,7 @@ function runCopyImagesSuite(): number {
     "the same fact the atlas's page names already state, derived the same way; a build that points at its own parts " +
       'is a build the editor can open',
   );
-  const elsewhere = mkdtempSync(join(tmpdir(), 'rigc-elsewhere-'));
+  const elsewhere = mkdtempSync(join(harnessTemp(), 'rigc-elsewhere-'));
   cpSync(oneDir.dir, elsewhere, { recursive: true });
   const moved = compile({
     rigPath: join(elsewhere, basename(oneDir.rigPath)),
@@ -45110,7 +45216,7 @@ function turnedPack(
   }
   // `under`: the rig's own directory, for a caller that builds through the pack from beside it — the pack is written to a
   // directory named by its turn and label inside it, so the page name spells no temp directory (issue #1127).
-  const dir = under === undefined ? mkdtempSync(join(tmpdir(), `rigc-turned${degrees}-`)) : join(under, `turned${degrees}_${label}`);
+  const dir = under === undefined ? mkdtempSync(join(harnessTemp(), `rigc-turned${degrees}-`)) : join(under, `turned${degrees}_${label}`);
   mkdirSync(dir, { recursive: true });
   page.writePng(join(dir, 'turned.png'));
   const atlasPath = join(dir, 'turned.atlas');
@@ -45153,7 +45259,7 @@ const RIM_COLOUR: RGBA = [242, 212, 156, 255];
  * colour, and then the patch's outline is drawn in a darker shade of it.
  */
 function writeRimProbe(): { rigPath: string; motionPath: string; outDir: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-rim-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-rim-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
   writeProbePng(join(parts, 'bg.png'), 120, 120, RIM_COLOUR);
@@ -45564,7 +45670,7 @@ function inUnits(specs: readonly AnchorUnitSpec[], jobs: number = JOBS): AnchorR
  * order, as JSON read them.
  */
 function unitValues(specs: readonly SelftestUnitSpec[], jobs: number): unknown[] {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-unit-specs-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-unit-specs-'));
   try {
     const files = specs.map((spec, k) => {
       const input = join(dir, `unit-${k}.json`);
@@ -47562,7 +47668,7 @@ function runPackerSuite(): number {
   // three cells together cover 277,248 texels, more than a 512x512 page — so the
   // smallest power-of-two page is twice that, while a width of three cells
   // wastes almost nothing.
-  const freeDir = mkdtempSync(join(tmpdir(), 'rigc-free-pages-'));
+  const freeDir = mkdtempSync(join(harnessTemp(), 'rigc-free-pages-'));
   const freeInputs: PackInput[] = ['free_a', 'free_b', 'free_c'].map((region, n) => {
     const plate = new Plate(300, 300);
     // A pattern that differs per part and per texel, so a lift-back that read
@@ -47881,7 +47987,7 @@ function runPackerSuite(): number {
     // skeleton beside it is a minimal Spine file naming each part, so the
     // footprints come out of `packFootprints` exactly as a build's do, and the
     // checks read them back with their own reader (`drawnLoops`).
-    const polyDir = mkdtempSync(join(tmpdir(), 'rigc-polygon-pack-'));
+    const polyDir = mkdtempSync(join(harnessTemp(), 'rigc-polygon-pack-'));
     const polyPart = (region: string, width: number, height: number, draws: (x: number, y: number) => boolean, n: number): PackInput => {
       const plate = new Plate(width, height);
       for (let y = 0; y < height; y++) {
@@ -48327,7 +48433,7 @@ function runPackerSuite(): number {
     const galleryOpts = (name: string, outDir: string): Options => ({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir });
     /** A gallery rig compiled and packed in process, its pages on disk, and the document `build` writes beside that pack. */
     const galleryPack = (name: string, shape: 'rect' | 'polygon') => {
-      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-${name}-${shape}-`));
+      const dir = mkdtempSync(join(harnessTemp(), `rigc-a49-${name}-${shape}-`));
       const result = compile(galleryOpts(name, dir));
       const pack = packAtlas(withFootprints(packInputsOf(result.images), result.skeletonText), { pageEdges: 'free', shape });
       for (const page of pack.pages) page.plate.writePng(join(dir, page.name));
@@ -48353,7 +48459,7 @@ function runPackerSuite(): number {
     // clause they failed `spine-html` by name.
     const routeRows = galleryNames.flatMap((name) =>
       VALIDATE_PROFILES.map((profile) => {
-        const out = mkdtempSync(join(tmpdir(), `rigc-a49-route-${name}-`));
+        const out = mkdtempSync(join(harnessTemp(), `rigc-a49-route-${name}-`));
         const run = runCli(['build', '--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json'), '--out', out, '--profile', profile, '--pack', '--page-edges', 'free', '--pack-shape', 'polygon']);
         const lines = run.stdout.split('\n');
         const rows = lines.filter((line) => line.includes(FOOTPRINT_RULE)).map((line) => line.trim());
@@ -48520,7 +48626,7 @@ function runPackerSuite(): number {
     const sameProbes: string[] = [...galleryProbes];
     let hullRegions = 0;
     for (const name of galleryNames) {
-      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-same-${name}-`));
+      const dir = mkdtempSync(join(harnessTemp(), `rigc-a49-same-${name}-`));
       const result = compile(galleryOpts(name, dir));
       const sizes = new Map(result.images.map((img) => [img.region, { width: img.width, height: img.height }]));
       const packer = [...packFootprints(result.skeletonText, (region) => sizes.get(region))].filter(([, f]) => f !== null).map(([region]) => region).sort();
@@ -49201,7 +49307,7 @@ function packWithFirstPageReplaced(forge: (png: Uint8Array, page: { width: numbe
   result: CompileResult;
 } {
   const packed = packFixture(OVERLAY, DEFAULT_PADDING);
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-'));
   for (const name of [...packed.pages, 'skeleton.atlas', 'skeleton.json']) copyFileSync(join(packed.dir, name), join(dir, name));
   const page = parseAtlasText(packed.atlasText).pages[0];
   const pagePath = join(dir, page.name);
@@ -49746,7 +49852,7 @@ function runAtlasReaderSuite(): number | null {
         .filter((line) => line.startsWith('  FAIL  '))
         .map((line) => line.slice('  FAIL  '.length).trim());
 
-    const copyRoot = mkdtempSync(join(tmpdir(), 'rigc-copy-in-'));
+    const copyRoot = mkdtempSync(join(harnessTemp(), 'rigc-copy-in-'));
     const specDir = join(copyRoot, 'spec');
     mkdirSync(specDir, { recursive: true });
     const sourceAtlas = readFileSync(copyPack.atlasPath, 'utf8');
@@ -49989,7 +50095,7 @@ function runAtlasReaderSuite(): number | null {
     // A temp directory of its own rather than a child of the pack's, because
     // several suites walk `packed_p2` for the pages it holds and a subdirectory
     // in there is a file that appeared in somebody else's subject.
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-page-grid-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-page-grid-'));
     for (const name of packed.pages) {
       const full = readPlate(join(packed.dir, name));
       const half = new Plate(full.width / 2, full.height / 2);
@@ -51771,7 +51877,7 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
   // skips is part of what MP30 measures — and a walk that throws takes every
   // later case down with it, which is the shape that hit on 2026-09-04.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-motion-walk-'));
+    const root = mkdtempSync(join(harnessTemp(), 'rigc-motion-walk-'));
     const spec = JSON.stringify({ format: 'rigc-motion/1' });
     mkdirSync(join(root, 'kept'));
     writeFileSync(join(root, 'kept', 'a.motion.json'), spec);
@@ -52145,7 +52251,7 @@ interface HalvedMeshPacks {
 }
 
 function halvedMeshPacks(): HalvedMeshPacks | string {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-halved-mesh-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-halved-mesh-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts);
   writeContourArt(join(parts, 'fan.png'), discArt(FAN_ART_R, FAN_SIZE), FAN_SIZE, FAN_SIZE);
@@ -53352,7 +53458,7 @@ function runCliSuite(): number {
   // opens a page, which is why an attachment resolves against a pack whose PNG
   // does not exist. Nothing here is fetched, so none of these five can HOLE.
   {
-    const artless = mkdtempSync(join(tmpdir(), 'rigc-sizes-only-'));
+    const artless = mkdtempSync(join(harnessTemp(), 'rigc-sizes-only-'));
     const rigPath = join(artless, 'rig.json');
     const motionPath = join(artless, 'motion.json');
     const packPath = join(artless, 'pack.atlas');
@@ -53753,7 +53859,7 @@ function runCliSuite(): number {
   // at all — so the second case measures the heading the feature adds rather
   // than the flag that is optional beside it.
   {
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-diff-as-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-diff-as-'));
     const built = join(dir, 'built');
     const build = runCli(['build', '--rig', 'gallery/walk/rig.json', '--motion', 'gallery/walk/motion.json', '--out', built]);
     const skeletonPath = join(built, 'skeleton.json');
@@ -53819,7 +53925,7 @@ function runCliSuite(): number {
     const stackOf = (stderr: string): string[] => stderr.split('\n').filter((line) => /^\s+at /.test(line));
     const webpPack = packWithFirstPageReplaced((_png, page) => minimalWebp(page.width, page.height));
     const honestPack = packWithFirstPageReplaced((png) => png);
-    const renderRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-render-'));
+    const renderRoot = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-render-'));
     const honestRender = runCli(['render', '--candidate', honestPack.dir, '--out', join(renderRoot, 'honest')]);
     const webpRender = runCli(['render', '--candidate', webpPack.dir, '--out', join(renderRoot, 'webp')]);
     const firstError = webpRender.stderr.split('\n').find((line) => line.startsWith('rigc')) ?? '';
@@ -53844,7 +53950,7 @@ function runCliSuite(): number {
     );
 
     // A loose part, copied out of the fixture so the fixture itself is untouched.
-    const looseRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-loose-'));
+    const looseRoot = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-loose-'));
     cpSync(OVERLAY.dir, looseRoot, { recursive: true });
     const looseParts = readdirSync(join(looseRoot, 'parts')).filter((name) => name.endsWith('.png')).sort();
     const loosePart = looseParts.length === 0 ? null : join(looseRoot, 'parts', looseParts[0]);
@@ -54336,7 +54442,7 @@ function runCliSuite(): number {
       .filter((name): name is string => name !== undefined)
       .sort();
     const realSkill = (name: string): string => realpathSync(join(import.meta.dir, 'skills', name));
-    const work = mkdtempSync(join(tmpdir(), 'rigc-skills-install-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-skills-install-'));
     const ws = (label: string): string => {
       const dir = join(work, label);
       mkdirSync(dir, { recursive: true });
@@ -54537,7 +54643,7 @@ function runCliSuite(): number {
   // pixels where the head's edge coverage is too faint to leave the background
   // on its own and still moves the composite by a level.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-slot-subset-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-slot-subset-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const renderInto = (
@@ -54831,7 +54937,7 @@ function runCliSuite(): number {
     const identity = buildIdentityExample(null);
     const frames = renderOwnFrames(identity, IDENTITY_FPS);
     const setDir = readdirSync(frames).find((n) => statSync(join(frames, n)).isDirectory()) ?? '';
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-out-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-out-'));
     const aFile = join(work, 'a-file');
     writeFileSync(aFile, 'not a directory\n');
     const emptyDir = join(work, 'empty');
@@ -54936,7 +55042,7 @@ function runCliSuite(): number {
   // printed for the same files, the closing line against the --out given —
   // and never a figure written here.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-handoff-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-handoff-'));
     const lastLine = (text: string): string => text.split('\n').filter((l) => l !== '').pop() ?? '';
     /** What the validator prints for a directory, gutters off — the strings the page must carry. */
     const validateSays = (dir: string): { status: number | null; summary: string; firstFail: string | null } => {
@@ -55377,7 +55483,7 @@ function runEditorRoundtripSuite(): number {
     bad += reportCase(name, ok, detail, why);
   };
 
-  const root = mkdtempSync(join(tmpdir(), 'rigc-ert-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-ert-'));
   // A build directory is only a precondition here: the tool reads skeleton.json
   // and the atlas before it looks at the editor at all (the atlas since issue
   // #1107), and every case below stops long before anything else reads them.
@@ -58343,7 +58449,7 @@ function readSkillInstallShapes(source: string, skills: string[], shipped: Set<s
   const resolved = new Map<SkillInstallShape, number>(SKILL_INSTALL_SHAPES.map((shape) => [shape, 0]));
   const faults: string[] = [];
   let physical = 0;
-  const work = mkdtempSync(join(tmpdir(), 'rigc-skill-shapes-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-skill-shapes-'));
   try {
     // The package, as npm would lay it down: the shipped set and nothing else.
     const pkg = join(work, 'package', 'node_modules', 'spine-rigc');
@@ -58535,7 +58641,7 @@ function runSkillSurfaceSuite(): number {
   // stops matching goes silent rather than red, and a check that starts matching
   // good input is the false refusal this file exists against.
   const plant = (label: string, files: Record<string, string>): string => {
-    const dir = mkdtempSync(join(tmpdir(), `rigc-skills-${label}-`));
+    const dir = mkdtempSync(join(harnessTemp(), `rigc-skills-${label}-`));
     for (const [path, text] of Object.entries(files)) {
       mkdirSync(join(dir, dirname(path)), { recursive: true });
       writeFileSync(join(dir, path), text);
@@ -58761,7 +58867,7 @@ function runSkillSurfaceSuite(): number {
   // own skill, and is required to fault in exactly the shapes it breaks — the
   // climbing link in the two installed shapes and nowhere else, which is the
   // whole of the difference between this reader and SKL03's.
-  const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-skill-shape-plant-'));
+  const plantRoot = mkdtempSync(join(harnessTemp(), 'rigc-skill-shape-plant-'));
   const plantFiles: Record<string, string> = {
     'README.md': '# probe\n',
     'docs/GUIDE.md': '# a shipped guide\n',
@@ -60600,7 +60706,7 @@ function runCurrencySuite(): number {
 
     /** Plant every path as `kind` in a fresh repository carrying `text`, and ask git which it ignores. */
     const askGit = (text: string, paths: string[], kind: PlantKind): { ignored: Set<string>; broken: string | null } => {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-gitignore-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-gitignore-'));
       // A user's global excludes file would otherwise decide some of these, and
       // a machine that has one would measure something this repository does not
       // ship. Point it at a path that does not exist.
@@ -61032,7 +61138,7 @@ function runCurrencySuite(): number {
     if (textVictim === null) {
       controlFaults.push('no tracked file reads as text, so the red-first plant had nothing to aim at');
     } else {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-opaque-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-opaque-'));
       try {
         const source = readFileSync(join(root, textVictim));
         // ① the same file, untouched: the positive control, reported in no way.
@@ -62024,7 +62130,7 @@ function runCurrencySuite(): number {
 
     /** A directory holding an `npm` that answers instead of the registry, to go first on PATH. */
     const fakeRegistry = (body: string): string => {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-fake-npm-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-fake-npm-'));
       writeFileSync(join(dir, 'npm'), body);
       chmodSync(join(dir, 'npm'), 0o755);
       return dir;
@@ -62715,7 +62821,7 @@ function runCurrencySuite(): number {
     if (launcher === undefined) probes115.push('package.json names no `rigc` bin');
     else if (firstOnPath('node') !== null) {
       const nodeBin = join(firstOnPath('node') as string, 'node');
-      const work = mkdtempSync(join(tmpdir(), 'rigc-cur115-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-cur115-'));
       const tree = (name: string, runtime: boolean, drop?: string): string => {
         const at = absentTree(join(work, name));
         mkdirSync(join(at, 'bin'), { recursive: true });
@@ -65833,7 +65939,7 @@ function runCurrencySuite(): number {
     const standing = scanIngest(ingestText);
     // The rebuild side of the same sentence: every header key but the
     // declared ones comes back, `audio: null` included.
-    const probeDir = mkdtempSync(join(tmpdir(), 'rigc-header-probe-'));
+    const probeDir = mkdtempSync(join(harnessTemp(), 'rigc-header-probe-'));
     writeFileSync(join(probeDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
     writeFileSync(join(probeDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
     let rebuilt: Record<string, unknown> | null = null;
@@ -66622,7 +66728,7 @@ function runCurrencySuite(): number {
     // exactly one fault and the untracked one none — and the untracked file is
     // on disk, where a directory walk would have read it, so the plant that
     // must stay silent is not silent for want of a file.
-    const repo = mkdtempSync(join(tmpdir(), 'rigc-part-pointer-population-'));
+    const repo = mkdtempSync(join(harnessTemp(), 'rigc-part-pointer-population-'));
     let trackedRaised: number | null = null;
     let untrackedRaised: number | null = null;
     if (movedOnly !== undefined) {
@@ -67512,7 +67618,7 @@ interface RefusalRun {
  */
 function runRefusalRecipe(galleryRoot: string, recipe: RefusalRecipe): RefusalRun {
   const src = join(galleryRoot, recipe.example);
-  const dir = mkdtempSync(join(tmpdir(), `rigc-refusal-${recipe.example}-`));
+  const dir = mkdtempSync(join(harnessTemp(), `rigc-refusal-${recipe.example}-`));
   for (const entry of readdirSync(src)) {
     if (entry === `${recipe.spec}.json`) continue;
     symlinkSync(join(src, entry), join(dir, entry));
@@ -68115,7 +68221,7 @@ function runGalleryTranscriptSuite(): number {
       unstated.push(example);
       continue;
     }
-    const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-transcript-${example}-`)));
+    const runs = transcriptRunsFor(example, readme, mkdtempSync(join(harnessTemp(), `rigc-transcript-${example}-`)));
     for (const run of runs) {
       if (run.status !== 0 || run.lines.length < 20) {
         broken.push(`gallery/${example}: \`${run.command}\` exited ${run.status} with ${run.lines.length} line(s)`);
@@ -69277,7 +69383,7 @@ function runSeeItSuite(): number {
 
   // The decoder itself, at the level the fix lives: one control per colour type
   // `tools/plate.ts` could not write and therefore never met until #226.
-  const probe = mkdtempSync(join(tmpdir(), 'rigc-decode-'));
+  const probe = mkdtempSync(join(harnessTemp(), 'rigc-decode-'));
   writeTypedPng(join(probe, 'indexed.png'), 8, 4, { colourType: 3, trns: true });
   writeTypedPng(join(probe, 'grey.png'), 8, 4, { colourType: 0, trns: true });
   // 8x8 rather than 8x4: `writeGreyAlphaPng` makes a two-pixel transparent border,
@@ -70644,7 +70750,7 @@ function runGeometryExportSuite(): number {
   // is scaled to 0 reached the same file by the other road: every vertex at the
   // bone's origin. The rigs are built through the rig spec, so both posers run.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-unframeable-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-unframeable-'));
     const oneSlot = [{ name: 'block', bone: 'block', attachment: 'block' }];
     const defaultSkin = { block: { block: { image: 'block.png' } } };
     const unposedRig = writeProbeRig({
@@ -71317,7 +71423,7 @@ function buildPoseFixture(headScale?: number): {
   clearPath: string;
   truth: Map<string, PosePlacementTruth>;
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -72462,7 +72568,7 @@ function runPoseSuite(): number {
   // the span at the part's own size, so which side of the floor each lands on
   // is a fact about the part rather than about a scale the search wandered to.
   {
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-legible-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-legible-'));
     const plainColour: RGBA = [70, 120, 180, 255];
     const frame = new Plate(320, 240);
     for (let y = 0; y < frame.height; y++) for (let x = 0; x < frame.width; x++) frame.set(x, y, BACKGROUND);
@@ -72567,7 +72673,7 @@ function runPoseSuite(): number {
     const { posable, scenes } = loadFloorScenes(INGEST_CORPUS_ROOT);
     const scene = scenes.slice(0, 1);
     const slots = new Map(scene.map((sc) => [sc.name, floorSlots(posable, sc)]));
-    const work = mkdtempSync(join(tmpdir(), 'rigc-pose-floor-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-pose-floor-'));
     const cell = (texture: FloorTexture): FloorCell => floorCell(posable, scene, slots, 32, texture, work);
     const [flat, blurred, native] = [cell('flat'), cell('blur2'), cell('native')];
     rmSync(work, { recursive: true, force: true });
@@ -72604,7 +72710,7 @@ function runPoseSuite(): number {
     // search came back ambiguous between two placements 173 px off at 0.148 —
     // the basin fell between two anchor cells and, on its own rung, ranked
     // fifth. It must now be FOUND, which is neither ambiguous nor wrong.
-    const fistDir = mkdtempSync(join(tmpdir(), 'rigc-pose-fist-'));
+    const fistDir = mkdtempSync(join(harnessTemp(), 'rigc-pose-fist-'));
     const fist = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'a'));
     const fistAgain = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'b'));
     rmSync(fistDir, { recursive: true, force: true });
@@ -72658,7 +72764,7 @@ function runPoseSuite(): number {
     // at the 2x level and cut. Each must now be FOUND — placed within the bar
     // and not ambiguous — rather than merely within 2 px of an answer.
     const walk = scenes.find((sc) => sc.name.startsWith('walk'));
-    const lostDir = mkdtempSync(join(tmpdir(), 'rigc-pose-877-'));
+    const lostDir = mkdtempSync(join(harnessTemp(), 'rigc-pose-877-'));
     const four: [string, string, number][] = [
       [scene[0].name, 'front-shin', 24],
       [walk?.name ?? '', 'front-upper-arm', 48],
@@ -72754,7 +72860,7 @@ function runPoseSuite(): number {
     };
     const files = ['parts/post.png', 'parts/arm.png', 'parts/flag.png', 'poseA.png'];
     const missing = files.filter((f) => fence(f) === null);
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-886-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-886-'));
     mkdirSync(join(dir, 'parts'));
     for (const f of files) {
       const bytes = fence(f);
@@ -73375,7 +73481,7 @@ function runPoseOracleSuite(): number {
         source: basename(entry.path),
         version: packageVersion(),
       });
-      const root = mkdtempSync(join(tmpdir(), `rigc-oracle-${entry.name}-`));
+      const root = mkdtempSync(join(harnessTemp(), `rigc-oracle-${entry.name}-`));
       writeFileSync(join(root, 'rig.json'), `${JSON.stringify(decompiled.rig, null, 2)}\n`);
       writeFileSync(join(root, 'motion.json'), `${JSON.stringify(decompiled.motion, null, 2)}\n`);
       // The pack is found by resolving, as IG16 finds it: the first one the
@@ -74636,7 +74742,7 @@ function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnit
   const names = inputs.map((input) => input.unit);
   const claimOrder = CORE_UNITS_HEAVIEST_FIRST.filter((name) => names.includes(name));
   for (const name of names) if (!claimOrder.includes(name)) claimOrder.push(name);
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-selftest-core-units-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-core-units-'));
   try {
     const worker: SelftestUnitSpec = { kind: 'core-worker', dir, shared: inputs[0], units: claimOrder };
     const workers = unitValues(Array.from({ length: Math.min(jobs, inputs.length) }, () => worker), jobs) as CoreWorkerRun[][];
@@ -74714,7 +74820,7 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
     bad += reportCase(name, ok, detail, why);
   };
   const root = import.meta.dir;
-  const work = mkdtempSync(join(tmpdir(), 'rigc-core-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-core-'));
   // Gallery builds chosen off what their models declare rather than by name:
   // the first with no constraint (the core poses its bones) and, while a
   // constraint kind is left to a later cut (LATER_KINDS), the first declaring
@@ -85655,7 +85761,7 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
   // `tools/core_gate.ts`'s bounds row reads — the core's, spine-core's
   // `getBounds`, the header's — and plants the one misreading it exists to see.
   if (parent) {
-    const boxRoot = mkdtempSync(join(tmpdir(), 'rigc-bounds-'));
+    const boxRoot = mkdtempSync(join(harnessTemp(), 'rigc-bounds-'));
     const boxAtlas = join(boxRoot, 'p.atlas');
     writeFileSync(boxAtlas, ['p.png', 'size: 64, 32', 'filter: Linear, Linear', 'a', 'bounds: 0, 0, 20, 20', 'b', 'bounds: 20, 0, 20, 20', ''].join('\n'));
     const regionAt = (x: number, y = 0): Record<string, unknown> => ({ width: 20, height: 20, x, y });
@@ -86366,7 +86472,7 @@ function runDeformCoreSuite(): number | null {
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the survey was not held both ways on a built row.');
     return bad;
   }
-  const work = mkdtempSync(join(tmpdir(), 'rigc-deform-core-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-deform-core-'));
   const gallery = galleryNames.flatMap((name) => {
     try {
       const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, name) });
@@ -87104,7 +87210,7 @@ function runEmitHashesSuite(): number | null {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-selftest-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-emit-hashes-selftest-'));
   const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
   const recipesPath = join(work, 'recipes.json');
   writeFileSync(recipesPath, recipesText(recipes));
@@ -87847,7 +87953,7 @@ function shiftedCorePoser(dx: number): (modelText: string, atlasText: string, wh
  * texel, with a periodic alpha, so a UV a few float32 steps off moves a pixel.
  */
 function writeClipPixelProbe(polygon: number[], flags: { inverse?: boolean; convex?: boolean; rotation?: number; scale?: number } = {}): { dir: string; outDir: string; status: number | null; stderr: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-clip-pixels-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-clip-pixels-'));
   const art = (name: string, w: number, h: number, seed: number): void => {
     const plate = new Plate(w, h);
     for (let y = 0; y < h; y++) {
@@ -88094,7 +88200,7 @@ function runRenderHashesSuite(): number | null {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-render-hashes-selftest-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-render-hashes-selftest-'));
   const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
   const recipesPath = join(work, 'recipes.json');
   writeFileSync(recipesPath, recipesText(recipes));
@@ -91853,7 +91959,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
   }
 
   // --- MB05: every compiled rig's bones are its model through the emitter and the two passes --
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-bones-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-bones-'));
   {
     const probes: string[] = [];
     const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
@@ -92289,7 +92395,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-vertices-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-vertices-'));
   const chain = computeWorldTransforms([
     { name: 'root', x: 3, y: -2 },
     { name: 'arm', parent: 'root', x: 20, y: 4, rotation: 35, scaleX: 1.5, scaleY: 0.5 },
@@ -92864,7 +92970,7 @@ function compileRecordSourceProblems(text: string): string[] {
  * `anim` replaces the one animation's extra timelines.
  */
 function writeModelRecordsProbe(anim: Record<string, unknown> = {}): { dirs: ProbeDirs; motionPath: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-model-records-'));
   writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
   writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
   writeOverlayProbePng(join(dir, 'marker2.png'), 6, 6, [80, 170, 50, 255]);
@@ -93002,7 +93108,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-records-'));
 
   // --- MS01: a slot's keys in the constructor's order; a null setup left out --
   {
@@ -93647,7 +93753,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-animations-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-animations-'));
   const slotsOf = (...names: string[]): ModelSlot[] => names.map((name) => ({ name, bone: 'root', setup: null }));
   const glide = { glide: [0.42, 0, 0.58, 1] };
   const everyCompiled = compileAnimationsProbe({ idle: ANIMATIONS_PROBE_IDLE, every: EVERY_GROUP_ANIMATION }, glide);
@@ -94239,7 +94345,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-document-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-document-'));
   const probe = modelDocumentProbe();
   const model = probe.result?.model ?? null;
 
@@ -94909,7 +95015,7 @@ const RECT_PROBE_STEM = 'glint_';
  * 2, 1 of 16x16); `untrimmed` differs from `trimmed` in `badge`'s two lines alone.
  */
 function writeRectProbe(extra: Record<string, Record<string, unknown>> = {}): { dirs: ProbeDirs; motionPath: string; trimmed: string; untrimmed: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-atlas-rect-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-atlas-rect-'));
   writeProbePng(join(dir, 'plate.png'), 12, 8, [40, 60, 90, 255]);
   for (let i = 0; i < RECT_PROBE_FRAMES; i++) writeProbePng(join(dir, `${RECT_PROBE_STEM}${String(1 + i).padStart(4, '0')}.png`), 16, 16, [60 * (i + 1), 60, 90, 255]);
   const rigPath = join(dir, 'probe.rig.json');
@@ -94966,7 +95072,7 @@ function runModelAtlasSuite(): number {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-atlas-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-atlas-'));
   const probe = writeRectProbe();
   const loose = buildRectProbe(probe, join(probe.dirs.dir, 'loose'));
   const trimmed = buildRectProbe(probe, join(probe.dirs.dir, 'trimmed'), probe.trimmed);
@@ -95701,7 +95807,7 @@ interface ChainFitFixture {
  * the two hang off two different pivots.
  */
 function buildChainFitFixture(): ChainFitFixture {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-chainfit-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -95988,7 +96094,7 @@ interface ChainFitRelocationFixture {
  * hinge cannot translate a pivot back.
  */
 function buildChainFitRelocationFixture(): ChainFitRelocationFixture {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-reloc-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-chainfit-reloc-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -97477,7 +97583,7 @@ function runBallotSuite(): number {
     }
     built.push({ dir: dirs.dir, outDir: dirs.outDir });
   }
-  const work = mkdtempSync(join(tmpdir(), 'rigc-ballot-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-ballot-'));
   const ballotPath = join(work, 'ballot.html');
   const ledgerPath = join(work, 'votes.jsonl');
   const vote = runCli([
@@ -98110,7 +98216,7 @@ function runGallerySuite(): { failures: number; examples: number } {
   let bad = 0;
   for (const name of names) {
     const dir = join(root, name);
-    const outDir = mkdtempSync(join(tmpdir(), `rigc-gallery-${name}-`));
+    const outDir = mkdtempSync(join(harnessTemp(), `rigc-gallery-${name}-`));
     const opts = { rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir };
     try {
       const result = compile(opts);
@@ -99598,7 +99704,7 @@ function runIngestSuite(): number {
     // somebody typed into it, and that half is reachable only through a real
     // invocation. Three clauses, because a refusal with no positive control
     // beside it is satisfied by refusing everything.
-    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-cli-'));
+    const cliRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-images-cli-'));
     const cliSkeleton = join(cliRoot, 'skeleton.json');
     writeFileSync(cliSkeleton, trips.get('ingest_probe')!.a.skeletonText);
     const artDir = resolve(dirname(probeCandidate.rigPath));
@@ -99648,7 +99754,7 @@ function runIngestSuite(): number {
     const rows = existsSync(galleryDir)
       ? readdirSync(galleryDir).sort().filter((n) => existsSync(join(galleryDir, n, 'rig.json')) && existsSync(join(galleryDir, n, 'motion.json')))
       : [];
-    const docRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-docstage-'));
+    const docRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-docstage-'));
     /** One gallery build, written as `build` writes it: the pair and the document. */
     const written = rows.map((name) => {
       const dir = join(docRoot, name, 'A');
@@ -99806,7 +99912,7 @@ function runIngestSuite(): number {
         version: packageVersion(),
       });
       const blockers = decompiled.findings.filter((f) => f.kind === 'blocker');
-      const root = mkdtempSync(join(tmpdir(), `rigc-corpus-${entry.name}-`));
+      const root = mkdtempSync(join(harnessTemp(), `rigc-corpus-${entry.name}-`));
       const specDir = join(root, 'S');
       mkdirSync(specDir, { recursive: true });
       const rigPath = join(specDir, 'rig.json');
@@ -100703,7 +100809,7 @@ function runIngestSuite(): number {
     const refusedCoded = refusedFindings.filter((f) => f.code === 'SPEC_REFUSED');
     // The same run through the CLI, because the file on disk is the half a
     // library call cannot reach and the half the census reads.
-    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-refused-'));
+    const cliRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-refused-'));
     const cliSkeleton = join(cliRoot, 'skeleton.json');
     writeFileSync(cliSkeleton, JSON.stringify(forgedRefusal));
     const cliOut = join(cliRoot, 'specs');
@@ -101213,7 +101319,7 @@ function runIngestSuite(): number {
     // probe does not carry, because its link is in the default skin beside its
     // source. `skin` is therefore STATED on both, and a rebuild that dropped it
     // would resolve them against the default skin instead.
-    const twoSkinDir = mkdtempSync(join(tmpdir(), 'rigc-linkskins-'));
+    const twoSkinDir = mkdtempSync(join(harnessTemp(), 'rigc-linkskins-'));
     writeProbePng(join(twoSkinDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
     writeProbePng(join(twoSkinDir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
     const twoSkinRigPath = join(twoSkinDir, 'probe.rig.json');
@@ -102395,7 +102501,7 @@ function runIngestSuite(): number {
     const chainMotion = join(chainDirs.dir, 'probe.motion.json');
     writeFileSync(chainMotion, `${JSON.stringify(inheritChainMotion(null), null, 2)}\n`);
     const plainChain = compile({ rigPath: chainDirs.rigPath, motionPath: chainMotion, outDir: chainDirs.outDir, imagesDir: chainDirs.dir });
-    const packDir = mkdtempSync(join(tmpdir(), 'rigc-inherittrack-'));
+    const packDir = mkdtempSync(join(harnessTemp(), 'rigc-inherittrack-'));
     writeFileSync(join(packDir, 'skeleton.atlas'), plainChain.atlasText);
     const plantedKeys = [
       { time: 0.5, inherit: 'noScale' },
@@ -103612,7 +103718,7 @@ function runIngestSuite(): number {
   // 🌱 The plant is DATA: every `name` deleted out of the decompiled spec before
   // the rebuild, which is the branch point's spec reproduced inside the run.
   {
-    const nameDir = mkdtempSync(join(tmpdir(), 'rigc-attachment-name-'));
+    const nameDir = mkdtempSync(join(harnessTemp(), 'rigc-attachment-name-'));
     writeProbePng(join(nameDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
     writeProbePng(join(nameDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
     writeProbePng(join(nameDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
@@ -104097,7 +104203,7 @@ function runIngestSuite(): number {
     // float32 holds exactly — so a rebuild that re-measured would say so. The
     // plant is DATA: the same spec with `lengths` deleted, which is the branch
     // point's spec reproduced inside the run.
-    const lengthsDir = mkdtempSync(join(tmpdir(), 'rigc-path-lengths-'));
+    const lengthsDir = mkdtempSync(join(harnessTemp(), 'rigc-path-lengths-'));
     const lengthsRigPath = join(lengthsDir, 'path_lengths.rig.json');
     const lengthsMotionPath = join(lengthsDir, 'path_lengths.motion.json');
     writeFileSync(
@@ -108897,7 +109003,7 @@ function runRunTallySuite(live: RunTally): number {
     // --- TY37: the build-root helper refuses a prefix that could leave the art's directory, by name (issue #1127) --
     {
       const probes: string[] = [];
-      const art = mkdtempSync(join(tmpdir(), 'rigc-ty37-art-'));
+      const art = mkdtempSync(join(harnessTemp(), 'rigc-ty37-art-'));
       const refusalOf = (prefix: string): string | null => {
         try {
           buildRootIn(art, prefix);
@@ -108931,6 +109037,104 @@ function runRunTallySuite(live: RunTally): number {
         "issue #1127: every fixture build now lands inside its art's directory so its page names spell no temp directory, and that holds only while the helper cannot be handed a path that leaves it — a prefix is a name, and anything else is refused where it is given",
       );
     }
+  }
+
+  // --- TY39: a run leaves tmpdir() as it found it; a process that leaks one directory is read (issue #1137) --
+  // Each child below is a whole selftest process given a fresh, empty TMPDIR of
+  // its own (inside this run's root), so what it leaves there is its alone and
+  // no other process on the machine can add to the count. Read on the exit
+  // paths a run has that a child can reach without editing a site: a name
+  // `--only` does not register (exit 2 after every suite was skipped), a
+  // partial run that ran real sites (exit 2), and a `--merge` the run refuses
+  // (exit 2) — each after its fixtures exist, so after its root was made.
+  // `--keep-temp` must leave exactly its root and name it; a refused spelling
+  // must stop before a suite runs. The plant is a process that makes one
+  // directory under `tmpdir()` and does not remove it, read by the same count.
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const NO_SUITE = 'ty39-no-such-suite';
+    const childEnv = (temp: string, extra: Record<string, string> = {}): Record<string, string> => {
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== 'RIGC_KEEP_TEMP') env[key] = value;
+      return { ...env, TMPDIR: temp, RIGC_JOBS: '', ...extra };
+    };
+    const fresh = (): string => mkdtempSync(join(harnessTemp(), 'rigc-ty39-'));
+    // The spellings, held without a process.
+    for (const [argv, env] of [
+      [['--keep-temp=1'], undefined],
+      [['--keep-temps'], undefined],
+      [['--keeptemp'], undefined],
+      [['--keep-temp', '--keep-temp'], undefined],
+      [[], 'yes'],
+      [[], '0'],
+      [[], 'true'],
+    ] as const) {
+      const said = parseKeepTemp(argv, env);
+      if (typeof said !== 'string') probes.push(`${JSON.stringify(argv)} with RIGC_KEEP_TEMP=${JSON.stringify(env ?? null)} was read as ${JSON.stringify(said)}, not refused`);
+    }
+    for (const [argv, env, want] of [
+      [[], undefined, false],
+      [[], '', false],
+      [['--keep-temp'], undefined, true],
+      [[], '1', true],
+    ] as const) {
+      const said = parseKeepTemp(argv, env);
+      if (said !== want) probes.push(`${JSON.stringify(argv)} with RIGC_KEEP_TEMP=${JSON.stringify(env ?? null)} was read as ${JSON.stringify(said)}, not ${String(want)}`);
+    }
+    // The runs: each must leave its TMPDIR empty.
+    const merged = join(fresh(), 'forged-shard.json');
+    writeFileSync(merged, '{}\n');
+    for (const [how, args] of [
+      [`--only ${NO_SUITE}`, ['--only', NO_SUITE]],
+      ['--only draw-order --jobs 1', ['--only', 'draw-order', '--jobs', '1']],
+      ['--merge <a forged document>', ['--merge', merged]],
+    ] as const) {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp), maxBuffer: 64 * 1024 * 1024 });
+      const grew = tempGrowth(new Map(), tempCensus(temp));
+      if (run.status !== 2) probes.push(`${how}: exit ${String(run.status)}, not the 2 this path ends with: ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      if (grew.length > 0) probes.push(`${how} left ${grew.join(', ')} in its tmpdir()`);
+      else read.push(`${how} (exit ${String(run.status)}) left 0`);
+    }
+    // --keep-temp: exactly the root, named on stderr.
+    {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE, '--keep-temp'], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp) });
+      const left = readdirSync(temp).filter((name) => name.startsWith('rigc-'));
+      const named = run.stderr.split('\n').find((line) => line.startsWith("selftest: --keep-temp kept this process's temp root: ")) ?? null;
+      if (left.length !== 1 || !/^rigc-selftest-[A-Za-z0-9]{6}$/.test(left[0]) || named === null || !named.endsWith(join(temp, left[0]))) {
+        probes.push(`--keep-temp left [${left.join(', ')}] and said ${JSON.stringify(named)}, not exactly its rigc-selftest-XXXXXX root, named`);
+      } else read.push('--keep-temp left its root alone and named it');
+    }
+    // The door: a refused spelling stops before any suite and makes nothing.
+    {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp, { RIGC_KEEP_TEMP: 'yes' }) });
+      const said = run.stderr.trim().split('\n')[0] ?? '';
+      const left = readdirSync(temp);
+      if (run.status !== 2 || !said.startsWith('selftest: RIGC_KEEP_TEMP="yes" is not 1') || run.stdout.includes('──') || left.length > 0) {
+        probes.push(`RIGC_KEEP_TEMP=yes: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 160))}${run.stdout.includes('──') ? ', after walking the registry' : ''}, leaving [${left.join(', ')}]`);
+      } else read.push(`RIGC_KEEP_TEMP=yes -> ${said}`);
+    }
+    // The plant: a process that leaks one directory under tmpdir(), read by the same count.
+    {
+      const temp = fresh();
+      const before = tempCensus(temp);
+      spawnSync(process.execPath, ['-e', "const { mkdtempSync } = require('node:fs'); const { join } = require('node:path'); const { tmpdir } = require('node:os'); mkdtempSync(join(tmpdir(), 'rigc-ty39-plant-'));"], { encoding: 'utf8', env: childEnv(temp) });
+      const grew = tempGrowth(before, tempCensus(temp));
+      if (grew.length !== 1 || grew[0] !== 'rigc-ty39-plant- +1') probes.push(`the plant that leaks one rigc-ty39-plant- directory was counted as [${grew.join(', ')}]`);
+      else read.push(`the plant read as ${grew[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'TY39_A_RUN_LEAVES_TMPDIR_AS_IT_FOUND_IT_ON_EVERY_EXIT_PATH_AND_A_LEAKED_DIRECTORY_IS_NAMED_BY_PREFIX',
+      held,
+      probeDetail(held, probes, `each child in an empty tmpdir() of its own: ${read.join('; ')}; --keep-temp refuses every other spelling by name`),
+      'issue #1137: every temp directory the harness made used to stay behind — 500,703 entries on one machine, and Bun pays ' +
+        "for each at every start under that directory — so the run's directories now live in one root the exit removes, and " +
+        'what a run leaves is counted rather than promised',
+    );
   }
 
   return bad;
@@ -108996,7 +109200,7 @@ interface IntegerNamedBuild {
 function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[]; dirs: string[] } | null {
   const galleryRoot = resolve(import.meta.dir, 'gallery');
   if (!['nod', 'walk'].every((name) => existsSync(join(galleryRoot, name, 'rig.json')))) return null;
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-integer-named-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-integer-named-'));
   const builds: IntegerNamedBuild[] = [];
   const refused: string[] = [];
   type Spec = Record<string, unknown>;
@@ -109118,7 +109322,7 @@ function verdictSideProblems(population: ReadonlyMap<string, string>, root: stri
  */
 function cut4c5Builds(root: string): Array<{ label: string; result: ReturnType<typeof compile>; outDir: string }> {
   const look = join(root, 'gallery', 'look');
-  const lookOut = mkdtempSync(join(tmpdir(), 'rigc-vf14-look-'));
+  const lookOut = mkdtempSync(join(harnessTemp(), 'rigc-vf14-look-'));
   const lookResult = compile({ rigPath: join(look, 'rig.json'), motionPath: join(look, 'motion.json'), outDir: lookOut, imagesDir: join(look, 'parts') });
   const tips = writeProbeRig(threeTipsRig(['jiggle', 'jiggle_b']));
   const tipsMotion = join(tips.dir, 'probe.motion.json');
@@ -109616,7 +109820,7 @@ function runVerdictSuppliersSuite(): number {
   // --- VF07: the instrument, on the gallery's rows -------------------------
   {
     const probes: string[] = [];
-    const work = mkdtempSync(join(tmpdir(), 'rigc-verdict-gate-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-verdict-gate-'));
     const recipesFile = join(work, 'recipes.json');
     writeFileSync(recipesFile, recipesText(galleryRecipes(root, () => {})));
     const printed: string[] = [];
@@ -109658,7 +109862,7 @@ function runVerdictSuppliersSuite(): number {
     for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A08_REGION_NAMES_MATCH_ATTACHMENTS', 'A13_MESH_BUDGET', 'A22_MESH_UVS_IN_UNIT_RANGE', 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED']) {
       if (!inView.includes(code)) probes.push(`${code} iterates over its subject and is not in the view's quantified roster`);
     }
-    const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-vf08-'));
+    const plantRoot = mkdtempSync(join(harnessTemp(), 'rigc-vf08-'));
     mkdirSync(join(plantRoot, 'src', 'assertions', 'bodies'), { recursive: true });
     writeFileSync(join(plantRoot, 'src', 'validate.ts'), "  check('A03_REGION_WIDTH_HEIGHT_FINITE', () => vfNoSuchBody(verdicts, facts));\n");
     let refusal = '';
@@ -110869,7 +111073,7 @@ function runVerdictSuppliersSuite(): number {
       return { key: familyBuildKey({ ...built, rig: built.rig }, modelDocument(built.model, built.skeletonText, built.atlasText)), atlasText: built.atlasText };
     };
     const inside = copies.map((dirs) => keyOf(join(buildRootIn(dirs.dir, 'rigc-vf23-'), 'spine'), dirs.rigPath, dirs.dir));
-    const beside = copies.map((dirs) => keyOf(join(mkdtempSync(join(tmpdir(), 'rigc-vf23-beside-')), 'spine'), dirs.rigPath, dirs.dir));
+    const beside = copies.map((dirs) => keyOf(join(mkdtempSync(join(harnessTemp(), 'rigc-vf23-beside-')), 'spine'), dirs.rigPath, dirs.dir));
     const twice = [0, 1].map(() => keyOf(join(buildRootIn(copies[0].dir, 'rigc-vf23-twice-'), 'spine'), copies[0].rigPath, copies[0].dir));
     const distinct = (rows: ReadonlyArray<{ key: string }>): number => new Set(rows.map((row) => row.key)).size;
     const besidePage = firstPageLine(beside[0].atlasText);
@@ -110903,7 +111107,7 @@ function runVerdictSuppliersSuite(): number {
     probes.push(...firstFew(faulted.flatMap((row) => row.place.faults.map((fault) => `build ${row.key.slice(0, 16)}: ${fault}`)), 'path(s)'));
     // The plant: the static probe built from a sibling temp directory, the way the harness built a fixture before #1127.
     const planted = writeProbeRig();
-    const siblingOut = join(mkdtempSync(join(tmpdir(), 'rigc-ty36-sibling-')), 'spine');
+    const siblingOut = join(mkdtempSync(join(harnessTemp(), 'rigc-ty36-sibling-')), 'spine');
     mkdirSync(siblingOut, { recursive: true });
     const plantedBuild = compile({ rigPath: planted.rigPath, motionPath: staticMotionIn(planted.dir), outDir: siblingOut, imagesDir: planted.dir });
     const plantedPlace = buildPlaceOf({ ...plantedBuild, atlasDir: siblingOut }, modelDocument(plantedBuild.model, plantedBuild.skeletonText, plantedBuild.atlasText));
@@ -113211,7 +113415,7 @@ function runDocScriptRound(
 ): Map<string, DocOutcome> {
   /** The gutter line every verdict of a rigc report is printed on. */
   const verdictLine = /^ {2}(PASS|FAIL|SKIP) {2}(A\d\d_[A-Z\d_]+)/;
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-doc-script-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-doc-script-'));
   const outcomes = new Map<string, DocOutcome>();
   try {
     const here = (text: string): string => text.split(docScratchPrefix()).join(`${dir}/`);
@@ -113695,7 +113899,7 @@ function runDocScriptSuite(): number {
    * with for one run.
    */
   const MOVED_OFFSET_ROW = 'differ after un-permuting';
-  const renumberRoot = mkdtempSync(join(tmpdir(), 'rigc-doc-renumber-'));
+  const renumberRoot = mkdtempSync(join(harnessTemp(), 'rigc-doc-renumber-'));
   const construction: string[] = [];
   const invariance: string[] = [];
   const plantMisses: string[] = [];
@@ -114944,7 +115148,7 @@ function docsQuoteCommands(file: string, text: string, root: string): DocsQuoteC
  */
 function docsQuoteIgnored(paths: string[], root: string): { ignored: Set<string>; fault: string | null } {
   if (paths.length === 0) return { ignored: new Set<string>(), fault: null };
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-ignore-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-ignore-'));
   try {
     writeFileSync(join(dir, '.gitignore'), readFileSync(join(root, '.gitignore'), 'utf8'));
     const init = spawnSync('git', ['init', '-q', dir], { encoding: 'utf8' });
@@ -115756,7 +115960,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       const readme = readFileSync(readmePath, 'utf8');
       if (!new RegExp(`bun cli\\.ts build[^\\n]*--rig gallery/${example}/rig\\.json`).test(readme)) continue;
       galleryExamples++;
-      const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-docsquote-${example}-`)));
+      const runs = transcriptRunsFor(example, readme, mkdtempSync(join(harnessTemp(), `rigc-docsquote-${example}-`)));
       galleryRuns += runs.length;
       for (const run of runs) {
         for (const line of run.lines) {
@@ -115803,7 +116007,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     }
   }
 
-  const roundDir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-round-'));
+  const roundDir = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-round-'));
   const memo = new Map<string, { run: TranscriptRun; out: string | null }>();
   const runsBy = new Map<string, TranscriptRun[]>();
   const setupRefusals: string[] = [];
@@ -116250,7 +116454,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // the check against it. Same function, same git, a directory nothing else
   // reads.
   {
-    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-probe-'));
+    const probe = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-probe-'));
     try {
       writeFileSync(join(probe, 'kept.txt'), 'a file the round leaves alone\n');
       spawnSync('git', ['init', '-q', probe], { encoding: 'utf8' });
@@ -116686,7 +116890,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const buildOnce = (rigPath: string, motionPath: string): CompileResult => {
     const already = rangeBuilds.get(rigPath);
     if (already !== undefined) return already;
-    const fresh = compile({ rigPath, motionPath, outDir: mkdtempSync(join(tmpdir(), 'rigc-range-')) });
+    const fresh = compile({ rigPath, motionPath, outDir: mkdtempSync(join(harnessTemp(), 'rigc-range-')) });
     rangeBuilds.set(rigPath, fresh);
     return fresh;
   };
@@ -117037,7 +117241,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const setupProbes: string[] = [];
   const setupCases: string[] = [];
   {
-    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-setup-'));
+    const probe = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-setup-'));
     try {
       const page = 'docs/DQ07_PLANTED_PAGE.md';
       const written = [

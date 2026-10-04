@@ -122,10 +122,22 @@ function octagon(x: number, y: number, w: number, h: number, inset: number): Arr
 }
 
 let root: string | null = null;
+let parent: string | null = null;
+
+/**
+ * Make the fixture root inside `dir` rather than in the system temp directory
+ * — the selftest's run root (issue #1137), which the selftest removes when it
+ * exits, so the fixtures leave nothing behind. Named before the first fixture
+ * is made, or refused: a root already made elsewhere would be left behind.
+ */
+export function placeFixturesUnder(dir: string): void {
+  if (root !== null) throw new Error(`placeFixturesUnder(${dir}): the fixture root ${root} is already made`);
+  parent = dir;
+}
 
 /** One temp root for the whole run, so a failed run leaves one directory to read. */
 function fixtureRoot(): string {
-  if (root === null) root = mkdtempSync(join(tmpdir(), 'rigc-fixtures-'));
+  if (root === null) root = mkdtempSync(join(parent ?? tmpdir(), 'rigc-fixtures-'));
   return root;
 }
 

@@ -77,6 +77,13 @@ cores, and `--jobs 1` runs them one after another as the run did before the
 flag. The printed log is the same text at any `--jobs`. On a machine you share,
 pass `--jobs 2`.
 
+A run leaves `tmpdir()` as it found it. Every directory a selftest process makes
+lives under one `rigc-selftest-XXXXXX` root of its own, which the process
+removes when it exits, green or red; a shard and a `--jobs` unit are processes
+and remove their own (`TY39` counts what a run leaves). `--keep-temp` (or
+`RIGC_KEEP_TEMP=1`) keeps the root to read and names it on stderr; any other
+spelling is refused by name. A run killed by a signal leaves its root behind.
+
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
 installs packages, so it needs a network:
