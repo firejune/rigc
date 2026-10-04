@@ -87422,7 +87422,7 @@ function runDeformCoreSuite(): number | null {
 // the byte-identity instrument: tools/emit_hashes.ts (issue #914, step 1a of #380)
 // ---------------------------------------------------------------------------
 
-import { CeilingInputError, ceilingTable, measureBuild, regionWindow, rowOf, type ContourReader, type RegionResolver } from './tools/hull_ceiling.ts';
+import { CeilingInputError, ceilingTable, measureBuild, regionWindow, rowOf, type ContourReader, type ConversionReading, type RegionResolver } from './tools/hull_ceiling.ts';
 import { anchorMain, tracedInputs, tracedPack } from './tools/pack_anchor.ts';
 import { CONTOUR_GENERATOR_DEFAULTS, regionKindRegions, type Tightness } from './tools/trace_footprint.ts';
 
@@ -88461,6 +88461,127 @@ function runEmitHashesSuite(): number | null {
         'issue #1093: three production rigs read 0 opaque texels under nonzero hulls, and they turn many regions; a turned ' +
           'region is read through a hand-written index map, so the map is held to `extractRegion` — the tree\'s one lift — ' +
           'and the counts to the drawing, at every turn',
+      );
+    }
+
+    // HUL07/HUL08 build pages of their own: a region-kind region the tracer refuses, beside what it is weighed
+    // against, read once by the arithmetic the instrument states and once by the one it replaced (issue #1157).
+    /** A build whose pages are `[file, painted rectangles, cleared texels, regions]`, every region sampled by a region attachment. */
+    const pagesBuild = (label: string, pages: Array<{ file: string; paint: Array<[number, number, number, number]>; clear?: Array<[number, number]>; regions: Array<[string, number, number, number, number]> }>): string => {
+      const dir = join(work, label);
+      mkdirSync(dir, { recursive: true });
+      const atlas: string[] = [];
+      const attachments: Record<string, Record<string, unknown>> = {};
+      for (const pg of pages) {
+        const page = new Plate(200, 100);
+        for (const [x, y, w, h] of pg.paint) page.rect(x, y, w, h, [200, 120, 40, 255]);
+        for (const [x, y] of pg.clear ?? []) page.set(x, y, [0, 0, 0, 0]);
+        page.writePng(join(dir, pg.file));
+        if (atlas.length > 0) atlas.push('');
+        atlas.push(pg.file, 'size: 200, 100', 'filter: Linear, Linear', 'pma: false');
+        for (const [name, x, y, w, h] of pg.regions) {
+          atlas.push(name, `bounds: ${x}, ${y}, ${w}, ${h}`, `offsets: 0, 0, ${w}, ${h}`, 'rotate: 0');
+          attachments[`s_${name}`] = { [name]: {} };
+        }
+      }
+      writeFileSync(join(dir, 'skeleton.atlas'), `${atlas.join('\n')}\n`);
+      writeFileSync(join(dir, 'skeleton.json'), JSON.stringify({ skeleton: {}, bones: [{ name: 'root' }], skins: [{ name: 'default', attachments }] }));
+      return dir;
+    };
+    /** The arithmetic before #1157: a refused region counted by its silhouette, a region with no art by its convex hull (0). */
+    const silhouetteForRefused: ConversionReading = (m) => ({ traced: m.silhouette, convex: m.convex });
+    /** What a row must read, as probes; empty when it reads it. */
+    const judge = (row: ReturnType<typeof rowOf>, want: { hullTraced: number; hullConvex: number; refused: Record<string, number>; refusedRect: number; cell: string }): string[] => {
+      const probes: string[] = [];
+      if (row.hullTraced !== want.hullTraced) probes.push(`Σ hull, regions traced is ${row.hullTraced}, not ${want.hullTraced}`);
+      if (row.hullConvex !== want.hullConvex) probes.push(`Σ hull, regions convex is ${row.hullConvex}, not ${want.hullConvex}`);
+      const sorted = (r: Record<string, number>): string => JSON.stringify(Object.entries(r).sort(([x], [y]) => (x < y ? -1 : 1)));
+      if (sorted(row.fallbacks.traceRefused) !== sorted(want.refused)) probes.push(`the refusals counted are ${JSON.stringify(row.fallbacks.traceRefused)}, not ${JSON.stringify(want.refused)}`);
+      if (row.fallbacks.refusedRect !== want.refusedRect) probes.push(`the refused regions keep ${row.fallbacks.refusedRect} texels of rectangle, not ${want.refusedRect}`);
+      const line = ceilingTable([row]).find((l) => l.startsWith(`| ${row.name} `)) ?? '';
+      if (!line.includes(want.cell)) probes.push(`the row does not say ${JSON.stringify(want.cell)}: ${JSON.stringify(line.slice(0, 400))}`);
+      return probes;
+    };
+
+    // --- HUL07: a region on a page with no alpha counts as its rectangle, never as 0 --
+    {
+      const probes: string[] = [];
+      let said = '';
+      try {
+        // Page 1 carries a 40x30 region whose left 20 columns are art (traced 600); page 2 carries a 40x30
+        // region and no texel of alpha > 0 anywhere, which the tracer refuses `empty`.
+        const dir = pagesBuild('hul07', [
+          { file: 'page.png', paint: [[0, 0, 20, 30]], regions: [['half', 0, 0, 40, 30]] },
+          { file: 'dark.png', paint: [], regions: [['dark', 0, 0, 40, 30]] },
+        ]);
+        const measured = measureBuild(dir);
+        const half = measured.measures.find((m) => m.name === 'half');
+        const dark = measured.measures.find((m) => m.name === 'dark');
+        if (half === undefined || dark === undefined) throw new Error(`the build measured ${JSON.stringify(measured.measures.map((m) => m.name))}, not "half" and "dark"`);
+        if (!('refused' in dark.traced) || dark.traced.refused !== 'empty') probes.push(`the tracer read "dark" as ${JSON.stringify(dark.traced)}, not a refusal \`empty\``);
+        if (!('area' in half.traced) || half.silhouette !== 600) probes.push(`"half" traced as ${JSON.stringify(half.traced)} with silhouette ${half.silhouette}, not 600`);
+        const want = { hullTraced: half.silhouette + dark.rect, hullConvex: half.convex + dark.rect, refused: { empty: 1 }, refusedRect: dark.rect, cell: `refuses 1 empty, kept as ${String(dark.rect).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} texels of rectangle` };
+        const honest = rowOf('hul07', 'synthetic', measured, null);
+        probes.push(...judge(honest, want));
+        if (JSON.stringify(honest.emptyPages) !== '[2]') probes.push(`the empty pages are ${JSON.stringify(honest.emptyPages)}, not [2]`);
+        const planted = rowOf('hul07', 'synthetic', measured, null, silhouetteForRefused);
+        const caught = judge(planted, want);
+        if (!caught.some((c) => c.startsWith(`Σ hull, regions traced is ${half.silhouette},`))) probes.push(`the silhouette-for-refused arithmetic planted back was not read by its figure ${half.silhouette}: ${JSON.stringify(caught)}`);
+        if (!caught.some((c) => c.startsWith(`Σ hull, regions convex is ${half.convex},`))) probes.push(`the convex hull of no art planted back as 0 was not read by its figure ${half.convex}: ${JSON.stringify(caught)}`);
+        said = `a 40x30 region half art (silhouette ${half.silhouette}) and a 40x30 region on a page with no alpha (refused ${JSON.stringify(dark.traced)}): traced ${honest.hullTraced} = ${half.silhouette} + its rectangle ${dark.rect}, convex ${honest.hullConvex}; planted back the arithmetic before #1157 reads ${JSON.stringify(caught)}`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL07_A_REGION_ON_A_PAGE_WITH_NO_ALPHA_COUNTS_AS_ITS_RECTANGLE_IN_THE_CONVERTED_COLUMNS_AND_ZERO_IS_NAMED',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1157: the converted columns are read as what converting region attachments could reach, and a region a ' +
+          'conversion cannot make stays its rectangle in any build — counting the silhouette of a page with no alpha, 0, ' +
+          'made most of a corpus\'s gap a saving no conversion reaches, while the same row already named the page empty',
+      );
+    }
+
+    // --- HUL08: an `islands` or `pinch` refusal on a page with alpha counts as its rectangle --
+    {
+      const probes: string[] = [];
+      let said = '';
+      try {
+        // "split": two 10x30 bars at the ends of a 40x30 rectangle, two islands of equal size (refused `islands`).
+        // "pinch": a 20x20 block in a 40x30 rectangle with two texels cleared diagonally inside it (refused `pinch`).
+        const dir = pagesBuild('hul08', [
+          { file: 'page.png', paint: [[0, 0, 10, 30], [30, 0, 10, 30], [50, 0, 20, 20]], clear: [[55, 5], [56, 6]], regions: [['split', 0, 0, 40, 30], ['pinch', 50, 0, 40, 30]] },
+        ]);
+        const measured = measureBuild(dir);
+        const split = measured.measures.find((m) => m.name === 'split');
+        const pinch = measured.measures.find((m) => m.name === 'pinch');
+        if (split === undefined || pinch === undefined) throw new Error(`the build measured ${JSON.stringify(measured.measures.map((m) => m.name))}, not "split" and "pinch"`);
+        if (!('refused' in split.traced) || split.traced.refused !== 'islands') probes.push(`the tracer read "split" as ${JSON.stringify(split.traced)}, not a refusal \`islands\``);
+        if (!('refused' in pinch.traced) || pinch.traced.refused !== 'pinch') probes.push(`the tracer read "pinch" as ${JSON.stringify(pinch.traced)}, not a refusal \`pinch\``);
+        if (split.silhouette >= split.rect || pinch.silhouette >= pinch.rect) probes.push(`the silhouettes ${split.silhouette} and ${pinch.silhouette} are not below the rectangles, so the plant has nothing to be caught on`);
+        const refusedRect = split.rect + pinch.rect;
+        // The convex hull is a conversion that refuses neither, so its column keeps the two convex hulls.
+        const want = { hullTraced: refusedRect, hullConvex: split.convex + pinch.convex, refused: { islands: 1, pinch: 1 }, refusedRect, cell: `refuses 1 islands, 1 pinch, kept as ${String(refusedRect).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} texels of rectangle` };
+        const honest = rowOf('hul08', 'synthetic', measured, null);
+        probes.push(...judge(honest, want));
+        const planted = rowOf('hul08', 'synthetic', measured, null, silhouetteForRefused);
+        const caught = judge(planted, want);
+        const old = split.silhouette + pinch.silhouette;
+        if (!caught.some((c) => c.startsWith(`Σ hull, regions traced is ${old},`))) probes.push(`the silhouette-for-refused arithmetic planted back was not read by its figure ${old}: ${JSON.stringify(caught)}`);
+        if (caught.some((c) => c.startsWith('Σ hull, regions convex'))) probes.push(`the plant moved the convex column, which neither refusal touches: ${JSON.stringify(caught)}`);
+        said = `"split" (${JSON.stringify(split.traced)}, silhouette ${split.silhouette}) and "pinch" (${JSON.stringify(pinch.traced)}, silhouette ${pinch.silhouette}), two 40x30 rectangles on a page with alpha: traced ${honest.hullTraced}, convex ${honest.hullConvex} (${split.convex} + ${pinch.convex}); planted back the arithmetic before #1157 reads ${JSON.stringify(caught)}`;
+      } catch (err) {
+        probes.push(`measuring threw: ${(err as Error).message}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'HUL08_AN_ISLANDS_OR_PINCH_REFUSAL_ON_A_PAGE_WITH_ALPHA_COUNTS_AS_ITS_RECTANGLE_IN_THE_TRACED_COLUMN',
+        held,
+        probeDetail(held, probes, said),
+        'issue #1157: a region the tracer refuses `islands` or `pinch` is kept a rectangle by a conversion exactly as an ' +
+          '`empty` one is (tools/trace_footprint.ts, and `pack_anchor --trace-regions`, the realised figure the column is ' +
+          'the ceiling of); counted by its silhouette it is area of the gap that no conversion reaches',
       );
     }
   }
@@ -113711,9 +113832,12 @@ function main(): void {
           'opaque texel outside a hull separating the drawn floor from the raw count, and a transparent region named by ' +
           'page; a trimmed mesh hull read in the drawing and cut to the kept rectangle; a tracer that answers the ' +
           'rectangle named by region on a gallery rig; a mesh named past its key and a linked mesh in a second skin each ' +
-          'reaching the region the runtime reaches, the key-only reading refused by name; and one drawing at four turns ' +
-          'reading the same in every column, its window equal to extractRegion\'s lift; and — issue #1140 — every tool ' +
-          'that builds recipes, run by hand, removing the work directory it made on every exit path unless --keep-work)') +
+          'reaching the region the runtime reaches, the key-only reading refused by name; one drawing at four turns ' +
+          'reading the same in every column, its window equal to extractRegion\'s lift; and — issue #1157 — a region ' +
+          'on a page with no alpha, and an `islands` and a `pinch` refusal on a page with alpha, each counted as its ' +
+          'rectangle in the converted columns, the silhouette-for-refused arithmetic planted back read by its figure; ' +
+          'and — issue #1140 — every tool that builds recipes, run by hand, removing the work directory it made on ' +
+          'every exit path unless --keep-work)') +
       (renderHashesBad === null
         ? ''
         : ', + ' + n('render-hashes') + ' render-hashes controls (issue #965 — `tools/render_hashes.ts`, the render-identity ' +
