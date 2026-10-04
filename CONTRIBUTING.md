@@ -95,7 +95,17 @@ high-water with the `--jobs` it was read at (`TY40`), each times the same
 margin. A platform with no entry, or no children's figure, is a `SKIP` naming
 the command that writes one: `bun selftest.ts --memory-base` on a green full
 run at `--jobs 2` or more writes both numbers. Never type them. A shard holds
-its own figures and the merge holds every shard's. The ceiling holds the
+its own figures and the merge holds every shard's. The children's figure has a
+second writer, because a child's peak is its own process's whichever shard
+started it: `bun selftest.ts --merge <file>… --memory-base-children [<file>]`
+writes only the children's half of its platform's entry — the largest over the
+shard documents, at the `--jobs` they ran at, which every shard that measured a
+child must agree on — and leaves the parent's high-water, which only a
+one-process run can read (`--memory-base` under `--merge` stays refused). The
+darwin entry is written by `--memory-base` on a laptop; the linux entry's
+children's figure by CI's merge, which uploads it as the `selftest-memory-base`
+artifact, and the tracked linux figure is committed from that artifact, as the
+durations base is from `selftest-shards-base`. The ceiling holds the
 largest child, not the sum alive at once, because the sum is a reading of
 one schedule; the sum is at most `--jobs` times the largest. To read every
 unit's figure, set `RIGC_UNIT_PEAKS=<file>`: one line per unit with its peak,

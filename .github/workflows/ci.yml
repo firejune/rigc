@@ -142,15 +142,27 @@ jobs:
       # merge's own per-suite seconds (issue #1128). It is written only after a
       # green verdict and changes nothing else the merge prints or exits on; the
       # tracked base is rewritten from this artifact, so the deal is read off
-      # CI's seconds rather than a laptop's.
+      # CI's seconds rather than a laptop's. `--memory-base-children` (issue
+      # #1144) writes, after the same green verdict, the linux entry's children's
+      # half of `tools/selftest_memory.base.json` — the largest child any shard
+      # measured, at the `--jobs` they ran at — and leaves the parent's
+      # high-water; the tracked base's linux children's figure is committed from
+      # its artifact, so `TY40` holds CI's own children rather than a SKIP.
       - name: The merge of every shard is the verdict
-        run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json --shards-base "$RUNNER_TEMP/selftest_shards.base.json"
+        run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json --shards-base "$RUNNER_TEMP/selftest_shards.base.json" --memory-base-children "$RUNNER_TEMP/selftest_memory.base.json"
       - name: Upload the durations base this merge wrote
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: selftest-shards-base
           path: ${{ runner.temp }}/selftest_shards.base.json
+          if-no-files-found: error
+      - name: Upload the memory base this merge wrote
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-memory-base
+          path: ${{ runner.temp }}/selftest_memory.base.json
           if-no-files-found: error
 
   # Linux's own readings of the gallery's builds and renders: measurement only,
