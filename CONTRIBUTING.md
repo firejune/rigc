@@ -83,7 +83,12 @@ after a forced collection; a suite that ran units adds `children high-water
 <MB> MB (<unit>)` — the largest peak of any child process it started, as the
 driver read it, and which unit that was (a `core` worker is named for the unit
 it was running when its peak was reached). The `--jobs 1` path reads no child's
-peak, so there the line says nothing about children. Both figures are held
+peak, so there the line says nothing about children. The unit of a child's
+`maxRSS` is read through the call that reads it: each driver first runs one
+`bun -e` child that holds 64 MiB and decides bytes or KiB from what
+`Bun.spawn`'s `resourceUsage()` reports for it (`TY42` holds a known 256 MiB
+child to that reading), and a calibration that reads neither leaves every
+peak unread, with the reason in `RIGC_UNIT_PEAKS`. Both figures are held
 under `tools/selftest_memory.base.json`, one entry per platform: the parent's
 high-water (`TY26`, and the full run after its tables) and the children's
 high-water with the `--jobs` it was read at (`TY40`), each times the same
