@@ -34,7 +34,12 @@ bun run selftest     # the validator's own negative controls
 ```
 
 `bun run selftest` needs no arguments and no assets — it generates its own
-fixtures. If you have not run `bun run fetch-examples`, the suites that read the
+fixtures. A build of a generated fixture or probe lands inside that fixture's
+own directory, never in a temp directory beside it: a page name is the art's
+path seen from the atlas, so a build from beside it would write a temp
+directory's random name into the pair and its document, and the same inputs
+would count as a different build in every process that built them (`TY36`
+reads every recorded build for that name). If you have not run `bun run fetch-examples`, the suites that read the
 corpus will report a hole rather than a result — `TY20` prints them by name, so
 the run says which — and a run where nothing substantive executed exits 2 rather
 than printing green. That includes the core suite's corpus half: a control there
@@ -46,15 +51,89 @@ exits 2 naming every suite it skipped — it is never a verdict, so run the whol
 `bun run selftest` before you open a pull request.
 
 The whole run can also be cut into shards and merged, which is how CI runs it:
-`bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites whose
-registration index is `i − 1` modulo `n` and writes what it ran, exiting 2 when
-green like `--only`; `bun selftest.ts --merge <file>…` over every shard's
-document refuses by name a set that is not one run's shards each once, runs the
-three suites that read the whole run, and prints the full run's summary and
-verdict. `RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
+`bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites dealt to
+shard `i` and writes what it ran, exiting 2 when green like `--only`. The deal
+is longest-first over the per-suite seconds in `tools/selftest_shards.base.json`
+— each suite, heaviest first, to the shard holding the least so far — and a
+suite the base has no entry for is dealt round-robin by its registration index.
+`bun selftest.ts --merge <file>…` over every shard's document refuses by name a
+set that is not one run's shards each once (including shards that were dealt
+two different ways), runs the three suites that read the whole run, and prints
+the full run's summary and verdict; add `--shards-base [<file>]` and a green
+merge writes the base again from its own seconds (to `<file>`, or over the
+tracked base when none is named). CI's merge writes it and uploads it as the
+`selftest-shards-base` artifact, which is where the tracked base comes from.
+Never edit the base by hand.
+`RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
 environment. CI's `shard` jobs are the six shards side by side and its `test`
 job is the merge. On a machine you share, run the shards one after another, not
 together: each is a whole process with its own memory high-water.
+
+Inside a suite, independent units run concurrently: `render-hashes`' eight
+`render_hashes.ts` runs and two batches of its CLI runs, `packer`'s packs by
+set, and `core`'s posing-heavy controls, which `--jobs` workers share. `--jobs
+<n>` (or `RIGC_JOBS`) is how many run at once; the default is the machine's
+cores, and `--jobs 1` runs them one after another as the run did before the
+flag. The printed log is the same text at any `--jobs`. On a machine you share,
+pass `--jobs 2`.
+
+The run's memory is read in two places. Each suite's line ends with the
+process's RSS, its change across the suite, and the heap and external buffers
+after a forced collection; a suite that ran units adds `children high-water
+<MB> MB (<unit>)` — the largest peak of any child process it started, as the
+driver read it, and which unit that was (a `core` worker is named for the unit
+it was running when its peak was reached). The `--jobs 1` path reads no child's
+peak, so there the line says nothing about children. The unit of a child's
+`maxRSS` is read through the call that reads it: each driver first runs one
+`bun -e` child that holds 64 MiB and decides bytes or KiB from what
+`Bun.spawn`'s `resourceUsage()` reports for it (`TY42` holds a known 256 MiB
+child to that reading), and a calibration that reads neither leaves every
+peak unread, with the reason in `RIGC_UNIT_PEAKS`. Both figures are held
+under `tools/selftest_memory.base.json`, one entry per platform: the parent's
+high-water (`TY26`, and the full run after its tables) and the children's
+high-water with the `--jobs` it was read at (`TY40`), each times the same
+margin. A platform with no entry, or no children's figure, is a `SKIP` naming
+the command that writes one: `bun selftest.ts --memory-base` on a green full
+run at `--jobs 2` or more writes both numbers. Never type them. A shard holds
+its own figures and the merge holds every shard's. The children's figure has a
+second writer, because a child's peak is its own process's whichever shard
+started it: `bun selftest.ts --merge <file>… --memory-base-children [<file>]`
+writes only the children's half of its platform's entry — the largest over the
+shard documents, at the `--jobs` they ran at, which every shard that measured a
+child must agree on — and leaves the parent's high-water, which only a
+one-process run can read (`--memory-base` under `--merge` stays refused). The
+darwin entry is written by `--memory-base` on a laptop; the linux entry's
+children's figure by CI's merge, which uploads it as the `selftest-memory-base`
+artifact, and the tracked linux figure is committed from that artifact, as the
+durations base is from `selftest-shards-base`. Neither writer takes the run's
+children's figure as measured: one run's largest child is not the figure (which
+units a `core` worker claims is decided by timing, and CI read 506 to 720 MB on
+the same code), so both write the larger of the tracked figure and the run's,
+and their line says which — `kept 547 MB (this run 506 MB) at --jobs 4`,
+`raised 547 → 720 MB at --jobs 4`, or `wrote … (the base held no children's
+figure)`. The figure ratcheted against is always the tracked file's entry, the
+one the ceiling reads, never the file named after `--memory-base-children`,
+which is overwritten unread. A run that measured no child keeps the tracked
+figure. Lowering it is a deliberate act with its own spelling: add
+`--reset-children-base` to either writer, and the line says `lowered 547 →
+506 MB … (--reset-children-base)`. The same spelling is the only way to
+replace a figure read at another `--jobs`, which is otherwise refused by name
+rather than compared, because a figure is a reading at one `--jobs`. Without
+either writer the spelling is refused, since it would write nothing. The
+parent's high-water is still written as the one-process run measured it. The
+ceiling holds the
+largest child, not the sum alive at once, because the sum is a reading of
+one schedule; the sum is at most `--jobs` times the largest. To read every
+unit's figure, set `RIGC_UNIT_PEAKS=<file>`: one line per unit with its peak,
+its seconds and when in its batch it started and ended, which is where the
+overlap of a batch's children is read from.
+
+A run leaves `tmpdir()` as it found it. Every directory a selftest process makes
+lives under one `rigc-selftest-XXXXXX` root of its own, which the process
+removes when it exits, green or red; a shard and a `--jobs` unit are processes
+and remove their own (`TY39` counts what a run leaves). `--keep-temp` (or
+`RIGC_KEEP_TEMP=1`) keeps the root to read and names it on stderr; any other
+spelling is refused by name. A run killed by a signal leaves its root behind.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it

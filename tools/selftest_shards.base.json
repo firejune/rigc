@@ -1,0 +1,269 @@
+{
+  "spec": "selftest-shards/1",
+  "suites": [
+    {
+      "suite": "overlay_probe",
+      "seconds": 2.6
+    },
+    {
+      "suite": "articulated_probe",
+      "seconds": 1
+    },
+    {
+      "suite": "articulated_probe (contained cut)",
+      "seconds": 0.4
+    },
+    {
+      "suite": "rig-spec",
+      "seconds": 2
+    },
+    {
+      "suite": "static-rig",
+      "seconds": 7.1
+    },
+    {
+      "suite": "png-transparency",
+      "seconds": 1.7
+    },
+    {
+      "suite": "draw-order",
+      "seconds": 0.1
+    },
+    {
+      "suite": "key-time",
+      "seconds": 0.1
+    },
+    {
+      "suite": "event",
+      "seconds": 0
+    },
+    {
+      "suite": "constraint-deform",
+      "seconds": 1.9
+    },
+    {
+      "suite": "hold-curve",
+      "seconds": 0.1
+    },
+    {
+      "suite": "path-slider",
+      "seconds": 9
+    },
+    {
+      "suite": "polygon",
+      "seconds": 0
+    },
+    {
+      "suite": "contour-mesh",
+      "seconds": 4
+    },
+    {
+      "suite": "segments-mesh",
+      "seconds": 0.3
+    },
+    {
+      "suite": "deform-winding",
+      "seconds": 4.9
+    },
+    {
+      "suite": "deform-transform",
+      "seconds": 0.3
+    },
+    {
+      "suite": "deform-report",
+      "seconds": 1.4
+    },
+    {
+      "suite": "group-member",
+      "seconds": 0.2
+    },
+    {
+      "suite": "mesh-rasteriser",
+      "seconds": 0.2
+    },
+    {
+      "suite": "mesh-outline",
+      "seconds": 0
+    },
+    {
+      "suite": "mesh-rung",
+      "seconds": 0.1
+    },
+    {
+      "suite": "mesh-check",
+      "seconds": 12.9
+    },
+    {
+      "suite": "slot-attribution",
+      "seconds": 0
+    },
+    {
+      "suite": "error-attribution",
+      "seconds": 0
+    },
+    {
+      "suite": "motion-parse",
+      "seconds": 0.2
+    },
+    {
+      "suite": "cli",
+      "seconds": 26.7
+    },
+    {
+      "suite": "bin-launcher",
+      "seconds": 0.5
+    },
+    {
+      "suite": "editor-roundtrip",
+      "seconds": 4.7
+    },
+    {
+      "suite": "shipped-doc",
+      "seconds": 0
+    },
+    {
+      "suite": "agent-skill",
+      "seconds": 0.2
+    },
+    {
+      "suite": "currency",
+      "seconds": 16.6
+    },
+    {
+      "suite": "gallery-transcript",
+      "seconds": 6.7
+    },
+    {
+      "suite": "docs-transcript",
+      "seconds": 50.9
+    },
+    {
+      "suite": "doc-script",
+      "seconds": 4
+    },
+    {
+      "suite": "see-it",
+      "seconds": 2
+    },
+    {
+      "suite": "geometry-export",
+      "seconds": 7.3
+    },
+    {
+      "suite": "pose",
+      "seconds": 98.4
+    },
+    {
+      "suite": "pose-oracle",
+      "seconds": 7.1
+    },
+    {
+      "suite": "core",
+      "seconds": 166
+    },
+    {
+      "suite": "emit-hashes",
+      "seconds": 14.5
+    },
+    {
+      "suite": "render-hashes",
+      "seconds": 204.4
+    },
+    {
+      "suite": "deform-core",
+      "seconds": 10.6
+    },
+    {
+      "suite": "model-bones",
+      "seconds": 1
+    },
+    {
+      "suite": "model-vertices",
+      "seconds": 2.5
+    },
+    {
+      "suite": "model-records",
+      "seconds": 2.4
+    },
+    {
+      "suite": "model-animations",
+      "seconds": 2.3
+    },
+    {
+      "suite": "model-document",
+      "seconds": 13.9
+    },
+    {
+      "suite": "model-atlas",
+      "seconds": 4.2
+    },
+    {
+      "suite": "chainfit",
+      "seconds": 88.9
+    },
+    {
+      "suite": "ballot",
+      "seconds": 1.3
+    },
+    {
+      "suite": "copy-images",
+      "seconds": 0
+    },
+    {
+      "suite": "bilinear-sampling",
+      "seconds": 0.1
+    },
+    {
+      "suite": "packer",
+      "seconds": 138.4
+    },
+    {
+      "suite": "atlas-reader",
+      "seconds": 3.9
+    },
+    {
+      "suite": "diff",
+      "seconds": 0.6
+    },
+    {
+      "suite": "bonedist",
+      "seconds": 0
+    },
+    {
+      "suite": "check",
+      "seconds": 97.7
+    },
+    {
+      "suite": "slider-reader",
+      "seconds": 0.3
+    },
+    {
+      "suite": "generation",
+      "seconds": 0
+    },
+    {
+      "suite": "ingest",
+      "seconds": 18.5
+    },
+    {
+      "suite": "loop-seam",
+      "seconds": 0
+    },
+    {
+      "suite": "partial-run",
+      "seconds": 0
+    },
+    {
+      "suite": "gate-helper",
+      "seconds": 1.2
+    },
+    {
+      "suite": "gallery-example",
+      "seconds": 2.6
+    },
+    {
+      "suite": "registered-cut",
+      "seconds": 0
+    }
+  ]
+}

@@ -25,9 +25,12 @@ permissions:
 
 jobs:
   # The selftest as n shards side by side, each a process of its own on a runner
-  # of its own (issue #1116). Every shard runs the suites whose 0-based
-  # registration index is `i − 1` modulo `n` and writes what it ran as a tally
+  # of its own (issue #1116). Every shard runs the suites dealt to it —
+  # longest-first over `tools/selftest_shards.base.json`, round-robin for a suite
+  # the base has no entry for (issue #1128) — and writes what it ran as a tally
   # document; the `test` job below merges them, and that merge is the verdict.
+  # Inside a shard a suite's independent units run up to `--jobs` at once, and
+  # `--jobs` defaults to the runner's cores (4 here), so no flag is passed.
   #
   # ⏱️ Why `n` is 6, measured on the one-process run of main at 1c36d4d (run
   # 37131671933: the selftest step 15m41s, 941.2 s of suites): the suites dealt
@@ -135,8 +138,32 @@ jobs:
           pattern: selftest-shard-*
           path: ${{ runner.temp }}/tally
           merge-multiple: true
+      # `--shards-base` writes the durations the next deal reads, off this
+      # merge's own per-suite seconds (issue #1128). It is written only after a
+      # green verdict and changes nothing else the merge prints or exits on; the
+      # tracked base is rewritten from this artifact, so the deal is read off
+      # CI's seconds rather than a laptop's. `--memory-base-children` (issue
+      # #1144) writes, after the same green verdict, the linux entry's children's
+      # half of `tools/selftest_memory.base.json` — the largest child any shard
+      # measured, at the `--jobs` they ran at — and leaves the parent's
+      # high-water; the tracked base's linux children's figure is committed from
+      # its artifact, so `TY40` holds CI's own children rather than a SKIP.
       - name: The merge of every shard is the verdict
-        run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json
+        run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json --shards-base "$RUNNER_TEMP/selftest_shards.base.json" --memory-base-children "$RUNNER_TEMP/selftest_memory.base.json"
+      - name: Upload the durations base this merge wrote
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-shards-base
+          path: ${{ runner.temp }}/selftest_shards.base.json
+          if-no-files-found: error
+      - name: Upload the memory base this merge wrote
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-memory-base
+          path: ${{ runner.temp }}/selftest_memory.base.json
+          if-no-files-found: error
 
   # Linux's own readings of the gallery's builds and renders: measurement only,
   # gating nothing. A job of its own since #1116, because neither half needs a

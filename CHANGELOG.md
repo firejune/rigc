@@ -1,5 +1,55 @@
 # Changelog
 
+## [2.9.0](https://github.com/firejune/rigc/compare/v2.8.0...v2.9.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** both writers of the children's memory base keep the larger of the tracked figure and the run's and say which, --reset-children-base is the one spelling that lowers it, and TY43 holds every case with a plant each way ([#1153](https://github.com/firejune/rigc/issues/1153)) ([05c0405](https://github.com/firejune/rigc/commit/05c04058d40ebef6712482afd9cfebc659d14d2a)), closes [#1151](https://github.com/firejune/rigc/issues/1151)
+
+## [2.8.0](https://github.com/firejune/rigc/compare/v2.7.0...v2.8.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** a green merge writes the children's half of its platform's memory base with --memory-base-children, CI's test job writes it and uploads it as selftest-memory-base, and TY41 holds the write to the max over the shard documents and a red merge to none ([#1149](https://github.com/firejune/rigc/issues/1149)) ([342ae0c](https://github.com/firejune/rigc/commit/342ae0c5f89fd488104a91840abd0d18fc7ba596)), closes [#1144](https://github.com/firejune/rigc/issues/1144)
+
+## [2.7.0](https://github.com/firejune/rigc/compare/v2.6.1...v2.7.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** every --unit child's peak RSS reaches the parent in its result, the suite line names its children's high-water and the unit that set it, and TY40 holds that figure under a per-platform base — with the scale read through Bun.spawn by ([#1148](https://github.com/firejune/rigc/issues/1148)) ([bcf7777](https://github.com/firejune/rigc/commit/bcf777717f86aa51f2d4b88da035d621673bde24))
+* **selftest:** every --unit child's peak RSS reaches the parent in its result, the suite line names its children's high-water and the unit that set it, and TY40 holds that figure under a per-platform base ([#1145](https://github.com/firejune/rigc/issues/1145)) ([af9af3f](https://github.com/firejune/rigc/commit/af9af3fc24ac158b0ed20b1431dac672205070d3))
+
+## [2.6.1](https://github.com/firejune/rigc/compare/v2.6.0...v2.6.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **selftest:** every directory a selftest process makes lives in one rigc-selftest- root that its exit removes, so a run leaves tmpdir() as it found it, and TY39 counts it ([#1141](https://github.com/firejune/rigc/issues/1141)) ([cec559d](https://github.com/firejune/rigc/commit/cec559df6ece104aa01b63db515b1c8c898ea9ab)), closes [#1137](https://github.com/firejune/rigc/issues/1137)
+
+## [2.6.0](https://github.com/firejune/rigc/compare/v2.5.1...v2.6.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** core's posing-heavy controls run as --unit work shared by --jobs workers, each control's lines and shares applied at its own position, so the log is byte-identical at any --jobs ([#1136](https://github.com/firejune/rigc/issues/1136)) ([8ea177d](https://github.com/firejune/rigc/commit/8ea177d8aa82509b69026b248e67eecf9eb11b89)), closes [#1133](https://github.com/firejune/rigc/issues/1133)
+
+## [2.5.1](https://github.com/firejune/rigc/compare/v2.5.0...v2.5.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **selftest:** builds of a fixture or probe land inside its own directory, so no page name spells a temp directory and VF09 counts the same builds in any process ([#1131](https://github.com/firejune/rigc/issues/1131)) ([cf1b125](https://github.com/firejune/rigc/commit/cf1b125a96c887dad4b3b976ac14b75aa9abce44)), closes [#1127](https://github.com/firejune/rigc/issues/1127)
+
+## [2.5.0](https://github.com/firejune/rigc/compare/v2.4.0...v2.5.0) (2026-10-03)
+
+
+### Features
+
+* **selftest:** a suite's independent units run up to --jobs at once with the log byte-identical, and shards are dealt longest-first from a tracked durations base ([#1129](https://github.com/firejune/rigc/issues/1129)) ([d7aef3c](https://github.com/firejune/rigc/commit/d7aef3ca1e07dd0d0e1c2b0db8268a11b75597cb))
+
 ## [2.4.0](https://github.com/firejune/rigc/compare/v2.3.0...v2.4.0) (2026-10-03)
 
 

@@ -97,11 +97,18 @@
  * (`tools/selftest_memory.base.json`, written by `--memory-base`) times a
  * stated margin; `TY25` plants a retaining suite against it and `TY26` holds
  * the live run, as a SKIP naming the command where the platform has no base.
+ * A suite that ran units through `inParallel` ends its line with `children
+ * high-water <MB> MB (<unit>)` — the largest peak of any child it started, as
+ * the driver read it of the child (issue #1143) — and the run's largest is held
+ * under the same base's children's figure by the same margin: `TY40` holds the
+ * live run and its plant, a unit holding a stated amount, is named by label.
  *
  * ## What `--shard` and `--merge` do
  *
- * `--shard i/n` runs the suites whose 0-based index in `main`'s registration
- * order is `i − 1` modulo `n`, exactly as the full run runs them, prints one
+ * `--shard i/n` runs the suites dealt to shard `i` — longest-first over the
+ * per-suite seconds in `tools/selftest_shards.base.json` (written by `--merge …
+ * --shards-base`), and round-robin by registration index for a suite the base
+ * has no entry for (issue #1128) — exactly as the full run runs them, prints one
  * `SKIP … — --shard` line for each of the rest, and ends like `--only`: exit 2
  * when green, 1 when red, never the summary. With `--tally-out` it writes a
  * document of every suite it ran — the block the floor holds, the gutter, the
@@ -115,11 +122,29 @@
  * the verdict and the summary are then this file's one-process code over the
  * replayed numbers; each shard's high-water is held to the memory ceiling as
  * its own process. `TY27`–`TY31` hold the shard, the merge's equality with one
- * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite.
+ * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite;
+ * `TY34`–`TY35` the deal and shards dealt two ways. `--memory-base-children
+ * [<file>]` has a green merge write the children's half of its platform's
+ * memory-base entry off the shards' documents, leaving the parent's (issue
+ * #1144); `TY41` holds that write to the documents and a red merge to none.
+ * Both writers of the children's figure ratchet (issue #1151): they keep the
+ * larger of the tracked figure and the run's and say which, and only
+ * `--reset-children-base` writes a lower one; `TY43` holds every case.
+ *
+ * ## What `--jobs` does
+ *
+ * A suite's independent units — `render-hashes`' `render_hashes.ts` runs and
+ * CLI batches, `packer`'s packs by set, `core`'s posing-heavy controls — run up
+ * to `--jobs` at once through `inParallel` (issues #1128, #1133), and the suite
+ * prints its case lines after every unit has finished, in the sequential order,
+ * so the log is one text at any `--jobs`. `TY32` holds the flag's refusals,
+ * `TY33` the order and a plant that interleaves units' lines, `RH08`, `PK105`
+ * and `CO41`–`CO42` the three suites' units.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   cpSync,
@@ -576,6 +601,7 @@ import {
   articulatedFixture,
   containedFixture,
   overlayFixture,
+  placeFixturesUnder,
   SEGMENTS_PLATE,
   segmentsFixture,
   type Fixture,
@@ -804,9 +830,10 @@ function flagOrEnvironment(argv: readonly string[], flag: string, variable: stri
 }
 
 /**
- * `--shard <i>/<n>` (or `RIGC_SHARD`): this process runs the suites whose
- * 0-based registration index is `i − 1` modulo `n`, exactly as the full run
- * runs them, and none of the rest (issue #1116). Refused beside `--only` (two
+ * `--shard <i>/<n>` (or `RIGC_SHARD`): this process runs the suites dealt to
+ * shard `i` — longest-first over `SHARDS_BASE_PATH`, round-robin by
+ * registration index where the base has no entry (issue #1128) — exactly as
+ * the full run runs them, and none of the rest (issue #1116). Refused beside `--only` (two
  * ways of choosing suites, and a run choosing by both would be choosing by
  * neither) and beside `--memory-base` (a shard's high-water is not the run's).
  */
@@ -862,15 +889,557 @@ const MERGE = ((): string[] | null => {
   }
   for (const [flag, given] of [['--only', ONLY !== null], ['--shard', SHARD !== null], ['--memory-base', WRITE_MEMORY_BASE]] as const) {
     if (given) {
-      console.error(`selftest: --merge reads the shards' documents and cannot be given with ${flag}`);
+      // Issue #1144: the children's half is a merge's to write, under its own flag; the parent's is not.
+      const children = flag === '--memory-base' ? " — a merge writes only the children's half of the memory base, with --memory-base-children [<file>]" : '';
+      console.error(`selftest: --merge reads the shards' documents and cannot be given with ${flag}${children}`);
       process.exit(2);
     }
   }
   return files;
 })();
+/**
+ * `--shards-base [<file>]` (issue #1128): a green merge writes the durations
+ * base off its own per-suite seconds — the durations the next `--shard` deals
+ * from — to `<file>`, or to `SHARDS_BASE_PATH` when no file follows the flag
+ * (CI names a file under its temp directory and uploads it, so the tracked base
+ * can be rewritten from CI's own seconds). Refused without `--merge`: one
+ * process's or one shard's seconds are not the run's. It changes nothing else:
+ * the file is written after the verdict and the memory ceiling, so a red merge
+ * exits red before it and writes nothing.
+ */
+const WRITE_SHARDS_BASE = ((): string | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--shards-base');
+  if (at === -1) return null;
+  if (MERGE === null) {
+    console.error("selftest: --shards-base writes the durations base off a merged run's per-suite seconds; it needs --merge <file>…");
+    process.exit(2);
+  }
+  if (argv.indexOf('--shards-base', at + 1) !== -1) {
+    console.error('selftest: --shards-base was given twice');
+    process.exit(2);
+  }
+  const named = argv[at + 1];
+  // '' stands for the tracked path, resolved where it is written (`SHARDS_BASE_PATH` is declared further down).
+  return named === undefined || named.startsWith('--') ? '' : resolve(named);
+})();
+/**
+ * `--memory-base-children [<file>]` (issue #1144): a green merge writes the
+ * CHILDREN'S half of its platform's memory-base entry — `children: {highWater,
+ * jobs}`, the largest child any suite of the merged run measured and the
+ * `--jobs` the processes that measured it ran at — to `<file>`, or over
+ * `MEMORY_BASE_PATH` when no file follows the flag (CI names a file under its
+ * temp directory and uploads it). The entry's parent half — `highWater`,
+ * `suites`, `bun` — is kept as the one-process run wrote it, because a shard's
+ * high-water is not the run's; a child's peak is the same whichever process
+ * started it, so the largest over the shards' documents is the run's.
+ *
+ * Its own flag rather than `--memory-base` under `--merge`, because that
+ * refusal stays true: `--memory-base` writes both halves off ONE process, and
+ * a merge has no one process whose high-water is the run's. Refused without
+ * `--merge`: a one-process run writes both halves with `--memory-base`, and a
+ * shard's children are a share of the run. It changes nothing else: the file
+ * is written after the verdict and the memory ceiling, so a red merge exits red
+ * before it and writes nothing, and `mergedChildrenBase` refuses a red tally
+ * itself as well (`TY41`).
+ */
+const WRITE_CHILDREN_BASE = ((): string | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--memory-base-children');
+  if (at === -1) return null;
+  if (MERGE === null) {
+    console.error(
+      "selftest: --memory-base-children writes the children's half of the memory base off a merged run's shard documents; it needs --merge <file>… " +
+        '(a one-process full run writes both halves with --memory-base)',
+    );
+    process.exit(2);
+  }
+  if (argv.indexOf('--memory-base-children', at + 1) !== -1) {
+    console.error('selftest: --memory-base-children was given twice');
+    process.exit(2);
+  }
+  const named = argv[at + 1];
+  // '' stands for the tracked path, resolved where it is written (`MEMORY_BASE_PATH` is declared further down).
+  return named === undefined || named.startsWith('--') ? '' : resolve(named);
+})();
+/**
+ * `--reset-children-base` (issue #1151): the one spelling under which a writer
+ * of the children's figure — `--memory-base` or `--memory-base-children` — may
+ * write a figure LOWER than the tracked entry's, or one read at another
+ * `--jobs`. Without it both writers ratchet (`ratchetChildren`): they write the
+ * larger of the tracked figure and the run's, and their line says which they
+ * kept and both figures. A companion rather than a value of either flag:
+ * `--memory-base` takes no value, `--memory-base-children`'s value is a path,
+ * and the shards base's writer has no such rule, so a bare `--reset` would read
+ * as resetting something it does not. Refused without either writer, since it
+ * would then change nothing — a caller who typed it expected a write.
+ */
+const RESET_CHILDREN_BASE = ((): boolean => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--reset-children-base');
+  if (at === -1) return false;
+  if (argv.indexOf('--reset-children-base', at + 1) !== -1) {
+    console.error('selftest: --reset-children-base was given twice');
+    process.exit(2);
+  }
+  if (!WRITE_MEMORY_BASE && WRITE_CHILDREN_BASE === null) {
+    console.error(
+      "selftest: --reset-children-base lets a writer of the children's memory base write a figure lower than the tracked one, or one read at another --jobs; " +
+        'it needs --memory-base (a green one-process full run) or --merge <file>… --memory-base-children [<file>], and without either it writes nothing',
+    );
+    process.exit(2);
+  }
+  return true;
+})();
 // Read once, above; a child this run starts is not a shard of it.
 delete process.env.RIGC_SHARD;
 delete process.env.RIGC_TALLY_OUT;
+
+/**
+ * `--jobs`'s value read as a whole number from 1, or the refusal naming what is
+ * wrong with it (issue #1128). Pure, so `TY32` holds every refusal by name.
+ * Read strictly for `parseShardSpec`'s reason: `0`, `-1`, `x`, `1.5`, `+2` and
+ * ` 2` are each a caller who meant something a generous reading would guess.
+ */
+function parseJobs(value: string): number | string {
+  if (!/^[1-9]\d*$/.test(value)) return `--jobs ${JSON.stringify(value)} is not a whole number of concurrent units from 1, e.g. --jobs 2`;
+  return Number(value);
+}
+
+/**
+ * `--jobs <n>` (or `RIGC_JOBS`): how many of a suite's independent units run
+ * at once (issue #1128) — the units `inParallel` is handed, today the heavy
+ * subprocesses of `render-hashes`, the packs by set of `packer` and the
+ * posing-heavy controls of `core` (issue #1133). Absent, the
+ * machine's cores as Bun reports them, never under 1. `--jobs 1` is the run as
+ * it was before the flag existed: every unit in order, in this process's turn.
+ *
+ * 🔒 Whatever `n`, the printed log is the same text (`TY33`, `RH08`, `PK105`, `CO41`):
+ * a unit prints nothing, the suite prints its case lines after every unit it
+ * reads has finished, in the order the sequential run prints them.
+ */
+const JOBS = ((): number => {
+  const value = flagOrEnvironment(process.argv.slice(2), '--jobs', 'RIGC_JOBS');
+  if (value === null) return Math.max(1, Math.floor(navigator.hardwareConcurrency || 1));
+  const read = parseJobs(value);
+  if (typeof read === 'string') {
+    console.error(`selftest: ${read}`);
+    process.exit(2);
+  }
+  return read;
+})();
+
+/**
+ * `--unit <spec.json> <out.json>`: this process is one unit `inUnits` handed
+ * out (issue #1128) — it runs that unit's work and writes its value, and runs
+ * no suite. Not a flag for a person; it is how a pack in another process is
+ * the same code as a pack in this one.
+ */
+const UNIT = ((): { input: string; output: string } | null => {
+  const argv = process.argv.slice(2);
+  const at = argv.indexOf('--unit');
+  if (at === -1) return null;
+  const input = argv[at + 1];
+  const output = argv[at + 2];
+  if (input === undefined || output === undefined || input.startsWith('--') || output.startsWith('--')) {
+    console.error('selftest: --unit needs <spec.json> <out.json>; it is how a suite hands one of its units to another process');
+    process.exit(2);
+  }
+  return { input, output };
+})();
+
+/**
+ * `--keep-temp` (or `RIGC_KEEP_TEMP=1`) read strictly (issue #1137): `true` to
+ * keep this process's temp root, `false` for the default, or the refusal naming
+ * the spelling — `parseJobs`' reason: `--keep-temp=1`, `--keep-temps`,
+ * `RIGC_KEEP_TEMP=yes` are each a caller who meant something, and a generous
+ * reading would decide by guessing whether the run cleans up. Pure, so `TY39`
+ * holds every refusal by name without starting a process.
+ */
+function parseKeepTemp(argv: readonly string[], fromEnvironment: string | undefined): boolean | string {
+  const spelled = argv.filter((arg) => /^--keep[-_]?temp/i.test(arg));
+  for (const arg of spelled) if (arg !== '--keep-temp') return `${JSON.stringify(arg)} is not --keep-temp, which is spelled exactly so and takes no value`;
+  if (spelled.length > 1) return '--keep-temp was given twice';
+  if (fromEnvironment !== undefined && fromEnvironment !== '' && fromEnvironment !== '1') {
+    return `RIGC_KEEP_TEMP=${JSON.stringify(fromEnvironment)} is not 1; set it to 1 to keep this run's temp root, or leave it unset`;
+  }
+  return spelled.length === 1 || fromEnvironment === '1';
+}
+
+/**
+ * Whether this process keeps its temp root when it ends (issue #1137). Read
+ * once and taken out of the environment: a child this run starts — a `--unit`
+ * process, a selftest a control starts — removes its own root unless it is
+ * asked by its own command line.
+ */
+const KEEP_TEMP = ((): boolean => {
+  const read = parseKeepTemp(process.argv.slice(2), process.env.RIGC_KEEP_TEMP);
+  if (typeof read === 'string') {
+    console.error(`selftest: ${read}`);
+    process.exit(2);
+  }
+  return read;
+})();
+delete process.env.RIGC_KEEP_TEMP;
+
+/** The system temp directory as this process found it — where the run root is made, and what `TY39` counts. */
+const SYSTEM_TEMP = tmpdir();
+let harnessTempRoot: string | null = null;
+
+/**
+ * The one directory this process makes under `tmpdir()` (issue #1137):
+ * `rigc-selftest-XXXXXX`, made on first use, and every temp directory the
+ * harness makes is made inside it under its own prefix — so a path still
+ * spells `rigc-static-XXXXXX` where a control reads it, and a site cannot leak
+ * by forgetting its `rmSync`. Removed once, when the process exits, on every
+ * way it exits: a return from `main`, every `process.exit` (the floor's 2, a
+ * partial run's 2, a red run's 1, a refused flag after the root exists) and
+ * an uncaught throw. `--keep-temp` keeps it and names it on stderr instead, so
+ * stdout is the same text either way.
+ *
+ * ⚠️ A run killed by a signal leaves its root: one directory, where it used to
+ * leave every site's. Catching the signal to remove it was measured and
+ * rejected — `main` is synchronous, so a JavaScript handler runs only after it
+ * returns: a `--only path-slider` run sent SIGTERM mid-suite went on to the
+ * end of its suite and exited 2, where without the handler it stopped
+ * at once (143).
+ *
+ * ⚠️ Only this process's own directories live here. A child it starts — a
+ * tool, the CLI, another selftest — makes its directories where its own
+ * `tmpdir()` says, which this process does not redirect: a child that leaks is
+ * a fault of that command, and `TY39`'s count of a child run is how it shows.
+ */
+function harnessTemp(): string {
+  if (harnessTempRoot === null) {
+    const root = mkdtempSync(join(SYSTEM_TEMP, 'rigc-selftest-'));
+    harnessTempRoot = root;
+    process.on('exit', () => {
+      if (KEEP_TEMP) console.error(`selftest: --keep-temp kept this process's temp root: ${root}`);
+      else rmSync(root, { recursive: true, force: true });
+    });
+  }
+  return harnessTempRoot;
+}
+
+/** The `rigc-*` entries directly inside `dir`, by prefix — the name less the six characters `mkdtemp` appends (issue #1137, `TY39`). */
+function tempCensus(dir: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const name of readdirSync(dir).sort()) {
+    if (!name.startsWith('rigc-')) continue;
+    const prefix = /^(.*-)[A-Za-z0-9]{6}$/.exec(name)?.[1] ?? name;
+    counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Every prefix that has more entries `after` than `before`, as `<prefix> +<n>`, in prefix order. */
+function tempGrowth(before: ReadonlyMap<string, number>, after: ReadonlyMap<string, number>): string[] {
+  return [...after]
+    .filter(([prefix, count]) => count > (before.get(prefix) ?? 0))
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([prefix, count]) => `${prefix} +${count - (before.get(prefix) ?? 0)}`);
+}
+
+/** One independent unit of a suite: a command, the directory it runs from, and the output its sequential call could hold. */
+interface ParallelUnit {
+  argv: readonly string[];
+  cwd: string;
+  /** The `maxBuffer` the unit's sequential `spawnSync` was given; past it the two paths would differ, so it is refused. */
+  maxBuffer?: number;
+  /**
+   * What the suite line calls this unit when it is the heaviest (issue #1143).
+   * Deterministic text: absent, it is the script's file name, the word after
+   * it and the unit's place in its batch (`unitLabel`), which no temp
+   * directory's name can reach.
+   */
+  label?: string;
+}
+
+/**
+ * What one unit left: what `spawnSync` would have handed back, and what the
+ * driver read of the child (issue #1143) — its peak resident set in BYTES,
+ * normalised by the factor its driver's calibration child read through the
+ * same call (`spawnMaxRssScale`, carried as `scale`), and its seconds.
+ * `peakBytes` and `scale` are `null` on the sequential path (`--jobs 1`, or a
+ * batch of one): `spawnSync` hands back no resource usage, so that child's
+ * peak is not read rather than guessed — and `null` too when the calibration
+ * read neither unit.
+ */
+interface UnitResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+  peakBytes: number | null;
+  scale: 1 | 1024 | null;
+  /** What the driver's calibration child read, or `null` on the sequential path and from a driver that wrote none. */
+  calibration: UnitCalibration | null;
+  seconds: number;
+}
+
+/**
+ * One measured child of the run (issue #1143): its label and its peak, as
+ * `inParallel` took them. `UNIT_PEAKS_TAKEN` holds every one in the order the
+ * run took them, and `RunTally.of` reads the ones a suite's call added — which
+ * is how the suite line names its heaviest unit with no call site having to
+ * remember to report one.
+ */
+interface UnitPeak {
+  label: string;
+  peakBytes: number;
+  /** The factor the raw `maxRSS` was multiplied by, as the driver's calibration read it. */
+  scale: 1 | 1024;
+  seconds: number;
+}
+
+/** Every child this process measured, in the order it measured them — appended by `inParallel`, read by `RunTally.of` (issue #1143). */
+const UNIT_PEAKS_TAKEN: UnitPeak[] = [];
+
+/**
+ * The factor that turns a process's OWN `process.resourceUsage().maxRSS` into
+ * bytes, read off that same process (issue #1143): `1` when the reading is
+ * bytes, `1024` when it is KiB, `null` when it is neither. It is for a process
+ * reading itself and for nothing else — a `--unit` child's peak, which the
+ * driver reads through another API, is scaled by `spawnMaxRssScale`.
+ *
+ * ⚠️ There are two APIs and they do not agree on every platform:
+ * - `process.resourceUsage().maxRSS` (the Node API, a process reading itself):
+ *   bytes on darwin, measured (a `bun -e` child that touched 64 MiB read
+ *   92,864,512 beside an `rss` of 92,880,896; Bun 1.3.11) — and KiB on Linux,
+ *   as Node documents it and CI showed (below).
+ * - `Bun.spawn(...).resourceUsage().maxRSS` (Bun's API, a parent reading a
+ *   child that exited): bytes on darwin, measured (the same child read
+ *   93,175,808 — 300-odd KiB above its own last reading, the exit's tail) —
+ *   and bytes on Linux, which CI showed.
+ *
+ * On darwin both are bytes, so nothing measured there could tell them apart.
+ * PR #1145 scaled every child by the DRIVER's own Node reading, and on Linux
+ * CI the suite lines printed `core` children high-water 736924 MB: a ~720 MB
+ * worker read in bytes and multiplied by the 1024 the driver's KiB reading
+ * asked for. The rule since: a figure's unit is read through the call that
+ * produced the figure, never through a neighbour.
+ *
+ * Here the unit is decided by the reading itself, a process's own `maxRSS`
+ * beside its own `process.memoryUsage().rss`, which is bytes on every
+ * platform. A peak is never below the resident set it peaked over, and the two
+ * candidate units are 1024 apart, so the ratio's distance from 1 decides it at
+ * the geometric middle, 32. (Not exactly 1: on darwin a fresh process read
+ * `maxRSS` 21,725,184 beside an `rss` of 21,741,568 — the peak is refreshed
+ * lazily — so the reading is a ratio, never an inequality.)
+ */
+function maxRssScale(rawMaxRss: number, rssBytes: number): 1 | 1024 | null {
+  if (!(rawMaxRss > 0) || !(rssBytes > 0)) return null;
+  const ratio = rssBytes / rawMaxRss;
+  if (ratio < 32 && ratio > 1 / 32) return 1;
+  if (ratio / 1024 < 32 && ratio / 1024 > 1 / 32) return 1024;
+  return null;
+}
+
+/**
+ * What the unit driver's calibration child allocates and touches before the
+ * driver's first unit (issue #1143): 64 MiB, enough that a `bun -e` process's
+ * own load (22 MB on darwin, measured) cannot carry the reading out of its
+ * window, and small enough to cost the driver ~11 ms (darwin, measured).
+ */
+const CALIBRATION_BYTES = 64 * 1024 * 1024;
+
+/**
+ * What the driver read of its calibration child: the bytes it was asked to
+ * hold, the `maxRSS` `Bun.spawn`'s `resourceUsage()` reported for it (`null`
+ * when the child failed or no usage came back), its exit, and what it cost.
+ */
+interface UnitCalibration {
+  bytes: number;
+  maxRss: number | null;
+  exit: number | null;
+  ms: number;
+}
+
+/**
+ * The factor that turns `Bun.spawn(...).resourceUsage().maxRSS` into bytes,
+ * read through that same call (issue #1143): the driver's calibration child
+ * held `bytes` and reported `maxRss`, and a peak is never below what the
+ * process touched, so in bytes the ratio `maxRss / bytes` is at least 1, in
+ * KiB at least 1/1024 — the two windows 1,024 apart and split at their
+ * geometric middle, 1/32: `[1, 32)` is bytes, `[1/1024, 1/32)` is KiB, and
+ * anything else (a ratio under 1/1024, one in `[1/32, 1)` — a peak below the
+ * allocation, which no unit reads — or one 32 times the allocation) is
+ * neither, `null` with the reason, never a guess. Measured on darwin: 64 MiB
+ * read 93,126,656–93,208,576 (ratio 1.388–1.389), 256 MiB 294,518,784–
+ * 294,535,168 (1.097). The driver's own `process.resourceUsage()` is not
+ * consulted: that is the Node API, and it is the one that differs (see
+ * `maxRssScale`).
+ */
+function spawnMaxRssScale(calibration: UnitCalibration | undefined): { scale: 1 | 1024 | null; why: string } {
+  if (calibration === undefined) return { scale: null, why: 'the driver wrote no calibration, so no child of it has a unit' };
+  const { bytes, maxRss, exit } = calibration;
+  if (maxRss === null || !(maxRss > 0) || !(bytes > 0)) {
+    return { scale: null, why: `the calibration child holding ${bytes} bytes exited ${String(exit)} and reported maxRSS ${String(maxRss)}, so its unit is not read` };
+  }
+  const ratio = maxRss / bytes;
+  if (ratio >= 1 && ratio < 32) return { scale: 1, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss}: bytes (ratio ${ratio.toFixed(4)})` };
+  if (ratio >= 1 / 1024 && ratio < 1 / 32) return { scale: 1024, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss}: KiB (ratio ${ratio.toFixed(6)})` };
+  return { scale: null, why: `the calibration child holding ${bytes} bytes reported maxRSS ${maxRss} (ratio ${ratio.toFixed(6)}), inside neither bytes' window [1, 32) nor KiB's [1/1024, 1/32)` };
+}
+
+/**
+ * What a unit is called with no `label` of its own: its script, the command
+ * word after it, and its place in the batch — `render_hashes.ts base, unit 1
+ * of 8` — all read off the command and none off a path, so no temp directory's
+ * name reaches the line. Inline code (`bun -e …`) is called `bun -e`, never by
+ * its text.
+ */
+function unitLabel(unit: ParallelUnit, k: number, of: number): string {
+  if (unit.label !== undefined) return unit.label;
+  const inline = unit.argv[1] === '-e';
+  const script = inline ? 'bun -e' : unit.argv[1] === undefined ? basename(unit.argv[0] ?? '?') : basename(unit.argv[1]);
+  const after = unit.argv[2];
+  const word = !inline && after !== undefined && /^[A-Za-z][\w-]*$/.test(after) ? ` ${after}` : '';
+  return `${script}${word}, unit ${k + 1} of ${of}`;
+}
+
+/** `spawnSync`'s own default `maxBuffer`, which every sequential call here that names none was held to. */
+const SPAWN_MAX_BUFFER = 1024 * 1024;
+
+/**
+ * The child that runs a batch of units concurrently (issue #1128). This file is
+ * synchronous from `main` down — every suite returns its count, and `tally.of`
+ * brackets a call — so the one way to wait on several processes from inside a
+ * suite is to wait on ONE process that waits on them: `inParallel` starts this
+ * with `spawnSync`, it starts up to `jobs` units with `Bun.spawn`, takes each
+ * unit's stdout, stderr, exit and peak RSS, and writes them in the units' order
+ * to the file its spec names. Plain JavaScript, because `bun -e` reads it.
+ */
+const UNIT_DRIVER = [
+  'const spec = JSON.parse(await Bun.file(process.argv[process.argv.length - 1]).text());',
+  // Issue #1143: the unit of a child's `maxRSS` is read through the call that
+  // reads the children — `Bun.spawn`'s `resourceUsage()` — off one child that
+  // holds a stated amount, once per driver and before its first unit, and
+  // handed back beside every unit's figure (`spawnMaxRssScale` decides it).
+  // A spec with no `calibrationBytes` gets no calibration, and then the parent
+  // reads no child's peak rather than assuming a unit.
+  'let calibration;',
+  "if (typeof spec.calibrationBytes === 'number') {",
+  '  const began = performance.now();',
+  "  const hold = 'const b = Buffer.alloc(' + spec.calibrationBytes + '); let t = 0; for (let i = 0; i < b.length; i += 4096) { b[i] = 1; t += b[i]; } if (t !== Math.ceil(b.length / 4096)) process.exit(3);';",
+  "  const child = Bun.spawn([process.execPath, '-e', hold], { stdin: 'ignore', stdout: 'ignore', stderr: 'pipe' });",
+  '  await new Response(child.stderr).text();',
+  '  await child.exited;',
+  '  const usage = child.resourceUsage();',
+  '  calibration = { bytes: spec.calibrationBytes, maxRss: child.exitCode === 0 && usage !== undefined ? Number(usage.maxRSS) : null, exit: child.exitCode, ms: performance.now() - began };',
+  '}',
+  'const results = new Array(spec.units.length);',
+  'let next = 0;',
+  'const lane = async () => {',
+  '  while (next < spec.units.length) {',
+  '    const k = next++;',
+  '    const unit = spec.units[k];',
+  '    const began = performance.now();',
+  "    const child = Bun.spawn(unit.argv, { cwd: unit.cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });",
+  '    const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);',
+  '    await child.exited;',
+  '    const usage = child.resourceUsage();',
+  '    const ended = performance.now();',
+  '    results[k] = { status: child.exitCode, stdout, stderr, maxRss: usage === undefined ? null : Number(usage.maxRSS), calibration, seconds: (ended - began) / 1000, began: began / 1000, ended: ended / 1000 };',
+  '  }',
+  '};',
+  'await Promise.all(Array.from({ length: Math.min(spec.jobs, spec.units.length) }, lane));',
+  'await Bun.write(spec.out, JSON.stringify(results));',
+].join('\n');
+
+/**
+ * Run a suite's independent units, up to `jobs` at once, and hand back what
+ * each left in the units' own order (issue #1128).
+ *
+ * 🔒 Why the log cannot interleave: a unit prints nothing to this process — its
+ * stdout and stderr come back as values — and the caller prints its case lines
+ * only after this returns, which is after EVERY unit has finished, in the order
+ * its sequential code already prints them. So `jobs` decides when a unit ran and
+ * never what anybody printed. ⚠️ The caller's half of that is to hand over only
+ * units whose result does not depend on another unit having run first — each in
+ * its own work directory, none reading what another writes — which is the
+ * condition `inParallel` cannot check and the call sites state.
+ *
+ * `jobs` 1, or one unit, is the sequential path: `spawnSync` per unit, in
+ * order, exactly the call each site made before. Above that one driver child
+ * runs them (`UNIT_DRIVER`), and every unit's peak RSS, as the driver read it of
+ * the child, comes back in its result and is appended to `UNIT_PEAKS_TAKEN`
+ * (issue #1143) — the reading the parent's own column cannot take (`TY26`
+ * reads this process), which the suite's line states as its children's
+ * high-water and `TY40` holds under the platform's base. No flag asks for it.
+ *
+ * `RIGC_UNIT_PEAKS=<file>` stays as the per-unit JOURNAL: one line per unit
+ * with its command, peak, seconds and when in the batch it started and ended.
+ * The log carries one figure per suite — the largest child and its name —
+ * because a line per unit would print 100-odd figures that differ run to run;
+ * the journal is where the overlap of a batch's children is read from
+ * (the sum alive at once, which the log does not state — see `TY40`).
+ */
+// `driverSource` is `UNIT_DRIVER` everywhere but `TY33`, which hands in the
+// plant — a driver that interleaves its units' lines — to see it read.
+function inParallel(units: readonly ParallelUnit[], jobs: number = JOBS, driverSource: string = UNIT_DRIVER): UnitResult[] {
+  if (jobs < 1 || !Number.isInteger(jobs)) throw new Error(`inParallel: jobs ${jobs} is not a whole number from 1`);
+  if (jobs === 1 || units.length <= 1) {
+    return units.map((unit) => {
+      const began = performance.now();
+      const result = spawnSync(unit.argv[0], unit.argv.slice(1), { cwd: unit.cwd, encoding: 'utf8', maxBuffer: unit.maxBuffer ?? SPAWN_MAX_BUFFER });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, peakBytes: null, scale: null, calibration: null, seconds: (performance.now() - began) / 1000 };
+    });
+  }
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-units-'));
+  try {
+    const specPath = join(dir, 'units.json');
+    const out = join(dir, 'results.json');
+    writeFileSync(specPath, JSON.stringify({ jobs, out, calibrationBytes: CALIBRATION_BYTES, units: units.map((unit) => ({ argv: unit.argv, cwd: unit.cwd })) }));
+    const driver = spawnSync(process.execPath, ['-e', driverSource, specPath], { encoding: 'utf8' });
+    if (driver.status !== 0 || !existsSync(out)) {
+      throw new Error(`inParallel: the unit driver exited ${String(driver.status)} over ${units.length} unit(s) and wrote ${existsSync(out) ? 'its results' : 'nothing'}: ${driver.stderr.trim().slice(0, 300)}`);
+    }
+    // What the driver wrote per unit. Every field past the three `spawnSync`
+    // would hand back is optional: `TY33`'s planted driver writes none of them,
+    // and a unit with no reading is a unit whose peak is not known, never 0.
+    const results = JSON.parse(readFileSync(out, 'utf8')) as Array<{
+      status: number | null;
+      stdout: string;
+      stderr: string;
+      maxRss?: number | null;
+      calibration?: UnitCalibration;
+      seconds?: number;
+      began?: number;
+      ended?: number;
+    }>;
+    const peaks = process.env.RIGC_UNIT_PEAKS;
+    return results.map((result, k) => {
+      const unit = units[k];
+      const limit = unit.maxBuffer ?? SPAWN_MAX_BUFFER;
+      for (const [stream, text] of [['stdout', result.stdout], ['stderr', result.stderr]] as const) {
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > limit) {
+          throw new Error(
+            `inParallel: unit ${k} (${unit.argv.slice(1, 4).join(' ')} …) wrote ${bytes} byte(s) to ${stream}, past the ${limit} its sequential spawnSync allowed — ` +
+              '--jobs 1 would have cut it off and this path would not, so the two runs would differ',
+          );
+        }
+      }
+      // The scale comes from the calibration this driver read through the
+      // call that read the unit; a calibration that read neither unit leaves
+      // the peak unread (the journal says why) rather than guessed.
+      const { scale, why } = spawnMaxRssScale(result.calibration);
+      const peakBytes = typeof result.maxRss === 'number' && scale !== null ? result.maxRss * scale : null;
+      const seconds = result.seconds ?? 0;
+      const label = unitLabel(unit, k, units.length);
+      if (peakBytes !== null && scale !== null) UNIT_PEAKS_TAKEN.push({ label, peakBytes, scale, seconds });
+      if (peaks !== undefined && peaks !== '') {
+        appendFileSync(
+          peaks,
+          `${JSON.stringify({ jobs, unit: k, of: units.length, label, argv: unit.argv.slice(1).map((a) => basename(a)).join(' '), maxRss: result.maxRss ?? null, calibration: result.calibration ?? null, scale, why, peakBytes, seconds, began: result.began ?? null, ended: result.ended ?? null })}\n`,
+        );
+      }
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, peakBytes, scale, calibration: result.calibration ?? null, seconds };
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 function optsForCut(dir: string, entry: CutEntry): Options {
   const opts: Options = {
@@ -890,6 +1459,46 @@ function optsForFixture(fixture: Fixture): Options {
     outDir: fixture.outDir,
     manifestPath: fixture.manifestPath,
   };
+}
+
+/**
+ * A fresh directory for a build to land in, made INSIDE the directory its art
+ * lives in (issue #1127) — `<artDir>/<prefix>XXXXXX` — so a build of a fixture
+ * or a probe never spells another temp directory's name.
+ *
+ * ⭐ Why it has to be inside, measured rather than tidy: a page name is the art's
+ * path seen from the atlas file (`relative(outDir, …)` in `src/compile.ts`), and
+ * so are `skeleton.images` and the model document's `pages`. A build whose
+ * output directory sat in a temp directory of its own, beside the art's, wrote
+ * `../../rigc-fixtures-XXXXXX/…` into all three — a name chosen at random by
+ * whichever process made the directory. `VF09` keys a build on those texts, so
+ * one set of inputs counted once per directory it was built from. From inside,
+ * the spelling is `../../plates/x.png` wherever the fixture root is — the way
+ * `tools/emit_hashes.ts` stages a recipe.
+ *
+ * 🔒 The prefix is a NAME, never a path: one carrying a separator could put the
+ * root anywhere, and is refused by name before anything is made (`TY37`).
+ */
+function buildRootIn(artDir: string, prefix: string): string {
+  if (prefix === '' || /[\\/]/.test(prefix)) {
+    throw new Error(`buildRootIn: the prefix ${JSON.stringify(prefix)} is not a plain directory name, so the build root it makes need not be inside ${artDir}`);
+  }
+  return mkdtempSync(join(artDir, prefix));
+}
+
+/**
+ * `buildRootIn(home, prefix)` where the art has a home this run made, and a temp directory of its own where it has none —
+ * the art is the checkout's (a gallery example, the corpus), which no build here writes into.
+ */
+function buildRootFor(home: string | undefined, prefix: string): string {
+  return home === undefined ? mkdtempSync(join(harnessTemp(), prefix)) : buildRootIn(home, prefix);
+}
+
+/** The static probe's motion spec (`STATIC_MOTION`) written beside a probe's rig, and its path — what `gateProbe` writes. */
+function staticMotionIn(dir: string): string {
+  const motionPath = join(dir, 'probe.motion.json');
+  writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+  return motionPath;
 }
 
 /** The four fields a setup stage is, as the editor and `compile` write them. */
@@ -929,6 +1538,8 @@ function stageFieldsOf(skeletonText: string): string[] {
  * The overlay fixture: a base plate, two slots that fade, and one ring mesh.
  * Everything the region, timeline, atlas, mesh and physics assertions look at.
  */
+// The fixtures live in this process's run root, which the exit removes (issue #1137).
+placeFixturesUnder(harnessTemp());
 const OVERLAY = overlayFixture();
 /**
  * The articulated fixture. Its invariants live on bones the overlay rig does not
@@ -1538,6 +2149,8 @@ type SupplierSighting =
   | {
       kind: 'family';
       key: string;
+      /** Where the build's paths point, read at its first sighting (issue #1127, `TY36`). */
+      place: BuildPlace;
       family: { walked: FamilyTally[]; identical: FactCut[]; derivations: DerivationTally[] | null; multiSkin: boolean; documentOrderDiffers: boolean } | null;
     };
 
@@ -1561,6 +2174,104 @@ interface SupplierDelta {
   unthreaded: Array<{ case: string; codes: string[] }>;
   unwritable: string[];
   sightings: SupplierSighting[];
+}
+
+/**
+ * `VF09`'s key for one build (issues #1054, #1127): its pair, its document and
+ * the declarations its bodies were handed, each hashed — so two builds are one
+ * build exactly when every text the walk reads is the same. `VF23` holds it
+ * over two directories, which is why it is a function rather than a line.
+ */
+function familyBuildKey(input: Pick<ValidateInput, 'skeletonText' | 'atlasText' | 'rig' | 'declaredDurations'>, modelText: string): string {
+  return [input.skeletonText, input.atlasText, modelText, JSON.stringify(input.rig ?? null), JSON.stringify(input.declaredDurations ?? null)].map(spineFileSha256).join(' ');
+}
+
+/** A path component a harness temp directory carries: a `rigc-…-` prefix and the six characters `mkdtemp` appends (issue #1127). */
+const HARNESS_TEMP_COMPONENT = /^rigc-.+-[A-Za-z0-9]{6}$/;
+
+/**
+ * The directories a harness temp directory sits directly inside, each as given
+ * and as resolved — macOS hands out `/var/…` and resolves it to `/private/var/…`:
+ * this process's run root first (issue #1137), where every one of its own is
+ * made, then the system temp directory, where a child's would be. The run root
+ * has to come first: every pair now sits under it, so reading from the system
+ * temp directory alone would give one root to every build and no climb from
+ * one temp directory into another could be seen.
+ */
+function tempRoots(): string[] {
+  const run = harnessTemp();
+  return [...new Set([resolve(run), realpathSync(run), resolve(SYSTEM_TEMP), realpathSync(SYSTEM_TEMP)])];
+}
+
+/**
+ * Where one recorded build's paths point (issue #1127, `TY36`): the paths it
+ * spells that carry a harness temp directory's name or climb out of the temp
+ * directory the pair sits in into another, each named; and how many of its
+ * page and image paths reach art outside the system temp directory — the
+ * checkout's gallery and corpus, which no build here writes into, counted
+ * rather than faulted because their spelling is a function of the checkout's
+ * path and the temp directory's, not of the process that built them.
+ */
+interface BuildPlace {
+  faults: string[];
+  checkout: number;
+}
+
+function buildPlaceOf(input: { skeletonText: string; atlasText: string; atlasDir: string }, modelText: string): BuildPlace {
+  const faults: string[] = [];
+  let checkout = 0;
+  const tempRootOf = (path: string): string | null => {
+    for (const temp of tempRoots()) {
+      const from = relative(temp, path);
+      if (from !== '' && !from.startsWith('..') && !isAbsolute(from)) return join(temp, from.split(/[\\/]/)[0]);
+    }
+    return null;
+  };
+  const pairRoot = tempRootOf(resolve(input.atlasDir));
+  const strings = (text: string): string[] => {
+    const out: string[] = [];
+    const walk = (node: unknown): void => {
+      if (typeof node === 'string') out.push(node);
+      else if (Array.isArray(node)) node.forEach(walk);
+      else if (typeof node === 'object' && node !== null) Object.values(node).forEach(walk);
+    };
+    try {
+      walk(JSON.parse(text));
+    } catch {
+      // A forged pair that does not parse spells nothing this reading can name.
+    }
+    return out;
+  };
+  let pages: string[] = [];
+  try {
+    pages = pagesOfAtlas(input.atlasText).map((page) => page.name);
+  } catch {
+    pages = [];
+  }
+  let images: string[] = [];
+  try {
+    const header = (JSON.parse(input.skeletonText) as { skeleton?: { images?: unknown } }).skeleton;
+    images = typeof header?.images === 'string' ? [header.images] : [];
+  } catch {
+    images = [];
+  }
+  const spelled: Array<[string, string]> = [
+    ...pages.map((name): [string, string] => ['atlas page', name]),
+    ...strings(input.skeletonText).map((value): [string, string] => ['skeleton string', value]),
+    ...strings(modelText).map((value): [string, string] => ['document string', value]),
+  ];
+  for (const [where, value] of spelled) {
+    const component = value.split(/[\\/]/).find((part) => HARNESS_TEMP_COMPONENT.test(part));
+    if (component !== undefined) faults.push(`${where} ${JSON.stringify(value)} spells the temp directory "${component}"`);
+  }
+  for (const [where, value] of [...pages.map((name): [string, string] => ['atlas page', name]), ...images.map((path): [string, string] => ['skeleton.images', path])]) {
+    if (isAbsolute(value)) continue;
+    const landed = resolve(input.atlasDir, value);
+    const root = tempRootOf(landed);
+    if (root === null) checkout++;
+    else if (pairRoot !== null && root !== pairRoot) faults.push(`${where} ${JSON.stringify(value)} climbs out of the pair's temp directory into another`);
+  }
+  return { faults, checkout };
 }
 
 class SupplierCheck {
@@ -1663,6 +2374,11 @@ class SupplierCheck {
    * builds, and a sum of two shards' would count a shared build twice.
    */
   private sightings: SupplierSighting[] = [];
+  /** Every distinct build this check recorded, first sightings only and in run order, with where its paths point (issue #1127, `TY36`). */
+  recordedPlaces(): Array<{ key: string; place: BuildPlace }> {
+    return this.sightings.flatMap((sighting) => (sighting.kind === 'family' ? [{ key: sighting.key, place: sighting.place }] : []));
+  }
+
   /** The faults a first sighting raised, by the build it was the first sighting of. */
   private faultBuild = new Map<object, string>();
 
@@ -1908,10 +2624,10 @@ class SupplierCheck {
    */
   private walkFamiliesOf(input: ValidateInput, modelText: string): void {
     this.familyWalk.calls++;
-    const build = [input.skeletonText, input.atlasText, modelText, JSON.stringify(input.rig ?? null), JSON.stringify(input.declaredDurations ?? null)].map(spineFileSha256).join(' ');
+    const build = familyBuildKey(input, modelText);
     if (this.familyBuilt.has(build)) return;
     this.familyBuilt.add(build);
-    const sighting: SupplierSighting = { kind: 'family', key: build, family: null };
+    const sighting: SupplierSighting = { kind: 'family', key: build, place: buildPlaceOf(input, modelText), family: null };
     this.sightings.push(sighting);
     const walked = compareFactFamilies(input.skeletonText, input.atlasText, modelText, { rig: input.rig, declaredDurations: input.declaredDurations }, this.plant);
     if (walked === null) return;
@@ -4801,7 +5517,7 @@ const DIFF_SLIDER_RENAMES: ReadonlyArray<{ name: string; from: string }> = [
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** #1040's probe as a skeleton's JSON text — see `DIFF_SLIDER_SOURCE` — and the atlas its build wrote. */
 function diffSliderProbe(): { text: string; atlasText: string } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-diff-slider-probe-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-diff-slider-probe-'));
   const built = compile({
     rigPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.rig),
     motionPath: resolve(import.meta.dir, DIFF_SLIDER_SOURCE.motion),
@@ -6581,7 +7297,7 @@ function runBoneDistSuite(): number | null {
   console.log('\n── rigc bonedist (fixture: 6-arcs-pro, the ladder\'s stage 3) ──');
   const exportDir = dirname(BONEDIST_FIXTURE);
   const text = readFileSync(BONEDIST_FIXTURE, 'utf8');
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-bonedist-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-bonedist-'));
   let bad = 0;
 
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -6945,7 +7661,7 @@ function repackRotatedTrimmed(atlasText: string, atlasDir: string): { atlasText:
     );
     at += part.width + REPACK_GAP;
   }
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-repack-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-repack-'));
   packed.writePng(join(outDir, 'repacked.png'));
   const text = `${lines.join('\n')}\n`;
   writeFileSync(join(outDir, 'repacked.atlas'), text);
@@ -6957,7 +7673,9 @@ function compileTranscription(
   motionText: string | null,
   imagesDir = CHECK_IMAGES,
 ): { skeletonText: string; atlasText: string; atlasDir: string; modelText: string | undefined } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-check-'));
+  // Art this run wrote (`padImagesSideways`) builds inside its own directory (issue #1127); the corpus's art is the checkout's,
+  // which no build here writes into.
+  const outDir = buildRootFor(imagesDir === CHECK_IMAGES ? undefined : imagesDir, 'rigc-check-');
   let motionPath = join(CHECK_TRANSCRIPTION, '3-timing-and-spacing-ess.motion.json');
   if (motionText !== null) {
     motionPath = join(outDir, 'rewritten.motion.json');
@@ -6984,7 +7702,7 @@ function compileTranscription(
  * measuring and the new one is not.
  */
 function padImagesSideways(pad: number): string {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-padded-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-padded-'));
   mkdirSync(outDir, { recursive: true });
   for (const name of readdirSync(CHECK_IMAGES)) {
     if (!name.endsWith('.png')) continue;
@@ -7150,7 +7868,7 @@ function buildIdentityExample(
   example: string = IDENTITY_EXAMPLE,
   rigText?: string,
 ): ExampleBuild {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-identity-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-identity-'));
   let motionPath = join(example, 'motion.json');
   if (motionText !== null) {
     motionPath = join(outDir, 'motion.json');
@@ -7190,7 +7908,7 @@ function buildIdentityExample(
  * answered by each example's first set as completely as by all of them.
  */
 function renderOwnFrames(build: ExampleBuild, fps: number, only?: string): string {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-identity-frames-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-identity-frames-'));
   const posable = posableFromText(build.skeletonText, build.atlasText, build.atlasDir);
   const viewport = framingViewport(posable.data, 256);
   if (viewport === null) throw new Error('the identity fixture posed no drawable attachment');
@@ -7462,7 +8180,7 @@ function buildSheetFixture(
   };
   const set = source.sets.find((s) => s.dir === setDir);
   if (!set) throw new Error(`selftest: no set ${JSON.stringify(setDir)} in ${CHECK_FRAMES}/${FRAMES_SIDECAR}`);
-  const root = mkdtempSync(join(tmpdir(), 'rigc-sheet-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-sheet-'));
   mkdirSync(join(root, setDir), { recursive: true });
 
   // The first and last frames, from the corpus, untouched.
@@ -8696,7 +9414,7 @@ function runCheckSuite(): number | null {
     // the ones it measured. A page checked against a list typed here would be a
     // spelling test; checked against the run, it is a claim that can go stale
     // and be caught going stale.
-    const absentFrames = join(mkdtempSync(join(tmpdir(), 'rigc-identity-absent-')), 'not-a-frame-set');
+    const absentFrames = join(mkdtempSync(join(harnessTemp(), 'rigc-identity-absent-')), 'not-a-frame-set');
     const observed = [
       {
         what: 'a comparison that ran, on the build with every easing reversed',
@@ -9212,7 +9930,7 @@ function runCheckSuite(): number | null {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-subset-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-subset-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
@@ -9351,7 +10069,7 @@ function runCheckSuite(): number | null {
     ): { report: CheckReport; out: string; peak: number } => {
       const plates = new CheckPlates({ allFrames });
       const report = checkAgainstFrames({ ...build, framesDir, plates });
-      const out = mkdtempSync(join(tmpdir(), 'rigc-check-pictures-'));
+      const out = mkdtempSync(join(harnessTemp(), 'rigc-check-pictures-'));
       writeCheckPictures(out, report, plates, { allFrames });
       return { report, out, peak: plates.peakBytes };
     };
@@ -9605,7 +10323,7 @@ function runCheckSuite(): number | null {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-foreign-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-foreign-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const rendered = join(work, 'rendered');
@@ -10728,7 +11446,7 @@ function writeJsonAsAuthored(path: string, spec: unknown): void {
 function runRigSuite(): number {
   const opts = optsForFixture(ARTICULATED);
   const sourceText = readFileSync(opts.rigPath, 'utf8');
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-rigspec-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-rigspec-'));
   const rigPath = join(dir, 'probe.rig.json');
   let bad = 0;
   console.log(`\n── rig spec refusals (${ARTICULATED.rig}) ──`);
@@ -10995,7 +11713,7 @@ function runRigSuite(): number {
 
     // (3) nothing is written: the CLI's `build` refuses before it writes a file.
     {
-      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-finite-'));
       const planted = join(work, 'planted.rig.json');
       writeJsonAsAuthored(planted, edited((rig) => { rootOf(rig).x = Infinity; }));
       const out = join(work, 'out');
@@ -11016,7 +11734,7 @@ function runRigSuite(): number {
     // The manifest and the motion spec: the same walk over the other two files whose numbers are emitted.
     {
       const manifestPath = opts.manifestPath;
-      const work = mkdtempSync(join(tmpdir(), 'rigc-finite-inputs-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-finite-inputs-'));
       let manifestSaid = 'the fixture has no manifest';
       if (manifestPath !== undefined) {
         const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { crop: Record<string, unknown> };
@@ -11094,7 +11812,7 @@ function runRigSuite(): number {
         return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
       }
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-types-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-types-'));
 
     // (e) the motion spec: a field nothing in `parseMotionSpec` reads, refused by
     // its path — and a field it does read keeps its own sentence.
@@ -11342,7 +12060,7 @@ function runRigSuite(): number {
         return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
       }
     };
-    const work = mkdtempSync(join(tmpdir(), 'rigc-enums-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-enums-'));
 
     // The manifest's `mesh.kind`, planted on a ring part: before the set was
     // stated it was refused as a ribbon missing its rows — a fault it did not have.
@@ -12775,7 +13493,7 @@ function runRigSuite(): number {
   // (RF56). It needs no art at all — a path attachment is geometry — so nothing
   // here depends on a plate, and the atlas it emits is 0 bytes.
   {
-    const kindRoot = mkdtempSync(join(tmpdir(), 'rigc-kindnames-'));
+    const kindRoot = mkdtempSync(join(harnessTemp(), 'rigc-kindnames-'));
     /** The four kinds, named by the caller, so one rig serves the shared and the distinct case. */
     const kindRig = (named: Record<string, string>): Record<string, unknown> => ({
       spec: 'rigc-rig/1',
@@ -13413,7 +14131,7 @@ function runRigSuite(): number {
   // is the only arrangement that can tell a rule that was removed from a rule
   // that was removed along with its neighbours.
   {
-    const sharedRoot = mkdtempSync(join(tmpdir(), 'rigc-sharedskin-'));
+    const sharedRoot = mkdtempSync(join(harnessTemp(), 'rigc-sharedskin-'));
     const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
     /**
      * A rig with no art at all — a path attachment is geometry — carrying one
@@ -14753,7 +15471,7 @@ function writeOpaqueProbeArt(dirs: ProbeDirs): void {
 }
 
 function writeProbeRig(extra: Record<string, unknown> = {}): ProbeDirs {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-static-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-static-'));
   writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
   writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
   const rigPath = join(dir, 'probe.rig.json');
@@ -14804,7 +15522,7 @@ function writeSeriesProbe(
   keys: unknown[] | null = [{ t: 0, mode: 'loop', delay: 0.1 }],
   frames = SERIES_COUNT,
 ): { dirs: ProbeDirs; motionPath: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-series-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-series-'));
   for (let i = 0; i < frames; i++) writeProbePng(join(dir, `${seriesFrame(i)}.png`), 16, 16, [40 * (i + 1), 60, 90, 255]);
   const rigPath = join(dir, 'probe.rig.json');
   writeFileSync(
@@ -17131,7 +17849,7 @@ function runStaticRigSuite(): number {
   // states no stage of its own, so its crop IS its stage — which makes it the
   // one rig here where the precedence decides a byte.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-stageless-crop-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-stageless-crop-');
     const crop = (JSON.parse(readFileSync(ARTICULATED.manifestPath, 'utf8')) as { crop?: { w?: unknown; h?: unknown } }).crop;
     const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
     mkdirSync(stagedOpts.outDir, { recursive: true });
@@ -17513,7 +18231,7 @@ function runStaticRigSuite(): number {
     // lifted out of a pack declaring `scale:` is `originalWidth / scale` wide,
     // and 2 / 0.3 is 6.666666666666667 in doubles. The file says the float it
     // lands on; six decimals said something else.
-    const packDir = mkdtempSync(join(tmpdir(), 'rigc-float-pack-'));
+    const packDir = mkdtempSync(join(harnessTemp(), 'rigc-float-pack-'));
     writeProbePng(join(packDir, 'pack.png'), 16, 16, [40, 60, 90, 255]);
     const texels = { w: 1, h: 2 };
     const packScale = 0.3;
@@ -17604,9 +18322,8 @@ function runStaticRigSuite(): number {
   // read the corpus against the exports themselves, which is where the table's
   // own correctness is decided.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-keyorder-'));
     const builds = [OVERLAY, ARTICULATED, CONTAINED].map((fixture) => {
-      const outDir = join(root, fixture.rig);
+      const outDir = join(buildRootIn(fixture.dir, 'rigc-keyorder-'), fixture.rig);
       mkdirSync(outDir, { recursive: true });
       return { label: fixture.rig, skeleton: JSON.parse(compile({ ...optsForFixture(fixture), outDir }).skeletonText) as Record<string, unknown> };
     });
@@ -18178,7 +18895,7 @@ function runStaticRigSuite(): number {
     );
 
     // S108 — a file beginning with a blank line, on disk, through `validate`.
-    const diskDir = mkdtempSync(join(tmpdir(), 'rigc-leading-blank-'));
+    const diskDir = mkdtempSync(join(harnessTemp(), 'rigc-leading-blank-'));
     for (const name of readdirSync(pack.dir)) {
       if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(diskDir, name));
     }
@@ -18236,7 +18953,7 @@ function runStaticRigSuite(): number {
     const trailingLine = lines.length + 1;
 
     // S110 — a file ending in a blank line, on disk, through `validate`.
-    const tailDir = mkdtempSync(join(tmpdir(), 'rigc-trailing-blank-'));
+    const tailDir = mkdtempSync(join(harnessTemp(), 'rigc-trailing-blank-'));
     for (const name of readdirSync(pack.dir)) {
       if (name.endsWith('.png') || name === 'skeleton.json') copyFileSync(join(pack.dir, name), join(tailDir, name));
     }
@@ -18449,18 +19166,21 @@ let omissionBuildsHeld: OmissionBuild[] | null = null;
  */
 function omissionBuilds(): OmissionBuild[] {
   if (omissionBuildsHeld !== null) return omissionBuildsHeld;
-  const root = mkdtempSync(join(tmpdir(), 'rigc-omitdefaults-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-omitdefaults-'));
   const galleryRoot = resolve(import.meta.dir, 'gallery');
-  const sources: Array<{ label: string; opts: Omit<Options, 'outDir'> }> = [
+  // A fixture builds inside its own directory (`buildRootIn`, issue #1127); a gallery example's art is the checkout's, which
+  // no build here writes into, so it builds under the one temp root and its page names spell the checkout's path.
+  const sources: Array<{ label: string; opts: Omit<Options, 'outDir'>; artDir: string | null }> = [
     // Labelled by directory: two of the three fixtures share a rig `name`.
-    ...[OVERLAY, ARTICULATED, CONTAINED].map((fixture) => ({ label: basename(fixture.dir), opts: optsForFixture(fixture) })),
+    ...[OVERLAY, ARTICULATED, CONTAINED].map((fixture) => ({ label: basename(fixture.dir), opts: optsForFixture(fixture), artDir: fixture.dir })),
     ...galleryExampleNames(galleryRoot).map((name) => ({
       label: `gallery/${name}`,
       opts: { rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json') },
+      artDir: null,
     })),
   ];
-  omissionBuildsHeld = sources.map(({ label, opts }, i) => {
-    const outDir = join(root, String(i));
+  omissionBuildsHeld = sources.map(({ label, opts, artDir }, i) => {
+    const outDir = join(artDir === null ? root : buildRootIn(artDir, 'rigc-omitdefaults-'), String(i));
     mkdirSync(outDir, { recursive: true });
     const built = compile({ ...opts, outDir });
     return { label, skeletonText: built.skeletonText, atlasText: built.atlasText };
@@ -18924,7 +19644,7 @@ function gatePartImage(write: (path: string) => void): ReturnType<typeof validat
  * rewrites the directory every other suite is reading.
  */
 function privateFixtureCopy(fixture: Fixture, prefix: string): Fixture {
-  const dir = join(mkdtempSync(join(tmpdir(), prefix)), basename(fixture.dir));
+  const dir = join(mkdtempSync(join(harnessTemp(), prefix)), basename(fixture.dir));
   cpSync(fixture.dir, dir, { recursive: true });
   const moved = (path: string): string => join(dir, relative(fixture.dir, path));
   return {
@@ -19114,7 +19834,7 @@ function runPngTransparencySuite(): number {
 
   // Where the defect actually lived: the reader stopped at the IHDR, so a chunk
   // sitting after it could not be seen no matter what the rule above it said.
-  const probe = mkdtempSync(join(tmpdir(), 'rigc-trns-'));
+  const probe = mkdtempSync(join(harnessTemp(), 'rigc-trns-'));
   writeTypedPng(join(probe, 'with.png'), 12, 8, { colourType: 3, trns: true });
   writeTypedPng(join(probe, 'without.png'), 12, 8, { colourType: 3, trns: false });
   const withTrns = readPngInfo(join(probe, 'with.png'));
@@ -19170,7 +19890,7 @@ function runPngTransparencySuite(): number {
       trns: false,
     });
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-baseplate-overlay-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-baseplate-overlay-out-'), 'loose'),
       'spine-html',
     );
     const probes = opaqueOverlayProbes(gated);
@@ -19197,7 +19917,7 @@ function runPngTransparencySuite(): number {
     });
     const rig = JSON.parse(readFileSync(copy.rigPath, 'utf8')) as Record<string, unknown>;
     rig.skeleton = { ...((rig.skeleton ?? {}) as Record<string, unknown>), x: 0, y: 0, width: fromManifest.overlay.w, height: fromManifest.overlay.h };
-    const root = mkdtempSync(join(tmpdir(), 'rigc-baseplate-precedence-out-'));
+    const root = buildRootIn(copy.dir, 'rigc-baseplate-precedence-out-');
     const rigPath = join(root, 'stated.rig.json');
     writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
     const outDir = join(root, 'loose');
@@ -19237,7 +19957,7 @@ function runPngTransparencySuite(): number {
 
   {
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(ARTICULATED, mkdtempSync(join(tmpdir(), 'rigc-baseplate-norig-')), 'loose'),
+      stagelessOptionsFor(ARTICULATED, buildRootIn(ARTICULATED.dir, 'rigc-baseplate-norig-'), 'loose'),
       'spine-html',
     );
     const run = runCli(['validate', gated.packedDir, '--profile', 'spine-html']);
@@ -19286,7 +20006,7 @@ function runPngTransparencySuite(): number {
     writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, null);
     writeSolidRgbaPng(basePath, fromManifest.base.w, fromManifest.base.h, null);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseopaque-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseopaque-out-'), 'loose'),
       'spine-html',
     );
     const loose = a19Details(gated.loose);
@@ -19340,7 +20060,7 @@ function runPngTransparencySuite(): number {
     const last: [number, number] = [fromManifest.overlay.w - 1, fromManifest.overlay.h - 1];
     writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, last);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-looseclear-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseclear-out-'), 'loose'),
       'spine-html',
     );
     const clear = clearTexels(overlayPath);
@@ -34208,7 +34928,7 @@ function buildContourRig(
     attachments?: Record<string, Record<string, unknown>>;
   } = {},
 ): ContourBuild {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-contour-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-contour-'));
   const artPath = join(dir, 'blob.png');
   const art = extra.art ?? contourBlob;
   writeContourArt(artPath, art, extra.width ?? CONTOUR_W, extra.height ?? CONTOUR_H);
@@ -36133,7 +36853,7 @@ function runContourMeshSuite(): number {
           };
         }
         const docs = new Map<string, string>();
-        const work = mkdtempSync(join(tmpdir(), 'rigc-tie-'));
+        const work = mkdtempSync(join(harnessTemp(), 'rigc-tie-'));
         try {
           for (const row of rows) {
             const built = compile({ rigPath: join(galleryRoot, row, 'rig.json'), motionPath: join(galleryRoot, row, 'motion.json'), outDir: join(work, row) });
@@ -37463,7 +38183,7 @@ function buildTurnRig(
     rootRotation?: number;
   } = {},
 ): TurnBuild {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-turn-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-turn-'));
   const width = TURN_R * 2;
   const height = 380;
   writeOverlayProbePng(join(dir, 'head.png'), width, height, [200, 170, 150, 255]);
@@ -43279,7 +43999,7 @@ function compileMeshTranscription(
   rig: CompileResult['rig'];
   modelText: string | undefined;
 } {
-  const outDir = mkdtempSync(join(tmpdir(), 'rigc-mesh-'));
+  const outDir = mkdtempSync(join(harnessTemp(), 'rigc-mesh-'));
   let rigPath = join(MESH_TRANSCRIPTION, '6-arcs-pro.rig.json');
   if (rigText !== null) {
     rigPath = join(outDir, 'rewritten.rig.json');
@@ -43966,7 +44686,7 @@ function runCopyImagesSuite(): number {
   );
 
   // --- a basename collision is disambiguated, deterministically ---------------
-  const collideRoot = mkdtempSync(join(tmpdir(), 'rigc-collide-'));
+  const collideRoot = mkdtempSync(join(harnessTemp(), 'rigc-collide-'));
   const dirA = join(collideRoot, 'a');
   const dirB = join(collideRoot, 'b');
   mkdirSync(dirA, { recursive: true });
@@ -44077,7 +44797,7 @@ function runCopyImagesSuite(): number {
     "the same fact the atlas's page names already state, derived the same way; a build that points at its own parts " +
       'is a build the editor can open',
   );
-  const elsewhere = mkdtempSync(join(tmpdir(), 'rigc-elsewhere-'));
+  const elsewhere = mkdtempSync(join(harnessTemp(), 'rigc-elsewhere-'));
   cpSync(oneDir.dir, elsewhere, { recursive: true });
   const moved = compile({
     rigPath: join(elsewhere, basename(oneDir.rigPath)),
@@ -44710,6 +45430,7 @@ function turnedPack(
   parts: ReadonlyArray<{ region: string; absPath: string }>,
   degrees: number,
   label: number = degrees,
+  under?: string,
 ): { dir: string; atlasPath: string; pageName: string } {
   const gap = DEFAULT_PADDING * 2;
   const laid = parts.map((part) => {
@@ -44765,7 +45486,10 @@ function turnedPack(
     );
     at += p.footH + gap;
   }
-  const dir = mkdtempSync(join(tmpdir(), `rigc-turned${degrees}-`));
+  // `under`: the rig's own directory, for a caller that builds through the pack from beside it — the pack is written to a
+  // directory named by its turn and label inside it, so the page name spells no temp directory (issue #1127).
+  const dir = under === undefined ? mkdtempSync(join(harnessTemp(), `rigc-turned${degrees}-`)) : join(under, `turned${degrees}_${label}`);
+  mkdirSync(dir, { recursive: true });
   page.writePng(join(dir, 'turned.png'));
   const atlasPath = join(dir, 'turned.atlas');
   writeFileSync(atlasPath, `${lines.join('\n')}\n`);
@@ -44807,7 +45531,7 @@ const RIM_COLOUR: RGBA = [242, 212, 156, 255];
  * colour, and then the patch's outline is drawn in a darker shade of it.
  */
 function writeRimProbe(): { rigPath: string; motionPath: string; outDir: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-rim-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-rim-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
   writeProbePng(join(parts, 'bg.png'), 120, 120, RIM_COLOUR);
@@ -45116,6 +45840,179 @@ function runSamplingSuite(): number {
   );
 
   return bad;
+}
+
+/** Two packs that are one pack: the same atlas text and every page's pixels. */
+function packsSame(a: ReturnType<typeof packAtlas>, b: ReturnType<typeof packAtlas>): boolean {
+  return a.atlasText === b.atlasText && a.pages.length === b.pages.length && a.pages.every((p, i) => p.plate.data.every((v, k) => v === b.pages[i].plate.data[k]));
+}
+
+/** One set PK96–PK99 pack: values only, so it crosses a process boundary as JSON (issue #1128). */
+interface AnchorSet {
+  name: string;
+  inputs: PackInput[];
+  skeleton: string;
+  pageSize: number;
+}
+
+/** What a pack is reduced to for PK96–PK99: every page's size and the candidate kept. */
+interface PackFigures {
+  pages: Array<{ width: number; height: number }>;
+  candidate: ReturnType<typeof packAtlas>['candidate'];
+}
+
+/** One (set, page edges) row of PK96–PK99, as the controls read it. */
+interface AnchorRow {
+  name: string;
+  pageEdges: 'pot' | 'free';
+  rect: PackFigures;
+  box: PackFigures;
+  poly: PackFigures;
+  same: boolean;
+  texels: { checked: number; texels: number; wrong: string[] } | null;
+}
+
+/**
+ * One row of PK96–PK99 (issue #1104): the set packed `rect`, `polygon` under the
+ * owned box's anchor alone, and `polygon` as it packs — made again and from its
+ * parts reversed for PK99, and the brute force over the polygon pack for PK98.
+ *
+ * ⚡ Module-level and over values (issue #1128) so the same code runs in this
+ * process at `--jobs 1` and in a unit process above it (`selftestUnit`): it
+ * reads nothing but its arguments and the part PNGs their `absPath`s name,
+ * writes nothing, records no seeded draw and makes no `validate` call — the
+ * three things a child's process would keep from the parent's run state.
+ *
+ * 🧮 Each row keeps the FIGURES its controls compare — every page's size and
+ * the candidate kept — and never a pack's decoded pages (issue #1121): held
+ * whole, five packs per set and page edge put about 140 packs of pages in
+ * memory at once, the packer suite's +1.3 GB peak. The two readings that need
+ * a pack's pixels are taken here, while its pages are still in hand: PK99's
+ * sameness, and PK98's brute force over the polygon pack.
+ */
+function anchorRowOf(set: AnchorSet, pageEdges: 'pot' | 'free'): AnchorRow {
+  const figuresOf = (r: ReturnType<typeof packAtlas>): PackFigures => ({
+    pages: r.pages.map((p) => ({ width: p.width, height: p.height })),
+    candidate: r.candidate,
+  });
+  const base = { pageEdges, pageSize: set.pageSize };
+  const name = `${set.name}/${pageEdges}`;
+  const rect = figuresOf(packAtlas(set.inputs, base));
+  const box = figuresOf(packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' }));
+  const packed = packAtlas(set.inputs, { ...base, shape: 'polygon' });
+  const same = packsSame(packed, packAtlas(set.inputs, { ...base, shape: 'polygon' })) && packsSame(packed, packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' }));
+  const texels = packed.candidate === 'rect' ? null : footprintTexelsWrong(packed.pages.map((p) => p.plate), packed.atlasText, set.skeleton, set.inputs, packed.padding);
+  return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
+}
+
+/** A pack row's unit (issue #1128): the set and the page edges, both values. */
+type AnchorUnitSpec = { kind: 'anchor-row'; set: AnchorSet; pageEdges: 'pot' | 'free' };
+/** The work a unit process can be handed (issues #1128, #1133): its kind and its input, both values. */
+/**
+ * `TY40`'s scratch unit (issue #1143): a `--unit` process that touches
+ * `megabytes` MiB and holds them to its end, so its peak is the unit's
+ * load plus a stated amount. Not a suite's work — `TY40` runs a pair of them,
+ * one holding nothing, to see the run's own path carry a child's peak to the
+ * parent and the ceiling name the unit that went over.
+ */
+type AllocateUnitSpec = { kind: 'ty40-allocate'; megabytes: number; label: string };
+type SelftestUnitSpec =
+  | AnchorUnitSpec
+  | AllocateUnitSpec
+  | { kind: 'core'; input: CoreUnitInput }
+  | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] };
+
+/**
+ * What `TY40`'s scratch unit hands back: how many MiB it held and the first
+ * byte of each, so the pages cannot be skipped — or, when the allocation was
+ * refused, `refused` with what refused it, so the parent names the plant's
+ * fault rather than dying of it.
+ */
+interface AllocateUnitValue {
+  megabytes: number;
+  touched: number;
+  refused?: string;
+}
+
+/** `TY40`'s scratch unit's work: `megabytes` MiB allocated and every page written, held until the value is returned. */
+function allocateUnitWork(spec: AllocateUnitSpec): AllocateUnitValue {
+  let held: Buffer;
+  try {
+    // Issue #1143: on main a plant sized 1,024x too large threw `RangeError`
+    // here and the merge job died of it. A refused allocation is the plant's
+    // fault and comes back as a value naming it.
+    held = Buffer.alloc(spec.megabytes * 1024 * 1024);
+  } catch (err) {
+    return { megabytes: spec.megabytes, touched: 0, refused: `${(err as Error).name}: ${(err as Error).message}` };
+  }
+  let touched = 0;
+  for (let at = 0; at < held.length; at += 4096) {
+    held[at] = 1;
+    touched += held[at];
+  }
+  return { megabytes: spec.megabytes, touched };
+}
+
+/** A unit's work, run in whichever process holds it — the one function both paths call. */
+function selftestUnitWork(spec: AnchorUnitSpec): AnchorRow {
+  if (spec.kind === 'anchor-row') return anchorRowOf(spec.set, spec.pageEdges);
+  throw new Error(`selftest --unit: unknown unit kind ${JSON.stringify((spec as { kind?: unknown }).kind)}`);
+}
+
+/**
+ * Run in-process JS units through `inParallel` (issue #1128): each spec is
+ * written as JSON, a `bun selftest.ts --unit <spec> <out>` process runs
+ * `selftestUnitWork` over it and writes its value as JSON, and the values come
+ * back in the specs' order. `--jobs 1` runs every unit in this process instead
+ * — the run as it was before the flag.
+ *
+ * ⚠️ A process rather than a `Worker`: a worker would load this file to reach
+ * `footprintTexelsWrong`, and loading it runs `main`; a process is told by
+ * `--unit` to run one unit instead. What crosses is JSON both ways, so the
+ * input has to be values: no `-0`, `NaN` or `Infinity` (JSON spells them `0`,
+ * `null`, `null`) — `PK105` holds a unit's answer equal to this process's on
+ * the same rows, which is where such a value would show.
+ */
+function inUnits(specs: readonly AnchorUnitSpec[], jobs: number = JOBS): AnchorRow[] {
+  if (jobs === 1) return specs.map((spec) => selftestUnitWork(spec));
+  return unitValues(specs, jobs) as AnchorRow[];
+}
+
+/** What the suite line calls a `--unit` process when it is the heaviest (issue #1143): the work it was handed, never the spec file's temp path. */
+function unitSpecLabel(spec: SelftestUnitSpec, k: number, of: number): string {
+  if (spec.kind === 'anchor-row') return `anchor row ${spec.set.name}/${spec.pageEdges}`;
+  if (spec.kind === 'core') return `core unit ${spec.input.unit}`;
+  if (spec.kind === 'core-worker') return `core worker ${k + 1} of ${of}`;
+  return spec.label;
+}
+
+/**
+ * The process half of `inUnits` (issues #1128, #1133): each spec run by a
+ * `bun selftest.ts --unit` process through `inParallel`, up to `jobs` at once
+ * — one after another at `jobs` 1 — and the values they wrote, in the specs'
+ * order, as JSON read them.
+ */
+function unitValues(specs: readonly SelftestUnitSpec[], jobs: number): unknown[] {
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-unit-specs-'));
+  try {
+    const files = specs.map((spec, k) => {
+      const input = join(dir, `unit-${k}.json`);
+      writeFileSync(input, JSON.stringify(spec));
+      return { input, output: join(dir, `unit-${k}.out.json`) };
+    });
+    const runs = inParallel(
+      files.map((f, k) => ({ argv: [process.execPath, 'selftest.ts', '--unit', f.input, f.output], cwd: import.meta.dir, label: unitSpecLabel(specs[k], k, specs.length) })),
+      jobs,
+    );
+    return runs.map((run, k) => {
+      if (run.status !== 0 || !existsSync(files[k].output)) {
+        throw new Error(`selftest --unit: unit ${k} (${specs[k].kind}) exited ${String(run.status)} and wrote ${existsSync(files[k].output) ? 'its value' : 'nothing'}: ${run.stderr.trim().slice(0, 400)}`);
+      }
+      return JSON.parse(readFileSync(files[k].output, 'utf8')) as unknown;
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function runPackerSuite(): number {
@@ -46040,7 +46937,7 @@ function runPackerSuite(): number {
   const authoredParts = [{ region: 'blob', absPath: authored.artPath }];
   const looseFit = authored.result.meshes.find((m) => m.slot === 'blob');
   const fitAt = (degrees: number, label: number): { coverage?: number; overshoot?: number } | string => {
-    const pack = turnedPack(authoredParts, degrees, label);
+    const pack = turnedPack(authoredParts, degrees, label, authored.dir);
     try {
       const built = compile({
         ...authored.opts,
@@ -46101,7 +46998,7 @@ function runPackerSuite(): number {
   const contourParts = [{ region: 'blob', absPath: contourLoose.artPath }];
   const contourApart: string[] = [];
   for (const degrees of TURNS) {
-    const pack = turnedPack(contourParts, degrees);
+    const pack = turnedPack(contourParts, degrees, degrees, contourLoose.dir);
     let turnedText: string;
     try {
       turnedText = compile({
@@ -46957,7 +47854,7 @@ function runPackerSuite(): number {
   // same atlas and the same page bytes, and the packed pair gates green with no
   // box in its header.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-stageless-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-pack-stageless-');
     const stagedResult = compile(optsForFixture(ARTICULATED));
     const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'packed');
     const stagelessResult = compile(stagelessOpts);
@@ -47012,7 +47909,7 @@ function runPackerSuite(): number {
   {
     const { base } = manifestBaseAndOverlay(ARTICULATED);
     const baseRegion = basename(base.image, '.png');
-    const root = mkdtempSync(join(tmpdir(), 'rigc-pack-baseplate-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-pack-baseplate-');
     const stageless = gateLooseAndPacked(stagelessOptionsFor(ARTICULATED, root, 'stageless'), 'spine-html');
     const stagedOut = join(root, 'staged');
     mkdirSync(stagedOut, { recursive: true });
@@ -47097,7 +47994,7 @@ function runPackerSuite(): number {
   // three cells together cover 277,248 texels, more than a 512x512 page — so the
   // smallest power-of-two page is twice that, while a width of three cells
   // wastes almost nothing.
-  const freeDir = mkdtempSync(join(tmpdir(), 'rigc-free-pages-'));
+  const freeDir = mkdtempSync(join(harnessTemp(), 'rigc-free-pages-'));
   const freeInputs: PackInput[] = ['free_a', 'free_b', 'free_c'].map((region, n) => {
     const plate = new Plate(300, 300);
     // A pattern that differs per part and per texel, so a lift-back that read
@@ -47416,7 +48313,7 @@ function runPackerSuite(): number {
     // skeleton beside it is a minimal Spine file naming each part, so the
     // footprints come out of `packFootprints` exactly as a build's do, and the
     // checks read them back with their own reader (`drawnLoops`).
-    const polyDir = mkdtempSync(join(tmpdir(), 'rigc-polygon-pack-'));
+    const polyDir = mkdtempSync(join(harnessTemp(), 'rigc-polygon-pack-'));
     const polyPart = (region: string, width: number, height: number, draws: (x: number, y: number) => boolean, n: number): PackInput => {
       const plate = new Plate(width, height);
       for (let y = 0; y < height; y++) {
@@ -47637,7 +48534,7 @@ function runPackerSuite(): number {
     // reader takes the line whole — and a polygon build passes A18 on its packed
     // atlas, the second independent compile+pack.
     const lineOf = (run: { stdout: string }): string => run.stdout.split('\n').find((line) => line.includes('  pack: ')) ?? '(no pack line)';
-    const meshBase = ['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, ...(OVERLAY.manifestPath === undefined ? [] : ['--manifest', OVERLAY.manifestPath]), '--out', join(polyDir, 'cli')];
+    const meshBase = ['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, ...(OVERLAY.manifestPath === undefined ? [] : ['--manifest', OVERLAY.manifestPath]), '--out', join(buildRootIn(OVERLAY.dir, 'rigc-polygon-pack-'), 'cli')];
     const lineRuns = [
       ['--pack', runCli([...edgesBase, '--pack']), /, padding \d+, shape rect$/],
       ['--pack --pack-shape rect', runCli([...edgesBase, '--pack', '--pack-shape', 'rect']), /, padding \d+, shape rect$/],
@@ -47862,7 +48759,7 @@ function runPackerSuite(): number {
     const galleryOpts = (name: string, outDir: string): Options => ({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir });
     /** A gallery rig compiled and packed in process, its pages on disk, and the document `build` writes beside that pack. */
     const galleryPack = (name: string, shape: 'rect' | 'polygon') => {
-      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-${name}-${shape}-`));
+      const dir = mkdtempSync(join(harnessTemp(), `rigc-a49-${name}-${shape}-`));
       const result = compile(galleryOpts(name, dir));
       const pack = packAtlas(withFootprints(packInputsOf(result.images), result.skeletonText), { pageEdges: 'free', shape });
       for (const page of pack.pages) page.plate.writePng(join(dir, page.name));
@@ -47888,7 +48785,7 @@ function runPackerSuite(): number {
     // clause they failed `spine-html` by name.
     const routeRows = galleryNames.flatMap((name) =>
       VALIDATE_PROFILES.map((profile) => {
-        const out = mkdtempSync(join(tmpdir(), `rigc-a49-route-${name}-`));
+        const out = mkdtempSync(join(harnessTemp(), `rigc-a49-route-${name}-`));
         const run = runCli(['build', '--rig', join(galleryRoot, name, 'rig.json'), '--motion', join(galleryRoot, name, 'motion.json'), '--out', out, '--profile', profile, '--pack', '--page-edges', 'free', '--pack-shape', 'polygon']);
         const lines = run.stdout.split('\n');
         const rows = lines.filter((line) => line.includes(FOOTPRINT_RULE)).map((line) => line.trim());
@@ -48055,7 +48952,7 @@ function runPackerSuite(): number {
     const sameProbes: string[] = [...galleryProbes];
     let hullRegions = 0;
     for (const name of galleryNames) {
-      const dir = mkdtempSync(join(tmpdir(), `rigc-a49-same-${name}-`));
+      const dir = mkdtempSync(join(harnessTemp(), `rigc-a49-same-${name}-`));
       const result = compile(galleryOpts(name, dir));
       const sizes = new Map(result.images.map((img) => [img.region, { width: img.width, height: img.height }]));
       const packer = [...packFootprints(result.skeletonText, (region) => sizes.get(region))].filter(([, f]) => f !== null).map(([region]) => region).sort();
@@ -48263,7 +49160,7 @@ function runPackerSuite(): number {
           },
         ],
       });
-    const anchorSets: Array<{ name: string; inputs: PackInput[]; skeleton: string; pageSize: number }> = [
+    const anchorSets: AnchorSet[] = [
       { name: 'wedge set', inputs: polyInputs, skeleton: honestSkeleton, pageSize: DEFAULT_PAGE_SIZE },
       ...PACK_FIXTURES.map(([name, fixture]) => {
         const result = compile(optsForFixture(fixture));
@@ -48274,31 +49171,13 @@ function runPackerSuite(): number {
       { name: genRows[1].what, inputs: gainShaped, skeleton: polySkeletonOf(polypackShapes(POLYPACK_GAIN_SEED)), pageSize: DEFAULT_PAGE_SIZE },
       ...galleryRows.map((r) => ({ name: `gallery/${r.name}`, inputs: r.inputs, skeleton: r.skeleton, pageSize: DEFAULT_PAGE_SIZE })),
     ];
-    // 🧮 Each row keeps the FIGURES its controls compare — every page's size and
-    // the candidate kept — and never a pack's decoded pages (issue #1121): held
-    // whole, five packs per set and page edge put about 140 packs of pages in
-    // memory at once, the packer suite's +1.3 GB peak. The two readings that
-    // need a pack's pixels are taken here, while its pages are still in hand:
-    // PK99's sameness, and PK98's brute force over the polygon pack.
-    const figuresOf = (r: ReturnType<typeof packAtlas>): { pages: Array<{ width: number; height: number }>; candidate: typeof r.candidate } => ({
-      pages: r.pages.map((p) => ({ width: p.width, height: p.height })),
-      candidate: r.candidate,
-    });
-    const anchorRows = anchorSets.flatMap((set) =>
-      (['pot', 'free'] as const).map((pageEdges) => {
-        const base = { pageEdges, pageSize: set.pageSize };
-        const name = `${set.name}/${pageEdges}`;
-        const rect = figuresOf(packAtlas(set.inputs, base));
-        const box = figuresOf(packAtlas(set.inputs, { ...base, shape: 'polygon', footprintAnchors: 'box' }));
-        const packed = packAtlas(set.inputs, { ...base, shape: 'polygon' });
-        const same = samePack(packed, packAtlas(set.inputs, { ...base, shape: 'polygon' })) && samePack(packed, packAtlas(set.inputs.slice().reverse(), { ...base, shape: 'polygon' }));
-        const texels =
-          packed.candidate === 'rect'
-            ? null
-            : footprintTexelsWrong(packed.pages.map((p) => p.plate), packed.atlasText, set.skeleton, set.inputs, packed.padding);
-        return { name, pageEdges, rect, box, poly: figuresOf(packed), same, texels };
-      }),
-    );
+    // ⚡ Each (set, page edges) row is `anchorRowOf` over values — the pack of
+    // one set reads nothing another row wrote — so the rows run as units
+    // (issue #1128): in this process at `--jobs 1`, through `inUnits` above it.
+    // They come back in this order either way, and the controls below read only
+    // what came back.
+    const anchorSpecs = anchorSets.flatMap((set) => (['pot', 'free'] as const).map((pageEdges): AnchorUnitSpec => ({ kind: 'anchor-row', set, pageEdges })));
+    const anchorRows = inUnits(anchorSpecs);
 
     // PK96: Σ page area, over every page a pack writes, is never above `rect`'s
     // nor above the owned box's anchor alone on any set — by construction, since
@@ -48625,6 +49504,46 @@ function runPackerSuite(): number {
       'a gate nobody has seen fail is not a gate: the count of regions packed by contour is the instrument\'s own word, ' +
         'and only the pack can show that the word was kept',
     );
+
+    // PK105 (issue #1128): what crosses the unit boundary. PK96–PK99 read rows
+    // that came from `inUnits` — in this process at --jobs 1, from `--unit`
+    // processes above it, as JSON both ways. The first four rows (the wedge
+    // set and the first fixture, under both page edges) made here and made by
+    // two unit processes are the same values, compared by `Object.is` at every
+    // leaf, so a `-0` or a `NaN` JSON flattened on the way would be named.
+    // Planted: the comparison over a `-0` sent through JSON, which it must see.
+    const sameValue = (x: unknown, y: unknown, at: string, out: string[]): void => {
+      if (typeof x === 'object' && x !== null && typeof y === 'object' && y !== null) {
+        const keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].sort();
+        for (const key of keys) sameValue((x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], `${at}.${key}`, out);
+      } else if (!Object.is(x, y)) {
+        const spell = (v: unknown): string => (Object.is(v, -0) ? '-0' : String(v));
+        out.push(`${at}: ${spell(x)} here, ${spell(y)} from the unit`);
+      }
+    };
+    const crossing = anchorSpecs.slice(0, 4);
+    const here = crossing.map((spec) => selftestUnitWork(spec));
+    const there = inUnits(crossing, 2);
+    const boundary: string[] = [];
+    here.forEach((row, k) => sameValue(row, there[k], `row ${row.name}`, boundary));
+    const jsonPlant: string[] = [];
+    sameValue({ x: -0 }, JSON.parse(JSON.stringify({ x: -0 })) as unknown, 'plant', jsonPlant);
+    const crossProbes = [...boundary, ...(jsonPlant.length === 1 ? [] : ['a -0 sent through JSON compared equal, so the comparison cannot see what JSON flattens'])];
+    const crossHeld = crossProbes.length === 0;
+    const sent = crossing.reduce((n, spec) => n + JSON.stringify(spec).length, 0);
+    const back = there.reduce((n, row) => n + JSON.stringify(row).length, 0);
+    say(
+      'PK105_AN_ANCHOR_ROW_MADE_IN_A_UNIT_PROCESS_IS_THE_ROW_MADE_HERE_TO_EVERY_LEAF',
+      crossHeld,
+      probeDetail(
+        crossHeld,
+        crossProbes,
+        `${crossing.length} row(s) [${here.map((r) => r.name).join(', ')}] made here and by two \`--unit\` processes: equal at every leaf by Object.is — ` +
+          `${sent} character(s) of input crossed as JSON and ${back} came back; the plant (a -0 through JSON) is named: ${jsonPlant[0] ?? 'nothing'}`,
+      ),
+      'issue #1128: a pack run in another process is the same code over the same values only if the values survive the trip; ' +
+        'JSON spells -0 as 0 and NaN as null, and a row that changed on the way would print a verdict about another input',
+    );
   }
   return bad;
 }
@@ -48714,7 +49633,7 @@ function packWithFirstPageReplaced(forge: (png: Uint8Array, page: { width: numbe
   result: CompileResult;
 } {
   const packed = packFixture(OVERLAY, DEFAULT_PADDING);
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-'));
   for (const name of [...packed.pages, 'skeleton.atlas', 'skeleton.json']) copyFileSync(join(packed.dir, name), join(dir, name));
   const page = parseAtlasText(packed.atlasText).pages[0];
   const pagePath = join(dir, page.name);
@@ -49259,7 +50178,7 @@ function runAtlasReaderSuite(): number | null {
         .filter((line) => line.startsWith('  FAIL  '))
         .map((line) => line.slice('  FAIL  '.length).trim());
 
-    const copyRoot = mkdtempSync(join(tmpdir(), 'rigc-copy-in-'));
+    const copyRoot = mkdtempSync(join(harnessTemp(), 'rigc-copy-in-'));
     const specDir = join(copyRoot, 'spec');
     mkdirSync(specDir, { recursive: true });
     const sourceAtlas = readFileSync(copyPack.atlasPath, 'utf8');
@@ -49502,7 +50421,7 @@ function runAtlasReaderSuite(): number | null {
     // A temp directory of its own rather than a child of the pack's, because
     // several suites walk `packed_p2` for the pages it holds and a subdirectory
     // in there is a file that appeared in somebody else's subject.
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-page-grid-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-page-grid-'));
     for (const name of packed.pages) {
       const full = readPlate(join(packed.dir, name));
       const half = new Plate(full.width / 2, full.height / 2);
@@ -49786,7 +50705,8 @@ function runAtlasReaderSuite(): number | null {
     );
 
     // PKR50 — up front, where `build --atlas-in` opens the pack.
-    const pressRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-build-'));
+    // Inside the pack's own directory (issue #1127): the build re-anchors the pack's page names to its output directory.
+    const pressRoot = buildRootIn(honestPack.dir, 'rigc-page-bytes-build-');
     const pressWith = (pack: ReturnType<typeof packWithFirstPageReplaced>, out: string): { status: number | null; stdout: string; stderr: string } =>
       runCli(['build', '--rig', OVERLAY.rigPath, '--motion', OVERLAY.motionPath, '--manifest', OVERLAY.manifestPath, '--atlas-in', pack.atlasPath, '--out', out]);
     const honestOut = join(pressRoot, 'honest');
@@ -51283,7 +52203,7 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
   // skips is part of what MP30 measures — and a walk that throws takes every
   // later case down with it, which is the shape that hit on 2026-09-04.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-motion-walk-'));
+    const root = mkdtempSync(join(harnessTemp(), 'rigc-motion-walk-'));
     const spec = JSON.stringify({ format: 'rigc-motion/1' });
     mkdirSync(join(root, 'kept'));
     writeFileSync(join(root, 'kept', 'a.motion.json'), spec);
@@ -51657,7 +52577,7 @@ interface HalvedMeshPacks {
 }
 
 function halvedMeshPacks(): HalvedMeshPacks | string {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-halved-mesh-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-halved-mesh-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts);
   writeContourArt(join(parts, 'fan.png'), discArt(FAN_ART_R, FAN_SIZE), FAN_SIZE, FAN_SIZE);
@@ -52864,7 +53784,7 @@ function runCliSuite(): number {
   // opens a page, which is why an attachment resolves against a pack whose PNG
   // does not exist. Nothing here is fetched, so none of these five can HOLE.
   {
-    const artless = mkdtempSync(join(tmpdir(), 'rigc-sizes-only-'));
+    const artless = mkdtempSync(join(harnessTemp(), 'rigc-sizes-only-'));
     const rigPath = join(artless, 'rig.json');
     const motionPath = join(artless, 'motion.json');
     const packPath = join(artless, 'pack.atlas');
@@ -53136,7 +54056,7 @@ function runCliSuite(): number {
         : [`the line for "${name}" does not end in "${want}": ${JSON.stringify(line)}`];
     };
 
-    const quarter = turnedPack(parts, 90);
+    const quarter = turnedPack(parts, 90, 90, dirs.dir);
     const quarterRun = buildThrough(quarter, 'out_quarter');
     const quarterRegions = regionsOf(quarter);
     const clauseProbes: string[] = [];
@@ -53205,7 +54125,7 @@ function runCliSuite(): number {
         'and two derived it wrongly',
     );
 
-    const flat = turnedPack(parts, 0);
+    const flat = turnedPack(parts, 0, 0, dirs.dir);
     const flatRun = buildThrough(flat, 'out_flat');
     const flatProbes: string[] = [];
     if (flatRun.status !== 0) {
@@ -53265,7 +54185,7 @@ function runCliSuite(): number {
   // at all — so the second case measures the heading the feature adds rather
   // than the flag that is optional beside it.
   {
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-diff-as-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-diff-as-'));
     const built = join(dir, 'built');
     const build = runCli(['build', '--rig', 'gallery/walk/rig.json', '--motion', 'gallery/walk/motion.json', '--out', built]);
     const skeletonPath = join(built, 'skeleton.json');
@@ -53331,7 +54251,7 @@ function runCliSuite(): number {
     const stackOf = (stderr: string): string[] => stderr.split('\n').filter((line) => /^\s+at /.test(line));
     const webpPack = packWithFirstPageReplaced((_png, page) => minimalWebp(page.width, page.height));
     const honestPack = packWithFirstPageReplaced((png) => png);
-    const renderRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-render-'));
+    const renderRoot = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-render-'));
     const honestRender = runCli(['render', '--candidate', honestPack.dir, '--out', join(renderRoot, 'honest')]);
     const webpRender = runCli(['render', '--candidate', webpPack.dir, '--out', join(renderRoot, 'webp')]);
     const firstError = webpRender.stderr.split('\n').find((line) => line.startsWith('rigc')) ?? '';
@@ -53356,7 +54276,7 @@ function runCliSuite(): number {
     );
 
     // A loose part, copied out of the fixture so the fixture itself is untouched.
-    const looseRoot = mkdtempSync(join(tmpdir(), 'rigc-page-bytes-loose-'));
+    const looseRoot = mkdtempSync(join(harnessTemp(), 'rigc-page-bytes-loose-'));
     cpSync(OVERLAY.dir, looseRoot, { recursive: true });
     const looseParts = readdirSync(join(looseRoot, 'parts')).filter((name) => name.endsWith('.png')).sort();
     const loosePart = looseParts.length === 0 ? null : join(looseRoot, 'parts', looseParts[0]);
@@ -53558,7 +54478,7 @@ function runCliSuite(): number {
     const say = (name: string, ok: boolean, detail: string, why: string): void => {
       bad += reportCase(name, ok, detail, why);
     };
-    const root = mkdtempSync(join(tmpdir(), 'rigc-cli-stageless-'));
+    const root = buildRootIn(ARTICULATED.dir, 'rigc-cli-stageless-');
     const stagedOpts: Options = { ...optsForFixture(ARTICULATED), outDir: join(root, 'staged') };
     mkdirSync(stagedOpts.outDir, { recursive: true });
     const stagelessOpts = stagelessOptionsFor(ARTICULATED, root, 'stageless');
@@ -53848,7 +54768,7 @@ function runCliSuite(): number {
       .filter((name): name is string => name !== undefined)
       .sort();
     const realSkill = (name: string): string => realpathSync(join(import.meta.dir, 'skills', name));
-    const work = mkdtempSync(join(tmpdir(), 'rigc-skills-install-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-skills-install-'));
     const ws = (label: string): string => {
       const dir = join(work, label);
       mkdirSync(dir, { recursive: true });
@@ -54049,7 +54969,7 @@ function runCliSuite(): number {
   // pixels where the head's edge coverage is too faint to leave the background
   // on its own and still moves the composite by a level.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-slot-subset-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-slot-subset-'));
     const build = join(work, 'look');
     const built = runCli(['build', '--rig', 'gallery/look/rig.json', '--motion', 'gallery/look/motion.json', '--out', build]);
     const renderInto = (
@@ -54343,7 +55263,7 @@ function runCliSuite(): number {
     const identity = buildIdentityExample(null);
     const frames = renderOwnFrames(identity, IDENTITY_FPS);
     const setDir = readdirSync(frames).find((n) => statSync(join(frames, n)).isDirectory()) ?? '';
-    const work = mkdtempSync(join(tmpdir(), 'rigc-check-out-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-check-out-'));
     const aFile = join(work, 'a-file');
     writeFileSync(aFile, 'not a directory\n');
     const emptyDir = join(work, 'empty');
@@ -54448,7 +55368,7 @@ function runCliSuite(): number {
   // printed for the same files, the closing line against the --out given —
   // and never a figure written here.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-handoff-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-handoff-'));
     const lastLine = (text: string): string => text.split('\n').filter((l) => l !== '').pop() ?? '';
     /** What the validator prints for a directory, gutters off — the strings the page must carry. */
     const validateSays = (dir: string): { status: number | null; summary: string; firstFail: string | null } => {
@@ -54889,7 +55809,7 @@ function runEditorRoundtripSuite(): number {
     bad += reportCase(name, ok, detail, why);
   };
 
-  const root = mkdtempSync(join(tmpdir(), 'rigc-ert-'));
+  const root = mkdtempSync(join(harnessTemp(), 'rigc-ert-'));
   // A build directory is only a precondition here: the tool reads skeleton.json
   // and the atlas before it looks at the editor at all (the atlas since issue
   // #1107), and every case below stops long before anything else reads them.
@@ -57855,7 +58775,7 @@ function readSkillInstallShapes(source: string, skills: string[], shipped: Set<s
   const resolved = new Map<SkillInstallShape, number>(SKILL_INSTALL_SHAPES.map((shape) => [shape, 0]));
   const faults: string[] = [];
   let physical = 0;
-  const work = mkdtempSync(join(tmpdir(), 'rigc-skill-shapes-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-skill-shapes-'));
   try {
     // The package, as npm would lay it down: the shipped set and nothing else.
     const pkg = join(work, 'package', 'node_modules', 'spine-rigc');
@@ -58047,7 +58967,7 @@ function runSkillSurfaceSuite(): number {
   // stops matching goes silent rather than red, and a check that starts matching
   // good input is the false refusal this file exists against.
   const plant = (label: string, files: Record<string, string>): string => {
-    const dir = mkdtempSync(join(tmpdir(), `rigc-skills-${label}-`));
+    const dir = mkdtempSync(join(harnessTemp(), `rigc-skills-${label}-`));
     for (const [path, text] of Object.entries(files)) {
       mkdirSync(join(dir, dirname(path)), { recursive: true });
       writeFileSync(join(dir, path), text);
@@ -58273,7 +59193,7 @@ function runSkillSurfaceSuite(): number {
   // own skill, and is required to fault in exactly the shapes it breaks — the
   // climbing link in the two installed shapes and nowhere else, which is the
   // whole of the difference between this reader and SKL03's.
-  const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-skill-shape-plant-'));
+  const plantRoot = mkdtempSync(join(harnessTemp(), 'rigc-skill-shape-plant-'));
   const plantFiles: Record<string, string> = {
     'README.md': '# probe\n',
     'docs/GUIDE.md': '# a shipped guide\n',
@@ -60112,7 +61032,7 @@ function runCurrencySuite(): number {
 
     /** Plant every path as `kind` in a fresh repository carrying `text`, and ask git which it ignores. */
     const askGit = (text: string, paths: string[], kind: PlantKind): { ignored: Set<string>; broken: string | null } => {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-gitignore-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-gitignore-'));
       // A user's global excludes file would otherwise decide some of these, and
       // a machine that has one would measure something this repository does not
       // ship. Point it at a path that does not exist.
@@ -60544,7 +61464,7 @@ function runCurrencySuite(): number {
     if (textVictim === null) {
       controlFaults.push('no tracked file reads as text, so the red-first plant had nothing to aim at');
     } else {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-opaque-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-opaque-'));
       try {
         const source = readFileSync(join(root, textVictim));
         // ① the same file, untouched: the positive control, reported in no way.
@@ -61536,7 +62456,7 @@ function runCurrencySuite(): number {
 
     /** A directory holding an `npm` that answers instead of the registry, to go first on PATH. */
     const fakeRegistry = (body: string): string => {
-      const dir = mkdtempSync(join(tmpdir(), 'rigc-fake-npm-'));
+      const dir = mkdtempSync(join(harnessTemp(), 'rigc-fake-npm-'));
       writeFileSync(join(dir, 'npm'), body);
       chmodSync(join(dir, 'npm'), 0o755);
       return dir;
@@ -62227,7 +63147,7 @@ function runCurrencySuite(): number {
     if (launcher === undefined) probes115.push('package.json names no `rigc` bin');
     else if (firstOnPath('node') !== null) {
       const nodeBin = join(firstOnPath('node') as string, 'node');
-      const work = mkdtempSync(join(tmpdir(), 'rigc-cur115-'));
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-cur115-'));
       const tree = (name: string, runtime: boolean, drop?: string): string => {
         const at = absentTree(join(work, name));
         mkdirSync(join(at, 'bin'), { recursive: true });
@@ -65085,7 +66005,7 @@ function runCurrencySuite(): number {
     const copy = privateFixtureCopy(ARTICULATED, 'rigc-loosequote-');
     writeSolidRgbaPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, null);
     const gated = gateLooseAndPacked(
-      stagelessOptionsFor(copy, mkdtempSync(join(tmpdir(), 'rigc-loosequote-out-')), 'loose'),
+      stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-loosequote-out-'), 'loose'),
       'spine-html',
     );
     const live =
@@ -65345,7 +66265,7 @@ function runCurrencySuite(): number {
     const standing = scanIngest(ingestText);
     // The rebuild side of the same sentence: every header key but the
     // declared ones comes back, `audio: null` included.
-    const probeDir = mkdtempSync(join(tmpdir(), 'rigc-header-probe-'));
+    const probeDir = mkdtempSync(join(harnessTemp(), 'rigc-header-probe-'));
     writeFileSync(join(probeDir, 'rig.json'), `${JSON.stringify(read.rig, null, 2)}\n`);
     writeFileSync(join(probeDir, 'motion.json'), `${JSON.stringify(read.motion, null, 2)}\n`);
     let rebuilt: Record<string, unknown> | null = null;
@@ -66134,7 +67054,7 @@ function runCurrencySuite(): number {
     // exactly one fault and the untracked one none — and the untracked file is
     // on disk, where a directory walk would have read it, so the plant that
     // must stay silent is not silent for want of a file.
-    const repo = mkdtempSync(join(tmpdir(), 'rigc-part-pointer-population-'));
+    const repo = mkdtempSync(join(harnessTemp(), 'rigc-part-pointer-population-'));
     let trackedRaised: number | null = null;
     let untrackedRaised: number | null = null;
     if (movedOnly !== undefined) {
@@ -67024,7 +67944,7 @@ interface RefusalRun {
  */
 function runRefusalRecipe(galleryRoot: string, recipe: RefusalRecipe): RefusalRun {
   const src = join(galleryRoot, recipe.example);
-  const dir = mkdtempSync(join(tmpdir(), `rigc-refusal-${recipe.example}-`));
+  const dir = mkdtempSync(join(harnessTemp(), `rigc-refusal-${recipe.example}-`));
   for (const entry of readdirSync(src)) {
     if (entry === `${recipe.spec}.json`) continue;
     symlinkSync(join(src, entry), join(dir, entry));
@@ -67627,7 +68547,7 @@ function runGalleryTranscriptSuite(): number {
       unstated.push(example);
       continue;
     }
-    const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-transcript-${example}-`)));
+    const runs = transcriptRunsFor(example, readme, mkdtempSync(join(harnessTemp(), `rigc-transcript-${example}-`)));
     for (const run of runs) {
       if (run.status !== 0 || run.lines.length < 20) {
         broken.push(`gallery/${example}: \`${run.command}\` exited ${run.status} with ${run.lines.length} line(s)`);
@@ -68789,7 +69709,7 @@ function runSeeItSuite(): number {
 
   // The decoder itself, at the level the fix lives: one control per colour type
   // `tools/plate.ts` could not write and therefore never met until #226.
-  const probe = mkdtempSync(join(tmpdir(), 'rigc-decode-'));
+  const probe = mkdtempSync(join(harnessTemp(), 'rigc-decode-'));
   writeTypedPng(join(probe, 'indexed.png'), 8, 4, { colourType: 3, trns: true });
   writeTypedPng(join(probe, 'grey.png'), 8, 4, { colourType: 0, trns: true });
   // 8x8 rather than 8x4: `writeGreyAlphaPng` makes a two-pixel transparent border,
@@ -69789,7 +70709,7 @@ function runGeometryExportSuite(): number {
 
   // GY04 — two exports are byte-identical, and --geometry changes no other file.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-geometry-'));
+    const work = buildRootIn(turn.dir, 'rigc-geometry-');
     const candidate = join(work, 'turn');
     const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
     const renderInto = (name: string, extra: string[]): ReturnType<typeof runCli> =>
@@ -69951,7 +70871,7 @@ function runGeometryExportSuite(): number {
   // one number edited, the way GY08 plants it — the rig spec route is not used,
   // because a motion key of 1e309 is refused by the compiler by name.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-nonfinite-'));
+    const work = buildRootIn(turn.dir, 'rigc-nonfinite-');
     const candidate = join(work, 'turn');
     const built = runCli(['build', '--rig', turn.opts.rigPath, '--motion', turn.opts.motionPath, '--images', turn.opts.imagesDir ?? turn.dir, '--out', candidate]);
     const skeletonPath = join(candidate, 'skeleton.json');
@@ -70156,7 +71076,7 @@ function runGeometryExportSuite(): number {
   // is scaled to 0 reached the same file by the other road: every vertex at the
   // bone's origin. The rigs are built through the rig spec, so both posers run.
   {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-unframeable-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-unframeable-'));
     const oneSlot = [{ name: 'block', bone: 'block', attachment: 'block' }];
     const defaultSkin = { block: { block: { image: 'block.png' } } };
     const unposedRig = writeProbeRig({
@@ -70829,7 +71749,7 @@ function buildPoseFixture(headScale?: number): {
   clearPath: string;
   truth: Map<string, PosePlacementTruth>;
 } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -71974,7 +72894,7 @@ function runPoseSuite(): number {
   // the span at the part's own size, so which side of the floor each lands on
   // is a fact about the part rather than about a scale the search wandered to.
   {
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-legible-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-legible-'));
     const plainColour: RGBA = [70, 120, 180, 255];
     const frame = new Plate(320, 240);
     for (let y = 0; y < frame.height; y++) for (let x = 0; x < frame.width; x++) frame.set(x, y, BACKGROUND);
@@ -72079,7 +72999,7 @@ function runPoseSuite(): number {
     const { posable, scenes } = loadFloorScenes(INGEST_CORPUS_ROOT);
     const scene = scenes.slice(0, 1);
     const slots = new Map(scene.map((sc) => [sc.name, floorSlots(posable, sc)]));
-    const work = mkdtempSync(join(tmpdir(), 'rigc-pose-floor-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-pose-floor-'));
     const cell = (texture: FloorTexture): FloorCell => floorCell(posable, scene, slots, 32, texture, work);
     const [flat, blurred, native] = [cell('flat'), cell('blur2'), cell('native')];
     rmSync(work, { recursive: true, force: true });
@@ -72116,7 +73036,7 @@ function runPoseSuite(): number {
     // search came back ambiguous between two placements 173 px off at 0.148 —
     // the basin fell between two anchor cells and, on its own rung, ranked
     // fifth. It must now be FOUND, which is neither ambiguous nor wrong.
-    const fistDir = mkdtempSync(join(tmpdir(), 'rigc-pose-fist-'));
+    const fistDir = mkdtempSync(join(harnessTemp(), 'rigc-pose-fist-'));
     const fist = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'a'));
     const fistAgain = floorTrial(posable, scene[0], 'front-fist', 48, 'native', join(fistDir, 'b'));
     rmSync(fistDir, { recursive: true, force: true });
@@ -72170,7 +73090,7 @@ function runPoseSuite(): number {
     // at the 2x level and cut. Each must now be FOUND — placed within the bar
     // and not ambiguous — rather than merely within 2 px of an answer.
     const walk = scenes.find((sc) => sc.name.startsWith('walk'));
-    const lostDir = mkdtempSync(join(tmpdir(), 'rigc-pose-877-'));
+    const lostDir = mkdtempSync(join(harnessTemp(), 'rigc-pose-877-'));
     const four: [string, string, number][] = [
       [scene[0].name, 'front-shin', 24],
       [walk?.name ?? '', 'front-upper-arm', 48],
@@ -72266,7 +73186,7 @@ function runPoseSuite(): number {
     };
     const files = ['parts/post.png', 'parts/arm.png', 'parts/flag.png', 'poseA.png'];
     const missing = files.filter((f) => fence(f) === null);
-    const dir = mkdtempSync(join(tmpdir(), 'rigc-pose-886-'));
+    const dir = mkdtempSync(join(harnessTemp(), 'rigc-pose-886-'));
     mkdirSync(join(dir, 'parts'));
     for (const f of files) {
       const bytes = fence(f);
@@ -72508,7 +73428,6 @@ function runPoseOracleSuite(): number {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-pose-oracle-'));
   const tol = { xy: ORACLE_DEFAULT_TOL, m: ORACLE_DEFAULT_TOL };
 
   // The build every generated row reads: the ingest coverage probe, through
@@ -72517,6 +73436,8 @@ function runPoseOracleSuite(): number {
   // and a linked mesh, a clipping attachment, an event, a draw-order key, two
   // dark colours, a physics constraint and a second skin.
   const probe = writeIngestProbe();
+  // Inside the probe's own directory (issue #1127), so the build's page names spell no temp directory.
+  const work = buildRootFor(probe.home, 'rigc-pose-oracle-');
   const buildDir = join(work, 'build');
   const built = runCli(['build', '--rig', probe.rigPath, '--motion', probe.motionPath, '--out', buildDir, ...(probe.imagesDir === undefined ? [] : ['--images', probe.imagesDir])]);
   const buildOk = built.status === 0 && existsSync(join(buildDir, 'skeleton.json')) && existsSync(join(buildDir, 'skeleton.atlas'));
@@ -72886,7 +73807,7 @@ function runPoseOracleSuite(): number {
         source: basename(entry.path),
         version: packageVersion(),
       });
-      const root = mkdtempSync(join(tmpdir(), `rigc-oracle-${entry.name}-`));
+      const root = mkdtempSync(join(harnessTemp(), `rigc-oracle-${entry.name}-`));
       writeFileSync(join(root, 'rig.json'), `${JSON.stringify(decompiled.rig, null, 2)}\n`);
       writeFileSync(join(root, 'motion.json'), `${JSON.stringify(decompiled.motion, null, 2)}\n`);
       // The pack is found by resolving, as IG16 finds it: the first one the
@@ -73996,14 +74917,252 @@ function noSkinSeedSkeleton(rnd: () => number, mode: 'none' | 'plain' | 'members
   return { skeleton: { spine: '4.3.13' }, bones, slots, skins: [...(fallback === null ? [] : [fallback]), ...named], constraints, animations: { a: animation } };
 }
 
-function runCoreSuite(): number {
-  console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
+// ---------------------------------------------------------------------------
+// core's units (issue #1133) — the posing-heavy controls run up to --jobs at once
+// ---------------------------------------------------------------------------
+
+/**
+ * The `core` controls that run as units at `--jobs` above 1 (issue #1133), in
+ * the order the suite prints them. A name joined by `+` is a group: controls
+ * that read the same suite-level objects — a population built once above the
+ * first, its clean walks, its spine-core dumps — so they run in one process,
+ * the objects built there and nowhere else.
+ *
+ * ⚡ Chosen by measurement, not by family: each holds at least half a second
+ * of the suite on its own (or as its group) and reads nothing a control kept
+ * in the parent writes. Kept in the parent, and why:
+ * - every control that READS one of `CORE_UNIT_LISTS` (CC11, CQ11, CK11, CP11,
+ *   CD12, CR10, CR11, CR13, CR14, CR15, CR16) — the list at its position is
+ *   what every control above it pushed, which no unit can know when the batch
+ *   starts;
+ * - every control above the corpus build (CO01–CO05, CO21–CO24): the batch
+ *   starts once the build its units read exists;
+ * - the rest, which are cheaper than a unit process's own load.
+ *
+ * 🔒 Whatever `--jobs`, the suite prints the same text and leaves the same run
+ * state: a unit prints nothing to this process, and the parent prints each
+ * unit's lines and applies its shares at that control's own position, in the
+ * sequential order (`unit` in `runCoreSuite`). `CO41` holds the lines, `CO42`
+ * the corpus cases' order.
+ */
+const CORE_UNITS = [
+  'CO08', 'CO14', 'CO18', 'CL04', 'CA06', 'CA08', 'CO19', 'CC09', 'CC10', 'CQ10', 'CK07', 'CK09', 'CP10',
+  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO29+CO30', 'CO31+CO32',
+] as const;
+type CoreUnitName = (typeof CORE_UNITS)[number];
+
+/**
+ * The order a batch's workers claim units in (`coreUnitBatch`): heaviest first,
+ * by each unit's seconds in the suite's own process, measured 2026-10-04 on
+ * one machine. Scheduling only — a stale order moves when a unit finishes and
+ * never what the suite prints (`CO41`) — and `CO41` holds it to be `CORE_UNITS`
+ * exactly, each once.
+ */
+const CORE_UNITS_HEAVIEST_FIRST: CoreUnitName[] = [
+  'CO31+CO32', 'CO25+CO26', 'CO27', 'CD11', 'CO08', 'CO29+CO30', 'CA08', 'CU04', 'CR06', 'CD06', 'CK09', 'CO14',
+  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10',
+];
+
+/**
+ * The suite-local lists of probe documents controls push onto and later
+ * controls read (`drewTheSame`, the HOLE coverage). A unit's pushes are one of
+ * its shares: handed back as strings and appended at its position.
+ */
+const CORE_UNIT_LISTS = ['probeModels', 'cqModels', 'ckModels', 'pathProbeModels', 'cdModels'] as const;
+type CoreUnitList = (typeof CORE_UNIT_LISTS)[number];
+
+/**
+ * What a core unit is handed (issue #1133), all values: which unit, and the
+ * suite's objects above the batch — the gallery builds (their model texts,
+ * which the unit reads again), the build's problems and the corpus notes, and
+ * the corpus build's rows and their unplanted gate verdicts. A plant never
+ * crosses: the unit's process runs the same suite code, which builds its own.
+ */
+interface CoreUnitInput {
+  unit: CoreUnitName;
+  builds: Array<{ name: string; out: string; text: string }>;
+  buildProblems: string[];
+  notes: string[];
+  built: BuiltRow[];
+  rows: ReturnType<typeof gateBuilt>;
+}
+
+/**
+ * What a core unit hands back (issue #1133): the lines its controls printed,
+ * exactly as they would have printed them, its FAIL count, and its shares —
+ * of the run state (`runStates()`, in that order), of `CORE_UNIT_LISTS` (in
+ * that order) and the corpus floors it wrote.
+ */
+interface CoreUnitResult {
+  unit: CoreUnitName;
+  lines: string[];
+  bad: number;
+  states: unknown[];
+  lists: string[][];
+  floors: string[];
+}
+
+/** The suite run inside a unit's process: the input it was handed, and where it leaves its result. */
+interface CoreUnitChild {
+  input: CoreUnitInput;
+  result: CoreUnitResult | null;
+}
+
+/** One core unit's work, in whichever process holds it: the suite run for that unit alone. */
+function coreUnitWork(input: CoreUnitInput): CoreUnitResult {
+  const child: CoreUnitChild = { input, result: null };
+  runCoreSuite(child);
+  if (child.result === null) throw new Error(`selftest --unit: the core suite reached no unit named ${JSON.stringify(input.unit)}`);
+  return child.result;
+}
+
+/**
+ * Every leaf where `x` and `y` differ by `Object.is`, by path — PK105's
+ * comparison, at module level so a batch can hold its input to the trip: a
+ * value JSON flattens (`-0`, `NaN`, `±Infinity`, `undefined` in an array)
+ * would reach the unit as another value and the unit would print a verdict
+ * about another input.
+ */
+function sameLeaves(x: unknown, y: unknown, at: string, out: string[] = []): string[] {
+  if (typeof x === 'object' && x !== null && typeof y === 'object' && y !== null) {
+    const keys = [...new Set([...Object.keys(x), ...Object.keys(y)])].sort();
+    for (const key of keys) sameLeaves((x as Record<string, unknown>)[key], (y as Record<string, unknown>)[key], `${at}.${key}`, out);
+  } else if (!Object.is(x, y)) {
+    const spell = (v: unknown): string => (Object.is(v, -0) ? '-0' : String(v));
+    out.push(`${at}: ${spell(x)} against ${spell(y)}`);
+  }
+  return out;
+}
+
+/**
+ * The core units `inputs` names, run in `--unit` processes, and their results
+ * in the inputs' order (issue #1133). Refuses by name an input JSON would not
+ * carry back as itself.
+ *
+ * `jobs` 1 is one process per unit, one after another — what `CO41` holds a
+ * unit's lines against. Above it, `min(jobs, units)` workers run at once
+ * through `inParallel`, each claiming the next unclaimed unit, heaviest first
+ * (`CORE_UNITS_HEAVIEST_FIRST`), until none is left — so a lane is busy until
+ * the batch is done, whichever units are heavy on the machine that runs it.
+ *
+ * ⚡ Why a worker takes several units rather than a process per unit, measured
+ * on one shared machine: a unit is slower out of the suite's process than in
+ * it — CO08 alone in a fresh process took 6.4–6.9 s, the same control in place
+ * 4.1 s — so a process per unit pays that on every unit, and a worker pays it
+ * on fewer. Even in a worker a unit ran 1.3–2.4 times its seconds in place
+ * (116 s of units against 70 s, the same 25 units, adjacent runs).
+ *
+ * 🔒 Which worker ran a unit decides nothing it hands back: each unit is the
+ * suite run anew for that unit alone (`coreUnitWork`), its shares taken as the
+ * difference across it, so a unit sharing a process with another reads what
+ * it reads alone — `CO41` compares a unit run alone to the batch's, to every
+ * leaf. With `RIGC_UNIT_PEAKS` each unit's seconds and its worker's peak RSS
+ * after it are appended to that file, beside the workers' own lines.
+ */
+function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnitResult[] {
+  for (const input of inputs.slice(0, 1)) {
+    const faults = sameLeaves(input, JSON.parse(JSON.stringify(input)) as unknown, 'input');
+    if (faults.length > 0) throw new Error(`a core unit's input does not survive JSON, so a unit would read another value: ${faults.slice(0, 5).join('; ')}`);
+  }
+  if (jobs === 1 || inputs.length <= 1) return unitValues(inputs.map((input): SelftestUnitSpec => ({ kind: 'core', input })), 1) as CoreUnitResult[];
+  const names = inputs.map((input) => input.unit);
+  const claimOrder = CORE_UNITS_HEAVIEST_FIRST.filter((name) => names.includes(name));
+  for (const name of names) if (!claimOrder.includes(name)) claimOrder.push(name);
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-selftest-core-units-'));
+  try {
+    const worker: SelftestUnitSpec = { kind: 'core-worker', dir, shared: inputs[0], units: claimOrder };
+    const taken = UNIT_PEAKS_TAKEN.length;
+    const workers = unitValues(Array.from({ length: Math.min(jobs, inputs.length) }, () => worker), jobs) as CoreWorkerRun[][];
+    // Issue #1143: a worker is the child the driver measured, and what the
+    // suite line should name is the core unit, so each worker's peak is
+    // renamed for the unit it was running when its own peak was first reached
+    // — the reading after which it never rose again. That names where the
+    // mark was SET; the units before it contributed what the worker kept.
+    workers.forEach((runs, w) => {
+      const label = `core worker ${w + 1} of ${workers.length}`;
+      const peak = UNIT_PEAKS_TAKEN.slice(taken).find((p) => p.label === label);
+      const read = runs.filter((run): run is CoreWorkerRun & { maxRss: number } => run.maxRss !== null);
+      const top = Math.max(0, ...read.map((run) => run.maxRss));
+      const setter = read.find((run) => run.maxRss === top);
+      if (peak !== undefined && setter !== undefined) peak.label = `${setter.unit} in ${label}`;
+    });
+    const peaks = process.env.RIGC_UNIT_PEAKS;
+    if (peaks !== undefined && peaks !== '') {
+      workers.forEach((runs, w) => {
+        for (const run of runs) appendFileSync(peaks, `${JSON.stringify({ jobs, worker: w, of: workers.length, unit: run.unit, maxRss: run.maxRss, seconds: run.seconds })}\n`);
+      });
+    }
+    return names.map((name) => {
+      const path = join(dir, `result-${name}.json`);
+      if (!existsSync(path)) throw new Error(`selftest --unit: no core worker handed back unit ${name}`);
+      return JSON.parse(readFileSync(path, 'utf8')) as CoreUnitResult;
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** What a core worker ran: each unit it claimed, its seconds, and the worker's peak RSS after it, in bytes (`null` where `maxRssScale` could not read the unit). */
+interface CoreWorkerRun {
+  unit: CoreUnitName;
+  seconds: number;
+  maxRss: number | null;
+}
+
+/** One worker of a core batch (issue #1133): it claims units in `units`' order until none is left, and writes each one's result beside the claims. */
+function coreUnitWorker(spec: { dir: string; shared: CoreUnitInput; units: CoreUnitName[] }): CoreWorkerRun[] {
+  const ran: CoreWorkerRun[] = [];
+  for (const name of spec.units) {
+    try {
+      // The claim: created only if absent, so exactly one worker runs each unit.
+      writeFileSync(join(spec.dir, `claim-${name}`), '', { flag: 'wx' });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+    const began = performance.now();
+    const result = coreUnitWork({ ...spec.shared, unit: name });
+    writeFileSync(join(spec.dir, `result-${name}.json`), JSON.stringify(result));
+    const raw = process.resourceUsage().maxRSS;
+    const scale = maxRssScale(raw, process.memoryUsage().rss);
+    ran.push({ unit: name, seconds: (performance.now() - began) / 1000, maxRss: scale === null ? null : raw * scale });
+  }
+  return ran;
+}
+
+/** The order the corpus controls print in, read off `runCoreSuite`'s `sayCorpus` calls in source order (`CO42`). */
+function corpusControlOrder(source: string): string[] {
+  const tree = ts.createSourceFile('selftest.ts', source, ts.ScriptTarget.Latest, true);
+  const fn = tree.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === 'runCoreSuite');
+  const names: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'sayCorpus' && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])) names.push(n.arguments[0].text);
+    ts.forEachChild(n, visit);
+  };
+  if (fn?.body !== undefined) visit(fn.body);
+  return names;
+}
+
+/** What `TY22`'s live half reads of the core's corpus cases: how many, and each verdict's count with the HOLEs named. */
+function coreCorpusReading(cases: ReadonlyArray<{ name: string; verdict: CorpusCaseVerdict }>): string {
+  const holes = cases.filter((c) => c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
+  return (
+    `${cases.length} core control(s) hold a corpus floor, ` +
+    `${cases.filter((c) => c.verdict === 'PASS').length} PASS, ${cases.filter((c) => c.verdict === 'FAIL').length} FAIL, ` +
+    `${holes.length} HOLE${holes.length > 0 ? ` [${holes.join(', ')}]` : ''}`
+  );
+}
+
+function runCoreSuite(child: CoreUnitChild | null = null): number {
+  /** Issue #1133: false in a core unit's own process, which runs that unit alone and skips every control kept in the parent. */
+  const parent = child === null;
+  if (parent) console.log('\n── core: rigc\'s own core reads rigc-compiled/1 and dumps the setup bones, slots, draw order and attachments\' world vertices, and every animation\'s bones, slots, draw order, attachments and events at its samples, every constraint kind applied in their order, and the triangles drawn under a clip, as pose-oracle/3 (issues #925, #928, #931, #936, #938, #955, #964) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
   const root = import.meta.dir;
-  const work = mkdtempSync(join(tmpdir(), 'rigc-core-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-core-'));
   // Gallery builds chosen off what their models declare rather than by name:
   // the first with no constraint (the core poses its bones) and, while a
   // constraint kind is left to a later cut (LATER_KINDS), the first declaring
@@ -74011,9 +75170,11 @@ function runCoreSuite(): number {
   // admitted, so no rig is held back and the controls that read one say so
   // (NOTHING_HELD).
   const galleryRoot = join(root, 'gallery');
-  const names = existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
+  const names = parent && existsSync(galleryRoot) ? readdirSync(galleryRoot).sort().filter((n) => existsSync(join(galleryRoot, n, 'rig.json'))) : [];
   const builds: Array<{ name: string; out: string; model: CompiledDocument; text: string }> = [];
-  const buildProblems: string[] = [];
+  const buildProblems: string[] = child?.input.buildProblems.slice() ?? [];
+  // A unit's process reads the gallery builds the parent made, rather than building them again.
+  for (const b of child?.input.builds ?? []) builds.push({ ...b, model: readModel(b.text, join(b.out, MODEL_DOCUMENT_FILE)) });
   for (const [i, name] of names.entries()) {
     const built = runRecipe(galleryRecipe(root, name).recipe, join(work, `g${i}`), root);
     const modelPath = join(work, `g${i}`, 'out', MODEL_DOCUMENT_FILE);
@@ -74028,13 +75189,13 @@ function runCoreSuite(): number {
   const free = builds.find((b) => b.model.constraints.length === 0) ?? null;
   // The rig held back is one declaring a later kind — and only while a later kind exists.
   const held = LATER_KINDS.length === 0 ? null : builds.find((b) => b.model.constraints.some((c) => !ADMITTED_CONSTRAINT_KINDS.includes(c.kind))) ?? null;
-  if (free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
-  if (LATER_KINDS.length > 0 && held === null) buildProblems.push(`no gallery rig built a model that declares a ${LATER_KINDS.join(', ')} constraint`);
+  if (parent && free === null) buildProblems.push('no gallery rig built a model that declares no constraint');
+  if (parent && LATER_KINDS.length > 0 && held === null) buildProblems.push(`no gallery rig built a model that declares a ${LATER_KINDS.join(', ')} constraint`);
   /** What a control that reads the held-back rig says when there is none to read. */
   const NOTHING_HELD = LATER_KINDS.length === 0 ? '; no later kind: nothing is held back' : '';
 
   // --- CO01: readModel reads a built document and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let count = 0;
     if (free !== null) {
@@ -74078,7 +75239,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO02: the core dump poses the setup bones and names every block it leaves out --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let detail = '';
     if (free !== null) {
@@ -74143,7 +75304,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO03: compare SKIPs a block one side leaves out and refuses one neither carries --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     if (free !== null) {
@@ -74219,7 +75380,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO04: the core imports nothing from spine-core and nothing impure --
-  {
+  if (parent) {
     const probes: string[] = [];
     const population = srcPopulation(root);
     const live = coreTreeProblems(population);
@@ -74264,7 +75425,7 @@ function runCoreSuite(): number {
   // read every entry exactly (`Object.is`). The plants are the two readings the
   // spelling guards against: a running total restarted per curve, and one entry a
   // single ulp away, which only a comparison at tolerance 0 can see.
-  {
+  if (parent) {
     const probes: string[] = [];
     const json = {
       skeleton: {},
@@ -74351,7 +75512,7 @@ function runCoreSuite(): number {
   // answers `getPath` for every frame. The defaults are read off that series, not
   // stated here. Plants: the padding one digit wide, and an unstated `start` read
   // as 0.
-  {
+  if (parent) {
     const probes: string[] = [];
     const STARTS: ReadonlyArray<number | undefined> = [undefined, -10, -3, -1, 0, 1, 2, 5, 9, 10, 99, 100, 999, 1000, 12345];
     const DIGITS: ReadonlyArray<number | undefined> = [undefined, 0, 1, 2, 3, 4, 6, 10];
@@ -74464,7 +75625,7 @@ function runCoreSuite(): number {
   // identifiers spelling a member of an exported class's prototype are the
   // language's and the format's words (`get`, `set`, `length`, `bone`, `slot`,
   // `mix`) — neither holds without an exception table.
-  {
+  if (parent) {
     const probes: string[] = [];
     const runtimeNames = new Set(Object.keys(SPINE_CORE_EXPORTS));
     const population = srcPopulation(root);
@@ -74550,7 +75711,7 @@ function runCoreSuite(): number {
   // the old arithmetic, and the middle row of the card (the runtime's constant and
   // degree turn with the rotation-only frame kept), each through a copy of the
   // evaluator.
-  {
+  if (parent) {
     const probes: string[] = [];
     const RIGS = 2000;
     const POINTS = 4;
@@ -74656,7 +75817,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO05: the gate names a skipped or refused row, and the census counts by hand --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     if (held !== null) {
       const row = gateBuild(held.name, held.out);
@@ -74693,10 +75854,10 @@ function runCoreSuite(): number {
 
   // The equivalence gate (issue #925): the tree's recipes built once, then
   // gated with the core's evaluator and with each plant.
-  const notes: string[] = [];
-  const recipes = treeRecipes(root, (line) => notes.push(line));
-  const built = buildRecipes(recipes, join(work, 'gate'), root);
-  const rows = gateBuilt(built);
+  const notes: string[] = child?.input.notes.slice() ?? [];
+  const recipes = parent ? treeRecipes(root, (line) => notes.push(line)) : [];
+  const built = child?.input.built ?? buildRecipes(recipes, join(work, 'gate'), root);
+  const rows = child?.input.rows ?? gateBuilt(built);
   const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
   // Issue #1004: a floor only a corpus row can clear is written through
   // `corpusFloor` and its control reports through `sayCorpus`, so an absent
@@ -74734,8 +75895,75 @@ function runCoreSuite(): number {
       return m === mode ? [out[0], -out[1], out[2], -out[3]] : out;
     });
 
+  // ⚡ Issue #1133: the units. Above `--jobs 1` the controls `CORE_UNITS` names
+  // run in `--unit` processes, all started here — the first place every object
+  // they read exists — in one batch the suite waits on. Each control's lines and
+  // shares are then printed and applied at its own position below (`unit`), so
+  // the log and the run state are what `--jobs 1` leaves. In a unit's own
+  // process (`child`) this suite runs that unit alone: every control kept in the
+  // parent is skipped (`if (parent)`), and the unit's lines are taken, not printed.
+  const unitLists: Record<CoreUnitList, string[]> = { probeModels: [], cqModels: [], ckModels: [], pathProbeModels: [], cdModels: [] };
+  const unitInput = (name: CoreUnitName): CoreUnitInput => ({ unit: name, builds: builds.map((b) => ({ name: b.name, out: b.out, text: b.text })), buildProblems, notes, built, rows });
+  /** Where this suite's corpus cases begin in the run's list (`CO42`). */
+  const corpusMark = CORE_CORPUS_CASES.length;
+  const batch = parent && JOBS > 1 ? coreUnitBatch(CORE_UNITS.map(unitInput), JOBS) : null;
+  const dispatched = new Map((batch ?? []).map((r) => [r.unit, r] as const));
+  /** The units this process printed from the batch, in the order it printed them (`CO41`). */
+  const replayed: CoreUnitName[] = [];
+  /** At `--jobs 1`, what each unit's controls printed and left here, run in this process (`CO41`). */
+  const inline = new Map<CoreUnitName, CoreUnitResult>();
+  /** Every argument of a `console.log` call as the run's own wrapper joins it into a line. */
+  const lineOf = (args: unknown[]): string => args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ');
+  /** Run one unit's controls here and take what they printed and left, printing it too when `forward` (`--jobs 1`), or not (a unit's own process). */
+  const taken = (name: CoreUnitName, body: () => void, forward: boolean): CoreUnitResult => {
+    const print = console.log;
+    const states = runStates();
+    const marks = states.map((s) => s.mark());
+    const listMarks = CORE_UNIT_LISTS.map((l) => unitLists[l].length);
+    const floorsBefore = new Set(corpusFloors);
+    const badBefore = bad;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]): void => {
+      lines.push(lineOf(args));
+      if (forward) print(...args);
+    };
+    try {
+      body();
+    } finally {
+      console.log = print;
+    }
+    return {
+      unit: name,
+      lines,
+      bad: bad - badBefore,
+      states: states.map((s, k) => s.since(marks[k])),
+      lists: CORE_UNIT_LISTS.map((l, k) => unitLists[l].slice(listMarks[k])),
+      floors: [...corpusFloors].filter((f) => !floorsBefore.has(f)),
+    };
+  };
+  /** Run one unit's controls, or print and apply what its process handed back, at their own position. */
+  const unit = (name: CoreUnitName, body: () => void): void => {
+    if (child !== null) {
+      if (child.input.unit === name) child.result = taken(name, body, false);
+      return;
+    }
+    const result = dispatched.get(name);
+    if (result === undefined) {
+      // As JSON would carry it, so `CO41` compares like with like.
+      inline.set(name, JSON.parse(JSON.stringify(taken(name, body, true))) as CoreUnitResult);
+      return;
+    }
+    // The order one process makes them in: the shares, then the lines that report on them.
+    runStates().forEach((s, k) => s.apply(result.states[k]));
+    CORE_UNIT_LISTS.forEach((l, k) => unitLists[l].push(...result.lists[k]));
+    for (const f of result.floors) corpusFloors.add(f);
+    for (const line of result.lines) console.log(line);
+    bad += result.bad;
+    replayed.push(name);
+  };
+
   // --- CO06: every recipe without a constraint poses as spine-core does ------
-  {
+  if (parent) {
     const probes: string[] = [];
     for (const r of rows) {
       const bones = r.blocks?.['setup.bones'];
@@ -74764,7 +75992,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO07: a hand-written probe poses all five modes and the skin rule as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
     // Four parents, each a different thing to inherit — a rotation with scale and shear, a reflection on x,
@@ -74826,7 +76054,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO08: one mode's sign flipped in a copy of the evaluator turns exactly the rows using it red --
-  {
+  unit('CO08', () => {
     const probes: string[] = [];
     const reached: string[] = [];
     const MODES: readonly CoreInheritMode[] = ['normal', 'onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
@@ -74850,10 +76078,10 @@ function runCoreSuite(): number {
       'issue #925\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the mode at all',
     );
     for (const mode of holes) console.log(`          ⚠️ HOLE: no compared recipe has a bone in ${mode}, so its plant has no corpus row to turn red — CO07's probe is the only reading of it`);
-  }
+  });
 
   // --- CO09: readModel reads the slot records and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [...buildProblems];
     let count = 0;
     if (free !== null) {
@@ -74914,7 +76142,7 @@ function runCoreSuite(): number {
   const slotCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.slots'].verdict !== 'SKIP');
 
   // --- CO10: every recipe poses its setup slots as spine-core does, the constrained ones included --
-  {
+  if (parent) {
     const probes: string[] = [];
     let exact = 0;
     let constrained = 0;
@@ -74985,7 +76213,7 @@ function runCoreSuite(): number {
   const hex2 = (v: number): string => (v % 256).toString(16).padStart(2, '0');
 
   // --- CO11: a hand-written probe poses the skin rule, the colours and the paths as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // One table, written once as the Spine file and once as the model: per slot its bone, setup placeholder,
     // colours, and per skin the record filling it (Spine keys; the model's are derived below).
@@ -75112,7 +76340,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO12: several skins on one placeholder are the file's order, and a disagreement is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     // The measurement itself: three skins filling one placeholder with three names, in three file orders.
@@ -75171,7 +76399,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO13: a slider keying a slot poses it at setup as the core does, and without bones its slots are left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const sliderSkeleton = (slider: boolean): string => JSON.stringify({
       skeleton: { spine: '4.3.13' }, bones: [{ name: 'root' }, { name: 'dial', parent: 'root', rotation: 10 }],
@@ -75216,7 +76444,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO14: a channel misread and a wrong skin, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CO14', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => slotCompared.some((r) => r.name === b.name));
     const statesRed = (b: BuiltRow): boolean => readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).slots.some((s) => s.color !== undefined && s.color.slice(0, 2) !== '00');
@@ -75248,7 +76476,7 @@ function runCoreSuite(): number {
       'issue #928\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the channel or the skin at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO11's probe is the only reading of it`);
-  }
+  });
 
   // The attachments' world vertices (issue #931). One hand-written skeleton, written once as the Spine file and
   // once as the model, holds every case the corpus does not reach — read by CO15, posed by CO17.
@@ -75337,7 +76565,7 @@ function runCoreSuite(): number {
   };
 
   // --- CO15: readModel reads each record's geometry and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read = coreRefusal(probeModelText);
     if (read !== '') probes.push(`the probe's model was refused: ${read}`);
@@ -75375,7 +76603,7 @@ function runCoreSuite(): number {
   const attachmentsCompared = rows.filter((r) => r.blocks !== null && r.blocks['setup.attachments'].verdict !== 'SKIP');
 
   // --- CO16: every recipe without a constraint poses its setup attachments as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let vertices = 0;
     let rowsHeld = 0;
@@ -75426,7 +76654,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO17: a hand-written probe poses every attachment case the corpus does not reach as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -75476,7 +76704,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO18: a scaled weight and rotated corners, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CO18', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => attachmentsCompared.some((r) => r.name === b.name));
     const shows = (b: BuiltRow, test: (kind: string, weightedMesh: boolean) => boolean): boolean => {
@@ -75511,7 +76739,7 @@ function runCoreSuite(): number {
       'issue #931\'s positive control: a gate nobody has seen fail is not a gate, and a plant that reddened every row would not show the gate reads the weights or the corner order at all',
     );
     for (const label of holes) console.log(`          ⚠️ HOLE: no compared recipe has a row the plant "${label}" reaches, so it has no corpus row to turn red — CO17's probe is the only reading of it`);
-  }
+  });
 
   // ===========================================================================
   // Construct 6 (issue #964): clipping applied to the draw — the `clipped` block, src/core/clipping.ts.
@@ -75589,7 +76817,7 @@ function runCoreSuite(): number {
   const clipRowsOf = (rows: ReadonlyArray<[string, string, 0 | 1, Array<number | null>, Array<number | null>, number[]]> | null): string => (rows ?? []).map((r) => `${r[0]}:${r[2]}:${r[5].length / 3}`).join(' ');
 
   // --- CL01: a hand-written probe clips every case as spine-core's clipper does, at tolerance 0, with and without the physics step --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -75628,7 +76856,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL02: the rejected readings, each in a copy, are named at exactly the slots they reach --
-  {
+  if (parent) {
     const probes: string[] = [];
     let named = 0;
     try {
@@ -75660,7 +76888,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL03: a clip the core does not clip against leaves the block out by name, and readModel refuses what the clipper would read wrong --
-  {
+  if (parent) {
     const probes: string[] = [];
     try {
       const concave = [0, 0, 100, 0, 100, 100, 50, 40, 0, 100];
@@ -75713,7 +76941,7 @@ function runCoreSuite(): number {
   }
 
   // --- CL04: every row drawing under a clip reads IDENTICAL, and a moved vertex and a flipped winding turn exactly those rows red --
-  {
+  unit('CL04', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     const drawing = rows.filter((r) => (r.clippedCensus?.drawn ?? 0) > 0);
@@ -75741,7 +76969,7 @@ function runCoreSuite(): number {
       'issue #964, construct 6 of #380 §5 admitted: the triangles every region and mesh draws under a strictly convex clip, as spine-core\'s clipper returns them, on the corpus rows that draw under one — the step src/render.ts needs before it can clip through the core (step 3)',
     );
     for (const line of clippedReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
-  }
+  });
 
   // --- CL05: the core's own decomposition of a concave or inverse clip covers what spine-core's clipper covers (issue #964's STOP) --
   //
@@ -75750,7 +76978,7 @@ function runCoreSuite(): number {
   // vertices, none added and every one used, and the triangles it returns covering what spine-core's clipper returns for the same
   // triangles, polygon and flags. Random simple polygons, both windings, `inverse` and `convex` drawn at random; a plant dropping one
   // region of the plan turns the area short.
-  {
+  if (parent) {
     const probes: string[] = [];
     let figures = '';
     try {
@@ -76009,7 +77237,7 @@ function runCoreSuite(): number {
   };
 
   // --- CA01: readModel reads the timelines and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const base = timelinePair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -76054,7 +77282,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA02: the Bézier is the runtime's ten-piece polyline, and each rejected reading misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     // The measurement: one bone, one translatex from (0, 0) to (1, 1000) through handles (0.1, 800) and (0.3, 1000).
@@ -76189,7 +77417,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA03: a hand-written probe holds the key search and each bone kind's rule --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [
@@ -76242,7 +77470,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA04: every bone and slot timeline kind on a hand-written probe poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const seeds = [7919, 15838, 23757];
     let boneSamples = 0;
@@ -76276,7 +77504,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA05: the colour rules — set not blended, clamped, and a two-colour timeline on a slot with no dark colour --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'dur', parent: 'root' }],
@@ -76331,7 +77559,7 @@ function runCoreSuite(): number {
   const animationSlotsCompared = rows.filter((r) => r.blocks !== null && r.blocks['animations.slots'].verdict !== 'SKIP');
 
   // --- CA06: every recipe poses every animation's bones and slots as spine-core does, the constrained ones' bones skipped by construct --
-  {
+  unit('CA06', () => {
     const probes: string[] = [];
     let denseBones = 0;
     let animations = 0;
@@ -76373,10 +77601,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${gateVerdict(rows).line}: ${animations} animation(s), ${boneAnimations} IDENTICAL on their bones and ${slotAnimations} on their slots at the gate's nine grid samples, the rest skipped by construct and named; every row again at 200 dense samples, IDENTICAL at tolerance 0 over ${denseBones} bone-samples; the rows whose bones were skipped exactly the ones declaring ${LATER_WORDS}`),
       'issue #936, construct 4 of #380 §5 admitted: every recipe\'s every animation, bones and slots, against spine-core\'s dump of the same build — a rig\'s bones are posed by its constraints after the animation (CA07): the ik, transform, path, physics and slider constraints are posed since issue #938, and a rig declaring a kind left to a later cut — none is left — would have its bones left to that cut',
     );
-  }
+  });
 
   // --- CA07: a constrained row posed without its constraints differs, which is why the constraints are posed (construct 5, issue #938) --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     const candidate = built.find((b) => {
@@ -76421,7 +77649,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA08: a Bézier handle moved, a channel's sign flipped and the key search off by one each turn exactly the rows they move red --
-  {
+  unit('CA08', () => {
     const probes: string[] = [];
     const reached: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null && (r.blocks['animations.bones'].verdict !== 'SKIP' || r.blocks['animations.slots'].verdict !== 'SKIP')));
@@ -76451,10 +77679,10 @@ function runCoreSuite(): number {
       probeDetail(ok, judged.length === 0 ? [...probes, 'no row\'s animations were compared'] : probes, `each plant passed as a copy, never in src/: rows red of those compared — ${reached.join(', ')} — exactly the rows where the plant moves the core's own dump, each a row that uses what was planted`),
       'issue #936\'s positive control: a gate nobody has seen fail is not a gate. A plant that reddened every row would not show the gate reads the curve, the channel or the search, and one that reddened a row where it moved nothing would be reading something else',
     );
-  }
+  });
 
   // --- CA09: the sample blocks — absent by name, compared by animation name, over the runtime's duration --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -76511,7 +77739,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA10: the animations' census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = timelinePair({
       bones: [{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'root' }],
@@ -76544,7 +77772,7 @@ function runCoreSuite(): number {
   }
 
   // --- CA11: every kind and curve no compared row reaches is a HOLE by name, and the all-kinds probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = animationReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => /animations (\S+):/.exec(l)?.[1] ?? l);
     const probeCensus = animationCensusOf(allKindsProbe(7919).model, DENSE);
@@ -76565,7 +77793,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO19: the blend mode — a probe stating every mode posed as spine-core does, a bad spelling refused, the plant named on exactly the rows stating it --
-  {
+  unit('CO19', () => {
     const probes: string[] = [];
     let detail = '';
     const MODES: Array<[string, string | undefined, string]> = [
@@ -76628,7 +77856,7 @@ function runCoreSuite(): number {
       detail,
       'issue #933: the slot row gained the blend mode, so the 36 corpus slots stating one are judged; the reader takes the eight spellings the runtime was measured to read as a mode and refuses the rest, and a plant that reddened every row would not show the gate reads the mode at all',
     );
-  }
+  });
 
   // ===========================================================================
   // Construct 5, first cut (issue #938): the update order, and the ik and
@@ -76670,7 +77898,7 @@ function runCoreSuite(): number {
   const constraintCompare = (pair: { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE, plant: CorePlant = {}): ReturnType<typeof compareDumps> =>
     compareDumps(dumpSkeleton(loadOracleData(pair.spine, '', 'the constraint probe'), options), coreDump(readModel(pair.model, 'the constraint probe'), options, plant), { xy: 0, m: 0 });
   /** A probe population: `n` pairs from `make`, each compared; the misses named (the first three) and every model kept for the census. */
-  const probeModels: string[] = [];
+  const probeModels = unitLists.probeModels;
   const population = (n: number, seed: number, make: (rnd: () => number) => { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE): { exact: number; misses: string[]; samples: number } => {
     const rnd = seededRandom(seed);
     let exact = 0;
@@ -76814,7 +78042,7 @@ function runCoreSuite(): number {
   };
 
   // --- CC01: readModel reads each ik and transform record and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', length: 30 }, { name: 'c', parent: 'p', x: 30, length: 30 }, { name: 'o', parent: 'root' }, { name: 't', parent: 'root', x: 20, y: 30 }];
     const ik: Obj = { type: 'ik', name: 'k', bones: ['p', 'c'], target: 't', mix: 0.5, softness: 3, bendPositive: false, stretch: true, scaleY: 'Uniform' };
@@ -76870,7 +78098,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC02: a one-bone ik on a hand-written population poses as spine-core does --
-  {
+  if (parent) {
     const r = population(600, 9381, ikOneProbe);
     const ok = r.exact === 600;
     say(
@@ -76882,7 +78110,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC03: a two-bone ik on a hand-written population poses as spine-core does --
-  {
+  if (parent) {
     const r = population(1200, 9382, ikTwoProbe);
     const ok = r.exact === 1200;
     say(
@@ -76894,7 +78122,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC04: the degenerate cases read as measured, and what the runtime would throw on is refused --
-  {
+  if (parent) {
     const probes: string[] = [];
     const g: Obj = { name: 'g', parent: 'root', x: 10, y: 5, rotation: 30 };
     const cases: Array<[string, Obj[], Obj[], Obj[]?]> = [
@@ -76939,7 +78167,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC05: the update order on random rigs of several constraints poses as spine-core does --
-  {
+  if (parent) {
     const r = population(400, 9385, orderProbe);
     const ok = r.exact === 400;
     say(
@@ -76951,7 +78179,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC06: a bone moved in world space is read back into local values the runtime's way, in all five modes --
-  {
+  if (parent) {
     const r = population(400, 9386, readBackProbe);
     const ok = r.exact === 400;
     say(
@@ -76963,7 +78191,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC07: a transform constraint over every property, mapping, flag and mode poses as spine-core does --
-  {
+  if (parent) {
     const r = population(900, 9387, transformProbe);
     const ok = r.exact === 900;
     say(
@@ -76975,7 +78203,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC08: the ik and transform timelines at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [
       { name: 'root' }, { name: 'hip', parent: 'root', x: 10, y: 40, rotation: 5 },
@@ -77029,7 +78257,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC09: every row declaring only ik and transform poses its bones, vertices and samples as spine-core does --
-  {
+  unit('CC09', () => {
     const probes: string[] = [];
     const admittedOnly = (b: BuiltRow): CompiledDocument | null => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -77067,10 +78295,10 @@ function runCoreSuite(): number {
       `${gateVerdict(rows).line}: ${judged} row(s) declaring only ik and transform IDENTICAL on setup.bones, setup.attachments, setup.clips and animations.bones, and again at 200 dense samples at tolerance 0 (${denseSamples} bone-samples); ${LATER_KINDS.length === 0 ? 'no row skipped, since no kind is left to a later cut' : `every row still skipped names ${LATER_KINDS.join(', ')}`}`,
       'issue #938, construct 5\'s first cut admitted: the rows whose constraints are all ik and transform are judged on every block the core poses, and a row carrying a later kind stays SKIP naming it (#380 §4 — a construct not admitted is SKIP by name, never a pass)',
     );
-  }
+  });
 
   // --- CC10: a mix scaled, a bend flipped and two constraints swapped in a copy each turn exactly the rows using them red --
-  {
+  unit('CC10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -77114,10 +78342,10 @@ function runCoreSuite(): number {
       `over the ${targets.length} rows declaring only ik and transform: ${lines.join('; ')}; no slot row moved`,
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
     );
-  }
+  });
 
   // --- CC11: every constraint field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = constraintReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]);
     const reached = Object.fromEntries(CONSTRAINT_CENSUS_FIELDS.map((f) => [f, 0])) as Record<ConstraintCensusField, number>;
@@ -77143,7 +78371,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC12: the constraints' census and the per-kind lines count a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', scaleX: 2, length: 10 }, { name: 'c', parent: 'p', x: 10, y: 1, length: 10 }, { name: 'n', parent: 'root', inherit: 'noScale' }, { name: 't', parent: 'root' }];
     const constraints: Obj[] = [
@@ -77219,12 +78447,12 @@ function runCoreSuite(): number {
     compareDumps(sliderSpine(pair, options), coreDump(readModel(pair.model, 'the slider probe'), options, plant), { xy: 0, m: 0 });
   /** The blocks the core poses that a comparison skipped — a probe is exact only when none is. */
   const posedSkips = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => /^(setup\.(bones|slots|attachments|clips)|animations\.(bones|slots)):/.test(x));
-  const cqModels: string[] = [];
+  const cqModels = unitLists.cqModels;
   const SIX_IRR: OracleOptions = { phase: 'irr', samples: 6, skin: 'all', physics: 'none', dt: null };
   const hexOf = (rnd: () => number, n: number): string => Array.from({ length: n }, () => Math.floor(rnd() * 256).toString(16).padStart(2, '0')).join('');
 
   // --- CQ01: readModel reads each physics and slider record and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'd', parent: 'root', x: 3 }, { name: 'p', parent: 'root' }];
     const base = sliderPair(bones, [{ name: 's', bone: 'p', attachment: 'q' }], [
@@ -77287,7 +78515,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ02: under Physics.none a physics constraint applies nothing, and the core poses it so --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(93802);
     const R = within(rnd);
@@ -77355,7 +78583,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ03: a dial's property maps to the slider's time — clamped at 0, or looped — as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // The keyed bone p is at x = 100 · the time the slider applies (0..2 s), so the dump reads the time off p's worldX.
     const timeOf = (slider: Obj, dial: Obj): { spine: number | null; exact: boolean; first: string | null } => {
@@ -77409,7 +78637,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ04: a slider composes on the current pose by its mix, and additively when it says so, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const PROPS6 = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearY'] as const;
     // p's local values read back through six localSource transforms written onto spare bones' x, after the slider.
@@ -77454,7 +78682,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ05: a slider's slot timelines blend from the current slot, clamped, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const slotRow = (slider: Obj, keys: Keyed[string]): { setup: SlotRow; sample: SlotRow; exact: boolean; first: string | null } => {
       const pair = sliderPair([{ name: 'root' }], [{ name: 's', bone: 'root', attachment: 'r', color: '80406020', dark: '102030' }], [{ type: 'slider', name: 'sl', animation: 'x', ...slider }], {
@@ -77506,7 +78734,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ06: a random population of sliders over sample animations, with ik, transform and physics among them, poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(93806);
     const R = within(rnd);
@@ -77627,7 +78855,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ07: the slider timelines' time and mix at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'p', parent: 'root', rotation: 20, x: 5 }, ...amplify('p')];
     const slots: Obj[] = [{ name: 's', bone: 'p', attachment: 'r', color: '80808080' }];
@@ -77654,7 +78882,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ08: a skin-required slider and one on an inactive dial are not applied, and what this cut does not pose is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const keyed: Keyed = { p: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 90 }] } };
     const angleOf = (pair: { spine: string }): number => {
@@ -77706,7 +78934,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ09: every row declaring a physics or slider constraint poses every block as spine-core does, or leaves one out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     let judged = 0;
     let denseSamples = 0;
@@ -77741,7 +78969,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ10: a slider dropped, its mix scaled, its additive flipped and a physics constraint applied, each in a copy, turn exactly the rows using them red --
-  {
+  unit('CQ10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -77778,10 +79006,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${targets.length} rows declaring a physics or slider constraint: ${lines.join('; ')}`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it; "applies nothing" is planted by making the physics constraint apply something, and the rows declaring one must be exactly the rows that go red',
     );
-  }
+  });
 
   // --- CQ11: every physics and slider field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines = constraintReachLines(rows);
     const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  constraints '.length).split(':')[0]).filter((h) => h.startsWith('physics') || h.startsWith('slider'));
@@ -77803,7 +79031,7 @@ function runCoreSuite(): number {
   }
 
   // --- CQ12: the physics and slider census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = sliderPair([{ name: 'root' }, { name: 'd', parent: 'root' }, { name: 'p', parent: 'root' }], [{ name: 's', bone: 'p', attachment: 'q' }], [
       { type: 'slider', name: 'world', animation: 'x', bone: 'd', property: 'rotate', additive: true, mix: 0.5 },
@@ -77863,7 +79091,7 @@ function runCoreSuite(): number {
   const stepSpine = (pair: { spine: string }, options: OracleOptions): OracleDump => dumpSkeleton(loadOracleData(pair.spine, '', 'the step probe'), options);
   const stepCompare = (pair: { spine: string; model: string }, options: OracleOptions, plant: TimelinePlant = {}): ReturnType<typeof compareDumps> =>
     compareDumps(stepSpine(pair, options), coreDump(readModel(pair.model, 'the step probe'), options, plant), { xy: 0, m: 0 });
-  const ckModels: string[] = [];
+  const ckModels = unitLists.ckModels;
   /** A population of step probes: how many read exact (and with `plant`, how many a planted step leaves exact), the first misses named. */
   const stepPopulation = (n: number, seed: number, make: (rnd: () => number) => { pair: { spine: string; model: string }; options: OracleOptions }, plant?: TimelinePlant): { exact: number; planted: number; misses: string[]; samples: number } => {
     const rnd = seededRandom(seed);
@@ -77925,7 +79153,7 @@ function runCoreSuite(): number {
   };
 
   // --- CK01: readModel reads a physics constraint's settings and its timelines, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones: Obj[] = [{ name: 'root' }, { name: 'b', parent: 'root', length: 10 }];
     const stated: Obj = { type: 'physics', name: 'all', bone: 'b', x: 0.5, y: 1, rotate: 1, scaleX: 0.25, shearX: 2, limit: 40, fps: 45, inertia: 0.3, strength: 70, damping: 0.6, mass: 3, wind: 2, gravity: -4, mix: 0.8, inertiaGlobal: true, mixGlobal: true, scaleY: 'volume' };
@@ -77960,7 +79188,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK02: the simplest spring steps as computed by hand, and as spine-core steps it at three dt --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bones = [{ name: 'root' }, { name: 'p', parent: 'root' }, { name: 'b', parent: 'p', length: 50 }];
     const pair = stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', x: 1 }], { a: { bones: { p: { translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 60, y: 0 }] } } } });
@@ -77992,7 +79220,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK03: the schedule steps as the oracle walks it, counted by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     // A one-second animation, nine grid samples an eighth apart: at dt 1/60 seven steps before each sample and one to it,
     // at 0.05 two and one, at 0.2 none and one; the first sample, at 0, is the reset pose and takes none.
@@ -78013,7 +79241,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK04: each component steps as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     let samples = 0;
@@ -78036,7 +79264,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK05: a probe per setting: each steps as spine-core does, and scaled in a copy reads another pose --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     const SETTINGS: Array<[string, (r: CorePhysicsRecord) => CorePhysicsRecord]> = [
@@ -78067,7 +79295,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK06: each physics timeline, the one naming no constraint and the reset, pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines: string[] = [];
     const KINDS = ['inertia', 'strength', 'damping', 'mass', 'wind', 'gravity', 'mix'];
@@ -78146,7 +79374,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK07: a random population of physics constraints among ik and transform, skins and two animations, steps as spine-core does --
-  {
+  unit('CK07', () => {
     const probes: string[] = [];
     const rnd = seededRandom(95631);
     const R = within(rnd);
@@ -78217,10 +79445,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${exact} of ${N} rigs exact at tolerance 0 (${samples} bone-samples) — one to five constraints each, physics with random components, settings, flags and timelines, some skin-required, ik and world- and local-space transforms among them, the timeline naming no constraint, two animations, parents reflecting and sheared, bones normal or onlyTranslation; ${N - planted} red with the remainder dropped in a copy`),
       'issue #956: the rules hold together in the update order, a physics constraint re-posing what later ones read. The bones are normal or onlyTranslation because the other three modes are posed by ./world.ts to the grid but not to the bit, and a step amplifies a last-bit difference (src/core/constraints_physics.ts, *What is not exact*)',
     );
-  }
+  });
 
   // --- CK08: every row stepped poses its bones as spine-core does, and every row declaring physics is among them --
-  {
+  if (parent) {
     const probes: string[] = [];
     const declaring: string[] = [];
     let dense = 0;
@@ -78250,7 +79478,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK09: a setting scaled, or the remainder dropped, in a copy turns exactly the rows declaring physics red --
-  {
+  unit('CK09', () => {
     const probes: string[] = [];
     const declares = (b: BuiltRow): boolean => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics');
     const using = built.filter(declares).map((b) => b.name).sort();
@@ -78272,10 +79500,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${built.length} tree rows, ${using.length} declaring physics: ${lines.join('; ')}`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on exactly the rows using it — one setting scaled, and the fixed step\'s remainder not carried from one update to the next',
     );
-  }
+  });
 
   // --- CK10: the stepped census counts a hand-made document as computed by hand --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = stepPair([{ name: 'root' }, { name: 'a', parent: 'root' }, { name: 'b', parent: 'a' }], [
       { type: 'physics', name: 'one', bone: 'a', x: 1, rotate: -1, strength: 50, mass: 2 },
@@ -78301,7 +79529,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK11: every stepped field no compared row reaches is a HOLE by name, and a CK probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const lines = steppedReachLines(rows);
     const holes = lines.filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  stepped '.length).split(':')[0]);
@@ -78324,7 +79552,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK12: the stepped core dump is written twice to the byte from the command line --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = NOTHING_HELD;
     const physicsRow = built.find((b) => existsSync(join(b.out, MODEL_DOCUMENT_FILE)) && readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')).constraints.some((c) => c.kind === 'physics'));
@@ -78351,7 +79579,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK13: a skin-required physics constraint steps exactly when a skin lists it, and the unlisted reading in a copy goes red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KINDS = ['ik', 'transform', 'path', 'physics', 'slider'];
     const listed = (skins: Array<{ name: string; bones?: string[]; physics?: string[] }>, boneSkin: boolean): { spine: string; model: string } => {
@@ -78493,7 +79721,7 @@ function runCoreSuite(): number {
     });
     return { spine: JSON.stringify(spine), model };
   };
-  const pathProbeModels: string[] = [];
+  const pathProbeModels = unitLists.pathProbeModels;
   /** The two dumps of a path pair compared at tolerance 0 — the whole document, the `paths` and `pathAttachments` blocks included. */
   const pathCompare = (pair: { spine: string; model: string }, options: OracleOptions = ONE_SAMPLE, plant: CorePlant = {}): ReturnType<typeof compareDumps> => {
     pathProbeModels.push(pair.model);
@@ -78607,7 +79835,7 @@ function runCoreSuite(): number {
     });
 
   // --- CP01: readModel reads each path record, attachment and timeline, and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const base = pathPair({
@@ -78666,7 +79894,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP02: the walk — one bone over a grid of positions on three and four knots, open and closed, at constant speed and off the stated lengths, percent and fixed --
-  {
+  if (parent) {
     const probes: string[] = [];
     let exact = 0;
     let total = 0;
@@ -78690,7 +79918,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP03: a random population over every mode, setting, mix and curve poses as spine-core does --
-  {
+  if (parent) {
     const r = pathPopulation(600, 93803, pathProbe);
     const ok = r.exact === 600;
     say(
@@ -78702,7 +79930,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP04: the walk's edge cases read as measured --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = [-30, 0, 0, 0, 30, 0, 60, 0, 90, 0, 100, 0, 110, 0, 180, 0, 210, 0, 240, 0, 270, 0, 300, 0];
     const chain = (c: Obj, att: Partial<PathAttachmentSpec> = {}): { spine: string; model: string } =>
@@ -78744,7 +79972,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP05: a stated lengths is read off the stated table, and constant speed reads none (issue #804) --
-  {
+  if (parent) {
     const probes: string[] = [];
     let held = 0;
     const rnd = mix32(80405);
@@ -78780,7 +80008,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP06: which slot bone the offset reads — the runtime's update order, and the previous pose's --
-  {
+  if (parent) {
     const probes: string[] = [];
     const local = [-30, 0, 0, 0, 30, 40, 60, 40, 90, 40, 120, -20, 150, 0, 180, 0, 210, 0];
     const weighted = (bone: string): Array<Array<{ bone: string; x: number; y: number; w: number }>> => {
@@ -78832,7 +80060,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP07: the update order with path, ik and transform constraints on random rigs poses as spine-core does --
-  {
+  if (parent) {
     const rnd = mix32(70707);
     const R = within(rnd);
     const pick = pickOf(rnd);
@@ -78911,7 +80139,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP08: the path timelines at a sample time pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = [-30, 0, 0, 0, 30, 40, 60, 40, 90, 40, 120, -20, 150, 0, 180, 0, 210, 0];
     const timelines: Array<[string, Record<string, Obj[]>]> = [
@@ -78953,7 +80181,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP09: every row declaring path constraints (and nothing not admitted) poses its bones, vertices and samples as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     let judged = 0;
     let denseSamples = 0;
@@ -78984,7 +80212,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP10: a position moved, a mix scaled and a mode swapped in a copy each turn exactly the rows using a path red --
-  {
+  unit('CP10', () => {
     const probes: string[] = [];
     const targets = built.filter((b) => {
       const path = join(b.out, MODEL_DOCUMENT_FILE);
@@ -79016,10 +80244,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `over the ${targets.length} rows declaring only admitted kinds, ${using.length} of them a path: ${lines.join('; ')}; no slot row moved`),
       'issue #380 §5: a construct is admitted when its planted difference turns the gate red on the rows using it — a gate nobody has seen fail is not a gate. The plant is a copy passed through the core\'s `constraints` hook, never a change in src/',
     );
-  }
+  });
 
   // --- CP11: every path field no compared row reaches is a HOLE by name, and a probe reaches it --
-  {
+  if (parent) {
     const probes: string[] = [];
     const holes = pathReachLines(rows).filter((l) => l.startsWith('  HOLE')).map((l) => l.slice('  HOLE  paths '.length).split(':')[0]);
     const reached = Object.fromEntries(PATH_CENSUS_FIELDS.map((f) => [f, 0])) as Record<PathCensusField, number>;
@@ -79040,7 +80268,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP12: the paths' census counts a hand-made document as computed by hand, and each path the core cannot pose is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const local = WALK_POINTS[3];
@@ -79101,7 +80329,7 @@ function runCoreSuite(): number {
   }
 
   // --- CP13: a physics constraint and a slider before a weighted path set its slot bone in the update order as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     // One weighted path (bound to w1, not to its slot bone sb) with an offset: its sign reads sb as the update order last set it —
     // fresh, the offset turns one way ('turned'); from the previous pass (zeros at setup) or reflected, the other ('negated').
@@ -79176,7 +80404,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK14: a stepped physics constraint and a deformed walked path pose in the runtime's order, before and after the path --
-  {
+  if (parent) {
     const probes: string[] = [];
     const xy = WALK_POINTS[3];
     const deform = { slot: 'o', attachment: 'q', keys: [{ time: 0, offset: 2, vertices: [3, -4, 5, 6] }, { time: 1 }] };
@@ -79219,7 +80447,7 @@ function runCoreSuite(): number {
   }
 
   // --- CK15: the step reads the document's referenceScale, and a document stating 50 against a file read as 100 goes red (#958) --
-  {
+  unit('CK15', () => {
     const probes: string[] = [];
     const OTHER = UNSTATED_REFERENCE_SCALE / 2;
     /** The pair with both spellings stating `spine` and `model` as the reference scale (`undefined`: the Spine header omits it). */
@@ -79291,7 +80519,7 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${N} wind-and-gravity probes exact with both spellings stating ${OTHER} (${samples} bone-samples), ${moved} of ${N} red with the document alone stating it against a file read as ${UNSTATED_REFERENCE_SCALE} and ${constant} of ${N} with the step reading ${UNSTATED_REFERENCE_SCALE} as a constant in a copy, and ${still} of ${N} without wind or gravity exact under the same plant; over the ${built.length} tree rows with every document stating ${OTHER}: ${tree}; declaring physics and reading neither, exact: [${quiet.join(', ')}]`),
       'issue #958: the core stepped wind and gravity over the parser\'s 100 as a constant; the document now states the skeleton\'s reference scale and the step reads it, so a document disagreeing with the file it came from turns red exactly where wind or gravity reads it — a row declaring physics that reads neither is untouched by it',
     );
-  }
+  });
 
   // ===========================================================================
   // The stepped schedule (issue #960): a physics `reset` key is crossed once,
@@ -79396,7 +80624,7 @@ function runCoreSuite(): number {
   const scList = (xs: readonly number[]): string => `[${xs.join(', ')}]`;
 
   // --- SC01: the probe under the player's schedule — the oracle is spine-core's player to the bit, both dumpers IDENTICAL, and the old schedule and a key crossed twice go red after the key --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = scPair([SC_KEY]);
     ckModels.push(pair.model);
@@ -79444,7 +80672,7 @@ function runCoreSuite(): number {
   }
 
   // --- SC02: without a reset key the schedule change moves nothing — the probe and every tree row stepped read the same bytes under either reading --
-  {
+  if (parent) {
     const probes: string[] = [];
     const bare = scPair([]);
     ckModels.push(bare.model);
@@ -79483,7 +80711,7 @@ function runCoreSuite(): number {
   }
 
   // --- SC03: the raw walk and the stepped grid agree on the probe — the same schedule at two precisions — and the raw walk crosses the key once as render's AnimationState recipe does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = scPair([SC_KEY]);
     const model = readModel(pair.model, 'the #960 probe');
@@ -79663,7 +80891,7 @@ function runCoreSuite(): number {
     compareDumps(remainderSpine(pair, options), coreDump(readModel(pair.model, 'the remainder probe'), options, plant, uvSourceOf(pair.atlas, pair.model)), { xy: 0, m: 0 });
   /** Every block a comparison skipped but the physics parameters' — a probe is exact only when none is. */
   const blocksSkipped = (c: ReturnType<typeof compareDumps>): string[] => c.skipped.filter((x) => !x.startsWith('physics:'));
-  const cdModels: string[] = [];
+  const cdModels = unitLists.cdModels;
   /** Five decimals, not float32: the stored float32 of a key and the double the document states differ. */
   const dec5 = (rnd: () => number) => (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1e5) / 1e5;
   const FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null };
@@ -79761,7 +80989,7 @@ function runCoreSuite(): number {
   };
 
   // --- CD01: readModel reads the attachment, draw-order and event timelines and refuses each plant by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const base: RSpec = {
       bones: [{ name: 'root' }],
@@ -79814,7 +81042,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD02: the deform Bézier runs its recurrence to 0.99999999, a bone channel's to its key — each on a population, each rejected reading missing --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9551);
     const D = dec5(rnd);
@@ -79856,7 +81084,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD03: an unweighted deform population poses as spine-core does, and the double sum misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9553);
     const D = dec5(rnd);
@@ -79890,7 +81118,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD04: a weighted deform population poses as spine-core does, and a key held as positions misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9554);
     const D = dec5(rnd);
@@ -79926,7 +81154,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD05: a slider's deform blends from the current deform, additive and not, at setup and at a sample, as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9555);
     const D = dec5(rnd);
@@ -79973,7 +81201,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD06: every row carrying a deform, sequence, draw-order or event timeline reads IDENTICAL on the block it changes, at 200 dense samples too --
-  {
+  unit('CD06', () => {
     const probes: string[] = [];
     const kindLines = timelineKindLines(rows);
     for (const line of kindLines) if (!/ 0 SKIP$/.test(line) || / DIFF/.test(line)) probes.push(`a kind line names a SKIP or a DIFF: ${line.trim()}`);
@@ -80004,10 +81232,10 @@ function runCoreSuite(): number {
       'issue #955, the remainder of construct 4 admitted per kind: the block each kind changes IDENTICAL on every corpus row carrying it — a deform the attachments (and gallery/look\'s setup, where a slider applies one), a draw-order key the draw order, an event key the events. No public row keys a sequence: CD08\'s probe is its only reading',
     );
     for (const line of kindLines) console.log(`          ${line.trim()}`);
-  }
+  });
 
   // --- CD07: a deformed clipping polygon, a linked mesh playing its source's deform or not, and a deform keyed on an attachment not shown pose as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tri = [0, 0, 30, 0, 0, 30];
     const keys = [{ time: 0, vertices: [1, 2, 3, 4] }, { time: 1, offset: 2, vertices: [-5, 6, 7] }];
@@ -80063,7 +81291,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD08: a sequence steps its frames by mode, index and delay as spine-core does, and the step without its epsilon misses --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9558);
     const pick = pickOf(rnd);
@@ -80122,7 +81350,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD09: the draw order at a sample — a key's moves over the setup order, a restore, a slider's key — as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9559);
     let exact = 0;
@@ -80177,7 +81405,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD10: the events a sample lists are the keys in (previous t, t], each field the key's, else the definition's, else the parser's --
-  {
+  if (parent) {
     const probes: string[] = [];
     const events: Record<string, Obj> = { e: { int: 7, float: 1.5, string: 'hi' }, g: {}, au: { audio: 'x.ogg', volume: 0.5, balance: -0.2, int: 3, float: 0.1000065 } };
     const cases: Array<[string, Obj[], OracleOptions]> = [
@@ -80210,7 +81438,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD11: a vertex offset scaled, a frame index shifted, two slots swapped and an event's int moved, each in a copy of the core, turn exactly the rows using them red --
-  {
+  unit('CD11', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     const uses = (b: BuiltRow, field: AnimationCensusField): boolean => {
@@ -80243,10 +81471,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `each plant passed as a copy, never in src/: ${reached.join('; ')} — exactly the rows keying the kind, on the block it changes and no other`),
       'issue #955\'s positive control, one plant per kind: a gate nobody has seen fail is not a gate. A plant reddening a row that does not key the kind would be reading something else, and one reddening none would show the gate reads nothing',
     );
-  }
+  });
 
   // --- CD12: the remainder's census counts a hand-made document as computed by hand, and each field no row reaches is a HOLE a probe reaches --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = remainderPair({
       bones: [{ name: 'root' }, { name: 'b', parent: 'root' }],
@@ -80296,7 +81524,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD13: what the core cannot pose exactly is left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tri: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
     const absences: Array<[string, RSpec, string, string]> = [
@@ -80332,7 +81560,7 @@ function runCoreSuite(): number {
   }
 
   // --- CD14: a slider switching a slot to another attachment clears the deform and the frame the sample set, and naming the one shown keeps them --
-  {
+  if (parent) {
     const probes: string[] = [];
     const m: RAtt = { kind: 'mesh', xy: [0, 0, 1, 0, 0, 1] };
     const n: RAtt = { kind: 'mesh', xy: [10, 10, 11, 10, 10, 11] };
@@ -80472,7 +81700,7 @@ function runCoreSuite(): number {
   const uvSlotsNamed = (c: ReturnType<typeof compareDumps>): string[] => [...new Set([...c.document, ...c.rows.flatMap((r) => r.findings)].map((f) => /uvs "([^/"]+)\//.exec(f)?.[1] ?? `(not a uvs finding) ${f}`))].sort();
 
   // --- CU01: the hand-written probe draws every page-UV case as spine-core holds it, on the grid and bit for bit --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     try {
@@ -80541,7 +81769,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU02: each rejected reading, in a copy, is named at exactly the slots it reaches --
-  {
+  if (parent) {
     const probes: string[] = [];
     const reached: string[] = [];
     try {
@@ -80579,7 +81807,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU03: computeUvs is MeshAttachment.computeUVs — texture substitution's call — bit for bit, into a plain array and a Float32Array --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9671);
     const spellings = ['0', '90', '180', '270', 'true', 'false', '45', '-90', '360', '450'];
@@ -80636,7 +81864,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU04: every corpus row reads IDENTICAL on both uvs blocks at tolerance 0, and each reading turns exactly the rows using it red --
-  {
+  unit('CU04', () => {
     const probes: string[] = [];
     const judged = built.filter((b) => rows.some((r) => r.name === b.name && r.blocks !== null));
     for (const r of rows) for (const block of ['setup.uvs', 'animations.uvs'] as const) if (r.blocks !== null && r.blocks[block].verdict !== 'IDENTICAL') probes.push(`${r.name}: ${block} ${r.blocks[block].verdict} — ${r.blocks[block].why}`);
@@ -80672,10 +81900,10 @@ function runCoreSuite(): number {
       'issue #967, the gate at tolerance 0: every drawn attachment\'s page and page UVs on every corpus row, from the build\'s own atlas beside the model, against the arrays the runtime holds — the draw\'s last input the core lacked',
     );
     for (const line of lines) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
-  }
+  });
 
   // --- CU05: without an atlas the blocks are absent by name; a missing region, a stale spec, a bad series and a slider under the step are refused or left out by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     try {
       const pair = uvPair();
@@ -80760,7 +81988,7 @@ function runCoreSuite(): number {
   }
 
   // --- CU06: rigc's atlas lookup finds the region and page spine-core's does, on every corpus atlas and the probe's edge cases --
-  {
+  if (parent) {
     const probes: string[] = [];
     const texts: Array<[string, string]> = built.map((b) => [b.name, readFileSync(join(b.out, 'skeleton.atlas'), 'utf8')]);
     const exportRoot = join(root, 'examples');
@@ -80839,7 +82067,7 @@ function runCoreSuite(): number {
   };
 
   // --- CN01: under --skin <name> a slot shows the named skin's record, else the default skin's, and only the named skin's bones activate --
-  {
+  if (parent) {
     const probes: string[] = [];
     const region = (path: string): RAtt => ({ kind: 'region', path });
     const tri = (d: number): RAtt => ({ kind: 'mesh', xy: [d, 0, d + 1, 0, d, 1] });
@@ -80906,7 +82134,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN02: a skin-required constraint of each kind is applied exactly when an applied skin's list for its kind names it (card #961) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KINDS = CORE_CONSTRAINT_KINDS;
     const constraintOf = (kind: (typeof KINDS)[number], mixZero: boolean): Obj => {
@@ -80986,7 +82214,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN03: both dumpers pose --skin <name> from the command line, and the core refuses a skin the model does not declare by name --
-  {
+  if (parent) {
     const probes: string[] = [];
     const pair = withSkinLists(remainderPair({
       bones: [{ name: 'root' }, { name: 'r1', parent: 'root', skin: true, x: 3 }],
@@ -81033,7 +82261,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN04: the gate runs every skin of a row declaring several, judges what the merged view leaves out per skin, and a per-skin plant turns it red --
-  {
+  if (parent) {
     const probes: string[] = [];
     let detail = '';
     const out = join(work, 'skin-order', 'out');
@@ -81066,7 +82294,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN05: on a row declaring one skin, that skin's dump is the merged dump, so the gate does not run it twice --
-  {
+  if (parent) {
     const probes: string[] = [];
     let one = 0;
     let dumps = 0;
@@ -81100,7 +82328,7 @@ function runCoreSuite(): number {
   }
 
   // --- CN06: a slot on a bone the applied skin leaves inactive is not animated; one on an active bone showing nothing is (the commander's private finding) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const KEYS: Record<string, Obj[]> = {
       rgba: [{ time: 0, color: 'ffffff00' }],
@@ -81268,7 +82496,7 @@ function runCoreSuite(): number {
   };
 
   // --- CC13: a constraint over a bone the posed skin leaves unposed poses as spine-core does, signed zeros included (issue #979) --
-  {
+  unit('CC13', () => {
     const probes: string[] = [];
     const population: UnposedProbe[] = [];
     const add = (label: string, pair: { spine: string; model: string; atlas: string }, physics: 'none' | 'step' = 'none'): void => {
@@ -81354,10 +82582,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${population.length} probes under --skin default, which leaves the skin-required "arm" inactive and "hand", "tip", "side" below it unposed — one- and two-bone iks on them in every inherit mode, iks aimed at them, transforms onto and from them in six flag sets and five modes, paths on them and walking a slot on one, physics under none and step, a later constraint moving their posed ancestor, a transform naming a posed and an inactive bone, and one- and two-bone iks naming the inactive bone (its frame zero or brought up to date first) — each bone's local values read onto posed rows: every bone row of every pose equal to spine-core's by Object.is where spine-core's two readings — sample after sample and on a fresh skeleton — agree (${unposedSamples} unposed bone-samples among them, through pose_oracle's unposed reading; ${historySamples} bone-samples where they disagree are HISTORY, compared with nothing); ${planted.join(', ')}, each only on probes reaching it`),
       'issue #979: the core wrote NaN into a bone an ik moved under an inactive parent where spine-core writes zeros, and an active constraint reading such a bone carried it on. The rules are measured on these rows, not on the grid compare reads — it excludes every unposed bone and spells -0 as 0',
     );
-  }
+  });
 
   // --- CC14: a posed bone under a collapsed frame poses as spine-core does (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     type Posed = { label: string; pair: { spine: string; model: string; atlas: string } };
     const population: Posed[] = [];
@@ -81420,7 +82648,7 @@ function runCoreSuite(): number {
   }
 
   // --- CC15: a posed bone reading a value the runtime makes depend on its previous pass is refused by name (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const writers: Record<string, Obj> = {
       'one-bone ik on arm': { type: 'ik', name: 'w', bones: ['arm'], target: 't' },
@@ -81488,7 +82716,7 @@ function runCoreSuite(): number {
   }
 
   // --- CO20: pose_oracle unposed compares the bones compare leaves out, to the bit and the sign of zero (issue #979) --
-  {
+  if (parent) {
     const probes: string[] = [];
     const row = (name: string, v: number[], active: 0 | 1, parent: string | null): BoneRow => [name, v[0], v[1], v[2], v[3], v[4], v[5], active, parent];
     const docOf = (bones: BoneRow[]): OracleDocument => ({ spec: ORACLE_RAW_SPEC, dumper: 'hand', source: { spine: null, hash: null }, options: signedOf('default'), bones: bones.map((b) => b[0]), slots: [], skins: ['default'], constraints: [], physics: [], paths: [], pathAttachments: [], setup: { bones, slots: [], drawOrder: [], attachments: [], clips: [], clipped: [], uvs: [] }, animations: [] });
@@ -81589,7 +82817,7 @@ function runCoreSuite(): number {
   };
 
   // --- CR01: every constraint population reads bit-exact through --raw, or misses only inside a HOLE named by its construct --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // The read-back, update-order and transform populations carried two HOLEs until issue #966's second cut (localFromWorld, an additive world-space shearY); both are closed (CW01–CW04), so every probe of every population must now read exact.
@@ -81612,7 +82840,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR02: every inherit mode reads bit-exact under a 1e9 amplifier, and each rejected operation order is named --
-  {
+  if (parent) {
     const probes: string[] = [];
     const modeProbe = (mode: string) => (rnd: () => number): { spine: string; model: string } => {
       const R = within(rnd);
@@ -81681,7 +82909,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR03: the raw walk poses every built row as spine-core's render and deform-measure recipes do, bit for bit --
-  {
+  if (parent) {
     const probes: string[] = [];
     const tally = { frames: 0, bones: 0, drawn: 0, events: 0, jumps: 0, setups: 0 };
     let redSum = 0;
@@ -81816,7 +83044,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR04: the raw entry and the model reader refuse by name, and retain the colour, hull and sequence frame --
-  {
+  if (parent) {
     const probes: string[] = [];
     if (free !== null) {
       const refusal = (f: () => unknown): string => {
@@ -81871,7 +83099,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR05: pose_oracle --raw writes full doubles under its own spec, and compare reads them in ulps at tolerance 0 --
-  {
+  if (parent) {
     const probes: string[] = [];
     if (free !== null) {
       const text = (options: OracleOptions): string => dumpText(dumpSkeleton(loadOracleData(readFileSync(join(free.out, 'skeleton.json'), 'utf8'), readFileSync(join(free.out, 'skeleton.atlas'), 'utf8'), free.out), options));
@@ -81920,7 +83148,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR06: core_gate --raw reads every built row bit-exact, and a rejected corner order planted in a copy turns the rows drawing regions red --
-  {
+  unit('CR06', () => {
     const probes: string[] = [];
     const rawRows = gateBuilt(built, {}, undefined, true);
     for (const r of rawRows) if (r.verdict === 'DIFF' || r.verdict === 'REFUSED' || r.stepped?.verdict === 'DIFF') probes.push(`${r.name}: ${r.verdict}, stepped ${r.stepped?.verdict} — ${r.why ?? r.stepped?.why}`);
@@ -81961,10 +83189,10 @@ function runCoreSuite(): number {
       'issue #966: `core_gate --raw` is the census of last-bit gaps on every corpus; a plant only the raw reading sees is what shows the raw reading sees more than the grid',
     );
     if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the raw gate read the gallery's rows alone`);
-  }
+  });
 
   // --- CR07: the stepped physics population with every inherit mode reads bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(96631);
     const R = within(rnd);
@@ -82017,7 +83245,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR08: the bone channels' Bézier, the deform curve, the weighted sum and the region corners read bit-exact at a 1e9 amplifier --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(96681);
     const D = dec5(rnd);
@@ -82098,7 +83326,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR09: a deform segment, linear or Bézier, reads bit-exact whatever the key vertices' float32-ness; each end piece's form planted back is red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const counts: Record<string, number> = {};
     const N = 60;
@@ -82297,7 +83525,7 @@ function runCoreSuite(): number {
   const PLANT_PREFIX = 40;
 
   // --- CR10: CD05's slider-deform population reads bit-exact through --raw — additive at mix 1 over no current deform is the target, and each rejected form planted back is red --
-  {
+  if (parent) {
     const probes: string[] = [];
     const rnd = seededRandom(9555);
     const D = dec5(rnd);
@@ -82375,7 +83603,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR11: the slider populations read bit-exact through --raw — CQ06's and CQ02's rigs redrawn, and CQ03–CQ05's and CQ07's typed rigs --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // CQ06's generator, from its seed.
@@ -82629,7 +83857,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR12: a slider population keying mix on 85 % and time on 70 % of bone-less sliders reads bit-exact through --raw, and issue #991's reading planted back is red --
-  {
+  unit('CR12', () => {
     const probes: string[] = [];
     // Issue #991's scratch generator, brought in: one or two sliders, each a looped dial, an unlooped dial, a bone-less slider or a looped
     // bone-less one; every numeric bone timeline kind in their animations; the sample animation keying the dial and each slider's mix on
@@ -82756,10 +83984,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `${exact} of ${N} rigs drawn in turn from seed 99101, bit-exact under --raw at tolerance 0 at 8 irrational, offset or grid samples, on setup and sampled bones, slots and region vertices — one or two sliders each, looped and unlooped dials on every property and bone-less sliders, every numeric bone timeline kind, mix and time keyed; issue #991's time and mix as keyed, planted, red on ${red} of the ${keyedRigs} rigs keying either (red of rigs, by shape and key: ${tagLine})`),
       'issue #993 ask 4: the population issue #991 was closed on, brought into the tree — richer than CQ06\'s (mix keyed on 85 % of sliders, time on 70 % of the bone-less), the rigs where #991\'s rule is about one in three',
     );
-  }
+  });
 
   // --- CR13: the path populations read bit-exact through --raw — CP02's walk, CP03's and CP06's probes, CP07's rigs, CP08's timelines and CP13's orders --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     const tally = (what: string, n: number, each: (i: number) => { pair: { spine: string; model: string }; options: OracleOptions }): void => {
@@ -82955,7 +84183,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR14: the ik and transform timelines at a sample and CK07's stepped physics population read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     // CC08's keyed skeleton, at its 200 dense samples and at the grid.
@@ -83082,7 +84310,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR15: the deform, sequence and draw-order populations and CP05's stated lengths read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     /** A deform timeline's array one ulp out on every value — planted, a gap only the raw reading sees. */
@@ -83217,7 +84445,7 @@ function runCoreSuite(): number {
   }
 
   // --- CR16: the stepped per-component, per-setting and per-timeline probes read bit-exact through --raw --
-  {
+  if (parent) {
     const probes: string[] = [];
     const read: string[] = [];
     const MIX_ULP_STEP = plantedRecord((r) => ({ ...r, mix: ulpOut(r.mix) }));
@@ -83276,7 +84504,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW01: localFromWorld reads a reflected bone's shear to the bit — the right angle taken off the other way, not the y angle turned by 180 --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const r = readBackRun(['normal', 'onlyTranslation'], N, 96621, { readBackReflectedShear: false });
@@ -83292,7 +84520,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW02: localFromWorld in noRotationOrReflection inverts the conformal frame as its axes over their lengths --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 200;
     const r = readBackRun(['noRotationOrReflection'], N, 96622, { readBackConformalInverse: false });
@@ -83308,7 +84536,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW03: localFromWorld in the noScale modes reads the columns in the frame of the rotation it reads first, the residual kept as shearX --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const r = readBackRun(['noScale', 'noScaleOrReflection'], N, 96623, { readBackNoScaleFrame: false });
@@ -83324,7 +84552,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW04: an additive world-space shearY turns the y column by (v + 90)·RAD − 90·RAD --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const rnd = seededRandom(96624);
@@ -83358,7 +84586,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW05: a transform timeline's keyed mixes reach the pose through the setup blend --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 60;
     const MIXES = ['mixRotate', 'mixX', 'mixY', 'mixScaleX', 'mixScaleY', 'mixShearY'];
@@ -83417,7 +84645,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW06: a two-bone ik over a parent whose scale is 0 poses as spine-core does --
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 300;
     const rnd = seededRandom(96626);
@@ -83457,7 +84685,7 @@ function runCoreSuite(): number {
   }
 
   // --- CW07: the ik thresholds the zero-scale probes found, each held at its edge --
-  {
+  if (parent) {
     const probes: string[] = [];
     const RAW_STRICT = signedOf('all', 'none', 1);
     const judge = (pair: { spine: string; model: string }, solver: Partial<SolverRules> = {}): string | null => strictBones(dumpSkeleton(loadOracleData(pair.spine, '', 'the cw07 probe'), RAW_STRICT), coreDump(readModel(pair.model, 'the cw07 probe'), RAW_STRICT, { solver }));
@@ -83501,7 +84729,7 @@ function runCoreSuite(): number {
   // negative x, so the drawn child sits at negative x. Both bones are in normal mode (the two-bone solver skips any
   // other) and the ik's mix is above 0. Measured before this was stated: a drawn population of scaleX or scaleY 0 at
   // any x and any mode put the plant red on 3 of 40.
-  {
+  if (parent) {
     const probes: string[] = [];
     const N = 400;
     const M = 40;
@@ -83570,7 +84798,7 @@ function runCoreSuite(): number {
   // corpus row decided it, so this population does.
   // ===========================================================================
   // --- CY01: a path timeline's keyed position, spacing and mixes reach the pose through the setup blend --
-  {
+  unit('CY01', () => {
     const probes: string[] = [];
     const N = 60;
     const RAW_FORTY_IRR: OracleOptions = { phase: 'irr', samples: 40, skin: 'all', physics: 'none', dt: null, raw: true };
@@ -83690,10 +84918,10 @@ function runCoreSuite(): number {
       probeDetail(ok, probes, `path constraints keying position, spacing or mix (and all three) by Bézier segments over setup values that include 0 and negatives, every position, spacing and rotate mode, one to three bones, bit-exact under --raw at 40 irrational samples: ${read.join('; ')} — the value as keyed planted at every sample in place of setup + (value − setup)·1, for every field the population keys and for each mix channel alone`),
       'issue #984: the path timelines were read as keyed, as the transform timeline\'s mixes were before CW05, and no corpus row separates the two readings; measured, each of the three timelines and each mix channel alone goes through the setup blend at alpha 1',
     );
-  }
+  });
 
   // --- CZ01: a slider poses again every bone its animation keys, a timeline before its first key included --
-  {
+  if (parent) {
     const probes: string[] = [];
     // The three rigs of CQ06's population the old lcg never drew (issue #989), reduced to a world-space transform on b2 and one
     // slider after it that keys b2 or its parent before the timeline's first key — so it writes nothing, and b2 is still posed again.
@@ -83750,7 +84978,7 @@ function runCoreSuite(): number {
   }
 
   // --- CZ02: a slider's scale keys blend to the bit — additive as v·setup − setup, and the target itself at mix 1 --
-  {
+  if (parent) {
     const probes: string[] = [];
     // Typed in, no generator: five setup scales, five key values, five mixes, additive or not, over the setup or over a current an earlier slider moved.
     const SETUPS = [-1.7, -0.35, 0.4, 1.3, 2];
@@ -83802,7 +85030,7 @@ function runCoreSuite(): number {
   }
 
   // --- CZ03: a slider timeline's keyed time and mix reach the slider through the setup blend --
-  {
+  if (parent) {
     const probes: string[] = [];
     const RAW_SIX_IRR: OracleOptions = { ...SIX_IRR, raw: true };
     // Typed in, no generator: the rig issue #991 was reduced to (CQ06's probe 213 under the new sequence) — a looped dial on world
@@ -83888,7 +85116,7 @@ function runCoreSuite(): number {
   // against the object spine-core loaded, the two tables' spellings against
   // each other, and a row of the runtime's table misspelled turns red only that
   // row's timelines.
-  {
+  unit('CO27', () => {
     const probes: string[] = [];
     let builds: ReturnType<typeof additiveSeedBuilds> = [];
     try {
@@ -84014,7 +85242,7 @@ function runCoreSuite(): number {
       ),
       'issue #1025, cut 4c-5: A40 needs what each timeline does when applied additively, which only the runtime\'s probe answered; measured, it is not a function of the kind alone, so the core computes it from the document and is held cell by cell to the runtime it replaces',
     );
-  }
+  });
 
   // --- CO28: whom a physics timeline naming no constraint reaches, the core's reading against the runtime's --
   //
@@ -84028,7 +85256,7 @@ function runCoreSuite(): number {
   // the first, the values spread across the three, and every value global on
   // every one. Plants: a value read off its neighbour's flag, and `reset`
   // reading a flag.
-  {
+  if (parent) {
     const probes: string[] = [];
     const flagSets: Array<[string, Array<Record<string, boolean>>]> = [
       ['none global', [{}, {}, {}]],
@@ -84091,654 +85319,660 @@ function runCoreSuite(): number {
     );
   }
 
-  // ===========================================================================
-  // A10's looping walk through the core (issue #1025, cut 4c-5a): the walk
-  // `A10_NO_NAN_AFTER_STEPPING` takes — the setup pose reset, then every
-  // animation on a LOOPING track stepped 120 times by max(duration, 1) / 120 —
-  // posed by `src/core/walk.ts` and by spine-core, every number compared at
-  // tolerance 0, a non-finite one included (`compareWalkDocuments`).
-  // ===========================================================================
-  type WalkObj = Record<string, unknown>;
-  /** A bones-only skeleton spelled twice — the Spine file and the model — for the walk's seeded population. */
-  const loopingWalkPair = (rnd: () => number, durations: readonly number[], kinds: { physics: boolean; ik: boolean; transform: boolean; resets: boolean }): { spine: string; model: string; resetsAt: number[] } => {
-    const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
-    const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
-    const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
-    const bones: WalkObj[] = [{ name: 'root' }];
-    for (let j = 1; j <= 6; j++) {
-      const b: WalkObj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
-      if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
-      if (rnd() < 0.3) b.inherit = pick(MODES);
-      bones.push(b);
-    }
-    bones.push({ name: 't', parent: 'root', x: R(-100, 100), y: R(-100, 100) });
-    const names = bones.slice(1, 7).map((b) => b.name as string);
-    const constraints: WalkObj[] = [];
-    if (kinds.ik) constraints.push({ type: 'ik', name: 'ik', bones: [pick(names)], target: 't', mix: pick([1, R(0, 1)]) });
-    if (kinds.transform) constraints.push({ type: 'transform', name: 'tr', bones: [names[5]], source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1) });
-    const physics: string[] = [];
-    if (kinds.physics) {
-      for (let k = 0, n = 1 + Math.floor(rnd() * 2); k < n; k++) {
-        const c: WalkObj = { type: 'physics', name: `p${k}`, bone: pick(names) };
-        for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
-        if (!['x', 'y', 'rotate', 'scaleX', 'shearX'].some((f) => f in c)) c.rotate = 1;
-        for (const [f, lo, hi] of [['inertia', 0, 1], ['strength', 1, 300], ['damping', 0, 1], ['mass', 0.2, 3]] as const) if (rnd() < 0.4) c[f] = R(lo, hi);
-        constraints.push(c);
-        physics.push(c.name as string);
+  unit('CO25+CO26', () => {
+    // ===========================================================================
+    // A10's looping walk through the core (issue #1025, cut 4c-5a): the walk
+    // `A10_NO_NAN_AFTER_STEPPING` takes — the setup pose reset, then every
+    // animation on a LOOPING track stepped 120 times by max(duration, 1) / 120 —
+    // posed by `src/core/walk.ts` and by spine-core, every number compared at
+    // tolerance 0, a non-finite one included (`compareWalkDocuments`).
+    // ===========================================================================
+    type WalkObj = Record<string, unknown>;
+    /** A bones-only skeleton spelled twice — the Spine file and the model — for the walk's seeded population. */
+    const loopingWalkPair = (rnd: () => number, durations: readonly number[], kinds: { physics: boolean; ik: boolean; transform: boolean; resets: boolean }): { spine: string; model: string; resetsAt: number[] } => {
+      const R = (lo: number, hi: number): number => Math.round((lo + rnd() * (hi - lo)) * 1000) / 1000;
+      const pick = <T,>(l: readonly T[]): T => l[Math.floor(rnd() * l.length)];
+      const MODES = ['onlyTranslation', 'noRotationOrReflection', 'noScale', 'noScaleOrReflection'];
+      const bones: WalkObj[] = [{ name: 'root' }];
+      for (let j = 1; j <= 6; j++) {
+        const b: WalkObj = { name: `b${j}`, parent: j === 1 ? 'root' : pick(bones.map((x) => x.name as string)), x: R(-40, 40), y: R(-40, 40), rotation: R(-180, 180), length: R(5, 60) };
+        if (rnd() < 0.3) Object.assign(b, { scaleX: pick([1, -1]) * R(0.3, 2), scaleY: pick([1, -1]) * R(0.3, 2), shearX: R(-30, 30), shearY: R(-30, 30) });
+        if (rnd() < 0.3) b.inherit = pick(MODES);
+        bones.push(b);
       }
-    }
-    const spineAnims: WalkObj = {};
-    const modelAnims: WalkObj[] = [];
-    const resetsAt: number[] = [];
-    durations.forEach((d, ai) => {
-      const keyed = pick(names);
-      const later = (keys: WalkObj[]): WalkObj[] => keys.filter((k, i, a) => i === 0 || (k.time as number) > (a[i - 1].time as number));
-      const group: WalkObj = { [keyed]: { rotate: later([{ time: 0, value: R(-90, 90) }, { time: Math.round(d * 500) / 1000, value: R(-90, 90) }, { time: d, value: R(-90, 90) }]) }, t: { translate: later([{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: d, x: R(-30, 30), y: R(-30, 30) }]) } };
-      const anim: WalkObj = { bones: group };
-      const physicsTimelines: WalkObj[] = [];
-      if (kinds.physics && kinds.resets) {
-        const keyedPhysics: WalkObj = {};
-        for (const name of physics) {
-          const times = [...new Set([pick([0, d, R(0, d)]), pick([0, d, R(0, d)])])].sort((x, y) => x - y);
-          resetsAt.push(...times);
-          const resets = times.map((time) => ({ time }));
-          const mix = [{ time: 0, value: R(0.2, 1) }, ...(d > 0 ? [{ time: d, value: R(0.2, 1) }] : [])];
-          keyedPhysics[name] = { reset: resets, mix };
-          physicsTimelines.push({ name, timelines: [{ name: 'reset', keys: resets }, { name: 'mix', keys: mix }] });
+      bones.push({ name: 't', parent: 'root', x: R(-100, 100), y: R(-100, 100) });
+      const names = bones.slice(1, 7).map((b) => b.name as string);
+      const constraints: WalkObj[] = [];
+      if (kinds.ik) constraints.push({ type: 'ik', name: 'ik', bones: [pick(names)], target: 't', mix: pick([1, R(0, 1)]) });
+      if (kinds.transform) constraints.push({ type: 'transform', name: 'tr', bones: [names[5]], source: 't', properties: { rotate: { to: { rotate: {} } }, x: { to: { x: {} } } }, mixRotate: R(0, 1), mixX: R(0, 1) });
+      const physics: string[] = [];
+      if (kinds.physics) {
+        for (let k = 0, n = 1 + Math.floor(rnd() * 2); k < n; k++) {
+          const c: WalkObj = { type: 'physics', name: `p${k}`, bone: pick(names) };
+          for (const f of ['x', 'y', 'rotate', 'scaleX', 'shearX']) if (rnd() < 0.5) c[f] = pick([1, R(0.05, 2)]);
+          if (!['x', 'y', 'rotate', 'scaleX', 'shearX'].some((f) => f in c)) c.rotate = 1;
+          for (const [f, lo, hi] of [['inertia', 0, 1], ['strength', 1, 300], ['damping', 0, 1], ['mass', 0.2, 3]] as const) if (rnd() < 0.4) c[f] = R(lo, hi);
+          constraints.push(c);
+          physics.push(c.name as string);
         }
-        anim.physics = keyedPhysics;
       }
-      const ikKeys: WalkObj[] = kinds.ik ? [{ time: 0, mix: R(0, 1) }, ...(d > 0 ? [{ time: d, mix: R(0, 1) }] : [])] : [];
-      if (kinds.ik) anim.ik = { ik: ikKeys };
-      spineAnims[`a${ai}`] = anim;
-      modelAnims.push({
-        name: `a${ai}`, duration: 0,
-        bones: Object.entries(group).map(([name, tls]) => ({ name, timelines: Object.entries(tls as WalkObj).map(([k, keys]) => ({ name: k, keys })) })),
-        slots: [], constraints: { ik: kinds.ik ? [{ name: 'ik', keys: ikKeys }] : [], transform: [], path: [], physics: physicsTimelines, slider: [] }, attachments: [], drawOrder: [], events: [],
+      const spineAnims: WalkObj = {};
+      const modelAnims: WalkObj[] = [];
+      const resetsAt: number[] = [];
+      durations.forEach((d, ai) => {
+        const keyed = pick(names);
+        const later = (keys: WalkObj[]): WalkObj[] => keys.filter((k, i, a) => i === 0 || (k.time as number) > (a[i - 1].time as number));
+        const group: WalkObj = { [keyed]: { rotate: later([{ time: 0, value: R(-90, 90) }, { time: Math.round(d * 500) / 1000, value: R(-90, 90) }, { time: d, value: R(-90, 90) }]) }, t: { translate: later([{ time: 0, x: R(-30, 30), y: R(-30, 30) }, { time: d, x: R(-30, 30), y: R(-30, 30) }]) } };
+        const anim: WalkObj = { bones: group };
+        const physicsTimelines: WalkObj[] = [];
+        if (kinds.physics && kinds.resets) {
+          const keyedPhysics: WalkObj = {};
+          for (const name of physics) {
+            const times = [...new Set([pick([0, d, R(0, d)]), pick([0, d, R(0, d)])])].sort((x, y) => x - y);
+            resetsAt.push(...times);
+            const resets = times.map((time) => ({ time }));
+            const mix = [{ time: 0, value: R(0.2, 1) }, ...(d > 0 ? [{ time: d, value: R(0.2, 1) }] : [])];
+            keyedPhysics[name] = { reset: resets, mix };
+            physicsTimelines.push({ name, timelines: [{ name: 'reset', keys: resets }, { name: 'mix', keys: mix }] });
+          }
+          anim.physics = keyedPhysics;
+        }
+        const ikKeys: WalkObj[] = kinds.ik ? [{ time: 0, mix: R(0, 1) }, ...(d > 0 ? [{ time: d, mix: R(0, 1) }] : [])] : [];
+        if (kinds.ik) anim.ik = { ik: ikKeys };
+        spineAnims[`a${ai}`] = anim;
+        modelAnims.push({
+          name: `a${ai}`, duration: 0,
+          bones: Object.entries(group).map(([name, tls]) => ({ name, timelines: Object.entries(tls as WalkObj).map(([k, keys]) => ({ name: k, keys })) })),
+          slots: [], constraints: { ik: kinds.ik ? [{ name: 'ik', keys: ikKeys }] : [], transform: [], path: [], physics: physicsTimelines, slider: [] }, attachments: [], drawOrder: [], events: [],
+        });
       });
-    });
-    return {
-      spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
-      model: JSON.stringify({
-        spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
-        bones: bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
-        slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
-        constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
-        events: [], animations: modelAnims,
-        images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
-      }),
-      resetsAt,
+      return {
+        spine: JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], constraints, skins: [{ name: 'default', attachments: {} }], animations: spineAnims }),
+        model: JSON.stringify({
+          spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE,
+          bones: bones.map(({ inherit, ...b }) => ({ ...b, ...(inherit === undefined ? {} : { inheritMode: inherit }) })),
+          slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }],
+          constraints: constraints.map(({ type, name, ...c }) => ({ kind: type, name, declaredIn: 'rig', ...c })),
+          events: [], animations: modelAnims,
+          images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+        }),
+        resetsAt,
+      };
     };
-  };
-  /** The walk's seeded population: durations under, at and over a second (and 0), physics with reset keys anywhere in the animation, ik and transform. */
-  const WALK_DURATIONS = [0, 0.25, 0.4, 0.5, 0.77, 0.9, 1, 1.2, 2.5];
-  const walkPopulation = (n: number, seed: number): Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> => {
-    const rnd = seededRandom(seed);
-    const out: Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> = [];
-    for (let i = 0; i < n; i++) {
-      const durations = [WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)], WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)]];
-      const kinds = { physics: rnd() < 0.85, ik: rnd() < 0.4, transform: rnd() < 0.4, resets: rnd() < 0.8 };
-      const pair = loopingWalkPair(rnd, durations, kinds);
-      out.push({ i, spine: pair.spine, model: pair.model, physics: kinds.physics, resets: kinds.physics && kinds.resets && pair.resetsAt.length > 0, wraps: durations.some((d) => d < 1) });
-    }
-    return out;
-  };
-  const WALK_N = 60;
-  const walkProbes = walkPopulation(WALK_N, 102505);
-  /** A Spine file and its model document, both forged by `edit` — the walk's non-finite injections, on a built row. */
-  type WalkForge = (spine: WalkObj, model: WalkObj) => boolean;
-  const leafOfBones = (bones: WalkObj[]): WalkObj | undefined => {
-    const parents = new Set(bones.map((b) => b.parent));
-    return [...bones].reverse().find((b) => typeof b.parent === 'string' && !parents.has(b.name));
-  };
-  const firstAnimationOfBoth = (spine: WalkObj, model: WalkObj): { s: WalkObj; m: WalkObj; d: number } | null => {
-    const name = Object.keys((spine.animations ?? {}) as WalkObj)[0];
-    if (name === undefined) return null;
-    const s = (spine.animations as Record<string, WalkObj>)[name];
-    const m = (model.animations as WalkObj[]).find((a) => a.name === name);
-    if (m === undefined) return null;
-    let d = 0;
-    JSON.stringify(s, (k, v: unknown) => {
-      if (k === 'time' && typeof v === 'number') d = Math.max(d, v);
-      return v;
-    });
-    return { s, m, d: d > 0 ? d : 1 };
-  };
-  /** One bone timeline set on both sides: the Spine group's entry, and the document's `{ name, timelines }` list. */
-  const keyBoneOnBoth = (a: { s: WalkObj; m: WalkObj }, bone: string, timeline: string, keys: WalkObj[]): void => {
-    const group = (a.s.bones ??= {}) as Record<string, WalkObj>;
-    group[bone] = { ...(group[bone] ?? {}), [timeline]: keys };
-    const list = a.m.bones as Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }>;
-    let entry = list.find((b) => b.name === bone);
-    if (entry === undefined) {
-      entry = { name: bone, timelines: [] };
-      list.push(entry);
-    }
-    entry.timelines = [...entry.timelines.filter((t) => t.name !== timeline), { name: timeline, keys }];
-  };
-  const ROOT_OF_MAX = Math.sqrt(Number.MAX_VALUE);
-  const scaleChain = (factor: number): WalkForge => (spine, model) => {
-    const leaf = leafOfBones(spine.bones as WalkObj[]);
-    if (leaf === undefined) return false;
-    for (const name of [leaf.name, leaf.parent]) {
-      for (const bones of [spine.bones, model.bones] as WalkObj[][]) {
-        const b = bones.find((x) => x.name === name);
-        if (b !== undefined) b.scaleX = factor;
+    /** The walk's seeded population: durations under, at and over a second (and 0), physics with reset keys anywhere in the animation, ik and transform. */
+    const WALK_DURATIONS = [0, 0.25, 0.4, 0.5, 0.77, 0.9, 1, 1.2, 2.5];
+    const walkPopulation = (n: number, seed: number): Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> => {
+      const rnd = seededRandom(seed);
+      const out: Array<{ i: number; spine: string; model: string; physics: boolean; resets: boolean; wraps: boolean }> = [];
+      for (let i = 0; i < n; i++) {
+        const durations = [WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)], WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)]];
+        const kinds = { physics: rnd() < 0.85, ik: rnd() < 0.4, transform: rnd() < 0.4, resets: rnd() < 0.8 };
+        const pair = loopingWalkPair(rnd, durations, kinds);
+        out.push({ i, spine: pair.spine, model: pair.model, physics: kinds.physics, resets: kinds.physics && kinds.resets && pair.resetsAt.length > 0, wraps: durations.some((d) => d < 1) });
       }
-    }
-    return true;
-  };
-  const WALK_FORGES: Array<[string, WalkForge]> = [
-    // M95b's shape: a parent and its leaf each at twice the square root of the largest double — the leaf's a past it.
-    ['a scale chain past the largest double at the bone', scaleChain(2 * ROOT_OF_MAX)],
-    // M96's shape: nine tenths of it — every bone finite, the leaf's vertices not.
-    ['a scale chain past the largest double at the vertices', scaleChain(0.9 * ROOT_OF_MAX)],
-    // A translate key on a leaf at 2^128, the first number past float32's largest: Infinity once the key is read as float32, from the key on.
-    ['a translate key past float32 halfway through the first animation', (spine, model) => {
-      const leaf = leafOfBones(spine.bones as WalkObj[]);
-      const a = firstAnimationOfBoth(spine, model);
-      if (leaf === undefined || a === null) return false;
-      keyBoneOnBoth(a, leaf.name as string, 'translate', [{ time: 0, x: 0, y: 0 }, { time: a.d / 2, x: 2 ** 128, y: 0 }]);
-      return true;
-    }],
-    // A physics constraint's mass keyed to 0: its inverse Infinity, every offset it integrates NaN.
-    ['a physics mass keyed to 0', (spine, model) => {
-      const c = ((spine.constraints ?? []) as WalkObj[]).find((x) => x.type === 'physics');
-      const a = firstAnimationOfBoth(spine, model);
-      if (c === undefined || a === null) return false;
-      const keys = [{ time: 0, value: 0 }];
-      const group = (a.s.physics ??= {}) as Record<string, WalkObj>;
-      group[c.name as string] = { ...(group[c.name as string] ?? {}), mass: keys };
-      const list = (a.m.constraints as { physics: Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }> }).physics;
-      let entry = list.find((e) => e.name === c.name);
+      return out;
+    };
+    const WALK_N = 60;
+    const walkProbes = walkPopulation(WALK_N, 102505);
+    /** A Spine file and its model document, both forged by `edit` — the walk's non-finite injections, on a built row. */
+    type WalkForge = (spine: WalkObj, model: WalkObj) => boolean;
+    const leafOfBones = (bones: WalkObj[]): WalkObj | undefined => {
+      const parents = new Set(bones.map((b) => b.parent));
+      return [...bones].reverse().find((b) => typeof b.parent === 'string' && !parents.has(b.name));
+    };
+    const firstAnimationOfBoth = (spine: WalkObj, model: WalkObj): { s: WalkObj; m: WalkObj; d: number } | null => {
+      const name = Object.keys((spine.animations ?? {}) as WalkObj)[0];
+      if (name === undefined) return null;
+      const s = (spine.animations as Record<string, WalkObj>)[name];
+      const m = (model.animations as WalkObj[]).find((a) => a.name === name);
+      if (m === undefined) return null;
+      let d = 0;
+      JSON.stringify(s, (k, v: unknown) => {
+        if (k === 'time' && typeof v === 'number') d = Math.max(d, v);
+        return v;
+      });
+      return { s, m, d: d > 0 ? d : 1 };
+    };
+    /** One bone timeline set on both sides: the Spine group's entry, and the document's `{ name, timelines }` list. */
+    const keyBoneOnBoth = (a: { s: WalkObj; m: WalkObj }, bone: string, timeline: string, keys: WalkObj[]): void => {
+      const group = (a.s.bones ??= {}) as Record<string, WalkObj>;
+      group[bone] = { ...(group[bone] ?? {}), [timeline]: keys };
+      const list = a.m.bones as Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }>;
+      let entry = list.find((b) => b.name === bone);
       if (entry === undefined) {
-        entry = { name: c.name as string, timelines: [] };
+        entry = { name: bone, timelines: [] };
         list.push(entry);
       }
-      entry.timelines = [...entry.timelines.filter((t) => t.name !== 'mass'), { name: 'mass', keys }];
-      return true;
-    }],
-  ];
-  /** Every forge on every gallery row it applies to: the forged pair, both walks, the forge's label. */
-  const forgedWalks = (): Array<{ label: string; row: string; spine: string; atlas: string; model: string }> => {
-    const out: Array<{ label: string; row: string; spine: string; atlas: string; model: string }> = [];
-    for (const b of built.filter((r) => r.name.startsWith('gallery/') && r.exits.every((e) => e === 0))) {
-      const spineText = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
-      const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
-      const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
-      for (const [label, forge] of WALK_FORGES) {
-        const spine = JSON.parse(spineText) as WalkObj;
-        const model = JSON.parse(modelText) as WalkObj;
-        if (forge(spine, model)) out.push({ label, row: b.name, spine: JSON.stringify(spine), atlas, model: JSON.stringify(model) });
-      }
-    }
-    return out;
-  };
-  const forged = forgedWalks();
-  /** A seeded probe or a forged row, both walks, compared — `walkPlant` in the core's walk when a plant asks. */
-  const walkOf = (spine: string, atlas: string, model: string, where: string, walkPlant: WalkPlant = {}): WalkComparison | string => {
-    try {
-      return compareWalkDocuments(spineWalkDocument(loadOracleData(spine, atlas, where)), coreWalkDocument(readModel(model, where), undefined, {}, walkPlant));
-    } catch (err) {
-      if (err instanceof CoreInputError) return `${where}: the core refused it — ${err.message}`;
-      throw err;
-    }
-  };
-
-  // --- CO25: A10's looping walk through the core poses every built row, a seeded population and every non-finite injection as spine-core does --
-  {
-    const probes: string[] = [];
-    const sum = { poses: 0, numbers: 0, wrapped: 0, wrappedAnimations: 0, nonFinite: 0 };
-    const add = (c: WalkComparison): void => {
-      for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+      entry.timelines = [...entry.timelines.filter((t) => t.name !== timeline), { name: timeline, keys }];
     };
-    const rows = walkBuilt(built);
-    for (const r of rows) {
-      if (r.comparison !== null) add(r.comparison);
-      if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    }
-    let seededExact = 0;
-    let seededResets = 0;
-    for (const p of walkProbes) {
-      const c = walkOf(p.spine, '', p.model, `walk probe ${p.i}`);
-      if (typeof c === 'string') probes.push(c);
-      else {
-        add(c);
-        if (c.first === null) seededExact++;
-        else if (probes.length < 12) probes.push(`walk probe ${p.i}: ${c.first}`);
-        if (p.resets && p.wraps) seededResets++;
-      }
-    }
-    let forgedExact = 0;
-    let forgedNonFinite = 0;
-    for (const f of forged) {
-      const c = walkOf(f.spine, f.atlas, f.model, `${f.row} with ${f.label}`);
-      if (typeof c === 'string') probes.push(c);
-      else {
-        add(c);
-        if (c.first === null) forgedExact++;
-        else if (probes.length < 12) probes.push(`${f.row} with ${f.label}: ${c.first}`);
-        if (c.nonFinite > 0) forgedNonFinite++;
-      }
-    }
-    // The inactive-bone probes (the production corpus's sign-of-zero rig, rebuilt in public): bones the view leaves inactive that a
-    // transform constraint writes into hold the runtime's previous step — HISTORY (issue #979), counted apart and compared with nothing.
-    const inactiveRows = inactiveWalkProbes();
-    let history = 0;
-    let historySign = 0;
-    for (const r of inactiveRows) {
-      if (r.verdict !== 'IDENTICAL' || r.comparison === null) probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-      else {
-        add(r.comparison);
-        history += r.comparison.historyNumbers;
-        historySign += r.comparison.historySignOnly;
-      }
-    }
-    // Its plants, on the −150° probe (every applied step's four cells of four bones differ in sign alone, as on the production rig):
-    // the HISTORY class taken away, a value off on the inactive bone no constraint writes, and a value off on a HISTORY bone.
-    const pair = inactiveHistoryProbe(-150, 1, false);
-    const spineSide = spineWalkDocument(loadOracleData(pair.spine, '', 'the inactive-bone probe'));
-    const coreSide = (edit: (doc: ReturnType<typeof coreWalkDocument>) => void = () => {}): WalkComparison => {
-      const doc = coreWalkDocument(readModel(pair.model, 'the inactive-bone probe'));
-      edit(doc);
-      return compareWalkDocuments(spineSide, doc);
-    };
-    const offAt = (doc: ReturnType<typeof coreWalkDocument>, bone: string): void => {
-      const row = doc.animations[0].poses[0].bones.find((b) => b[0] === bone);
-      if (row !== undefined) row[5] += 1;
-    };
-    const clean = coreSide();
-    const noClass = coreSide((doc) => void delete doc.history);
-    const freeOff = coreSide((doc) => offAt(doc, 'free'));
-    const historyOff = coreSide((doc) => offAt(doc, 'k0'));
-    if (clean.first !== null || clean.historySignOnly === 0) probes.push(`the −150° probe unplanted: ${clean.first ?? `${clean.historySignOnly} sign-only number(s)`}`);
-    if (noClass.first === null) probes.push('with the HISTORY class taken away the −150° probe still read identical, so the class is not what holds it');
-    if (freeOff.first === null) probes.push('a value off on the inactive bone no constraint writes read identical — the class reaches past the bones a constraint writes');
-    if (historyOff.first !== null || historyOff.historyNumbers - historyOff.historySignOnly !== clean.historyNumbers - clean.historySignOnly + 1) probes.push(`a value off on a HISTORY bone read ${historyOff.first ?? `${historyOff.historyNumbers - historyOff.historySignOnly} value difference(s)`}, not one more value difference counted apart`);
-    probes.push(
-      ...floorProbes(
-        [
-          [sum.wrapped, 1, `${sum.wrapped} step(s) at or past the duration`],
-          [seededResets, 1, `${seededResets} seeded rig(s) keying a physics reset on an animation the walk wraps`],
-          [forgedNonFinite, WALK_FORGES.length, `${forgedNonFinite} forged walk(s) holding a non-finite value`],
-          [historySign, 1, `${historySign} HISTORY number(s) differing only in the sign of zero on the inactive-bone probes`],
-          [history - historySign, 1, `${history - historySign} HISTORY number(s) differing in value on the inactive-bone probes`],
-        ],
-        'so the walk was not held where it differs from the raw entry\'s',
-      ),
-    );
-    const ok = probes.length === 0;
-    say(
-      'CO25_A10S_LOOPING_WALK_THROUGH_THE_CORE_POSES_EVERY_ROW_A_SEEDED_POPULATION_AND_EVERY_NON_FINITE_INJECTION_AS_SPINE_CORE_DOES',
-      ok,
-      probeDetail(
-        ok,
-        probes.slice(0, 12),
-        `${rows.length} built row(s) walked identical (${rows.filter((r) => r.verdict === 'IDENTICAL').length}), ${seededExact} of ${walkProbes.length} seeded rig(s) (durations ${WALK_DURATIONS.join(', ')} s; physics, ik and transform; ${seededResets} keying a physics reset on a walk that wraps) and ${forgedExact} of ${forged.length} forged gallery walk(s) (${WALK_FORGES.map(([label]) => label).join('; ')}) exact: ` +
-          `${sum.poses} pose(s), ${sum.numbers} number(s) at tolerance 0, ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s), ${sum.nonFinite} pose(s) holding a non-finite value, kept in place on both sides; ` +
-          `${inactiveRows.length} inactive-bone probe(s) identical with ${history} HISTORY number(s) counted apart (${historySign} only in the sign of zero, ${history - historySign} in value) on bones a transform constraint writes while the view leaves them inactive; ` +
-          `the class taken away reads ${noClass.first === null ? 'identical' : 'DIFF'}, a value off on the inactive bone nothing writes ${freeOff.first === null ? 'identical' : 'DIFF'}, and one off on a HISTORY bone one more value counted apart`,
-      ),
-      'issue #1025, cut 4c-5a: A10 steps a LOOPING track past the duration and reads the value that is not finite — the two things the raw entry refuses on purpose — so the core walks it in its own entry, held to spine-core taking A10\'s own steps',
-    );
-    if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows, the seeded rigs and the forged walks alone`);
-  }
-
-  // --- CO26: each reading the looping walk rejected, planted in a copy, turns exactly the walks it reads red --
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    // Every walk the plants run on: the seeded rigs, and the forged gallery walks — with what each reaches.
-    const population = [
-      ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, spine: p.spine, atlas: '', model: p.model, physics: p.physics, resets: p.resets, forged: false })),
-      ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, spine: f.spine, atlas: f.atlas, model: f.model, physics: readModel(f.model).constraints.some((c) => c.kind === 'physics'), resets: false, forged: true })),
-    ];
-    const clean = new Map(population.map((p) => [p.where, walkOf(p.spine, p.atlas, p.model, p.where)]));
-    const plants: Array<[string, WalkPlant, (p: (typeof population)[number], c: WalkComparison) => boolean]> = [
-      // The wrap a step late: the first step past each duration applied at the duration, as a holding track would.
-      ['the wrap one step late', { time: (t, d, before) => (d > 0 && Math.floor(before / d) < Math.floor(t / d) ? d : loopedTime(t, d)) }, (_p, c) => c.wrapped > 0],
-      // The physics clock moved by how far the animation time moved rather than by the step: the two differ at the wrap.
-      ['the physics clock moved by the animation time', { clock: (_dt, moved) => moved }, (p) => p.physics],
-      // A non-finite value swallowed as 0, the way a walk reading the raw entry's nulls as numbers would.
-      ['a non-finite value swallowed as 0', { number: (v) => (Number.isFinite(v) ? v : 0) }, (_p, c) => c.nonFinite > 0],
-      // No reset key fired across the wrap — the reading this cut's measurement rejected.
-      ['no physics reset fired across the wrap', { wrapResets: false }, (p) => p.resets],
-    ];
-    for (const [label, plant, reads] of plants) {
-      const red: string[] = [];
-      const outside: string[] = [];
-      for (const p of population) {
-        const base = clean.get(p.where);
-        if (base === undefined || typeof base === 'string') continue;
-        const c = walkOf(p.spine, p.atlas, p.model, p.where, plant);
-        if (typeof c === 'string' || c.first === null) continue;
-        red.push(p.where);
-        if (!reads(p, base)) outside.push(p.where);
-      }
-      if (red.length === 0) probes.push(`${label}: no walk turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
-      read.push(`${label} → ${red.length} walk(s) red`);
-    }
-    // The non-finite plant reaches the forged walks and nothing else: every forged walk holding one turns red.
-    const swallowed = population.filter((p) => p.forged).filter((p) => {
-      const base = clean.get(p.where);
-      if (base === undefined || typeof base === 'string' || base.nonFinite === 0) return false;
-      const c = walkOf(p.spine, p.atlas, p.model, p.where, { number: (v) => (Number.isFinite(v) ? v : 0) });
-      return typeof c !== 'string' && c.first === null;
-    });
-    if (swallowed.length > 0) probes.push(`a non-finite value swallowed left [${swallowed.map((p) => p.where).slice(0, 4).join(', ')}] green`);
-    const ok = probes.length === 0;
-    say(
-      'CO26_EACH_READING_THE_LOOPING_WALK_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_WALKS_READING_IT_RED',
-      ok,
-      probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
-      'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
-    );
-  }
-
-  // ===========================================================================
-  // No skin set (issue #1051): what a fresh skeleton whose `setSkin` was never
-  // called shows over a document with skins and no `default` one, and over a
-  // `default` skin naming skin-required members — `underNoSkin`, posed through
-  // `noSkinView` by `render`, A10's walk and the model side of `validate()`.
-  // ===========================================================================
-  const noSkinWork = join(work, 'noskin');
-  const NOSKIN_MODES = ['none', 'plain', 'members'] as const;
-  const NOSKIN_N = 90;
-  const noSkinRnd = seededRandom(105101);
-  const noSkinPopulation: BuiltRow[] = [
-    ...noSkinProbeBuilds(join(noSkinWork, 'probes')),
-    ...Array.from({ length: NOSKIN_N }, (_v, i) => buildSpineSkeleton(`noskin seed ${i} (${NOSKIN_MODES[i % 3]})`, noSkinSeedSkeleton(noSkinRnd, NOSKIN_MODES[i % 3]), NOSKIN_SEED_ATLAS, join(noSkinWork, `seed${i}`))),
-  ];
-  const noSkinDocs = new Map(noSkinPopulation.filter((b) => b.exits.every((e) => e === 0)).map((b) => [b.name, readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)] as const));
-
-  // --- CO29: the no-skin view poses the probes and a seeded population as spine-core does, grid, raw, stepped, unposed and walked --
-  {
-    const probes: string[] = [];
-    for (const b of noSkinPopulation) if (b.exits.some((e) => e !== 0)) probes.push(`${b.name} did not build: ${readFileSync(join(b.out, '..', 'refused.txt'), 'utf8').trim().slice(0, 200)}`);
-    const rows = [...noSkinPopulation.filter((b) => noSkinDocs.has(b.name)).map((b) => noSkinRun(b.name, b.out, true))];
-    for (const r of rows) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    const walks = walkBuilt(noSkinPopulation.filter((b) => noSkinDocs.has(b.name)));
-    for (const w of walks) if (w.verdict !== 'IDENTICAL') probes.push(`${w.name} walked: ${w.verdict} — ${w.why}`);
-    // The tree's own rows in the class, posed the same way — none on a corpus whose every row has a plain default skin, which is said, not passed.
-    const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null);
-    for (const r of corpus.map((b) => noSkinRun(b.name, b.out, true))) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
-    // What the population reaches, off the documents: each class, and each construct the rule separates.
-    const docs = [...noSkinDocs.values()];
-    const byClass = (k: string | null): number => docs.filter((d) => noSkinClass(d) === k).length;
-    const fallback = (d: CompiledDocument): CompiledDocument['skins'][number] | undefined => d.skins.find((k) => k.name === 'default');
-    const writers = (d: CompiledDocument): Set<string> => new Set(d.constraints.flatMap((c) => (c.record !== undefined && 'bones' in c.record ? (c.record.bones as string[]) : [])));
-    const reach = {
-      defaultBones: docs.reduce((n, d) => n + (fallback(d)?.bones.length ?? 0), 0),
-      defaultConstraints: docs.reduce((n, d) => n + Object.values(fallback(d)?.constraints ?? {}).reduce((m, l) => m + l.length, 0), 0),
-      written: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && writers(d).has(b.name)).length, 0),
-      unwritten: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && !writers(d).has(b.name)).length, 0),
-      parents: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired !== true && d.bones.some((p) => p.name === b.parent && p.skinRequired === true)).length, 0),
-      namedOnly: docs.reduce((n, d) => n + d.slots.filter((sl) => sl.setup !== null && fallback(d)?.attachments[sl.name]?.[sl.setup] === undefined && d.skins.some((k) => k.attachments[sl.name]?.[sl.setup as string] !== undefined)).length, 0),
-    };
-    const sum = (f: (r: (typeof rows)[number]) => number): number => rows.reduce((n, r) => n + f(r), 0);
-    const walked = walks.reduce((n, w) => n + (w.comparison?.poses ?? 0), 0);
-    const history = walks.reduce((n, w) => n + (w.comparison?.historyNumbers ?? 0), 0);
-    probes.push(
-      ...floorProbes(
-        [
-          [byClass('no default skin'), NOSKIN_N / 3, `${byClass('no default skin')} document(s) with skins and no default one`],
-          [byClass('a default skin naming skin-required members'), NOSKIN_N / 3, `${byClass('a default skin naming skin-required members')} with a default skin naming skin-required members`],
-          [byClass(null), NOSKIN_N / 3, `${byClass(null)} with a plain default skin`],
-          [reach.defaultBones, 1, `${reach.defaultBones} skin-required bone(s) a default skin names`],
-          [reach.defaultConstraints, 1, `${reach.defaultConstraints} skin-required constraint(s) a default skin lists`],
-          [reach.written, 1, `${reach.written} skin-required bone(s) a constraint writes`],
-          [reach.unwritten, 1, `${reach.unwritten} skin-required bone(s) no constraint writes`],
-          [reach.parents, 1, `${reach.parents} bone(s) that are not skin-required under one that is`],
-          [reach.namedOnly, 1, `${reach.namedOnly} slot(s) whose setup placeholder only a named skin fills`],
-          [sum((r) => r.unposed?.boneSamples ?? 0), 1, 'unposed bone-samples compared to the bit'],
-          [history, 1, `${history} HISTORY number(s) on the walk (issue #979's class, counted apart)`],
-        ],
-        'so the no-skin rule was not held where it separates one reading from another',
-      ),
-    );
-    const ok = probes.length === 0;
-    say(
-      'CO29_THE_NO_SKIN_VIEW_POSES_THE_PROBES_AND_A_SEEDED_POPULATION_AS_SPINE_CORE_DOES_WITH_NO_SKIN_SET',
-      ok,
-      probeDetail(
-        ok,
-        probes.slice(0, 12),
-        `${rows.length} build(s) — the three probes and ${NOSKIN_N} seeded skeletons rebuilt through ingest and compile, ${byClass('no default skin')} with skins and no default one, ${byClass('a default skin naming skin-required members')} whose default names skin-required members, ${byClass(null)} with a plain default — ` +
-          `posed with no skin set by both dumpers under --raw at tolerance 0: every block, the stepped run and the unposed bones IDENTICAL over ${sum((r) => r.boneSamples)} bone-sample(s), ${sum((r) => r.slotRows)} slot row(s), ${sum((r) => r.attachmentRows)} setup attachment row(s), ${sum((r) => r.unposed?.boneSamples ?? 0)} unposed bone-sample(s) to the bit (${sum((r) => r.inactive)} bone(s) inactive at setup); ` +
-          `A10's walk identical on every one over ${walked} pose(s), ${history} HISTORY number(s) counted apart; reached: ${reach.defaultBones} skin-required bone(s) and ${reach.defaultConstraints} constraint(s) a default skin names, ${reach.written} skin-required bone(s) a constraint writes and ${reach.unwritten} none does, ${reach.parents} bone(s) under a skin-required one, ${reach.namedOnly} slot(s) only a named skin fills; ` +
-          `${corpus.length} tree row(s) in the class${corpus.length === 0 ? ' (every tree row has a plain default skin, so the probes and the seeds are the reading)' : ''}`,
-      ),
-      'issue #1051: the core refused to pose with no skin set over a document with skins and no default one, and over a default skin naming skin-required members, because that view was not measured; measured, a fresh skeleton applies no skin\'s bones or constraints — the default skin\'s included — and resolves every slot through the default skin alone, or through nothing',
-    );
-  }
-
-  // --- CO30: each reading the no-skin measurement rejected, planted in the view, turns exactly the builds it reads red --
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    const emptied = (k: CompiledDocument['skins'][number], what: 'bones' | 'constraints' | 'both'): CompiledDocument['skins'][number] => ({
-      ...k,
-      bones: what === 'constraints' ? k.bones : [],
-      constraints: what === 'bones' ? k.constraints : { ik: [], transform: [], path: [], physics: [], slider: [] },
-    });
-    const fallbackOf = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name === 'default');
-    /** The document's default skin with `what` kept and the rest emptied, posed as the named skin it is — or the measured view where there is no default skin. */
-    const asDefault = (what: 'bones' | 'constraints' | 'both') => (m: CompiledDocument): CompiledDocument => {
-      if (fallbackOf(m) === undefined) return underNoSkin(m);
-      const keep = what === 'both' ? null : what === 'bones' ? 'constraints' : 'bones';
-      return underSkin({ ...m, skins: m.skins.map((k) => (k.name === 'default' && keep !== null ? emptied(k, keep) : k)) }, 'default');
-    };
-    const firstNamed = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name !== 'default');
-    const plants: Array<[string, (m: CompiledDocument) => CompiledDocument, (d: CompiledDocument) => boolean, boolean]> = [
-      // Every skin-required bone posed as active, as if the flag were not read with no skin set.
-      ['a skin-required bone posed as active', (m) => underNoSkin({ ...m, bones: m.bones.map(({ skinRequired: _flag, ...b }) => b) }), (d) => d.bones.some((b) => b.skinRequired === true), true],
-      // The default skin's bones applied with no skin set, its constraints not.
-      ["the default skin's bones activated", asDefault('bones'), (d) => (fallbackOf(d)?.bones.length ?? 0) > 0, true],
-      // The default skin's constraints applied with no skin set, its bones not — red only where an applied one moves the pose.
-      ["the default skin's constraints applied", asDefault('constraints'), (d) => Object.values(fallbackOf(d)?.constraints ?? {}).some((l) => l.length > 0), false],
-      // The reading the refusal stood in for: no skin set read as the default skin, both lists applied.
-      ['no skin set read as the default skin', asDefault('both'), (d) => noSkinClass(d) === 'a default skin naming skin-required members', true],
-      // A slot resolved through the first named skin as well, as if the runtime fell back to the first skin where there is no default.
-      ['a slot showing what the first named skin gives it', (m) => {
-        const first = firstNamed(m);
-        return first === undefined ? underNoSkin(m) : underSkin({ ...m, skins: m.skins.map((k) => (k === first ? emptied(k, 'both') : k)) }, first.name);
-      }, (d) => {
-        const first = firstNamed(d);
-        return first !== undefined && d.slots.some((sl) => sl.setup !== null && first.attachments[sl.name]?.[sl.setup] !== undefined);
-      }, true],
-    ];
-    const population = noSkinPopulation.filter((b) => noSkinDocs.has(b.name));
-    for (const [label, view, reads, exact] of plants) {
-      const red: string[] = [];
-      const predicted = population.filter((b) => reads(noSkinDocs.get(b.name) as CompiledDocument)).map((b) => b.name);
-      for (const b of population) {
-        const r = noSkinRun(b.name, b.out, true, (m) => view(m));
-        if (r.verdict !== 'IDENTICAL') red.push(b.name);
-      }
-      const outside = red.filter((n) => !predicted.includes(n));
-      const quiet = predicted.filter((n) => !red.includes(n));
-      if (red.length === 0) probes.push(`${label}: no build turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
-      if (exact && quiet.length > 0) probes.push(`${label}: [${quiet.slice(0, 4).join(', ')}] read it and stayed green`);
-      read.push(`${label} → ${red.length} of ${predicted.length} reading it red`);
-    }
-    // The walk under the reading the refusal stood in for: red only on the documents whose default skin names members.
-    const walkRed: string[] = [];
-    for (const b of population) {
-      const pair = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => readFileSync(join(b.out, f), 'utf8'));
-      const c = compareWalkDocuments(spineWalkDocument(loadOracleData(pair[0], pair[1], b.name)), coreWalkDocument(readModel(pair[2], b.name), undefined, {}, {}, asDefault('both')));
-      if (c.first !== null) walkRed.push(b.name);
-    }
-    const walkOutside = walkRed.filter((n) => noSkinClass(noSkinDocs.get(n) as CompiledDocument) !== 'a default skin naming skin-required members');
-    if (walkRed.length === 0) probes.push('no skin set read as the default skin, on the walk: no walk turned red');
-    if (walkOutside.length > 0) probes.push(`no skin set read as the default skin, on the walk: red on [${walkOutside.slice(0, 4).join(', ')}], whose default skin names nothing`);
-    read.push(`the same on A10's walk → ${walkRed.length} walk(s) red, every one a default skin naming members`);
-    const ok = probes.length === 0;
-    say(
-      'CO30_EACH_NO_SKIN_READING_THE_MEASUREMENT_REJECTED_PLANTED_IN_THE_VIEW_TURNS_ONLY_THE_BUILDS_READING_IT_RED',
-      ok,
-      probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
-      'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
-    );
-  }
-
-  // --- CO31 and CO32: a slider's physics keys under the step (issue #1049) --
-  //
-  // Until issue #1049 the core applied none of a slider's physics keys, and on the selftest's own
-  // builds where a dial's animation keys `wind` or `gravity` of a constraint after it the bones left
-  // spine-core from the third step; a probe with a slot on the physics bone drew wrong frames through
-  // `render` with no refusal. The rule (`./src/core/constraints_slider.ts`, *Its physics timelines*)
-  // is held here on the core_gate probe rows and a seeded population, on all three stepped entries:
-  // A10's looping walk, `render`'s recipe on the raw entry (60 and 12 fps), and the oracle's stepped
-  // grid under `--raw`, every number at tolerance 0.
-  const SLIDER_PHYSICS_N = 150;
-  const sliderPhysicsRigs = (() => {
-    const rnd = seededRandom(104901);
-    return [
-      ...SLIDER_PHYSICS_PROBES.map(([label, shape]) => ({ where: `probe "${label}"`, shape })),
-      ...Array.from({ length: SLIDER_PHYSICS_N }, (_v, i) => ({ where: `slider-physics rig ${i}`, shape: sliderPhysicsShape(rnd) })),
-    ].map((r) => ({ ...r, pair: sliderPhysicsPair(r.shape) }));
-  })();
-  /** Every key a slider's animation holds on a physics timeline, with the slider's own flags. */
-  const sliderPhysicsKeys = (shape: SliderPhysicsShape): Array<{ slider: string; additive: boolean; kind: string; target: string; before: boolean }> =>
-    shape.sliders.flatMap((s) =>
-      (shape.animations.find((a) => a.name === s.animation)?.physics ?? []).map((k) => ({
-        slider: s.name,
-        additive: s.fields.additive === true,
-        kind: k.kind,
-        target: k.name,
-        // A named constraint updating before the slider: what the slider writes is not read this pass.
-        before: k.name !== '*' && shape.order.indexOf(k.name) < shape.order.indexOf(s.name),
-      })),
-    );
-  const STEPPED_RAW: OracleOptions = { ...STEPPED_OPTIONS, raw: true };
-  const PHYSICS_FIELDS = ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const;
-  /** spine-core's side of one rig on the three entries, taken once: the walk, each render frame's bones, the stepped grid. */
-  const sliderPhysicsSpine = sliderPhysicsRigs.map((r) => {
-    const data = loadOracleData(r.pair.spine, '', r.where);
-    const frames: Array<{ animation: string; fps: number; bones: number[][] }> = [];
-    for (const fps of [60, 12]) {
-      for (const anim of data.animations) {
-        const n = Math.round(anim.duration * fps) + 3;
-        const skeleton = new Skeleton(data);
-        const state = new AnimationState(new AnimationStateData(data));
-        state.setAnimation(0, anim.name, false);
-        skeleton.setupPose();
-        const bones: number[][] = [];
-        for (let i = 0; i <= n; i++) {
-          if (i > 0) {
-            state.update(1 / fps);
-            state.apply(skeleton);
-            skeleton.update(1 / fps);
-            skeleton.updateWorldTransform(Physics.update);
-          } else {
-            state.apply(skeleton);
-            skeleton.update(0);
-            skeleton.updateWorldTransform(Physics.reset);
-          }
-          bones.push(skeleton.bones.flatMap((b) => PHYSICS_FIELDS.map((f) => b.appliedPose[f])));
+    const ROOT_OF_MAX = Math.sqrt(Number.MAX_VALUE);
+    const scaleChain = (factor: number): WalkForge => (spine, model) => {
+      const leaf = leafOfBones(spine.bones as WalkObj[]);
+      if (leaf === undefined) return false;
+      for (const name of [leaf.name, leaf.parent]) {
+        for (const bones of [spine.bones, model.bones] as WalkObj[][]) {
+          const b = bones.find((x) => x.name === name);
+          if (b !== undefined) b.scaleX = factor;
         }
-        frames.push({ animation: anim.name, fps, bones });
       }
-    }
-    return { walk: spineWalkDocument(data), frames, grid: dumpSkeleton(data, STEPPED_RAW) };
-  });
-  /** The core's side of rig `k` against spine-core's, under `plant`: the first difference on any entry, or null, with what was compared. */
-  const sliderPhysicsRun = (k: number, plant: TimelinePlant = {}): { first: string | null; walkPoses: number; frames: number; numbers: number } => {
-    const r = sliderPhysicsRigs[k];
-    const spine = sliderPhysicsSpine[k];
-    const model = readModel(r.pair.model, r.where);
-    const walk = compareWalkDocuments(spine.walk, coreWalkDocument(model, undefined, plant));
-    let first = walk.first === null ? null : `${r.where} walk: ${walk.first}`;
-    let numbers = walk.numbers;
-    const doc = underSkin(model, 'default');
-    for (const f of spine.frames) {
-      const poses = poseRawAnimation(doc, f.animation, new Array<number>(f.bones.length - 1).fill(1 / f.fps), plant);
-      poses.forEach((p, i) => {
-        const ours = p.bones.flatMap((b) => PHYSICS_FIELDS.map((x) => b[x]));
-        numbers += ours.length;
-        const at = ours.findIndex((v, j) => !Object.is(v, f.bones[i][j]));
-        if (at >= 0) first ??= `${r.where} render ${f.fps} fps "${f.animation}" frame ${i}: bone "${p.bones[Math.floor(at / 6)].name}" ${PHYSICS_FIELDS[at % 6]} ${f.bones[i][at]} in spine-core, ${ours[at]} in the core`;
-      });
-    }
-    const grid = compareDumps(spine.grid, coreDump(model, STEPPED_RAW, plant, uvSourceOf('', r.pair.model)), { xy: 0, m: 0 });
-    if (!grid.identical) first ??= `${r.where} stepped grid: ${grid.first}`;
-    return { first, walkPoses: walk.poses, frames: spine.frames.reduce((n, f) => n + f.bones.length, 0), numbers };
-  };
-  const sliderPhysicsClean = sliderPhysicsRigs.map((_r, k) => sliderPhysicsRun(k));
-  {
-    const probes: string[] = [];
-    let exact = 0;
-    const sum = { walkPoses: 0, frames: 0, numbers: 0 };
-    sliderPhysicsClean.forEach((c) => {
-      for (const key of Object.keys(sum) as Array<keyof typeof sum>) sum[key] += c[key];
-      if (c.first === null) exact++;
-      else if (probes.length < 12) probes.push(c.first);
-    });
-    const keys = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
-    const rigsWith = (f: (k: ReturnType<typeof sliderPhysicsKeys>[number], shape: SliderPhysicsShape) => boolean): number => keys.filter((list, i) => list.some((k) => f(k, sliderPhysicsRigs[i].shape))).length;
-    const reach: Array<[number, string]> = [
-      [rigsWith((k) => k.kind !== 'reset' && !k.before), 'a slider keying a constraint that updates after it'],
-      [rigsWith((k) => k.kind !== 'reset' && k.before), 'a slider keying a constraint that updates before it'],
-      [rigsWith((k) => k.additive && (k.kind === 'wind' || k.kind === 'gravity')), 'an additive slider keying wind or gravity'],
-      [rigsWith((k) => k.additive && !['wind', 'gravity', 'reset'].includes(k.kind)), 'an additive slider keying a value that does not add'],
-      [rigsWith((k) => !k.additive && k.kind !== 'reset'), 'a slider that is not additive'],
-      [rigsWith((k) => k.kind === 'mass'), 'a mass key'],
-      [rigsWith((k) => k.kind === 'mix'), 'a mix key'],
-      [rigsWith((k) => k.kind === 'reset'), 'a reset key'],
-      [rigsWith((k) => k.target === '*'), 'the timeline naming no constraint'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.mix !== undefined)), 'a slider at a mix other than 1'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.loop === true)), 'a looping slider'],
-      [rigsWith((_k, s) => s.sliders.some((x) => x.fields.bone === undefined)), 'a bone-less slider'],
-      [rigsWith((_k, s) => s.animations.some((a) => a.name === 'sway' && a.sliders.length > 0)), 'a track keying a slider\'s time or mix'],
+      return true;
+    };
+    const WALK_FORGES: Array<[string, WalkForge]> = [
+      // M95b's shape: a parent and its leaf each at twice the square root of the largest double — the leaf's a past it.
+      ['a scale chain past the largest double at the bone', scaleChain(2 * ROOT_OF_MAX)],
+      // M96's shape: nine tenths of it — every bone finite, the leaf's vertices not.
+      ['a scale chain past the largest double at the vertices', scaleChain(0.9 * ROOT_OF_MAX)],
+      // A translate key on a leaf at 2^128, the first number past float32's largest: Infinity once the key is read as float32, from the key on.
+      ['a translate key past float32 halfway through the first animation', (spine, model) => {
+        const leaf = leafOfBones(spine.bones as WalkObj[]);
+        const a = firstAnimationOfBoth(spine, model);
+        if (leaf === undefined || a === null) return false;
+        keyBoneOnBoth(a, leaf.name as string, 'translate', [{ time: 0, x: 0, y: 0 }, { time: a.d / 2, x: 2 ** 128, y: 0 }]);
+        return true;
+      }],
+      // A physics constraint's mass keyed to 0: its inverse Infinity, every offset it integrates NaN.
+      ['a physics mass keyed to 0', (spine, model) => {
+        const c = ((spine.constraints ?? []) as WalkObj[]).find((x) => x.type === 'physics');
+        const a = firstAnimationOfBoth(spine, model);
+        if (c === undefined || a === null) return false;
+        const keys = [{ time: 0, value: 0 }];
+        const group = (a.s.physics ??= {}) as Record<string, WalkObj>;
+        group[c.name as string] = { ...(group[c.name as string] ?? {}), mass: keys };
+        const list = (a.m.constraints as { physics: Array<{ name: string; timelines: Array<{ name: string; keys: WalkObj[] }> }> }).physics;
+        let entry = list.find((e) => e.name === c.name);
+        if (entry === undefined) {
+          entry = { name: c.name as string, timelines: [] };
+          list.push(entry);
+        }
+        entry.timelines = [...entry.timelines.filter((t) => t.name !== 'mass'), { name: 'mass', keys }];
+        return true;
+      }],
     ];
-    probes.push(...floorProbes(reach.map(([n, what]): [number, number, string] => [n, 1, `${n} rig(s) with ${what}`]), 'so the population does not reach every part of the rule'));
-    const ok = probes.length === 0;
-    say(
-      'CO31_A_SLIDERS_PHYSICS_KEYS_POSE_UNDER_THE_STEP_AS_SPINE_CORE_POSES_THEM_ON_THE_WALK_THE_RAW_ENTRY_AND_THE_STEPPED_GRID',
-      ok,
-      probeDetail(
+    /** Every forge on every gallery row it applies to: the forged pair, both walks, the forge's label. */
+    const forgedWalks = (): Array<{ label: string; row: string; spine: string; atlas: string; model: string }> => {
+      const out: Array<{ label: string; row: string; spine: string; atlas: string; model: string }> = [];
+      for (const b of built.filter((r) => r.name.startsWith('gallery/') && r.exits.every((e) => e === 0))) {
+        const spineText = readFileSync(join(b.out, 'skeleton.json'), 'utf8');
+        const modelText = readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8');
+        const atlas = readFileSync(join(b.out, 'skeleton.atlas'), 'utf8');
+        for (const [label, forge] of WALK_FORGES) {
+          const spine = JSON.parse(spineText) as WalkObj;
+          const model = JSON.parse(modelText) as WalkObj;
+          if (forge(spine, model)) out.push({ label, row: b.name, spine: JSON.stringify(spine), atlas, model: JSON.stringify(model) });
+        }
+      }
+      return out;
+    };
+    const forged = forgedWalks();
+    /** A seeded probe or a forged row, both walks, compared — `walkPlant` in the core's walk when a plant asks. */
+    const walkOf = (spine: string, atlas: string, model: string, where: string, walkPlant: WalkPlant = {}): WalkComparison | string => {
+      try {
+        return compareWalkDocuments(spineWalkDocument(loadOracleData(spine, atlas, where)), coreWalkDocument(readModel(model, where), undefined, {}, walkPlant));
+      } catch (err) {
+        if (err instanceof CoreInputError) return `${where}: the core refused it — ${err.message}`;
+        throw err;
+      }
+    };
+
+    // --- CO25: A10's looping walk through the core poses every built row, a seeded population and every non-finite injection as spine-core does --
+    {
+      const probes: string[] = [];
+      const sum = { poses: 0, numbers: 0, wrapped: 0, wrappedAnimations: 0, nonFinite: 0 };
+      const add = (c: WalkComparison): void => {
+        for (const k of Object.keys(sum) as Array<keyof typeof sum>) sum[k] += c[k];
+      };
+      const rows = walkBuilt(built);
+      for (const r of rows) {
+        if (r.comparison !== null) add(r.comparison);
+        if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      }
+      let seededExact = 0;
+      let seededResets = 0;
+      for (const p of walkProbes) {
+        const c = walkOf(p.spine, '', p.model, `walk probe ${p.i}`);
+        if (typeof c === 'string') probes.push(c);
+        else {
+          add(c);
+          if (c.first === null) seededExact++;
+          else if (probes.length < 12) probes.push(`walk probe ${p.i}: ${c.first}`);
+          if (p.resets && p.wraps) seededResets++;
+        }
+      }
+      let forgedExact = 0;
+      let forgedNonFinite = 0;
+      for (const f of forged) {
+        const c = walkOf(f.spine, f.atlas, f.model, `${f.row} with ${f.label}`);
+        if (typeof c === 'string') probes.push(c);
+        else {
+          add(c);
+          if (c.first === null) forgedExact++;
+          else if (probes.length < 12) probes.push(`${f.row} with ${f.label}: ${c.first}`);
+          if (c.nonFinite > 0) forgedNonFinite++;
+        }
+      }
+      // The inactive-bone probes (the production corpus's sign-of-zero rig, rebuilt in public): bones the view leaves inactive that a
+      // transform constraint writes into hold the runtime's previous step — HISTORY (issue #979), counted apart and compared with nothing.
+      const inactiveRows = inactiveWalkProbes();
+      let history = 0;
+      let historySign = 0;
+      for (const r of inactiveRows) {
+        if (r.verdict !== 'IDENTICAL' || r.comparison === null) probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+        else {
+          add(r.comparison);
+          history += r.comparison.historyNumbers;
+          historySign += r.comparison.historySignOnly;
+        }
+      }
+      // Its plants, on the −150° probe (every applied step's four cells of four bones differ in sign alone, as on the production rig):
+      // the HISTORY class taken away, a value off on the inactive bone no constraint writes, and a value off on a HISTORY bone.
+      const pair = inactiveHistoryProbe(-150, 1, false);
+      const spineSide = spineWalkDocument(loadOracleData(pair.spine, '', 'the inactive-bone probe'));
+      const coreSide = (edit: (doc: ReturnType<typeof coreWalkDocument>) => void = () => {}): WalkComparison => {
+        const doc = coreWalkDocument(readModel(pair.model, 'the inactive-bone probe'));
+        edit(doc);
+        return compareWalkDocuments(spineSide, doc);
+      };
+      const offAt = (doc: ReturnType<typeof coreWalkDocument>, bone: string): void => {
+        const row = doc.animations[0].poses[0].bones.find((b) => b[0] === bone);
+        if (row !== undefined) row[5] += 1;
+      };
+      const clean = coreSide();
+      const noClass = coreSide((doc) => void delete doc.history);
+      const freeOff = coreSide((doc) => offAt(doc, 'free'));
+      const historyOff = coreSide((doc) => offAt(doc, 'k0'));
+      if (clean.first !== null || clean.historySignOnly === 0) probes.push(`the −150° probe unplanted: ${clean.first ?? `${clean.historySignOnly} sign-only number(s)`}`);
+      if (noClass.first === null) probes.push('with the HISTORY class taken away the −150° probe still read identical, so the class is not what holds it');
+      if (freeOff.first === null) probes.push('a value off on the inactive bone no constraint writes read identical — the class reaches past the bones a constraint writes');
+      if (historyOff.first !== null || historyOff.historyNumbers - historyOff.historySignOnly !== clean.historyNumbers - clean.historySignOnly + 1) probes.push(`a value off on a HISTORY bone read ${historyOff.first ?? `${historyOff.historyNumbers - historyOff.historySignOnly} value difference(s)`}, not one more value difference counted apart`);
+      probes.push(
+        ...floorProbes(
+          [
+            [sum.wrapped, 1, `${sum.wrapped} step(s) at or past the duration`],
+            [seededResets, 1, `${seededResets} seeded rig(s) keying a physics reset on an animation the walk wraps`],
+            [forgedNonFinite, WALK_FORGES.length, `${forgedNonFinite} forged walk(s) holding a non-finite value`],
+            [historySign, 1, `${historySign} HISTORY number(s) differing only in the sign of zero on the inactive-bone probes`],
+            [history - historySign, 1, `${history - historySign} HISTORY number(s) differing in value on the inactive-bone probes`],
+          ],
+          'so the walk was not held where it differs from the raw entry\'s',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO25_A10S_LOOPING_WALK_THROUGH_THE_CORE_POSES_EVERY_ROW_A_SEEDED_POPULATION_AND_EVERY_NON_FINITE_INJECTION_AS_SPINE_CORE_DOES',
         ok,
-        probes.slice(0, 12),
-        `${exact} of ${sliderPhysicsRigs.length} rig(s) exact — the ${SLIDER_PHYSICS_PROBES.length} core_gate probe rows and ${SLIDER_PHYSICS_N} seeded — on A10's looping walk (${sum.walkPoses} pose(s)), render's recipe on the raw entry at 60 and 12 fps (${sum.frames} frame(s)) and the oracle's stepped grid under --raw: ${sum.numbers} walk and frame number(s) at tolerance 0; the population reaches ${reach.map(([n, what]) => `${what} (${n})`).join(', ')}`,
-      ),
-      'issue #1049: a slider applies its animation\'s physics keys to the pass\'s physics records at its place in the update order — the core applied none of them, and a constraint after the slider integrated without the wind or gravity it wrote: render drew a wrong frame with no refusal and A10\'s walk refused the class by name',
-    );
-  }
-  {
-    const probes: string[] = [];
-    const read: string[] = [];
-    const keysOf = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
-    const plants: Array<[string, Partial<SolverRules>, (keys: ReturnType<typeof sliderPhysicsKeys>) => boolean]> = [
-      ['a slider\'s physics keys write nothing (the core before issue #1049)', { sliderWritesPhysics: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before)],
-      ['a key that does not add blends from the setup value, not the current one', { sliderPhysicsFromCurrent: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before && !(k.additive && (k.kind === 'wind' || k.kind === 'gravity')))],
-      ['every value kind adds under an additive slider', { sliderPhysicsAddsWindGravityOnly: false }, (keys) => keys.some((k) => k.additive && !k.before && !['wind', 'gravity', 'reset'].includes(k.kind))],
-      ['a mass key blends the inverse mass', { sliderPhysicsBlendsMass: false }, (keys) => keys.some((k) => k.kind === 'mass' && !k.before)],
-      // A write that outlasts its pass reaches a constraint before the slider too, on the next step.
-      ['what a slider wrote stands on the next step', { sliderPhysicsLastsOnePass: false }, (keys) => keys.some((k) => k.kind !== 'reset')],
-      ['a reset key at or before the slider\'s time fires on every pass', { sliderPhysicsResetIsDead: false }, (keys) => keys.some((k) => k.kind === 'reset')],
-    ];
-    for (const [label, solver, reads] of plants) {
-      const red: string[] = [];
-      const outside: string[] = [];
-      sliderPhysicsRigs.forEach((r, k) => {
-        if (sliderPhysicsClean[k].first !== null || sliderPhysicsRun(k, { solver }).first === null) return;
-        red.push(r.where);
-        if (!reads(keysOf[k])) outside.push(r.where);
-      });
-      if (red.length === 0) probes.push(`${label}: no rig turned red`);
-      if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which key nothing it reads`);
-      read.push(`${label} → ${red.length} rig(s) red${red.some((w) => w.startsWith('probe')) ? ` (${red.filter((w) => w.startsWith('probe')).length} probe row(s))` : ''}`);
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${rows.length} built row(s) walked identical (${rows.filter((r) => r.verdict === 'IDENTICAL').length}), ${seededExact} of ${walkProbes.length} seeded rig(s) (durations ${WALK_DURATIONS.join(', ')} s; physics, ik and transform; ${seededResets} keying a physics reset on a walk that wraps) and ${forgedExact} of ${forged.length} forged gallery walk(s) (${WALK_FORGES.map(([label]) => label).join('; ')}) exact: ` +
+            `${sum.poses} pose(s), ${sum.numbers} number(s) at tolerance 0, ${sum.wrapped} step(s) at or past the duration in ${sum.wrappedAnimations} animation(s), ${sum.nonFinite} pose(s) holding a non-finite value, kept in place on both sides; ` +
+            `${inactiveRows.length} inactive-bone probe(s) identical with ${history} HISTORY number(s) counted apart (${historySign} only in the sign of zero, ${history - historySign} in value) on bones a transform constraint writes while the view leaves them inactive; ` +
+            `the class taken away reads ${noClass.first === null ? 'identical' : 'DIFF'}, a value off on the inactive bone nothing writes ${freeOff.first === null ? 'identical' : 'DIFF'}, and one off on a HISTORY bone one more value counted apart`,
+        ),
+        'issue #1025, cut 4c-5a: A10 steps a LOOPING track past the duration and reads the value that is not finite — the two things the raw entry refuses on purpose — so the core walks it in its own entry, held to spine-core taking A10\'s own steps',
+      );
+      if (examplesHole !== null) console.log(`          ⚠️ HOLE: ${examplesHole} — the walk was held on the gallery's rows, the seeded rigs and the forged walks alone`);
     }
-    const ok = probes.length === 0;
-    say(
-      'CO32_EACH_READING_A_SLIDERS_PHYSICS_KEYS_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_RIGS_KEYING_WHAT_IT_CHANGES_RED',
-      ok,
-      probeDetail(ok, probes, `over ${sliderPhysicsRigs.length} rig(s) — the probe rows and the seeded population of CO31: ${read.join('; ')}; each red only on a rig whose sliders key what the plant changes on a constraint that updates after them (a reset key, and a write that outlasts its pass, wherever the constraint stands)`),
-      'issue #1049: the rule held on a population is a measurement only while each reading it rejected is seen to differ there — that the keys write, from which value, which kinds add, how a mass blends, how long a write lasts and whether a reset key fires',
-    );
-  }
+
+    // --- CO26: each reading the looping walk rejected, planted in a copy, turns exactly the walks it reads red --
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      // Every walk the plants run on: the seeded rigs, and the forged gallery walks — with what each reaches.
+      const population = [
+        ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, spine: p.spine, atlas: '', model: p.model, physics: p.physics, resets: p.resets, forged: false })),
+        ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, spine: f.spine, atlas: f.atlas, model: f.model, physics: readModel(f.model).constraints.some((c) => c.kind === 'physics'), resets: false, forged: true })),
+      ];
+      const clean = new Map(population.map((p) => [p.where, walkOf(p.spine, p.atlas, p.model, p.where)]));
+      const plants: Array<[string, WalkPlant, (p: (typeof population)[number], c: WalkComparison) => boolean]> = [
+        // The wrap a step late: the first step past each duration applied at the duration, as a holding track would.
+        ['the wrap one step late', { time: (t, d, before) => (d > 0 && Math.floor(before / d) < Math.floor(t / d) ? d : loopedTime(t, d)) }, (_p, c) => c.wrapped > 0],
+        // The physics clock moved by how far the animation time moved rather than by the step: the two differ at the wrap.
+        ['the physics clock moved by the animation time', { clock: (_dt, moved) => moved }, (p) => p.physics],
+        // A non-finite value swallowed as 0, the way a walk reading the raw entry's nulls as numbers would.
+        ['a non-finite value swallowed as 0', { number: (v) => (Number.isFinite(v) ? v : 0) }, (_p, c) => c.nonFinite > 0],
+        // No reset key fired across the wrap — the reading this cut's measurement rejected.
+        ['no physics reset fired across the wrap', { wrapResets: false }, (p) => p.resets],
+      ];
+      for (const [label, plant, reads] of plants) {
+        const red: string[] = [];
+        const outside: string[] = [];
+        for (const p of population) {
+          const base = clean.get(p.where);
+          if (base === undefined || typeof base === 'string') continue;
+          const c = walkOf(p.spine, p.atlas, p.model, p.where, plant);
+          if (typeof c === 'string' || c.first === null) continue;
+          red.push(p.where);
+          if (!reads(p, base)) outside.push(p.where);
+        }
+        if (red.length === 0) probes.push(`${label}: no walk turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+        read.push(`${label} → ${red.length} walk(s) red`);
+      }
+      // The non-finite plant reaches the forged walks and nothing else: every forged walk holding one turns red.
+      const swallowed = population.filter((p) => p.forged).filter((p) => {
+        const base = clean.get(p.where);
+        if (base === undefined || typeof base === 'string' || base.nonFinite === 0) return false;
+        const c = walkOf(p.spine, p.atlas, p.model, p.where, { number: (v) => (Number.isFinite(v) ? v : 0) });
+        return typeof c !== 'string' && c.first === null;
+      });
+      if (swallowed.length > 0) probes.push(`a non-finite value swallowed left [${swallowed.map((p) => p.where).slice(0, 4).join(', ')}] green`);
+      const ok = probes.length === 0;
+      say(
+        'CO26_EACH_READING_THE_LOOPING_WALK_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_WALKS_READING_IT_RED',
+        ok,
+        probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
+        'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
+      );
+    }
+  });
+
+  unit('CO29+CO30', () => {
+    // ===========================================================================
+    // No skin set (issue #1051): what a fresh skeleton whose `setSkin` was never
+    // called shows over a document with skins and no `default` one, and over a
+    // `default` skin naming skin-required members — `underNoSkin`, posed through
+    // `noSkinView` by `render`, A10's walk and the model side of `validate()`.
+    // ===========================================================================
+    const noSkinWork = join(work, 'noskin');
+    const NOSKIN_MODES = ['none', 'plain', 'members'] as const;
+    const NOSKIN_N = 90;
+    const noSkinRnd = seededRandom(105101);
+    const noSkinPopulation: BuiltRow[] = [
+      ...noSkinProbeBuilds(join(noSkinWork, 'probes')),
+      ...Array.from({ length: NOSKIN_N }, (_v, i) => buildSpineSkeleton(`noskin seed ${i} (${NOSKIN_MODES[i % 3]})`, noSkinSeedSkeleton(noSkinRnd, NOSKIN_MODES[i % 3]), NOSKIN_SEED_ATLAS, join(noSkinWork, `seed${i}`))),
+    ];
+    const noSkinDocs = new Map(noSkinPopulation.filter((b) => b.exits.every((e) => e === 0)).map((b) => [b.name, readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)] as const));
+
+    // --- CO29: the no-skin view poses the probes and a seeded population as spine-core does, grid, raw, stepped, unposed and walked --
+    {
+      const probes: string[] = [];
+      for (const b of noSkinPopulation) if (b.exits.some((e) => e !== 0)) probes.push(`${b.name} did not build: ${readFileSync(join(b.out, '..', 'refused.txt'), 'utf8').trim().slice(0, 200)}`);
+      const rows = [...noSkinPopulation.filter((b) => noSkinDocs.has(b.name)).map((b) => noSkinRun(b.name, b.out, true))];
+      for (const r of rows) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      const walks = walkBuilt(noSkinPopulation.filter((b) => noSkinDocs.has(b.name)));
+      for (const w of walks) if (w.verdict !== 'IDENTICAL') probes.push(`${w.name} walked: ${w.verdict} — ${w.why}`);
+      // The tree's own rows in the class, posed the same way — none on a corpus whose every row has a plain default skin, which is said, not passed.
+      const corpus = built.filter((r) => r.exits.every((e) => e === 0) && existsSync(join(r.out, MODEL_DOCUMENT_FILE))).filter((r) => noSkinClass(readModel(readFileSync(join(r.out, MODEL_DOCUMENT_FILE), 'utf8'))) !== null);
+      for (const r of corpus.map((b) => noSkinRun(b.name, b.out, true))) if (r.verdict !== 'IDENTICAL') probes.push(`${r.name}: ${r.verdict} — ${r.why}`);
+      // What the population reaches, off the documents: each class, and each construct the rule separates.
+      const docs = [...noSkinDocs.values()];
+      const byClass = (k: string | null): number => docs.filter((d) => noSkinClass(d) === k).length;
+      const fallback = (d: CompiledDocument): CompiledDocument['skins'][number] | undefined => d.skins.find((k) => k.name === 'default');
+      const writers = (d: CompiledDocument): Set<string> => new Set(d.constraints.flatMap((c) => (c.record !== undefined && 'bones' in c.record ? (c.record.bones as string[]) : [])));
+      const reach = {
+        defaultBones: docs.reduce((n, d) => n + (fallback(d)?.bones.length ?? 0), 0),
+        defaultConstraints: docs.reduce((n, d) => n + Object.values(fallback(d)?.constraints ?? {}).reduce((m, l) => m + l.length, 0), 0),
+        written: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && writers(d).has(b.name)).length, 0),
+        unwritten: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired === true && !writers(d).has(b.name)).length, 0),
+        parents: docs.reduce((n, d) => n + d.bones.filter((b) => b.skinRequired !== true && d.bones.some((p) => p.name === b.parent && p.skinRequired === true)).length, 0),
+        namedOnly: docs.reduce((n, d) => n + d.slots.filter((sl) => sl.setup !== null && fallback(d)?.attachments[sl.name]?.[sl.setup] === undefined && d.skins.some((k) => k.attachments[sl.name]?.[sl.setup as string] !== undefined)).length, 0),
+      };
+      const sum = (f: (r: (typeof rows)[number]) => number): number => rows.reduce((n, r) => n + f(r), 0);
+      const walked = walks.reduce((n, w) => n + (w.comparison?.poses ?? 0), 0);
+      const history = walks.reduce((n, w) => n + (w.comparison?.historyNumbers ?? 0), 0);
+      probes.push(
+        ...floorProbes(
+          [
+            [byClass('no default skin'), NOSKIN_N / 3, `${byClass('no default skin')} document(s) with skins and no default one`],
+            [byClass('a default skin naming skin-required members'), NOSKIN_N / 3, `${byClass('a default skin naming skin-required members')} with a default skin naming skin-required members`],
+            [byClass(null), NOSKIN_N / 3, `${byClass(null)} with a plain default skin`],
+            [reach.defaultBones, 1, `${reach.defaultBones} skin-required bone(s) a default skin names`],
+            [reach.defaultConstraints, 1, `${reach.defaultConstraints} skin-required constraint(s) a default skin lists`],
+            [reach.written, 1, `${reach.written} skin-required bone(s) a constraint writes`],
+            [reach.unwritten, 1, `${reach.unwritten} skin-required bone(s) no constraint writes`],
+            [reach.parents, 1, `${reach.parents} bone(s) that are not skin-required under one that is`],
+            [reach.namedOnly, 1, `${reach.namedOnly} slot(s) whose setup placeholder only a named skin fills`],
+            [sum((r) => r.unposed?.boneSamples ?? 0), 1, 'unposed bone-samples compared to the bit'],
+            [history, 1, `${history} HISTORY number(s) on the walk (issue #979's class, counted apart)`],
+          ],
+          'so the no-skin rule was not held where it separates one reading from another',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO29_THE_NO_SKIN_VIEW_POSES_THE_PROBES_AND_A_SEEDED_POPULATION_AS_SPINE_CORE_DOES_WITH_NO_SKIN_SET',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${rows.length} build(s) — the three probes and ${NOSKIN_N} seeded skeletons rebuilt through ingest and compile, ${byClass('no default skin')} with skins and no default one, ${byClass('a default skin naming skin-required members')} whose default names skin-required members, ${byClass(null)} with a plain default — ` +
+            `posed with no skin set by both dumpers under --raw at tolerance 0: every block, the stepped run and the unposed bones IDENTICAL over ${sum((r) => r.boneSamples)} bone-sample(s), ${sum((r) => r.slotRows)} slot row(s), ${sum((r) => r.attachmentRows)} setup attachment row(s), ${sum((r) => r.unposed?.boneSamples ?? 0)} unposed bone-sample(s) to the bit (${sum((r) => r.inactive)} bone(s) inactive at setup); ` +
+            `A10's walk identical on every one over ${walked} pose(s), ${history} HISTORY number(s) counted apart; reached: ${reach.defaultBones} skin-required bone(s) and ${reach.defaultConstraints} constraint(s) a default skin names, ${reach.written} skin-required bone(s) a constraint writes and ${reach.unwritten} none does, ${reach.parents} bone(s) under a skin-required one, ${reach.namedOnly} slot(s) only a named skin fills; ` +
+            `${corpus.length} tree row(s) in the class${corpus.length === 0 ? ' (every tree row has a plain default skin, so the probes and the seeds are the reading)' : ''}`,
+        ),
+        'issue #1051: the core refused to pose with no skin set over a document with skins and no default one, and over a default skin naming skin-required members, because that view was not measured; measured, a fresh skeleton applies no skin\'s bones or constraints — the default skin\'s included — and resolves every slot through the default skin alone, or through nothing',
+      );
+    }
+
+    // --- CO30: each reading the no-skin measurement rejected, planted in the view, turns exactly the builds it reads red --
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const emptied = (k: CompiledDocument['skins'][number], what: 'bones' | 'constraints' | 'both'): CompiledDocument['skins'][number] => ({
+        ...k,
+        bones: what === 'constraints' ? k.bones : [],
+        constraints: what === 'bones' ? k.constraints : { ik: [], transform: [], path: [], physics: [], slider: [] },
+      });
+      const fallbackOf = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name === 'default');
+      /** The document's default skin with `what` kept and the rest emptied, posed as the named skin it is — or the measured view where there is no default skin. */
+      const asDefault = (what: 'bones' | 'constraints' | 'both') => (m: CompiledDocument): CompiledDocument => {
+        if (fallbackOf(m) === undefined) return underNoSkin(m);
+        const keep = what === 'both' ? null : what === 'bones' ? 'constraints' : 'bones';
+        return underSkin({ ...m, skins: m.skins.map((k) => (k.name === 'default' && keep !== null ? emptied(k, keep) : k)) }, 'default');
+      };
+      const firstNamed = (m: CompiledDocument): CompiledDocument['skins'][number] | undefined => m.skins.find((k) => k.name !== 'default');
+      const plants: Array<[string, (m: CompiledDocument) => CompiledDocument, (d: CompiledDocument) => boolean, boolean]> = [
+        // Every skin-required bone posed as active, as if the flag were not read with no skin set.
+        ['a skin-required bone posed as active', (m) => underNoSkin({ ...m, bones: m.bones.map(({ skinRequired: _flag, ...b }) => b) }), (d) => d.bones.some((b) => b.skinRequired === true), true],
+        // The default skin's bones applied with no skin set, its constraints not.
+        ["the default skin's bones activated", asDefault('bones'), (d) => (fallbackOf(d)?.bones.length ?? 0) > 0, true],
+        // The default skin's constraints applied with no skin set, its bones not — red only where an applied one moves the pose.
+        ["the default skin's constraints applied", asDefault('constraints'), (d) => Object.values(fallbackOf(d)?.constraints ?? {}).some((l) => l.length > 0), false],
+        // The reading the refusal stood in for: no skin set read as the default skin, both lists applied.
+        ['no skin set read as the default skin', asDefault('both'), (d) => noSkinClass(d) === 'a default skin naming skin-required members', true],
+        // A slot resolved through the first named skin as well, as if the runtime fell back to the first skin where there is no default.
+        ['a slot showing what the first named skin gives it', (m) => {
+          const first = firstNamed(m);
+          return first === undefined ? underNoSkin(m) : underSkin({ ...m, skins: m.skins.map((k) => (k === first ? emptied(k, 'both') : k)) }, first.name);
+        }, (d) => {
+          const first = firstNamed(d);
+          return first !== undefined && d.slots.some((sl) => sl.setup !== null && first.attachments[sl.name]?.[sl.setup] !== undefined);
+        }, true],
+      ];
+      const population = noSkinPopulation.filter((b) => noSkinDocs.has(b.name));
+      for (const [label, view, reads, exact] of plants) {
+        const red: string[] = [];
+        const predicted = population.filter((b) => reads(noSkinDocs.get(b.name) as CompiledDocument)).map((b) => b.name);
+        for (const b of population) {
+          const r = noSkinRun(b.name, b.out, true, (m) => view(m));
+          if (r.verdict !== 'IDENTICAL') red.push(b.name);
+        }
+        const outside = red.filter((n) => !predicted.includes(n));
+        const quiet = predicted.filter((n) => !red.includes(n));
+        if (red.length === 0) probes.push(`${label}: no build turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which do not read it`);
+        if (exact && quiet.length > 0) probes.push(`${label}: [${quiet.slice(0, 4).join(', ')}] read it and stayed green`);
+        read.push(`${label} → ${red.length} of ${predicted.length} reading it red`);
+      }
+      // The walk under the reading the refusal stood in for: red only on the documents whose default skin names members.
+      const walkRed: string[] = [];
+      for (const b of population) {
+        const pair = ['skeleton.json', 'skeleton.atlas', MODEL_DOCUMENT_FILE].map((f) => readFileSync(join(b.out, f), 'utf8'));
+        const c = compareWalkDocuments(spineWalkDocument(loadOracleData(pair[0], pair[1], b.name)), coreWalkDocument(readModel(pair[2], b.name), undefined, {}, {}, asDefault('both')));
+        if (c.first !== null) walkRed.push(b.name);
+      }
+      const walkOutside = walkRed.filter((n) => noSkinClass(noSkinDocs.get(n) as CompiledDocument) !== 'a default skin naming skin-required members');
+      if (walkRed.length === 0) probes.push('no skin set read as the default skin, on the walk: no walk turned red');
+      if (walkOutside.length > 0) probes.push(`no skin set read as the default skin, on the walk: red on [${walkOutside.slice(0, 4).join(', ')}], whose default skin names nothing`);
+      read.push(`the same on A10's walk → ${walkRed.length} walk(s) red, every one a default skin naming members`);
+      const ok = probes.length === 0;
+      say(
+        'CO30_EACH_NO_SKIN_READING_THE_MEASUREMENT_REJECTED_PLANTED_IN_THE_VIEW_TURNS_ONLY_THE_BUILDS_READING_IT_RED',
+        ok,
+        probeDetail(ok, probes, `over ${population.length} build(s) — CO29's probes and seeds, posed with no skin set under --raw at tolerance 0: ${read.join('; ')}; each red only where the document reads what the plant changes (a skin-required bone, a default skin naming one or a constraint, a slot only the first named skin fills), and every one reading it red but the applied constraints, which are red only where one moves the pose`),
+        'issue #1051: a view held equal on a population is a measurement only while each wrong reading is seen to differ on it — the bones a skin-required flag switches off, the default skin\'s two lists, and the skins a slot is resolved through are each one plant',
+      );
+    }
+  });
+
+  unit('CO31+CO32', () => {
+    // --- CO31 and CO32: a slider's physics keys under the step (issue #1049) --
+    //
+    // Until issue #1049 the core applied none of a slider's physics keys, and on the selftest's own
+    // builds where a dial's animation keys `wind` or `gravity` of a constraint after it the bones left
+    // spine-core from the third step; a probe with a slot on the physics bone drew wrong frames through
+    // `render` with no refusal. The rule (`./src/core/constraints_slider.ts`, *Its physics timelines*)
+    // is held here on the core_gate probe rows and a seeded population, on all three stepped entries:
+    // A10's looping walk, `render`'s recipe on the raw entry (60 and 12 fps), and the oracle's stepped
+    // grid under `--raw`, every number at tolerance 0.
+    const SLIDER_PHYSICS_N = 150;
+    const sliderPhysicsRigs = (() => {
+      const rnd = seededRandom(104901);
+      return [
+        ...SLIDER_PHYSICS_PROBES.map(([label, shape]) => ({ where: `probe "${label}"`, shape })),
+        ...Array.from({ length: SLIDER_PHYSICS_N }, (_v, i) => ({ where: `slider-physics rig ${i}`, shape: sliderPhysicsShape(rnd) })),
+      ].map((r) => ({ ...r, pair: sliderPhysicsPair(r.shape) }));
+    })();
+    /** Every key a slider's animation holds on a physics timeline, with the slider's own flags. */
+    const sliderPhysicsKeys = (shape: SliderPhysicsShape): Array<{ slider: string; additive: boolean; kind: string; target: string; before: boolean }> =>
+      shape.sliders.flatMap((s) =>
+        (shape.animations.find((a) => a.name === s.animation)?.physics ?? []).map((k) => ({
+          slider: s.name,
+          additive: s.fields.additive === true,
+          kind: k.kind,
+          target: k.name,
+          // A named constraint updating before the slider: what the slider writes is not read this pass.
+          before: k.name !== '*' && shape.order.indexOf(k.name) < shape.order.indexOf(s.name),
+        })),
+      );
+    const STEPPED_RAW: OracleOptions = { ...STEPPED_OPTIONS, raw: true };
+    const PHYSICS_FIELDS = ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const;
+    /** spine-core's side of one rig on the three entries, taken once: the walk, each render frame's bones, the stepped grid. */
+    const sliderPhysicsSpine = sliderPhysicsRigs.map((r) => {
+      const data = loadOracleData(r.pair.spine, '', r.where);
+      const frames: Array<{ animation: string; fps: number; bones: number[][] }> = [];
+      for (const fps of [60, 12]) {
+        for (const anim of data.animations) {
+          const n = Math.round(anim.duration * fps) + 3;
+          const skeleton = new Skeleton(data);
+          const state = new AnimationState(new AnimationStateData(data));
+          state.setAnimation(0, anim.name, false);
+          skeleton.setupPose();
+          const bones: number[][] = [];
+          for (let i = 0; i <= n; i++) {
+            if (i > 0) {
+              state.update(1 / fps);
+              state.apply(skeleton);
+              skeleton.update(1 / fps);
+              skeleton.updateWorldTransform(Physics.update);
+            } else {
+              state.apply(skeleton);
+              skeleton.update(0);
+              skeleton.updateWorldTransform(Physics.reset);
+            }
+            bones.push(skeleton.bones.flatMap((b) => PHYSICS_FIELDS.map((f) => b.appliedPose[f])));
+          }
+          frames.push({ animation: anim.name, fps, bones });
+        }
+      }
+      return { walk: spineWalkDocument(data), frames, grid: dumpSkeleton(data, STEPPED_RAW) };
+    });
+    /** The core's side of rig `k` against spine-core's, under `plant`: the first difference on any entry, or null, with what was compared. */
+    const sliderPhysicsRun = (k: number, plant: TimelinePlant = {}): { first: string | null; walkPoses: number; frames: number; numbers: number } => {
+      const r = sliderPhysicsRigs[k];
+      const spine = sliderPhysicsSpine[k];
+      const model = readModel(r.pair.model, r.where);
+      const walk = compareWalkDocuments(spine.walk, coreWalkDocument(model, undefined, plant));
+      let first = walk.first === null ? null : `${r.where} walk: ${walk.first}`;
+      let numbers = walk.numbers;
+      const doc = underSkin(model, 'default');
+      for (const f of spine.frames) {
+        const poses = poseRawAnimation(doc, f.animation, new Array<number>(f.bones.length - 1).fill(1 / f.fps), plant);
+        poses.forEach((p, i) => {
+          const ours = p.bones.flatMap((b) => PHYSICS_FIELDS.map((x) => b[x]));
+          numbers += ours.length;
+          const at = ours.findIndex((v, j) => !Object.is(v, f.bones[i][j]));
+          if (at >= 0) first ??= `${r.where} render ${f.fps} fps "${f.animation}" frame ${i}: bone "${p.bones[Math.floor(at / 6)].name}" ${PHYSICS_FIELDS[at % 6]} ${f.bones[i][at]} in spine-core, ${ours[at]} in the core`;
+        });
+      }
+      const grid = compareDumps(spine.grid, coreDump(model, STEPPED_RAW, plant, uvSourceOf('', r.pair.model)), { xy: 0, m: 0 });
+      if (!grid.identical) first ??= `${r.where} stepped grid: ${grid.first}`;
+      return { first, walkPoses: walk.poses, frames: spine.frames.reduce((n, f) => n + f.bones.length, 0), numbers };
+    };
+    const sliderPhysicsClean = sliderPhysicsRigs.map((_r, k) => sliderPhysicsRun(k));
+    {
+      const probes: string[] = [];
+      let exact = 0;
+      const sum = { walkPoses: 0, frames: 0, numbers: 0 };
+      sliderPhysicsClean.forEach((c) => {
+        for (const key of Object.keys(sum) as Array<keyof typeof sum>) sum[key] += c[key];
+        if (c.first === null) exact++;
+        else if (probes.length < 12) probes.push(c.first);
+      });
+      const keys = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+      const rigsWith = (f: (k: ReturnType<typeof sliderPhysicsKeys>[number], shape: SliderPhysicsShape) => boolean): number => keys.filter((list, i) => list.some((k) => f(k, sliderPhysicsRigs[i].shape))).length;
+      const reach: Array<[number, string]> = [
+        [rigsWith((k) => k.kind !== 'reset' && !k.before), 'a slider keying a constraint that updates after it'],
+        [rigsWith((k) => k.kind !== 'reset' && k.before), 'a slider keying a constraint that updates before it'],
+        [rigsWith((k) => k.additive && (k.kind === 'wind' || k.kind === 'gravity')), 'an additive slider keying wind or gravity'],
+        [rigsWith((k) => k.additive && !['wind', 'gravity', 'reset'].includes(k.kind)), 'an additive slider keying a value that does not add'],
+        [rigsWith((k) => !k.additive && k.kind !== 'reset'), 'a slider that is not additive'],
+        [rigsWith((k) => k.kind === 'mass'), 'a mass key'],
+        [rigsWith((k) => k.kind === 'mix'), 'a mix key'],
+        [rigsWith((k) => k.kind === 'reset'), 'a reset key'],
+        [rigsWith((k) => k.target === '*'), 'the timeline naming no constraint'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.mix !== undefined)), 'a slider at a mix other than 1'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.loop === true)), 'a looping slider'],
+        [rigsWith((_k, s) => s.sliders.some((x) => x.fields.bone === undefined)), 'a bone-less slider'],
+        [rigsWith((_k, s) => s.animations.some((a) => a.name === 'sway' && a.sliders.length > 0)), 'a track keying a slider\'s time or mix'],
+      ];
+      probes.push(...floorProbes(reach.map(([n, what]): [number, number, string] => [n, 1, `${n} rig(s) with ${what}`]), 'so the population does not reach every part of the rule'));
+      const ok = probes.length === 0;
+      say(
+        'CO31_A_SLIDERS_PHYSICS_KEYS_POSE_UNDER_THE_STEP_AS_SPINE_CORE_POSES_THEM_ON_THE_WALK_THE_RAW_ENTRY_AND_THE_STEPPED_GRID',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${exact} of ${sliderPhysicsRigs.length} rig(s) exact — the ${SLIDER_PHYSICS_PROBES.length} core_gate probe rows and ${SLIDER_PHYSICS_N} seeded — on A10's looping walk (${sum.walkPoses} pose(s)), render's recipe on the raw entry at 60 and 12 fps (${sum.frames} frame(s)) and the oracle's stepped grid under --raw: ${sum.numbers} walk and frame number(s) at tolerance 0; the population reaches ${reach.map(([n, what]) => `${what} (${n})`).join(', ')}`,
+        ),
+        'issue #1049: a slider applies its animation\'s physics keys to the pass\'s physics records at its place in the update order — the core applied none of them, and a constraint after the slider integrated without the wind or gravity it wrote: render drew a wrong frame with no refusal and A10\'s walk refused the class by name',
+      );
+    }
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const keysOf = sliderPhysicsRigs.map((r) => sliderPhysicsKeys(r.shape));
+      const plants: Array<[string, Partial<SolverRules>, (keys: ReturnType<typeof sliderPhysicsKeys>) => boolean]> = [
+        ['a slider\'s physics keys write nothing (the core before issue #1049)', { sliderWritesPhysics: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before)],
+        ['a key that does not add blends from the setup value, not the current one', { sliderPhysicsFromCurrent: false }, (keys) => keys.some((k) => k.kind !== 'reset' && !k.before && !(k.additive && (k.kind === 'wind' || k.kind === 'gravity')))],
+        ['every value kind adds under an additive slider', { sliderPhysicsAddsWindGravityOnly: false }, (keys) => keys.some((k) => k.additive && !k.before && !['wind', 'gravity', 'reset'].includes(k.kind))],
+        ['a mass key blends the inverse mass', { sliderPhysicsBlendsMass: false }, (keys) => keys.some((k) => k.kind === 'mass' && !k.before)],
+        // A write that outlasts its pass reaches a constraint before the slider too, on the next step.
+        ['what a slider wrote stands on the next step', { sliderPhysicsLastsOnePass: false }, (keys) => keys.some((k) => k.kind !== 'reset')],
+        ['a reset key at or before the slider\'s time fires on every pass', { sliderPhysicsResetIsDead: false }, (keys) => keys.some((k) => k.kind === 'reset')],
+      ];
+      for (const [label, solver, reads] of plants) {
+        const red: string[] = [];
+        const outside: string[] = [];
+        sliderPhysicsRigs.forEach((r, k) => {
+          if (sliderPhysicsClean[k].first !== null || sliderPhysicsRun(k, { solver }).first === null) return;
+          red.push(r.where);
+          if (!reads(keysOf[k])) outside.push(r.where);
+        });
+        if (red.length === 0) probes.push(`${label}: no rig turned red`);
+        if (outside.length > 0) probes.push(`${label}: red on [${outside.slice(0, 4).join(', ')}], which key nothing it reads`);
+        read.push(`${label} → ${red.length} rig(s) red${red.some((w) => w.startsWith('probe')) ? ` (${red.filter((w) => w.startsWith('probe')).length} probe row(s))` : ''}`);
+      }
+      const ok = probes.length === 0;
+      say(
+        'CO32_EACH_READING_A_SLIDERS_PHYSICS_KEYS_REJECTED_PLANTED_IN_A_COPY_TURNS_ONLY_THE_RIGS_KEYING_WHAT_IT_CHANGES_RED',
+        ok,
+        probeDetail(ok, probes, `over ${sliderPhysicsRigs.length} rig(s) — the probe rows and the seeded population of CO31: ${read.join('; ')}; each red only on a rig whose sliders key what the plant changes on a constraint that updates after them (a reset key, and a write that outlasts its pass, wherever the constraint stands)`),
+        'issue #1049: the rule held on a population is a measurement only while each reading it rejected is seen to differ there — that the keys write, from which value, which kinds add, how a mass blends, how long a write lasts and whether a reset key fires',
+      );
+    }
+  });
 
   // --- CO33, CO34: issue #1039 — the order of an animation's bone timelines, and whether it reaches a pose --------
   // The core applies an animation's bone timelines bone by bone in the document's order and, on one bone, timeline by timeline
@@ -84756,7 +85990,7 @@ function runCoreSuite(): number {
     edit(doc);
     return `${JSON.stringify(doc, null, 2)}\n`;
   };
-  {
+  if (parent) {
     const probes: string[] = [];
     const rows: string[] = [];
     let apart = 0;
@@ -84806,7 +86040,7 @@ function runCoreSuite(): number {
       'issue #1039: the file keys an animation\'s bones by name, so it lists an integer-like bone first and the core applies the document\'s order — each bone\'s timelines write that bone alone, so the order is one lines are printed in and not a posed value',
     );
   }
-  {
+  if (parent) {
     const probes: string[] = [];
     const rows: string[] = [];
     let boneSamples = 0;
@@ -84868,8 +86102,8 @@ function runCoreSuite(): number {
   // `ingest` and `compile` against a two-region atlas, reads the three boxes
   // `tools/core_gate.ts`'s bounds row reads — the core's, spine-core's
   // `getBounds`, the header's — and plants the one misreading it exists to see.
-  {
-    const boxRoot = mkdtempSync(join(tmpdir(), 'rigc-bounds-'));
+  if (parent) {
+    const boxRoot = mkdtempSync(join(harnessTemp(), 'rigc-bounds-'));
     const boxAtlas = join(boxRoot, 'p.atlas');
     writeFileSync(boxAtlas, ['p.png', 'size: 64, 32', 'filter: Linear, Linear', 'a', 'bounds: 0, 0, 20, 20', 'b', 'bounds: 20, 0, 20, 20', ''].join('\n'));
     const regionAt = (x: number, y = 0): Record<string, unknown> => ({ width: 20, height: 20, x, y });
@@ -85036,6 +86270,98 @@ function runCoreSuite(): number {
       );
     }
     rmSync(boxRoot, { recursive: true, force: true });
+  }
+
+  // --- CO41: a unit's lines are the lines --jobs 1 prints, in the units' order (issue #1133) --
+  // The units above ran at this run's --jobs, and the log is one text at any
+  // --jobs exactly when each unit hands back what its controls print in this
+  // process and the parent prints the units in their order. Held on the two
+  // cheapest units, in `RH08`'s shape: run here at --jobs 1 against the same
+  // two in `--unit` processes, or, above it, one process after another against
+  // the batch's, to every leaf — lines, FAIL count and every share. Planted: a
+  // parent that interleaves the two units' lines, which must be read.
+  if (parent) {
+    const probes: string[] = [];
+    const cheap: CoreUnitName[] = ['CQ10', 'CK07'];
+    const alone = coreUnitBatch(cheap.map(unitInput), 1);
+    const compared: string[] = [];
+    cheap.forEach((name, k) => {
+      const ran = inline.get(name) ?? dispatched.get(name);
+      if (ran === undefined) {
+        probes.push(`${name} neither ran here nor came back from the batch`);
+        return;
+      }
+      const differ = sameLeaves(alone[k], ran, name);
+      if (differ.length > 0) probes.push(`${name} alone in a --unit process and in this run: ${differ.slice(0, 3).join('; ')}`);
+      compared.push(`${name} (${ran.lines.length} line(s))`);
+    });
+    const printed = batch === null ? [...inline.keys()] : replayed;
+    if (JSON.stringify(printed) !== JSON.stringify(CORE_UNITS)) probes.push(`the units printed in the order [${printed.join(', ')}], not [${CORE_UNITS.join(', ')}]`);
+    if (JSON.stringify([...CORE_UNITS_HEAVIEST_FIRST].sort()) !== JSON.stringify([...CORE_UNITS].sort())) probes.push(`the claim order [${CORE_UNITS_HEAVIEST_FIRST.join(', ')}] is not the units [${CORE_UNITS.join(', ')}], each once`);
+    // The plant: the two units' lines interleaved, as a parent printing each line when it arrived would.
+    const inOrder = [...alone[0].lines, ...alone[1].lines];
+    const interleaved = alone[0].lines.flatMap((line, k) => [line, ...(k < alone[1].lines.length ? [alone[1].lines[k]] : [])]).concat(alone[1].lines.slice(alone[0].lines.length));
+    const plantAt = inOrder.findIndex((line, k) => line !== interleaved[k]);
+    if (plantAt < 0) probes.push('the interleaved plant printed the units\' lines in their order, so it cannot be told apart');
+    const sent = JSON.stringify(unitInput(cheap[0])).length;
+    const back = alone.reduce((n, r) => n + JSON.stringify(r).length, 0);
+    const held = probes.length === 0;
+    say(
+      'CO41_A_CORE_UNITS_LINES_AND_SHARES_ARE_WHAT_JOBS_1_LEAVES_IN_THE_UNITS_ORDER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${CORE_UNITS.length} unit(s), printed in the units' order; ${compared.join(' and ')}, each run alone in a --unit process, against this run's — in this process at --jobs 1, the batch's above it: equal at every leaf of the lines, the FAIL count and every share — ` +
+          `${sent} character(s) of input per unit crossed as JSON, ${back} came back from the two; the plant (their lines interleaved) is read at line ${plantAt + 1}`,
+      ),
+      'issue #1133: --jobs decides when a core unit runs and never what the suite prints, which holds only while a unit hands back what its controls print in one process and the parent prints the units in their order',
+    );
+  }
+
+  // --- CO42: a unit's corpus cases are applied at its own position (issue #1133) --
+  // `TY22` reads every core control's corpus verdict, and a shard or a merge
+  // reads the run state in order. The cases this suite left are its `sayCorpus`
+  // controls in source order exactly when each unit's share was applied at its
+  // control's position. Planted: a unit's cases dropped, which `TY22`'s reading
+  // counts, and the units' cases applied at the end, which it does not — its
+  // reading is a count, so the order is read here, by name.
+  if (parent) {
+    const probes: string[] = [];
+    const order = corpusControlOrder(readFileSync(join(root, 'selftest.ts'), 'utf8'));
+    const cases = CORE_CORPUS_CASES.slice(corpusMark);
+    const firstApart = (list: ReadonlyArray<{ name: string }>): string | null => {
+      const at = order.findIndex((name, k) => list[k]?.name !== name);
+      return at < 0 && list.length === order.length ? null : `case ${at < 0 ? order.length + 1 : at + 1}: ${list[at < 0 ? order.length : at]?.name ?? 'nothing'} where ${order[at] ?? 'nothing'} belongs`;
+    };
+    const unitOf = (name: string): CoreUnitName | undefined => CORE_UNITS.find((u) => u.split('+').includes(name.split('_')[0]));
+    const fromUnits = cases.filter((c) => unitOf(c.name) !== undefined);
+    const real = firstApart(cases);
+    if (order.length === 0) probes.push('no sayCorpus control was read off runCoreSuite, so the order holds nothing');
+    if (real !== null) probes.push(`the corpus cases this suite left are not its sayCorpus controls in source order — ${real}`);
+    const dropUnit = fromUnits.length === 0 ? undefined : unitOf(fromUnits[0].name);
+    const dropped = cases.filter((c) => unitOf(c.name) !== dropUnit);
+    const atEnd = [...cases.filter((c) => unitOf(c.name) === undefined), ...fromUnits];
+    const reading = coreCorpusReading(cases);
+    const droppedRead = firstApart(dropped);
+    const atEndRead = firstApart(atEnd);
+    if (dropUnit === undefined) probes.push('no corpus case is a unit\'s, so the plants move nothing');
+    if (coreCorpusReading(dropped) === reading) probes.push(`${dropUnit ?? 'a unit'}'s cases dropped left TY22's reading as it was: ${reading}`);
+    if (droppedRead === null) probes.push(`${dropUnit ?? 'a unit'}'s cases dropped read in source order`);
+    if (atEndRead === null) probes.push('the units\' cases applied at the end read in source order');
+    const held = probes.length === 0;
+    say(
+      'CO42_A_CORE_UNITS_CORPUS_CASES_ARE_APPLIED_AT_ITS_OWN_POSITION',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${cases.length} corpus case(s), ${fromUnits.length} of them a unit's, in the order of the ${order.length} sayCorpus control(s) in runCoreSuite; ` +
+          `planted, ${dropUnit ?? 'a unit'}'s dropped: TY22 reads "${coreCorpusReading(dropped)}" for "${reading}", and the order is read at ${droppedRead ?? 'nothing'}; ` +
+          `the units' cases applied at the end: TY22 reads "${coreCorpusReading(atEnd)}", a count, and the order is read at ${atEndRead ?? 'nothing'}`,
+      ),
+      'issue #1133: a unit\'s run state crosses as a share the parent applies at the control\'s own position, so TY22, RG01 and a merge read the run one process leaves; applied anywhere else the share is the same rows in another order, which only the order can show',
+    );
   }
 
   rmSync(work, { recursive: true, force: true });
@@ -85488,7 +86814,7 @@ function runDeformCoreSuite(): number | null {
     console.log('          ⚠️ This is a HOLE in this run, not a pass — the survey was not held both ways on a built row.');
     return bad;
   }
-  const work = mkdtempSync(join(tmpdir(), 'rigc-deform-core-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-deform-core-'));
   const gallery = galleryNames.flatMap((name) => {
     try {
       const result = compile({ rigPath: join(galleryRoot, name, 'rig.json'), motionPath: join(galleryRoot, name, 'motion.json'), outDir: join(work, name) });
@@ -86226,7 +87552,7 @@ function runEmitHashesSuite(): number | null {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-selftest-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-emit-hashes-selftest-'));
   const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
   const recipesPath = join(work, 'recipes.json');
   writeFileSync(recipesPath, recipesText(recipes));
@@ -86969,7 +88295,7 @@ function shiftedCorePoser(dx: number): (modelText: string, atlasText: string, wh
  * texel, with a periodic alpha, so a UV a few float32 steps off moves a pixel.
  */
 function writeClipPixelProbe(polygon: number[], flags: { inverse?: boolean; convex?: boolean; rotation?: number; scale?: number } = {}): { dir: string; outDir: string; status: number | null; stderr: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-clip-pixels-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-clip-pixels-'));
   const art = (name: string, w: number, h: number, seed: number): void => {
     const plate = new Plate(w, h);
     for (let y = 0; y < h; y++) {
@@ -87172,8 +88498,11 @@ function runCliStubbed(stub: string, root: string, args: string[]): { status: nu
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
+/** The output a `render_hashes.ts` run may hand back, sequential or through `inParallel`. */
+const RENDER_HASHES_MAX_BUFFER = 64 * 1024 * 1024;
+
 function runRenderHashes(args: string[]): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const result = spawnSync(process.execPath, ['tools/render_hashes.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: RENDER_HASHES_MAX_BUFFER });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -87205,7 +88534,7 @@ function runRenderHashesSuite(): number | null {
         .slice(0, 2)
     : [];
   if (pair.length < 2) {
-    console.log(`  SKIP  RH01–RH07, RC01–RC23 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
+    console.log(`  SKIP  RH01–RH08, RC01–RC23 and CH01–CH03 did not run: fewer than two gallery rigs under ${galleryRoot}.`);
     console.log('          ⚠️ This is a HOLE in this run, not a pass — no render was hashed, so render identity across runs was not measured.');
     return null;
   }
@@ -87213,13 +88542,15 @@ function runRenderHashesSuite(): number | null {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-render-hashes-selftest-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-render-hashes-selftest-'));
   const recipes = pair.map((name) => galleryRecipe(import.meta.dir, name).recipe);
   const recipesPath = join(work, 'recipes.json');
   writeFileSync(recipesPath, recipesText(recipes));
-  const runAt = (label: string, workDir: string, root?: string): { run: ReturnType<typeof runRenderHashes>; out: string; doc: RenderHashesDocument | null } => {
+  const runArgs = (label: string, workDir: string, root?: string): string[] => [
+    'run', '--recipes', recipesPath, '--out', join(work, `${label}.json`), '--work', workDir, ...(root === undefined ? [] : ['--root', root]),
+  ];
+  const runRead = (label: string, run: ReturnType<typeof runRenderHashes>): { run: ReturnType<typeof runRenderHashes>; out: string; doc: RenderHashesDocument | null } => {
     const out = join(work, `${label}.json`);
-    const run = runRenderHashes(['run', '--recipes', recipesPath, '--out', out, '--work', workDir, ...(root === undefined ? [] : ['--root', root])]);
     let doc: RenderHashesDocument | null = null;
     try {
       doc = existsSync(out) ? readRenderHashes(out) : null;
@@ -87233,10 +88564,63 @@ function runRenderHashesSuite(): number | null {
     for (const name of pair) cpSync(join(galleryRoot, name), join(root, 'gallery', name), { recursive: true });
     return root;
   };
+  /** A spec edit made before the runs, and the probe its control prints if it could not be made — in the place the control printed it. */
+  const plantBones = (path: string, edit: (bones: SpecBone[]) => string): { what: string; failed: string | null } => {
+    try {
+      return { what: editSpecBones(path, edit), failed: null };
+    } catch (err) {
+      return { what: '', failed: `the plant could not be made: ${(err as Error).message}` };
+    }
+  };
+  const moveLastX = (bones: SpecBone[]): string => {
+    const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
+    if (bone === undefined) return '';
+    bone.x = (bone.x as number) + 1;
+    return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
+  };
+  const trackedBase = resolve(import.meta.dir, RENDER_BASE_FILE);
+
+  // ⚡ The eight `render_hashes.ts` runs RH01–RH06 read (issue #1128) — four
+  // `run`s over the pair and four `base` runs over the gallery's seven, the
+  // bulk of this suite's time — each with its own work directory and its own
+  // output, none reading what another writes. Their inputs are prepared first
+  // (the plants are copies under `work`), the runs go through `inParallel`,
+  // and the controls below read the results in the order they always printed.
+  // `--jobs 1` runs them one after another before RH01, which is the only
+  // thing it changes: when they ran, never what a control saw.
+  const movedRoot = plantRoot('moved');
+  const movedPlant = plantBones(join(movedRoot, 'gallery', pair[1], 'rig.json'), moveLastX);
+  const refusedRoot = plantRoot('refused');
+  const refusedPlant = plantBones(join(refusedRoot, 'gallery', pair[0], 'rig.json'), (bones) => {
+    const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
+    if (bone === undefined) return '';
+    bone.parent = '__render_hashes_no_such_bone';
+    return `bone "${bone.name}"'s parent renamed to a bone that does not exist`;
+  });
+  const freshBase = join(work, 'fresh-base.json');
+  const editedBase = join(work, 'hand-edited-base.json');
+  if (existsSync(trackedBase)) writeFileSync(editedBase, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
+  const baseMovedRoot = join(work, 'base-moved-root');
+  const builtInGallery = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
+  cpSync(galleryRoot, join(baseMovedRoot, 'gallery'), { recursive: true, filter: (from) => !builtInGallery.test(from) });
+  const baseMovedPlant = plantBones(join(baseMovedRoot, 'gallery', pair[1], 'rig.json'), moveLastX);
+  const hashesUnit = (args: string[]): ParallelUnit => ({ argv: [process.execPath, 'tools/render_hashes.ts', ...args], cwd: import.meta.dir, maxBuffer: RENDER_HASHES_MAX_BUFFER });
+  // Longest first — the four `base` runs render seven recipes each, the four
+  // `run`s two — so the last lane to finish is not a seven-recipe run started late.
+  const [wroteRun, checkRun, handRun, baseMovedRun, aRun, bRun, movedRun, refusedRun] = inParallel([
+    hashesUnit(['base', '--file', freshBase, '--work', join(work, 'wf')]),
+    hashesUnit(['base', '--check', '--work', join(work, 'wk')]),
+    hashesUnit(['base', '--check', '--file', editedBase, '--work', join(work, 'wh')]),
+    hashesUnit(['base', '--check', '--root', baseMovedRoot, '--work', join(work, 'wbm')]),
+    hashesUnit(runArgs('a', join(work, 'wa'))),
+    hashesUnit(runArgs('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'))),
+    hashesUnit(runArgs('moved', join(work, 'wm'), movedRoot)),
+    hashesUnit(runArgs('refused', join(work, 'wr'), refusedRoot)),
+  ]);
 
   // --- RH01: two runs of one recipe set, at two work depths, are byte-identical --
-  const a = runAt('a', join(work, 'wa'));
-  const b = runAt('b', join(work, 'w', 'one', 'level', 'deeper', 'wb'));
+  const a = runRead('a', aRun);
+  const b = runRead('b', bRun);
   {
     const probes: string[] = [];
     for (const [label, r] of [['A', a], ['B', b]] as const) {
@@ -87278,20 +88662,10 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[1];
-    const root = plantRoot('moved');
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
-        if (bone === undefined) return '';
-        bone.x = (bone.x as number) + 1;
-        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
+    const what = movedPlant.what;
+    if (movedPlant.failed !== null) probes.push(movedPlant.failed);
     if (what === '') probes.push(`gallery/${target}/rig.json has no bone with a numeric x to move`);
-    const moved = runAt('moved', join(work, 'wm'), root);
+    const moved = runRead('moved', movedRun);
     const run = runRenderHashes(['compare', a.out, moved.out]);
     let named: string[] = [];
     let geometry = 0;
@@ -87320,19 +88694,9 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[0];
-    const root = plantRoot('refused');
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.parent === 'string');
-        if (bone === undefined) return '';
-        bone.parent = '__render_hashes_no_such_bone';
-        return `bone "${bone.name}"'s parent renamed to a bone that does not exist`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
-    const refused = runAt('refused', join(work, 'wr'), root);
+    const what = refusedPlant.what;
+    if (refusedPlant.failed !== null) probes.push(refusedPlant.failed);
+    const refused = runRead('refused', refusedRun);
     const row = refused.doc?.recipes.find((r) => r.name === `gallery/${target}`);
     if (refused.run.status !== 0) probes.push(`the run exited ${refused.run.status} over a refusing recipe; a refusal is data, not a failed run`);
     if (row === undefined) probes.push(`the planted document has no row for gallery/${target} — the refusal was dropped`);
@@ -87402,14 +88766,13 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
-  const trackedBase = resolve(import.meta.dir, RENDER_BASE_FILE);
   const staleLines = (run: ReturnType<typeof runRenderHashes>): string[] => run.stdout.split('\n').filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY') || l.startsWith('STALE') || l.startsWith('          '));
 
   // --- RH05: the tracked base is what `base` writes on this tree, PNGs only --
   {
     const probes: string[] = [];
-    const fresh = join(work, 'fresh-base.json');
-    const wrote = runRenderHashes(['base', '--file', fresh, '--work', join(work, 'wf')]);
+    const fresh = freshBase;
+    const wrote = wroteRun;
     if (wrote.status !== 0) probes.push(`\`${RENDER_BASE_COMMAND} --file …\` exited ${wrote.status}: ${wrote.stderr.trim().slice(0, 300)}`);
     if (!existsSync(trackedBase)) probes.push(`there is no ${RENDER_BASE_FILE}; write it with \`${RENDER_BASE_COMMAND}\``);
     else if (existsSync(fresh) && !readFileSync(fresh).equals(readFileSync(trackedBase))) probes.push(`${RENDER_BASE_FILE} is not byte-identical to a fresh \`${RENDER_BASE_COMMAND}\` on this tree`);
@@ -87419,12 +88782,11 @@ function runRenderHashesSuite(): number | null {
     const notPixels = doc?.recipes.flatMap((r) => r.files.filter((f) => f.pixels === undefined || f.sha256 !== undefined || f.size !== undefined).map((f) => `${r.name} ${f.path}`)) ?? [];
     if (notPixels.length > 0) probes.push(`${notPixels.length} base entr(ies) carry file bytes or no pixel hash, e.g. ${notPixels[0]} — the PNG encoder's bytes differ between macOS and Linux (PR #972)`);
     if (doc?.recipes.some((r) => r.framing !== null)) probes.push('the base records a framing box, whose numbers carry full doubles off libm');
-    const check = runRenderHashes(['base', '--check', '--work', join(work, 'wk')]);
+    const check = checkRun;
     const verdict = check.stdout.trim().split('\n').pop() ?? '';
     if (check.status !== 0 || !verdict.startsWith('CURRENT')) probes.push(`\`${RENDER_BASE_COMMAND} --check\` exited ${check.status}: ${staleLines(check).join(' | ') || JSON.stringify(verdict)}`);
-    const edited = join(work, 'hand-edited-base.json');
-    if (existsSync(trackedBase)) writeFileSync(edited, readFileSync(trackedBase, 'utf8').replace('{\n  "spec"', '{\n "spec"'));
-    const hand = runRenderHashes(['base', '--check', '--file', edited, '--work', join(work, 'wh')]);
+    const edited = editedBase;
+    const hand = handRun;
     if (hand.status !== 1 || !hand.stdout.includes('but not in its bytes') || !staleLines(hand).some((l) => l.startsWith('STALE') && l.includes(`\`${RENDER_BASE_COMMAND} --file ${edited}\``))) {
       probes.push(`a hand-edited copy of the base exited ${hand.status} and printed ${JSON.stringify(staleLines(hand))}, not a STALE naming its bytes and the command`);
     }
@@ -87451,21 +88813,9 @@ function runRenderHashesSuite(): number | null {
   {
     const probes: string[] = [];
     const target = pair[1];
-    const root = join(work, 'base-moved-root');
-    const built = /[\\/]gallery[\\/][^\\/]+[\\/](build|render|preview\.html)$/;
-    cpSync(galleryRoot, join(root, 'gallery'), { recursive: true, filter: (from) => !built.test(from) });
-    let what = '';
-    try {
-      what = editSpecBones(join(root, 'gallery', target, 'rig.json'), (bones) => {
-        const bone = [...bones].reverse().find((x) => typeof x.x === 'number');
-        if (bone === undefined) return '';
-        bone.x = (bone.x as number) + 1;
-        return `bone "${bone.name}" x ${bone.x - 1} → ${bone.x}`;
-      });
-    } catch (err) {
-      probes.push(`the plant could not be made: ${(err as Error).message}`);
-    }
-    const check = runRenderHashes(['base', '--check', '--root', root, '--work', join(work, 'wbm')]);
+    const what = baseMovedPlant.what;
+    if (baseMovedPlant.failed !== null) probes.push(baseMovedPlant.failed);
+    const check = baseMovedRun;
     const lines = staleLines(check);
     const rows = lines.filter((l) => l.startsWith('  DIFF') || l.startsWith('  ONLY'));
     if (check.status !== 1) probes.push(`\`--check\` over the moved copy exited ${check.status}, not 1: ${check.stderr.trim().slice(0, 200)}`);
@@ -87544,6 +88894,44 @@ function runRenderHashesSuite(): number | null {
     );
   }
 
+  // --- RH08: this suite's units hand back at any --jobs what --jobs 1 does (issue #1128) --
+  // The eight runs above went through `inParallel` at this run's --jobs; the
+  // controls read only what came back, so the log is the same text at any
+  // --jobs exactly when every unit's result is. Held here on five cheap
+  // `render_hashes.ts` units of the same kind — three compares, a refusal and
+  // an unknown command, each answering differently — run sequentially and at
+  // max(2, --jobs): the same status, stdout and stderr, unit for unit, in the
+  // units' order. The whole log at --jobs 1, 2 and 4 is the PR's measurement;
+  // a second full pass of this suite here would double its cost to say it.
+  {
+    const probes: string[] = [];
+    const parallel = Math.max(2, JOBS);
+    const units = [
+      ['compare', a.out, b.out],
+      ['compare', a.out, join(work, 'moved.json')],
+      ['compare', a.out, join(work, 'refused.json')],
+      ['compare', join(work, 'absent.json'), a.out],
+      ['hash'],
+    ].map((args) => hashesUnit(args));
+    const one = inParallel(units, 1);
+    const many = inParallel(units, parallel);
+    const statuses = one.map((r) => String(r.status)).join(' ');
+    one.forEach((r, k) => {
+      const m = many[k];
+      if (m === undefined || m.status !== r.status || m.stdout !== r.stdout || m.stderr !== r.stderr) {
+        probes.push(`unit ${k} (${units[k].argv.slice(2, 3).join(' ')}): --jobs 1 read exit ${String(r.status)} over ${r.stdout.length}+${r.stderr.length} character(s), --jobs ${parallel} exit ${String(m?.status)} over ${m?.stdout.length ?? 0}+${m?.stderr.length ?? 0}`);
+      }
+    });
+    if (new Set(one.map((r) => `${r.status}|${r.stdout}|${r.stderr}`)).size !== units.length) probes.push('two of the units answered alike, so an order swapped between them would not be seen');
+    const held = probes.length === 0;
+    say(
+      'RH08_THE_RENDER_HASHES_UNITS_HAND_BACK_AT_ANY_JOBS_WHAT_JOBS_1_HANDS_BACK_IN_THE_UNITS_ORDER',
+      held,
+      probeDetail(held, probes, `${units.length} render_hashes.ts unit(s), each answering differently (exits ${statuses}), run one after another and max(2, --jobs) at a time: the same status, stdout and stderr, unit for unit, in order`),
+      'issue #1128: the units run at --jobs at once and the controls print after every one has finished, so the log is the same text ' +
+        'at any --jobs exactly when each unit hands back what it handed back alone, in its own place',
+    );
+  }
 
   // --- RC01–RC05: the core poser behind the seam (issue #968, step 3d of #380) --
   //
@@ -89779,14 +91167,35 @@ function runRenderHashesSuite(): number | null {
         { name: 'chainfit', args: (dir) => ['chainfit', '--candidate', row.out, '--images', parts, '--frame', frame, '--anchor', anchor, '--hinge', '-10,10', '--passes', '1', '--out', join(dir, 'chainfit.json')] },
       ];
       let files = 0;
+      // ⚡ Issue #1128: each case's two runs write into their own directories and
+      // read only what is already on disk — except `chainfit`, whose --anchor is
+      // the pose the `pose` case's cli.ts run wrote. So every case but chainfit
+      // runs through `inParallel`, the anchor is copied, then chainfit's pair
+      // does; the loop below reads them in the order it always ran them.
+      const caseDir = (side: 'full' | 'core', i: number): string => join(work, `rc24-${side}-${i}`);
+      for (const i of cases.keys()) {
+        mkdirSync(caseDir('full', i), { recursive: true });
+        mkdirSync(caseDir('core', i), { recursive: true });
+      }
+      const pairUnits = (i: number): ParallelUnit[] => [
+        { argv: [process.execPath, 'cli.ts', ...cases[i].args(caseDir('full', i))], cwd: import.meta.dir },
+        { argv: [process.execPath, join(tree, 'cli_core.ts'), ...cases[i].args(caseDir('core', i))], cwd: work, maxBuffer: 64 * 1024 * 1024 },
+      ];
+      const caseRuns = new Map<number, UnitResult[]>();
+      const before = [...cases.keys()].filter((i) => cases[i].name !== 'chainfit');
+      const firstRuns = inParallel(before.flatMap(pairUnits));
+      before.forEach((i, k) => caseRuns.set(i, firstRuns.slice(2 * k, 2 * k + 2)));
+      const poseAt = cases.findIndex((c) => c.name === 'pose');
+      if (poseAt >= 0 && existsSync(join(caseDir('full', poseAt), 'pose.json'))) cpSync(join(caseDir('full', poseAt), 'pose.json'), anchor);
+      const after = [...cases.keys()].filter((i) => cases[i].name === 'chainfit');
+      const lastRuns = inParallel(after.flatMap(pairUnits));
+      after.forEach((i, k) => caseRuns.set(i, lastRuns.slice(2 * k, 2 * k + 2)));
       for (const [i, c] of cases.entries()) {
-        const a = join(work, `rc24-full-${i}`);
-        const b = join(work, `rc24-core-${i}`);
-        mkdirSync(a, { recursive: true });
-        mkdirSync(b, { recursive: true });
-        const twin = runCli(c.args(a));
-        const run = runEntryIn(tree, 'cli_core.ts', c.args(b), work);
-        if (c.name === 'pose' && existsSync(join(a, 'pose.json'))) cpSync(join(a, 'pose.json'), anchor);
+        const a = caseDir('full', i);
+        const b = caseDir('core', i);
+        const pair = caseRuns.get(i);
+        if (pair === undefined || pair.length !== 2) throw new Error(`RC24: case ${c.name} was handed to no batch`);
+        const [twin, run] = pair;
         const fa = dirDigests(a);
         const fb = dirDigests(b);
         const differ = digestDifferences(fb, fa);
@@ -89973,10 +91382,16 @@ function runRenderHashesSuite(): number | null {
           ['a path with nothing at it', absent, absent],
         ] as const;
         let refused27 = 0;
+        // ⚡ Issue #1128: the 30 refusals are independent — each its own --out, each
+        // expected to write nothing, none reading another's — so they run through
+        // `inParallel` and are read below in the order the loop always read them.
+        const runs27 = inParallel(
+          takes.flatMap((c, i) => states.map(([, x], k) => ({ argv: [process.execPath, 'cli.ts', ...c.args(x, join(work, `rc27-o-${i}-${k}`))], cwd: import.meta.dir }))),
+        );
         for (const [i, c] of takes.entries()) {
-          for (const [k, [state, x, said]] of states.entries()) {
+          for (const [k, [state, , said]] of states.entries()) {
             const o = join(work, `rc27-o-${i}-${k}`);
-            const r = runCli(c.args(x, o));
+            const r = runs27[i * states.length + k];
             if (r.status !== 2 || firstErr(r) !== `rigc: nothing at ${said}` || stacked(r)) probes.RC27.push(`${c.name} on ${state} exited ${r.status} saying ${JSON.stringify(firstErr(r).slice(0, 160))}${stacked(r) ? ' with a stack' : ''}, not "rigc: nothing at ${said}"`);
             else if (existsSync(o)) probes.RC27.push(`${c.name} on ${state} wrote ${o}`);
             else refused27++;
@@ -90503,8 +91918,10 @@ function runRenderHashesSuite(): number | null {
         figures.RC40 = `in copies of the tree, ${row1060.name} built by cli_core.ts against cli.ts's: ${reds40.join('; ')}`;
 
         const containedArgs = (out: string): string[] => ['build', '--rig', CONTAINED.rigPath, '--motion', CONTAINED.motionPath, '--manifest', CONTAINED.manifestPath, '--profile', 'spine-html', '--out', out];
-        const fullBare = runCli(containedArgs(join(work, 'rc41-full')));
-        const coreBare = runEntryIn(tree, 'cli_core.ts', containedArgs(join(work, 'rc41-core')), work);
+        // Built inside the fixture's own directory (issue #1127), so neither entry's pages spell a temp directory.
+        const rc41Root = buildRootIn(CONTAINED.dir, 'rigc-rc41-');
+        const fullBare = runCli(containedArgs(join(rc41Root, 'rc41-full')));
+        const coreBare = runEntryIn(tree, 'cli_core.ts', containedArgs(join(rc41Root, 'rc41-core')), work);
         const bareLine = figuresOf(coreBare.stdout)[0] ?? [];
         const bareKeys = bareLine.map(([k]) => k);
         if (fullBare.status !== 0 || coreBare.status !== 0) probes.RC41.push(`${CONTAINED.rig} (contained cut): cli.ts exited ${fullBare.status} and cli_core.ts ${coreBare.status} — ${JSON.stringify(firstErr(coreBare).slice(0, 200))}`);
@@ -90884,7 +92301,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
   }
 
   // --- MB05: every compiled rig's bones are its model through the emitter and the two passes --
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-bones-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-bones-'));
   {
     const probes: string[] = [];
     const TRACK = { type: 'path', vertexCount: 6, vertices: [0, 0, 10, 10, 20, 10, 30, 0, 40, -10, 50, -10] };
@@ -91320,7 +92737,7 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-vertices-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-vertices-'));
   const chain = computeWorldTransforms([
     { name: 'root', x: 3, y: -2 },
     { name: 'arm', parent: 'root', x: 20, y: 4, rotation: 35, scaleX: 1.5, scaleY: 0.5 },
@@ -91895,7 +93312,7 @@ function compileRecordSourceProblems(text: string): string[] {
  * `anim` replaces the one animation's extra timelines.
  */
 function writeModelRecordsProbe(anim: Record<string, unknown> = {}): { dirs: ProbeDirs; motionPath: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-model-records-'));
   writeOverlayProbePng(join(dir, 'block.png'), 12, 8, [40, 60, 90, 255]);
   writeOverlayProbePng(join(dir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
   writeOverlayProbePng(join(dir, 'marker2.png'), 6, 6, [80, 170, 50, 255]);
@@ -92033,7 +93450,7 @@ function runModelRecordsSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-records-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-records-'));
 
   // --- MS01: a slot's keys in the constructor's order; a null setup left out --
   {
@@ -92678,7 +94095,7 @@ function runModelAnimationsSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-animations-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-animations-'));
   const slotsOf = (...names: string[]): ModelSlot[] => names.map((name) => ({ name, bone: 'root', setup: null }));
   const glide = { glide: [0.42, 0, 0.58, 1] };
   const everyCompiled = compileAnimationsProbe({ idle: ANIMATIONS_PROBE_IDLE, every: EVERY_GROUP_ANIMATION }, glide);
@@ -93270,7 +94687,7 @@ function runModelDocumentSuite(): { failures: number; gateHole: boolean } {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-document-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-document-'));
   const probe = modelDocumentProbe();
   const model = probe.result?.model ?? null;
 
@@ -93940,7 +95357,7 @@ const RECT_PROBE_STEM = 'glint_';
  * 2, 1 of 16x16); `untrimmed` differs from `trimmed` in `badge`'s two lines alone.
  */
 function writeRectProbe(extra: Record<string, Record<string, unknown>> = {}): { dirs: ProbeDirs; motionPath: string; trimmed: string; untrimmed: string } {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-atlas-rect-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-atlas-rect-'));
   writeProbePng(join(dir, 'plate.png'), 12, 8, [40, 60, 90, 255]);
   for (let i = 0; i < RECT_PROBE_FRAMES; i++) writeProbePng(join(dir, `${RECT_PROBE_STEM}${String(1 + i).padStart(4, '0')}.png`), 16, 16, [60 * (i + 1), 60, 90, 255]);
   const rigPath = join(dir, 'probe.rig.json');
@@ -93997,7 +95414,7 @@ function runModelAtlasSuite(): number {
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
     bad += reportCase(name, ok, detail, why);
   };
-  const work = mkdtempSync(join(tmpdir(), 'rigc-model-atlas-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-model-atlas-'));
   const probe = writeRectProbe();
   const loose = buildRectProbe(probe, join(probe.dirs.dir, 'loose'));
   const trimmed = buildRectProbe(probe, join(probe.dirs.dir, 'trimmed'), probe.trimmed);
@@ -94330,7 +95747,8 @@ function runModelAtlasSuite(): number {
       let named = '';
       let regions = 0;
       routes.forEach(([label, args, gates], i) => {
-        const out = join(work, 'routes', String(i));
+        // The probe's routes build inside the probe's own directory (issue #1127); the gallery's art is the checkout's.
+        const out = join(args.includes(probe.trimmed) ? buildRootIn(probe.dirs.dir, 'rigc-routes-') : join(work, 'routes'), String(i));
         const run = runCli(['build', ...args, '--out', out]);
         if (run.status !== 0) {
           probes.push(`${label}: build exited ${run.status}: ${run.stderr.trim().split('\n').slice(-2).join(' | ')}`);
@@ -94731,7 +96149,7 @@ interface ChainFitFixture {
  * the two hang off two different pivots.
  */
 function buildChainFitFixture(): ChainFitFixture {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-chainfit-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -95018,7 +96436,7 @@ interface ChainFitRelocationFixture {
  * hinge cannot translate a pivot back.
  */
 function buildChainFitRelocationFixture(): ChainFitRelocationFixture {
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-chainfit-reloc-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-chainfit-reloc-'));
   const parts = join(dir, 'parts');
   mkdirSync(parts, { recursive: true });
 
@@ -96507,7 +97925,7 @@ function runBallotSuite(): number {
     }
     built.push({ dir: dirs.dir, outDir: dirs.outDir });
   }
-  const work = mkdtempSync(join(tmpdir(), 'rigc-ballot-'));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-ballot-'));
   const ballotPath = join(work, 'ballot.html');
   const ledgerPath = join(work, 'votes.jsonl');
   const vote = runCli([
@@ -97140,7 +98558,7 @@ function runGallerySuite(): { failures: number; examples: number } {
   let bad = 0;
   for (const name of names) {
     const dir = join(root, name);
-    const outDir = mkdtempSync(join(tmpdir(), `rigc-gallery-${name}-`));
+    const outDir = mkdtempSync(join(harnessTemp(), `rigc-gallery-${name}-`));
     const opts = { rigPath: join(dir, 'rig.json'), motionPath: join(dir, 'motion.json'), outDir };
     try {
       const result = compile(opts);
@@ -97278,6 +98696,11 @@ interface IngestCandidate {
   motionPath: string;
   manifestPath?: string;
   imagesDir?: string;
+  /**
+   * The directory a build of this candidate lands inside (`buildRootIn`, issue #1127): a fixture's or a probe's own. Absent
+   * for a gallery example, whose art is the checkout's and which no build here writes into.
+   */
+  home?: string;
 }
 
 /** What one round trip produced, and everything a case reads off it. */
@@ -97607,7 +99030,7 @@ function writeIngestProbe(): IngestCandidate {
   const dirs = writeProbeRig(INGEST_PROBE_RIG);
   const motionPath = join(dirs.dir, 'ingest_probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(INGEST_PROBE_MOTION, null, 2)}\n`);
-  return { name: 'ingest_probe', rigPath: dirs.rigPath, motionPath, imagesDir: dirs.dir };
+  return { name: 'ingest_probe', rigPath: dirs.rigPath, motionPath, imagesDir: dirs.dir, home: dirs.dir };
 }
 
 /** Every rig this run can round-trip: the gallery, the three probes, the coverage probe. */
@@ -97624,7 +99047,7 @@ function ingestCandidates(): IngestCandidate[] {
     ['articulated_probe', ARTICULATED],
     ['contained_probe', CONTAINED],
   ] as const) {
-    out.push({ name, rigPath: fixture.rigPath, motionPath: fixture.motionPath, manifestPath: fixture.manifestPath });
+    out.push({ name, rigPath: fixture.rigPath, motionPath: fixture.motionPath, manifestPath: fixture.manifestPath, home: fixture.dir });
   }
   out.push(writeIngestProbe());
   return out;
@@ -97651,7 +99074,8 @@ function ingestRoundTrip(
   art: 'loose' | 'none',
   mutate?: (rig: Record<string, unknown>, motion: Record<string, unknown>) => number,
 ): IngestTrip | null {
-  const root = mkdtempSync(join(tmpdir(), `rigc-ingest-${candidate.name}-`));
+  const prefix = `rigc-ingest-${candidate.name}-`;
+  const root = buildRootFor(candidate.home, prefix);
   const aDir = join(root, 'A');
   const bDir = join(root, 'B');
   const specDir = join(root, 'S');
@@ -98541,7 +99965,7 @@ function runIngestSuite(): number {
     const imagesTrip = (
       writeImages: boolean,
     ): { specDir: string; artDir: string; images?: string; unflagged?: CompileResult; refusal?: string; flagged: CompileResult } => {
-      const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-'));
+      const root = buildRootFor(probeCandidate.home, 'rigc-ingest-images-');
       const [aDir, bDir, fDir, specDir] = ['A', 'B', 'F', 'S'].map((leaf) => join(root, leaf));
       // Every output directory a sibling of every other, for the reason
       // `ingestRoundTrip` says: a path written `relative(outDir, …)` is a
@@ -98622,7 +100046,7 @@ function runIngestSuite(): number {
     // somebody typed into it, and that half is reachable only through a real
     // invocation. Three clauses, because a refusal with no positive control
     // beside it is satisfied by refusing everything.
-    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-images-cli-'));
+    const cliRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-images-cli-'));
     const cliSkeleton = join(cliRoot, 'skeleton.json');
     writeFileSync(cliSkeleton, trips.get('ingest_probe')!.a.skeletonText);
     const artDir = resolve(dirname(probeCandidate.rigPath));
@@ -98672,7 +100096,7 @@ function runIngestSuite(): number {
     const rows = existsSync(galleryDir)
       ? readdirSync(galleryDir).sort().filter((n) => existsSync(join(galleryDir, n, 'rig.json')) && existsSync(join(galleryDir, n, 'motion.json')))
       : [];
-    const docRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-docstage-'));
+    const docRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-docstage-'));
     /** One gallery build, written as `build` writes it: the pair and the document. */
     const written = rows.map((name) => {
       const dir = join(docRoot, name, 'A');
@@ -98830,7 +100254,7 @@ function runIngestSuite(): number {
         version: packageVersion(),
       });
       const blockers = decompiled.findings.filter((f) => f.kind === 'blocker');
-      const root = mkdtempSync(join(tmpdir(), `rigc-corpus-${entry.name}-`));
+      const root = mkdtempSync(join(harnessTemp(), `rigc-corpus-${entry.name}-`));
       const specDir = join(root, 'S');
       mkdirSync(specDir, { recursive: true });
       const rigPath = join(specDir, 'rig.json');
@@ -99255,7 +100679,7 @@ function runIngestSuite(): number {
     // mutates the SPEC and this mutates the SOURCE, which is the one thing it
     // cannot be asked for.
     const probeCandidate = candidates.find((c) => c.name === 'ingest_probe')!;
-    const originRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-origin-'));
+    const originRoot = buildRootFor(probeCandidate.home, 'rigc-ingest-origin-');
     const originA = join(originRoot, 'A');
     const originB = join(originRoot, 'B');
     for (const dir of [originA, originB]) mkdirSync(dir, { recursive: true });
@@ -99727,7 +101151,7 @@ function runIngestSuite(): number {
     const refusedCoded = refusedFindings.filter((f) => f.code === 'SPEC_REFUSED');
     // The same run through the CLI, because the file on disk is the half a
     // library call cannot reach and the half the census reads.
-    const cliRoot = mkdtempSync(join(tmpdir(), 'rigc-ingest-refused-'));
+    const cliRoot = mkdtempSync(join(harnessTemp(), 'rigc-ingest-refused-'));
     const cliSkeleton = join(cliRoot, 'skeleton.json');
     writeFileSync(cliSkeleton, JSON.stringify(forgedRefusal));
     const cliOut = join(cliRoot, 'specs');
@@ -99857,7 +101281,7 @@ function runIngestSuite(): number {
   const rebuildForged = (
     mutate?: (motion: Record<string, unknown>) => number,
   ): { findings: IngestFinding[]; motion: Record<string, unknown>; built: CompileResult | null; refusal: string; edits: number } => {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-pathdeform-'));
+    const root = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-ingest-pathdeform-');
     const specDir = join(root, 'S');
     const outDir = join(root, 'B');
     for (const dir of [specDir, outDir]) mkdirSync(dir, { recursive: true });
@@ -100237,7 +101661,7 @@ function runIngestSuite(): number {
     // probe does not carry, because its link is in the default skin beside its
     // source. `skin` is therefore STATED on both, and a rebuild that dropped it
     // would resolve them against the default skin instead.
-    const twoSkinDir = mkdtempSync(join(tmpdir(), 'rigc-linkskins-'));
+    const twoSkinDir = mkdtempSync(join(harnessTemp(), 'rigc-linkskins-'));
     writeProbePng(join(twoSkinDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
     writeProbePng(join(twoSkinDir, 'marker.png'), 6, 6, [180, 70, 50, 255]);
     const twoSkinRigPath = join(twoSkinDir, 'probe.rig.json');
@@ -100609,7 +102033,7 @@ function runIngestSuite(): number {
       source: 'skeleton.json',
       version: '0',
     });
-    const rebuiltDir = mkdtempSync(join(tmpdir(), 'rigc-linkgeom-'));
+    const rebuiltDir = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-linkgeom-');
     const rebuiltRigPath = join(rebuiltDir, 'rig.json');
     const rebuiltMotionPath = join(rebuiltDir, 'motion.json');
     writeFileSync(rebuiltRigPath, `${JSON.stringify(forgedResult.rig, null, 2)}\n`);
@@ -100722,7 +102146,7 @@ function runIngestSuite(): number {
     let tripRefusal: string | null = null;
     try {
       sharedTrip = ingestRoundTrip(
-        { name: 'sharedskin', rigPath: sharedDirs.rigPath, motionPath: sharedMotionPath, imagesDir: sharedDirs.dir },
+        { name: 'sharedskin', rigPath: sharedDirs.rigPath, motionPath: sharedMotionPath, imagesDir: sharedDirs.dir, home: sharedDirs.dir },
         'none',
       );
     } catch (err) {
@@ -100885,7 +102309,7 @@ function runIngestSuite(): number {
       return `${JSON.stringify(forged, null, 2)}\n`;
     };
     const rebuildText = (text: string): { findings: IngestFinding[]; built: CompileResult | null; refusal: string } => {
-      const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-separable-'));
+      const root = buildRootFor(candidates.find((c) => c.name === 'ingest_probe')?.home, 'rigc-ingest-separable-');
       const specDir = join(root, 'S');
       const outDir = join(root, 'B');
       for (const dir of [specDir, outDir]) mkdirSync(dir, { recursive: true });
@@ -101159,7 +102583,7 @@ function runIngestSuite(): number {
     // IG59: the rebuild. The forged file's specs are the clean file's, so the
     // rebuild is the clean file byte for byte and gates green; the two ways of
     // carrying the constraint through are each refused, by name, where they are.
-    const rebuildDir = mkdtempSync(join(tmpdir(), 'rigc-inertphysics-'));
+    const rebuildDir = buildRootIn(ARTICULATED.dir, 'rigc-inertphysics-');
     const atlasInPath = join(physicsTrip.aDir, 'skeleton.atlas');
     /** Write a rig and motion spec, compile them, and gate the result; the refusal as text when there is one. */
     const buildSpecs = (tag: string, rig: unknown, motion: unknown): { text: string | null; refusal: string; failures: string[] } => {
@@ -101419,7 +102843,7 @@ function runIngestSuite(): number {
     const chainMotion = join(chainDirs.dir, 'probe.motion.json');
     writeFileSync(chainMotion, `${JSON.stringify(inheritChainMotion(null), null, 2)}\n`);
     const plainChain = compile({ rigPath: chainDirs.rigPath, motionPath: chainMotion, outDir: chainDirs.outDir, imagesDir: chainDirs.dir });
-    const packDir = mkdtempSync(join(tmpdir(), 'rigc-inherittrack-'));
+    const packDir = mkdtempSync(join(harnessTemp(), 'rigc-inherittrack-'));
     writeFileSync(join(packDir, 'skeleton.atlas'), plainChain.atlasText);
     const plantedKeys = [
       { time: 0.5, inherit: 'noScale' },
@@ -101662,7 +103086,7 @@ function runIngestSuite(): number {
   // `bounds_box` has no two boxes to compare.
   {
     const probe = candidates.find((c) => c.name === 'ingest_probe')!;
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-stageless-'));
+    const root = buildRootFor(probe.home, 'rigc-ingest-stageless-');
     const dirA = join(root, 'A');
     const dirB = join(root, 'B');
     for (const dir of [dirA, dirB]) mkdirSync(dir, { recursive: true });
@@ -101781,7 +103205,7 @@ function runIngestSuite(): number {
   // be a rule `spine` does not run, read off `profileSkipped` rather than listed.
   {
     const probe = candidates.find((c) => c.name === 'ingest_probe')!;
-    const outDir = mkdtempSync(join(tmpdir(), 'rigc-ingest-own-'));
+    const outDir = buildRootFor(probe.home, 'rigc-ingest-own-');
     const built = compile({
       rigPath: probe.rigPath,
       motionPath: probe.motionPath,
@@ -102353,7 +103777,6 @@ function runIngestSuite(): number {
   // declaration back off the written spec is the control that it is the
   // declaration, and not something else, that turns the rebuild green.
   {
-    const root = mkdtempSync(join(tmpdir(), 'rigc-ingest-consumer-'));
     const dirs = writeProbeRig({
       bones: [
         { name: 'root' },
@@ -102368,6 +103791,7 @@ function runIngestSuite(): number {
         { name: 'follow', type: 'transform', bones: ['follower'], source: 'source', properties: { rotate: { to: { rotate: {} } } }, mixRotate: 0 },
       ],
     });
+    const root = buildRootIn(dirs.dir, 'rigc-ingest-consumer-');
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(
       motionPath,
@@ -102636,7 +104060,7 @@ function runIngestSuite(): number {
   // 🌱 The plant is DATA: every `name` deleted out of the decompiled spec before
   // the rebuild, which is the branch point's spec reproduced inside the run.
   {
-    const nameDir = mkdtempSync(join(tmpdir(), 'rigc-attachment-name-'));
+    const nameDir = mkdtempSync(join(harnessTemp(), 'rigc-attachment-name-'));
     writeProbePng(join(nameDir, 'block.png'), 12, 8, [40, 60, 90, 255]);
     writeProbePng(join(nameDir, 'panel.png'), 10, 10, [90, 40, 60, 255]);
     writeProbePng(join(nameDir, 'plate.png'), 10, 10, [30, 120, 40, 255]);
@@ -102670,7 +104094,7 @@ function runIngestSuite(): number {
         )}\n`,
       );
       writeFileSync(motionPath, `${JSON.stringify({ ...STATIC_MOTION, archetype: name, cut: name }, null, 2)}\n`);
-      return { name, rigPath, motionPath, imagesDir: nameDir };
+      return { name, rigPath, motionPath, imagesDir: nameDir, home: nameDir };
     };
     /** Compile a candidate on its own, for a forge to start from. */
     const emitOf = (candidate: IngestCandidate): { skeletonText: string; atlasText: string } => {
@@ -103121,7 +104545,7 @@ function runIngestSuite(): number {
     // float32 holds exactly — so a rebuild that re-measured would say so. The
     // plant is DATA: the same spec with `lengths` deleted, which is the branch
     // point's spec reproduced inside the run.
-    const lengthsDir = mkdtempSync(join(tmpdir(), 'rigc-path-lengths-'));
+    const lengthsDir = mkdtempSync(join(harnessTemp(), 'rigc-path-lengths-'));
     const lengthsRigPath = join(lengthsDir, 'path_lengths.rig.json');
     const lengthsMotionPath = join(lengthsDir, 'path_lengths.motion.json');
     writeFileSync(
@@ -103839,7 +105263,7 @@ function prefixOpeningCollisions(blocks: readonly SuiteBlock[]): string[] {
  * one, and `TY23` holds that it is not.
  */
 const DURATION_LINE =
-  /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\)(?:, heap (\d+) MB \(([+-]\d+) MB\), ext (\d+) MB)?)?$/;
+  /^ {2}suite (.+): (\d+) case line\(s\), (\d+\.\d) s(?:, rss (\d+) MB \(([+-]\d+) MB\)(?:, heap (\d+) MB \(([+-]\d+) MB\), ext (\d+) MB)?(?:, children high-water (\d+) MB \((.+)\))?)?$/;
 
 /**
  * What the process held after one suite and how far the suite moved it, in
@@ -103866,6 +105290,26 @@ interface SuiteRss {
   heap?: number;
   heapDelta?: number;
   ext?: number;
+  /**
+   * The largest peak of any child process the suite's call measured through
+   * `inParallel`, in whole MB, and that child's label (issue #1143). Absent
+   * when the suite measured none — it ran no units, or ran them on the
+   * sequential path, which reads no child's peak.
+   */
+  children?: SuiteChildren;
+}
+
+/** A suite's children's high-water: the largest child it measured, in whole MB, and what that child was. */
+interface SuiteChildren {
+  highWater: number;
+  unit: string;
+}
+
+/** The heaviest of the children a suite's call measured, or `undefined` with none (issue #1143). The first measured wins a tie, so one run names one unit. */
+function suiteChildren(peaks: readonly UnitPeak[]): SuiteChildren | undefined {
+  let top: UnitPeak | undefined;
+  for (const peak of peaks) if (top === undefined || peak.peakBytes > top.peakBytes) top = peak;
+  return top === undefined ? undefined : { highWater: megabytes(top.peakBytes), unit: top.label };
 }
 
 /** One reading of the process's memory, in bytes: what a suite boundary reads, once. */
@@ -103919,7 +105363,8 @@ function durationLine(key: string, controls: number, seconds: number, rss: Suite
     rss.heap === undefined || rss.heapDelta === undefined || rss.ext === undefined
       ? ''
       : `, heap ${rss.heap} MB (${signedMegabytes(rss.heapDelta)} MB), ext ${rss.ext} MB`;
-  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${signedMegabytes(rss.delta)} MB)${heap}`;
+  const children = rss.children === undefined ? '' : `, children high-water ${rss.children.highWater} MB (${rss.children.unit})`;
+  return `  suite ${key}: ${controls} case line(s), ${seconds.toFixed(1)} s, rss ${rss.after} MB (${signedMegabytes(rss.delta)} MB)${heap}${children}`;
 }
 
 /** The figures a duration line printed, read back off `DURATION_LINE`'s groups; `null` when it printed no RSS. */
@@ -103931,6 +105376,7 @@ function printedMemory(match: RegExpExecArray): SuiteRss | null {
     read.heapDelta = Number(match[7]);
     read.ext = Number(match[8]);
   }
+  if (match[9] !== undefined && match[10] !== undefined) read.children = { highWater: Number(match[9]), unit: match[10] };
   return read;
 }
 
@@ -104050,6 +105496,13 @@ function durationFaults(
         );
       }
     }
+    // Issue #1143: the children's figure is read back the same way — a line
+    // that drops it, or names another unit or figure, says nothing true about
+    // the processes the suite started.
+    if (stated !== undefined && measured !== undefined && (stated.children?.highWater !== measured.children?.highWater || stated.children?.unit !== measured.children?.unit)) {
+      const spell = (c: SuiteChildren | undefined): string => (c === undefined ? 'no children' : `children high-water ${c.highWater} MB (${c.unit})`);
+      faults.push(`the suite "${block.key}" printed ${spell(stated.children)} while its call measured ${spell(measured.children)}`);
+    }
   }
   for (const key of printed.keys()) {
     if (!blocks.some((block) => block.key === key)) {
@@ -104111,6 +105564,26 @@ const MEMORY_BASE_SPEC = 'selftest-memory/1';
  */
 const MEMORY_MARGIN = 1.4;
 
+/**
+ * How far above the children's bound `TY40`'s plant is sized (issue #1143): a
+ * tenth, so the planted unit's own allocation crosses the bound with no help
+ * from the load it runs over and no rounding between MiB and the line's MB
+ * can put it under.
+ */
+const TY40_PLANT_OVER = 1.1;
+
+/**
+ * The most `TY40`'s plant may ask for, in MB (issue #1143). A plant runs on a
+ * CI runner beside the unit next to it and the parent (whose own high-water
+ * `TY26` holds, per platform, in the same base), and a runner's memory is finite:
+ * GitHub documents its hosted Linux runners at 16 GB for a public repository
+ * and 7 GB for a private one [their documentation, not measured here], so
+ * 4,096 MB leaves the smaller room for the rest. Over it the plant does not
+ * run and `TY40` names why — a plant must never be the thing that kills the
+ * job, which is what a plant sized 1,024x too large did to main's merge job.
+ */
+const TY40_PLANT_LIMIT_MB = 4096;
+
 /** One platform's base: the high-water a green full run on it reached. */
 interface MemoryBaseEntry {
   /** The largest RSS any suite line of that run printed, in whole MB. */
@@ -104119,6 +105592,16 @@ interface MemoryBaseEntry {
   suites: number;
   /** The Bun that ran it: the allocator is the runtime's, and a new one can move the figure. */
   bun: string;
+  /**
+   * The largest peak of any child that run measured (issue #1143, `TY40`), in
+   * whole MB, and the `--jobs` it ran at — a core worker's share of the units
+   * is the batch over `jobs`, so the figure is a reading AT that `jobs`.
+   * Absent from an entry written before #1143, or by a run that measured no
+   * child (`--jobs 1`); then `TY40` is a SKIP that names the command, never a
+   * pass. Optional, so the format word did not change: every reader of
+   * `selftest-memory/1` reads an entry with it exactly as one without.
+   */
+  children?: { highWater: number; jobs: number };
 }
 
 /** The base document, keyed by `process.platform`. */
@@ -104138,6 +105621,9 @@ function readMemoryBase(root: string): MemoryBase | null {
   for (const [platform, entry] of Object.entries(parsed.platforms)) {
     if (typeof entry?.highWater !== 'number') {
       throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry states no "highWater"; write it again with \`bun selftest.ts --memory-base\``);
+    }
+    if (entry.children !== undefined && (typeof entry.children?.highWater !== 'number' || typeof entry.children?.jobs !== 'number')) {
+      throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry's "children" states no "highWater" and "jobs"; write it again with \`bun selftest.ts --memory-base\``);
     }
   }
   return { spec: parsed.spec, platforms: parsed.platforms };
@@ -104160,6 +105646,58 @@ interface MemoryCeiling {
 /** The run's high-water: the largest RSS any suite line printed, in whole MB (0 with none). */
 function highWaterOf(rss: ReadonlyMap<string, SuiteRss>): number {
   return Math.max(0, ...[...rss.values()].map((r) => r.after));
+}
+
+/** The run's children's high-water (issue #1143): the largest child any suite line stated, with its suite and unit, or `null` with none. Ties go to the first suite. */
+function childrenHighWaterOf(rss: ReadonlyMap<string, SuiteRss>): { highWater: number; suite: string; unit: string } | null {
+  let top: { highWater: number; suite: string; unit: string } | null = null;
+  for (const [suite, r] of rss) {
+    if (r.children !== undefined && (top === null || r.children.highWater > top.highWater)) top = { highWater: r.children.highWater, suite, unit: r.children.unit };
+  }
+  return top;
+}
+
+/** What the children's ceiling says about one run (issue #1143): held, over, nothing to hold it to, or no child measured. */
+interface ChildrenCeiling {
+  verdict: 'held' | 'over' | 'no base' | 'no children';
+  bound: number | null;
+  highWater: number | null;
+  faults: string[];
+}
+
+/**
+ * The run's children's high-water against its platform's children's base ×
+ * `MEMORY_MARGIN` — the same factor `TY26`'s ceiling uses, read from the same
+ * constant (issue #1143, `TY40`). Over the bound, the fault names the unit and
+ * the suite that started it, because "a child is too big" with no child named
+ * is a search through 100-odd processes rather than a fix.
+ *
+ * ⚖️ It holds the LARGEST child, not the sum of the children alive at once.
+ * The sum is what a runner dies of, but it is a reading of a schedule: which
+ * units overlap depends on `--jobs`, on the cores and on how long each unit
+ * took that run, so a base of sums written at one `jobs` bounds no other — and
+ * the sum alive at once is at most `jobs` × the largest child, which is the
+ * bound this one figure gives for any `jobs`. What it cannot see: a run whose
+ * units all grew a little, under the bound each, while their sum at the
+ * runner's `jobs` crossed the runner's memory — the per-unit journal
+ * (`RIGC_UNIT_PEAKS`) is where that sum is read.
+ */
+function childrenCeiling(rss: ReadonlyMap<string, SuiteRss>, entry: MemoryBaseEntry | undefined, platform: string): ChildrenCeiling {
+  const top = childrenHighWaterOf(rss);
+  if (entry?.children === undefined) return { verdict: 'no base', bound: null, highWater: top?.highWater ?? null, faults: [] };
+  const bound = Math.floor(entry.children.highWater * MEMORY_MARGIN);
+  if (top === null) return { verdict: 'no children', bound, highWater: null, faults: [] };
+  if (top.highWater <= bound) return { verdict: 'held', bound, highWater: top.highWater, faults: [] };
+  return {
+    verdict: 'over',
+    bound,
+    highWater: top.highWater,
+    faults: [
+      `the run's children's high-water was ${top.highWater} MB — "${top.unit}", started by the suite "${top.suite}" — over the ${platform} bound of ${bound} MB ` +
+        `(base children's high-water ${entry.children.highWater} MB at --jobs ${entry.children.jobs} × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
+        'every suite line names its own heaviest child. If the growth is intended, write the base again with `bun selftest.ts --memory-base`',
+    ],
+  };
 }
 
 /**
@@ -104516,12 +106054,19 @@ class RunTally {
 
   /**
    * `--shard`: which shard of the registration list this tally runs, or `null`
-   * (issue #1116). A suite whose 0-based registration index is not `i − 1`
-   * modulo `n` prints its header and one `SKIP … — --shard` line, as `--only`'s
+   * (issue #1116). A suite not dealt to shard `i` (`ownerOf`, issue #1128)
+   * prints its header and one `SKIP … — --shard` line, as `--only`'s
    * skipped suites do, and so does every suite that reads the whole run — the
    * merge runs those.
    */
   shard: ShardSpec | null = null;
+  /**
+   * `--shard`'s deal (issue #1128): the shard each suite in the durations base
+   * belongs to, by longest-first bin packing (`shardPlan`). A suite with no
+   * entry is dealt round-robin by its registration index, as every suite was
+   * before the base existed — so an empty plan is #1116's deal exactly.
+   */
+  plan: ReadonlyMap<string, number> = new Map();
   /**
    * `--merge`: the shard documents this tally replays, or `null` (issue #1116).
    * A suite a shard ran is not called: its block, its counts, its printed
@@ -104554,6 +106099,12 @@ class RunTally {
    * unless it says otherwise.
    */
   constructor(readonly only: ReadonlySet<string> | null = null) {}
+
+  /** The 1-based shard a suite belongs to under `--shard`: its entry in the plan, or round-robin by registration index. */
+  ownerOf(index: number, key: string): number {
+    if (this.shard === null) throw new Error(`ownerOf("${key}") asked of a tally that is not a shard`);
+    return shardOwner(this.plan, index, key, this.shard.n);
+  }
 
   /** Every FAIL line observed so far. */
   get fails(): readonly string[] {
@@ -104685,13 +106236,14 @@ class RunTally {
       const recorded = this.replay.expect(index, key, reads.whole === true);
       if (recorded !== null) return this.replayed(recorded.record, recorded.from) as T;
     }
-    if (this.shard !== null && (reads.whole === true || index % this.shard.n !== this.shard.i - 1)) {
+    if (this.shard !== null && (reads.whole === true || this.ownerOf(index, key) !== this.shard.i)) {
       const gutterBefore = new Map(this.gutter);
       console.log(`\n── ${key} ──`);
       console.log(
         reads.whole === true
           ? `  SKIP  ${key}: not run — --shard; it reads what every suite before it left in the run, so the merge runs it over every shard's record`
-          : `  SKIP  ${key}: not run — --shard ${this.shard.i}/${this.shard.n} (registration index ${index} is shard ${(index % this.shard.n) + 1}'s)`,
+          : `  SKIP  ${key}: not run — --shard ${this.shard.i}/${this.shard.n} (registration index ${index} is shard ${this.ownerOf(index, key)}'s, ` +
+              `${this.plan.has(key) ? `dealt longest-first by ${SHARDS_BASE_PATH}` : `round-robin: ${SHARDS_BASE_PATH} has no entry for it`})`,
       );
       for (const [word, count] of this.gutter) {
         const added = count - (gutterBefore.get(word) ?? 0);
@@ -104752,10 +106304,15 @@ class RunTally {
     const failsBefore = this.failText.length;
     const marks = keeping ? this.states.map((state) => state.mark()) : [];
     const memoryBefore = readMemory(this.collects);
+    // Issue #1143: the children this suite's call measured are the ones
+    // `inParallel` added to `UNIT_PEAKS_TAKEN` across it.
+    const unitsBefore = UNIT_PEAKS_TAKEN.length;
     const began = performance.now();
     const value = suite();
     const seconds = (performance.now() - began) / 1000;
     const rss = suiteMemory(memoryBefore, readMemory(this.collects));
+    const children = suiteChildren(UNIT_PEAKS_TAKEN.slice(unitsBefore));
+    if (children !== undefined) rss.children = children;
     const block: SuiteBlock = {
       key,
       ran: reads.ran === undefined ? true : reads.ran(value),
@@ -104852,8 +106409,8 @@ class RunTally {
 // the run as n shards whose merge is the verdict (#1116)
 // ---------------------------------------------------------------------------
 //
-// `--shard i/n` runs the suites whose 0-based registration index is `i − 1`
-// modulo `n` — the order `main` calls `tally.of` in, which is the same in every
+// `--shard i/n` runs the suites dealt to shard `i` (the deal, below: issue
+// #1128) over the order `main` calls `tally.of` in, which is the same in every
 // process because it is code — prints every case line and one `SKIP` per suite
 // it leaves, and exits like `--only`: 2 when green, never 0, because a shard is
 // a true statement about its suites and none about the tree. `--tally-out`
@@ -104920,6 +106477,82 @@ function runStates(): RunState[] {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// the deal: which shard runs which suite (#1128)
+// ---------------------------------------------------------------------------
+//
+// #1116 dealt suites by registration index modulo n, which put CI's two
+// heaviest suites' shards at 344 and 364 s beside one of 45 s (n = 4). The deal
+// is now longest-first bin packing over a tracked durations base — each suite,
+// heaviest first, to the shard holding the least so far; ties by the base's
+// order, which is registration order; equal loads to the lowest shard — and a
+// suite the base has no entry for is dealt round-robin as before. The base is
+// WRITTEN, by `--merge … --shards-base` off a merged run's own per-suite
+// seconds, never typed: a typed duration is a guess wearing a measurement. The
+// merge does not re-derive the deal — each shard's document carries the owner
+// it dealt every suite to, the merge refuses documents that disagree, and it
+// reads "every suite exactly once" off those owners and the records.
+
+/** The durations base `--shard` deals from, relative to this file. */
+const SHARDS_BASE_PATH = 'tools/selftest_shards.base.json';
+/** The base document's format word. */
+const SHARDS_BASE_SPEC = 'selftest-shards/1';
+
+/** Per suite a shard ran in the merged run that wrote it, its seconds — in registration order. */
+interface ShardsBase {
+  spec: string;
+  suites: Array<{ suite: string; seconds: number }>;
+}
+
+/** The base as it is on disk, or `null` with no file; a file that is not a base throws, by name. */
+function readShardsBase(root: string): ShardsBase | null {
+  const path = join(root, SHARDS_BASE_PATH);
+  if (!existsSync(path)) return null;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<ShardsBase>;
+  const again = 'write it again with `bun selftest.ts --merge <file>… --shards-base`';
+  if (parsed.spec !== SHARDS_BASE_SPEC || !Array.isArray(parsed.suites)) throw new Error(`${SHARDS_BASE_PATH} is not a "${SHARDS_BASE_SPEC}" document; ${again}`);
+  const seen = new Set<string>();
+  for (const entry of parsed.suites) {
+    if (typeof entry?.suite !== 'string' || typeof entry.seconds !== 'number' || !Number.isFinite(entry.seconds) || entry.seconds < 0) {
+      throw new Error(`${SHARDS_BASE_PATH}: the entry ${JSON.stringify(entry)} is not a suite name with a duration of 0 seconds or more; ${again}`);
+    }
+    if (seen.has(entry.suite)) throw new Error(`${SHARDS_BASE_PATH} names the suite "${entry.suite}" twice; ${again}`);
+    seen.add(entry.suite);
+  }
+  return { spec: parsed.spec, suites: parsed.suites };
+}
+
+/**
+ * The deal over a base, for `n` shards: longest-first bin packing. Pure, so
+ * `TY34` holds a stated base to a stated packing. Every entry of the base is
+ * dealt — the caller never asks it of a suite the merge runs, because the base
+ * is written without them.
+ */
+function shardPlan(base: ShardsBase | null, n: number): Map<string, number> {
+  const plan = new Map<string, number>();
+  if (base === null) return plan;
+  const load = new Array<number>(n).fill(0);
+  const order = base.suites.map((entry, k) => ({ ...entry, k })).sort((a, b) => b.seconds - a.seconds || a.k - b.k);
+  for (const entry of order) {
+    let lightest = 0;
+    for (let s = 1; s < n; s++) if (load[s] < load[lightest]) lightest = s;
+    load[lightest] += entry.seconds;
+    plan.set(entry.suite, lightest + 1);
+  }
+  return plan;
+}
+
+/** The 1-based shard a suite is dealt to: its entry in the plan, or round-robin by its 0-based registration index. */
+function shardOwner(plan: ReadonlyMap<string, number>, index: number, key: string, n: number): number {
+  return plan.get(key) ?? (index % n) + 1;
+}
+
+/** The base a merged run writes: every suite a shard ran, in registration order, its seconds to the tenth. */
+function shardsBaseText(t: RunTally): string {
+  const suites = t.blocks.filter((block) => (t.origin.get(block.key) ?? -1) !== -1).map((block) => ({ suite: block.key, seconds: Math.round((t.seconds.get(block.key) ?? 0) * 10) / 10 }));
+  return `${JSON.stringify({ spec: SHARDS_BASE_SPEC, suites }, null, 2)}\n`;
+}
+
 /** One suite a shard ran, as its document carries it: the block the floor holds, and everything else the merge reads. */
 interface ShardRecord {
   /** Its 0-based registration index. */
@@ -104951,8 +106584,17 @@ interface ShardOutside {
   gutter: Record<string, number>;
 }
 
-/** The format word of a shard's document. */
-const SHARD_DOCUMENT_SPEC = 'selftest-shard/1';
+/**
+ * The format word of a shard's document. `/3` since issue #1143: a record's
+ * `rss` may carry `children` — the suite's heaviest child — which the merge
+ * holds per shard. `/4` since issue #1144: the document states the `--jobs`
+ * its process ran at, which a children's figure is a reading at and which
+ * `--memory-base-children` writes beside it. Nothing older reads a newer
+ * document anyway (the merge refuses any document whose `source` is another
+ * `selftest.ts`), so the word moved because a field was added, not to keep an
+ * old reader out.
+ */
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/4';
 
 /** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
 interface ShardDocument {
@@ -104962,6 +106604,12 @@ interface ShardDocument {
   source: string;
   /** The registration list it saw, in order — the shard key. */
   registered: string[];
+  /**
+   * The shard it dealt each registration to, by index — 0 for a suite the merge
+   * runs (issue #1128). Every shard of one run deals alike or the merge refuses
+   * them; the merge reads who owns a suite here, never off a rule of its own.
+   */
+  owners: number[];
   /** The suites it ran, in order. */
   run: ShardRecord[];
   /** The suites it left to other shards, and those it left to the merge. */
@@ -104977,6 +106625,8 @@ interface ShardDocument {
   exit: number;
   platform: string;
   bun: string;
+  /** The `--jobs` it ran at (issue #1144): a `core` worker's share of the units is the batch over it, so its children's figure is a reading AT it. */
+  jobs: number;
 }
 
 /** sha256 of this file as it is on disk — what every shard document and the merge compare. */
@@ -105000,6 +106650,7 @@ function shardDocument(
     shard,
     source,
     registered: [...tally.registered],
+    owners: tally.registered.map((key, index) => (merge.has(key) ? 0 : tally.ownerOf(index, key))),
     run: tally.records.map((record) => ({
       ...record,
       printedSeconds: tally.printedSeconds.get(record.block.key) ?? null,
@@ -105015,7 +106666,16 @@ function shardDocument(
     exit,
     platform: process.platform,
     bun: Bun.version,
+    jobs: JOBS,
   };
+}
+
+/** How a shard's suites were dealt (issue #1128): how many off the durations base, how many round-robin. */
+function shardDealSentence(tally: RunTally): string {
+  const merge = new Set(tally.leftToMerge);
+  const dealt = tally.registered.filter((key) => !merge.has(key));
+  const based = dealt.filter((key) => tally.plan.has(key)).length;
+  return `Of the ${dealt.length} suite(s) the shards run, ${based} were dealt longest-first by ${SHARDS_BASE_PATH} and ${dealt.length - based} round-robin.`;
 }
 
 /** How a shard ends: its last line says it is one shard and is not a verdict, and it exits 2 when green, 1 when red. */
@@ -105028,7 +106688,7 @@ function shardVerdict(tally: RunTally): RunVerdict | null {
   const line =
     `rigc selftest: SHARD ${i}/${n} — not a verdict on the tree. ${ran.length} suite(s) ran [${ran.join(', ')}] over ` +
     `${tally.total} case line(s); ${others} suite(s) are other shards' and ${merge.size} read the whole run, so the merge ` +
-    `runs them [${tally.leftToMerge.join(', ')}]. The verdict is \`bun selftest.ts --merge <file>…\` over every shard's --tally-out document.`;
+    `runs them [${tally.leftToMerge.join(', ')}]. ${shardDealSentence(tally)} The verdict is \`bun selftest.ts --merge <file>…\` over every shard's --tally-out document.`;
   const bad = tally.failures;
   return bad > 0 ? { code: 1, lines: [`rigc selftest: ${bad} control(s) failed`, line] } : { code: 2, lines: [line] };
 }
@@ -105109,6 +106769,23 @@ function mergeRefusals(given: readonly GivenDocument[], source: string): string[
       refusals.push(`${label(first)} leaves [${first.doc.merge.join(', ')}] to the merge and ${label(g)} [${g.doc.merge.join(', ')}]`);
     }
   }
+  // The deal (issue #1128): read off the documents, held equal across them.
+  for (const g of given) {
+    const owners = g.doc.owners;
+    if (!Array.isArray(owners) || owners.length !== g.doc.registered.length || owners.some((o) => !Number.isInteger(o) || o < 0 || o > n)) {
+      refusals.push(`${label(g)} states no deal of its ${g.doc.registered.length} registration(s) to shards 1..${n} — write it again with this selftest.ts`);
+    }
+  }
+  if (refusals.length > 0) return refusals;
+  for (const g of given.slice(1)) {
+    const k = first.doc.owners.findIndex((owner, at) => owner !== g.doc.owners[at]);
+    if (k !== -1) {
+      refusals.push(
+        `${label(first)} deals "${first.doc.registered[k]}" (registration index ${k}) to shard ${first.doc.owners[k]} and ${label(g)} to shard ${g.doc.owners[k]} — ` +
+          `shards dealt from two durations bases can run a suite twice or not at all`,
+      );
+    }
+  }
   if (refusals.length > 0) return refusals;
   const registered = first.doc.registered;
   const toMerge = new Set(first.doc.merge);
@@ -105131,7 +106808,7 @@ function mergeRefusals(given: readonly GivenDocument[], source: string): string[
       for (const g of runners) refusals.push(`${label(g)} ran "${key}", which reads the whole run and is the merge's to run`);
       return;
     }
-    const owner = (index % n) + 1;
+    const owner = first.doc.owners[index];
     if (runners.length === 0) {
       refusals.push(`the suite "${key}" (registration index ${index}) was run by no shard — it is shard ${owner}/${n}'s, and that document does not carry it`);
     } else if (runners.length > 1) {
@@ -105194,8 +106871,10 @@ class MergeReplay {
       );
     }
     if (whole) return null;
-    const n = this.docs.length;
-    const from = index % n;
+    // The shard the documents dealt it to (issue #1128); `docs` is ordered by shard, one each.
+    const owner = this.docs[0]?.owners?.[index];
+    if (owner === undefined || owner < 1 || owner > this.docs.length) this.refuse(`the suite "${key}" (registration index ${index}) is dealt to no shard by the documents`);
+    const from = owner - 1;
     const record = this.docs[from].run.find((r) => r.index === index);
     if (record === undefined) this.refuse(`the suite "${key}" (registration index ${index}) is in no shard's record`);
     return { record, from };
@@ -105298,10 +106977,168 @@ function mergedCeilingFaults(t: RunTally, replay: MergeReplay, base: MemoryBase 
     const platform = from === -1 ? process.platform : replay.docs[from].platform;
     const where = from === -1 ? 'the merge' : replay.label(from);
     const ceiling = memoryCeiling(rss, base?.platforms[platform], platform);
-    if (ceiling.verdict === 'over') faults.push(...ceiling.faults.map((fault) => `${where}: ${fault}`));
-    else held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}`);
+    // Issue #1143: each shard's children are held as its own, so the merge
+    // holds the largest over every shard without a second figure for it.
+    const children = childrenCeiling(rss, base?.platforms[platform], platform);
+    if (ceiling.verdict === 'over' || children.verdict === 'over') {
+      faults.push(...[...ceiling.faults, ...children.faults].map((fault) => `${where}: ${fault}`));
+    } else {
+      const childText =
+        children.highWater === null
+          ? ', no child measured'
+          : `, children ${children.highWater} MB${children.bound === null ? ` (no ${platform} children's base)` : ` ≤ ${children.bound}`}`;
+      held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}${childText}`);
+    }
   }
   return { faults, held };
+}
+
+/** A children's figure as the base states it: whole MB, and the `--jobs` it was read at. */
+interface ChildrenFigure {
+  highWater: number;
+  jobs: number;
+}
+
+/** What a writer of the children's figure writes (issue #1151): the figure, or none, and the words its line carries. */
+interface ChildrenRatchet {
+  children: ChildrenFigure | undefined;
+  /** Which figure was kept and both figures — `kept 547 MB (this run 506 MB) at --jobs 4`, `raised 547 → 720 MB at --jobs 4`. */
+  said: string;
+}
+
+/**
+ * The children's figure a writer puts in its platform's entry, given the
+ * TRACKED entry's and this run's (issue #1151), or the refusal naming why it
+ * cannot. Pure, so `TY43` drives every case over forged figures; both writers —
+ * `--memory-base` and `--memory-base-children` — call it, so they cannot
+ * disagree about what a write does.
+ *
+ * ⚖️ It ratchets: the written figure is the larger of the tracked one and the
+ * run's, because one run's largest child is not the figure — which units a
+ * `core` worker claims is decided by timing, and on CI the same code read 506,
+ * 519, 545, 547 and 720 MB. `TY40` holds a run under base × `MEMORY_MARGIN`, so
+ * a base taken from the low end of that series turns a high run red with no
+ * change in the code. Under the ratchet the tracked figure converges to the
+ * series' maximum as runs are committed, and no single low run tightens it.
+ *
+ * Lowering is a deliberate act: only `reset` (`--reset-children-base`) writes a
+ * figure below the tracked one. A figure read at another `--jobs` is a
+ * different quantity — the batch each worker runs is the units over `jobs` —
+ * so the larger of the two is neither's figure; without `reset` that write is
+ * refused by name, and with it the run's figure replaces the tracked one. A
+ * run that measured no child (`--jobs 1`) keeps the tracked figure, since no
+ * reading is not a lower one; under `reset` it drops it.
+ */
+function ratchetChildren(tracked: ChildrenFigure | undefined, run: number | null, jobs: number, reset: boolean): ChildrenRatchet | string {
+  const lower = '--reset-children-base';
+  if (run === null) {
+    if (tracked === undefined) return { children: undefined, said: `none — no child's peak was measured at --jobs ${jobs}, and the base held none` };
+    if (reset) return { children: undefined, said: `dropped ${tracked.highWater} MB at --jobs ${tracked.jobs} (${lower}; this run measured no child at --jobs ${jobs})` };
+    return { children: tracked, said: `kept ${tracked.highWater} MB at --jobs ${tracked.jobs} (this run measured no child at --jobs ${jobs})` };
+  }
+  const written: ChildrenFigure = { highWater: run, jobs };
+  if (tracked === undefined) return { children: written, said: `wrote ${run} MB at --jobs ${jobs} (the base held no children's figure)` };
+  if (tracked.jobs !== jobs) {
+    if (!reset) {
+      return (
+        `the base's children's figure, ${tracked.highWater} MB, was read at --jobs ${tracked.jobs} and this run's, ${run} MB, at --jobs ${jobs} — ` +
+        `a figure is a reading at one --jobs, so the larger of the two is neither's; give ${lower} to replace it with this run's`
+      );
+    }
+    return { children: written, said: `replaced ${tracked.highWater} MB at --jobs ${tracked.jobs} → ${run} MB at --jobs ${jobs} (${lower})` };
+  }
+  if (run > tracked.highWater) return { children: written, said: `raised ${tracked.highWater} → ${run} MB at --jobs ${jobs}` };
+  if (run < tracked.highWater && reset) return { children: written, said: `lowered ${tracked.highWater} → ${run} MB at --jobs ${jobs} (${lower})` };
+  return {
+    children: tracked,
+    said: `kept ${tracked.highWater} MB (this run ${run} MB) at --jobs ${jobs}${run < tracked.highWater ? ` — a lower figure is written only with ${lower}` : ''}`,
+  };
+}
+
+/** What `--memory-base-children` writes: the whole base document, and the line that says what was written. */
+interface ChildrenBaseWrite {
+  text: string;
+  /** The entry written for the platform, which `TY41` and `TY43` read against the documents and the tracked figure. */
+  entry: MemoryBaseEntry;
+  /** The suite, unit and process whose child set this run's figure. */
+  from: string;
+  /** This run's figure: the largest child over the documents and the merge's own suites. */
+  run: number;
+  /** Which figure the write kept and both figures (`ratchetChildren`). */
+  said: string;
+  /** The `--jobs` every process that measured a child ran at. */
+  jobs: number;
+}
+
+/**
+ * The base `--memory-base-children` writes over a merged run (issue #1144), or
+ * the refusal naming why it cannot be written. Pure, so `TY41` drives it over
+ * the miniature's documents.
+ *
+ * The figure is `childrenHighWaterOf` over the merged tally's replayed `rss` —
+ * every shard record's `children` and the merge's own suites' — which is the
+ * largest over the documents because a child's peak is its own process's
+ * reading, whichever process started it. Measured, not assumed: on Linux CI
+ * (run 37179080837) the merge's `run-tally` read a `bun -e` child at 23 MB
+ * while the merge itself stood at 739 MB, and `TY42`'s 256 MiB child at
+ * 278.3 MiB, so a child's figure carries nothing of its parent's memory. What
+ * it does depend on is `--jobs`, which deals a `core` worker its batch — so
+ * every process whose child entered the figure must have run at one `--jobs`,
+ * and that is the figure's `jobs`.
+ *
+ * Only the children's half moves: the entry's `highWater`, `suites` and `bun`
+ * stay as the one-process run wrote them, and an entry that does not exist is
+ * refused rather than made, since a merge has no parent's figure to put in it.
+ * A red tally is refused here too, beside `main` exiting before the write.
+ *
+ * The run's figure is then ratcheted against the `base` entry's (issue #1151,
+ * `ratchetChildren`): `base` is the TRACKED document, the one `main` reads for
+ * the ceiling, never the file named after the flag — that file is a destination
+ * (CI's is a fresh path under its temp directory), and a destination that
+ * already exists is overwritten unread, because the written document is the
+ * tracked one with its children's figure ratcheted and nothing else of it
+ * moved. `reset` is `--reset-children-base`.
+ */
+function mergedChildrenBase(t: RunTally, replay: MergeReplay, base: MemoryBase | null, platform: string, mergeJobs: number, reset = false): ChildrenBaseWrite | string {
+  const nothing = 'so nothing is written';
+  const faults = replayFaults(replay);
+  if (t.failures > 0 || faults.length > 0) {
+    return `the merged run is red — ${t.failures} failure(s)${faults.length > 0 ? `, ${faults.join('; ')}` : ''} — and a red run's children are no base, ${nothing}`;
+  }
+  const elsewhere = replay.docs.map((doc, from) => ({ doc, from })).filter(({ doc }) => doc.platform !== platform);
+  if (elsewhere.length > 0) {
+    return `${elsewhere.map(({ doc, from }) => `${replay.label(from)} ran on ${doc.platform}`).join(', ')}, and this merge writes the ${platform} entry — ${nothing}`;
+  }
+  const entry = base?.platforms[platform];
+  if (entry === undefined) {
+    return `${MEMORY_BASE_PATH} holds no ${platform} entry, and a merge writes only an entry's children's half — the parent's high-water is a one-process run's; write the entry with \`bun selftest.ts --memory-base\` first, ${nothing}`;
+  }
+  const top = childrenHighWaterOf(t.rss);
+  if (top === null) return `no suite of the merged run measured a child's peak (a shard at --jobs 1 reads none), ${nothing}`;
+  const measured: Array<{ where: string; jobs: unknown }> = [];
+  for (let from = -1; from < replay.docs.length; from++) {
+    const measuredHere = t.blocks.some((block) => (t.origin.get(block.key) ?? -1) === from && t.rss.get(block.key)?.children !== undefined);
+    if (measuredHere) measured.push(from === -1 ? { where: 'the merge', jobs: mergeJobs } : { where: replay.label(from), jobs: replay.docs[from].jobs });
+  }
+  const unstated = measured.filter((m) => typeof m.jobs !== 'number' || !Number.isInteger(m.jobs) || m.jobs < 1);
+  if (unstated.length > 0) return `${unstated.map((m) => m.where).join(', ')} measured a child and states no --jobs it ran at, ${nothing}`;
+  const jobs = [...new Set(measured.map((m) => m.jobs as number))];
+  if (jobs.length !== 1) {
+    return `the processes that measured a child ran at different --jobs — ${measured.map((m) => `${m.where} at ${String(m.jobs)}`).join(', ')} — and a children's figure is a reading at one, ${nothing}`;
+  }
+  const origin = t.origin.get(top.suite) ?? -1;
+  // Issue #1151: against the TRACKED entry's figure — the base this merge read for `TY40` — never the file it writes to.
+  const ratchet = ratchetChildren(entry.children, top.highWater, jobs[0], reset);
+  if (typeof ratchet === 'string') return `${ratchet}, ${nothing}`;
+  const written: MemoryBaseEntry = { ...entry, children: ratchet.children };
+  return {
+    text: memoryBaseText(base, platform, written),
+    entry: written,
+    from: `"${top.unit}", suite "${top.suite}", ${origin === -1 ? 'the merge' : replay.label(origin)}`,
+    run: top.highWater,
+    said: ratchet.said,
+    jobs: jobs[0],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -106969,8 +108806,21 @@ function runRunTallySuite(live: RunTally): number {
         return out;
       };
       const mentions = (node: ts.Node, name: string): boolean => (ts.isIdentifier(node) && node.text === name) || (ts.forEachChild(node, (n) => mentions(n, name) || undefined) ?? false);
-      for (const statement of fn.body.statements) {
-        if (!ts.isBlock(statement)) continue;
+      /**
+       * The suite's controls: each top-level block, the block of an `if` (issue
+       * #1133's `if (parent)`), the callback of a `unit(…)` naming one control,
+       * and the controls inside one naming a group (`CO25+CO26`).
+       */
+      const controlsOf = (statements: readonly ts.Statement[]): ts.Block[] =>
+        statements.flatMap((s): ts.Block[] => {
+          if (ts.isBlock(s)) return [s];
+          if (ts.isIfStatement(s) && ts.isBlock(s.thenStatement)) return [s.thenStatement];
+          if (!ts.isExpressionStatement(s) || !ts.isCallExpression(s.expression) || !ts.isIdentifier(s.expression.expression) || s.expression.expression.text !== 'unit') return [];
+          const [named, body] = s.expression.arguments;
+          if (named === undefined || !ts.isStringLiteral(named) || body === undefined || !ts.isArrowFunction(body) || !ts.isBlock(body.body)) return [];
+          return named.text.includes('+') ? controlsOf(body.body.statements) : [body.body];
+        });
+      for (const statement of controlsOf(fn.body.statements)) {
         const floorsHere = callsTo(statement, 'corpusFloor');
         count += floorsHere.length;
         const line = tree.getLineAndCharacterOfPosition(statement.getStart()).line + 1;
@@ -106993,18 +108843,30 @@ function runRunTallySuite(live: RunTally): number {
     const routed = floorScan(miniature("    probes.push(corpusFloor('x'));\n    sayCorpus('ZZ01_A', probes, 'c', 'w');"), 'aSuite');
     const oldPush = floorScan(miniature("    probes.push(`x${examplesHole === null ? '' : examplesHole}`);\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
     const plainSay = floorScan(miniature("    probes.push(corpusFloor('x'));\n    say('ZZ01_A', probes.length === 0, 'd', 'w');"), 'aSuite');
+    // Issue #1133: a control kept in the parent sits under `if (parent)`, and a unit's inside `unit(…)`; a floor reported through plain say is named in each.
+    const wrapped = (open: string, close: string): string =>
+      `function aSuite(): number {\n  ${open}\n    const probes: string[] = [];\n    probes.push(corpusFloor('x'));\n    say('ZZ01_A', probes.length === 0, 'd', 'w');\n  ${close}\n  return 0;\n}\n`;
+    const shapes: Array<[string, string, string]> = [
+      ['under if (parent)', 'if (parent) {', '}'],
+      ['inside a unit of one control', "unit('ZZ01', () => {", '});'],
+      ['inside a group of units', "unit('ZZ01+ZZ02', () => {\n  {", '}\n  });'],
+    ];
+    const shapeProbes = shapes.flatMap(([label, open, close]) => {
+      const read = floorScan(wrapped(open, close), 'aSuite');
+      return read.problems.length === 1 && read.floors === 1 ? [] : [`a floor reported through plain say ${label} read as ${read.floors} floor(s) and [${read.problems.join('; ')}]`];
+    });
     const real = floorScan(source, 'runCoreSuite');
     const scanProbes = [
       ...(routed.problems.length === 0 && routed.floors === 1 ? [] : [`a floor routed through both helpers read as ${routed.floors} floor(s) and [${routed.problems.join('; ')}]`]),
       ...(oldPush.problems.length === 1 ? [] : [`a floor pushed with the hole note by hand read as [${oldPush.problems.join('; ')}]`]),
       ...(plainSay.problems.length === 1 ? [] : [`a floor reported through plain say read as [${plainSay.problems.join('; ')}]`]),
+      ...shapeProbes,
       ...real.problems.map((p) => `runCoreSuite: ${p}`),
       ...floorProbes([[real.floors, 1, `${real.floors} corpus floor(s) were found in runCoreSuite`]], 'a scan that stopped matching would report the suite clean over nothing'),
     ];
 
     const coreRan = live.blocks.some((b) => b.key === 'core' && b.ran);
     const corpusAbsent = CORE_CORPUS_CASES.some((c) => c.absent);
-    const holes = CORE_CORPUS_CASES.filter((c) => c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
     const onDiskHoles = CORE_CORPUS_CASES.filter((c) => !c.absent && c.verdict === 'HOLE').map((c) => c.name.split('_')[0]);
     const liveProbes = [
       ...(coreRan && CORE_CORPUS_CASES.length === 0 ? ['the core suite ran and no control reported through sayCorpus'] : []),
@@ -107014,9 +108876,7 @@ function runRunTallySuite(live: RunTally): number {
     ];
     const liveWords = !coreRan
       ? 'the core suite did not run in this run, so the live half read nothing'
-      : `this run, with examples/ ${corpusAbsent ? 'absent' : 'on disk'}: ${CORE_CORPUS_CASES.length} core control(s) hold a corpus floor, ` +
-        `${CORE_CORPUS_CASES.filter((c) => c.verdict === 'PASS').length} PASS, ${CORE_CORPUS_CASES.filter((c) => c.verdict === 'FAIL').length} FAIL, ` +
-        `${holes.length} HOLE${holes.length > 0 ? ` [${holes.join(', ')}]` : ''}`;
+      : `this run, with examples/ ${corpusAbsent ? 'absent' : 'on disk'}: ${coreCorpusReading(CORE_CORPUS_CASES)}`;
 
     const ty22Probes = [...verdictProbes, ...lineProbes, ...scanProbes, ...liveProbes];
     const ty22Held = ty22Probes.length === 0;
@@ -107030,7 +108890,7 @@ function runRunTallySuite(live: RunTally): number {
           'without it, and a DIFF beside it is FAIL either way; a HOLE prints one SKIP line and the HOLE sentence and no ' +
           `case line; runCoreSuite writes ${real.floors} corpus floor(s), every one through corpusFloor inside a control ` +
           'reporting through sayCorpus, while a floor pushed with the hole note by hand and one reported through plain ' +
-          `say are each named; TY20 lists runCoreSuite; ${liveWords}`,
+          `say are each named, the second at the top level, ${shapes.map(([label]) => label).join(', ').replace(/, ([^,]*)$/, ' and $1')}; TY20 lists runCoreSuite; ${liveWords}`,
       ),
       'issue #1004: two states printed the same FAIL — a corpus on the machine that reaches nothing, which is the ' +
         "tree's fault, and a corpus not on the machine, which is the run's state and a HOLE in every other corpus " +
@@ -107327,6 +109187,266 @@ function runRunTallySuite(live: RunTally): number {
         );
       }
     }
+
+    // --- TY40: the children's high-water is held under the platform's base, and a planted child is named (#1143) --
+    //
+    // `TY26` reads this process; since #1129 and #1136 the heaviest work runs in
+    // `--unit` children it cannot see. The live half holds the largest child any
+    // suite so far measured to the base's children's figure × `MEMORY_MARGIN`.
+    // The plant runs the run's own path — `unitValues` → `inParallel` → the
+    // driver — over `TY40`'s scratch unit kind: one unit holding a stated amount
+    // beside one holding nothing. The ceiling has to name the planted unit, with
+    // its figure, by the label the suite line would print.
+    //
+    // 🔒 The plant is sized from the BASE ENTRY alone — `TY40_PLANT_OVER` above
+    // its bound — and bounded by `TY40_PLANT_LIMIT_MB`. With no entry it does
+    // not run and the control is a SKIP that says so. PR #1145 sized it off the
+    // run's own children's reading, and on Linux that reading was 1,024x the
+    // truth: the plant asked for hundreds of GB, `Buffer.alloc` threw, and the
+    // merge job on main died of the control (issue #1143). A refused allocation
+    // and a unit that did not complete are both read as the plant's fault.
+    //
+    // ⚠️ Their peaks are taken back out of `UNIT_PEAKS_TAKEN` once read: the
+    // plant's child is deliberate, and left in it would become `run-tally`'s
+    // own children's high-water — the reading the plant exists to test.
+    {
+      const probes: string[] = [];
+      let plantWords = '';
+      let unitWord = 'not read here: no plant child ran';
+      const jobs = Math.max(2, JOBS);
+      const base = readMemoryBase(import.meta.dir);
+      const entry = base?.platforms[process.platform];
+      const children = entry?.children;
+      const taken = UNIT_PEAKS_TAKEN.length;
+      const peakOf = (label: string): UnitPeak | undefined => UNIT_PEAKS_TAKEN.slice(taken).find((p) => p.label === label);
+      if (entry === undefined || children === undefined) {
+        plantWords = `the plant did not run: it is sized from the ${process.platform} base's children's figure alone, and ${MEMORY_BASE_PATH} holds none`;
+      } else {
+        const ceiling = Math.floor(children.highWater * MEMORY_MARGIN);
+        const plantMegabytes = Math.ceil(ceiling * TY40_PLANT_OVER);
+        const plantLabel = `TY40 plant holding ${plantMegabytes} MB`;
+        const besideLabel = 'TY40 beside the plant holding 0 MB';
+        if (plantMegabytes > TY40_PLANT_LIMIT_MB) {
+          probes.push(
+            `the plant would hold ${plantMegabytes} MB (the ${process.platform} bound of ${ceiling} MB × ${TY40_PLANT_OVER}), over its limit of ${TY40_PLANT_LIMIT_MB} MB, ` +
+              "so it was not run — the base's children's figure has outgrown what a plant may ask a runner for; raise the limit with its reason or lower the children",
+          );
+        } else {
+          try {
+            const values = unitValues(
+              [
+                { kind: 'ty40-allocate', megabytes: plantMegabytes, label: plantLabel },
+                { kind: 'ty40-allocate', megabytes: 0, label: besideLabel },
+              ],
+              jobs,
+            ) as AllocateUnitValue[];
+            const refused = values.flatMap((v, k) => (v.refused === undefined ? [] : [`${k === 0 ? plantLabel : besideLabel}: ${v.refused}`]));
+            const plant = peakOf(plantLabel);
+            const beside = peakOf(besideLabel);
+            if (refused.length > 0) {
+              probes.push(`the plant could not allocate what it states — ${refused.join('; ')}`);
+            } else if (plant === undefined || beside === undefined) {
+              probes.push(`the driver handed back no peak for ${plant === undefined ? 'the planted unit' : 'the unit beside it'}`);
+            } else {
+              unitWord = plant.scale === 1 ? 'bytes' : 'KiB';
+              const suiteOf = (peaks: UnitPeak[]): SuiteRss => {
+                const r: SuiteRss = { after: 0, delta: 0 };
+                const c = suiteChildren(peaks);
+                if (c !== undefined) r.children = c;
+                return r;
+              };
+              const cleanRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-idle', suiteOf([])]]);
+              const plantedRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-planted', suiteOf([beside, plant])]]);
+              const clean = childrenCeiling(cleanRun, entry, 'plant');
+              const planted = childrenCeiling(plantedRun, entry, 'plant');
+              const noBase = childrenCeiling(plantedRun, { highWater: entry.highWater, suites: entry.suites, bun: entry.bun }, 'plant');
+              const noChildren = childrenCeiling(new Map([['ty40-idle', suiteOf([])]]), entry, 'plant');
+              if (clean.verdict !== 'held') probes.push(`the unit holding nothing, held to the ${process.platform} base, read ${clean.verdict}: ${clean.faults.join('; ')}`);
+              if (planted.verdict !== 'over' || planted.faults.length !== 1 || !planted.faults[0].includes(`"${plantLabel}"`) || !planted.faults[0].includes('"ty40-planted"') || !planted.faults[0].includes(`${megabytes(plant.peakBytes)} MB`)) {
+                probes.push(`the unit holding ${plantMegabytes} MB (peak ${megabytes(plant.peakBytes)} MB, bound ${planted.bound ?? 'none'} MB) is not named by unit, suite and figure: ${planted.verdict} ${planted.faults.join('; ')}`);
+              }
+              if (noBase.verdict !== 'no base' || noBase.faults.length > 0) probes.push(`an entry with no children's figure reads ${noBase.verdict}, where it is no verdict at all`);
+              if (noChildren.verdict !== 'no children' || noChildren.faults.length > 0) probes.push(`a run that measured no child reads ${noChildren.verdict}, where it is no verdict at all`);
+              // The line states the figure and the unit, and reads back as what was measured; one that drops them is named.
+              const line = durationLine('ty40-planted', 2, 0.1, plantedRun.get('ty40-planted') ?? { after: 0, delta: 0 });
+              const read = DURATION_LINE.exec(line);
+              const readBack = read === null ? null : printedMemory(read);
+              if (readBack?.children?.highWater !== megabytes(plant.peakBytes) || readBack.children.unit !== plantLabel) {
+                probes.push(`the suite line ${JSON.stringify(line)} reads back as ${JSON.stringify(readBack?.children ?? null)}`);
+              }
+              const block: SuiteBlock = { key: 'ty40-planted', ran: true, controls: 2, quiet: 0, headers: 1, fails: 0, returned: 0, names: [] };
+              const dropped = durationFaults([block], new Map([['ty40-planted', 0.1]]), new Map([['ty40-planted', 0.1]]), 1, plantedRun, new Map([['ty40-planted', { after: 0, delta: 0 }]]));
+              if (!dropped.some((fault) => fault.includes('printed no children') && fault.includes(plantLabel))) {
+                probes.push(`a line that dropped the children's figure was not named: ${dropped.join('; ') || 'no fault'}`);
+              }
+              const kept = JSON.parse(memoryBaseText({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 9, suites: 1, bun: 'x' } } }, 'alpha', entry)) as MemoryBase;
+              if (kept.platforms.alpha?.children?.highWater !== children.highWater || kept.platforms.zeta?.children !== undefined) {
+                probes.push(`writing the children's figure for one platform did not keep it, or touched another's: ${JSON.stringify(kept.platforms)}`);
+              }
+              plantWords =
+                `the plant held — sized from the base alone (${ceiling} MB × ${TY40_PLANT_OVER}, under its limit of ${TY40_PLANT_LIMIT_MB} MB), the unit holding ${plantMegabytes} MB ` +
+                `beside one holding nothing (${megabytes(beside.peakBytes)} MB) peaks at ${megabytes(plant.peakBytes)} MB through the driver at --jobs ${jobs} and is named over the bound ` +
+                `of ${planted.bound ?? '?'} MB — ${planted.faults[0] ?? 'nothing'} — while an entry with no children's figure and a run with no child give no verdict, ` +
+                "the suite line carries the unit and its figure and one that drops them is named, and writing one platform's figure keeps every other platform's";
+            }
+          } catch (err) {
+            probes.push(`the plant's units did not complete, so the plant is at fault rather than the run: ${(err as Error).message.slice(0, 400)}`);
+          } finally {
+            UNIT_PEAKS_TAKEN.length = taken;
+          }
+        }
+      }
+      const scaleProbes = [
+        [294748160, 294404096, 1],
+        [287840, 294404096, 1024],
+        [21725184, 21741568, 1],
+        [1, 1e9, null],
+        [0, 1e8, null],
+      ] as const;
+      for (const [raw, rss, want] of scaleProbes) {
+        if (maxRssScale(raw, rss) !== want) probes.push(`maxRssScale(${raw}, ${rss}) reads ${String(maxRssScale(raw, rss))} where it is ${String(want)}`);
+      }
+      const sofar = childrenHighWaterOf(live.printedRss);
+      const ownRaw = process.resourceUsage().maxRSS;
+      const ownScale = maxRssScale(ownRaw, process.memoryUsage().rss);
+      if (ownScale === null) probes.push(`this process's maxRSS ${ownRaw} beside its rss ${process.memoryUsage().rss} bytes reads as neither bytes nor KiB`);
+      const plantHeld = probes.length === 0;
+      if (plantHeld && (entry?.children === undefined || sofar === null)) {
+        console.log(
+          `  SKIP  TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE: ` +
+            (entry?.children === undefined
+              ? `${MEMORY_BASE_PATH} holds no children's high-water for ${process.platform}, so this run's children` +
+                `${sofar === null ? '' : ` (${sofar.highWater} MB so far, "${sofar.unit}" in suite "${sofar.suite}")`} are held to nothing — ` +
+                'write one with `bun selftest.ts --memory-base` on a green full run at --jobs 2 or more'
+              : `no suite before this one measured a child's peak (--jobs ${JOBS}${JOBS === 1 ? ': the sequential path reads none' : ''}), so the ${process.platform} children's bound ` +
+                `of ${Math.floor(entry.children.highWater * MEMORY_MARGIN)} MB is held over nothing`) +
+            `; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+        );
+      } else {
+        const bound = entry?.children === undefined ? null : Math.floor(entry.children.highWater * MEMORY_MARGIN);
+        if (bound !== null && sofar !== null && sofar.highWater > bound) {
+          probes.push(`the children's high-water so far is ${sofar.highWater} MB ("${sofar.unit}", suite "${sofar.suite}"), over the ${process.platform} bound of ${bound} MB (base children's high-water ${entry?.children?.highWater ?? '?'} MB × ${MEMORY_MARGIN})`);
+        }
+        const held = probes.length === 0;
+        say(
+          'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the ${process.platform} base children's high-water is ${entry?.children?.highWater ?? '?'} MB at --jobs ${entry?.children?.jobs ?? '?'}, so the bound is ${bound ?? '?'} MB ` +
+              `(× ${MEMORY_MARGIN}); the largest child any suite so far measured is ${sofar?.highWater ?? '?'} MB ("${sofar?.unit ?? '?'}", suite "${sofar?.suite ?? '?'}"), ` +
+              `and the whole run's is held to the same bound after the tables; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+          ),
+          "issue #1143: the ceiling read one process while the heaviest work ran in --unit children it could not see (core's workers near 1 GB each), " +
+            'so a unit that doubled its memory passed every control and a CI shard would die of the runner\'s limit with no line naming the unit',
+        );
+      }
+    }
+
+    // --- TY42: a known child reads its known size through the driver, and a driver reporting a wrong scale is named (#1143) --
+    //
+    // The control that was missing when PR #1145 merged: nothing held a child
+    // whose size is KNOWN, so a figure 1,024x the truth printed on Linux and
+    // the only control that could have judged it was a SKIP there. A `bun -e`
+    // child that allocates and touches 256 MiB runs through the real path —
+    // `inParallel`, the driver, its calibration child, the normalisation — and
+    // its peak has to read inside [256 MiB, 1 GiB) on every platform: never
+    // below what it touched, and under four times it, which no `bun -e` load
+    // reaches (darwin, measured: 294,535,168 bytes). The plants are drivers
+    // that report the unit's figure ×1,024 and ÷1,024 — the two ways a scale
+    // read through the wrong API goes wrong — each read by name with the
+    // figure, and a calibration that reads neither unit leaves the peak
+    // unread rather than guessed. No base is read, so it runs everywhere.
+    {
+      const probes: string[] = [];
+      const mib = 1024 * 1024;
+      const low = 256 * mib;
+      const high = 1024 * mib;
+      const known = 'TY42 child holding 256 MiB';
+      const idle = 'TY42 child holding nothing';
+      const hold = (n: number): string =>
+        `const b = Buffer.alloc(${n} * 1024 * 1024); let t = 0; for (let i = 0; i < b.length; i += 4096) { b[i] = 1; t += b[i]; } if (t !== Math.ceil(b.length / 4096)) process.exit(3);`;
+      const units: ParallelUnit[] = [
+        { argv: [process.execPath, '-e', hold(256)], cwd: import.meta.dir, label: known },
+        { argv: [process.execPath, '-e', hold(0)], cwd: import.meta.dir, label: idle },
+      ];
+      const figure = (bytes: number): string => `${bytes} bytes (${(bytes / mib).toFixed(1)} MiB)`;
+      // What the known child read, or `null` when it read inside the window.
+      const knownFault = (results: readonly UnitResult[], driver: string): string | null => {
+        const r = results[0];
+        if (r === undefined) return `${driver}: no result for "${known}"`;
+        if (r.status !== 0) return `${driver}: "${known}" exited ${String(r.status)}: ${r.stderr.trim().slice(0, 200)}`;
+        if (r.peakBytes === null) return `${driver}: "${known}" read no peak (scale ${String(r.scale)})`;
+        if (r.peakBytes < low || r.peakBytes >= high) return `${driver}: "${known}" read ${figure(r.peakBytes)} at scale ${String(r.scale)}, outside [256 MiB, 1 GiB)`;
+        return null;
+      };
+      const planted = (from: string, to: string): string => {
+        const source = UNIT_DRIVER.split(from).join(to);
+        if (source === UNIT_DRIVER) probes.push(`the plant replacing ${JSON.stringify(from)} changed nothing in the driver, so it plants nothing`);
+        return source;
+      };
+      const unitRead = 'maxRss: usage === undefined ? null : Number(usage.maxRSS)';
+      const calibrationRead = 'maxRss: child.exitCode === 0 && usage !== undefined ? Number(usage.maxRSS) : null';
+      const taken = UNIT_PEAKS_TAKEN.length;
+      let realWords = '';
+      const plantWords: string[] = [];
+      try {
+        const real = inParallel(units, Math.max(2, JOBS));
+        const realFault = knownFault(real, 'the driver');
+        if (realFault !== null) probes.push(realFault);
+        const r = real[0];
+        const c = r?.calibration ?? null;
+        if (c === null) probes.push('the driver handed back no calibration');
+        if (real[1]?.status !== 0) probes.push(`"${idle}" exited ${String(real[1]?.status)}`);
+        realWords =
+          `"${known}" read ${r?.peakBytes === null || r?.peakBytes === undefined ? 'nothing' : figure(r.peakBytes)} at scale ${String(r?.scale)} through the driver, ` +
+          `its calibration child holding ${c?.bytes ?? '?'} bytes reported maxRSS ${String(c?.maxRss ?? '?')} in ${c === null ? '?' : c.ms.toFixed(1)} ms`;
+        for (const [name, to] of [
+          ['×1,024', `${unitRead} * 1024`],
+          ['÷1,024', `${unitRead} / 1024`],
+        ] as const) {
+          const fault = knownFault(inParallel(units, 2, planted(unitRead, to)), `the driver reporting ${name}`);
+          if (fault === null || !fault.includes(`"${known}"`) || !fault.includes(' bytes (')) {
+            probes.push(`the driver reporting the unit's figure ${name} was not read by name and figure: ${fault ?? 'it read inside the window'}`);
+          } else {
+            plantWords.push(fault);
+          }
+        }
+        const unread = inParallel(units, 2, planted(calibrationRead, `${calibrationRead.replace(' : null', ' * 64 : null')}`));
+        const unreadFault = knownFault(unread, 'the driver whose calibration reads 64x');
+        if (unread.some((u) => u.peakBytes !== null || u.scale !== null) || unreadFault === null || !unreadFault.includes('read no peak')) {
+          probes.push(`a calibration reading neither unit was not left unread: ${unread.map((u) => `peak ${String(u.peakBytes)} scale ${String(u.scale)}`).join(', ')}`);
+        } else {
+          plantWords.push(unreadFault);
+        }
+      } catch (err) {
+        probes.push(`the known child's batch did not complete: ${(err as Error).message.slice(0, 400)}`);
+      } finally {
+        UNIT_PEAKS_TAKEN.length = taken;
+      }
+      const table: ReadonlyArray<readonly [UnitCalibration | undefined, 1 | 1024 | null]> = [
+        [{ bytes: CALIBRATION_BYTES, maxRss: 93175808, exit: 0, ms: 0 }, 1],
+        [{ bytes: CALIBRATION_BYTES, maxRss: 90992, exit: 0, ms: 0 }, 1024],
+        [{ bytes: CALIBRATION_BYTES, maxRss: CALIBRATION_BYTES / 2, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: CALIBRATION_BYTES * 64, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: 1, exit: 0, ms: 0 }, null],
+        [{ bytes: CALIBRATION_BYTES, maxRss: null, exit: 3, ms: 0 }, null],
+        [undefined, null],
+      ];
+      for (const [calibration, want] of table) {
+        const got = spawnMaxRssScale(calibration).scale;
+        if (got !== want) probes.push(`spawnMaxRssScale(${JSON.stringify(calibration ?? null)}) reads ${String(got)} where it is ${String(want)}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY42_A_KNOWN_256_MIB_CHILD_READS_INSIDE_256_MIB_TO_1_GIB_AND_A_DRIVER_REPORTING_A_WRONG_SCALE_IS_NAMED_BY_ITS_FIGURE',
+        held,
+        probeDetail(held, probes, `${realWords}; planted — ${plantWords.join('; ')}; the calibration's windows read bytes, KiB and the five readings that are neither`),
+        "issue #1143: PR #1145 read a child's maxRSS scale off the driver's own Node reading (KiB on Linux) and applied it to Bun.spawn's (bytes there), " +
+          'so CI printed core children high-water 736924 MB, and the one control that could judge it was a SKIP — this one needs no base and runs everywhere',
+      );
+    }
   }
 
   // --- TY27–TY31: the run as n shards whose merge is the verdict (#1116) ----
@@ -107340,9 +109460,10 @@ function runRunTallySuite(live: RunTally): number {
   {
     const KEYS = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'omega'];
     const SOURCE = 'miniature-source';
-    const miniature = (opts: { shard?: ShardSpec; given?: GivenDocument[]; failing?: string }): { tally: RunTally; lines: string[]; called: string[]; refusal: string | null } => {
+    const miniature = (opts: { shard?: ShardSpec; given?: GivenDocument[]; failing?: string; plan?: ReadonlyMap<string, number> }): { tally: RunTally; lines: string[]; called: string[]; refusal: string | null } => {
       const tally = new RunTally(null);
       tally.timed = true;
+      if (opts.plan !== undefined) tally.plan = opts.plan;
       const left: string[] = [];
       tally.states = [
         {
@@ -107410,8 +109531,8 @@ function runRunTallySuite(live: RunTally): number {
       const doc = shardDocument(run.tally, spec, SOURCE, performance.now() / 1000, 0, [], verdict?.code ?? 0);
       return { file, doc: JSON.parse(JSON.stringify(doc)) as ShardDocument };
     };
-    const shardsOf = (n: number, failing?: string): GivenDocument[] =>
-      Array.from({ length: n }, (_, k) => document(miniature({ shard: { i: k + 1, n }, failing }), { i: k + 1, n }));
+    const shardsOf = (n: number, failing?: string, plan?: ReadonlyMap<string, number>): GivenDocument[] =>
+      Array.from({ length: n }, (_, k) => document(miniature({ shard: { i: k + 1, n }, failing, plan }), { i: k + 1, n }));
     const one = miniature({});
     const oneEnd = end(one.tally);
     const omegaLine = (lines: readonly string[]): string => lines.find((line) => line.includes('PROBE_omega')) ?? 'no omega line';
@@ -107598,6 +109719,528 @@ function runRunTallySuite(live: RunTally): number {
           'by construction; a merge does not, so a suite no shard ran would leave the summary short with every figure still derived',
       );
     }
+
+    // --- TY41: the merge writes the children's half off the documents it read, and a red merge writes nothing (#1144) --
+    //
+    // `--memory-base-children` writes what `mergedChildrenBase` hands back, after
+    // `main`'s every exit. The miniature's shards carry forged children's peaks
+    // in their records — the field a live shard's `rss` carries — and the run's
+    // figure has to be the largest over the documents, the written one the larger
+    // of that and the tracked figure (issue #1151; `TY43` holds the ratchet's
+    // every case), at the `--jobs` they state, with
+    // the entry's parent half and every other platform as the base held them.
+    // The plant is a red shard: the same documents with `beta` failing, and the
+    // same forged to claim exit 2 over the failure (`TY30`'s forgery).
+    {
+      const PLATFORM = 'zeta';
+      const PEAKS: Record<string, SuiteChildren> = {
+        alpha: { highWater: 300, unit: 'unit a' },
+        beta: { highWater: 700, unit: 'unit b' },
+        gamma: { highWater: 500, unit: 'unit c' },
+        delta: { highWater: 650, unit: 'unit d' },
+      };
+      const forge = (given: GivenDocument[], peaks: Record<string, SuiteChildren>, jobsOf: (i: number) => number = () => 2, platform = PLATFORM): GivenDocument[] =>
+        given.map((g) => ({
+          ...g,
+          doc: {
+            ...g.doc,
+            platform,
+            jobs: jobsOf(g.doc.shard.i),
+            run: g.doc.run.map((r) => (peaks[r.block.key] === undefined ? r : { ...r, rss: { ...r.rss, children: peaks[r.block.key] } })),
+          },
+        }));
+      const entry: MemoryBaseEntry = { highWater: 2000, suites: 6, bun: 'x', children: { highWater: 100, jobs: 2 } };
+      const other: MemoryBaseEntry = { highWater: 9, suites: 1, bun: 'y' };
+      const base: MemoryBase = { spec: MEMORY_BASE_SPEC, platforms: { [PLATFORM]: entry, eta: other } };
+      const write = (given: GivenDocument[], over: MemoryBase | null = base, platform = PLATFORM): ChildrenBaseWrite | string => {
+        const merged = miniature({ given });
+        if (merged.tally.replay === null) return 'the miniature replayed nothing';
+        return mergedChildrenBase(merged.tally, merged.tally.replay, over, platform, 2);
+      };
+      const probes: string[] = [];
+      // The positive control: the write is the max over the documents, read off them here independently.
+      const given = forge(shardsOf(3), PEAKS);
+      const docMax = Math.max(...given.flatMap((g) => g.doc.run.map((r) => r.rss.children?.highWater ?? -Infinity)));
+      const green = write(given);
+      let greenWords = 'nothing';
+      if (typeof green === 'string') probes.push(`a green merge of three shards was refused: ${green}`);
+      else {
+        const parsed = JSON.parse(green.text) as MemoryBase;
+        const got = parsed.platforms[PLATFORM];
+        // Issue #1151: the run's figure is the documents' largest; the written one the larger of it and the tracked figure.
+        const want = Math.max(docMax, entry.children?.highWater ?? -Infinity);
+        if (green.run !== docMax) probes.push(`the merge read this run's children's figure as ${green.run} MB where the documents' largest is ${docMax} MB`);
+        if (got?.children?.highWater !== want || got.children.jobs !== 2) {
+          probes.push(`the merge wrote children ${JSON.stringify(got?.children ?? null)} where the larger of the documents' largest, ${docMax} MB, and the tracked ${entry.children?.highWater} MB is ${want} MB at --jobs 2`);
+        }
+        if (got?.highWater !== entry.highWater || got.suites !== entry.suites || got.bun !== entry.bun) {
+          probes.push(`the merge moved the parent's half: ${JSON.stringify(got)} where the base held ${JSON.stringify(entry)}`);
+        }
+        if (JSON.stringify(parsed.platforms.eta) !== JSON.stringify(other)) probes.push(`the merge moved another platform's entry: ${JSON.stringify(parsed.platforms.eta)}`);
+        if (!green.from.includes('"unit b"') || !green.from.includes('shard 2/3')) probes.push(`the write names its child as ${green.from}, not "unit b" in shard 2/3`);
+        greenWords = `children ${got?.children?.highWater} MB at --jobs ${got?.children?.jobs} (${green.said}) from ${green.from}, the parent's ${got?.highWater} MB kept`;
+      }
+      // A shard that measured no child may have run at another --jobs: only the processes whose children entered the figure must agree.
+      const quiet = write(forge(shardsOf(3), { alpha: PEAKS.alpha, beta: PEAKS.beta }, (i) => (i === 3 ? 4 : 2)));
+      if (typeof quiet === 'string') probes.push(`a shard that measured no child, at another --jobs, refused the write: ${quiet}`);
+      // The plant and every refusal: each must write nothing, by name.
+      const forgedExit = forge(shardsOf(3, 'beta'), PEAKS);
+      forgedExit[1] = { ...forgedExit[1], doc: { ...forgedExit[1].doc, exit: 2 } };
+      const refusals: Array<[string, ChildrenBaseWrite | string, string]> = [
+        ['a red shard (beta failing in shard 2/3)', write(forge(shardsOf(3, 'beta'), PEAKS)), 'the merged run is red — 1 failure(s)'],
+        ['the red shard forged to exit 2', write(forgedExit), 'shard 2/3 exited 2'],
+        ['shards at two --jobs', write(forge(shardsOf(3), PEAKS, (i) => (i === 3 ? 4 : 2))), 'shard 3/3 at 4'],
+        ['a platform with no entry', write(given, { spec: MEMORY_BASE_SPEC, platforms: { eta: other } }), `holds no ${PLATFORM} entry`],
+        ['shards of another platform', write(given, base, 'eta'), `shard 1/3 ran on ${PLATFORM}`],
+        ['no child measured', write(forge(shardsOf(3), {})), "measured a child's peak"],
+      ];
+      const read: string[] = [];
+      for (const [what, got, words] of refusals) {
+        if (typeof got !== 'string') probes.push(`${what}: the merge wrote children ${JSON.stringify(got.entry.children)} rather than nothing`);
+        else if (!got.includes(words) || !got.includes('so nothing is written')) probes.push(`${what}: refused as ${JSON.stringify(got)}, not by "${words}"`);
+        else read.push(`${what} -> ${got}`);
+      }
+      // The doors, before any suite: the flag without --merge, given twice, and --memory-base under --merge pointing at it.
+      const NO_SUITE = 'ty41-no-such-suite';
+      const doors: string[] = [];
+      for (const [how, args, words] of [
+        ['no --merge', ['--only', NO_SUITE, '--memory-base-children', 'x.json'], 'selftest: --memory-base-children writes the children\'s half of the memory base off a merged run\'s shard documents; it needs --merge'],
+        ['given twice', ['--merge', 'ty41-absent.json', '--memory-base-children', 'a.json', '--memory-base-children', 'b.json'], 'selftest: --memory-base-children was given twice'],
+        ['--memory-base under --merge', ['--merge', 'ty41-absent.json', '--memory-base'], "selftest: --merge reads the shards' documents and cannot be given with --memory-base — a merge writes only the children's half of the memory base, with --memory-base-children"],
+      ] as const) {
+        const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', env: { ...process.env, RIGC_JOBS: '', RIGC_SHARD: '', RIGC_TALLY_OUT: '' } });
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 2 || !said.startsWith(words) || run.stdout.includes('──')) {
+          probes.push(`${how}: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 200))}${run.stdout.includes('──') ? ', after walking the registry' : ''}`);
+        } else doors.push(`${how} -> exit 2`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY41_THE_MERGE_WRITES_THE_CHILDRENS_HALF_AS_THE_LARGER_OF_THE_TRACKED_FIGURE_AND_THE_MAX_OVER_THE_DOCUMENTS_AND_A_RED_MERGE_WRITES_NOTHING',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `over three shards carrying forged children's peaks the merge wrote ${greenWords}, the documents' largest being ${docMax} MB and the tracked figure ${entry.children?.highWater} MB; ` +
+            `a shard with no child at another --jobs does not refuse it; and each of these writes nothing: ${read.join('; ')}; at the door: ${doors.join(', ')}`,
+        ),
+        "issue #1144: CI runs the full selftest only as shards and a merge, and the merge refused --memory-base, so Linux's children's figure " +
+          "had no writer and TY40 read SKIP on every CI run; a child's peak is its own process's, so the max over the shards is the run's",
+      );
+    }
+
+    // --- TY43: a writer of the children's figure ratchets, and lowering it is a spelling of its own (#1151) --
+    //
+    // Both writers hand their figure to `ratchetChildren`; the clauses below are
+    // one reading of it, run over the real function and over two plants — the
+    // writer as it was before #1151 (it writes the run's figure, lower or not)
+    // and one that never raises — so every clause has been seen to fire. The
+    // tracked figure and the run's are forged: 547 MB is the linux entry the
+    // card names and 506 / 720 MB the low and high readings beside it. Then the
+    // merge's own write over the miniature's documents, with a tracked figure
+    // above the documents' largest and below it, and the flag's doors.
+    {
+      type Writer = (tracked: ChildrenFigure | undefined, run: number | null, jobs: number, reset: boolean) => ChildrenRatchet | string;
+      const TRACKED: ChildrenFigure = { highWater: 547, jobs: 4 };
+      const clauses = (writer: Writer): string[] => {
+        const out: string[] = [];
+        const expect = (what: string, got: ChildrenRatchet | string, children: ChildrenFigure | undefined, words: string): void => {
+          if (typeof got === 'string') out.push(`${what}: refused as ${JSON.stringify(got)} rather than written`);
+          else if (JSON.stringify(got.children) !== JSON.stringify(children) || !got.said.startsWith(words)) {
+            out.push(`${what}: wrote ${JSON.stringify(got.children ?? null)} saying ${JSON.stringify(got.said)}, where ${JSON.stringify(children ?? null)} saying "${words}…" is the ratchet`);
+          }
+        };
+        expect('a lower figure without --reset-children-base', writer(TRACKED, 506, 4, false), TRACKED, 'kept 547 MB (this run 506 MB)');
+        expect('a higher figure', writer(TRACKED, 720, 4, false), { highWater: 720, jobs: 4 }, 'raised 547 → 720 MB');
+        expect('the same figure', writer(TRACKED, 547, 4, false), TRACKED, 'kept 547 MB (this run 547 MB)');
+        expect('a lower figure with --reset-children-base', writer(TRACKED, 506, 4, true), { highWater: 506, jobs: 4 }, 'lowered 547 → 506 MB');
+        expect('a higher figure with --reset-children-base', writer(TRACKED, 720, 4, true), { highWater: 720, jobs: 4 }, 'raised 547 → 720 MB');
+        expect('no tracked figure', writer(undefined, 506, 4, false), { highWater: 506, jobs: 4 }, 'wrote 506 MB at --jobs 4');
+        expect('no child measured (--jobs 1)', writer(TRACKED, null, 1, false), TRACKED, 'kept 547 MB at --jobs 4');
+        expect('no child measured with --reset-children-base', writer(TRACKED, null, 1, true), undefined, 'dropped 547 MB');
+        expect('another --jobs with --reset-children-base', writer(TRACKED, 870, 2, true), { highWater: 870, jobs: 2 }, 'replaced 547 MB at --jobs 4 → 870 MB at --jobs 2');
+        const elsewhere = writer(TRACKED, 870, 2, false);
+        if (typeof elsewhere !== 'string' || !elsewhere.includes('read at --jobs 4') || !elsewhere.includes('give --reset-children-base')) {
+          out.push(`a figure read at another --jobs without --reset-children-base: ${typeof elsewhere === 'string' ? `refused as ${JSON.stringify(elsewhere)}` : `wrote ${JSON.stringify(elsewhere.children ?? null)}`}, not refused naming both --jobs and the spelling`);
+        }
+        return out;
+      };
+      const probes = clauses(ratchetChildren).map((p) => `the writer: ${p}`);
+      // The plants: each must be read, by the clause it breaks.
+      const plants: Array<[string, Writer, string]> = [
+        ['the writer before #1151, which writes the run\'s figure lower or not', (_t, run, jobs) => ({ children: run === null ? undefined : { highWater: run, jobs }, said: `wrote ${String(run)} MB` }), 'a lower figure without --reset-children-base'],
+        ['a writer that never raises', (t, run, jobs) => ({ children: t ?? (run === null ? undefined : { highWater: run, jobs }), said: `kept ${t?.highWater ?? run} MB (this run ${String(run)} MB)` }), 'a higher figure'],
+      ];
+      const plantsRead: string[] = [];
+      for (const [what, writer, clause] of plants) {
+        const caught = clauses(writer).find((p) => p.startsWith(`${clause}:`));
+        if (caught === undefined) probes.push(`the plant "${what}" was not read by the clause "${clause}"`);
+        else plantsRead.push(`${what} -> ${caught}`);
+      }
+      // The merge's own write: a tracked figure above the documents' largest is kept, one below is raised, and the spelling lowers.
+      const merged = miniature({
+        given: shardsOf(3).map((g) => ({
+          ...g,
+          doc: { ...g.doc, platform: 'zeta', jobs: 2, run: g.doc.run.map((r) => (r.block.key === 'beta' ? { ...r, rss: { ...r.rss, children: { highWater: 700, unit: 'unit b' } } } : r)) },
+        })),
+      });
+      const mergeWords: string[] = [];
+      if (merged.tally.replay === null) probes.push('the miniature replayed nothing');
+      else {
+        const replay = merged.tally.replay;
+        const baseAt = (highWater: number): MemoryBase => ({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 2000, suites: 6, bun: 'x', children: { highWater, jobs: 2 } } } });
+        for (const [what, tracked, reset, want, words] of [
+          ['tracked 900 MB over a run of 700 MB', 900, false, 900, 'kept 900 MB (this run 700 MB)'],
+          ['tracked 500 MB under a run of 700 MB', 500, false, 700, 'raised 500 → 700 MB'],
+          ['tracked 900 MB with --reset-children-base', 900, true, 700, 'lowered 900 → 700 MB'],
+        ] as const) {
+          const got = mergedChildrenBase(merged.tally, replay, baseAt(tracked), 'zeta', 2, reset);
+          if (typeof got === 'string') probes.push(`the merge, ${what}: refused as ${JSON.stringify(got)}`);
+          else {
+            const written = (JSON.parse(got.text) as MemoryBase).platforms.zeta?.children;
+            if (written?.highWater !== want || got.run !== 700 || !got.said.startsWith(words)) {
+              probes.push(`the merge, ${what}: wrote ${JSON.stringify(written ?? null)} over a run of ${got.run} MB saying ${JSON.stringify(got.said)}, where ${want} MB saying "${words}…" is the ratchet`);
+            } else mergeWords.push(`${what} -> ${written.highWater} MB (${got.said})`);
+          }
+        }
+      }
+      // The doors, before any suite: the spelling without a writer, beside --merge alone, and given twice.
+      const NO_SUITE = 'ty43-no-such-suite';
+      const needs = "selftest: --reset-children-base lets a writer of the children's memory base write a figure lower than the tracked one";
+      const doors: string[] = [];
+      for (const [how, args, words] of [
+        ['without a writer', ['--only', NO_SUITE, '--reset-children-base'], needs],
+        ['under --merge without --memory-base-children', ['--merge', 'ty43-absent.json', '--reset-children-base'], needs],
+        ['given twice', ['--merge', 'ty43-absent.json', '--memory-base-children', 'a.json', '--reset-children-base', '--reset-children-base'], 'selftest: --reset-children-base was given twice'],
+      ] as const) {
+        const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', env: { ...process.env, RIGC_JOBS: '', RIGC_SHARD: '', RIGC_TALLY_OUT: '' } });
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 2 || !said.startsWith(words) || run.stdout.includes('──')) {
+          probes.push(`${how}: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 200))}${run.stdout.includes('──') ? ', after walking the registry' : ''}`);
+        } else doors.push(`${how} -> exit 2`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY43_A_WRITER_OF_THE_CHILDRENS_BASE_KEEPS_THE_LARGER_FIGURE_AND_LOWERS_IT_ONLY_WITH_RESET_CHILDREN_BASE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `over a tracked 547 MB at --jobs 4 the writer kept it against 506 MB, raised it to 720 MB, lowered it only with --reset-children-base, ` +
+            `refused a figure read at --jobs 2 without the spelling and replaced the tracked figure with it given the spelling; the plants were read — ${plantsRead.join('; ')}; ` +
+            `the merge: ${mergeWords.join('; ')}; at the door: ${doors.join(', ')}`,
+        ),
+        "issue #1151: one run's largest child is not the figure — CI read 506 to 720 MB on the same code — and a writer that took the run's figure as measured " +
+          "let one low run tighten TY40's bound into a red main from noise",
+      );
+    }
+
+    // --- TY32–TY35: concurrent units and the time-balanced deal (#1128) ------
+
+    // --- TY32: --jobs is a whole number from 1; anything else is refused by name --
+    {
+      const probes: string[] = [];
+      const refused = ['0', '-1', 'x', '1.5', '+2', ' 2', '2 ', ''];
+      for (const value of refused) {
+        const read = parseJobs(value);
+        if (typeof read !== 'string' || !read.startsWith(`--jobs ${JSON.stringify(value)} is not a whole number`)) probes.push(`--jobs ${JSON.stringify(value)} read as ${JSON.stringify(read)}`);
+      }
+      for (const [value, want] of [['1', 1], ['4', 4], ['16', 16]] as const) if (parseJobs(value) !== want) probes.push(`--jobs ${value} read as ${JSON.stringify(parseJobs(value))}`);
+      // The door itself: a process given a bad --jobs, or RIGC_JOBS, refuses before it runs a suite.
+      // 🔒 Each door also names a suite no registration has, under --only: a --jobs that is wrongly
+      // ACCEPTED then walks the registry as SKIPs and is refused for the unknown name, rather than
+      // starting a whole selftest inside this one — measured, the day this control was planted.
+      const NO_SUITE = 'ty32-no-such-suite';
+      const doors: string[] = [];
+      for (const [how, args, env] of [
+        ['--jobs 0', ['--jobs', '0'], {}],
+        ['--jobs -1', ['--jobs', '-1'], {}],
+        ['--jobs x', ['--jobs', 'x'], {}],
+        ['RIGC_JOBS=0', [], { RIGC_JOBS: '0' }],
+      ] as const) {
+        const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE, ...args], { cwd: import.meta.dir, encoding: 'utf8', env: { ...process.env, RIGC_JOBS: '', ...env } });
+        const said = run.stderr.trim().split('\n')[0] ?? '';
+        if (run.status !== 2 || !said.startsWith('selftest: --jobs "') || !said.includes('is not a whole number of concurrent units from 1') || run.stdout.includes('──')) {
+          probes.push(`${how}: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 160))}${run.stdout.includes('──') ? ', after walking the registry' : ''}`);
+        } else doors.push(`${how} -> ${said}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY32_JOBS_IS_A_WHOLE_NUMBER_FROM_1_AND_EVERY_OTHER_SPELLING_IS_REFUSED_BY_NAME_BEFORE_ANY_SUITE_RUNS',
+        held,
+        probeDetail(held, probes, `--jobs refuses ${refused.map((v) => JSON.stringify(v)).join(', ')} by name and reads "1", "4", "16"; at the door, exit 2 before any suite: ${doors.join('; ')}`),
+        'issue #1128: a --jobs read generously would decide how many units run at once by guessing, and 0 would either hang ' +
+          'the helper or quietly mean something else',
+      );
+    }
+
+    // --- TY33: units come back in their own order; a driver that interleaves their lines is read --
+    // Three units that each print two lines with a pause between them, the
+    // first pausing longest. Sequentially and three at a time, `inParallel`
+    // hands back what each printed, in the units' order, so the log a suite
+    // makes from them is one text. The plant is the hazard the helper exists to
+    // remove: a driver that streams every unit's stdout into one shared log as
+    // it arrives — what printing straight to the terminal does — so the lines
+    // of three running units interleave, and the log differs.
+    {
+      const probes: string[] = [];
+      const units: ParallelUnit[] = [0, 1, 2].map((k) => ({
+        argv: [process.execPath, '-e', `console.log("unit ${k} line 1"); await Bun.sleep(${(3 - k) * 250}); console.log("unit ${k} line 2"); console.error("unit ${k} stderr"); process.exit(${k});`],
+        cwd: import.meta.dir,
+      }));
+      const logOf = (results: readonly UnitResult[]): string => results.map((r, k) => `  unit ${k} exit ${String(r.status)}\n${r.stdout}${r.stderr}`).join('');
+      const one = logOf(inParallel(units, 1));
+      const three = logOf(inParallel(units, 3));
+      if (three !== one) probes.push(`three at a time the units' log reads ${JSON.stringify(three)} where one at a time it reads ${JSON.stringify(one)}`);
+      const interleaving = [
+        'const spec = JSON.parse(await Bun.file(process.argv[process.argv.length - 1]).text());',
+        'const shared = [];',
+        'let next = 0;',
+        'const lane = async () => {',
+        '  while (next < spec.units.length) {',
+        '    const unit = spec.units[next++];',
+        "    const child = Bun.spawn(unit.argv, { cwd: unit.cwd, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });",
+        '    const decoder = new TextDecoder();',
+        '    for await (const chunk of child.stdout) shared.push(decoder.decode(chunk));',
+        '    await child.exited;',
+        '  }',
+        '};',
+        'await Promise.all(Array.from({ length: spec.jobs }, lane));',
+        "await Bun.write(spec.out, JSON.stringify(spec.units.map((_, k) => ({ status: 0, stdout: k === 0 ? shared.join('') : '', stderr: '', maxRss: null }))));",
+      ].join('\n');
+      const lines = (results: readonly UnitResult[]): string => results.map((r) => r.stdout).join('');
+      const planted = lines(inParallel(units, 3, interleaving));
+      const ordered = lines(inParallel(units, 1));
+      if (planted === ordered) probes.push(`the interleaving driver's log read ${JSON.stringify(planted)}, the units' own order — the plant interleaved nothing`);
+      const held = probes.length === 0;
+      say(
+        'TY33_UNITS_COME_BACK_IN_THEIR_OWN_ORDER_AT_ANY_JOBS_AND_A_DRIVER_THAT_INTERLEAVES_THEIR_LINES_IS_READ',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `three units, the first pausing longest between its two lines: one at a time and three at a time the log is the same ${one.split('\n').length - 1} line(s); ` +
+            `the planted driver streaming every unit into one log hands back the same ${planted.split('\n').filter(Boolean).length} line(s) in another order, and the difference is read`,
+        ),
+        'issue #1128: --jobs decides when a unit runs and never what a suite prints, which holds only because no unit prints to the ' +
+          'run and the suite prints after every unit has finished; a unit printing as it ran is exactly the interleaving planted here',
+      );
+    }
+
+    // --- TY34: the deal over a stated base is longest-first; without one, round-robin --
+    {
+      const probes: string[] = [];
+      // In registration order and NOT heaviest first, so a deal in the base's order is a different deal.
+      const base: ShardsBase = { spec: SHARDS_BASE_SPEC, suites: [{ suite: 'alpha', seconds: 4 }, { suite: 'beta', seconds: 9 }, { suite: 'gamma', seconds: 5 }, { suite: 'delta', seconds: 10 }] };
+      // Stated, not derived: delta 10 to shard 1; beta 9 to shard 2 (0 < 10); gamma 5 to shard 2 (9 < 10); alpha 4 to shard 1 (10 < 14).
+      // Dealt in the base's order instead it would be alpha 1, beta 2, gamma 1, delta 1 — loads 19 and 9.
+      const want: Array<[string, number]> = [['alpha', 1], ['beta', 2], ['gamma', 2], ['delta', 1]];
+      const plan = shardPlan(base, 2);
+      const got = want.map(([key]) => [key, plan.get(key) ?? 0]);
+      if (JSON.stringify(got) !== JSON.stringify(want) || plan.size !== want.length) probes.push(`the plan of 4/9/5/10 s over 2 shards is ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+      const ties = shardPlan({ spec: SHARDS_BASE_SPEC, suites: [{ suite: 'x', seconds: 5 }, { suite: 'y', seconds: 5 }, { suite: 'z', seconds: 5 }] }, 2);
+      if (JSON.stringify([...ties]) !== JSON.stringify([['x', 1], ['y', 2], ['z', 1]])) probes.push(`three equal suites over 2 shards were dealt ${JSON.stringify([...ties])}, not in registration order to the lowest shard`);
+      // A suite the base does not name — epsilon, index 4 — is dealt round-robin: shard (4 mod 2) + 1 = 1.
+      if (shardOwner(plan, 4, 'epsilon', 2) !== 1 || shardOwner(new Map(), 1, 'beta', 2) !== 2) probes.push('a suite with no entry was not dealt round-robin by its registration index');
+      // Through real shards: each calls exactly its dealt suites, and the merge of the two ends as one process does.
+      const dealt = (i: number): string[] => KEYS.filter((key, index) => key !== 'omega' && shardOwner(plan, index, key, 2) === i);
+      for (const i of [1, 2]) {
+        const run = miniature({ shard: { i, n: 2 }, plan });
+        if (run.called.join() !== dealt(i).join()) probes.push(`shard ${i}/2 over the plan called [${run.called.join(', ')}], dealt [${dealt(i).join(', ')}]`);
+      }
+      const given = shardsOf(2, undefined, plan);
+      const refusals = mergeRefusals(given, SOURCE);
+      if (refusals.length > 0) probes.push(`the merge refused shards dealt by one plan: ${refusals.join('; ')}`);
+      else {
+        const merged = miniature({ given });
+        const mergedEnd = end(merged.tally);
+        if (merged.refusal !== null || mergedEnd.join('\n') !== oneEnd.join('\n')) probes.push(`the merge of the planned shards ends ${JSON.stringify(mergedEnd.find((l, k) => l !== oneEnd[k]) ?? merged.refusal)}, not as the one-process run`);
+      }
+      const without = shardsOf(2);
+      if (JSON.stringify(without[0].doc.owners) !== JSON.stringify(KEYS.map((key, index) => (key === 'omega' ? 0 : (index % 2) + 1)))) probes.push(`with no base the shards dealt ${JSON.stringify(without[0].doc.owners)}, not round-robin`);
+      const held = probes.length === 0;
+      say(
+        'TY34_THE_DEAL_OVER_A_STATED_BASE_IS_LONGEST_FIRST_AND_A_SUITE_WITH_NO_ENTRY_IS_DEALT_ROUND_ROBIN',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `alpha/beta/gamma/delta at 4/9/5/10 s over 2 shards dealt ${got.map(([k, v]) => `${k}→${v}`).join(', ')} (loads 14 and 14, where their own order would give 19 and 9); three equal suites x, y, z dealt 1, 2, 1; ` +
+            `epsilon, absent from the base, round-robin to shard 1; each planned shard called exactly its suites and their merge ends as the one-process run; with no base, owners ${JSON.stringify(without[0].doc.owners)}`,
+        ),
+        "issue #1128: CI's wall is the heaviest shard, and dealing by registration index put two heavy suites on one shard beside a " +
+          '45 s one; the deal is read off measured seconds and falls back to the old rule only where there is no measurement',
+      );
+    }
+
+    // --- TY35: shards dealt two ways, or a suite run by two shards, is refused by the merge --
+    {
+      const probes: string[] = [];
+      const one = new Map([['alpha', 1], ['beta', 1], ['gamma', 2], ['delta', 2], ['epsilon', 1]]);
+      const other = new Map([['alpha', 1], ['beta', 2], ['gamma', 2], ['delta', 2], ['epsilon', 1]]);
+      // The plant: shard 1 dealt by one base, shard 2 by another — both claim beta.
+      const mixed = [document(miniature({ shard: { i: 1, n: 2 }, plan: one }), { i: 1, n: 2 }), document(miniature({ shard: { i: 2, n: 2 }, plan: other }), { i: 2, n: 2 })];
+      const ranBeta = mixed.filter((g) => g.doc.run.some((r) => r.block.key === 'beta')).length;
+      const mixedRefusals = mergeRefusals(mixed, SOURCE);
+      if (ranBeta !== 2) probes.push(`the plant ran beta in ${ranBeta} shard(s), not 2, so it assigns nothing twice`);
+      if (!mixedRefusals.some((r) => r.includes('deals "beta" (registration index 1) to shard 1') && r.includes('to shard 2'))) probes.push(`shards dealt two ways were refused as [${mixedRefusals.join('; ') || 'nothing'}]`);
+      // The same twice-run suite under one deal, forged: shard 2's document also carries beta's record.
+      const fair = shardsOf(2, undefined, one);
+      const betaRecord = fair[0].doc.run.find((r) => r.block.key === 'beta');
+      const forged = [fair[0], { ...fair[1], doc: { ...fair[1].doc, run: [...fair[1].doc.run, ...(betaRecord === undefined ? [] : [betaRecord])].sort((x, y) => x.index - y.index), others: fair[1].doc.others.filter((k) => k !== 'beta') } }];
+      const forgedRefusals = mergeRefusals(forged, SOURCE);
+      if (!forgedRefusals.some((r) => r.includes('"beta" (registration index 1) was run by 2 shards'))) probes.push(`a suite run by two shards under one deal was refused as [${forgedRefusals.join('; ') || 'nothing'}]`);
+      if (mergeRefusals(fair, SOURCE).length > 0) probes.push(`the fair shards were refused: ${mergeRefusals(fair, SOURCE).join('; ')}`);
+      const held = probes.length === 0;
+      say(
+        'TY35_SHARDS_DEALT_TWO_WAYS_OR_A_SUITE_RUN_BY_TWO_SHARDS_IS_REFUSED_BY_THE_MERGE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `two shards dealt from two bases both ran beta and the merge refuses them — ${mixedRefusals.find((r) => r.includes('deals "beta"')) ?? 'nothing'}; ` +
+            `under one deal, beta's record forged into the other shard too — ${forgedRefusals.find((r) => r.includes('was run by 2 shards')) ?? 'nothing'}; the fair pair is accepted`,
+        ),
+        'issue #1128: the deal now depends on a file, and two shards that read two versions of it would each run what it believes ' +
+          'is its own; the merge reads who owns a suite off the documents and refuses them when they disagree',
+      );
+    }
+
+    // --- TY37: the build-root helper refuses a prefix that could leave the art's directory, by name (issue #1127) --
+    {
+      const probes: string[] = [];
+      const art = mkdtempSync(join(harnessTemp(), 'rigc-ty37-art-'));
+      const refusalOf = (prefix: string): string | null => {
+        try {
+          buildRootIn(art, prefix);
+          return null;
+        } catch (err) {
+          return (err as Error).message;
+        }
+      };
+      const refused: string[] = [];
+      for (const prefix of ['../rigc-ty37-escape-', 'nested/rigc-ty37-', '..\\rigc-ty37-escape-', '']) {
+        const said = refusalOf(prefix);
+        if (said === null) probes.push(`the prefix ${JSON.stringify(prefix)} was accepted`);
+        else if (!said.includes(`the prefix ${JSON.stringify(prefix)} is not a plain directory name`) || !said.includes(art)) probes.push(`the prefix ${JSON.stringify(prefix)} was refused without naming itself and the art directory: ${JSON.stringify(said)}`);
+        else refused.push(JSON.stringify(prefix));
+      }
+      const strays = [...readdirSync(art), ...readdirSync(dirname(art)).filter((name) => name.startsWith('rigc-ty37-escape-'))];
+      if (strays.length > 0) probes.push(`a refused prefix still made [${strays.join(', ')}]`);
+      // The tolerance: a plain name is a fresh directory one level inside the art's.
+      const made = buildRootIn(art, 'rigc-ty37-');
+      const from = relative(art, made);
+      if (dirname(made) !== art || !from.startsWith('rigc-ty37-')) probes.push(`the plain prefix made ${made}, not a directory directly inside ${art}`);
+      const held = probes.length === 0;
+      say(
+        'TY37_THE_BUILD_ROOT_HELPER_REFUSES_A_PREFIX_THAT_COULD_LEAVE_THE_ART_DIRECTORY_BY_NAME',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `buildRootIn refuses ${refused.join(', ')} before making anything, each naming the prefix and the art directory; a plain prefix makes ${JSON.stringify(from.replace(/[A-Za-z0-9]{6}$/, 'XXXXXX'))} directly inside it`,
+        ),
+        "issue #1127: every fixture build now lands inside its art's directory so its page names spell no temp directory, and that holds only while the helper cannot be handed a path that leaves it — a prefix is a name, and anything else is refused where it is given",
+      );
+    }
+  }
+
+  // --- TY39: a run leaves tmpdir() as it found it; a process that leaks one directory is read (issue #1137) --
+  // Each child below is a whole selftest process given a fresh, empty TMPDIR of
+  // its own (inside this run's root), so what it leaves there is its alone and
+  // no other process on the machine can add to the count. Read on the exit
+  // paths a run has that a child can reach without editing a site: a name
+  // `--only` does not register (exit 2 after every suite was skipped), a
+  // partial run that ran real sites (exit 2), and a `--merge` the run refuses
+  // (exit 2) — each after its fixtures exist, so after its root was made.
+  // `--keep-temp` must leave exactly its root and name it; a refused spelling
+  // must stop before a suite runs. The plant is a process that makes one
+  // directory under `tmpdir()` and does not remove it, read by the same count.
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const NO_SUITE = 'ty39-no-such-suite';
+    const childEnv = (temp: string, extra: Record<string, string> = {}): Record<string, string> => {
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== 'RIGC_KEEP_TEMP') env[key] = value;
+      return { ...env, TMPDIR: temp, RIGC_JOBS: '', ...extra };
+    };
+    const fresh = (): string => mkdtempSync(join(harnessTemp(), 'rigc-ty39-'));
+    // The spellings, held without a process.
+    for (const [argv, env] of [
+      [['--keep-temp=1'], undefined],
+      [['--keep-temps'], undefined],
+      [['--keeptemp'], undefined],
+      [['--keep-temp', '--keep-temp'], undefined],
+      [[], 'yes'],
+      [[], '0'],
+      [[], 'true'],
+    ] as const) {
+      const said = parseKeepTemp(argv, env);
+      if (typeof said !== 'string') probes.push(`${JSON.stringify(argv)} with RIGC_KEEP_TEMP=${JSON.stringify(env ?? null)} was read as ${JSON.stringify(said)}, not refused`);
+    }
+    for (const [argv, env, want] of [
+      [[], undefined, false],
+      [[], '', false],
+      [['--keep-temp'], undefined, true],
+      [[], '1', true],
+    ] as const) {
+      const said = parseKeepTemp(argv, env);
+      if (said !== want) probes.push(`${JSON.stringify(argv)} with RIGC_KEEP_TEMP=${JSON.stringify(env ?? null)} was read as ${JSON.stringify(said)}, not ${String(want)}`);
+    }
+    // The runs: each must leave its TMPDIR empty.
+    const merged = join(fresh(), 'forged-shard.json');
+    writeFileSync(merged, '{}\n');
+    for (const [how, args] of [
+      [`--only ${NO_SUITE}`, ['--only', NO_SUITE]],
+      ['--only draw-order --jobs 1', ['--only', 'draw-order', '--jobs', '1']],
+      ['--merge <a forged document>', ['--merge', merged]],
+    ] as const) {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp), maxBuffer: 64 * 1024 * 1024 });
+      const grew = tempGrowth(new Map(), tempCensus(temp));
+      if (run.status !== 2) probes.push(`${how}: exit ${String(run.status)}, not the 2 this path ends with: ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      if (grew.length > 0) probes.push(`${how} left ${grew.join(', ')} in its tmpdir()`);
+      else read.push(`${how} (exit ${String(run.status)}) left 0`);
+    }
+    // --keep-temp: exactly the root, named on stderr.
+    {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE, '--keep-temp'], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp) });
+      const left = readdirSync(temp).filter((name) => name.startsWith('rigc-'));
+      const named = run.stderr.split('\n').find((line) => line.startsWith("selftest: --keep-temp kept this process's temp root: ")) ?? null;
+      if (left.length !== 1 || !/^rigc-selftest-[A-Za-z0-9]{6}$/.test(left[0]) || named === null || !named.endsWith(join(temp, left[0]))) {
+        probes.push(`--keep-temp left [${left.join(', ')}] and said ${JSON.stringify(named)}, not exactly its rigc-selftest-XXXXXX root, named`);
+      } else read.push('--keep-temp left its root alone and named it');
+    }
+    // The door: a refused spelling stops before any suite and makes nothing.
+    {
+      const temp = fresh();
+      const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp, { RIGC_KEEP_TEMP: 'yes' }) });
+      const said = run.stderr.trim().split('\n')[0] ?? '';
+      const left = readdirSync(temp);
+      if (run.status !== 2 || !said.startsWith('selftest: RIGC_KEEP_TEMP="yes" is not 1') || run.stdout.includes('──') || left.length > 0) {
+        probes.push(`RIGC_KEEP_TEMP=yes: exit ${String(run.status)} saying ${JSON.stringify(said.slice(0, 160))}${run.stdout.includes('──') ? ', after walking the registry' : ''}, leaving [${left.join(', ')}]`);
+      } else read.push(`RIGC_KEEP_TEMP=yes -> ${said}`);
+    }
+    // The plant: a process that leaks one directory under tmpdir(), read by the same count.
+    {
+      const temp = fresh();
+      const before = tempCensus(temp);
+      spawnSync(process.execPath, ['-e', "const { mkdtempSync } = require('node:fs'); const { join } = require('node:path'); const { tmpdir } = require('node:os'); mkdtempSync(join(tmpdir(), 'rigc-ty39-plant-'));"], { encoding: 'utf8', env: childEnv(temp) });
+      const grew = tempGrowth(before, tempCensus(temp));
+      if (grew.length !== 1 || grew[0] !== 'rigc-ty39-plant- +1') probes.push(`the plant that leaks one rigc-ty39-plant- directory was counted as [${grew.join(', ')}]`);
+      else read.push(`the plant read as ${grew[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'TY39_A_RUN_LEAVES_TMPDIR_AS_IT_FOUND_IT_ON_EVERY_EXIT_PATH_AND_A_LEAKED_DIRECTORY_IS_NAMED_BY_PREFIX',
+      held,
+      probeDetail(held, probes, `each child in an empty tmpdir() of its own: ${read.join('; ')}; --keep-temp refuses every other spelling by name`),
+      'issue #1137: every temp directory the harness made used to stay behind — 500,703 entries on one machine, and Bun pays ' +
+        "for each at every start under that directory — so the run's directories now live in one root the exit removes, and " +
+        'what a run leaves is counted rather than promised',
+    );
   }
 
   return bad;
@@ -107663,13 +110306,13 @@ interface IntegerNamedBuild {
 function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[]; dirs: string[] } | null {
   const galleryRoot = resolve(import.meta.dir, 'gallery');
   if (!['nod', 'walk'].every((name) => existsSync(join(galleryRoot, name, 'rig.json')))) return null;
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-integer-named-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-integer-named-'));
   const builds: IntegerNamedBuild[] = [];
   const refused: string[] = [];
   type Spec = Record<string, unknown>;
   const read = (name: string, file: string): Spec => JSON.parse(readFileSync(join(galleryRoot, name, file), 'utf8')) as Spec;
-  const build = (name: string, carries: string, rig: Spec, motion: Spec, imagesDir?: string, rigText: (text: string) => string = (text) => text): void => {
-    const at = join(dir, name.replace(/\W+/g, '_'));
+  const build = (name: string, carries: string, rig: Spec, motion: Spec, imagesDir?: string, rigText: (text: string) => string = (text) => text, base = dir): void => {
+    const at = join(base, name.replace(/\W+/g, '_'));
     mkdirSync(at, { recursive: true });
     const specText = rigText(`${JSON.stringify(rig, null, 2)}\n`);
     writeFileSync(join(at, 'rig.json'), specText);
@@ -107736,7 +110379,8 @@ function integerNamedBuilds(): { builds: IntegerNamedBuild[]; refused: string[];
     const art = (i: number): string => (i % 2 === 0 ? 'block.png' : 'marker.png');
     const probe = writeProbeRig({ skins: { default: { ...PROBE_BLOCK_ONLY_SKIN }, ...Object.fromEntries(INTEGER_LIKE_NAMES.map((n, i) => [n, { marker: { marker: { image: art(i) } } }])) } });
     const rig = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as Spec;
-    build('the skins probe', 'the skins', rig, STATIC_MOTION, probe.dir);
+    // Built inside the probe's own directory (issue #1127): from a temp root beside it, every page name spelled the probe's.
+    build('the skins probe', 'the skins', rig, STATIC_MOTION, probe.dir, undefined, buildRootIn(probe.dir, 'rigc-integer-named-'));
     return { builds, refused, dirs: [dir, probe.dir] };
   }
 }
@@ -107784,7 +110428,7 @@ function verdictSideProblems(population: ReadonlyMap<string, string>, root: stri
  */
 function cut4c5Builds(root: string): Array<{ label: string; result: ReturnType<typeof compile>; outDir: string }> {
   const look = join(root, 'gallery', 'look');
-  const lookOut = mkdtempSync(join(tmpdir(), 'rigc-vf14-look-'));
+  const lookOut = mkdtempSync(join(harnessTemp(), 'rigc-vf14-look-'));
   const lookResult = compile({ rigPath: join(look, 'rig.json'), motionPath: join(look, 'motion.json'), outDir: lookOut, imagesDir: join(look, 'parts') });
   const tips = writeProbeRig(threeTipsRig(['jiggle', 'jiggle_b']));
   const tipsMotion = join(tips.dir, 'probe.motion.json');
@@ -108282,7 +110926,7 @@ function runVerdictSuppliersSuite(): number {
   // --- VF07: the instrument, on the gallery's rows -------------------------
   {
     const probes: string[] = [];
-    const work = mkdtempSync(join(tmpdir(), 'rigc-verdict-gate-'));
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-verdict-gate-'));
     const recipesFile = join(work, 'recipes.json');
     writeFileSync(recipesFile, recipesText(galleryRecipes(root, () => {})));
     const printed: string[] = [];
@@ -108324,7 +110968,7 @@ function runVerdictSuppliersSuite(): number {
     for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A08_REGION_NAMES_MATCH_ATTACHMENTS', 'A13_MESH_BUDGET', 'A22_MESH_UVS_IN_UNIT_RANGE', 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED']) {
       if (!inView.includes(code)) probes.push(`${code} iterates over its subject and is not in the view's quantified roster`);
     }
-    const plantRoot = mkdtempSync(join(tmpdir(), 'rigc-vf08-'));
+    const plantRoot = mkdtempSync(join(harnessTemp(), 'rigc-vf08-'));
     mkdirSync(join(plantRoot, 'src', 'assertions', 'bodies'), { recursive: true });
     writeFileSync(join(plantRoot, 'src', 'validate.ts'), "  check('A03_REGION_WIDTH_HEIGHT_FINITE', () => vfNoSuchBody(verdicts, facts));\n");
     let refusal = '';
@@ -109522,10 +112166,106 @@ function runVerdictSuppliersSuite(): number {
     "issue #1074: a page with an intact header over a broken stream passed A06 and was named only by A19's `threw: cannot decode PNG …`; A06 now names it in a sentence carrying the decoder's words, and A19 SKIPs",
   );
 
+  // --- VF23: one set of inputs is one build of VF09's wherever its art was written, once it builds inside its own directory --
+  // Two copies of the static probe stand for one probe written by two processes, each into a temp directory of its own —
+  // which is what a shard's fixtures are. Built inside their own directories (`buildRootIn`), they are one key of `VF09`'s;
+  // built from a temp directory beside the art, as the harness built before issue #1127, the same inputs are two.
+  {
+    const probes: string[] = [];
+    const copies = [writeProbeRig(), writeProbeRig()];
+    const keyOf = (outDir: string, rigPath: string, imagesDir: string): { key: string; atlasText: string } => {
+      mkdirSync(outDir, { recursive: true });
+      const built = compile({ rigPath, motionPath: staticMotionIn(imagesDir), outDir, imagesDir });
+      return { key: familyBuildKey({ ...built, rig: built.rig }, modelDocument(built.model, built.skeletonText, built.atlasText)), atlasText: built.atlasText };
+    };
+    const inside = copies.map((dirs) => keyOf(join(buildRootIn(dirs.dir, 'rigc-vf23-'), 'spine'), dirs.rigPath, dirs.dir));
+    const beside = copies.map((dirs) => keyOf(join(mkdtempSync(join(harnessTemp(), 'rigc-vf23-beside-')), 'spine'), dirs.rigPath, dirs.dir));
+    const twice = [0, 1].map(() => keyOf(join(buildRootIn(copies[0].dir, 'rigc-vf23-twice-'), 'spine'), copies[0].rigPath, copies[0].dir));
+    const distinct = (rows: ReadonlyArray<{ key: string }>): number => new Set(rows.map((row) => row.key)).size;
+    const besidePage = firstPageLine(beside[0].atlasText);
+    const insidePage = firstPageLine(inside[0].atlasText);
+    if (distinct(inside) !== 1) probes.push(`the two copies built inside their own directories are ${distinct(inside)} key(s), not 1`);
+    if (inside[0].atlasText !== inside[1].atlasText) probes.push('the two copies built inside their own directories wrote two atlas texts');
+    if (distinct(twice) !== 1) probes.push(`one copy built into two directories under its own root is ${distinct(twice)} key(s), not 1`);
+    if (distinct(beside) !== 2) probes.push(`the two copies built from a temp directory beside them are ${distinct(beside)} key(s), not 2, so nothing here shows the location moved the key`);
+    if (!besidePage.includes(basename(copies[0].dir))) probes.push(`the beside build's page line ${JSON.stringify(besidePage)} does not name its copy's directory "${basename(copies[0].dir)}"`);
+    const held = probes.length === 0;
+    say(
+      'VF23_ONE_SET_OF_INPUTS_IS_ONE_BUILD_OF_VF09S_WHEREVER_ITS_ART_WAS_WRITTEN',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `two copies of the static probe, each in a temp directory of its own as two processes write it: built inside their own directories, ${distinct(inside)} key and one atlas text (page ${JSON.stringify(insidePage)}); ` +
+          `one copy built into two directories under its root, ${distinct(twice)} key; the same copies built from a temp directory beside them, ${distinct(beside)} keys, the page line naming the copy's directory`,
+      ),
+      "issue #1127: VF09 counts distinct builds by the texts it reads, and a page name is the art's path from the atlas — so a fixture built beside its own temp directory counted once per process that wrote it (407 in one process, 410 and 411 in two merges of the same tree). The key is held over two directories, and the old shape is built beside it to show the key can move",
+    );
+  }
+
+  // --- TY36: no build this run recorded spells a harness temp directory, or climbs out of its pair's (issue #1127) --
+  // Last in the suite, so it reads every build every suite before it fed the supplier check — the record VF09 counts.
+  {
+    const probes: string[] = [];
+    const recorded = SUPPLIERS.recordedPlaces();
+    const faulted = recorded.filter((row) => row.place.faults.length > 0);
+    const fromCheckout = recorded.filter((row) => row.place.checkout > 0).length;
+    probes.push(...firstFew(faulted.flatMap((row) => row.place.faults.map((fault) => `build ${row.key.slice(0, 16)}: ${fault}`)), 'path(s)'));
+    // The plant: the static probe built from a sibling temp directory, the way the harness built a fixture before #1127.
+    const planted = writeProbeRig();
+    const siblingOut = join(mkdtempSync(join(harnessTemp(), 'rigc-ty36-sibling-')), 'spine');
+    mkdirSync(siblingOut, { recursive: true });
+    const plantedBuild = compile({ rigPath: planted.rigPath, motionPath: staticMotionIn(planted.dir), outDir: siblingOut, imagesDir: planted.dir });
+    const plantedPlace = buildPlaceOf({ ...plantedBuild, atlasDir: siblingOut }, modelDocument(plantedBuild.model, plantedBuild.skeletonText, plantedBuild.atlasText));
+    const named = plantedPlace.faults.filter((fault) => fault.includes(`"${basename(planted.dir)}"`));
+    const climbed = plantedPlace.faults.filter((fault) => fault.includes("climbs out of the pair's temp directory"));
+    if (named.length === 0) probes.push(`the plant built from a sibling temp directory was not named by its directory "${basename(planted.dir)}": [${plantedPlace.faults.join('; ') || 'nothing'}]`);
+    if (climbed.length === 0) probes.push(`the plant's pages were not read as climbing out of its pair's temp directory: [${plantedPlace.faults.join('; ') || 'nothing'}]`);
+    // The tolerance: the same probe built inside its own directory reads clean.
+    const ownOut = join(buildRootIn(planted.dir, 'rigc-ty36-own-'), 'spine');
+    mkdirSync(ownOut, { recursive: true });
+    const ownBuild = compile({ rigPath: planted.rigPath, motionPath: staticMotionIn(planted.dir), outDir: ownOut, imagesDir: planted.dir });
+    const ownPlace = buildPlaceOf({ ...ownBuild, atlasDir: ownOut }, modelDocument(ownBuild.model, ownBuild.skeletonText, ownBuild.atlasText));
+    if (ownPlace.faults.length > 0) probes.push(`the same probe built inside its own directory was named: ${ownPlace.faults.join('; ')}`);
+    probes.push(...floorProbes([[recorded.length - fromCheckout, 1, `${recorded.length - fromCheckout} recorded build(s) read art this run wrote`]], 'so nothing here read a build the harness placed'));
+    const held = probes.length === 0;
+    say(
+      'TY36_NO_RECORDED_BUILD_SPELLS_A_HARNESS_TEMP_DIRECTORY_OR_CLIMBS_OUT_OF_ITS_PAIRS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${recorded.length} distinct build(s) the supplier check recorded — the builds VF09 counts — read for a path component of a harness temp directory in their page names, skeleton and document, ` +
+          `and for a page or images path that leaves the pair's temp directory for another: none; ${fromCheckout} of them read art from the checkout (the gallery and the corpus, which no build writes into, so their paths spell the checkout's location — the same in every process on one machine); ` +
+          `the probe built from a sibling temp directory is named by its directory and as climbing out (${plantedPlace.faults.length} path(s)), and built inside its own directory reads clean`,
+        (count) => `${count} thing(s) the recorded builds' paths did:`,
+      ),
+      "issue #1127: a build placed beside its art's temp directory wrote that directory's name into its page names, its skeleton.images and its document, so VF09's count of distinct builds moved with the process that counted it; every build site now lands inside its art's directory, and this reads every recorded build for the name",
+    );
+  }
+
   return bad;
 }
 
 function main(): void {
+  // `--unit` (issue #1128): this process is one of `inUnits`' units — it runs the
+  // one unit its spec names, writes the value, and runs no suite.
+  if (UNIT !== null) {
+    const spec = JSON.parse(readFileSync(UNIT.input, 'utf8')) as SelftestUnitSpec;
+    writeFileSync(
+      UNIT.output,
+      JSON.stringify(
+        spec.kind === 'core'
+          ? coreUnitWork(spec.input)
+          : spec.kind === 'core-worker'
+            ? coreUnitWorker(spec)
+            : spec.kind === 'ty40-allocate'
+              ? allocateUnitWork(spec)
+              : selftestUnitWork(spec),
+      ),
+    );
+    return;
+  }
   let breaks = 0;
   let tolerances = 0;
   // Every case that actually looked at something, counted off the lines the
@@ -109546,6 +112286,8 @@ function main(): void {
   if (SHARD !== null) {
     tally.shard = SHARD;
     tally.states = runStates();
+    // Issue #1128: dealt longest-first over the tracked durations base; a suite it lacks, round-robin.
+    tally.plan = shardPlan(readShardsBase(import.meta.dir), SHARD.n);
   }
   if (MERGE !== null) {
     const read = readShardDocuments(MERGE);
@@ -109759,12 +112501,27 @@ function main(): void {
   // SKIP, printed in the run, and never a pass.
   const memoryBase = readMemoryBase(import.meta.dir);
   if (WRITE_MEMORY_BASE) {
-    writeFileSync(
-      join(import.meta.dir, MEMORY_BASE_PATH),
-      memoryBaseText(memoryBase, process.platform, { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version }),
-    );
+    // Issue #1143: both numbers, off the run's own columns — the children's
+    // only when the run measured a child, which `--jobs 1` does not.
+    // Issue #1151: the parent's half as measured; the children's half ratcheted
+    // against the tracked entry's, as `--memory-base-children` does.
+    const children = childrenHighWaterOf(tally.rss);
+    const ratchet = ratchetChildren(memoryBase?.platforms[process.platform]?.children, children?.highWater ?? null, JOBS, RESET_CHILDREN_BASE);
+    if (typeof ratchet === 'string') {
+      console.error(`rigc selftest: --memory-base refused: ${ratchet}, so nothing is written`);
+      process.exit(2);
+    }
+    const entry: MemoryBaseEntry = { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version };
+    if (ratchet.children !== undefined) entry.children = ratchet.children;
+    writeFileSync(join(import.meta.dir, MEMORY_BASE_PATH), memoryBaseText(memoryBase, process.platform, entry));
     console.log(
-      `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${highWaterOf(tally.rss)} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}`,
+      `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${entry.highWater} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}; ` +
+        `children's high-water ${ratchet.said}` +
+        (children === null
+          ? ratchet.children === undefined
+            ? ', so the entry holds no children\'s high-water and TY40 stays a SKIP'
+            : ''
+          : ` — this run's largest child was "${children.unit}", suite "${children.suite}"`),
     );
   } else if (tally.replay !== null) {
     // Every shard is a process with its own high-water (issue #1116).
@@ -109774,10 +112531,37 @@ function main(): void {
       process.exit(1);
     }
     console.log(`the memory ceiling, per process: ${merged.held.join('; ')}`);
+    // Issue #1144: decided before either file is written, so a refused children's write leaves both unwritten.
+    const childrenWrite = WRITE_CHILDREN_BASE === null ? null : mergedChildrenBase(tally, tally.replay, memoryBase, process.platform, JOBS, RESET_CHILDREN_BASE);
+    if (typeof childrenWrite === 'string') {
+      console.error(`rigc selftest: --memory-base-children refused: ${childrenWrite}`);
+      process.exit(2);
+    }
+    // Issue #1128: the next deal's durations, off this merged run's own seconds — written, never typed.
+    if (WRITE_SHARDS_BASE !== null) {
+      const text = shardsBaseText(tally);
+      const file = WRITE_SHARDS_BASE === '' ? join(import.meta.dir, SHARDS_BASE_PATH) : WRITE_SHARDS_BASE;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, text);
+      console.log(`selftest: wrote ${WRITE_SHARDS_BASE === '' ? SHARDS_BASE_PATH : file}: ${(JSON.parse(text) as ShardsBase).suites.length} suite(s) the shards ran, off this merge's ${tally.replay.docs.length} shard document(s)`);
+    }
+    // Issue #1144: the children's half of this platform's memory base, off the shards' documents — written, never typed.
+    if (WRITE_CHILDREN_BASE !== null && childrenWrite !== null) {
+      const write = childrenWrite;
+      const file = WRITE_CHILDREN_BASE === '' ? join(import.meta.dir, MEMORY_BASE_PATH) : WRITE_CHILDREN_BASE;
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, write.text);
+      console.log(
+        `selftest: wrote ${WRITE_CHILDREN_BASE === '' ? MEMORY_BASE_PATH : file} for ${process.platform}: children's high-water ${write.said} — this run's, ${write.run} MB (${write.from}), ` +
+          `is the largest over this merge's ${tally.replay.docs.length} shard document(s) and its own suites, ratcheted against ${MEMORY_BASE_PATH}'s; ` +
+          `the parent's high-water, ${write.entry.highWater} MB, is left as the one-process run wrote it`,
+      );
+    }
   } else {
     const ceiling = memoryCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
-    if (ceiling.verdict === 'over') {
-      for (const fault of ceiling.faults) console.error(`rigc selftest: ${fault}`);
+    const childCeiling = childrenCeiling(tally.rss, memoryBase?.platforms[process.platform], process.platform);
+    if (ceiling.verdict === 'over' || childCeiling.verdict === 'over') {
+      for (const fault of [...ceiling.faults, ...childCeiling.faults]) console.error(`rigc selftest: ${fault}`);
       process.exit(1);
     }
   }
@@ -111782,7 +114566,7 @@ function runDocScriptRound(
 ): Map<string, DocOutcome> {
   /** The gutter line every verdict of a rigc report is printed on. */
   const verdictLine = /^ {2}(PASS|FAIL|SKIP) {2}(A\d\d_[A-Z\d_]+)/;
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-doc-script-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-doc-script-'));
   const outcomes = new Map<string, DocOutcome>();
   try {
     const here = (text: string): string => text.split(docScratchPrefix()).join(`${dir}/`);
@@ -112266,7 +115050,7 @@ function runDocScriptSuite(): number {
    * with for one run.
    */
   const MOVED_OFFSET_ROW = 'differ after un-permuting';
-  const renumberRoot = mkdtempSync(join(tmpdir(), 'rigc-doc-renumber-'));
+  const renumberRoot = mkdtempSync(join(harnessTemp(), 'rigc-doc-renumber-'));
   const construction: string[] = [];
   const invariance: string[] = [];
   const plantMisses: string[] = [];
@@ -113515,7 +116299,7 @@ function docsQuoteCommands(file: string, text: string, root: string): DocsQuoteC
  */
 function docsQuoteIgnored(paths: string[], root: string): { ignored: Set<string>; fault: string | null } {
   if (paths.length === 0) return { ignored: new Set<string>(), fault: null };
-  const dir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-ignore-'));
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-ignore-'));
   try {
     writeFileSync(join(dir, '.gitignore'), readFileSync(join(root, '.gitignore'), 'utf8'));
     const init = spawnSync('git', ['init', '-q', dir], { encoding: 'utf8' });
@@ -114327,7 +117111,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
       const readme = readFileSync(readmePath, 'utf8');
       if (!new RegExp(`bun cli\\.ts build[^\\n]*--rig gallery/${example}/rig\\.json`).test(readme)) continue;
       galleryExamples++;
-      const runs = transcriptRunsFor(example, readme, mkdtempSync(join(tmpdir(), `rigc-docsquote-${example}-`)));
+      const runs = transcriptRunsFor(example, readme, mkdtempSync(join(harnessTemp(), `rigc-docsquote-${example}-`)));
       galleryRuns += runs.length;
       for (const run of runs) {
         for (const line of run.lines) {
@@ -114374,7 +117158,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
     }
   }
 
-  const roundDir = mkdtempSync(join(tmpdir(), 'rigc-docsquote-round-'));
+  const roundDir = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-round-'));
   const memo = new Map<string, { run: TranscriptRun; out: string | null }>();
   const runsBy = new Map<string, TranscriptRun[]>();
   const setupRefusals: string[] = [];
@@ -114821,7 +117605,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // the check against it. Same function, same git, a directory nothing else
   // reads.
   {
-    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-probe-'));
+    const probe = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-probe-'));
     try {
       writeFileSync(join(probe, 'kept.txt'), 'a file the round leaves alone\n');
       spawnSync('git', ['init', '-q', probe], { encoding: 'utf8' });
@@ -115257,7 +118041,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const buildOnce = (rigPath: string, motionPath: string): CompileResult => {
     const already = rangeBuilds.get(rigPath);
     if (already !== undefined) return already;
-    const fresh = compile({ rigPath, motionPath, outDir: mkdtempSync(join(tmpdir(), 'rigc-range-')) });
+    const fresh = compile({ rigPath, motionPath, outDir: mkdtempSync(join(harnessTemp(), 'rigc-range-')) });
     rangeBuilds.set(rigPath, fresh);
     return fresh;
   };
@@ -115608,7 +118392,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   const setupProbes: string[] = [];
   const setupCases: string[] = [];
   {
-    const probe = mkdtempSync(join(tmpdir(), 'rigc-docsquote-setup-'));
+    const probe = mkdtempSync(join(harnessTemp(), 'rigc-docsquote-setup-'));
     try {
       const page = 'docs/DQ07_PLANTED_PAGE.md';
       const written = [
