@@ -5,7 +5,7 @@
  * what the corpus reaches (issue #925, step 2a; the slots, issue #928; the
  * attachments' world vertices and the clipping polygons, issue #931).
  *
- *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>] [--raw | --walk]
+ *   bun tools/core_gate.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir> | --keep-work] [--raw | --walk]
  *
  * `--raw` (issue #966) runs every dump below under `pose_oracle.ts dump
  * --raw` — full doubles, both dumpers — and every `compare` at tolerance 0
@@ -235,8 +235,7 @@
  * DIFF or REFUSED; 2 on a bad input, by name. `tools/` is not `src/`: this file runs
  * child processes (through `runRecipes`) and reads the disk.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { activeBones, CORE_INHERIT_MODES, CoreInputError, foldInheritMode, readBlend, readModel, shownAttachment, shownRow } from '../src/core/index.ts';
 import { BONE_TIMELINE_KINDS, sampleTime, SLOT_TIMELINE_KINDS, type TimelinePlant } from '../src/core/animation.ts';
@@ -252,6 +251,7 @@ import { ingest } from '../src/ingest.ts';
 import { CORE_DEFAULT_SKIN } from '../src/core/skins.ts';
 import { encodePng } from './plate.ts';
 import { HashesInputError, readRecipes, runRecipes, TREE_ROOT, treeRecipes, type Recipe } from './emit_hashes.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 import { drawnRegions, shownAtSample, shownAtSetup, type DrawnRegion, type UvReading, type UvSource } from '../src/core/uvs.ts';
 import {
   compareDumps,
@@ -2295,8 +2295,10 @@ export function sliderPhysicsSteppedLines(raw: boolean): { lines: string[]; ok: 
 
 /** The command; returns the exit code. */
 export function gateMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
+  const scope = new WorkDirectory('core_gate');
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--work'], ['--raw', '--walk']);
+    const { argv: args, keep } = readKeepWork(argv, ['--raw', '--walk'], (m) => new GateInputError(m));
+    const flags = parseFlags(args, ['--recipes', '--root', '--work'], ['--raw', '--walk']);
     const raw = flags.has('--raw');
     const walk = flags.has('--walk');
     if (raw && walk) throw new GateInputError('--raw and --walk are two runs: --walk compares full doubles already, at tolerance 0');
@@ -2306,13 +2308,7 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
     const recipes = named === undefined ? treeRecipes(root, warn) : readRecipes(named);
     if (recipes.length === 0) throw new GateInputError('no recipes to run');
     const workFlag = flags.get('--work');
-    let work: string;
-    if (workFlag === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-core-gate-'));
-    else {
-      work = resolve(workFlag);
-      if (existsSync(work) && readdirSync(work).length > 0) throw new GateInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-      mkdirSync(work, { recursive: true });
-    }
+    const work = scope.open(workFlag, keep, 'rigc-core-gate-', (m) => new GateInputError(m));
     warn(`core_gate: ${recipes.length} recipe(s), work directory ${work}`);
     if (walk) {
       const walked = walkLines([...walkBuilt(buildRecipes(recipes, work, root, warn)), ...walkProbes(), ...noSkinWalkProbes(join(work, 'noskin-probes'))]);
@@ -2393,6 +2389,8 @@ export function gateMain(argv: readonly string[], print: (line: string) => void 
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 

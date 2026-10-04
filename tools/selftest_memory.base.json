@@ -15,7 +15,7 @@
       "suites": 69,
       "bun": "1.4.2",
       "children": {
-        "highWater": 717,
+        "highWater": 726,
         "jobs": 4
       }
     }

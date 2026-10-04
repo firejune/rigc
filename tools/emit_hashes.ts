@@ -4,10 +4,10 @@
  *
  *   bun tools/emit_hashes.ts recipes --out <recipes.json>
  *   bun tools/emit_hashes.ts run --recipes <recipes.json> --out <hashes.json>
- *                                [--work <dir>] [--root <dir>]
+ *                                [--work <dir> | --keep-work] [--root <dir>]
  *   bun tools/emit_hashes.ts compare <a.json> <b.json>
  *   bun tools/emit_hashes.ts base [--check] [--file <hashes.json>]
- *                                 [--work <dir>] [--root <dir>]
+ *                                 [--work <dir> | --keep-work] [--root <dir>]
  *
  * ⭐ Why this exists. Step 1 of issue #380 constructs a compiled model before
  * the Spine emitter, and it is gated by byte identity: every build in every
@@ -171,10 +171,10 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { MODEL_DOCUMENT_FILE } from '../src/model.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
 export const HASHES_SPEC = 'emit-hashes/1';
 export const RECIPES_SPEC = 'emit-hashes-recipes/1';
@@ -606,42 +606,47 @@ function exportRecipe(name: string, dir: string, file: string, pack: string): Re
 export function treeRecipes(root: string, note: (line: string) => void): Recipe[] {
   const recipes: Recipe[] = [];
   const examples = join(root, 'examples');
+  // The trial builds' directory is this function's own and is removed however it ends (issue #1140).
+  const trialScope = new WorkDirectory('emit_hashes');
   let trial: string | null = null;
-  if (!existsSync(examples)) {
-    note(`HOLE: no ${examples} — run \`bun run fetch-examples\`; the editor exports are not in these recipes`);
-  } else {
-    for (const ex of readdirSync(examples).sort(byCodeUnit)) {
-      const dir = `examples/${ex}/export`;
-      if (!existsSync(join(root, dir))) continue;
-      const files = readdirSync(join(root, dir)).sort(byCodeUnit);
-      const packs = files.filter((f) => f.endsWith('.atlas'));
-      for (const file of files.filter((f) => f.endsWith('.json'))) {
-        const name = `examples/${ex}/${file}`;
-        if (packs.length === 0) {
-          note(`FINDING: ${name} has no .atlas beside it; no recipe written`);
-          continue;
-        }
-        if (packs.length === 1) {
-          recipes.push(exportRecipe(name, dir, file, packs[0]));
-          continue;
-        }
-        trial ??= mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-trial-'));
-        const trialDir = trial;
-        const green = packs.find((pack, i) => {
-          const r = runRecipe(exportRecipe(name, dir, file, pack), join(trialDir, `${recipes.length}-${i}`), root);
-          return r.exits.length === 2 && r.exits.every((e) => e === 0);
-        });
-        if (green !== undefined) {
-          note(`  ${name}: ${packs.length} packs beside it; ${green} is the first whose chain exits 0`);
-          recipes.push(exportRecipe(name, dir, file, green));
-        } else {
-          note(`FINDING: ${name}: none of ${packs.join(', ')} builds green; each is written as its own recipe`);
-          for (const pack of packs) recipes.push(exportRecipe(`${name} [${pack}]`, dir, file, pack));
+  try {
+    if (!existsSync(examples)) {
+      note(`HOLE: no ${examples} — run \`bun run fetch-examples\`; the editor exports are not in these recipes`);
+    } else {
+      for (const ex of readdirSync(examples).sort(byCodeUnit)) {
+        const dir = `examples/${ex}/export`;
+        if (!existsSync(join(root, dir))) continue;
+        const files = readdirSync(join(root, dir)).sort(byCodeUnit);
+        const packs = files.filter((f) => f.endsWith('.atlas'));
+        for (const file of files.filter((f) => f.endsWith('.json'))) {
+          const name = `examples/${ex}/${file}`;
+          if (packs.length === 0) {
+            note(`FINDING: ${name} has no .atlas beside it; no recipe written`);
+            continue;
+          }
+          if (packs.length === 1) {
+            recipes.push(exportRecipe(name, dir, file, packs[0]));
+            continue;
+          }
+          trial ??= trialScope.open(undefined, false, 'rigc-emit-hashes-trial-', (m) => new HashesInputError(m));
+          const trialDir = trial;
+          const green = packs.find((pack, i) => {
+            const r = runRecipe(exportRecipe(name, dir, file, pack), join(trialDir, `${recipes.length}-${i}`), root);
+            return r.exits.length === 2 && r.exits.every((e) => e === 0);
+          });
+          if (green !== undefined) {
+            note(`  ${name}: ${packs.length} packs beside it; ${green} is the first whose chain exits 0`);
+            recipes.push(exportRecipe(name, dir, file, green));
+          } else {
+            note(`FINDING: ${name}: none of ${packs.join(', ')} builds green; each is written as its own recipe`);
+            for (const pack of packs) recipes.push(exportRecipe(`${name} [${pack}]`, dir, file, pack));
+          }
         }
       }
     }
+  } finally {
+    trialScope.close(note);
   }
-  if (trial !== null) rmSync(trial, { recursive: true, force: true });
   recipes.push(...galleryRecipes(root, note));
   return recipes.sort((a, b) => byCodeUnit(a.name, b.name));
 }
@@ -706,9 +711,10 @@ export function recipesText(recipes: readonly Recipe[]): string {
 const USAGE = [
   'usage:',
   '  bun tools/emit_hashes.ts recipes --out <recipes.json>',
-  '  bun tools/emit_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--work <dir>] [--root <dir>]',
+  '  bun tools/emit_hashes.ts run --recipes <recipes.json> --out <hashes.json> [--work <dir> | --keep-work] [--root <dir>]',
   '  bun tools/emit_hashes.ts compare <a.json> <b.json>',
-  '  bun tools/emit_hashes.ts base [--check] [--file <hashes.json>] [--work <dir>] [--root <dir>]',
+  '  bun tools/emit_hashes.ts base [--check] [--file <hashes.json>] [--work <dir> | --keep-work] [--root <dir>]',
+  '  (a work directory made without --work is removed when the command ends; --keep-work keeps it and names it)',
 ].join('\n');
 
 function parseFlags(args: readonly string[], known: readonly string[], switches: readonly string[] = []): { positional: string[]; flags: Map<string, string> } {
@@ -737,8 +743,11 @@ function parseFlags(args: readonly string[], known: readonly string[], switches:
 
 /** The command; returns the exit code. */
 export function hashesMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
-  const [command, ...rest] = argv;
+  const [command, ...args] = argv;
+  const scope = new WorkDirectory('emit_hashes');
   try {
+    // `--keep-work` is read only where a work directory is made; elsewhere the parser refuses it as unknown.
+    const { argv: rest, keep } = command === 'run' || command === 'base' ? readKeepWork(args, ['--check'], (m) => new HashesInputError(m)) : { argv: args, keep: false };
     if (command === 'recipes') {
       const { positional, flags } = parseFlags(rest, ['--out']);
       if (positional.length > 0) throw new HashesInputError(`recipes takes no path, got ${positional.join(' ')}`);
@@ -763,14 +772,7 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
         r.stage.filter((e) => !existsSync(isAbsolute(e.from) ? e.from : join(root, e.from))).map((e) => `recipe ${JSON.stringify(r.name)} stages ${JSON.stringify(e.from)}, and nothing is at ${isAbsolute(e.from) ? e.from : join(root, e.from)}`),
       );
       if (unstaged.length > 0) throw new HashesInputError(`${unstaged.length} input(s) missing before anything ran: ${unstaged.join('; ')}`);
-      const named = flags.get('--work');
-      let work: string;
-      if (named === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-'));
-      else {
-        work = resolve(named);
-        if (existsSync(work) && readdirSync(work).length > 0) throw new HashesInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-        mkdirSync(work, { recursive: true });
-      }
+      const work = scope.open(flags.get('--work'), keep, 'rigc-emit-hashes-', (m) => new HashesInputError(m));
       warn(`emit_hashes: ${recipes.length} recipe(s), work directory ${work}`);
       const started = performance.now();
       const doc = runRecipes(recipes, work, root, print);
@@ -790,14 +792,7 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
       const root = resolve(flags.get('--root') ?? TREE_ROOT);
       if (!existsSync(root) || !statSync(root).isDirectory()) throw new HashesInputError(`--root ${root} is not a directory`);
       const recipes = galleryRecipes(root, warn);
-      const named = flags.get('--work');
-      let work: string;
-      if (named === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-emit-hashes-base-'));
-      else {
-        work = resolve(named);
-        if (existsSync(work) && readdirSync(work).length > 0) throw new HashesInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-        mkdirSync(work, { recursive: true });
-      }
+      const work = scope.open(flags.get('--work'), keep, 'rigc-emit-hashes-base-', (m) => new HashesInputError(m));
       warn(`emit_hashes: ${recipes.length} gallery recipe(s), work directory ${work}`);
       const started = performance.now();
       const doc = spineFilesOnly(runRecipes(recipes, work, root, print));
@@ -811,7 +806,7 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
       if (refused.length > 0) {
         throw new HashesInputError(
           `${refused.length} gallery build(s) refused, and a base is a record of green builds — nothing written: ` +
-            refused.map((r) => `${r.name} exited ${JSON.stringify(r.exits)} (log beside ${work})`).join('; '),
+            refused.map((r) => `${r.name} exited ${JSON.stringify(r.exits)} (log beside ${work}${scope.removalNote()})`).join('; '),
         );
       }
       writeFileSync(file, hashesText(doc));
@@ -836,6 +831,8 @@ export function hashesMain(argv: readonly string[], print: (line: string) => voi
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 

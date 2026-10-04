@@ -8,7 +8,7 @@
  * `POLYGON_CANDIDATE_RULES` (issue #1104).
  *
  *   bun tools/pack_anchor.ts [--recipes <recipes.json>] [--root <dir>] [--regions <set.json>]…
- *                            [--seeds <n,n,…>] [--padding <n>] [--page-size <n>] [--work <dir>] [--json <out.json>]
+ *                            [--seeds <n,n,…>] [--padding <n>] [--page-size <n>] [--work <dir> | --keep-work] [--json <out.json>]
  *                            [--trace-regions <tolerance>]
  *
  * With no source flag, the tree's own: `fixtures/polypack_shapes.ts`'s two
@@ -96,8 +96,7 @@
  * the table and on stderr); 2 no set measured, or a bad input by name. The wall
  * time is printed on stderr only, so two runs print the same table.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   DEFAULT_PAGE_SIZE,
@@ -121,6 +120,7 @@ import { CompileError } from '../src/errors.ts';
 import { readPlate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 import { CONTOUR_GENERATOR_DEFAULTS, tracedSet, type Tightness, type TracedSet } from './trace_footprint.ts';
 import { POLYPACK_GAIN_SEED, POLYPACK_SEED, polypackShapes, writePolypackInputs, type PolypackShape } from '../fixtures/polypack_shapes.ts';
 
@@ -602,8 +602,10 @@ export function recipeRows(
 
 /** The command; returns the exit code. */
 export function anchorMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error, refusals: 'row' | 'throw' = 'row'): number {
+  const scope = new WorkDirectory('pack_anchor');
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--regions', '--seeds', '--padding', '--page-size', '--work', '--json', '--trace-regions'], ['--regions']);
+    const { argv: args, keep } = readKeepWork(argv, [], (m) => new AnchorInputError(m));
+    const flags = parseFlags(args, ['--recipes', '--root', '--regions', '--seeds', '--padding', '--page-size', '--work', '--json', '--trace-regions'], ['--regions']);
     const one = (flag: string): string | undefined => flags.get(flag)?.[0];
     const root = resolve(one('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new AnchorInputError(`--root ${root} is not a directory`);
@@ -633,13 +635,7 @@ export function anchorMain(argv: readonly string[], print: (line: string) => voi
     const recipes: Recipe[] = named !== undefined ? readRecipes(named) : regionSets.length === 0 && seedText === undefined ? treeRecipes(root, warn) : [];
     const sets = regionSets.map((path) => ({ path, shapes: readRegionSet(path) }));
     const workFlag = one('--work');
-    let work: string;
-    if (workFlag === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-pack-anchor-'));
-    else {
-      work = resolve(workFlag);
-      if (existsSync(work) && readdirSync(work).length > 0) throw new AnchorInputError(`--work ${work} is not empty; every set runs in a fresh directory`);
-      mkdirSync(work, { recursive: true });
-    }
+    const work = scope.open(workFlag, keep, 'rigc-pack-anchor-', (m) => new AnchorInputError(m), 'set');
     warn(`pack_anchor: ${seeds.length} seed(s), ${sets.length} region set(s), ${recipes.length} recipe(s), padding ${padding}, page size ${pageSize}, work directory ${work}`);
     const started = performance.now();
     const rows: AnchorRow[] = [];
@@ -663,6 +659,8 @@ export function anchorMain(argv: readonly string[], print: (line: string) => voi
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 

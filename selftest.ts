@@ -87433,6 +87433,108 @@ function runHashes(args: string[]): { status: number | null; stdout: string; std
 }
 
 /**
+ * One hand-shaped run of a tool that builds into a work directory (issue
+ * #1140): no `--work` unless `argv` names one, and a private `TMPDIR` of its
+ * own under `parent`, so what the run left in `tmpdir()` is read exactly —
+ * nothing else writes there. `made` is the directory the tool named on stderr
+ * (`… work directory <path>`), so a case is judged only once it is known to
+ * have reached its `mkdtemp`: a run that refused before it would leave nothing
+ * and prove nothing.
+ */
+function handShapedRun(parent: string, label: string, argv: readonly string[]): { status: number | null; stderr: string; tmp: string; left: string[]; made: string | null } {
+  const tmp = join(parent, label);
+  mkdirSync(tmp, { recursive: true });
+  const before = tempCensus(tmp);
+  const result = spawnSync(process.execPath, [...argv], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, TMPDIR: tmp } });
+  const made = /work directory (.+)$/m.exec(result.stderr)?.[1] ?? null;
+  return { status: result.status, stderr: result.stderr, tmp, left: tempGrowth(before, tempCensus(tmp)), made };
+}
+
+/**
+ * The inputs every work-directory case runs on, written under `dir`: a
+ * recipes document whose one build refuses at once (a tool reads it, makes its
+ * work directory, and runs one `rigc build` that exits 1 — the cheapest path
+ * that reaches the `mkdtemp`, since every tool reads its recipes before it
+ * makes the directory), and a root whose gallery holds one rig of that kind,
+ * which a `base` run stages and refuses.
+ */
+function workDirInputs(dir: string): { recipes: string; plantRoot: string } {
+  mkdirSync(dir, { recursive: true });
+  const recipes = join(dir, 'refused-recipes.json');
+  const build = ['build', '--rig', '{{work}}/absent/rig.json', '--motion', '{{work}}/absent/motion.json', '--out', '{{out}}'];
+  writeFileSync(recipes, recipesText([{ name: 'refused', stage: [], commands: [build] }]));
+  const plantRoot = join(dir, 'refused-root');
+  const rig = join(plantRoot, 'gallery', 'refused');
+  mkdirSync(rig, { recursive: true });
+  writeFileSync(join(rig, 'rig.json'), '{}\n');
+  writeFileSync(join(rig, 'motion.json'), '{}\n');
+  writeFileSync(join(rig, 'README.md'), 'bun cli.ts build --rig gallery/refused/rig.json --motion gallery/refused/motion.json --out gallery/refused/build\n');
+  return { recipes, plantRoot };
+}
+
+/**
+ * What a work-directory case found wrong. `prefix` is the `mkdtemp` prefix the
+ * run must have made its directory with (null for a run that must make none);
+ * `left` is what it may leave, as `tempGrowth` spells it.
+ */
+function workDirProbes(label: string, run: ReturnType<typeof handShapedRun>, status: number, prefix: string | null, left: readonly string[] = []): string[] {
+  const probes: string[] = [];
+  if (run.status !== status) probes.push(`${label}: exit ${String(run.status)}, not ${status}: ${run.stderr.trim().split('\n').pop()?.slice(0, 200) ?? ''}`);
+  if (prefix !== null && (run.made === null || !run.made.startsWith(join(run.tmp, prefix)))) {
+    probes.push(`${label}: named no work directory ${prefix}XXXXXX in its tmpdir() on stderr, so it never reached the mkdtemp this case is about`);
+  }
+  if (prefix === null && run.made !== null) probes.push(`${label}: named a work directory it should not have made`);
+  if (run.left.join(', ') !== left.join(', ')) probes.push(`${label} left ${run.left.join(', ') || 'nothing'} in its tmpdir(), not ${left.join(', ') || 'nothing'}`);
+  return probes;
+}
+
+/**
+ * The work-directory rule (issue #1140) held on one of the two hashes tools,
+ * for `EH08` and `RH09`: hand-shaped runs, each in a private `TMPDIR`, on
+ * every exit path a `finally` sees — exit 0, a red check (exit 1), a refusal
+ * after the directory was made (exit 2), a throw nothing catches (exit 1) —
+ * must leave 0 `rigc-*` entries; `--keep-work` leaves exactly the one it names;
+ * `--keep-work` beside `--work` and a near-miss spelling are refused by name
+ * with nothing made; and the plant — the helper opened and never closed, the
+ * shape of a tool whose removal is skipped — is read by the prefix it leaves.
+ */
+function workDirCases(tool: 'emit_hashes' | 'render_hashes', parent: string, inputs: { recipes: string; plantRoot: string }): { probes: string[]; said: string } {
+  const script = `tools/${tool}.ts`;
+  const runPrefix = `rigc-${tool.replace('_', '-')}-`;
+  const basePrefix = `${runPrefix}base-`;
+  const probes: string[] = [];
+  const run = (label: string, args: readonly string[]): ReturnType<typeof handShapedRun> => handShapedRun(parent, label, [script, ...args]);
+  const runArgs = (out: string): string[] => ['run', '--recipes', inputs.recipes, '--out', out];
+  probes.push(...workDirProbes('run, exit 0', run('green', runArgs(join(parent, 'green.json'))), 0, runPrefix));
+  probes.push(...workDirProbes('base --check, red', run('red', ['base', '--check', '--root', inputs.plantRoot, '--file', join(parent, 'absent-base.json')]), 1, basePrefix));
+  const refused = run('refused', ['base', '--root', inputs.plantRoot, '--file', join(parent, 'absent-base.json')]);
+  probes.push(...workDirProbes('base, refused after the directory was made', refused, 2, basePrefix));
+  if (!refused.stderr.includes('pass --keep-work to read it')) probes.push('base, refused: the refusal points at logs beside the work directory and does not say it is removed or how to keep it');
+  probes.push(...workDirProbes('run, an uncaught throw', run('throw', runArgs(join(parent, 'absent-dir', 'out.json'))), 1, runPrefix));
+  const kept = run('kept', [...runArgs(join(parent, 'kept.json')), '--keep-work']);
+  probes.push(...workDirProbes('run --keep-work', kept, 0, runPrefix, [`${runPrefix} +1`]));
+  if (kept.made !== null && !kept.stderr.includes(`${tool}: --keep-work kept the work directory ${kept.made}`)) probes.push('run --keep-work: stderr does not name the directory it kept');
+  const named = join(parent, 'named-work');
+  const both = run('both', [...runArgs(join(parent, 'both.json')), '--keep-work', '--work', named]);
+  probes.push(...workDirProbes('run --keep-work --work', both, 2, null));
+  if (!both.stderr.includes('--keep-work beside --work')) probes.push(`run --keep-work --work: stderr ${JSON.stringify(both.stderr.trim().slice(0, 200))} does not refuse the pair by name`);
+  if (existsSync(named)) probes.push('run --keep-work --work: the named work directory was made by a refused run');
+  const spelled = run('spelled', [...runArgs(join(parent, 'spelled.json')), '--keep-work=1']);
+  probes.push(...workDirProbes('run --keep-work=1', spelled, 2, null));
+  if (!spelled.stderr.includes('"--keep-work=1" is not --keep-work')) probes.push('run --keep-work=1: not refused by name');
+  // The plant: the helper's directory opened and never closed, in a process of its own.
+  const plant = handShapedRun(parent, 'plant', ['-e', `import { WorkDirectory } from './tools/work_dir.ts'; new WorkDirectory('plant').open(undefined, false, ${JSON.stringify(runPrefix)}, (m) => new Error(m));`]);
+  const plantRead = plant.status === 0 && plant.left.join(', ') === `${runPrefix} +1`;
+  if (!plantRead) probes.push(`the plant (a directory opened and never removed) read exit ${String(plant.status)} and ${plant.left.join(', ') || 'nothing'}, not ${runPrefix} +1 — the census would not see a skipped removal`);
+  return {
+    probes,
+    said:
+      `${tool}, run by hand in private tmpdir()s: exit 0, a red base --check (exit 1), a base refused after its directory was made (exit 2) and an uncaught throw (exit 1) each named their ${runPrefix}/${basePrefix} directory and left 0 rigc-* entries; ` +
+      `--keep-work left exactly ${runPrefix} +1 and named it on stderr; --keep-work beside --work and --keep-work=1 were refused by name with nothing made; the plant, a directory opened and never removed, is read as ${runPrefix} +1`,
+  };
+}
+
+/**
  * `after` as a base taken before two cuts to the model document reads it: with
  * `skeleton.model.json` taken out of every row whose `base` row does not carry
  * it (issue #922 made `build` write it), and, on a row whose base DOES carry it
@@ -87670,7 +87772,9 @@ function editSpecBones(path: string, edit: (bones: SpecBone[]) => string): strin
  * of the pair for EH01, one each for EH02 and EH03), the tree's recipes
  * generated once — which trial-builds the two exports that sit beside two
  * packs when `examples/` is fetched — and seven refusals that each exit before
- * building anything. The whole corpus is never run here; that is PR material.
+ * building anything; and EH08's thirteen hand-shaped runs (issue #1140), none
+ * building more than one recipe that refuses at once. The whole corpus is never
+ * run here; that is PR material.
  */
 function runEmitHashesSuite(): number | null {
   console.log('\n── emit-hashes: every build hashed as it lands on disk, and two runs compared (issue #914) ──');
@@ -88482,6 +88586,33 @@ function runEmitHashesSuite(): number | null {
     }
   }
 
+  // --- EH08: a tool run by hand removes the work directory it made (issue #1140) --
+  // emit_hashes on every exit path, and the four tools that build the tree's
+  // recipes the same way — core_gate, verdict_gate, pack_anchor, hull_ceiling —
+  // and survey_hashes, each once on the cheapest run that reaches its mkdtemp.
+  {
+    const parent = join(work, 'eh08');
+    const inputs = workDirInputs(join(parent, 'inputs'));
+    const { probes, said } = workDirCases('emit_hashes', parent, inputs);
+    const others: Array<[string, string[], number, string]> = [
+      ['core_gate', ['tools/core_gate.ts', '--recipes', inputs.recipes], 1, 'rigc-core-gate-'],
+      ['verdict_gate', ['tools/verdict_gate.ts', '--recipes', inputs.recipes], 2, 'rigc-verdict-gate-'],
+      ['pack_anchor', ['tools/pack_anchor.ts', '--recipes', inputs.recipes], 2, 'rigc-pack-anchor-'],
+      ['hull_ceiling', ['tools/hull_ceiling.ts', '--recipes', inputs.recipes], 1, 'rigc-hull-ceiling-'],
+      ['survey_hashes', ['tools/survey_hashes.ts', 'run', '--recipes', inputs.recipes, '--out', join(parent, 'survey.json')], 0, 'rigc-survey-hashes-'],
+    ];
+    for (const [tool, argv, status, prefix] of others) probes.push(...workDirProbes(`${tool} over a refused build`, handShapedRun(parent, tool, argv), status, prefix));
+    const held = probes.length === 0;
+    say(
+      'EH08_A_TOOL_RUN_BY_HAND_REMOVES_THE_WORK_DIRECTORY_IT_MADE_ON_EVERY_EXIT_PATH_UNLESS_KEEP_WORK_AND_A_SKIPPED_REMOVAL_IS_NAMED_BY_PREFIX',
+      held,
+      probeDetail(held, probes, `${said}; ${others.map(([tool, , status]) => `${tool} (exit ${status})`).join(', ')} over a recipe whose build refuses each named its directory and left 0`),
+      'issue #1140: run by hand without --work, every tool that builds recipes made its work directory under tmpdir() and ' +
+        'none removed it — `base --check`, which CONTRIBUTING directs before a commit, left 3.7 MB for emit_hashes and 19 MB for ' +
+        'render_hashes each time — and a temporary directory nobody empties is a cost every later Bun start pays (#1135)',
+    );
+  }
+
   rmSync(work, { recursive: true, force: true });
   return bad;
 }
@@ -88780,8 +88911,10 @@ function runRenderHashes(args: string[]): { status: number | null; stdout: strin
  * row's first and middle frames through both atlas readers; three over two
  * planted copies for RC17; ten over the tree and eight over four planted
  * copies for RC18–RC19; twelve over the tree and seventeen over five planted
- * copies for RC20–RC23). The corpus's nineteen rows are
- * never run here; that is PR and CI-artifact material.
+ * copies for RC20–RC23); and RH09's eight hand-shaped runs (issue #1140),
+ * none building more than one recipe that refuses, so none renders. The
+ * corpus's nineteen rows are never run here; that is PR and CI-artifact
+ * material.
  */
 function runRenderHashesSuite(): number | null {
   console.log('\n── render-hashes: every render of every build hashed, and two runs compared (issue #965) ──');
@@ -89189,6 +89322,22 @@ function runRenderHashesSuite(): number | null {
       probeDetail(held, probes, `${units.length} render_hashes.ts unit(s), each answering differently (exits ${statuses}), run one after another and max(2, --jobs) at a time: the same status, stdout and stderr, unit for unit, in order`),
       'issue #1128: the units run at --jobs at once and the controls print after every one has finished, so the log is the same text ' +
         'at any --jobs exactly when each unit hands back what it handed back alone, in its own place',
+    );
+  }
+
+  // --- RH09: render_hashes run by hand removes the work directory it made (issue #1140) --
+  // Every run here builds one recipe that refuses, so none renders: the gallery
+  // is rendered by the eight units above and nowhere else.
+  {
+    const parent = join(work, 'rh09');
+    const { probes, said } = workDirCases('render_hashes', parent, workDirInputs(join(parent, 'inputs')));
+    const held = probes.length === 0;
+    say(
+      'RH09_RENDER_HASHES_RUN_BY_HAND_REMOVES_THE_WORK_DIRECTORY_IT_MADE_ON_EVERY_EXIT_PATH_UNLESS_KEEP_WORK',
+      held,
+      probeDetail(held, probes, said),
+      'issue #1140: `bun tools/render_hashes.ts base --check`, run by hand without --work, left a 19 MB staged copy of the ' +
+        'gallery and its renders under tmpdir() every time; the units above all pass --work, so nothing here saw it',
     );
   }
 
@@ -113686,7 +113835,9 @@ function main(): void {
           'reaching the region the runtime reaches, the key-only reading refused by name; one drawing at four turns ' +
           'reading the same in every column, its window equal to extractRegion\'s lift; and — issue #1157 — a region ' +
           'on a page with no alpha, and an `islands` and a `pinch` refusal on a page with alpha, each counted as its ' +
-          'rectangle in the converted columns, the silhouette-for-refused arithmetic planted back read by its figure)') +
+          'rectangle in the converted columns, the silhouette-for-refused arithmetic planted back read by its figure; ' +
+          'and — issue #1140 — every tool that builds recipes, run by hand, removing the work directory it made on ' +
+          'every exit path unless --keep-work)') +
       (renderHashesBad === null
         ? ''
         : ', + ' + n('render-hashes') + ' render-hashes controls (issue #965 — `tools/render_hashes.ts`, the render-identity ' +
@@ -113695,7 +113846,8 @@ function main(): void {
           'moved in a spec copy named as the one row; a refused build recorded unrendered and named against its green ' +
           'twin; bad inputs refused with exit 2 and nothing written; the tracked gallery base byte-identical to what ' +
           '`base` writes and holding PNG pixel hashes only; a gallery render moved on purpose named by row and the one ' +
-          'command; and a PNG re-encoded at another deflate level read as the same render while one moved channel is not)') +
+          'command; a PNG re-encoded at another deflate level read as the same render while one moved channel is not; ' +
+          'and — issue #1140 — a hand run removing the work directory it made on every exit path unless --keep-work)') +
       ', + ' + n('model-bones') + ' model-bones controls (issue #915 — the compiled model\'s first record: `emitBones` ' +
       'restating a bone with every key in the constructor\'s order, which the key-order pass cannot restore for a key its ' +
       'row does not list; a name alone emitting the name alone; the mode and the skin flag under the Spine spellings; a ' +

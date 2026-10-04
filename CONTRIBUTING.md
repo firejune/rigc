@@ -204,6 +204,10 @@ the tarball runs* is the argument.
   command. That command is `bun tools/emit_hashes.ts base`; run it, commit the
   file, and say in the pull request which rows changed and why
   (`bun tools/emit_hashes.ts base --check` prints them before you regenerate).
+  Like every tool that builds recipes into a work directory, it removes the one
+  it made under `tmpdir()` when it ends, green or red; `--keep-work` keeps that
+  directory to read and names it on stderr, and a directory you name with
+  `--work` is yours and is never removed.
   The file is written by that command and never by hand: a copy whose hashes all
   agree but whose bytes do not is refused as stale too
   ([#930](https://github.com/firejune/rigc/issues/930)).

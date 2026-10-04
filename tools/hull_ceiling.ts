@@ -2,7 +2,7 @@
  * hull_ceiling — how much page area polygon packing could buy over a corpus,
  * measured before any packer is written (issue #1093).
  *
- *   bun tools/hull_ceiling.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir>] [--json <out.json>]
+ *   bun tools/hull_ceiling.ts [--recipes <recipes.json>] [--root <dir>] [--work <dir> | --keep-work] [--json <out.json>]
  *
  * With no `--recipes`, the tree's own: `tools/emit_hashes.ts`'s `treeRecipes`
  * (every fetched editor export and every gallery rig — nineteen when
@@ -128,8 +128,7 @@
  * in the table and on stderr); 2 a bad input by name. The wall time is printed
  * on stderr and nowhere else, so two runs print the same table.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pageFootprint, parseAtlasText, type AtlasPage, type AtlasRegion } from '../src/atlas.ts';
 import { findSelfIntersection, prunePolygon, signedArea, type AlphaMask } from '../src/mesh.ts';
@@ -137,6 +136,7 @@ import { traceOutline } from './trace_footprint.ts';
 import { readPlate, type Plate } from './plate.ts';
 import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } from './emit_hashes.ts';
 import { buildRecipes } from './core_gate.ts';
+import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
 export const CEILING_SPEC = 'hull-ceiling/2';
 
@@ -918,21 +918,17 @@ function parseFlags(args: readonly string[], known: readonly string[]): Map<stri
 
 /** The command; returns the exit code. */
 export function ceilingMain(argv: readonly string[], print: (line: string) => void = console.log, warn: (line: string) => void = console.error): number {
+  const scope = new WorkDirectory('hull_ceiling');
   try {
-    const flags = parseFlags(argv, ['--recipes', '--root', '--work', '--json']);
+    const { argv: args, keep } = readKeepWork(argv, [], (m) => new CeilingInputError(m));
+    const flags = parseFlags(args, ['--recipes', '--root', '--work', '--json']);
     const root = resolve(flags.get('--root') ?? TREE_ROOT);
     if (!existsSync(root) || !statSync(root).isDirectory()) throw new CeilingInputError(`--root ${root} is not a directory`);
     const named = flags.get('--recipes');
     const recipes: Recipe[] = named === undefined ? treeRecipes(root, warn) : readRecipes(named);
     if (recipes.length === 0) throw new CeilingInputError('no recipes to run');
     const workFlag = flags.get('--work');
-    let work: string;
-    if (workFlag === undefined) work = mkdtempSync(join(tmpdir(), 'rigc-hull-ceiling-'));
-    else {
-      work = resolve(workFlag);
-      if (existsSync(work) && readdirSync(work).length > 0) throw new CeilingInputError(`--work ${work} is not empty; every recipe runs in a fresh directory`);
-      mkdirSync(work, { recursive: true });
-    }
+    const work = scope.open(workFlag, keep, 'rigc-hull-ceiling-', (m) => new CeilingInputError(m));
     warn(`hull_ceiling: ${recipes.length} recipe(s), work directory ${work}`);
     const started = performance.now();
     const rows = ceilingRows(recipes, work, root, {}, warn);
@@ -949,6 +945,8 @@ export function ceilingMain(argv: readonly string[], print: (line: string) => vo
       return 2;
     }
     throw err;
+  } finally {
+    scope.close(warn);
   }
 }
 
