@@ -150,15 +150,18 @@ import {
   cpSync,
   existsSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1085,6 +1088,141 @@ delete process.env.RIGC_KEEP_TEMP;
 /** The system temp directory as this process found it — where the run root is made, and what `TY39` counts. */
 const SYSTEM_TEMP = tmpdir();
 let harnessTempRoot: string | null = null;
+
+/**
+ * The name a run root has and nothing else directly under `tmpdir()` has
+ * (issue #1156): `rigc-selftest-` and the six characters `mkdtemp` appends.
+ * Exactly that shape rather than the prefix and anything after it, because a
+ * `rigc-selftest-units-XXXXXX` directly under `tmpdir()` is not a directory
+ * this harness makes there any more, and a sweep is only ever entitled to the
+ * one name it makes — and to the name a sweep gives a root it has claimed
+ * (`.swept-<pid>`, see `sweepStaleRoots`), so a sweeper killed halfway through
+ * a removal leaves something the next sweep still finds.
+ */
+const STALE_ROOT_NAME = /^rigc-selftest-[A-Za-z0-9]{6}(?:\.swept-\d+)?$/;
+
+/**
+ * How long a run root must have gone untouched before a later run removes it
+ * (issue #1156). A root's modification time moves when an entry directly
+ * inside it is made or removed, so the age counts from the run's last direct
+ * child, never from its start, and the gap it must outlast is the longest a
+ * live run goes without making or removing one — at most the run itself, the
+ * longest of which measured on one machine is 1,378 s (#1122). Read on a
+ * `--only render-hashes,packer,core --jobs 2` run of 563 s at load 6 to 8, the
+ * longest stretch any root went unmoved was 96 s (the parent's; a `--unit`
+ * child's root that is never touched after it is made lived at most 39 s). 24 h
+ * is the longest run 62 times over, which also covers a loaded machine and one
+ * that slept through part of a run; a longer age costs one directory entry
+ * per killed run for the extra time, a shorter one risks a live run's root.
+ */
+const STALE_ROOT_AGE_HOURS = 24;
+
+/** What one sweep did: the roots it removed and the bytes of the files they held, and each it found stale and could not remove, with the reason. */
+interface StaleSweep {
+  removed: string[];
+  bytes: number;
+  failed: string[];
+}
+
+/**
+ * The bytes of the files under `path`, read with `lstat` so a link is counted
+ * as itself and never followed; an entry gone before it is read counts 0.
+ * Walked before a stale root is removed because it is cheap beside the
+ * removal: over a root a killed `--only path-slider` run left (985 entries),
+ * 26 ms against the removal's 86 ms (medians of 9, issue #1156).
+ */
+function treeBytes(path: string): number {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(path);
+  } catch {
+    return 0;
+  }
+  if (!stat.isDirectory()) return stat.size;
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(path);
+  } catch {
+    return 0;
+  }
+  let bytes = 0;
+  for (const entry of entries) bytes += treeBytes(join(path, entry));
+  return bytes;
+}
+
+/**
+ * Remove every directory directly in `dir` whose name `name` matches and whose
+ * modification time is more than `ageMs` before `now` (issue #1156) — the roots
+ * runs killed by a signal left. Pure of the clock: `now` and `ageMs` are
+ * handed in, so `TY44` plants a sweep that ignores the age or widens the name
+ * by calling this with another value rather than by editing it.
+ *
+ * Only real directories: an entry is read with `lstat`, so a symlink of a
+ * root's name is neither followed nor removed — the harness makes directories
+ * there and never links, so a link is something else's, and following it
+ * would delete what it points to.
+ *
+ * Losing a race is not an error, and is made impossible to mistake for one: a
+ * stale root is first CLAIMED by renaming it to `<name>.swept-<pid>`, which
+ * succeeds for exactly one of n sweepers, and only the claimant walks and
+ * removes it; a sweeper whose rename finds the root gone (`ENOENT`) skips it.
+ * Measured without the claim, four sweepers over forty stale roots each
+ * removed ten and three of them reported six roots "still present after
+ * removal" — `rmSync` returned while another process was mid-way through the
+ * same tree. A root still present after its claimant's removal is reported
+ * with the error, never thrown: a sweep that cannot clean up after another run
+ * has no reason to stop this one.
+ */
+function sweepStaleRoots(dir: string, now: number, ageMs: number, name: RegExp = STALE_ROOT_NAME): StaleSweep {
+  const swept: StaleSweep = { removed: [], bytes: 0, failed: [] };
+  for (const entry of readdirSync(dir).sort()) {
+    if (!name.test(entry)) continue;
+    const path = join(dir, entry);
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory() || now - stat.mtimeMs <= ageMs) continue;
+    const claimed = join(dir, `${entry.replace(/\.swept-\d+$/, '')}.swept-${process.pid}`);
+    try {
+      renameSync(path, claimed);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') swept.failed.push(`${path}: ${(err as Error).message}`);
+      continue;
+    }
+    const bytes = treeBytes(claimed);
+    let error = '';
+    try {
+      rmSync(claimed, { recursive: true, force: true });
+    } catch (err) {
+      error = (err as Error).message;
+    }
+    if (existsSync(claimed)) swept.failed.push(`${claimed}: ${error || 'still present after removal'}`);
+    else {
+      swept.removed.push(entry);
+      swept.bytes += bytes;
+    }
+  }
+  return swept;
+}
+
+// Issue #1156: the one sweeper per run is a process that is not a `--unit`
+// child — a unit is a share of its parent's run, and the parent has swept.
+// Before the root exists, so a run never judges its own; on stderr, so stdout
+// is the same text whatever `tmpdir()` held (`TY28`, `TY33`); silent when
+// nothing was stale.
+if (UNIT === null) {
+  const swept = sweepStaleRoots(SYSTEM_TEMP, Date.now(), STALE_ROOT_AGE_HOURS * 3600 * 1000);
+  if (swept.removed.length > 0) {
+    console.error(
+      `selftest: removed ${swept.removed.length} rigc-selftest- root(s) untouched for more than ${STALE_ROOT_AGE_HOURS} h from ${SYSTEM_TEMP}, ` +
+        `${(swept.bytes / 1048576).toFixed(1)} MB of files, left by runs killed by a signal`,
+    );
+  }
+  for (const failure of swept.failed) console.error(`selftest: could not remove a stale rigc-selftest- root, ${failure}`);
+}
 
 /**
  * The one directory this process makes under `tmpdir()` (issue #1137):
@@ -110240,6 +110378,162 @@ function runRunTallySuite(live: RunTally): number {
       'issue #1137: every temp directory the harness made used to stay behind — 500,703 entries on one machine, and Bun pays ' +
         "for each at every start under that directory — so the run's directories now live in one root the exit removes, and " +
         'what a run leaves is counted rather than promised',
+    );
+  }
+
+  // --- TY44: a run removes the stale roots killed runs left, and nothing else (issue #1156) --
+  // Each reading plants the same five entries in a fresh directory of its own
+  // (inside this run's root, so nothing else on the machine can be swept or
+  // add one): a root untouched for longer than the age, a root touched just
+  // inside it, a directory of another prefix as old as the stale root, a
+  // symlink of a root's name as old, pointing at an old directory, and a file
+  // of a root's name as old. The ages are forged with `utimesSync` /
+  // `lutimesSync` rather than injected, so the control adds no input to the
+  // product and reads the age the run itself uses. A sweep is right when the
+  // stale root is the only entry gone. The real sweep is read through whole
+  // child processes: a run (the parent of its own run, so it sweeps) and a
+  // `--unit` child (a share of its parent's run, so it must not). The plants
+  // are this file's own sweep called with the age ignored and with the name
+  // widened to every `rigc-` entry, read by the same judge. `--keep-temp` is
+  // read beside it: the run that keeps its root still sweeps, a later run
+  // leaves the kept root while it is younger than the age, and removes it after.
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const ageMs = STALE_ROOT_AGE_HOURS * 3600 * 1000;
+    const HOUR = 3600 * 1000;
+    const childEnv = (temp: string): Record<string, string> => {
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== 'RIGC_KEEP_TEMP') env[key] = value;
+      return { ...env, TMPDIR: temp, RIGC_JOBS: '' };
+    };
+    const STALE = 'rigc-selftest-ty44st';
+    const FRESH = 'rigc-selftest-ty44fr';
+    const OTHER = 'rigc-ty44other-ty44ot';
+    const LINK = 'rigc-selftest-ty44ln';
+    const FILE = 'rigc-selftest-ty44fl';
+    const TARGET = 'ty44-link-target';
+    const plant = (): string => {
+      const temp = mkdtempSync(join(harnessTemp(), 'rigc-ty44-'));
+      const stamp = (path: string, ago: number): void => {
+        const at = new Date(Date.now() - ago);
+        utimesSync(path, at, at);
+      };
+      for (const dir of [STALE, FRESH, OTHER, TARGET]) {
+        mkdirSync(join(temp, dir));
+        writeFileSync(join(temp, dir, 'inside.txt'), 'planted by TY44\n');
+      }
+      writeFileSync(join(temp, FILE), 'planted by TY44\n');
+      symlinkSync(join(temp, TARGET), join(temp, LINK));
+      for (const old of [STALE, OTHER, TARGET, FILE]) stamp(join(temp, old), ageMs + HOUR);
+      const linkAt = new Date(Date.now() - ageMs - HOUR);
+      lutimesSync(join(temp, LINK), linkAt, linkAt);
+      stamp(join(temp, FRESH), ageMs - HOUR);
+      return temp;
+    };
+    // What is wrong with the directory after a sweep, as one phrase per fault; empty when only the stale root is gone.
+    const judge = (temp: string, allowed: readonly string[] = []): string[] => {
+      const faults: string[] = [];
+      if (existsSync(join(temp, STALE))) faults.push(`the root untouched for ${STALE_ROOT_AGE_HOURS + 1} h is still there`);
+      if (!existsSync(join(temp, FRESH, 'inside.txt'))) faults.push(`the root touched ${STALE_ROOT_AGE_HOURS - 1} h ago was removed`);
+      if (!existsSync(join(temp, OTHER, 'inside.txt'))) faults.push(`${OTHER}, another prefix, was removed`);
+      let link = false;
+      try {
+        link = lstatSync(join(temp, LINK)).isSymbolicLink();
+      } catch {
+        link = false;
+      }
+      if (!link) faults.push(`the symlink ${LINK} was removed`);
+      if (!existsSync(join(temp, TARGET, 'inside.txt'))) faults.push(`the directory the symlink points at lost its file`);
+      if (!existsSync(join(temp, FILE))) faults.push(`the file ${FILE} was removed`);
+      // Only `rigc-` entries: Bun may keep a cache of its own in a TMPDIR it is given, which is not the run's.
+      const unexpected = readdirSync(temp).filter((entry) => entry.startsWith('rigc-') && ![STALE, FRESH, OTHER, LINK, FILE, ...allowed].includes(entry));
+      if (unexpected.length > 0) faults.push(`the run left [${unexpected.sort().join(', ')}]`);
+      return faults;
+    };
+    // The run: a whole selftest process, the sweeper of its own run, in the planted tmpdir() — under
+    // --keep-temp, which keeps its own root and does not stop the sweep (issue #1156, clause 2).
+    const NO_SUITE = 'ty44-no-such-suite';
+    const ROOT_SHAPE = /^rigc-selftest-[A-Za-z0-9]{6}$/;
+    const planted = [STALE, FRESH, OTHER, LINK, FILE];
+    {
+      const temp = plant();
+      const run = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE, '--keep-temp'], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp), maxBuffer: 64 * 1024 * 1024 });
+      const kept = readdirSync(temp).filter((entry) => ROOT_SHAPE.test(entry) && !planted.includes(entry));
+      const faults = judge(temp, kept);
+      const said = run.stderr.split('\n').find((line) => line.startsWith('selftest: removed ')) ?? null;
+      // The planted root holds one file of 16 bytes, so its size reads 0.0 MB.
+      const want = `selftest: removed 1 rigc-selftest- root(s) untouched for more than ${STALE_ROOT_AGE_HOURS} h from ${temp}, 0.0 MB of files, left by runs killed by a signal`;
+      const named = run.stderr.split('\n').find((line) => line.startsWith("selftest: --keep-temp kept this process's temp root: ")) ?? null;
+      if (run.status !== 2) probes.push(`the run exited ${String(run.status)}, not the 2 an unregistered --only ends with: ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      if (faults.length > 0) probes.push(`after a run: ${faults.join('; ')}`);
+      if (said !== want) probes.push(`the run said ${JSON.stringify(said)} on stderr, not ${JSON.stringify(want)}`);
+      if (kept.length !== 1 || named === null || !named.endsWith(join(temp, kept[0]))) probes.push(`--keep-temp kept [${kept.join(', ')}] and said ${JSON.stringify(named)}, not its one root, named`);
+      if (run.stdout.includes('rigc-selftest-ty44')) probes.push('the run named a swept root on stdout, which is the same text whatever tmpdir() holds');
+      if (run.status === 2 && faults.length === 0 && said === want && kept.length === 1) {
+        read.push(
+          `a run under --keep-temp removed the stale root alone — the root touched ${STALE_ROOT_AGE_HOURS - 1} h ago, ${OTHER}, the symlink of a root's name, ` +
+            `the directory it points at and the file of a root's name all stayed — kept its own and said so on stderr ("${said.replace(temp, '<tmpdir>')}")`,
+        );
+      }
+      // A later run over the same directory: the kept root is younger than the age, nothing is stale, and it says nothing.
+      const later = spawnSync(process.execPath, ['selftest.ts', '--only', NO_SUITE], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp), maxBuffer: 64 * 1024 * 1024 });
+      const spoke = later.stderr.split('\n').filter((line) => line.includes('rigc-selftest- root'));
+      const after = judge(temp, kept).filter((fault) => !fault.startsWith('the root untouched'));
+      const keptStays = kept.length === 1 && existsSync(join(temp, kept[0]));
+      if (spoke.length > 0 || after.length > 0 || !keptStays) probes.push(`a later run with nothing stale said ${JSON.stringify(spoke)}, leaving [${after.join('; ')}]${keptStays ? '' : ' and the kept root gone'}`);
+      else read.push('a later run left the kept root, younger than the age, and said nothing');
+      // Once the kept root is older than the age, the sweep a later run calls removes it.
+      if (kept.length === 1) {
+        const at = new Date(Date.now() - ageMs - HOUR);
+        utimesSync(join(temp, kept[0]), at, at);
+        const swept = sweepStaleRoots(temp, Date.now(), ageMs);
+        if (swept.removed.join(',') !== kept[0] || existsSync(join(temp, kept[0]))) probes.push(`the kept root, ${STALE_ROOT_AGE_HOURS + 1} h old, was not the one root the sweep removed: [${swept.removed.join(', ')}]`);
+        else read.push(`then, ${STALE_ROOT_AGE_HOURS + 1} h old, it is removed`);
+      }
+    }
+    // A `--unit` child given the same directory sweeps nothing.
+    {
+      const temp = plant();
+      const io = mkdtempSync(join(harnessTemp(), 'rigc-ty44-unit-'));
+      const spec: AllocateUnitSpec = { kind: 'ty40-allocate', megabytes: 0, label: 'ty44-unit' };
+      writeFileSync(join(io, 'spec.json'), JSON.stringify(spec));
+      const run = spawnSync(process.execPath, ['selftest.ts', '--unit', join(io, 'spec.json'), join(io, 'out.json')], { cwd: import.meta.dir, encoding: 'utf8', env: childEnv(temp) });
+      const faults = judge(temp).filter((fault) => !fault.startsWith('the root untouched'));
+      const stale = existsSync(join(temp, STALE, 'inside.txt'));
+      if (run.status !== 0 || !existsSync(join(io, 'out.json'))) probes.push(`the --unit child exited ${String(run.status)} without its value: ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      if (!stale || faults.length > 0) probes.push(`a --unit child swept: ${[...(stale ? [] : ['the stale root was removed']), ...faults].join('; ')}`);
+      else if (run.status === 0) read.push('a --unit child left the stale root where it was');
+    }
+    // The sweep itself, in this process: what it reports removing is the stale root alone and the bytes of its one file.
+    {
+      const temp = plant();
+      const swept = sweepStaleRoots(temp, Date.now(), ageMs);
+      const faults = judge(temp);
+      const bytes = Buffer.byteLength('planted by TY44\n');
+      if (swept.removed.join(',') !== STALE || swept.bytes !== bytes || swept.failed.length > 0 || faults.length > 0) {
+        probes.push(`the sweep reported removing [${swept.removed.join(', ')}] holding ${swept.bytes} byte(s) with [${swept.failed.join('; ')}] failed, leaving [${faults.join('; ')}], not ${STALE} holding ${bytes}`);
+      } else read.push(`the sweep reports ${STALE} removed holding ${swept.bytes} bytes`);
+    }
+    // The plants, read by the same judge.
+    for (const [how, ignoredAge, name, want] of [
+      ['a sweep that ignores the age', 0, STALE_ROOT_NAME, `the root touched ${STALE_ROOT_AGE_HOURS - 1} h ago was removed`],
+      ['a sweep that widens the name to every rigc- entry', ageMs, /^rigc-/, `${OTHER}, another prefix, was removed`],
+    ] as const) {
+      const temp = plant();
+      sweepStaleRoots(temp, Date.now(), ignoredAge, name);
+      const faults = judge(temp);
+      const hit = faults.find((fault) => fault === want) ?? null;
+      if (hit === null) probes.push(`${how} was read as [${faults.join('; ') || 'nothing'}]`);
+      else read.push(`${how} is read: ${hit}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'TY44_A_RUN_REMOVES_THE_ROOTS_KILLED_RUNS_LEFT_AND_NOTHING_YOUNGER_OR_OF_ANOTHER_NAME_AND_A_UNIT_REMOVES_NONE',
+      held,
+      probeDetail(held, probes, `in a tmpdir() of planted entries, ${STALE_ROOT_AGE_HOURS} h the line: ${read.join('; ')}`),
+      'issue #1156: a run killed by a signal leaves its root and nothing ran to remove it, so every run now removes the ' +
+        'roots no run has touched for longer than any run lasts — and only those, since a younger one may be a run in progress',
     );
   }
 

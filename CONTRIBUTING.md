@@ -132,8 +132,18 @@ A run leaves `tmpdir()` as it found it. Every directory a selftest process makes
 lives under one `rigc-selftest-XXXXXX` root of its own, which the process
 removes when it exits, green or red; a shard and a `--jobs` unit are processes
 and remove their own (`TY39` counts what a run leaves). `--keep-temp` (or
-`RIGC_KEEP_TEMP=1`) keeps the root to read and names it on stderr; any other
-spelling is refused by name. A run killed by a signal leaves its root behind.
+`RIGC_KEEP_TEMP=1`) keeps the root to read and names it on stderr until a later
+run finds it stale, 24 hours after anything was last made or removed directly
+inside it; any other spelling is refused by name. A run killed by a signal
+leaves its root behind, so every run except a `--unit` child first removes each
+`rigc-selftest-XXXXXX` directory directly under `tmpdir()` that nothing has
+touched for 24 hours, and says how many and their size on stderr (nothing when
+there were none); `TY44` holds what it removes and what it must not. The age
+counts from a run's last direct entry, not its start, so the gap it must
+outlast is at most a whole run — the longest measured is 23 minutes, and the
+longest quiet stretch read inside a 9-minute run was 96 s — and 24 hours
+leaves room for a loaded machine or one that slept through part of a run. A symlink or
+file of that name, a younger root and every other name are left alone.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
