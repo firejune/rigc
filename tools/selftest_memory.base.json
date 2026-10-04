@@ -13,7 +13,11 @@
     "linux": {
       "highWater": 1324,
       "suites": 69,
-      "bun": "1.4.2"
+      "bun": "1.4.2",
+      "children": {
+        "highWater": 547,
+        "jobs": 4
+      }
     }
   }
 }
