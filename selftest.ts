@@ -123,12 +123,13 @@
  * ## What `--jobs` does
  *
  * A suite's independent units — `render-hashes`' `render_hashes.ts` runs and
- * CLI batches, `packer`'s packs by set, `core`'s posing-heavy controls — run up
- * to `--jobs` at once through `inParallel` (issues #1128, #1133), and the suite
- * prints its case lines after every unit has finished, in the sequential order,
- * so the log is one text at any `--jobs`. `TY32` holds the flag's refusals,
- * `TY33` the order and a plant that interleaves units' lines, `RH08`, `PK105`
- * and `CO41`–`CO42` the three suites' units.
+ * CLI batches, `packer`'s packs by set, `core`'s corpus build chains and its
+ * posing-heavy controls — run up to `--jobs` at once through `inParallel`
+ * (issues #1128, #1133, #1139), and the suite prints its case lines after every
+ * unit has finished, in the sequential order, so the log is one text at any
+ * `--jobs`. `TY32` holds the flag's refusals, `TY33` the order and a plant that
+ * interleaves units' lines, `RH08`, `PK105` and `CO41`–`CO43` the three suites'
+ * units.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -928,8 +929,8 @@ function parseJobs(value: string): number | string {
 /**
  * `--jobs <n>` (or `RIGC_JOBS`): how many of a suite's independent units run
  * at once (issue #1128) — the units `inParallel` is handed, today the heavy
- * subprocesses of `render-hashes`, the packs by set of `packer` and the
- * posing-heavy controls of `core` (issue #1133). Absent, the
+ * subprocesses of `render-hashes`, the packs by set of `packer`, and the
+ * corpus build chains and posing-heavy controls of `core` (issues #1133, #1139). Absent, the
  * machine's cores as Bun reports them, never under 1. `--jobs 1` is the run as
  * it was before the flag existed: every unit in order, in this process's turn.
  *
@@ -73668,7 +73669,7 @@ import { activeBones, CORE_CONSTRAINT_KINDS, CORE_DUMPER, CoreInputError, foldBl
 import { regionCorners, worldVertices, type VertexPoser } from './src/core/vertices.ts';
 import { clipShapeOf, clipThrough, clipTriangles, convexPieces, signedArea2, type ClipReading, type ClipShape, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
-import { runRecipe } from './tools/emit_hashes.ts';
+import { runRecipe, type HashedRecipe } from './tools/emit_hashes.ts';
 import { corePoser, firstPageDifference } from './src/render_core.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
@@ -74788,6 +74789,97 @@ function coreUnitWorker(spec: { dir: string; shared: CoreUnitInput; units: CoreU
   return ran;
 }
 
+/**
+ * The process that runs one corpus build chain (issue #1139): `runRecipe`, the
+ * function `buildRecipes` calls for each recipe, run in a process of its own
+ * over the recipe, its work directory, the tree and the tool, printing what
+ * it built as JSON — its name, stage, commands, exit codes, and every file
+ * under `{{out}}` by path, size and sha256. Plain JavaScript, because `bun -e`
+ * reads it; it imports the tool rather than this file, so a unit pays the
+ * chain and not this file's load.
+ */
+const CHAIN_DRIVER = [
+  'const [recipe, work, root, tool] = process.argv.slice(-4);',
+  'const { runRecipe } = await import(tool);',
+  'process.stdout.write(JSON.stringify(runRecipe(JSON.parse(recipe), work, root)));',
+].join('\n');
+
+/** Where `buildRecipes` builds recipe `k` of `n` under `work` — `runRecipes`' layout, which a chain run as a unit keeps, so a row's `out` is the same path either way. */
+function chainWorkOf(work: string, k: number, n: number): string {
+  return join(work, String(k).padStart(String(n).length, '0'));
+}
+
+/**
+ * Each recipe's chain run in a `CHAIN_DRIVER` process through `inParallel`,
+ * up to `jobs` at once, each into its own `chainWorkOf` directory, and what
+ * each built, in the recipes' order (issue #1139).
+ *
+ * 🔒 Independent by construction, which is what `inParallel` asks its caller
+ * to state: a chain stages its inputs from the tree into its own directory and
+ * runs its commands there (`runRecipe`), so no chain reads what another
+ * writes — the recipes are the input, decided before any chain runs.
+ */
+function chainUnits(recipes: readonly Recipe[], work: string, root: string, jobs: number): HashedRecipe[] {
+  const tool = join(root, 'tools', 'emit_hashes.ts');
+  const runs = inParallel(
+    recipes.map((recipe, k): ParallelUnit => ({ argv: [process.execPath, '-e', CHAIN_DRIVER, JSON.stringify(recipe), chainWorkOf(work, k, recipes.length), root, tool], cwd: root })),
+    jobs,
+  );
+  return runs.map((run, k) => {
+    if (run.status !== 0) throw new Error(`selftest: corpus chain ${k} (${recipes[k].name}) exited ${String(run.status)} in its unit process: ${run.stderr.trim().slice(0, 400)}`);
+    return JSON.parse(run.stdout) as HashedRecipe;
+  });
+}
+
+/**
+ * The built rows `buildRecipes` hands back, made from what the chain units
+ * handed back (issue #1139): row `k` is recipe `k`'s, read by NAME — a unit's
+ * output at another recipe's position is a fault naming both, never a row,
+ * because a row is gated as the recipe its name says (`CO43`).
+ */
+function collectChains(recipes: readonly Recipe[], hashed: readonly HashedRecipe[], work: string): { built: BuiltRow[]; faults: string[] } {
+  const faults: string[] = [];
+  if (hashed.length !== recipes.length) faults.push(`${hashed.length} chain output(s) came back for ${recipes.length} recipe(s)`);
+  const built = recipes.map((recipe, k): BuiltRow => {
+    const got = hashed[k];
+    if (got === undefined) faults.push(`no chain output came back at position ${k}, where ${recipe.name} belongs`);
+    else if (got.name !== recipe.name) faults.push(`position ${k} holds the output of ${got.name} where ${recipe.name} belongs`);
+    return { name: recipe.name, out: join(chainWorkOf(work, k, recipes.length), 'out'), exits: got?.exits ?? [] };
+  });
+  return { built, faults };
+}
+
+/**
+ * The core suite's corpus build (issue #1139): `buildRecipes` in this
+ * process at `jobs` 1 — the run as it was — and above it every chain a unit
+ * (`chainUnits`), collected by name in the recipes' order (`collectChains`),
+ * so the rows are the same names, the same `out` paths and the same exits
+ * either way, and every control after them reads the same objects.
+ */
+function buildChains(recipes: readonly Recipe[], work: string, root: string, jobs: number = JOBS): BuiltRow[] {
+  if (jobs === 1 || recipes.length <= 1) return buildRecipes(recipes, work, root);
+  const { built, faults } = collectChains(recipes, chainUnits(recipes, work, root, jobs), work);
+  if (faults.length > 0) throw new Error(`selftest: the corpus chains' outputs did not come back by name: ${faults.join('; ')}`);
+  return built;
+}
+
+/** Every file under `dir` as `runRecipe` hashes `{{out}}`: path relative and `/`-separated, size and sha256, in code-unit order (`CO43`). */
+function hashedFilesUnder(dir: string): Array<{ path: string; size: number; sha256: string }> {
+  if (!existsSync(dir)) return [];
+  const paths: string[] = [];
+  const walk = (at: string, rel: string): void => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(at, entry.name), `${rel}${entry.name}/`);
+      else paths.push(`${rel}${entry.name}`);
+    }
+  };
+  walk(dir, '');
+  return paths.sort().map((path) => {
+    const bytes = readFileSync(join(dir, path));
+    return { path, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+  });
+}
+
 /** The order the corpus controls print in, read off `runCoreSuite`'s `sayCorpus` calls in source order (`CO42`). */
 function corpusControlOrder(source: string): string[] {
   const tree = ts.createSourceFile('selftest.ts', source, ts.ScriptTarget.Latest, true);
@@ -75514,7 +75606,8 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
   // gated with the core's evaluator and with each plant.
   const notes: string[] = child?.input.notes.slice() ?? [];
   const recipes = parent ? treeRecipes(root, (line) => notes.push(line)) : [];
-  const built = child?.input.built ?? buildRecipes(recipes, join(work, 'gate'), root);
+  // Issue #1139: above --jobs 1 each recipe's chain is a unit, collected by name in the recipes' order.
+  const built = child?.input.built ?? buildChains(recipes, join(work, 'gate'), root);
   const rows = child?.input.rows ?? gateBuilt(built);
   const examplesHole = notes.find((l) => l.startsWith('HOLE')) ?? null;
   // Issue #1004: a floor only a corpus row can clear is written through
@@ -86019,6 +86112,66 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
           `the units' cases applied at the end: TY22 reads "${coreCorpusReading(atEnd)}", a count, and the order is read at ${atEndRead ?? 'nothing'}`,
       ),
       'issue #1133: a unit\'s run state crosses as a share the parent applies at the control\'s own position, so TY22, RG01 and a merge read the run one process leaves; applied anywhere else the share is the same rows in another order, which only the order can show',
+    );
+  }
+
+  // --- CO43: a corpus chain run as a unit hands back what it builds in place (issue #1139) --
+  // Above --jobs 1 the rows every control here reads come from chain units
+  // (`buildChains`), so they are the sequential run's rows exactly when a
+  // chain built in another process writes the bytes it writes here, and when
+  // what comes back is read by name. Held on the last two recipes — the tree's
+  // own gallery, present with or without the corpus — in `PK105`'s shape: the
+  // two rows this run collected against the same two chains built by the OTHER
+  // path — as units at max(2, --jobs) where the rows were built here (--jobs
+  // 1), here where they came from units — compared at every leaf: the exits,
+  // and every file under `{{out}}` by path, size and sha256. One pair of
+  // chains at any --jobs, so the line is one text. Planted: one chain's output
+  // handed back in the other's place, which the collection must name; and the
+  // same output under the other's name, which only the leaves can read.
+  if (parent) {
+    const probes: string[] = [];
+    const pair = recipes.slice(-2);
+    const names = pair.map((r) => r.name);
+    if (pair.length !== 2) probes.push(`the tree generated ${recipes.length} recipe(s), fewer than the two this control runs`);
+    const otherWork = join(work, 'co43');
+    // What this run collected for the pair, hashed as `runRecipe` hashes a chain.
+    const collected = pair.map((recipe): HashedRecipe | null => {
+      const row = built.find((b) => b.name === recipe.name);
+      return row === undefined ? null : { ...recipe, exits: row.exits, files: hashedFilesUnder(row.out) };
+    });
+    const other = pair.length !== 2 ? [] : JOBS === 1 ? chainUnits(pair, otherWork, root, Math.max(2, JOBS)) : pair.map((recipe, k) => runRecipe(recipe, chainWorkOf(otherWork, k, pair.length), root));
+    const leaves = (r: HashedRecipe): { exits: Array<number | null>; files: HashedRecipe['files'] } => ({ exits: r.exits, files: r.files });
+    let files = 0;
+    pair.forEach((recipe, k) => {
+      const mine = collected[k];
+      const theirs = other[k];
+      if (mine === null) probes.push(`this run collected no row named ${recipe.name}`);
+      if (mine === null || theirs === undefined) return;
+      const differ = sameLeaves(leaves(mine), leaves(theirs), recipe.name);
+      if (differ.length > 0) probes.push(`${recipe.name} as this run collected it and built by the other path: ${differ.slice(0, 3).join('; ')}`);
+      if (mine.files.length === 0) probes.push(`${recipe.name} built no file, so its comparison held nothing`);
+      files += mine.files.length;
+    });
+    const read = collectChains(pair, other, otherWork);
+    if (read.faults.length > 0) probes.push(`the other path's outputs collected with faults: ${read.faults.join('; ')}`);
+    // Plant 1: the first chain's output handed back in the second's place.
+    const swapped = other.length === 2 ? collectChains(pair, [other[0], other[0]], otherWork).faults : [];
+    if (swapped.length === 0) probes.push(`${names[0] ?? 'a chain'}'s output in ${names[1] ?? 'another'}'s place was collected without a fault`);
+    // Plant 2: the same output under the second's name, which the name cannot show and only the leaves can.
+    const relabelled = other.length === 2 && collected[1] !== null ? sameLeaves(leaves(collected[1]), leaves({ ...other[0], name: names[1] }), names[1]) : [];
+    if (relabelled.length === 0) probes.push(`${names[0] ?? 'a chain'}'s output under ${names[1] ?? 'another'}'s name compared equal to ${names[1] ?? 'it'}`);
+    const back = other.reduce((n, r) => n + JSON.stringify(leaves(r)).length, 0);
+    const held = probes.length === 0;
+    say(
+      'CO43_A_CORPUS_CHAIN_RUN_AS_A_UNIT_HANDS_BACK_WHAT_IT_BUILDS_IN_PLACE_READ_BY_NAME',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${names.length} chain(s) [${names.join(', ')}] as this run collected them, against the same chains built by the other path (units where the rows were built in place, in place where they came from units): equal at every leaf — the exits and ${files} file(s) by path, size and sha256, ${back} character(s) of them; ` +
+          `planted, ${names[0]}'s output in ${names[1]}'s place is named: ${swapped[0] ?? 'nothing'}; under ${names[1]}'s name it is read at ${relabelled[0]?.split(':')[0] ?? 'nothing'}`,
+      ),
+      'issue #1139: above --jobs 1 the corpus rows every control reads come from chains built in other processes, which is the sequential run only while a chain built there writes the bytes it writes here and its output is taken as the recipe it names',
     );
   }
 

@@ -71,10 +71,10 @@ together: each is a whole process with its own memory high-water.
 
 Inside a suite, independent units run concurrently: `render-hashes`' eight
 `render_hashes.ts` runs and two batches of its CLI runs, `packer`'s packs by
-set, and `core`'s posing-heavy controls, which `--jobs` workers share. `--jobs
-<n>` (or `RIGC_JOBS`) is how many run at once; the default is the machine's
-cores, and `--jobs 1` runs them one after another as the run did before the
-flag. The printed log is the same text at any `--jobs`. On a machine you share,
+set, `core`'s corpus build chains, and `core`'s posing-heavy controls, which
+`--jobs` workers share. `--jobs <n>` (or `RIGC_JOBS`) is how many run at
+once; the default is the machine's cores, and `--jobs 1` runs them one after
+another as the run did before the flag. The printed log is the same text at any `--jobs`. On a machine you share,
 pass `--jobs 2`.
 
 A run leaves `tmpdir()` as it found it. Every directory a selftest process makes
