@@ -77,6 +77,26 @@ cores, and `--jobs 1` runs them one after another as the run did before the
 flag. The printed log is the same text at any `--jobs`. On a machine you share,
 pass `--jobs 2`.
 
+The run's memory is read in two places. Each suite's line ends with the
+process's RSS, its change across the suite, and the heap and external buffers
+after a forced collection; a suite that ran units adds `children high-water
+<MB> MB (<unit>)` — the largest peak of any child process it started, as the
+driver read it, and which unit that was (a `core` worker is named for the unit
+it was running when its peak was reached). The `--jobs 1` path reads no child's
+peak, so there the line says nothing about children. Both figures are held
+under `tools/selftest_memory.base.json`, one entry per platform: the parent's
+high-water (`TY26`, and the full run after its tables) and the children's
+high-water with the `--jobs` it was read at (`TY40`), each times the same
+margin. A platform with no entry, or no children's figure, is a `SKIP` naming
+the command that writes one: `bun selftest.ts --memory-base` on a green full
+run at `--jobs 2` or more writes both numbers. Never type them. A shard holds
+its own figures and the merge holds every shard's. The ceiling holds the
+largest child, not the sum alive at once, because the sum is a reading of
+one schedule; the sum is at most `--jobs` times the largest. To read every
+unit's figure, set `RIGC_UNIT_PEAKS=<file>`: one line per unit with its peak,
+its seconds and when in its batch it started and ended, which is where the
+overlap of a batch's children is read from.
+
 A run leaves `tmpdir()` as it found it. Every directory a selftest process makes
 lives under one `rigc-selftest-XXXXXX` root of its own, which the process
 removes when it exits, green or red; a shard and a `--jobs` unit are processes
