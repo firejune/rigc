@@ -70,11 +70,12 @@ job is the merge. On a machine you share, run the shards one after another, not
 together: each is a whole process with its own memory high-water.
 
 Inside a suite, independent units run concurrently: `render-hashes`' eight
-`render_hashes.ts` runs and two batches of its CLI runs, and `packer`'s packs
-by set. `--jobs <n>` (or `RIGC_JOBS`) is how many run at once; the default is
-the machine's cores, and `--jobs 1` runs them one after another as the run did
-before the flag. The printed log is the same text at any `--jobs`. On a machine
-you share, pass `--jobs 2`.
+`render_hashes.ts` runs and two batches of its CLI runs, `packer`'s packs by
+set, and `core`'s posing-heavy controls, which `--jobs` workers share. `--jobs
+<n>` (or `RIGC_JOBS`) is how many run at once; the default is the machine's
+cores, and `--jobs 1` runs them one after another as the run did before the
+flag. The printed log is the same text at any `--jobs`. On a machine you share,
+pass `--jobs 2`.
 
 There is a fourth. It is fast — the whole battery was 9.4s on the machine it was
 written on — but it is out of the list above because it is not offline: it
