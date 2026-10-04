@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.9.0](https://github.com/firejune/rigc/compare/v2.8.0...v2.9.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** both writers of the children's memory base keep the larger of the tracked figure and the run's and say which, --reset-children-base is the one spelling that lowers it, and TY43 holds every case with a plant each way ([#1153](https://github.com/firejune/rigc/issues/1153)) ([05c0405](https://github.com/firejune/rigc/commit/05c04058d40ebef6712482afd9cfebc659d14d2a)), closes [#1151](https://github.com/firejune/rigc/issues/1151)
+
 ## [2.8.0](https://github.com/firejune/rigc/compare/v2.7.0...v2.8.0) (2026-10-04)
 
 
