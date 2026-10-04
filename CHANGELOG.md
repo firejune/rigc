@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.6.0](https://github.com/firejune/rigc/compare/v2.5.1...v2.6.0) (2026-10-04)
+
+
+### Features
+
+* **selftest:** core's posing-heavy controls run as --unit work shared by --jobs workers, each control's lines and shares applied at its own position, so the log is byte-identical at any --jobs ([#1136](https://github.com/firejune/rigc/issues/1136)) ([8ea177d](https://github.com/firejune/rigc/commit/8ea177d8aa82509b69026b248e67eecf9eb11b89)), closes [#1133](https://github.com/firejune/rigc/issues/1133)
+
 ## [2.5.1](https://github.com/firejune/rigc/compare/v2.5.0...v2.5.1) (2026-10-03)
 
 
