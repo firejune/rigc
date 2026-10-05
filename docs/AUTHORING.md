@@ -219,13 +219,13 @@ What the flags mean:
 | --- | --- |
 | `--rig` | the rig spec — skeleton structure |
 | `--motion` | the motion spec — time |
-| `--out` | directory for `skeleton.json` + `skeleton.atlas`, and on `build` `skeleton.model.json` beside them; atlas page paths and `skeleton.images` are written relative to it. `skeleton.model.json` is rigc's own record of the compiled rig (`rigc-compiled/3`: the stage the header declares, or `null`; the bones, slots, skins, constraints, events and animations the Spine files were emitted from, in the spec's order, and `editorOrder`, the order `skeleton.json` lists the skins, each skin's slot keys and the animations in; the rest of what posing them takes; then `pages`, every page of the `skeleton.atlas` written beside it, its `pma` and its `scale:` line (`null` where it states none), and where each region sits on it — after `--pack` the packed pages, after `--copy-images` the copies' names), written after the same gate as the pair and ending in `spine.sha256`, the digest of the `skeleton.json` written beside it. A `rigc-compiled/2` document (rigc 1.7) states no stage, editor order, `pma` or `scale`, and is still read: `render` and `check` then read those off `skeleton.json` and the atlas, and the `poser` line names both files. A `rigc-compiled/1` document (rigc 1.6) has no `pages` either and is still read: the core then takes the placement from the atlas beside it, the `poser` line says so, and with no atlas there `render` and `check` refuse it naming the file. A `rigc-compiled/2` or `/3` build is rendered and checked with its `skeleton.atlas` gone (`--candidate` below). It is what rigc's own posing core (`src/core/`) poses: `render` and `check` — and `bench --frames`, which folds `check` in — pose a build through it, and `--poser` below says when they do not. On `check` it is a directory of **pictures** instead: one per frame the table lists (every compared frame under `--all-frames`), reference · candidate · difference · overlay at the comparison grid's native size, as `<dir>/<set>/f####.png` beside a `frames.json` that says what they are pictures of. Each `<dir>/<set>/` is cleared first; a file at `<dir>`, or a directory that is or holds `--frames`, is refused by name — **§9.2.1** |
+| `--out` | directory for `skeleton.json` + `skeleton.atlas`, and on `build` `skeleton.model.json` beside them; atlas page paths and `skeleton.images` are written relative to it. `skeleton.model.json` is rigc's own record of the compiled rig (`rigc-compiled/3`: the stage the header declares, or `null`; the bones, slots, skins, constraints, events and animations the Spine files were emitted from, in the spec's order, and `editorOrder`, the order `skeleton.json` lists the skins, each skin's slot keys and the animations in; the rest of what posing them takes; then `pages`, every page of the `skeleton.atlas` written beside it, its `pma` and its `scale:` line (`null` where it states none), and where each region sits on it — after `--pack` the packed pages, after `--copy-images` the copies' names), written after the same gate as the pair and ending in `spine.sha256`, the digest of the `skeleton.json` written beside it. A `rigc-compiled/2` document (rigc 1.7) states no stage, editor order, `pma` or `scale`, and is still read: `render` and `check` then read those off `skeleton.json` and the atlas, and the `poser` line names both files. A `rigc-compiled/1` document (rigc 1.6) has no `pages` either and is still read: the core then takes the placement from the atlas beside it, the `poser` line says so, and with no atlas there `render` and `check` refuse it naming the file. A `rigc-compiled/2` or `/3` build is rendered and checked with its `skeleton.atlas` gone (`--candidate` below). It is what rigc's own posing core (`src/core/`) poses: `render` and `check` — and `bench --frames`, which folds `check` in — pose a build through it, and `--poser` below says when they do not. On `check` it is a directory of **pictures** instead: one per frame the table lists (every compared frame under `--all-frames`), reference · candidate · difference · overlay at the comparison grid's native size, as `<dir>/<set>/f####.png` beside a `frames.json` that says what they are pictures of. Each `<dir>/<set>/` is cleared first; a file at `<dir>`, or a directory that is or holds `--frames`, is refused by name — **§9.2.1**. On `repack` it is the directory the repacked build is written into — the same files `build --pack` writes — and it has to be absent or empty — **§0.4** |
 | `--copy-images` | `build` only: also copies every page **the emitted atlas names** into `--out` and rewrites the atlas to the copies, so the directory is self-contained enough to zip or commit on its own, and points `skeleton.images` at `--out` itself so the editor's import finds the parts beside the skeleton (§3.1 says why it is spelled `../<out>/` and not `./`). Under `--atlas-in` those pages are the pack's, not one per part (**§0.2**). Without it, page paths point at the source art |
 | `--pack` | `build` only: arrange every part onto **shared** atlas page(s), written into `--out` as real PNGs, instead of one page per part. Lossless — nothing is resampled, trimmed or rotated. The default is one page per part — **§0.1** |
-| `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1** |
-| `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1** |
-| `--page-edges` | `build --pack` only: `pot` (default) or `free`. `pot` keeps both page edges powers of two; `free` sizes the page to the parts — a smaller page, at the cost of region attachments sampling within one least significant bit of the loose build instead of exactly. Any other value is refused by name — **§0.1** |
-| `--pack-shape` | `build --pack` only: `rect` (default) or `polygon`. `rect` keeps every region's cell apart; `polygon` packs a region that only meshes draw by its emitted hull, so a neighbour may sit inside its rectangle where the hull is not, with the padding kept between footprints. A region attachment's footprint stays its rectangle. Any other value is refused by name, and so is the flag without `--pack` — **§0.1** |
+| `--page-size` | `build --pack` only: the largest page edge (default `2048`). A ceiling, not the size: page edges are powers of two and the one written is the smallest that holds the pack — **§0.1**. `repack` takes it with the same meaning — **§0.4** |
+| `--padding` | `build --pack` only: the gutter each region reserves on every side (default `2`), filled by extending the region's own edge pixels outwards. `0` is not a legal-but-tight choice, it is bleed — **§0.1**. `repack` takes it with the same meaning — **§0.4** |
+| `--page-edges` | `build --pack` only: `pot` (default) or `free`. `pot` keeps both page edges powers of two; `free` sizes the page to the parts — a smaller page, at the cost of region attachments sampling within one least significant bit of the loose build instead of exactly. Any other value is refused by name — **§0.1**. `repack` takes it with the same meaning — **§0.4** |
+| `--pack-shape` | `build --pack` only: `rect` (default) or `polygon`. `rect` keeps every region's cell apart; `polygon` packs a region that only meshes draw by its emitted hull, so a neighbour may sit inside its rectangle where the hull is not, with the padding kept between footprints. A region attachment's footprint stays its rectangle. Any other value is refused by name, and so is the flag without `--pack` — **§0.1**. `repack` takes it with the same meaning, and always packs — **§0.4** |
 | `--atlas-in` | `build` and `explain`: resolve every part against the **regions of a pre-packed `.atlas`** instead of against loose PNGs. Region geometry is read from the file and sizes are descaled by the page's `scale:`; `build` re-emits the atlas into `--out`, re-anchored, and `explain` writes nothing and poses through it — **§0.2**. On `explain` it is the flag that makes a **size-only** spec readable at all (`ingest --art none`), because posing resolves every attachment against an atlas; without it that pair is refused by name rather than thrown through (§5.1) |
 | `--images` | where the rig spec's `image` names resolve (overrides the rig's own `images` field, and is relative to your working directory). For `pose` it is the directory of **loose part PNGs to place** — every `.png` in it is a part, in name order. For `chainfit` it is only where each attachment's image name **resolves**: the candidate decides what the parts are, so extra PNGs are unused and a missing name is refused by name (§12.3) |
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
@@ -1249,6 +1249,154 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   reason code from a closed enumeration. A **tie is a recorded answer**, and
   `both-unacceptable` is the one that means *propose again* rather than *adopt
   either* — check for it before you treat a ballot as settled.
+
+### 0.4 Repacking a build whose parts were not kept — `repack`
+
+A build directory holds `skeleton.json`, `skeleton.atlas`, the pages and
+`skeleton.model.json`, and a project that keeps only those — no loose part PNGs —
+could not take up a packer change (`--page-edges free`, `--pack-shape polygon`)
+without regenerating its parts upstream. `rigc repack` packs such a build again,
+from its own output:
+
+```bash
+bun cli.ts repack spine/ --out spine.free/ --page-edges free --pack-shape polygon
+#   ..    lift   10 region(s) off 1 page(s), each named once: 0 turned on its page, 0 trimmed of whitespace — …
+#   ..    stage  640 x 700 at 0,0 — read from the skeleton.model.json beside it (its spine.sha256 is this skeleton's). …
+#   ..    check  (a) regions: 10 of 10 pixel-identical, by name, to the same region lifted off the input's pages — 7 over the whole rectangle, 3 that only meshes draw over the footprint …
+#   ..    check  (b) skeleton.json: byte-identical to the input's — the pack owns none of it
+#   ..    check  (c) gate: green — the report above, on the compile and on the packed pair
+# rigc: wrote /abs/path/spine.free/skeleton.png
+```
+
+It is three steps, run in process through the tree's own functions: every region
+is **lifted** off its page by its atlas bounds (`extractRegion`, the inverse of
+what the runtime samples — `rotate:` and `offsets:` included), the skeleton is
+**read back** with `ingest --art loose` (an `image` per attachment, named after the
+region it draws, which is the file the lift wrote), and **`build --pack`** runs over
+the two specs and the lifted parts — the same body, the same gate, and on each entry
+that entry's gate (§0's paragraph on the two entries). They run in a work directory
+under the system temp directory that the command removes when it ends, green or
+refused or a gate that exits; only the build is copied into `--out`, so the output is
+the same kind of directory as the input and can itself be repacked. The lifted parts
+are not kept: the output's pages hold every one of them, and `repack` is the command
+that lifts them.
+
+| flag | what it decides |
+| --- | --- |
+| `<dir \| skeleton.json>` | the build to repack — a directory holding `skeleton.json` and `skeleton.atlas`, or a `skeleton.json` path |
+| `--out <dir>` | where the repacked build is written: `skeleton.json`, `skeleton.atlas`, `skeleton.model.json` and the pages. **Absent or empty**, and refused otherwise (exit 2): a page an earlier pack wrote and this one does not would stay beside the new atlas with nothing naming it — and the input's own directory is never empty |
+| `--atlas <path>` | the atlas, when it is not `skeleton.atlas` beside the skeleton |
+| `--page-size`, `--padding`, `--page-edges`, `--pack-shape` | `build --pack`'s, with the same defaults and the same meaning (§0.1). `repack` always packs |
+| `--profile` | the gate's profile, as on `build` |
+| `--stage x,y,w,h` | handed to `ingest` as its own `--stage` (§0.3) — a box for a skeleton that states none, refused beside one that does |
+
+Every other flag `build` takes is refused by name, with the reason `repack` does not
+take it (`--rig`, `--motion`, `--images`, `--manifest`, `--copy-images`, `--pack`,
+`--atlas-in`, `--cut`, `--cuts`); any other flag is refused listing the ones it takes.
+
+**Nothing reaches `--out` until three things are shown**, each on its own line:
+
+- **(a) every region** lifted off the **new** pages is pixel-identical, by name, to
+  the same region lifted off the **input's**. Under `--pack-shape rect` that is the
+  whole rectangle. Under `polygon` a region that only meshes draw owns its
+  **footprint** on the page — its hull and triangles, dilated by the padding — and a
+  neighbour may sit in the rest of its rectangle by design (§0.1), so that region is
+  compared over the footprint the packer kept as its own (`packFootprints` and
+  `footprintCell`, the packer's own two functions). Measured: a whole-rectangle
+  comparison refused `gallery/flex` repacked `--page-edges free --pack-shape polygon`
+  on 4 of its 20 regions, each one a neighbour's texels in a mesh's empty corner.
+  The lift carries those texels, so a later `rect` repack of a polygon build keeps
+  them where nothing samples them: `gallery/nod` taken `pot`/`rect` → `free`/`polygon`
+  → `pot`/`rect` comes back with its original `skeleton.json` and `skeleton.atlas`,
+  and a page that differs only in one mesh-only region outside its footprint.
+  A region the input atlas has and the rebuild does not is named here too — a
+  rebuild packs the regions this skeleton's attachments draw and no other, so an
+  atlas several skeletons share comes back short;
+- **(b) `skeleton.json`** is byte-identical to the input's. A repack is entitled to
+  change **nothing** in the skeleton: attachments name their regions and the atlas
+  alone says where a region sits, so the pack owns the atlas and the pages and none
+  of the skeleton. Measured on every repack below, the rebuilt skeleton was the
+  input's bytes. A difference is refused naming each path with both values — it is
+  something other than the pack, and the refusal says to rebuild the skeleton first
+  (`ingest`, then `build`) if that skeleton is the one wanted, and repack that;
+- **(c) the gate** is green — `build --pack`'s two reports, on the compile and on the
+  packed pair, printed above the three lines.
+
+Under the settings the input was packed with, a fourth line says the atlas and every
+page came back byte-identical to the input's — **40 of 40** such repacks below. That
+is a measurement, not the guarantee: under other settings the pages differ by design,
+and what is held is (a), (b) and (c). `skeleton.model.json` is the rebuild's own
+record — of a rig read back out of the skeleton, its `rig.archetype` the skeleton
+file's basename as `ingest` names it, its `pages` the new pack — and is not the
+input's bytes; its `spine.sha256` names the `skeleton.json` beside it, as every
+build's does.
+
+**What it was measured on.** The seven gallery rigs, each built `--pack` under
+`pot`/`free` × `rect`/`polygon` and under `--page-size 1024` (two pages for two of
+them; two more do not fit a 1024 page and are not built), each repacked under its own
+settings and under `free` + `polygon`; each built without `--pack` (one page per part,
+pages outside the directory) and repacked; and each `pot`/`rect` build reduced to its
+three kinds of file, with no `skeleton.model.json`. **80 of 80 repacked green**,
+every region pixel-identical, every skeleton the input's bytes, at about 1.4 s a rig.
+
+**What it accepts and what it refuses.** Measured over those 80 inputs and the twelve
+editor exports under `examples/` — each repacked directly, and each first rebuilt by
+rigc through `ingest --art none` and `build --atlas-in` (the shape a rigc build that
+carries an editor's pack has) — and, for a shape refused for one reason, with that
+refusal set aside to see whether the lift alone was exact:
+
+| atlas shape | occurs in | lifts exactly | repack |
+| --- | --- | --- | --- |
+| rigc's own pack, any `--page-edges`/`--pack-shape`, one page or several | the 80 gallery inputs | yes | **accepted** |
+| one part per page, pages outside the build directory (`build` without `--pack`) | the gallery, built unpacked | yes | **accepted** |
+| a region turned on its page (`rotate: 90`, `270`; `180` read the same way) | three editor exports, once each | yes — the turned regions of `5-squash-and-stretch` (90) and `7-anticipation` (270) came back identical, and the selftest lays a whole rig turned and trimmed (`RPK09`) | **accepted**: the pack writes it unturned |
+| a region trimmed of transparent border (`offsets:`) | one editor atlas (`spineboy-run`, refused for the reasons below) | yes — `RPK09` | **accepted**: lifted at its full drawing size, transparent where trimmed |
+| a region two attachments share | three editor exports | yes — lifted once | **accepted** |
+| a page `scale:` other than 1 | all twelve editor exports (0.4, 0.5) | yes — every region the skeleton draws came back identical | **refused**: rigc's packer writes every page at scale 1, so the repacked atlas would state texels coarser than the drawings as the drawings' own size |
+| `pma: true` | `spineboy-run` | — | **refused**: rigc's packer writes `pma: false`, and the same bytes would be blended as straight colour |
+| a region the atlas names twice | `spineboy-run` (a numbered series) | — | **refused**: one part per name, and the runtime draws the first of two |
+| `index:` on a region | `spineboy-run` | — | **refused**: rigc's packer writes no `index` line |
+| `filter` other than `Linear, Linear`; `format`; `repeat`; `split`/`pad`; a `rotate:` value outside `0/90/180/270/true/false`; any other line | none here | — | **refused**: the repacked atlas would drop or contradict it |
+| regions no attachment of this skeleton draws | three editor atlases each serving two skeletons | yes | **refused by (a)**: they do not come back |
+| an editor's `skeleton.json` itself | the twelve exports, repacked directly | — | **refused by (b)** were it reached: the rebuild writes rigc's `spine` version, drops `hash`, and computes the header box again (§0.3) |
+
+⚠️ **Why the loose-plate route was refused by `A08` on editor exports, and why this
+one is not.** Rebuilding a skeleton from loose parts after `ingest --art none` — the
+spec an `--atlas-in` build is made from — fails `A08_REGION_NAMES_MATCH_ATTACHMENTS`
+on every attachment: a `none` spec states each attachment's size and names **no
+`image`**, so `--images <dir>` resolves nothing (`0 part page(s)`) and no region exists
+for any attachment to join. Measured on `3-timing-and-spacing`: both attachments
+refused, exactly that way. It is the spec's art mode, not a shape of the atlas —
+not the region names, not stripped whitespace, not the page scale. `repack` reads
+the skeleton with `--art loose`, which names an `image` per attachment after the
+region it draws; the twelve exports rebuilt that way from their lifted regions all
+built green.
+
+**The stage.** `ingest`'s rules decide it, and the `stage` line says which applied:
+`--stage` when given; else the `skeleton.model.json` beside the skeleton, when its
+`spine.sha256` is the skeleton's digest; else the header's box. On a rigc build since
+2.2.0 that box is the **setup-pose bounding box**, not the stage — `gallery/nod`'s
+`640 x 700` stage reads back as `640 x 725` without its document — and the line says
+so. `skeleton.json` is held byte-identical below whatever it is (all seven
+document-less repacks above were); the stage the rebuild declares reaches
+`skeleton.model.json` and the rules on the rebuild that measure against a stage.
+Keep `skeleton.model.json` beside the pair to carry the stage.
+
+**What each refusal says, and what to change:**
+
+| `rigc repack: …` | exit | change |
+| --- | --- | --- |
+| `<atlas> cannot be lifted exactly — N reason(s), and nothing was written:` then one line per reason (`page … is not on disk`, `page … declares size … and … is …`, `page … states scale: …`, `… pma: true`, `region … is named twice`, `regions … differ only in case`, `region … states index: …`, `region … occupies … which leaves the … page`, `region … keeps … which does not fit inside it`, `region … is not a relative file name …`) | 1 | the atlas or its pages: put the page back, or repack the build a rigc pack wrote — a foreign pack with those shapes is rebuilt from its parts, not repacked |
+| `the atlas and skeleton.model.json beside it disagree — region "…" x: … in the atlas, … in the document` | 1 | one of the two was edited after the build wrote them: restore the atlas, or drop the document if the atlas is the record you mean |
+| `the repack lost something, so nothing was written to <out>:` then `(a) …` region lines | 1 | a region that does not come back, or a texel apart: the input atlas carries regions this skeleton does not draw (repack the build that has only its own), or the lift was not what the pack drew from |
+| the same, then `(b) skeleton.json: the rebuild differs from the input in N place(s) …` | 1 | the skeleton is not what this rigc writes from what it states — rebuild it (`ingest`, then `build`) and repack the result |
+| `ingest found N blocker(s) …` / `ingest refused the skeleton: …` | 1 / 2 | the skeleton cannot be read back exactly (§0.3's findings); `--stage` beside a stated box is `ingest`'s refusal |
+| `--out <dir> is not empty …` / `is a file …` | 2 | name a new directory |
+| `repack takes no --<flag>: …` | 2 | drop the flag |
+
+A red gate is `build`'s own report and its `rigc: N assertion(s) failed — nothing
+written`, followed by `rigc repack: nothing was written to <out>; the work directory
+… was removed`.
 
 ---
 

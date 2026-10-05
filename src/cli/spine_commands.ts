@@ -20,6 +20,7 @@ import { atlasPageNames } from '../render.ts';
 import { BoneDistError } from '../bonedist.ts';
 import { assertionCountForProfile, CLI_DEFAULT_PROFILE, reportLines, validate, type ValidateProfile } from '../validate.ts';
 import { type CliRefusal, type CommandRun, DEFAULT_BALLOT, PACKAGE_ROOT, DEFAULT_LEDGER, parseJsonNamed, readAnimationFlag, readJsonFile, readPackageMeta, readSkeletonText, readVersion, resolveBuild, resolveCut, resolveViewable, runCheck, spinePairOf, type BuildGate, runBuild, readProfile, STAGELESS_FRAMING, UsageError, writeJson, modelTextBeside } from './shared.ts';
+import { cmdRepack } from './repack.ts';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -801,6 +802,7 @@ export function cmdBoneDist(flags: Record<string, string>): void {
  */
 export const SPINE_COMMAND_RUNS: Readonly<Record<string, CommandRun>> = {
   build: ({ flags }) => cmdBuild(flags),
+  repack: (args) => cmdRepack(args, ROUND_TRIP_GATE),
   validate: ({ flags, positional }) => cmdValidate(flags, positional),
   bench: ({ flags, positional }) => cmdBench(flags, positional),
   bonedist: ({ flags }) => cmdBoneDist(flags),
