@@ -63607,6 +63607,73 @@ function runCurrencySuite(): number {
       ),
       'issue #1061: the owner settled 2.0.0 as one package whose install carries no runtime — the round trip stays what a clone and CI run, so the dependency moves to devDependencies, and the launcher is the one place that decides which entry an install runs; a choice anything but resolution could flip would be a bypass of the 🔒 invariant spelled as a variable',
     );
+
+    // CUR117 — RELEASING.md's row of the commands an install without the
+    // runtime runs is the set the command table derives (issue #1178). At
+    // v2.12.0 the row listed eight while `bun cli_core.ts --help` listed ten —
+    // `build` (#1060) and `repack` (#1177) have bodies on that entry — because
+    // nothing read it. The set is read off
+    // `COMMANDS` by the rule `entryCommands` applies — a `runtime` of `false`, or
+    // one carrying a `core` body — and the row's commands are its backticked
+    // lowercase words after the entry's own name, so the parenthesis beside them
+    // (`A00_ROUNDTRIP_PARSE`) is not one. Both directions, each difference named.
+    {
+      const ROW = '| no `@esotericsoftware/spine-core`';
+      const derived = COMMANDS.filter((doc) => doc.runtime === false || doc.runtime.core !== undefined).map((doc) => doc.name);
+      const rowFaults = (doc: string): { faults: string[]; listed: string[] } => {
+        const rows = doc.split('\n').filter((line) => line.startsWith(ROW));
+        if (rows.length !== 1) return { faults: [`RELEASING.md has ${rows.length} row(s) starting \`${ROW}\` where one was required, so there is no single statement to read`], listed: [] };
+        const cell = rows[0].split('|')[2] ?? '';
+        const tokens = [...cell.matchAll(/`([^`]+)`/g)].map((found) => found[1]);
+        if (tokens[0] !== 'cli_core.ts') return { faults: [`the row's second cell names ${JSON.stringify(tokens[0] ?? '(nothing)')} first, and the entry an install runs, cli_core.ts, was required`], listed: [] };
+        const listed = [...new Set(tokens.slice(1).filter((token) => /^[a-z][a-z0-9-]*$/.test(token)))];
+        const faults: string[] = [];
+        for (const name of derived.filter((n) => !listed.includes(n))) faults.push(`\`${name}\` runs on cli_core.ts by the command table and the row does not list it`);
+        for (const name of listed.filter((n) => !derived.includes(n))) {
+          faults.push(COMMANDS.some((doc) => doc.name === name) ? `the row lists \`${name}\`, which the command table marks as needing the runtime with no body on cli_core.ts, so an install refuses it` : `the row lists \`${name}\`, which is not a command`);
+        }
+        return { faults, listed };
+      };
+      const releasing = readFileSync(join(root, 'RELEASING.md'), 'utf8');
+      const live117 = rowFaults(releasing);
+      const probes117 = [...live117.faults];
+      const viaEntry = entryCommands(false).map((doc) => doc.name);
+      if (viaEntry.join(',') !== derived.join(',')) probes117.push(`the rule read here gives [${derived.join(', ')}] and entryCommands(false) gives [${viaEntry.join(', ')}], so this control reads a different set from the one the entry runs`);
+      if (derived.length === 0) probes117.push('the command table derives no command for cli_core.ts, so the row has nothing to be held to');
+      // The plants, derived from the live row and the table rather than typed:
+      // the row's last command dropped, and the first command the table keeps
+      // off the entry (validate, today) added after the entry's name.
+      const row = releasing.split('\n').find((line) => line.startsWith(ROW)) ?? '';
+      const last = live117.listed[live117.listed.length - 1];
+      const outsider = COMMANDS.find((doc) => !derived.includes(doc.name))?.name;
+      const plants117: Array<{ what: string; name: string | undefined; doc: string | null }> = [
+        { what: 'a command dropped from the row', name: last, doc: last === undefined || !row.includes(`, \`${last}\``) ? null : releasing.replace(row, row.replace(`, \`${last}\``, '')) },
+        { what: 'a command added to the row', name: outsider, doc: outsider === undefined ? null : releasing.replace(row, row.replace('`cli_core.ts` — ', `\`cli_core.ts\` — \`${outsider}\`, `)) },
+      ];
+      const plantCases117: string[] = [];
+      for (const plant of plants117) {
+        if (plant.doc === null || plant.name === undefined || plant.doc === releasing) {
+          probes117.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+          continue;
+        }
+        const raised = rowFaults(plant.doc).faults.filter((f) => !live117.faults.includes(f));
+        const named = raised.find((f) => f.includes(`\`${plant.name}\``));
+        if (named === undefined) probes117.push(`"${plant.what}" (\`${plant.name}\`) was planted and raised [${raised.join('; ')}], none naming it`);
+        else plantCases117.push(`${plant.what} -> ${named}`);
+      }
+      const held117 = probes117.length === 0;
+      say(
+        'CUR117_RELEASINGS_ROW_OF_CORE_ENTRY_COMMANDS_IS_THE_SET_THE_COMMAND_TABLE_DERIVES',
+        held117,
+        probeDetail(
+          held117,
+          probes117,
+          `RELEASING.md's row for an install without the runtime lists the ${live117.listed.length} command(s) [${live117.listed.join(', ')}] and the command table derives the same ${derived.length} for cli_core.ts, as entryCommands(false) does; ` +
+            `over ${plantCases117.length} plant(s): ${plantCases117.join('; ')}`,
+        ),
+        'issue #1178: the row listed eight commands while `bun cli_core.ts --help` listed ten — `build` and `repack` had bodies on that entry and the document an installer reads said they were refused',
+      );
+    }
   }
 
   // --- CUR32–CUR34: a filesystem path derived from `URL.pathname` (#558) ----

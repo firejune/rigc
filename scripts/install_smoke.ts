@@ -33,7 +33,8 @@
  * PATCHED COPY of the extracted package — an allowlist entry removed, a module
  * removed, a dependency added back, the skills removed, the `exports` map
  * removed, its deep paths removed, one named entry removed, one observed symbol
- * renamed — and INVERTS the verdict: such a case is green only when the smoke
+ * renamed, the core entry's build made to refuse, one byte of that build's
+ * output moved — and INVERTS the verdict: such a case is green only when the smoke
  * went red at the step it was supposed to, naming what went missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
  *
@@ -782,10 +783,44 @@ type Plant =
   | 'drop-exports'
   | 'drop-deep-exports'
   | 'drop-named-entry'
-  | 'rename-symbol';
+  | 'rename-symbol'
+  | 'refuse-core-build'
+  | 'move-core-byte';
 
-/** The module each plant takes out of the package, and the step whose output has to name it. */
-const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
+/**
+ * The line of the packed `src/cli/core_commands.ts` that registers the core
+ * entry's `build` body (issue #1060), which the two core-build plants replace.
+ *
+ * ⭐ Why a patched line and not a module out of `files`: every module the core
+ * entry reaches is a static import of `cli_core.ts`'s closure — there is no
+ * dynamic `import(` anywhere under `src/` — so a module the build alone needs does not
+ * exist, and removing any module kills `rigc --version` before the build is
+ * reached (that is `drop-core-entry`, and `drop-src-module` on the other
+ * entry). The body is the smallest thing only the core entry's `build` runs:
+ * `cli.ts` registers its own (`cmdBuild`), so the round-tripped build, render
+ * and check are untouched, and `alone` below holds that no other step went red.
+ */
+const CORE_BUILD_LINE = '  build: ({ flags }) => runBuild(flags, MODEL_AND_TEXT_GATE),';
+const CORE_BUILD_MODULE = 'src/cli/core_commands.ts';
+const CORE_BUILD_PLANTS: Record<'refuse-core-build' | 'move-core-byte', string> = {
+  'refuse-core-build': "  build: () => { throw new UsageError('install smoke plant: the core entry\\'s build refuses before it compiles'); },",
+  // After the gate and after the write, so the gate passes and the files land:
+  // one byte appended to the atlas the core entry wrote, which only the
+  // comparison against the round-tripped build can see.
+  'move-core-byte':
+    "  build: ({ flags }) => { runBuild(flags, MODEL_AND_TEXT_GATE); const at = join(flags.out, 'skeleton.atlas'); writeFileSync(at, `${readFileSync(at, 'utf8')}\\n`); },",
+};
+
+/** What the comparison holds equal: every file each entry's build of the fixture writes, by name. */
+const CORE_OUT = 'core-build';
+const FULL_OUT = 'build';
+
+/**
+ * The module each plant takes out of the package, and the step whose output has
+ * to name it. `alone` holds that no OTHER step went red — the plant broke one
+ * thing, and a red anywhere else would be the plant being larger than it says.
+ */
+const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string; alone?: true }> = {
   'drop-plate': {
     names: ['tools/plate.ts'],
     steps: ['fixture', 'build'],
@@ -830,6 +865,18 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
     what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issue #1167), which is the rename that passed every gate this tree had: the module loads, the build runs, and only a dependant reading the old name can tell — so the line has to name the entry and the symbol`,
+  },
+  'refuse-core-build': {
+    names: ['SMOKE_CORE_ENTRY_BUILDS'],
+    steps: ['core-build'],
+    alone: true,
+    what: `the core entry's \`build\` body in \`${CORE_BUILD_MODULE}\` made to refuse (issue #1178) — the build every install runs, which this smoke once recorded as a HOLE when it exited non-zero, and a HOLE does not move the exit code: \`rigc --version\`, the round-tripped build, render and check still work, so the core-build step has to go red alone`,
+  },
+  'move-core-byte': {
+    names: ['SMOKE_ENTRIES_BUILD_THE_SAME_BYTES', 'skeleton.atlas'],
+    steps: ['compare'],
+    alone: true,
+    what: `one byte appended to the \`skeleton.atlas\` the core entry's build wrote, after its gate (issue #1178) — the core build still exits 0 and writes every file, so only the comparison with the round-tripped build of the same fixture can see it, and it has to name the file`,
   },
 };
 
@@ -922,6 +969,14 @@ function tarballFor(
       return { tgz: '', faults, paths: [], evidence: '' };
     }
     writeFileSync(victim, `${text.replace(declared, `function ${RENAME_PLANT.symbol}(`)}\nexport { ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} };\n`);
+  } else if (plant === 'refuse-core-build' || plant === 'move-core-byte') {
+    const victim = join(pkgDir, CORE_BUILD_MODULE);
+    const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';
+    if (text.split(CORE_BUILD_LINE).length !== 2) {
+      faults.push(`SMOKE_PLANT_APPLIED: ${CORE_BUILD_MODULE} carries \`${CORE_BUILD_LINE.trim()}\` ${text.split(CORE_BUILD_LINE).length - 1} time(s) where once was required, so the plant "${plant}" plants nothing`);
+      return { tgz: '', faults, paths: [], evidence: '' };
+    }
+    writeFileSync(victim, text.replace(CORE_BUILD_LINE, CORE_BUILD_PLANTS[plant]));
   } else {
     const victim = join(pkgDir, 'src', 'validate.ts');
     if (!existsSync(victim)) {
@@ -947,10 +1002,11 @@ function tarballFor(
   // whole, and the inverted verdict below would then be reporting that a correct
   // package fails.
   //
-  // ⚠️ Some plants change the path list and three do not, so one clause cannot
-  // serve both: `add-dependency` and the two `exports` plants leave every path
-  // where it was and edit `package.json`, and a clause written only for the
-  // first kind would pass them by construction.
+  // ⚠️ Some plants change the path list and the rest do not, so one clause
+  // cannot serve both: `add-dependency` and the `exports` plants leave every
+  // path where it was and edit `package.json`, the rename and the two core-build
+  // plants edit one shipped module, and a clause written only for the first
+  // kind would pass them by construction.
   const before = new Set(paths);
   const after = tarPaths(second, work);
   const gone = [...before].filter((p) => !after.includes(p));
@@ -983,6 +1039,13 @@ function tarballFor(
       faults.push(`SMOKE_PLANT_APPLIED: the packed ${file} does not export ${RENAME_PLANT.symbol} under the name ${RENAME_PLANT.renamed} alone, so the plant "${plant}" planted nothing`);
     } else {
       evidence = `the packed ${file} exports ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} and no longer under its own name`;
+    }
+  } else if (plant === 'refuse-core-build' || plant === 'move-core-byte') {
+    const shipped = run('tar', ['-xzOf', second, `package/${CORE_BUILD_MODULE}`], work);
+    if (shipped.status !== 0 || shipped.out.includes(CORE_BUILD_LINE) || !shipped.out.includes(CORE_BUILD_PLANTS[plant])) {
+      faults.push(`SMOKE_PLANT_APPLIED: the packed ${CORE_BUILD_MODULE} still registers the core entry's build as the tree does, or not as the plant "${plant}" writes it, so nothing was planted`);
+    } else {
+      evidence = `the packed ${CORE_BUILD_MODULE} registers the core entry's build as \`${CORE_BUILD_PLANTS[plant].trim()}\``;
     }
   } else if (plant === 'drop-exports' || plant === 'drop-deep-exports') {
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
@@ -1051,16 +1114,41 @@ interface CaseResult {
   /** Which named step each fault came from, so a plant can require the red where it planted it. */
   steps: string[];
   notes: string[];
-  /** What the case could not measure and says so by name — never counted as a pass (issue #1061). */
-  holes: string[];
   output: string;
+}
+
+/**
+ * Every file in two build directories, compared by name and then byte for
+ * byte: one line per difference, naming the file, both sizes and the first
+ * byte at which they part. Empty when the two hold the same files with the
+ * same bytes.
+ */
+function sameBuild(core: string, full: string): { differences: string[]; files: Array<{ file: string; bytes: number }> } {
+  const listed = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir).filter((f) => statSync(join(dir, f)).isFile()).sort() : []);
+  const a = listed(core);
+  const b = listed(full);
+  const differences: string[] = [];
+  const files: Array<{ file: string; bytes: number }> = [];
+  for (const file of a.filter((f) => !b.includes(f))) differences.push(`${CORE_OUT}/${file} has no counterpart in ${FULL_OUT}/`);
+  for (const file of b.filter((f) => !a.includes(f))) differences.push(`${FULL_OUT}/${file} has no counterpart in ${CORE_OUT}/`);
+  for (const file of a.filter((f) => b.includes(f))) {
+    const x = readFileSync(join(core, file));
+    const y = readFileSync(join(full, file));
+    if (x.equals(y)) {
+      files.push({ file, bytes: x.length });
+      continue;
+    }
+    let at = 0;
+    while (at < x.length && at < y.length && x[at] === y[at]) at += 1;
+    differences.push(`${file}: ${CORE_OUT}/ holds ${x.length} byte(s) and ${FULL_OUT}/ ${y.length}, first differing at byte ${at}`);
+  }
+  return { differences, files };
 }
 
 function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   const faults: string[] = [];
   const steps: string[] = [];
   const notes: string[] = [];
-  const holes: string[] = [];
   let output = '';
   const fault = (step: string, message: string): void => {
     faults.push(message);
@@ -1069,7 +1157,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 
   const built = tarballFor(work, spec.source, spec.plant);
   for (const f of built.faults) fault('pack', f);
-  if (built.tgz === '') return { name: spec.name, faults, steps, notes, holes, output };
+  if (built.tgz === '') return { name: spec.name, faults, steps, notes, output };
   notes.push(`the tarball carries ${built.paths.length} path(s)`);
   if (built.evidence !== '') notes.push(built.evidence);
 
@@ -1093,7 +1181,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left no node_modules/spine-rigc/package.json under ${home}. ${install.out.trim().slice(0, 4000)}`,
     );
     if (!keep) rmSync(home, { recursive: true, force: true });
-    return { name: spec.name, faults, steps, notes, holes, output };
+    return { name: spec.name, faults, steps, notes, output };
   }
 
   const bin = join(home, 'node_modules', '.bin', 'rigc');
@@ -1168,21 +1256,40 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 
   expectVersion('version', 'cli_core.ts', `entry: cli_core.ts — ${RUNTIME} absent`);
 
-  // The build on the core entry. Until the core entry has a build of its own
-  // (issue #1060) it refuses by name — and a refusal is a HOLE here, never a
-  // pass: the case says what it could not measure and goes on.
-  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', 'core-build', '--profile', 'spine-html', '--pack'], home);
+  // The build on the core entry (issue #1060) — the build every install runs,
+  // since an install has no runtime. It has to exit 0 and write its files, and
+  // anything else is a fault of the case (issue #1178: this branch used to
+  // record a non-zero exit as a HOLE, and a HOLE does not move the exit code,
+  // so a package whose installed `build` was broken printed green).
+  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', CORE_OUT, '--profile', 'spine-html', '--pack'], home);
   output += coreBuild.out;
-  if (coreBuild.status === 0 && existsSync(join(home, 'core-build', 'skeleton.model.json'))) {
-    notes.push(`the build run before the runtime was added wrote core-build/skeleton.model.json, ${coreBuild.out.split('\n').filter((line) => /^\s*PASS\s/.test(line)).length} PASS line(s)`);
-    for (const line of coreBuild.out.split('\n').filter((l) => /^\s*FAIL\s/.test(l))) fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build printed ${line.trim()}`);
-  } else if (coreBuild.status === 0) {
-    fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build exited 0 and wrote no core-build/skeleton.model.json. ${coreBuild.out.trim().slice(0, 2000)}`);
-  } else {
-    holes.push(
-      `SMOKE_CORE_ENTRY_BUILDS: the core entry's build exited ${coreBuild.status} — ${JSON.stringify(coreBuild.out.trim().split('\n')[0].slice(0, 300))} — so a build without spine-core is not measured by this run (the core entry has no build until issue #1060 lands); render and check below run on the full entry's build instead`,
+  const coreDir = join(home, CORE_OUT);
+  const coreWants = ['skeleton.json', 'skeleton.atlas', 'skeleton.model.json', 'skeleton.png'];
+  const coreWrote = coreWants.filter((file) => existsSync(join(coreDir, file)) && statSync(join(coreDir, file)).size > 0);
+  const coreBuilt = coreBuild.status === 0 && coreWrote.length === coreWants.length;
+  if (!coreBuilt) {
+    // The first line it printed on the fault's own line — a plant's report and
+    // a log reader see that much — and the next eleven under it.
+    const printed = coreBuild.out.trim().split('\n').slice(0, 12);
+    fault(
+      'core-build',
+      `SMOKE_CORE_ENTRY_BUILDS: \`rigc build\` on the core entry exited ${coreBuild.status} and wrote ${coreWrote.length === 0 ? 'nothing' : coreWrote.join(', ')} under ${CORE_OUT}/, printing: ${printed[0] ?? '(nothing)'}` +
+        `${printed.slice(1).map((line) => `\n          ${line}`).join('')}\n          exit 0 and ${coreWants.join(', ')} were required`,
     );
+  } else {
+    notes.push(`the core entry's build wrote ${coreWrote.length} file(s) under ${CORE_OUT}/, ${coreBuild.out.split('\n').filter((line) => /^\s*PASS\s/.test(line)).length} PASS line(s)`);
+    // The same rules the round-tripped build is held to below, but the parse:
+    // this entry links no spine-core, so A00 has to come back as a SKIP — a
+    // PASS would be a parse that did not happen.
+    for (const [name, why] of REQUIRED_ASSERTIONS) {
+      if (name === 'A00_ROUNDTRIP_PARSE') {
+        if (!new RegExp(`^\\s*SKIP\\s+${name}\\b`, 'm').test(coreBuild.out)) fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build printed no SKIP for ${name}, and this entry links none of the runtime that rule is the parse of`);
+      } else if (!coreBuild.out.includes(name)) {
+        fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build never printed ${name}, which this fixture reaches through ${why}`);
+      }
+    }
   }
+  for (const line of coreBuild.out.split('\n').filter((l) => /^\s*FAIL\s/.test(l))) fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build printed ${line.trim()}`);
 
   // 🔒 Phase two: the runtime installed beside the package, by the version the
   // package declares — and the SAME `rigc` now runs cli.ts and the round trip.
@@ -1210,11 +1317,30 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // real page PNG and validates the packed atlas as well as the loose one, and
   // `--profile spine-html` runs every rule the package has rather than the
   // twenty-seven the default profile keeps.
-  const outDir = join(home, 'build');
-  const build = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', 'build', '--profile', 'spine-html', '--pack'], home);
+  const outDir = join(home, FULL_OUT);
+  const build = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', FULL_OUT, '--profile', 'spine-html', '--pack'], home);
   output += build.out;
   if (build.status !== 0) {
     fault('build', `SMOKE_BUILD_EXIT_0: \`node_modules/.bin/rigc build\` exited ${build.status}. ${build.out.trim().slice(0, 6000)}`);
+  }
+
+  // 🔒 The two entries' builds of the same fixture, from the install (issue
+  // #1178): the core entry's promise is "the same flags, the same files, byte
+  // for byte; only the gate differs", and `RC29` holds it in a clone. Here it
+  // is held on what an install runs. The two `--out` directories are siblings
+  // under one install, so a relative path written into either is spelled the
+  // same — and the comparison is every file each wrote, not a list kept here.
+  // Skipped only when one side already went red for writing nothing, which
+  // that side's own fault names; a difference would only restate it.
+  if (coreBuilt && build.status === 0) {
+    const compared = sameBuild(coreDir, outDir);
+    for (const difference of compared.differences) {
+      fault('compare', `SMOKE_ENTRIES_BUILD_THE_SAME_BYTES: the core entry's build and the round-tripped build of the same fixture differ — ${difference}`);
+    }
+    if (compared.differences.length === 0) {
+      if (compared.files.length === 0) fault('compare', `SMOKE_ENTRIES_BUILD_THE_SAME_BYTES: ${CORE_OUT}/ and ${FULL_OUT}/ hold no file to compare`);
+      else notes.push(`${CORE_OUT}/ and ${FULL_OUT}/ hold the same ${compared.files.length} file(s), byte for byte (${compared.files.map((f) => `${f.file} ${f.bytes}`).join(', ')})`);
+    }
   }
 
   const failLines = build.out.split('\n').filter((line) => /^\s*FAIL\s/.test(line));
@@ -1307,11 +1433,16 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     notes.push(`exports: ${exportsCounts}`);
   }
 
-  // 🔒 Phase three: the runtime taken away again, and the build the full entry
-  // wrote rendered and checked by the core entry — the two commands an install
-  // without spine-core is for. `check` is held against the frames `render` just
+  // 🔒 Phase three: the runtime taken away again, and the build rendered and
+  // checked by the core entry. `check` is held against the frames `render` just
   // wrote, so it measures that the core entry reads the build and the frames,
   // not how the rig looks.
+  //
+  // ⚖️ It reads `build/`, the round-tripped build, and not `core-build/`: the
+  // comparison above holds the two to the same bytes, so the input is the same
+  // either way, and reading the full entry's keeps a broken core build from
+  // also reddening render and check — the `refuse-core-build` plant goes red at
+  // one step, which is what shows render and check are untouched by it.
   rmSync(runtimeDir, { recursive: true, force: true });
   if (!existsSync(runtimeDir)) {
     expectVersion('version', 'cli_core.ts', `entry: cli_core.ts — ${RUNTIME} absent`);
@@ -1401,7 +1532,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   }
 
   if (!keep) rmSync(home, { recursive: true, force: true });
-  return { name: spec.name, faults, steps, notes, holes, output };
+  return { name: spec.name, faults, steps, notes, output };
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,7 +1561,7 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry; with spine-core installed beside it the same rigc builds through the round trip, resolves every \`exports\` entry and every shipped path and reads every observed symbol through its entry; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path and reads every observed symbol through its entry; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
@@ -1441,6 +1572,8 @@ cases:
   drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
   drop-named-entry   ${DROPPED_ENTRY} out of \`exports\` — importing spine-rigc${DROPPED_ENTRY.slice(1)} has to go RED naming it
   rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through spine-rigc${RENAME_PLANT.entry.slice(1)} has to go RED naming both
+  refuse-core-build  the core entry's build body made to refuse — the core-build step, and only it, has to go RED naming SMOKE_CORE_ENTRY_BUILDS
+  move-core-byte     one byte appended to the atlas the core entry's build wrote — the comparison, and only it, has to go RED naming the file
 
 A plant case is green when the smoke failed the way the plant says it must, and
 red when the smoke passed anyway. Nothing is written inside the repository.
@@ -1544,6 +1677,8 @@ function main(): number {
     { name: 'drop-deep-exports', source, installer, plant: 'drop-deep-exports', dirName: 'planted-deep-exports' },
     { name: 'drop-named-entry', source, installer, plant: 'drop-named-entry', dirName: 'planted-named-entry' },
     { name: 'rename-symbol', source, installer, plant: 'rename-symbol', dirName: 'planted-rename' },
+    { name: 'refuse-core-build', source, installer, plant: 'refuse-core-build', dirName: 'planted-core-build' },
+    { name: 'move-core-byte', source, installer, plant: 'move-core-byte', dirName: 'planted-core-byte' },
   ];
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {
@@ -1553,7 +1688,6 @@ function main(): number {
 
   let bad = 0;
   let ran = 0;
-  let holes = 0;
   for (const spec of chosen) {
     const work = mkdtempSync(join(tmpdir(), 'rigc-smoke-'));
     try {
@@ -1563,8 +1697,6 @@ function main(): number {
       if (planted === null) {
         if (result.faults.length === 0) {
           console.log(`  PASS  SMOKE_CASE[${spec.name}]  ${result.notes.join('; ')}`);
-          for (const hole of result.holes) console.log(`  HOLE  ${hole}`);
-          holes += result.holes.length;
         } else {
           bad += 1;
           console.log(`  FAIL  SMOKE_CASE[${spec.name}]`);
@@ -1577,6 +1709,10 @@ function main(): number {
         if (result.faults.length === 0) missed.push('the smoke passed on a package the plant broke');
         for (const step of planted.steps) {
           if (!result.steps.includes(step)) missed.push(`no fault came from the ${step} step, where this plant has to bite`);
+        }
+        if (planted.alone === true) {
+          const elsewhere = [...new Set(result.steps.filter((step) => !planted.steps.includes(step)))];
+          if (elsewhere.length > 0) missed.push(`the ${elsewhere.join(', ')} step(s) went red as well, and this plant breaks only ${planted.steps.join(', ')}: ${result.faults.find((_, i) => elsewhere.includes(result.steps[i]))?.split('\n')[0].slice(0, 300) ?? ''}`);
         }
         const said = `${result.faults.join('\n')}\n${result.output}`;
         for (const name of planted.names) {
@@ -1604,8 +1740,7 @@ function main(): number {
     console.log('  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  const holeNote = holes === 0 ? '' : ` — and ${holes} HOLE(s) above, each a thing this run did not measure rather than a pass`;
-  console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)${holeNote}` : `rigc install smoke: ${bad} of ${ran} case(s) failed${holeNote}`);
+  console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)` : `rigc install smoke: ${bad} of ${ran} case(s) failed`);
   if (bad === 0) return EXIT_GREEN;
   // 🚨 The second of the two outcomes, said out loud. Reaching here on a
   // registry source means the wait above ENDED — the registry handed over this
