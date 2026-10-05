@@ -50,6 +50,30 @@ on one suite, `bun selftest.ts --only <suite>[,<suite>…]` runs just those and
 exits 2 naming every suite it skipped — it is never a verdict, so run the whole
 `bun run selftest` before you open a pull request.
 
+The harness takes exactly these arguments, and `bun selftest.ts --help` prints
+them. Any other — an unknown flag, a near miss of a real one, `--jobs=2`, a
+stray word, a flag given twice — is refused by name with this list on stderr,
+exit 2, before the run sweeps or makes anything, so a typo never turns into a
+full run. A near miss names the flag when exactly one is one edit away.
+
+<!-- selftest.ts flagTableText(): TY45 holds this block to `bun selftest.ts --help` -->
+```text
+  --only <suite>[,<suite>…]        a PARTIAL run of the named suites: exits 2 when green, never a verdict
+  --cuts <cuts.json>               adds a suite that compiles and gates every cut in that table (or RIGC_CUTS=<cuts.json>)
+  --shard <i>/<n>                  runs the suites dealt to shard i of n: exits 2 when green, never a verdict (or RIGC_SHARD=<i>/<n>)
+  --tally-out <file>               with --shard: where the shard writes the tally document --merge reads (or RIGC_TALLY_OUT=<file>)
+  --merge <file>…                  every shard's tally document merged: the verdict
+  --shards-base [<file>]           with --merge: a green merge writes the durations base, to <file> or over the tracked one
+  --memory-base                    a green one-process full run writes its platform's memory base
+  --memory-base-children [<file>]  with --merge: a green merge writes the children's half of the memory base
+  --reset-children-base            lets a writer of the children's figure lower it, or replace one read at another --jobs
+  --jobs <n>                       how many of a suite's independent units run at once; the machine's cores by default (or RIGC_JOBS=<n>)
+  --keep-temp                      keeps this process's temp root and names it on stderr (or RIGC_KEEP_TEMP=1)
+  --help                           prints this table on stdout and exits 0, before anything is made or swept
+  -h                               the same as --help
+  --unit <spec.json> <out.json>    this process is one unit a suite handed out; runs no suite (passed by a run to a process it starts)
+```
+
 The whole run can also be cut into shards and merged, which is how CI runs it:
 `bun selftest.ts --shard <i>/<n> --tally-out <file>` runs the suites dealt to
 shard `i` and writes what it ran, exiting 2 when green like `--only`. The deal
