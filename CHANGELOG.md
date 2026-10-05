@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.13.0](https://github.com/firejune/rigc/compare/v2.12.0...v2.13.0) (2026-10-05)
+
+
+### Features
+
+* **selftest:** each suite's children are held under that suite's own figure × 1.5, which no run moves — a figure is added once or moved by --reset-children-base — so the hand-committed ratchet goes and TY40 names core at +56 %, packer at +53 % ([#1187](https://github.com/firejune/rigc/issues/1187)) ([b9cd02e](https://github.com/firejune/rigc/commit/b9cd02eb27bd6ba60955fe563fd1026f6e0db29f)), closes [#1166](https://github.com/firejune/rigc/issues/1166)
+
+
+### Bug Fixes
+
+* **authoring:** the core entry's two parse rules, A00_MODEL_READ and A00_MODEL_REGIONS_ON_PAGES, get their §5.2 rows; CUR118 holds every code either entry's build prints to one row, and each count sentence says why that report totals 53 ([#1188](https://github.com/firejune/rigc/issues/1188)) ([223f285](https://github.com/firejune/rigc/commit/223f2853000404d019aaa378af916e7adcb18f2f)), closes [#1183](https://github.com/firejune/rigc/issues/1183)
+* **selftest:** an argument no reader claims is refused by name, exit 2, before the sweep or the temp root — one HARNESS_FLAGS table the readers answer to, --help prints it and exits 0, TY45 holds it and CONTRIBUTING lists it ([#1182](https://github.com/firejune/rigc/issues/1182)) ([2580b20](https://github.com/firejune/rigc/commit/2580b206dc74483e655de89b58a0419d7c9538fc)), closes [#1174](https://github.com/firejune/rigc/issues/1174)
+* **smoke:** a core-entry build that fails is SMOKE_CORE_ENTRY_BUILDS rather than a HOLE, held byte for byte to the round-tripped build, with two plants; CUR117 holds RELEASING's core-entry row to the command table ([#1181](https://github.com/firejune/rigc/issues/1181)) ([f657d83](https://github.com/firejune/rigc/commit/f657d83938eaec586524c5018e43baf170d0b591)), closes [#1178](https://github.com/firejune/rigc/issues/1178)
+
 ## [2.12.0](https://github.com/firejune/rigc/compare/v2.11.1...v2.12.0) (2026-10-05)
 
 
