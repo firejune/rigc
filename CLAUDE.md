@@ -62,7 +62,11 @@ sincere about it. rigc exists to convert that silence into a named failure.
   runs are held to the round trip's verdict lines by `verdict_gate`, the 8
   restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A18) by
   `RC28`, and `A00_ROUNDTRIP_PARSE` — the parse by the official runtime — does
-  not run on the core build and is reported as a SKIP that says so. `core_gate`
+  not run on the core build and is reported as a SKIP that says so — in its
+  place the model side runs its own two parse rules, `A00_MODEL_READ` and
+  `A00_MODEL_REGIONS_ON_PAGES`, outside the registry and held by `verdict_gate`
+  to accept and refuse what A00 does, so that report counts 44 rules on the model side
+  and totals 53 on the core entry, each with a row in AUTHORING §5.2. `core_gate`
   holds rigc's poser to spine-core's poses at tolerance 0. CI runs all of that
   on every change over the public recipes and every selftest call; the 14
   production rigs are measured by hand with private recipes CI does not have,
