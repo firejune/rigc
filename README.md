@@ -63,8 +63,13 @@ it cuts both ways:
   selftest call, and on a private corpus of production rigs measured before each
   release. Of the 51 assertions, 50 run on both; `A00_ROUNDTRIP_PARSE`, the official
   parser's own parse, runs only where the runtime is installed and is reported as a
-  SKIP elsewhere. Install it beside rigc (`bun add -d @esotericsoftware/spine-core`)
-  and the same `rigc` runs the round trip on every build. The
+  SKIP elsewhere. There, in the parse's place, the report also carries the model
+  side's own two parse rules, `A00_MODEL_READ` and `A00_MODEL_REGIONS_ON_PAGES`,
+  which no round-trip rule matches and the registry does not hold — so its summary
+  totals 53 on the core entry, and its last line counts 44 rules on the model side
+  ([AUTHORING §5.2](docs/AUTHORING.md) has a row for each). Install it beside rigc
+  (`bun add -d @esotericsoftware/spine-core`) and the same `rigc` runs the round
+  trip on every build. The
   [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license)
   applies to that dependency wherever it is installed.
 

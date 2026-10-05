@@ -49,7 +49,10 @@ through `@esotericsoftware/spine-core`: install it beside the package
 (`bun add -d @esotericsoftware/spine-core`) and the same `rigc` runs them, and
 `build` runs the round trip as well. Without it they are refused by name, and
 `build` writes the same files gated without the parse — `rigc --version` names the
-entry that ran.
+entry that ran. In the parse's place that `build` runs two rules of its own over
+rigc's model document, `A00_MODEL_READ` and `A00_MODEL_REGIONS_ON_PAGES`; they are
+not registry assertions, so its summary counts two more, and AUTHORING §5.2 has a
+row for each.
 
 ## The loop
 

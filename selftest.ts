@@ -578,9 +578,10 @@ import {
   type ValidateProfile,
   type ValidateReport,
 } from './src/validate.ts';
-import { MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
+import { MODEL_SIDE_CODES, MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
 import { SKIP_NO_STAGE_BOX } from './src/assertions/facts/stage_box.ts';
-import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from './src/assertions/model/parse.ts';
+import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND } from './src/assertions/model/parse.ts';
+import { ASSERTION_KIND } from './src/assertions/kinds.ts';
 import { fileOrderedEntries, modelSkinEntries } from './src/assertions/model/skin_entries.ts';
 import { modelMeshFacts } from './src/assertions/model/mesh_attachments.ts';
 import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
@@ -59089,6 +59090,14 @@ interface SkillClaimTruth {
   /** `A39`, from the registry's own names. */
   codes: Set<string>;
   names: Set<string>;
+  /**
+   * Every code a build report prints, on either entry: the registry's names and
+   * the model side's own (issue #1183 — `A00_MODEL_READ` and
+   * `A00_MODEL_REGIONS_ON_PAGES` are printed by `cli_core.ts build` and are not
+   * in the registry). A reference is checked against this; `names` stays the
+   * registry, which is what the messages count.
+   */
+  printed: Set<string>;
   /** Page (`FACE`) to the section numbers its headings carry. */
   sections: Map<string, Set<string>>;
   /** What `rigc` offers, read off its own usage. */
@@ -59115,6 +59124,7 @@ function skillClaimTruth(root: string): SkillClaimTruth {
   return {
     codes: new Set(ASSERTION_NAMES.map((name) => name.slice(0, 3))),
     names: new Set(ASSERTION_NAMES),
+    printed: new Set([...ASSERTION_NAMES, ...MODEL_SIDE_CODES]),
     sections,
     commands: new Set([...usage.matchAll(/^ {2}rigc ([a-z][a-z-]*) /gm)].map((m) => m[1])),
   };
@@ -59143,7 +59153,7 @@ function readSkillClaims(
   const pages = [...truth.sections.keys()].sort((a, b) => b.length - a.length);
   const pageRe = pages.length === 0 ? null : new RegExp(`\\b(${pages.join('|')})\\b`, 'g');
   const assertionRe = /\bA\d{2}(?:_[A-Z\d_]+)?\b/g;
-  const known = (token: string): boolean => (token.includes('_') ? truth.names.has(token) : truth.codes.has(token));
+  const known = (token: string): boolean => (token.includes('_') ? truth.printed.has(token) : truth.codes.has(token));
 
   for (const file of files) {
     const raw = file.text.split('\n');
@@ -59156,7 +59166,7 @@ function readSkillClaims(
         faults.push({
           kind: 'assertion',
           where: `${file.path}:${i + 1}`,
-          what: `names ${found[0]}, and the assertion registry holds ${String(truth.names.size)} rules with no such name`,
+          what: `names ${found[0]}, and the assertion registry holds ${String(truth.names.size)} rules with no such name, nor is it one of the model side's own codes`,
         });
       }
       // A command is read where a reader would copy it: an inline code span, or a
@@ -60214,6 +60224,23 @@ interface CurrencyTruth {
   archetypeNames: string[];
   /** How many assertions the live report actually reached — the floor for the two above. */
   reached: number;
+  /**
+   * The core entry's report over the same fixture (issue #1183), counted off the
+   * two halves `cli_core.ts build` prints — the model side's report and the
+   * emitted text's — the way its own summary counts them: every code with a row.
+   */
+  core: {
+    /** The summary's `<N>`: every code either half printed a row for. */
+    total: number;
+    /** The rules the model side ran — its last line's first figure. */
+    modelSide: number;
+    /** The registry's assertions among them (`MOVED_ASSERTIONS`). */
+    moved: number;
+    /** The round trip's rules restated over the emitted text and run there — the A00 SKIP left out, as the last line leaves it out. */
+    restated: number;
+    /** Every code the core report printed, sorted. */
+    codes: string[];
+  };
   /** `docs/GATE.md`'s own header, e.g. `v2.4`. */
   gateVersion: string | null;
   /** kind → the gallery examples whose motion spec declares it. */
@@ -60249,6 +60276,15 @@ function currencyTruth(root: string): CurrencyTruth {
     ...report.failures.map((f) => f.assertion),
     ...report.profileSkipped.map((p) => p.assertion),
   ]);
+  // The core entry's two halves over the same build, as `MODEL_AND_TEXT_GATE` runs them.
+  const coreModelText = modelDocument(built.model, built.skeletonText, built.atlasText);
+  const codesOf = (r: { passed: string[]; failures: Array<{ assertion: string }>; skipped: Array<{ assertion: string }>; profileSkipped: Array<{ assertion: string }> }): Set<string> =>
+    new Set([...r.passed, ...r.failures.map((f) => f.assertion), ...r.skipped.map((s) => s.assertion), ...r.profileSkipped.map((p) => p.assertion)]);
+  const coreModel = codesOf(validateModel({ modelText: coreModelText, atlasDir: fixture.outDir, profile: 'spine' }));
+  const coreText = validateEmittedText({ skeletonText: built.skeletonText, atlasText: built.atlasText, modelText: coreModelText, reEmit: gateTextsOf(built), profile: 'spine' });
+  const coreTextCodes = codesOf(coreText);
+  const notRunHere = coreText.skipped.filter((s) => s.assertion === 'A00_ROUNDTRIP_PARSE').length;
+  const coreCodes = [...new Set([...coreModel, ...coreTextCodes])].sort();
   const gate = /^Current version: \*\*gate (v\d+(?:\.\d+)*)\*\*/m.exec(
     existsSync(join(root, 'docs/GATE.md')) ? readFileSync(join(root, 'docs/GATE.md'), 'utf8') : '',
   );
@@ -60292,6 +60328,13 @@ function currencyTruth(root: string): CurrencyTruth {
     rendererNames: report.profileSkipped.filter((p) => p.kind === 'renderer').map((p) => p.assertion).sort(),
     archetypeNames: report.profileSkipped.filter((p) => p.kind === 'archetype').map((p) => p.assertion).sort(),
     reached: reached.size,
+    core: {
+      total: coreCodes.length,
+      modelSide: coreModel.size,
+      moved: [...coreModel].filter((code) => ASSERTION_NAMES.includes(code)).length,
+      restated: coreTextCodes.size - notRunHere,
+      codes: coreCodes,
+    },
     gateVersion: gate === null ? null : gate[1],
     galleryKinds,
   };
@@ -60380,6 +60423,30 @@ function currencyTallies(truth: CurrencyTruth): CurrencyTally[] {
       quantity: 'the `spine` profile',
       truth: truth.spine,
       forms: [{ re: () => new RegExp(`${CURRENCY_NUMBER}\\s+validity\\s+(?:rules?|assertions?)`, 'gi') }],
+    },
+    // Issue #1183: what a core-entry report counts, which is not the registry —
+    // the model side's own two parse rules are rows there. Each is read off the
+    // live core report over the same fixture, never typed, and each form is the
+    // phrase the documents state it in, on one line.
+    {
+      quantity: "the core entry's report",
+      truth: truth.core.total,
+      forms: [{ re: () => new RegExp(`${CURRENCY_DIGITS}\\s+on\\s+the\\s+core\\s+entry\\b`, 'gi') }],
+    },
+    {
+      quantity: "the core entry's model side",
+      truth: truth.core.modelSide,
+      forms: [{ re: () => new RegExp(`${CURRENCY_DIGITS}\\s+rules?\\s+on\\s+the\\s+model\\s+side\\b`, 'gi') }],
+    },
+    {
+      quantity: "the registry's assertions the model side runs",
+      truth: truth.core.moved,
+      forms: [{ re: () => new RegExp(`\\bthe\\s+${CURRENCY_DIGITS}\\s+(?:registry\\s+assertions\\s+)?the\\s+model\\s+side\\s+runs\\b`, 'gi') }],
+    },
+    {
+      quantity: 'the rules restated over the emitted text',
+      truth: truth.core.restated,
+      forms: [{ re: () => new RegExp(`\\bthe\\s+${CURRENCY_DIGITS}\\s+restated\\s+over\\s+the\\s+emitted\\s+text\\b`, 'gi') }],
     },
     {
       quantity: 'renderer policy',
@@ -60753,12 +60820,15 @@ function scanWorkedCases(doc: CurrencyDoc, truth: CurrencyTruth, root: string): 
  */
 function scanNamedThings(doc: CurrencyDoc, shipsToo: (path: string) => boolean): CurrencyScan {
   const scan = emptyScan();
-  const known = new Set(ASSERTION_NAMES);
+  // Issue #1183: a name is held to what a build report prints on either entry —
+  // the registry, and the model side's own two parse rules `cli_core.ts build`
+  // prints beside it — so the guide can give those two their rows.
+  const known = new Set([...ASSERTION_NAMES, ...MODEL_SIDE_CODES]);
   doc.raw.forEach((line, i) => {
     for (const found of line.matchAll(/\bA\d{2}_[A-Z\d_]+/g)) {
       scan.sites.set('assertion name', (scan.sites.get('assertion name') ?? 0) + 1);
       if (!known.has(found[0])) {
-        scan.faults.push(`${doc.path}:${i + 1}  names ${found[0]}, which the registry does not have`);
+        scan.faults.push(`${doc.path}:${i + 1}  names ${found[0]}, which the registry does not have and no build report prints`);
       }
     }
     for (const found of line.matchAll(/node_modules\/spine-rigc\/([A-Za-z\d_./-]*)/g)) {
@@ -60873,6 +60943,20 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
     clean:
       '| `kind` | Parameters | Worked case |\n| --- | --- | --- |\n' +
       '| `pitch` | the same | `gallery/nod` |\n| `wave` | `amplitude`, `wavelength`, `phase` | `gallery/nod` |\n',
+  },
+  // Issue #1183's two figures, stale as a reader of the registry would write
+  // them and clean as the core report prints them. Not a hunk of a repair, as
+  // the rows above are — these sentences are new — so the figures are derived
+  // from the same lists the truth is: a registry that grows moves both spellings.
+  {
+    row: "README: the core entry's summary total (#1183)",
+    stale: `  SKIP elsewhere — so its summary totals ${ASSERTION_NAMES.length} on the core entry.\n`,
+    clean: `  SKIP elsewhere — so its summary totals ${new Set([...MODEL_SIDE_CODES, ...roundTripOnlyCodes()]).size} on the core entry.\n`,
+  },
+  {
+    row: "README: the core entry's model-side count (#1183)",
+    stale: `  and its last line counts ${MOVED_ASSERTIONS.length} rules on the model side.\n`,
+    clean: `  and its last line counts ${MODEL_SIDE_CODES.length} rules on the model side.\n`,
   },
 ];
 
@@ -61226,6 +61310,13 @@ function runCurrencySuite(): number {
       ? []
       : ['no document one hop off README was reached, so the landing tier read nothing']),
     ...(truth.total > 0 ? [] : ['the assertion registry answered 0 assertions, so every tally below compares against nothing']),
+    // Issue #1183: the core report's figures are read off a live run, and that run is held to the lists it derives from.
+    ...(truth.core.modelSide === MODEL_SIDE_CODES.length && truth.core.total === new Set([...MODEL_SIDE_CODES, ...roundTripOnlyCodes()]).size
+      ? []
+      : [
+          `the live core report printed ${truth.core.modelSide} code(s) on the model side and ${truth.core.total} in all, where MODEL_SIDE_CODES holds ` +
+            `${MODEL_SIDE_CODES.length} and the round trip's own rules ${roundTripOnlyCodes().length} more — the report reached something other than the lists`,
+        ]),
     ...(truth.spine > 0 ? [] : ['the `spine` profile answered 0 assertions']),
     ...(truth.excluded === truth.rendererNames.length + truth.archetypeNames.length
       ? []
@@ -61332,7 +61423,8 @@ function runCurrencySuite(): number {
     'CUR05_AN_ASSERTION_AND_AN_INSTALLED_PATH_A_DOC_NAMES_BOTH_EXIST',
     namedFaults.length === 0,
     namedFaults.length === 0
-      ? `${sitesOf('assertion name')} A??_NAME mention(s) all in the registry of ${truth.total}, and ` +
+      ? `${sitesOf('assertion name')} A??_NAME mention(s) all in the registry of ${truth.total} or among the model side's own ` +
+        `${MODEL_SIDE_CODES.length - MOVED_ASSERTIONS.length} parse rule(s) a core-entry report prints, and ` +
         `${sitesOf('installed path')} node_modules/spine-rigc/ path(s) all in \`files\``
       : `${namedFaults.length} name(s) that resolve to nothing:\n          ${namedFaults.join('\n          ')}`,
     'the cheap half of the same rule, and exhaustive rather than sampled: a renamed assertion leaves every doc ' +
@@ -63860,6 +63952,116 @@ function runCurrencySuite(): number {
             `over ${plantCases117.length} plant(s): ${plantCases117.join('; ')}`,
         ),
         'issue #1178: the row listed eight commands while `bun cli_core.ts --help` listed ten — `build` and `repack` had bodies on that entry and the document an installer reads said they were refused',
+      );
+    }
+
+    // CUR118 — every code a build report prints, on either entry, has exactly one
+    // row in docs/AUTHORING.md §5.2, and every row there is a code one of them
+    // prints (issue #1183). At v2.12.0 the core entry's build printed
+    // `A00_MODEL_READ` and `A00_MODEL_REGIONS_ON_PAGES` — the model side's own
+    // parse rules, outside the registry — and the guide that maps each named
+    // failure to the file to change had no row for either, because nothing held
+    // the table to anything: not to the registry, and not to the model side.
+    // What each entry prints is read, not listed: `cli.ts build`'s report is
+    // `validate()`'s, whose rows partition the registry (`S09`, and CUR01's
+    // `reached`); `cli_core.ts build`'s is the live core report `currencyTruth`
+    // ran, held there to MODEL_SIDE_CODES and the round trip's own codes. The
+    // profile column is held too, derived from the code's kind the way the
+    // harness excludes it: validity runs under both, the other two are named.
+    {
+      const GUIDE118 = 'docs/AUTHORING.md';
+      const guide118 = readFileSync(join(root, GUIDE118), 'utf8');
+      const kindOf118: Readonly<Record<string, string>> = { ...ASSERTION_KIND, ...MODEL_PARSE_KIND };
+      const columnOf118 = (kind: string | undefined): string | null => (kind === undefined ? null : kind === 'validity' ? 'both' : kind);
+      const entries118: ReadonlyArray<readonly [string, readonly string[]]> = [
+        ['cli.ts build', [...ASSERTION_NAMES]],
+        ['cli_core.ts build', truth.core.codes],
+      ];
+      /** §5.2's table rows whose first cell is one code: the code, its profile cell, and the line. */
+      const rowsOf118 = (text: string): Array<{ code: string; profile: string; line: number }> => {
+        const lines = text.split('\n');
+        const start = lines.findIndex((line) => line.startsWith('### 5.2 '));
+        if (start < 0) return [];
+        const after = lines.findIndex((line, k) => k > start && /^#{1,3} /.test(line));
+        const out: Array<{ code: string; profile: string; line: number }> = [];
+        for (let k = start + 1; k < (after < 0 ? lines.length : after); k++) {
+          const row = /^\| `([A-Z]\d\d_[A-Z\d_]+)` \| ([^|]*?) \|/.exec(lines[k]);
+          if (row !== null) out.push({ code: row[1], profile: row[2].replace('◑', '').trim(), line: k + 1 });
+        }
+        return out;
+      };
+      const faults118 = (text: string, printed: ReadonlyArray<readonly [string, readonly string[]]>): string[] => {
+        const rows = rowsOf118(text);
+        const codes = [...new Set(printed.flatMap(([, list]) => list))].sort();
+        const faults: string[] = [];
+        for (const code of codes) {
+          const mine = rows.filter((row) => row.code === code);
+          const by = printed.filter(([, list]) => list.includes(code)).map(([entry]) => entry).join(' and ');
+          if (mine.length === 0) faults.push(`\`${code}\` is printed by ${by} and ${GUIDE118} §5.2 has no row for it`);
+          else if (mine.length > 1) faults.push(`\`${code}\` is printed by ${by} and ${GUIDE118} §5.2 has ${mine.length} rows for it (lines ${mine.map((row) => row.line).join(', ')})`);
+        }
+        for (const row of rows) {
+          if (!codes.includes(row.code)) {
+            faults.push(`${GUIDE118}:${row.line} is a §5.2 row for \`${row.code}\`, which neither entry's build report prints`);
+            continue;
+          }
+          const want = columnOf118(kindOf118[row.code]);
+          if (want === null) faults.push(`${GUIDE118}:${row.line} \`${row.code}\` has no kind in ASSERTION_KIND or MODEL_PARSE_KIND, so its profile column cannot be derived`);
+          else if (row.profile !== want) faults.push(`${GUIDE118}:${row.line} files \`${row.code}\` under "${row.profile}", and its kind (${kindOf118[row.code]}) runs it under "${want}"`);
+        }
+        return faults;
+      };
+      const live118 = faults118(guide118, entries118);
+      const rows118 = rowsOf118(guide118);
+      const printed118 = [...new Set(entries118.flatMap(([, list]) => list))];
+      const probes118 = [
+        ...live118,
+        ...floorProbes(
+          [
+            [rows118.length, printed118.length, `${rows118.length} §5.2 row(s) read against ${printed118.length} printed code(s)`],
+            [truth.core.codes.filter((code) => !ASSERTION_NAMES.includes(code)).length, 1, 'the core report printed no code outside the registry'],
+          ],
+          'so the table was not read the way this control reads it, or the core report was not the one it describes',
+        ),
+      ];
+      // The plants, derived rather than typed: a code joining the model side's
+      // list with no row, and a copy of the first row filed under a code neither
+      // entry prints.
+      const PLANTED_CODE = `${MODEL_SIDE_CODES[0]}_PLANTED_BY_CUR118`;
+      const firstRow = guide118.split('\n').find((line, k) => rows118.length > 0 && k + 1 === rows118[0].line) ?? '';
+      const PLANTED_ROW = `${rows118[0]?.code ?? 'A00'}_ROW_PLANTED_BY_CUR118`;
+      const plants118: Array<{ what: string; name: string; faults: string[] | null }> = [
+        { what: 'a code added to the model side with no row', name: PLANTED_CODE, faults: faults118(guide118, [entries118[0], ['cli_core.ts build', [...entries118[1][1], PLANTED_CODE]]]) },
+        {
+          what: 'a row for a code neither entry prints',
+          name: PLANTED_ROW,
+          faults: firstRow === '' ? null : faults118(guide118.replace(firstRow, () => `${firstRow}\n${firstRow.replace(`\`${rows118[0].code}\``, () => `\`${PLANTED_ROW}\``)}`), entries118),
+        },
+      ];
+      const plantCases118: string[] = [];
+      for (const plant of plants118) {
+        if (plant.faults === null) {
+          probes118.push(`"${plant.what}": the guide had no row to copy, so this plant was never made`);
+          continue;
+        }
+        const raised = plant.faults.filter((f) => !live118.includes(f));
+        const named = raised.find((f) => f.includes(`\`${plant.name}\``));
+        if (raised.length !== 1 || named === undefined) probes118.push(`"${plant.what}" (\`${plant.name}\`) raised [${raised.join('; ')}], where one fault naming it was required`);
+        else plantCases118.push(`${plant.what} -> ${named}`);
+      }
+      const held118 = probes118.length === 0;
+      say(
+        'CUR118_EVERY_CODE_EITHER_ENTRYS_BUILD_REPORT_PRINTS_HAS_EXACTLY_ONE_GUIDE_ROW_AND_EVERY_ROW_IS_ONE',
+        held118,
+        probeDetail(
+          held118,
+          probes118,
+          `${GUIDE118} §5.2 has ${rows118.length} row(s), one for each of the ${printed118.length} code(s) a build report prints — the ${ASSERTION_NAMES.length} of cli.ts build's ` +
+            `and the ${truth.core.codes.length} of cli_core.ts build's, ${truth.core.codes.filter((code) => !ASSERTION_NAMES.includes(code)).length} of them outside the registry ` +
+            `[${truth.core.codes.filter((code) => !ASSERTION_NAMES.includes(code)).join(', ')}] — each filed under the profile its kind runs it in; ` +
+            `over ${plantCases118.length} plant(s): ${plantCases118.join('; ')}`,
+        ),
+        'issue #1183: the core entry printed two rules no shipped document named, so an agent meeting either as a FAIL on an install had no row to read — and the guide is the only map from a named failure to the file that has to change',
       );
     }
   }
