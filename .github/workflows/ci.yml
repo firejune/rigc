@@ -144,10 +144,12 @@ jobs:
       # tracked base is rewritten from this artifact, so the deal is read off
       # CI's seconds rather than a laptop's. `--memory-base-children` (issue
       # #1144) writes, after the same green verdict, the linux entry's children's
-      # half of `tools/selftest_memory.base.json` — the largest child any shard
-      # measured, at the `--jobs` they ran at — and leaves the parent's
-      # high-water; the tracked base's linux children's figure is committed from
-      # its artifact, so `TY40` holds CI's own children rather than a SKIP.
+      # half of `tools/selftest_memory.base.json` — each suite's largest child,
+      # at the `--jobs` the shards ran at — and leaves the parent's high-water.
+      # Since #1166 it keeps every tracked figure whatever the run read, so its
+      # artifact needs committing only when it adds a suite's figure or was
+      # written under `--reset-children-base`; no permission beyond the
+      # `contents: read` above is needed for any of it.
       - name: The merge of every shard is the verdict
         run: bun selftest.ts --merge "$RUNNER_TEMP"/tally/*.json --shards-base "$RUNNER_TEMP/selftest_shards.base.json" --memory-base-children "$RUNNER_TEMP/selftest_memory.base.json"
       - name: Upload the durations base this merge wrote

@@ -66,7 +66,7 @@ full run. A near miss names the flag when exactly one is one edit away.
   --shards-base [<file>]           with --merge: a green merge writes the durations base, to <file> or over the tracked one
   --memory-base                    a green one-process full run writes its platform's memory base
   --memory-base-children [<file>]  with --merge: a green merge writes the children's half of the memory base
-  --reset-children-base            lets a writer of the children's figure lower it, or replace one read at another --jobs
+  --reset-children-base            lets a writer of the children's figures move a tracked one, up or down, or replace them read at another --jobs
   --jobs <n>                       how many of a suite's independent units run at once; the machine's cores by default (or RIGC_JOBS=<n>)
   --keep-temp                      keeps this process's temp root and names it on stderr (or RIGC_KEEP_TEMP=1)
   --help                           prints this table on stdout and exits 0, before anything is made or swept
@@ -113,41 +113,63 @@ peak, so there the line says nothing about children. The unit of a child's
 `Bun.spawn`'s `resourceUsage()` reports for it (`TY42` holds a known 256 MiB
 child to that reading), and a calibration that reads neither leaves every
 peak unread, with the reason in `RIGC_UNIT_PEAKS`. Both figures are held
-under `tools/selftest_memory.base.json`, one entry per platform: the parent's
-high-water (`TY26`, and the full run after its tables) and the children's
-high-water with the `--jobs` it was read at (`TY40`), each times the same
-margin. A platform with no entry, or no children's figure, is a `SKIP` naming
-the command that writes one: `bun selftest.ts --memory-base` on a green full
-run at `--jobs 2` or more writes both numbers. Never type them. A shard holds
-its own figures and the merge holds every shard's. The children's figure has a
-second writer, because a child's peak is its own process's whichever shard
-started it: `bun selftest.ts --merge <file>… --memory-base-children [<file>]`
-writes only the children's half of its platform's entry — the largest over the
-shard documents, at the `--jobs` they ran at, which every shard that measured a
-child must agree on — and leaves the parent's high-water, which only a
-one-process run can read (`--memory-base` under `--merge` stays refused). The
-darwin entry is written by `--memory-base` on a laptop; the linux entry's
-children's figure by CI's merge, which uploads it as the `selftest-memory-base`
-artifact, and the tracked linux figure is committed from that artifact, as the
-durations base is from `selftest-shards-base`. Neither writer takes the run's
-children's figure as measured: one run's largest child is not the figure (which
-units a `core` worker claims is decided by timing, and CI read 506 to 720 MB on
-the same code), so both write the larger of the tracked figure and the run's,
-and their line says which — `kept 547 MB (this run 506 MB) at --jobs 4`,
-`raised 547 → 720 MB at --jobs 4`, or `wrote … (the base held no children's
-figure)`. The figure ratcheted against is always the tracked file's entry, the
-one the ceiling reads, never the file named after `--memory-base-children`,
-which is overwritten unread. A run that measured no child keeps the tracked
-figure. Lowering it is a deliberate act with its own spelling: add
-`--reset-children-base` to either writer, and the line says `lowered 547 →
-506 MB … (--reset-children-base)`. The same spelling is the only way to
-replace a figure read at another `--jobs`, which is otherwise refused by name
-rather than compared, because a figure is a reading at one `--jobs`. Without
-either writer the spelling is refused, since it would write nothing. The
-parent's high-water is still written as the one-process run measured it. The
-ceiling holds the
-largest child, not the sum alive at once, because the sum is a reading of
-one schedule; the sum is at most `--jobs` times the largest. To read every
+under `tools/selftest_memory.base.json` (`selftest-memory/2`), one entry per
+platform: the parent's high-water (`TY26`, and the full run after its tables)
+times `MEMORY_MARGIN`, and one children's figure per suite with the `--jobs`
+they were read at (`TY40`), each suite's heaviest child held under its own
+figure times `CHILDREN_MARGIN`. A platform with no entry, or no children's
+figures, is a `SKIP` naming the command that writes them: `bun selftest.ts
+--memory-base` on a green one-process full run at `--jobs 2` or more writes
+both halves. Never type them. A shard holds its own figures and the merge
+holds every shard's. The children's figures have a second writer, because a
+child's peak is its own process's whichever shard started it: `bun selftest.ts
+--merge <file>… --memory-base-children [<file>]` writes only the children's
+half of its platform's entry — each suite's largest child over the shard
+documents and the merge's own suites, at the `--jobs` they ran at, which every
+process that measured a child must agree on — and leaves the parent's
+high-water, which only a one-process run can read (`--memory-base` under
+`--merge` stays refused). CI's merge writes it on every run and uploads it as
+the `selftest-memory-base` artifact.
+
+Who writes which figure, and when (issue #1166): **noise never moves a tracked
+children's figure.** Both writers keep every tracked figure whatever the run
+read, up or down, and their line says so beside the run's — `kept core 587 MB
+(this run 650 MB), packer 389 MB (this run 380 MB) … at --jobs 4 — a tracked
+figure moves only with --reset-children-base`. So a green run leaves nothing to
+commit, and the artifact is committed only when it says something new: a suite
+the base holds no figure for is added with the run's reading (`added run-tally
+23 MB (the base held no figure for it)`), and until it is committed `TY40` is a
+`SKIP` naming that suite. Moving a figure is a deliberate act with one
+spelling: add `--reset-children-base` to either writer and the run's figures
+replace the tracked ones, up or down (`reset core 726 → 587 MB …`), dropping a
+tracked suite the run did not measure. The same spelling is the only way to
+replace figures read at another `--jobs`, which is otherwise refused by name,
+because a figure is a reading at one `--jobs`. Without either writer the
+spelling is refused, since it would write nothing. The figures written against
+are always the tracked file's, the ones the ceiling reads, never the file named
+after `--memory-base-children`, which is overwritten unread. A run that
+measured no child keeps the tracked figures. The parent's high-water is still
+written as the one-process run measured it. The linux figures were written from
+CI run 37340730277 (main at `f657d83`); darwin's are written by `--memory-base`
+on a laptop at `--jobs 2`, and until they are, `TY40` is a `SKIP` there. A
+`selftest-memory/1` document — one children's figure per platform — still
+reads for its parent half; its children's figure is not read, and `TY40` names
+it.
+
+What the ceiling detects: `CHILDREN_MARGIN` is 1.5 because a figure is one
+run's reading, and over 48 CI runs on unchanged code `core`'s heaviest child
+read 495–728 MB (1.47 between its lowest and highest), `packer`'s 330–420 and
+`render-hashes`' 154–183 — so a figure from any one of those runs keeps every
+other green, which 1.4 does not (from the lowest it fails 9 of the 48). From
+the linux figures as tracked the bounds are `core` 880 MB, `packer` 583,
+`render-hashes` 261 and `run-tally` 34: a suite's heaviest child is named once
+it grows about 55 % over its median reading (`core` +56 %, `packer` +53 %,
+`render-hashes` +57 %). The ratchet these replaced held one figure per
+platform, 726 MB × 1.4 = 1,016 MB, which named nothing under +80 % for `core`,
++167 % for `packer` and +510 % for `render-hashes`, and needed a hand commit
+whenever a run read above it. The ceiling holds each suite's largest child,
+not the sum alive at once, because the sum is a reading of one schedule; the
+sum is at most `--jobs` times the largest. To read every
 unit's figure, set `RIGC_UNIT_PEAKS=<file>`: one line per unit with its peak,
 its seconds and when in its batch it started and ended, which is where the
 overlap of a batch's children is read from.

@@ -92,9 +92,10 @@
  * the live run, as a SKIP naming the command where the platform has no base.
  * A suite that ran units through `inParallel` ends its line with `children
  * high-water <MB> MB (<unit>)` — the largest peak of any child it started, as
- * the driver read it of the child (issue #1143) — and the run's largest is held
- * under the same base's children's figure by the same margin: `TY40` holds the
- * live run and its plant, a unit holding a stated amount, is named by label.
+ * the driver read it of the child (issue #1143) — and each suite's is held
+ * under that suite's own children's figure in the same base, × a margin sized
+ * on CI's spread (issue #1166): `TY40` holds the live run, and its plant, a
+ * unit holding one MB over the heaviest suite's bound, is named by label.
  *
  * ## What `--shard` and `--merge` do
  *
@@ -120,9 +121,10 @@
  * [<file>]` has a green merge write the children's half of its platform's
  * memory-base entry off the shards' documents, leaving the parent's (issue
  * #1144); `TY41` holds that write to the documents and a red merge to none.
- * Both writers of the children's figure ratchet (issue #1151): they keep the
- * larger of the tracked figure and the run's and say which, and only
- * `--reset-children-base` writes a lower one; `TY43` holds every case.
+ * Both writers keep every tracked children's figure whatever the run read and
+ * say so beside the run's, add one only for a suite the base lacks, and only
+ * `--reset-children-base` moves one, up or down (issue #1166); `TY43` holds
+ * every case.
  *
  * ## What `--jobs` does
  *
@@ -734,7 +736,7 @@ const HARNESS_FLAGS: readonly HarnessFlag[] = [
   { spelling: '--shards-base', values: '[<file>]', arity: 'optional', environment: '', passedBy: 'caller', meaning: 'with --merge: a green merge writes the durations base, to <file> or over the tracked one' },
   { spelling: '--memory-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "a green one-process full run writes its platform's memory base" },
   { spelling: '--memory-base-children', values: '[<file>]', arity: 'optional', environment: '', passedBy: 'caller', meaning: "with --merge: a green merge writes the children's half of the memory base" },
-  { spelling: '--reset-children-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "lets a writer of the children's figure lower it, or replace one read at another --jobs" },
+  { spelling: '--reset-children-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "lets a writer of the children's figures move a tracked one, up or down, or replace them read at another --jobs" },
   { spelling: '--jobs', values: '<n>', arity: 'one', environment: 'RIGC_JOBS', passedBy: 'caller', meaning: "how many of a suite's independent units run at once; the machine's cores by default" },
   { spelling: '--keep-temp', values: '', arity: 'none', environment: 'RIGC_KEEP_TEMP', passedBy: 'caller', meaning: "keeps this process's temp root and names it on stderr" },
   { spelling: '--help', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: 'prints this table on stdout and exits 0, before anything is made or swept' },
@@ -1119,12 +1121,13 @@ const WRITE_CHILDREN_BASE = ((): string | null => {
   return named === undefined || named.startsWith('--') ? '' : resolve(named);
 })();
 /**
- * `--reset-children-base` (issue #1151): the one spelling under which a writer
- * of the children's figure — `--memory-base` or `--memory-base-children` — may
- * write a figure LOWER than the tracked entry's, or one read at another
- * `--jobs`. Without it both writers ratchet (`ratchetChildren`): they write the
- * larger of the tracked figure and the run's, and their line says which they
- * kept and both figures. A companion rather than a value of either flag:
+ * `--reset-children-base` (issues #1151, #1166): the one spelling under which
+ * a writer of the children's figures — `--memory-base` or
+ * `--memory-base-children` — moves a tracked figure, up or down, or replaces
+ * figures read at another `--jobs`. Without it both writers keep every tracked
+ * figure whatever the run read (`writtenChildren`), add one only for a suite
+ * the base holds none for, and their line says which they kept beside this
+ * run's. A companion rather than a value of either flag:
  * `--memory-base` takes no value, `--memory-base-children`'s value is a path,
  * and the shards base's writer has no such rule, so a bare `--reset` would read
  * as resetting something it does not. Refused without either writer, since it
@@ -1140,7 +1143,7 @@ const RESET_CHILDREN_BASE = ((): boolean => {
   }
   if (!WRITE_MEMORY_BASE && WRITE_CHILDREN_BASE === null) {
     console.error(
-      "selftest: --reset-children-base lets a writer of the children's memory base write a figure lower than the tracked one, or one read at another --jobs; " +
+      "selftest: --reset-children-base lets a writer of the children's memory base move a tracked figure, up or down, or replace figures read at another --jobs; " +
         'it needs --memory-base (a green one-process full run) or --merge <file>… --memory-base-children [<file>], and without either it writes nothing',
     );
     process.exit(2);
@@ -106590,10 +106593,24 @@ function durationFaults(
  * 1,324 MB, was written by the commander from CI's logs — the largest of three
  * runs' high-waters (1,324, 1,241, 1,209 MB: a spread of 1.10, inside the
  * margin), Bun 1.4.2, 69 suites.
+ *
+ * The children's half is one figure per SUITE (issue #1166), and the linux
+ * one was written from CI run 37340730277 (main at f657d83, `--jobs 4`): each
+ * suite's children's high-water as its shard document and the merge's own
+ * line state it — exactly what `--merge … --memory-base-children
+ * --reset-children-base` writes over that run's documents.
  */
 const MEMORY_BASE_PATH = 'tools/selftest_memory.base.json';
-/** The base document's format word. */
-const MEMORY_BASE_SPEC = 'selftest-memory/1';
+/**
+ * The base document's format word. `/2` since issue #1166: an entry's
+ * `children` is one figure per suite (`ChildrenFigures`), where `/1` held one
+ * per platform. A `/1` document's parent half reads as before; its children's
+ * figure is not read, and `TY40` names it as a `/1` figure with the command
+ * that writes the `/2` one (`MEMORY_BASE_SPEC_V1`).
+ */
+const MEMORY_BASE_SPEC = 'selftest-memory/2';
+/** The format word before issue #1166: one children's figure per platform. Read for its parent half only. */
+const MEMORY_BASE_SPEC_V1 = 'selftest-memory/1';
 /**
  * How far above its platform's base a run's high-water may reach before the run
  * is red. Not a figure anybody chose: the same high-water — the `currency` suite's
@@ -106608,12 +106625,43 @@ const MEMORY_BASE_SPEC = 'selftest-memory/1';
 const MEMORY_MARGIN = 1.4;
 
 /**
- * How far above the children's bound `TY40`'s plant is sized (issue #1143): a
- * tenth, so the planted unit's own allocation crosses the bound with no help
- * from the load it runs over and no rounding between MiB and the line's MB
- * can put it under.
+ * How far above a suite's tracked children's figure that suite's heaviest
+ * child may reach before the run is red (issue #1166, `TY40`). Not a figure
+ * anybody chose, and not `MEMORY_MARGIN`: over 48 CI runs on linux at
+ * `--jobs 4` (2026-10-04 04:51 to 2026-10-05 16:25 UTC, 23 on main and 25 pull
+ * request heads, every one green) the three suites that measure a child read
+ * `core` 495–728 MB, `packer` 330–420 and `render-hashes` 154–183 — spreads
+ * of 1.471, 1.273 and 1.188 between a suite's lowest and highest reading. The
+ * same twelve units in the same order read 826 and 988 MiB on two darwin runs
+ * (issue #1151), so the spread is the allocator's rather than the code's.
+ *
+ * ⚖️ A figure is written from ONE run (`--reset-children-base`, or the first
+ * write of a suite), and nothing says which: the margin has to keep green
+ * every run of that history whichever of them wrote the figure, so it is the
+ * largest spread, 1.471, rounded up to the next tenth. 1.4 — today's
+ * `MEMORY_MARGIN` — fails 9 of the 48 runs when the figure comes from the
+ * lowest one (495 × 1.4 = 693, under 700–728), and 1.5 fails none from any
+ * (the closest is 728 under 742). What it buys, from the linux figures as
+ * tracked: a child is named at `core` +56 % over its median reading, `packer`
+ * +53 % and `render-hashes` +57 % — where one figure per platform at the
+ * ratchet's 726 MB × 1.4 named none under 1,016 MB, +80 %, +167 % and +510 %.
  */
-const TY40_PLANT_OVER = 1.1;
+const CHILDREN_MARGIN = 1.5;
+
+/** A suite's children's bound: its tracked figure × `CHILDREN_MARGIN`, in whole MB. */
+function childrenBound(figure: number): number {
+  return Math.floor(figure * CHILDREN_MARGIN);
+}
+
+/**
+ * How far above the bound `TY40`'s plant is sized, in MB (issues #1143,
+ * #1166): one — the smallest whole figure the rule claims to name, so the plant
+ * is the growth the bound says it detects and not a tenth past it. The planted
+ * unit's own allocation crosses the bound with no help from the load it runs
+ * over; the unit's own load (a `--unit` process holding nothing peaks near
+ * 110 MB on linux and 141 MB on darwin) only takes it further over.
+ */
+const TY40_PLANT_OVER_MB = 1;
 
 /**
  * The most `TY40`'s plant may ask for, in MB (issue #1143). A plant runs on a
@@ -106627,6 +106675,17 @@ const TY40_PLANT_OVER = 1.1;
  */
 const TY40_PLANT_LIMIT_MB = 4096;
 
+/**
+ * A platform's children's figures (issue #1166): for each suite that measured
+ * a child, its children's high-water in whole MB — the largest peak of any
+ * child that suite started — and the one `--jobs` they were all read at,
+ * because a `core` worker's share of the units is the batch over `jobs`.
+ */
+interface ChildrenFigures {
+  jobs: number;
+  suites: Record<string, number>;
+}
+
 /** One platform's base: the high-water a green full run on it reached. */
 interface MemoryBaseEntry {
   /** The largest RSS any suite line of that run printed, in whole MB. */
@@ -106636,21 +106695,19 @@ interface MemoryBaseEntry {
   /** The Bun that ran it: the allocator is the runtime's, and a new one can move the figure. */
   bun: string;
   /**
-   * The largest peak of any child that run measured (issue #1143, `TY40`), in
-   * whole MB, and the `--jobs` it ran at — a core worker's share of the units
-   * is the batch over `jobs`, so the figure is a reading AT that `jobs`.
-   * Absent from an entry written before #1143, or by a run that measured no
-   * child (`--jobs 1`); then `TY40` is a SKIP that names the command, never a
-   * pass. Optional, so the format word did not change: every reader of
-   * `selftest-memory/1` reads an entry with it exactly as one without.
+   * Each suite's children's figure (issue #1166, `TY40`). Absent from an entry
+   * no writer gave children to, or whose `selftest-memory/1` figure was not
+   * read; then `TY40` is a SKIP that names the command, never a pass.
    */
-  children?: { highWater: number; jobs: number };
+  children?: ChildrenFigures;
 }
 
 /** The base document, keyed by `process.platform`. */
 interface MemoryBase {
   spec: string;
   platforms: Record<string, MemoryBaseEntry>;
+  /** The platforms whose entry carried a `selftest-memory/1` children's figure, which is not read (issue #1166); never written. */
+  unreadV1?: string[];
 }
 
 /** The base as it is on disk, or `null` with no file; a file that is not a base throws, by name. */
@@ -106658,18 +106715,38 @@ function readMemoryBase(root: string): MemoryBase | null {
   const path = join(root, MEMORY_BASE_PATH);
   if (!existsSync(path)) return null;
   const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<MemoryBase>;
-  if (parsed.spec !== MEMORY_BASE_SPEC || parsed.platforms === undefined || typeof parsed.platforms !== 'object') {
+  const v1 = parsed.spec === MEMORY_BASE_SPEC_V1;
+  if ((parsed.spec !== MEMORY_BASE_SPEC && !v1) || parsed.platforms === undefined || typeof parsed.platforms !== 'object' || parsed.platforms === null) {
     throw new Error(`${MEMORY_BASE_PATH} is not a "${MEMORY_BASE_SPEC}" document; write it again with \`bun selftest.ts --memory-base\``);
   }
+  const platforms: Record<string, MemoryBaseEntry> = {};
+  const unreadV1: string[] = [];
   for (const [platform, entry] of Object.entries(parsed.platforms)) {
     if (typeof entry?.highWater !== 'number') {
       throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry states no "highWater"; write it again with \`bun selftest.ts --memory-base\``);
     }
-    if (entry.children !== undefined && (typeof entry.children?.highWater !== 'number' || typeof entry.children?.jobs !== 'number')) {
-      throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry's "children" states no "highWater" and "jobs"; write it again with \`bun selftest.ts --memory-base\``);
+    const { children, ...parent } = entry;
+    platforms[platform] = parent;
+    if (children === undefined) continue;
+    // Issue #1166: a `/1` figure is one per platform — not a figure of any suite — so it is left unread and named, never mapped.
+    if (v1) {
+      unreadV1.push(platform);
+      continue;
     }
+    const figures = children.suites as unknown;
+    if (typeof children.jobs !== 'number' || typeof figures !== 'object' || figures === null) {
+      throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry's "children" states no "jobs" and "suites"; write it again with \`bun selftest.ts --memory-base\``);
+    }
+    const suites: Record<string, number> = {};
+    for (const [suite, figure] of Object.entries(figures as Record<string, unknown>)) {
+      if (typeof figure !== 'number' || !Number.isInteger(figure) || figure < 1) {
+        throw new Error(`${MEMORY_BASE_PATH}: the ${platform} entry's children's figure for "${suite}" is ${JSON.stringify(figure)}, not a whole number of MB from 1; write it again with \`bun selftest.ts --memory-base\``);
+      }
+      suites[suite] = figure;
+    }
+    platforms[platform] = { ...parent, children: { jobs: children.jobs, suites } };
   }
-  return { spec: parsed.spec, platforms: parsed.platforms };
+  return unreadV1.length > 0 ? { spec: parsed.spec ?? MEMORY_BASE_SPEC_V1, platforms, unreadV1 } : { spec: parsed.spec ?? MEMORY_BASE_SPEC, platforms };
 }
 
 /** The base document with this platform's entry replaced, every other platform kept, keys in order. */
@@ -106700,47 +106777,80 @@ function childrenHighWaterOf(rss: ReadonlyMap<string, SuiteRss>): { highWater: n
   return top;
 }
 
-/** What the children's ceiling says about one run (issue #1143): held, over, nothing to hold it to, or no child measured. */
+/** One suite's children against its own figure (issue #1166): its heaviest child, and its bound — `null` when the base holds no figure for the suite. */
+interface SuiteChildrenHeld {
+  suite: string;
+  highWater: number;
+  unit: string;
+  figure: number | null;
+  bound: number | null;
+}
+
+/** What the children's ceiling says about one run (issues #1143, #1166): held, over, nothing to hold it to, or no child measured — and every suite that measured one. */
 interface ChildrenCeiling {
   verdict: 'held' | 'over' | 'no base' | 'no children';
-  bound: number | null;
-  highWater: number | null;
+  /** Every suite that measured a child, in the run's order; a suite with no figure is listed with `bound: null`, never dropped. */
+  suites: SuiteChildrenHeld[];
   faults: string[];
 }
 
+/** Every suite whose line stated a children's figure, in the run's order (issue #1166). */
+function childrenBySuite(rss: ReadonlyMap<string, SuiteRss>): Array<{ suite: string; highWater: number; unit: string }> {
+  return [...rss].flatMap(([suite, r]) => (r.children === undefined ? [] : [{ suite, highWater: r.children.highWater, unit: r.children.unit }]));
+}
+
+/** The command that moves a tracked children's figure (issue #1166) — the one spelling, on either writer. */
+const CHILDREN_RESET_COMMAND =
+  '`bun selftest.ts --merge <file>… --memory-base-children [<file>] --reset-children-base` over a green run\'s shard documents, ' +
+  'or `bun selftest.ts --memory-base --reset-children-base` on a green one-process full run';
+
+/** `suite N MB ≤ bound` for each suite, or `(no <platform> figure)` where the base holds none — the held line's words. */
+function childrenHeldText(suites: readonly SuiteChildrenHeld[], platform: string): string {
+  return suites.map((s) => `${s.suite} ${s.highWater} MB${s.bound === null ? ` (no ${platform} figure)` : ` ≤ ${s.bound}`}`).join(', ');
+}
+
 /**
- * The run's children's high-water against its platform's children's base ×
- * `MEMORY_MARGIN` — the same factor `TY26`'s ceiling uses, read from the same
- * constant (issue #1143, `TY40`). Over the bound, the fault names the unit and
- * the suite that started it, because "a child is too big" with no child named
- * is a search through 100-odd processes rather than a fix.
+ * Each suite's children's high-water against that suite's own tracked figure
+ * × `CHILDREN_MARGIN` (issue #1166, `TY40`). Over its bound, the fault names
+ * the suite, the unit and both figures, because "a child is too big" with no
+ * child named is a search through 100-odd processes rather than a fix.
  *
- * ⚖️ It holds the LARGEST child, not the sum of the children alive at once.
- * The sum is what a runner dies of, but it is a reading of a schedule: which
- * units overlap depends on `--jobs`, on the cores and on how long each unit
- * took that run, so a base of sums written at one `jobs` bounds no other — and
- * the sum alive at once is at most `jobs` × the largest child, which is the
- * bound this one figure gives for any `jobs`. What it cannot see: a run whose
- * units all grew a little, under the bound each, while their sum at the
- * runner's `jobs` crossed the runner's memory — the per-unit journal
+ * ⚖️ Per suite, not one figure per run: the run's largest child is `core`'s
+ * on every one of 48 CI runs, so one figure held `packer` (median 380 MB) and
+ * `render-hashes` (median 166 MB) to `core`'s bound — a `packer` child had to
+ * grow 167 % before anything named it. Per suite it is the same margin over
+ * each suite's own figure. A suite the base holds no figure for is listed
+ * with no bound and is not a fault — `TY40` names it as held to nothing, and a
+ * writer adds its figure — because a red run writes no figure, so a fault
+ * there would leave a new suite no way to get one.
+ *
+ * It holds each suite's LARGEST child, not the sum alive at once. The sum is
+ * what a runner dies of, but it is a reading of a schedule: which units
+ * overlap depends on `--jobs`, on the cores and on how long each unit took
+ * that run, so a base of sums written at one `jobs` bounds no other — and the
+ * sum alive at once is at most `jobs` × the largest child. What it cannot see:
+ * a run whose units all grew a little, under the bound each, while their sum
+ * at the runner's `jobs` crossed the runner's memory — the per-unit journal
  * (`RIGC_UNIT_PEAKS`) is where that sum is read.
  */
 function childrenCeiling(rss: ReadonlyMap<string, SuiteRss>, entry: MemoryBaseEntry | undefined, platform: string): ChildrenCeiling {
-  const top = childrenHighWaterOf(rss);
-  if (entry?.children === undefined) return { verdict: 'no base', bound: null, highWater: top?.highWater ?? null, faults: [] };
-  const bound = Math.floor(entry.children.highWater * MEMORY_MARGIN);
-  if (top === null) return { verdict: 'no children', bound, highWater: null, faults: [] };
-  if (top.highWater <= bound) return { verdict: 'held', bound, highWater: top.highWater, faults: [] };
-  return {
-    verdict: 'over',
-    bound,
-    highWater: top.highWater,
-    faults: [
-      `the run's children's high-water was ${top.highWater} MB — "${top.unit}", started by the suite "${top.suite}" — over the ${platform} bound of ${bound} MB ` +
-        `(base children's high-water ${entry.children.highWater} MB at --jobs ${entry.children.jobs} × ${MEMORY_MARGIN}, ${MEMORY_BASE_PATH}); ` +
-        'every suite line names its own heaviest child. If the growth is intended, write the base again with `bun selftest.ts --memory-base`',
-    ],
-  };
+  const measured = childrenBySuite(rss);
+  const figures = entry?.children;
+  if (figures === undefined) return { verdict: 'no base', suites: measured.map((m) => ({ ...m, figure: null, bound: null })), faults: [] };
+  if (measured.length === 0) return { verdict: 'no children', suites: [], faults: [] };
+  const suites = measured.map((m): SuiteChildrenHeld => {
+    const figure = Object.hasOwn(figures.suites, m.suite) ? figures.suites[m.suite] : null;
+    return { ...m, figure, bound: figure === null ? null : childrenBound(figure) };
+  });
+  const faults = suites
+    .filter((s) => s.bound !== null && s.highWater > s.bound)
+    .map(
+      (s) =>
+        `the suite "${s.suite}"'s children's high-water was ${s.highWater} MB — "${s.unit}" — over its ${platform} bound of ${s.bound} MB ` +
+        `(its children's figure ${s.figure} MB at --jobs ${figures.jobs} × ${CHILDREN_MARGIN}, ${MEMORY_BASE_PATH}); ` +
+        `every suite line names its own heaviest child. If the growth is intended, write the figures again with ${CHILDREN_RESET_COMMAND}`,
+    );
+  return { verdict: faults.length > 0 ? 'over' : 'held', suites, faults };
 }
 
 /**
@@ -108020,94 +108130,130 @@ function mergedCeilingFaults(t: RunTally, replay: MergeReplay, base: MemoryBase 
     const platform = from === -1 ? process.platform : replay.docs[from].platform;
     const where = from === -1 ? 'the merge' : replay.label(from);
     const ceiling = memoryCeiling(rss, base?.platforms[platform], platform);
-    // Issue #1143: each shard's children are held as its own, so the merge
-    // holds the largest over every shard without a second figure for it.
+    // Issue #1143: each shard's children are held as its own; issue #1166:
+    // each suite's under that suite's own figure, whichever shard ran it.
     const children = childrenCeiling(rss, base?.platforms[platform], platform);
     if (ceiling.verdict === 'over' || children.verdict === 'over') {
       faults.push(...[...ceiling.faults, ...children.faults].map((fault) => `${where}: ${fault}`));
     } else {
       const childText =
-        children.highWater === null
+        children.suites.length === 0
           ? ', no child measured'
-          : `, children ${children.highWater} MB${children.bound === null ? ` (no ${platform} children's base)` : ` ≤ ${children.bound}`}`;
+          : children.verdict === 'no base'
+            ? `, children ${children.suites.map((s) => `${s.suite} ${s.highWater} MB`).join(', ')} (no ${platform} children's figures)`
+            : `, children ${childrenHeldText(children.suites, platform)}`;
       held.push(`${where} ${highWaterOf(rss)} MB${ceiling.bound === null ? ` (no ${platform} base)` : ` ≤ ${ceiling.bound}`}${childText}`);
     }
   }
   return { faults, held };
 }
 
-/** A children's figure as the base states it: whole MB, and the `--jobs` it was read at. */
-interface ChildrenFigure {
-  highWater: number;
-  jobs: number;
-}
-
-/** What a writer of the children's figure writes (issue #1151): the figure, or none, and the words its line carries. */
-interface ChildrenRatchet {
-  children: ChildrenFigure | undefined;
-  /** Which figure was kept and both figures — `kept 547 MB (this run 506 MB) at --jobs 4`, `raised 547 → 720 MB at --jobs 4`. */
+/** What a writer of the children's figures writes (issues #1151, #1166): the figures, or none, and the words its line carries. */
+interface ChildrenWrite {
+  children: ChildrenFigures | undefined;
+  /** Which figures were kept, added or moved, with this run's beside each — `kept core 587 MB (this run 650 MB), … at --jobs 4`. */
   said: string;
 }
 
+/** `core 587 MB, packer 389 MB` — figures in suite order, which is the order every writer writes them in. */
+function childrenFiguresText(suites: Readonly<Record<string, number>>): string {
+  return Object.keys(suites)
+    .sort()
+    .map((suite) => `${suite} ${suites[suite]} MB`)
+    .join(', ');
+}
+
+/** The same figures with their keys in order, so a written document does not depend on the order a run measured its suites in. */
+function sortedFigures(suites: Readonly<Record<string, number>>): Record<string, number> {
+  return Object.fromEntries(Object.keys(suites).sort().map((suite) => [suite, suites[suite]]));
+}
+
 /**
- * The children's figure a writer puts in its platform's entry, given the
- * TRACKED entry's and this run's (issue #1151), or the refusal naming why it
- * cannot. Pure, so `TY43` drives every case over forged figures; both writers —
- * `--memory-base` and `--memory-base-children` — call it, so they cannot
- * disagree about what a write does.
+ * The children's figures a writer puts in its platform's entry, given the
+ * TRACKED entry's and this run's — each suite's children's high-water — or
+ * the refusal naming why it cannot (issue #1166). Pure, so `TY43` drives every
+ * case over forged figures; both writers — `--memory-base` and
+ * `--memory-base-children` — call it, so they cannot disagree about what a
+ * write does.
  *
- * ⚖️ It ratchets: the written figure is the larger of the tracked one and the
- * run's, because one run's largest child is not the figure — which units a
- * `core` worker claims is decided by timing, and on CI the same code read 506,
- * 519, 545, 547 and 720 MB. `TY40` holds a run under base × `MEMORY_MARGIN`, so
- * a base taken from the low end of that series turns a high run red with no
- * change in the code. Under the ratchet the tracked figure converges to the
- * series' maximum as runs are committed, and no single low run tightens it.
+ * ⚖️ A tracked figure is KEPT, whatever this run read, up or down. One run's
+ * reading of a suite is not its figure: on the same code CI read `core`
+ * 495–728 MB over 48 runs, and the bound is the figure × `CHILDREN_MARGIN`,
+ * which is sized so that a figure from any one of those runs keeps every other
+ * green. A writer that raised on a higher reading (the ratchet of issue #1151)
+ * moved a tracked figure on noise — three times in a day on linux, each a
+ * hand commit of CI's artifact — and walked the bound to the noise's top and
+ * then a margin past it. Under this rule noise never moves a tracked figure,
+ * so there is nothing to commit after a run.
  *
- * Lowering is a deliberate act: only `reset` (`--reset-children-base`) writes a
- * figure below the tracked one. A figure read at another `--jobs` is a
- * different quantity — the batch each worker runs is the units over `jobs` —
- * so the larger of the two is neither's figure; without `reset` that write is
- * refused by name, and with it the run's figure replaces the tracked one. A
- * run that measured no child (`--jobs 1`) keeps the tracked figure, since no
- * reading is not a lower one; under `reset` it drops it.
+ * A suite the base holds no figure for is ADDED with this run's reading —
+ * that is a new suite, not noise, and its figure is written once. Every move
+ * of a tracked figure is a deliberate act with one spelling, `reset`
+ * (`--reset-children-base`): the run's figures replace the tracked ones, up
+ * or down, and a tracked suite this run did not measure is dropped. A figure
+ * read at another `--jobs` is a different quantity — the batch each worker
+ * runs is the units over `jobs` — so without `reset` that write is refused by
+ * name. A run that measured no child (`--jobs 1`) keeps the tracked figures,
+ * since no reading is not a lower one; under `reset` it drops them.
  */
-function ratchetChildren(tracked: ChildrenFigure | undefined, run: number | null, jobs: number, reset: boolean): ChildrenRatchet | string {
-  const lower = '--reset-children-base';
-  if (run === null) {
+function writtenChildren(tracked: ChildrenFigures | undefined, run: Readonly<Record<string, number>>, jobs: number, reset: boolean): ChildrenWrite | string {
+  const spelling = '--reset-children-base';
+  const ran = Object.keys(run);
+  if (ran.length === 0) {
     if (tracked === undefined) return { children: undefined, said: `none — no child's peak was measured at --jobs ${jobs}, and the base held none` };
-    if (reset) return { children: undefined, said: `dropped ${tracked.highWater} MB at --jobs ${tracked.jobs} (${lower}; this run measured no child at --jobs ${jobs})` };
-    return { children: tracked, said: `kept ${tracked.highWater} MB at --jobs ${tracked.jobs} (this run measured no child at --jobs ${jobs})` };
+    if (reset) return { children: undefined, said: `dropped ${childrenFiguresText(tracked.suites)} at --jobs ${tracked.jobs} (${spelling}; this run measured no child at --jobs ${jobs})` };
+    return { children: tracked, said: `kept ${childrenFiguresText(tracked.suites)} at --jobs ${tracked.jobs} (this run measured no child at --jobs ${jobs})` };
   }
-  const written: ChildrenFigure = { highWater: run, jobs };
-  if (tracked === undefined) return { children: written, said: `wrote ${run} MB at --jobs ${jobs} (the base held no children's figure)` };
+  const measured: ChildrenFigures = { jobs, suites: sortedFigures(run) };
+  if (tracked === undefined) return { children: measured, said: `wrote ${childrenFiguresText(run)} at --jobs ${jobs} (the base held no children's figures)` };
   if (tracked.jobs !== jobs) {
     if (!reset) {
       return (
-        `the base's children's figure, ${tracked.highWater} MB, was read at --jobs ${tracked.jobs} and this run's, ${run} MB, at --jobs ${jobs} — ` +
-        `a figure is a reading at one --jobs, so the larger of the two is neither's; give ${lower} to replace it with this run's`
+        `the base's children's figures, ${childrenFiguresText(tracked.suites)}, were read at --jobs ${tracked.jobs} and this run's, ${childrenFiguresText(run)}, at --jobs ${jobs} — ` +
+        `a figure is a reading at one --jobs, so neither holds the other; give ${spelling} to replace them with this run's`
       );
     }
-    return { children: written, said: `replaced ${tracked.highWater} MB at --jobs ${tracked.jobs} → ${run} MB at --jobs ${jobs} (${lower})` };
+    return { children: measured, said: `replaced ${childrenFiguresText(tracked.suites)} at --jobs ${tracked.jobs} → ${childrenFiguresText(run)} at --jobs ${jobs} (${spelling})` };
   }
-  if (run > tracked.highWater) return { children: written, said: `raised ${tracked.highWater} → ${run} MB at --jobs ${jobs}` };
-  if (run < tracked.highWater && reset) return { children: written, said: `lowered ${tracked.highWater} → ${run} MB at --jobs ${jobs} (${lower})` };
+  const names = [...new Set([...Object.keys(tracked.suites), ...ran])].sort();
+  if (reset) {
+    const moves = names.map((suite) => {
+      const was = Object.hasOwn(tracked.suites, suite) ? `${tracked.suites[suite]}` : 'none';
+      const now = Object.hasOwn(run, suite) ? `${run[suite]}` : 'none';
+      return `${suite} ${was} → ${now} MB`;
+    });
+    return { children: measured, said: `reset ${moves.join(', ')} at --jobs ${jobs} (${spelling})` };
+  }
+  const added = ran.filter((suite) => !Object.hasOwn(tracked.suites, suite)).sort();
+  const suites: Record<string, number> = { ...tracked.suites };
+  for (const suite of added) suites[suite] = run[suite];
+  const kept = Object.keys(tracked.suites)
+    .sort()
+    .map((suite) => `${suite} ${tracked.suites[suite]} MB (this run ${Object.hasOwn(run, suite) ? `${run[suite]} MB` : 'none'})`);
   return {
-    children: tracked,
-    said: `kept ${tracked.highWater} MB (this run ${run} MB) at --jobs ${jobs}${run < tracked.highWater ? ` — a lower figure is written only with ${lower}` : ''}`,
+    children: { jobs, suites: sortedFigures(suites) },
+    said:
+      `kept ${kept.join(', ')} at --jobs ${jobs}` +
+      (added.length === 0 ? '' : `; added ${added.map((suite) => `${suite} ${run[suite]} MB`).join(', ')} (the base held no figure for ${added.length === 1 ? 'it' : 'them'})`) +
+      ` — a tracked figure moves only with ${spelling}`,
   };
+}
+
+/** Each suite's children's high-water in a run, keyed by suite (issue #1166): what a writer writes. */
+function childrenFiguresOf(rss: ReadonlyMap<string, SuiteRss>): Record<string, number> {
+  return Object.fromEntries(childrenBySuite(rss).map((c) => [c.suite, c.highWater]));
 }
 
 /** What `--memory-base-children` writes: the whole base document, and the line that says what was written. */
 interface ChildrenBaseWrite {
   text: string;
-  /** The entry written for the platform, which `TY41` and `TY43` read against the documents and the tracked figure. */
+  /** The entry written for the platform, which `TY41` and `TY43` read against the documents and the tracked figures. */
   entry: MemoryBaseEntry;
-  /** The suite, unit and process whose child set this run's figure. */
+  /** The suite, unit and process whose child is the run's largest. */
   from: string;
-  /** This run's figure: the largest child over the documents and the merge's own suites. */
-  run: number;
-  /** Which figure the write kept and both figures (`ratchetChildren`). */
+  /** This run's figures: each suite's largest child, over the documents and the merge's own suites. */
+  run: Record<string, number>;
+  /** Which figures the write kept, added or moved (`writtenChildren`). */
   said: string;
   /** The `--jobs` every process that measured a child ran at. */
   jobs: number;
@@ -108118,29 +108264,28 @@ interface ChildrenBaseWrite {
  * the refusal naming why it cannot be written. Pure, so `TY41` drives it over
  * the miniature's documents.
  *
- * The figure is `childrenHighWaterOf` over the merged tally's replayed `rss` —
- * every shard record's `children` and the merge's own suites' — which is the
- * largest over the documents because a child's peak is its own process's
- * reading, whichever process started it. Measured, not assumed: on Linux CI
- * (run 37179080837) the merge's `run-tally` read a `bun -e` child at 23 MB
- * while the merge itself stood at 739 MB, and `TY42`'s 256 MiB child at
+ * The run's figures are `childrenFiguresOf` the merged tally's replayed `rss`
+ * — each shard record's `children` and the merge's own suites' — one per
+ * suite, each that suite's heaviest child, because a child's peak is its own
+ * process's reading, whichever process started it. Measured, not assumed: on
+ * Linux CI (run 37179080837) the merge's `run-tally` read a `bun -e` child at
+ * 23 MB while the merge itself stood at 739 MB, and `TY42`'s 256 MiB child at
  * 278.3 MiB, so a child's figure carries nothing of its parent's memory. What
  * it does depend on is `--jobs`, which deals a `core` worker its batch — so
- * every process whose child entered the figure must have run at one `--jobs`,
- * and that is the figure's `jobs`.
+ * every process whose child entered a figure must have run at one `--jobs`,
+ * and that is the figures' `jobs`.
  *
  * Only the children's half moves: the entry's `highWater`, `suites` and `bun`
  * stay as the one-process run wrote them, and an entry that does not exist is
  * refused rather than made, since a merge has no parent's figure to put in it.
  * A red tally is refused here too, beside `main` exiting before the write.
  *
- * The run's figure is then ratcheted against the `base` entry's (issue #1151,
- * `ratchetChildren`): `base` is the TRACKED document, the one `main` reads for
- * the ceiling, never the file named after the flag — that file is a destination
- * (CI's is a fresh path under its temp directory), and a destination that
- * already exists is overwritten unread, because the written document is the
- * tracked one with its children's figure ratcheted and nothing else of it
- * moved. `reset` is `--reset-children-base`.
+ * The run's figures are then written against the `base` entry's
+ * (`writtenChildren`: every tracked figure kept, a new suite's added, a move
+ * only under `reset`, which is `--reset-children-base`): `base` is the TRACKED
+ * document, the one `main` reads for the ceiling, never the file named after
+ * the flag — that file is a destination (CI's is a fresh path under its temp
+ * directory), and a destination that already exists is overwritten unread.
  */
 function mergedChildrenBase(t: RunTally, replay: MergeReplay, base: MemoryBase | null, platform: string, mergeJobs: number, reset = false): ChildrenBaseWrite | string {
   const nothing = 'so nothing is written';
@@ -108170,16 +108315,18 @@ function mergedChildrenBase(t: RunTally, replay: MergeReplay, base: MemoryBase |
     return `the processes that measured a child ran at different --jobs — ${measured.map((m) => `${m.where} at ${String(m.jobs)}`).join(', ')} — and a children's figure is a reading at one, ${nothing}`;
   }
   const origin = t.origin.get(top.suite) ?? -1;
-  // Issue #1151: against the TRACKED entry's figure — the base this merge read for `TY40` — never the file it writes to.
-  const ratchet = ratchetChildren(entry.children, top.highWater, jobs[0], reset);
-  if (typeof ratchet === 'string') return `${ratchet}, ${nothing}`;
-  const written: MemoryBaseEntry = { ...entry, children: ratchet.children };
+  const run = childrenFiguresOf(t.rss);
+  // Against the TRACKED entry's figures — the base this merge read for `TY40` — never the file it writes to.
+  const write = writtenChildren(entry.children, run, jobs[0], reset);
+  if (typeof write === 'string') return `${write}, ${nothing}`;
+  const written: MemoryBaseEntry = { highWater: entry.highWater, suites: entry.suites, bun: entry.bun };
+  if (write.children !== undefined) written.children = write.children;
   return {
     text: memoryBaseText(base, platform, written),
     entry: written,
     from: `"${top.unit}", suite "${top.suite}", ${origin === -1 ? 'the merge' : replay.label(origin)}`,
-    run: top.highWater,
-    said: ratchet.said,
+    run,
+    said: write.said,
     jobs: jobs[0],
   };
 }
@@ -110231,23 +110378,33 @@ function runRunTallySuite(live: RunTally): number {
       }
     }
 
-    // --- TY40: the children's high-water is held under the platform's base, and a planted child is named (#1143) --
+    // --- TY40: each suite's children are held under that suite's own figure, and a planted child is named (#1143, #1166) --
     //
     // `TY26` reads this process; since #1129 and #1136 the heaviest work runs in
-    // `--unit` children it cannot see. The live half holds the largest child any
-    // suite so far measured to the base's children's figure × `MEMORY_MARGIN`.
-    // The plant runs the run's own path — `unitValues` → `inParallel` → the
-    // driver — over `TY40`'s scratch unit kind: one unit holding a stated amount
-    // beside one holding nothing. The ceiling has to name the planted unit, with
-    // its figure, by the label the suite line would print.
+    // `--unit` children it cannot see. The live half holds each suite so far
+    // that measured a child to that suite's tracked figure × `CHILDREN_MARGIN`
+    // (issue #1166: one figure per suite, written only by a writer, moved only by
+    // `--reset-children-base`). The plant runs the run's own path —
+    // `unitValues` → `inParallel` → the driver — over `TY40`'s scratch unit
+    // kind: one unit holding a stated amount beside one holding nothing, read as
+    // children of the suite with the largest figure. The ceiling has to name the
+    // planted unit, with its figure and its suite, by the label the suite line
+    // would print.
     //
-    // 🔒 The plant is sized from the BASE ENTRY alone — `TY40_PLANT_OVER` above
-    // its bound — and bounded by `TY40_PLANT_LIMIT_MB`. With no entry it does
-    // not run and the control is a SKIP that says so. PR #1145 sized it off the
-    // run's own children's reading, and on Linux that reading was 1,024x the
-    // truth: the plant asked for hundreds of GB, `Buffer.alloc` threw, and the
-    // merge job on main died of the control (issue #1143). A refused allocation
-    // and a unit that did not complete are both read as the plant's fault.
+    // 🎯 The plant is sized AT the growth the rule claims to see: the heaviest
+    // suite's bound plus `TY40_PLANT_OVER_MB`, the smallest whole MB over it —
+    // not a margin past it. Then each tracked suite's figure is replayed through
+    // `childrenCeiling` itself: a child one MB over its bound is named by suite,
+    // one at its bound is not, and a suite the base holds no figure for is
+    // listed as held to nothing rather than dropped.
+    //
+    // 🔒 The plant is sized from the BASE ENTRY alone, and bounded by
+    // `TY40_PLANT_LIMIT_MB`. With no figures it does not run and the control is
+    // a SKIP that says so. PR #1145 sized it off the run's own children's
+    // reading, and on Linux that reading was 1,024x the truth: the plant asked
+    // for hundreds of GB, `Buffer.alloc` threw, and the merge job on main died
+    // of the control (issue #1143). A refused allocation and a unit that did not
+    // complete are both read as the plant's fault.
     //
     // ⚠️ Their peaks are taken back out of `UNIT_PEAKS_TAKEN` once read: the
     // plant's child is deliberate, and left in it would become `run-tally`'s
@@ -110260,19 +110417,59 @@ function runRunTallySuite(live: RunTally): number {
       const base = readMemoryBase(import.meta.dir);
       const entry = base?.platforms[process.platform];
       const children = entry?.children;
+      const unreadV1 = base?.unreadV1?.includes(process.platform) === true;
       const taken = UNIT_PEAKS_TAKEN.length;
       const peakOf = (label: string): UnitPeak | undefined => UNIT_PEAKS_TAKEN.slice(taken).find((p) => p.label === label);
-      if (entry === undefined || children === undefined) {
-        plantWords = `the plant did not run: it is sized from the ${process.platform} base's children's figure alone, and ${MEMORY_BASE_PATH} holds none`;
+      const suiteOf = (peaks: UnitPeak[]): SuiteRss => {
+        const r: SuiteRss = { after: 0, delta: 0 };
+        const c = suiteChildren(peaks);
+        if (c !== undefined) r.children = c;
+        return r;
+      };
+      // The suite with the largest figure (the first by name on a tie): the plant is read as its child.
+      const heaviest =
+        children === undefined
+          ? undefined
+          : Object.keys(children.suites)
+              .sort()
+              .reduce<string | undefined>((top, suite) => (top === undefined || children.suites[suite] > children.suites[top] ? suite : top), undefined);
+      const boundsWords =
+        children === undefined
+          ? ''
+          : Object.keys(children.suites)
+              .sort()
+              .map((suite) => `${suite} ${children.suites[suite]} → ${childrenBound(children.suites[suite])} MB`)
+              .join(', ');
+      if (entry === undefined || children === undefined || heaviest === undefined) {
+        plantWords =
+          `the plant did not run: it is sized from the ${process.platform} base's children's figures alone, and ${MEMORY_BASE_PATH} holds none` +
+          (unreadV1 ? ` it reads — its ${process.platform} entry carries a ${MEMORY_BASE_SPEC_V1} figure, one per platform, where ${MEMORY_BASE_SPEC} holds one per suite` : '');
       } else {
-        const ceiling = Math.floor(children.highWater * MEMORY_MARGIN);
-        const plantMegabytes = Math.ceil(ceiling * TY40_PLANT_OVER);
+        const plantFigure = children.suites[heaviest];
+        const ceiling = childrenBound(plantFigure);
+        const plantMegabytes = ceiling + TY40_PLANT_OVER_MB;
         const plantLabel = `TY40 plant holding ${plantMegabytes} MB`;
         const besideLabel = 'TY40 beside the plant holding 0 MB';
+        // The rule over every tracked figure, through `childrenCeiling` itself: one MB over a suite's bound is named by suite, its bound is not.
+        const forged = (suite: string, highWater: number): Map<string, SuiteRss> => new Map([[suite, { after: 0, delta: 0, children: { highWater, unit: `forged ${suite} child` } }]]);
+        for (const suite of Object.keys(children.suites).sort()) {
+          const bound = childrenBound(children.suites[suite]);
+          const over = childrenCeiling(forged(suite, bound + 1), entry, 'plant');
+          const at = childrenCeiling(forged(suite, bound), entry, 'plant');
+          if (over.verdict !== 'over' || over.faults.length !== 1 || !over.faults[0].includes(`"${suite}"`) || !over.faults[0].includes(`${bound + 1} MB`) || !over.faults[0].includes(`bound of ${bound} MB`)) {
+            probes.push(`a "${suite}" child of ${bound + 1} MB, one over its bound of ${bound} MB, is not named by suite and figure: ${over.verdict} ${over.faults.join('; ')}`);
+          }
+          if (at.verdict !== 'held') probes.push(`a "${suite}" child at its bound of ${bound} MB reads ${at.verdict}: ${at.faults.join('; ')}`);
+        }
+        const unheldSuite = 'ty40-no-figure';
+        const unheld = childrenCeiling(forged(unheldSuite, ceiling + 1), entry, 'plant');
+        if (unheld.verdict !== 'held' || unheld.faults.length > 0 || unheld.suites.length !== 1 || unheld.suites[0].bound !== null || unheld.suites[0].suite !== unheldSuite) {
+          probes.push(`a suite the base holds no figure for reads ${unheld.verdict} with ${JSON.stringify(unheld.suites)}, where it is listed with no bound and no fault`);
+        }
         if (plantMegabytes > TY40_PLANT_LIMIT_MB) {
           probes.push(
-            `the plant would hold ${plantMegabytes} MB (the ${process.platform} bound of ${ceiling} MB × ${TY40_PLANT_OVER}), over its limit of ${TY40_PLANT_LIMIT_MB} MB, ` +
-              "so it was not run — the base's children's figure has outgrown what a plant may ask a runner for; raise the limit with its reason or lower the children",
+            `the plant would hold ${plantMegabytes} MB (the ${process.platform} "${heaviest}" bound of ${ceiling} MB + ${TY40_PLANT_OVER_MB}), over its limit of ${TY40_PLANT_LIMIT_MB} MB, ` +
+              "so it was not run — that suite's children's figure has outgrown what a plant may ask a runner for; raise the limit with its reason or lower the children",
           );
         } else {
           try {
@@ -110292,45 +110489,42 @@ function runRunTallySuite(live: RunTally): number {
               probes.push(`the driver handed back no peak for ${plant === undefined ? 'the planted unit' : 'the unit beside it'}`);
             } else {
               unitWord = plant.scale === 1 ? 'bytes' : 'KiB';
-              const suiteOf = (peaks: UnitPeak[]): SuiteRss => {
-                const r: SuiteRss = { after: 0, delta: 0 };
-                const c = suiteChildren(peaks);
-                if (c !== undefined) r.children = c;
-                return r;
-              };
-              const cleanRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-idle', suiteOf([])]]);
-              const plantedRun = new Map([['ty40-beside', suiteOf([beside])], ['ty40-planted', suiteOf([beside, plant])]]);
+              const cleanRun = new Map([[heaviest, suiteOf([beside])], ['ty40-idle', suiteOf([])]]);
+              const plantedRun = new Map([[heaviest, suiteOf([beside, plant])]]);
               const clean = childrenCeiling(cleanRun, entry, 'plant');
               const planted = childrenCeiling(plantedRun, entry, 'plant');
               const noBase = childrenCeiling(plantedRun, { highWater: entry.highWater, suites: entry.suites, bun: entry.bun }, 'plant');
               const noChildren = childrenCeiling(new Map([['ty40-idle', suiteOf([])]]), entry, 'plant');
-              if (clean.verdict !== 'held') probes.push(`the unit holding nothing, held to the ${process.platform} base, read ${clean.verdict}: ${clean.faults.join('; ')}`);
-              if (planted.verdict !== 'over' || planted.faults.length !== 1 || !planted.faults[0].includes(`"${plantLabel}"`) || !planted.faults[0].includes('"ty40-planted"') || !planted.faults[0].includes(`${megabytes(plant.peakBytes)} MB`)) {
-                probes.push(`the unit holding ${plantMegabytes} MB (peak ${megabytes(plant.peakBytes)} MB, bound ${planted.bound ?? 'none'} MB) is not named by unit, suite and figure: ${planted.verdict} ${planted.faults.join('; ')}`);
+              if (clean.verdict !== 'held') probes.push(`the unit holding nothing, held to the ${process.platform} "${heaviest}" figure, read ${clean.verdict}: ${clean.faults.join('; ')}`);
+              if (planted.verdict !== 'over' || planted.faults.length !== 1 || !planted.faults[0].includes(`"${plantLabel}"`) || !planted.faults[0].includes(`"${heaviest}"`) || !planted.faults[0].includes(`${megabytes(plant.peakBytes)} MB`)) {
+                probes.push(`the unit holding ${plantMegabytes} MB (peak ${megabytes(plant.peakBytes)} MB, "${heaviest}" bound ${ceiling} MB) is not named by unit, suite and figure: ${planted.verdict} ${planted.faults.join('; ')}`);
               }
-              if (noBase.verdict !== 'no base' || noBase.faults.length > 0) probes.push(`an entry with no children's figure reads ${noBase.verdict}, where it is no verdict at all`);
+              if (noBase.verdict !== 'no base' || noBase.faults.length > 0) probes.push(`an entry with no children's figures reads ${noBase.verdict}, where it is no verdict at all`);
               if (noChildren.verdict !== 'no children' || noChildren.faults.length > 0) probes.push(`a run that measured no child reads ${noChildren.verdict}, where it is no verdict at all`);
               // The line states the figure and the unit, and reads back as what was measured; one that drops them is named.
-              const line = durationLine('ty40-planted', 2, 0.1, plantedRun.get('ty40-planted') ?? { after: 0, delta: 0 });
+              const plantedRss = plantedRun.get(heaviest) ?? { after: 0, delta: 0 };
+              const line = durationLine('ty40-planted', 2, 0.1, plantedRss);
               const read = DURATION_LINE.exec(line);
               const readBack = read === null ? null : printedMemory(read);
               if (readBack?.children?.highWater !== megabytes(plant.peakBytes) || readBack.children.unit !== plantLabel) {
                 probes.push(`the suite line ${JSON.stringify(line)} reads back as ${JSON.stringify(readBack?.children ?? null)}`);
               }
               const block: SuiteBlock = { key: 'ty40-planted', ran: true, controls: 2, quiet: 0, headers: 1, fails: 0, returned: 0, names: [] };
-              const dropped = durationFaults([block], new Map([['ty40-planted', 0.1]]), new Map([['ty40-planted', 0.1]]), 1, plantedRun, new Map([['ty40-planted', { after: 0, delta: 0 }]]));
+              const dropped = durationFaults([block], new Map([['ty40-planted', 0.1]]), new Map([['ty40-planted', 0.1]]), 1, new Map([['ty40-planted', plantedRss]]), new Map([['ty40-planted', { after: 0, delta: 0 }]]));
               if (!dropped.some((fault) => fault.includes('printed no children') && fault.includes(plantLabel))) {
                 probes.push(`a line that dropped the children's figure was not named: ${dropped.join('; ') || 'no fault'}`);
               }
               const kept = JSON.parse(memoryBaseText({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 9, suites: 1, bun: 'x' } } }, 'alpha', entry)) as MemoryBase;
-              if (kept.platforms.alpha?.children?.highWater !== children.highWater || kept.platforms.zeta?.children !== undefined) {
-                probes.push(`writing the children's figure for one platform did not keep it, or touched another's: ${JSON.stringify(kept.platforms)}`);
+              if (JSON.stringify(kept.platforms.alpha?.children) !== JSON.stringify(children) || kept.platforms.zeta?.children !== undefined || kept.spec !== MEMORY_BASE_SPEC) {
+                probes.push(`writing the children's figures for one platform did not keep them, or touched another's: ${JSON.stringify(kept)}`);
               }
               plantWords =
-                `the plant held — sized from the base alone (${ceiling} MB × ${TY40_PLANT_OVER}, under its limit of ${TY40_PLANT_LIMIT_MB} MB), the unit holding ${plantMegabytes} MB ` +
+                `the plant held — sized from the base alone at the growth the rule names (the "${heaviest}" figure ${plantFigure} MB × ${CHILDREN_MARGIN} = ${ceiling} MB, ` +
+                `+ ${TY40_PLANT_OVER_MB}, under its limit of ${TY40_PLANT_LIMIT_MB} MB), the unit holding ${plantMegabytes} MB ` +
                 `beside one holding nothing (${megabytes(beside.peakBytes)} MB) peaks at ${megabytes(plant.peakBytes)} MB through the driver at --jobs ${jobs} and is named over the bound ` +
-                `of ${planted.bound ?? '?'} MB — ${planted.faults[0] ?? 'nothing'} — while an entry with no children's figure and a run with no child give no verdict, ` +
-                "the suite line carries the unit and its figure and one that drops them is named, and writing one platform's figure keeps every other platform's";
+                `of ${ceiling} MB — ${planted.faults[0] ?? 'nothing'} — while each tracked suite's child one MB over its bound is named and one at it is not, ` +
+                "a suite with no figure is listed as held to nothing, an entry with no children's figures and a run with no child give no verdict, " +
+                "the suite line carries the unit and its figure and one that drops them is named, and writing one platform's figures keeps every other platform's";
             }
           } catch (err) {
             probes.push(`the plant's units did not complete, so the plant is at fault rather than the run: ${(err as Error).message.slice(0, 400)}`);
@@ -110349,40 +110543,45 @@ function runRunTallySuite(live: RunTally): number {
       for (const [raw, rss, want] of scaleProbes) {
         if (maxRssScale(raw, rss) !== want) probes.push(`maxRssScale(${raw}, ${rss}) reads ${String(maxRssScale(raw, rss))} where it is ${String(want)}`);
       }
-      const sofar = childrenHighWaterOf(live.printedRss);
       const ownRaw = process.resourceUsage().maxRSS;
       const ownScale = maxRssScale(ownRaw, process.memoryUsage().rss);
       if (ownScale === null) probes.push(`this process's maxRSS ${ownRaw} beside its rss ${process.memoryUsage().rss} bytes reads as neither bytes nor KiB`);
-      const plantHeld = probes.length === 0;
-      if (plantHeld && (entry?.children === undefined || sofar === null)) {
+      // The live half: every suite so far that measured a child, under its own figure.
+      const sofar = childrenCeiling(live.printedRss, entry, process.platform);
+      probes.push(...sofar.faults);
+      const unheldSoFar = sofar.verdict === 'held' ? sofar.suites.filter((s) => s.bound === null) : [];
+      const soFarWords = (suites: readonly SuiteChildrenHeld[]): string => suites.map((s) => `"${s.suite}" ${s.highWater} MB ("${s.unit}")`).join(', ');
+      const name = 'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE';
+      if (probes.length === 0 && (sofar.verdict === 'no base' || sofar.verdict === 'no children' || unheldSoFar.length > 0)) {
         console.log(
-          `  SKIP  TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE: ` +
-            (entry?.children === undefined
-              ? `${MEMORY_BASE_PATH} holds no children's high-water for ${process.platform}, so this run's children` +
-                `${sofar === null ? '' : ` (${sofar.highWater} MB so far, "${sofar.unit}" in suite "${sofar.suite}")`} are held to nothing — ` +
-                'write one with `bun selftest.ts --memory-base` on a green full run at --jobs 2 or more'
-              : `no suite before this one measured a child's peak (--jobs ${JOBS}${JOBS === 1 ? ': the sequential path reads none' : ''}), so the ${process.platform} children's bound ` +
-                `of ${Math.floor(entry.children.highWater * MEMORY_MARGIN)} MB is held over nothing`) +
+          `  SKIP  ${name}: ` +
+            (sofar.verdict === 'no base'
+              ? `${MEMORY_BASE_PATH} holds no children's figures for ${process.platform}` +
+                (unreadV1 ? ` that this selftest reads — its entry carries a ${MEMORY_BASE_SPEC_V1} figure, one per platform, where ${MEMORY_BASE_SPEC} holds one per suite (issue #1166)` : '') +
+                `, so this run's children${sofar.suites.length === 0 ? '' : ` (so far ${soFarWords(sofar.suites)})`} are held to nothing — ` +
+                'write them with `bun selftest.ts --memory-base` on a green one-process full run at --jobs 2 or more, or `bun selftest.ts --merge <file>… --memory-base-children [<file>]` over a green run\'s shard documents'
+              : sofar.verdict === 'no children'
+                ? `no suite before this one measured a child's peak (--jobs ${JOBS}${JOBS === 1 ? ': the sequential path reads none' : ''}), so the ${process.platform} children's bounds (${boundsWords}) are held over nothing`
+                : `${soFarWords(unheldSoFar)} measured a child and the ${process.platform} base holds no figure for ${unheldSoFar.length === 1 ? 'that suite' : 'those suites'}, so ${unheldSoFar.length === 1 ? 'it is' : 'they are'} held to nothing ` +
+                  `(held: ${childrenHeldText(sofar.suites.filter((s) => s.bound !== null), process.platform) || 'none'}) — a writer adds a suite's figure when the base holds none: ` +
+                  "commit the linux one from the merge's selftest-memory-base artifact, or write darwin's with `bun selftest.ts --memory-base`") +
             `; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
         );
       } else {
-        const bound = entry?.children === undefined ? null : Math.floor(entry.children.highWater * MEMORY_MARGIN);
-        if (bound !== null && sofar !== null && sofar.highWater > bound) {
-          probes.push(`the children's high-water so far is ${sofar.highWater} MB ("${sofar.unit}", suite "${sofar.suite}"), over the ${process.platform} bound of ${bound} MB (base children's high-water ${entry?.children?.highWater ?? '?'} MB × ${MEMORY_MARGIN})`);
-        }
         const held = probes.length === 0;
         say(
-          'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE',
+          name,
           held,
           probeDetail(
             held,
             probes,
-            `the ${process.platform} base children's high-water is ${entry?.children?.highWater ?? '?'} MB at --jobs ${entry?.children?.jobs ?? '?'}, so the bound is ${bound ?? '?'} MB ` +
-              `(× ${MEMORY_MARGIN}); the largest child any suite so far measured is ${sofar?.highWater ?? '?'} MB ("${sofar?.unit ?? '?'}", suite "${sofar?.suite ?? '?'}"), ` +
-              `and the whole run's is held to the same bound after the tables; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+            `the ${process.platform} base's children's figures at --jobs ${children?.jobs ?? '?'} × ${CHILDREN_MARGIN} are the bounds ${boundsWords || '?'}; ` +
+              `each suite so far that measured a child is under its own: ${childrenHeldText(sofar.suites, process.platform) || 'none'}, ` +
+              `and the whole run's are held the same way after the tables; ${plantWords}; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
           ),
           "issue #1143: the ceiling read one process while the heaviest work ran in --unit children it could not see (core's workers near 1 GB each), " +
-            'so a unit that doubled its memory passed every control and a CI shard would die of the runner\'s limit with no line naming the unit',
+            "so a unit that doubled its memory passed every control and a CI shard would die of the runner's limit with no line naming the unit; " +
+            "issue #1166: one figure per platform, ratcheted to the noise's top, let a packer child grow 167 % before anything named it",
         );
       }
     }
@@ -110763,14 +110962,14 @@ function runRunTallySuite(live: RunTally): number {
       );
     }
 
-    // --- TY41: the merge writes the children's half off the documents it read, and a red merge writes nothing (#1144) --
+    // --- TY41: the merge writes each suite's children's figure off the documents it read, and a red merge writes nothing (#1144, #1166) --
     //
     // `--memory-base-children` writes what `mergedChildrenBase` hands back, after
     // `main`'s every exit. The miniature's shards carry forged children's peaks
     // in their records — the field a live shard's `rss` carries — and the run's
-    // figure has to be the largest over the documents, the written one the larger
-    // of that and the tracked figure (issue #1151; `TY43` holds the ratchet's
-    // every case), at the `--jobs` they state, with
+    // figures have to be each suite's largest over the documents; the written
+    // ones every tracked figure kept and the other suites' added (issue #1166;
+    // `TY43` holds the writer's every case), at the `--jobs` they state, with
     // the entry's parent half and every other platform as the base held them.
     // The plant is a red shard: the same documents with `beta` failing, and the
     // same forged to claim exit 2 over the failure (`TY30`'s forgery).
@@ -110792,7 +110991,7 @@ function runRunTallySuite(live: RunTally): number {
             run: g.doc.run.map((r) => (peaks[r.block.key] === undefined ? r : { ...r, rss: { ...r.rss, children: peaks[r.block.key] } })),
           },
         }));
-      const entry: MemoryBaseEntry = { highWater: 2000, suites: 6, bun: 'x', children: { highWater: 100, jobs: 2 } };
+      const entry: MemoryBaseEntry = { highWater: 2000, suites: 6, bun: 'x', children: { jobs: 2, suites: { beta: 100 } } };
       const other: MemoryBaseEntry = { highWater: 9, suites: 1, bun: 'y' };
       const base: MemoryBase = { spec: MEMORY_BASE_SPEC, platforms: { [PLATFORM]: entry, eta: other } };
       const write = (given: GivenDocument[], over: MemoryBase | null = base, platform = PLATFORM): ChildrenBaseWrite | string => {
@@ -110801,27 +111000,36 @@ function runRunTallySuite(live: RunTally): number {
         return mergedChildrenBase(merged.tally, merged.tally.replay, over, platform, 2);
       };
       const probes: string[] = [];
-      // The positive control: the write is the max over the documents, read off them here independently.
+      // The positive control: the write is each suite's max over the documents, read off them here independently.
       const given = forge(shardsOf(3), PEAKS);
-      const docMax = Math.max(...given.flatMap((g) => g.doc.run.map((r) => r.rss.children?.highWater ?? -Infinity)));
+      const docFigures: Record<string, number> = {};
+      for (const g of given) {
+        for (const r of g.doc.run) {
+          if (r.rss.children !== undefined) docFigures[r.block.key] = Math.max(docFigures[r.block.key] ?? 0, r.rss.children.highWater);
+        }
+      }
+      const docMax = Math.max(...Object.values(docFigures));
+      const tracked = entry.children?.suites ?? {};
       const green = write(given);
       let greenWords = 'nothing';
       if (typeof green === 'string') probes.push(`a green merge of three shards was refused: ${green}`);
       else {
         const parsed = JSON.parse(green.text) as MemoryBase;
         const got = parsed.platforms[PLATFORM];
-        // Issue #1151: the run's figure is the documents' largest; the written one the larger of it and the tracked figure.
-        const want = Math.max(docMax, entry.children?.highWater ?? -Infinity);
-        if (green.run !== docMax) probes.push(`the merge read this run's children's figure as ${green.run} MB where the documents' largest is ${docMax} MB`);
-        if (got?.children?.highWater !== want || got.children.jobs !== 2) {
-          probes.push(`the merge wrote children ${JSON.stringify(got?.children ?? null)} where the larger of the documents' largest, ${docMax} MB, and the tracked ${entry.children?.highWater} MB is ${want} MB at --jobs 2`);
+        // Issue #1166: the run's figures are each suite's largest over the documents; the written ones every tracked figure kept and the rest added.
+        const want = JSON.stringify({ jobs: 2, suites: sortedFigures({ ...docFigures, ...tracked }) });
+        if (JSON.stringify(sortedFigures(green.run)) !== JSON.stringify(sortedFigures(docFigures))) {
+          probes.push(`the merge read this run's children's figures as ${JSON.stringify(green.run)} where each suite's largest over the documents is ${JSON.stringify(docFigures)}`);
+        }
+        if (JSON.stringify(got?.children ?? null) !== want) {
+          probes.push(`the merge wrote children ${JSON.stringify(got?.children ?? null)} where the tracked ${JSON.stringify(tracked)} kept over the documents' ${JSON.stringify(docFigures)} is ${want}`);
         }
         if (got?.highWater !== entry.highWater || got.suites !== entry.suites || got.bun !== entry.bun) {
           probes.push(`the merge moved the parent's half: ${JSON.stringify(got)} where the base held ${JSON.stringify(entry)}`);
         }
         if (JSON.stringify(parsed.platforms.eta) !== JSON.stringify(other)) probes.push(`the merge moved another platform's entry: ${JSON.stringify(parsed.platforms.eta)}`);
         if (!green.from.includes('"unit b"') || !green.from.includes('shard 2/3')) probes.push(`the write names its child as ${green.from}, not "unit b" in shard 2/3`);
-        greenWords = `children ${got?.children?.highWater} MB at --jobs ${got?.children?.jobs} (${green.said}) from ${green.from}, the parent's ${got?.highWater} MB kept`;
+        greenWords = `children ${childrenFiguresText(got?.children?.suites ?? {})} at --jobs ${got?.children?.jobs} (${green.said}), the run's largest child ${green.from}, the parent's ${got?.highWater} MB kept`;
       }
       // A shard that measured no child may have run at another --jobs: only the processes whose children entered the figure must agree.
       const quiet = write(forge(shardsOf(3), { alpha: PEAKS.alpha, beta: PEAKS.beta }, (i) => (i === 3 ? 4 : 2)));
@@ -110859,12 +111067,12 @@ function runRunTallySuite(live: RunTally): number {
       }
       const held = probes.length === 0;
       say(
-        'TY41_THE_MERGE_WRITES_THE_CHILDRENS_HALF_AS_THE_LARGER_OF_THE_TRACKED_FIGURE_AND_THE_MAX_OVER_THE_DOCUMENTS_AND_A_RED_MERGE_WRITES_NOTHING',
+        'TY41_THE_MERGE_WRITES_EACH_SUITES_CHILDREN_FIGURE_AS_ITS_MAX_OVER_THE_DOCUMENTS_KEEPING_EVERY_TRACKED_ONE_AND_A_RED_MERGE_WRITES_NOTHING',
         held,
         probeDetail(
           held,
           probes,
-          `over three shards carrying forged children's peaks the merge wrote ${greenWords}, the documents' largest being ${docMax} MB and the tracked figure ${entry.children?.highWater} MB; ` +
+          `over three shards carrying forged children's peaks the merge wrote ${greenWords}, the documents' figures being ${childrenFiguresText(docFigures)} (largest ${docMax} MB) and the tracked ${childrenFiguresText(tracked)}; ` +
             `a shard with no child at another --jobs does not refuse it; and each of these writes nothing: ${read.join('; ')}; at the door: ${doors.join(', ')}`,
         ),
         "issue #1144: CI runs the full selftest only as shards and a merge, and the merge refused --memory-base, so Linux's children's figure " +
@@ -110872,47 +111080,63 @@ function runRunTallySuite(live: RunTally): number {
       );
     }
 
-    // --- TY43: a writer of the children's figure ratchets, and lowering it is a spelling of its own (#1151) --
+    // --- TY43: a writer keeps every tracked children's figure, and moving one is a spelling of its own (#1151, #1166) --
     //
-    // Both writers hand their figure to `ratchetChildren`; the clauses below are
+    // Both writers hand their figures to `writtenChildren`; the clauses below are
     // one reading of it, run over the real function and over two plants — the
-    // writer as it was before #1151 (it writes the run's figure, lower or not)
-    // and one that never raises — so every clause has been seen to fire. The
-    // tracked figure and the run's are forged: 547 MB is the linux entry the
-    // card names and 506 / 720 MB the low and high readings beside it. Then the
-    // merge's own write over the miniature's documents, with a tracked figure
-    // above the documents' largest and below it, and the flag's doors.
+    // ratchet of #1151 (it raises a tracked figure on a higher reading, which is
+    // how noise moved the linux figure three times in a day) and the writer
+    // before #1151 (it writes the run's figures, lower or not) — so every clause
+    // has been seen to fire. The figures are forged: `core` 587 and `packer`
+    // 389 MB at --jobs 4 are the linux figures as tracked, 650/380 and 506/300
+    // readings above and below them, `run-tally` 23 MB a suite the base lacks.
+    // Then the merge's own write over the miniature's documents, and the doors.
     {
-      type Writer = (tracked: ChildrenFigure | undefined, run: number | null, jobs: number, reset: boolean) => ChildrenRatchet | string;
-      const TRACKED: ChildrenFigure = { highWater: 547, jobs: 4 };
+      type Writer = (tracked: ChildrenFigures | undefined, run: Readonly<Record<string, number>>, jobs: number, reset: boolean) => ChildrenWrite | string;
+      const TRACKED: ChildrenFigures = { jobs: 4, suites: { core: 587, packer: 389 } };
+      const HIGHER = { core: 650, packer: 380 };
+      const LOWER = { core: 506, packer: 300 };
       const clauses = (writer: Writer): string[] => {
         const out: string[] = [];
-        const expect = (what: string, got: ChildrenRatchet | string, children: ChildrenFigure | undefined, words: string): void => {
+        const expect = (what: string, got: ChildrenWrite | string, children: ChildrenFigures | undefined, words: string): void => {
           if (typeof got === 'string') out.push(`${what}: refused as ${JSON.stringify(got)} rather than written`);
           else if (JSON.stringify(got.children) !== JSON.stringify(children) || !got.said.startsWith(words)) {
-            out.push(`${what}: wrote ${JSON.stringify(got.children ?? null)} saying ${JSON.stringify(got.said)}, where ${JSON.stringify(children ?? null)} saying "${words}…" is the ratchet`);
+            out.push(`${what}: wrote ${JSON.stringify(got.children ?? null)} saying ${JSON.stringify(got.said)}, where ${JSON.stringify(children ?? null)} saying "${words}…" is the rule`);
           }
         };
-        expect('a lower figure without --reset-children-base', writer(TRACKED, 506, 4, false), TRACKED, 'kept 547 MB (this run 506 MB)');
-        expect('a higher figure', writer(TRACKED, 720, 4, false), { highWater: 720, jobs: 4 }, 'raised 547 → 720 MB');
-        expect('the same figure', writer(TRACKED, 547, 4, false), TRACKED, 'kept 547 MB (this run 547 MB)');
-        expect('a lower figure with --reset-children-base', writer(TRACKED, 506, 4, true), { highWater: 506, jobs: 4 }, 'lowered 547 → 506 MB');
-        expect('a higher figure with --reset-children-base', writer(TRACKED, 720, 4, true), { highWater: 720, jobs: 4 }, 'raised 547 → 720 MB');
-        expect('no tracked figure', writer(undefined, 506, 4, false), { highWater: 506, jobs: 4 }, 'wrote 506 MB at --jobs 4');
-        expect('no child measured (--jobs 1)', writer(TRACKED, null, 1, false), TRACKED, 'kept 547 MB at --jobs 4');
-        expect('no child measured with --reset-children-base', writer(TRACKED, null, 1, true), undefined, 'dropped 547 MB');
-        expect('another --jobs with --reset-children-base', writer(TRACKED, 870, 2, true), { highWater: 870, jobs: 2 }, 'replaced 547 MB at --jobs 4 → 870 MB at --jobs 2');
-        const elsewhere = writer(TRACKED, 870, 2, false);
+        expect('a higher reading without --reset-children-base', writer(TRACKED, HIGHER, 4, false), TRACKED, 'kept core 587 MB (this run 650 MB), packer 389 MB (this run 380 MB) at --jobs 4');
+        expect('a lower reading without --reset-children-base', writer(TRACKED, LOWER, 4, false), TRACKED, 'kept core 587 MB (this run 506 MB), packer 389 MB (this run 300 MB) at --jobs 4');
+        expect('a suite the base holds no figure for', writer(TRACKED, { ...HIGHER, 'run-tally': 23 }, 4, false), { jobs: 4, suites: { core: 587, packer: 389, 'run-tally': 23 } }, 'kept core 587 MB (this run 650 MB), packer 389 MB (this run 380 MB) at --jobs 4; added run-tally 23 MB');
+        expect('a tracked suite this run did not measure', writer(TRACKED, { core: 600 }, 4, false), TRACKED, 'kept core 587 MB (this run 600 MB), packer 389 MB (this run none)');
+        expect('a lower reading with --reset-children-base', writer(TRACKED, LOWER, 4, true), { jobs: 4, suites: LOWER }, 'reset core 587 → 506 MB, packer 389 → 300 MB at --jobs 4 (--reset-children-base)');
+        expect('a higher reading with --reset-children-base', writer(TRACKED, { ...HIGHER, 'run-tally': 23 }, 4, true), { jobs: 4, suites: { ...HIGHER, 'run-tally': 23 } }, 'reset core 587 → 650 MB, packer 389 → 380 MB, run-tally none → 23 MB');
+        expect('no tracked figures', writer(undefined, LOWER, 4, false), { jobs: 4, suites: LOWER }, 'wrote core 506 MB, packer 300 MB at --jobs 4');
+        expect('no child measured (--jobs 1)', writer(TRACKED, {}, 1, false), TRACKED, 'kept core 587 MB, packer 389 MB at --jobs 4');
+        expect('no child measured with --reset-children-base', writer(TRACKED, {}, 1, true), undefined, 'dropped core 587 MB, packer 389 MB');
+        expect('another --jobs with --reset-children-base', writer(TRACKED, { core: 870 }, 2, true), { jobs: 2, suites: { core: 870 } }, 'replaced core 587 MB, packer 389 MB at --jobs 4 → core 870 MB at --jobs 2');
+        const elsewhere = writer(TRACKED, { core: 870 }, 2, false);
         if (typeof elsewhere !== 'string' || !elsewhere.includes('read at --jobs 4') || !elsewhere.includes('give --reset-children-base')) {
           out.push(`a figure read at another --jobs without --reset-children-base: ${typeof elsewhere === 'string' ? `refused as ${JSON.stringify(elsewhere)}` : `wrote ${JSON.stringify(elsewhere.children ?? null)}`}, not refused naming both --jobs and the spelling`);
         }
         return out;
       };
-      const probes = clauses(ratchetChildren).map((p) => `the writer: ${p}`);
+      const probes = clauses(writtenChildren).map((p) => `the writer: ${p}`);
       // The plants: each must be read, by the clause it breaks.
       const plants: Array<[string, Writer, string]> = [
-        ['the writer before #1151, which writes the run\'s figure lower or not', (_t, run, jobs) => ({ children: run === null ? undefined : { highWater: run, jobs }, said: `wrote ${String(run)} MB` }), 'a lower figure without --reset-children-base'],
-        ['a writer that never raises', (t, run, jobs) => ({ children: t ?? (run === null ? undefined : { highWater: run, jobs }), said: `kept ${t?.highWater ?? run} MB (this run ${String(run)} MB)` }), 'a higher figure'],
+        [
+          "the ratchet of #1151, which raises a tracked figure on a higher reading",
+          (t, run, jobs) => {
+            const suites: Record<string, number> = { ...(t?.suites ?? {}) };
+            for (const [suite, figure] of Object.entries(run)) suites[suite] = Math.max(suites[suite] ?? 0, figure);
+            return { children: { jobs, suites: sortedFigures(suites) }, said: `raised to ${childrenFiguresText(suites)}` };
+          },
+          'a higher reading without --reset-children-base',
+        ],
+        [
+          "the writer before #1151, which writes the run's figures lower or not",
+          (_t, run, jobs) => ({ children: Object.keys(run).length === 0 ? undefined : { jobs, suites: sortedFigures(run) }, said: `wrote ${childrenFiguresText(run)}` }),
+          'a lower reading without --reset-children-base',
+        ],
       ];
       const plantsRead: string[] = [];
       for (const [what, writer, clause] of plants) {
@@ -110920,7 +111144,7 @@ function runRunTallySuite(live: RunTally): number {
         if (caught === undefined) probes.push(`the plant "${what}" was not read by the clause "${clause}"`);
         else plantsRead.push(`${what} -> ${caught}`);
       }
-      // The merge's own write: a tracked figure above the documents' largest is kept, one below is raised, and the spelling lowers.
+      // The merge's own write: a tracked figure above the documents' reading and one below are both kept, and the spelling moves it.
       const merged = miniature({
         given: shardsOf(3).map((g) => ({
           ...g,
@@ -110931,25 +111155,26 @@ function runRunTallySuite(live: RunTally): number {
       if (merged.tally.replay === null) probes.push('the miniature replayed nothing');
       else {
         const replay = merged.tally.replay;
-        const baseAt = (highWater: number): MemoryBase => ({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 2000, suites: 6, bun: 'x', children: { highWater, jobs: 2 } } } });
+        const baseAt = (figure: number): MemoryBase => ({ spec: MEMORY_BASE_SPEC, platforms: { zeta: { highWater: 2000, suites: 6, bun: 'x', children: { jobs: 2, suites: { beta: figure } } } } });
         for (const [what, tracked, reset, want, words] of [
-          ['tracked 900 MB over a run of 700 MB', 900, false, 900, 'kept 900 MB (this run 700 MB)'],
-          ['tracked 500 MB under a run of 700 MB', 500, false, 700, 'raised 500 → 700 MB'],
-          ['tracked 900 MB with --reset-children-base', 900, true, 700, 'lowered 900 → 700 MB'],
+          ['tracked 900 MB over a run of 700 MB', 900, false, 900, 'kept beta 900 MB (this run 700 MB)'],
+          ['tracked 500 MB under a run of 700 MB', 500, false, 500, 'kept beta 500 MB (this run 700 MB)'],
+          ['tracked 900 MB with --reset-children-base', 900, true, 700, 'reset beta 900 → 700 MB'],
+          ['tracked 500 MB with --reset-children-base', 500, true, 700, 'reset beta 500 → 700 MB'],
         ] as const) {
           const got = mergedChildrenBase(merged.tally, replay, baseAt(tracked), 'zeta', 2, reset);
           if (typeof got === 'string') probes.push(`the merge, ${what}: refused as ${JSON.stringify(got)}`);
           else {
             const written = (JSON.parse(got.text) as MemoryBase).platforms.zeta?.children;
-            if (written?.highWater !== want || got.run !== 700 || !got.said.startsWith(words)) {
-              probes.push(`the merge, ${what}: wrote ${JSON.stringify(written ?? null)} over a run of ${got.run} MB saying ${JSON.stringify(got.said)}, where ${want} MB saying "${words}…" is the ratchet`);
-            } else mergeWords.push(`${what} -> ${written.highWater} MB (${got.said})`);
+            if (written?.suites.beta !== want || got.run.beta !== 700 || !got.said.startsWith(words)) {
+              probes.push(`the merge, ${what}: wrote ${JSON.stringify(written ?? null)} over a run of ${JSON.stringify(got.run)} saying ${JSON.stringify(got.said)}, where beta ${want} MB saying "${words}…" is the rule`);
+            } else mergeWords.push(`${what} -> ${written.suites.beta} MB (${got.said})`);
           }
         }
       }
       // The doors, before any suite: the spelling without a writer, beside --merge alone, and given twice.
       const NO_SUITE = 'ty43-no-such-suite';
-      const needs = "selftest: --reset-children-base lets a writer of the children's memory base write a figure lower than the tracked one";
+      const needs = "selftest: --reset-children-base lets a writer of the children's memory base move a tracked figure";
       const doors: string[] = [];
       for (const [how, args, words] of [
         ['without a writer', ['--only', NO_SUITE, '--reset-children-base'], needs],
@@ -110964,17 +111189,19 @@ function runRunTallySuite(live: RunTally): number {
       }
       const held = probes.length === 0;
       say(
-        'TY43_A_WRITER_OF_THE_CHILDRENS_BASE_KEEPS_THE_LARGER_FIGURE_AND_LOWERS_IT_ONLY_WITH_RESET_CHILDREN_BASE',
+        'TY43_A_WRITER_OF_THE_CHILDRENS_BASE_KEEPS_EVERY_TRACKED_FIGURE_AND_MOVES_ONE_ONLY_WITH_RESET_CHILDREN_BASE',
         held,
         probeDetail(
           held,
           probes,
-          `over a tracked 547 MB at --jobs 4 the writer kept it against 506 MB, raised it to 720 MB, lowered it only with --reset-children-base, ` +
-            `refused a figure read at --jobs 2 without the spelling and replaced the tracked figure with it given the spelling; the plants were read — ${plantsRead.join('; ')}; ` +
+          `over a tracked core 587 MB, packer 389 MB at --jobs 4 the writer kept both against higher and lower readings and a tracked suite left unmeasured, ` +
+            'added a suite the base lacked, moved them up and down only with --reset-children-base, refused a figure read at --jobs 2 without the spelling ' +
+            `and replaced the tracked figures with it given the spelling; the plants were read — ${plantsRead.join('; ')}; ` +
             `the merge: ${mergeWords.join('; ')}; at the door: ${doors.join(', ')}`,
         ),
         "issue #1151: one run's largest child is not the figure — CI read 506 to 720 MB on the same code — and a writer that took the run's figure as measured " +
-          "let one low run tighten TY40's bound into a red main from noise",
+          "let one low run tighten TY40's bound into a red main from noise; issue #1166: the ratchet that replaced it moved the linux figure on noise three times in a day, " +
+          'each a hand commit, and walked the bound to the top of the noise',
       );
     }
 
@@ -114467,23 +114694,23 @@ function main(): void {
   if (WRITE_MEMORY_BASE) {
     // Issue #1143: both numbers, off the run's own columns — the children's
     // only when the run measured a child, which `--jobs 1` does not.
-    // Issue #1151: the parent's half as measured; the children's half ratcheted
-    // against the tracked entry's, as `--memory-base-children` does.
+    // Issue #1166: the parent's half as measured; the children's figures, one
+    // per suite, written against the tracked entry's as `--memory-base-children` does.
     const children = childrenHighWaterOf(tally.rss);
-    const ratchet = ratchetChildren(memoryBase?.platforms[process.platform]?.children, children?.highWater ?? null, JOBS, RESET_CHILDREN_BASE);
-    if (typeof ratchet === 'string') {
-      console.error(`rigc selftest: --memory-base refused: ${ratchet}, so nothing is written`);
+    const write = writtenChildren(memoryBase?.platforms[process.platform]?.children, childrenFiguresOf(tally.rss), JOBS, RESET_CHILDREN_BASE);
+    if (typeof write === 'string') {
+      console.error(`rigc selftest: --memory-base refused: ${write}, so nothing is written`);
       process.exit(2);
     }
     const entry: MemoryBaseEntry = { highWater: highWaterOf(tally.rss), suites: tally.blocks.length, bun: Bun.version };
-    if (ratchet.children !== undefined) entry.children = ratchet.children;
+    if (write.children !== undefined) entry.children = write.children;
     writeFileSync(join(import.meta.dir, MEMORY_BASE_PATH), memoryBaseText(memoryBase, process.platform, entry));
     console.log(
       `selftest: wrote ${MEMORY_BASE_PATH} for ${process.platform}: high-water rss ${entry.highWater} MB over ${tally.blocks.length} suite(s), bun ${Bun.version}; ` +
-        `children's high-water ${ratchet.said}` +
+        `children's figures ${write.said}` +
         (children === null
-          ? ratchet.children === undefined
-            ? ', so the entry holds no children\'s high-water and TY40 stays a SKIP'
+          ? write.children === undefined
+            ? ', so the entry holds no children\'s figures and TY40 stays a SKIP'
             : ''
           : ` — this run's largest child was "${children.unit}", suite "${children.suite}"`),
     );
@@ -114516,8 +114743,9 @@ function main(): void {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, write.text);
       console.log(
-        `selftest: wrote ${WRITE_CHILDREN_BASE === '' ? MEMORY_BASE_PATH : file} for ${process.platform}: children's high-water ${write.said} — this run's, ${write.run} MB (${write.from}), ` +
-          `is the largest over this merge's ${tally.replay.docs.length} shard document(s) and its own suites, ratcheted against ${MEMORY_BASE_PATH}'s; ` +
+        `selftest: wrote ${WRITE_CHILDREN_BASE === '' ? MEMORY_BASE_PATH : file} for ${process.platform}: children's figures ${write.said} — this run's, ` +
+          `${childrenFiguresText(write.run)}, each a suite's largest child over this merge's ${tally.replay.docs.length} shard document(s) and its own suites ` +
+          `(the run's largest child: ${write.from}), written against ${MEMORY_BASE_PATH}'s; ` +
           `the parent's high-water, ${write.entry.highWater} MB, is left as the one-process run wrote it`,
       );
     }
