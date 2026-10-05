@@ -2,9 +2,18 @@
   "spec": "selftest-memory/2",
   "platforms": {
     "darwin": {
-      "highWater": 2638,
-      "suites": 69,
-      "bun": "1.3.11"
+      "highWater": 2145,
+      "suites": 70,
+      "bun": "1.3.11",
+      "children": {
+        "jobs": 2,
+        "suites": {
+          "core": 931,
+          "packer": 685,
+          "render-hashes": 265,
+          "run-tally": 21
+        }
+      }
     },
     "linux": {
       "highWater": 1324,
