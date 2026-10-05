@@ -143,6 +143,62 @@ export interface RigSkeletonHeader {
    * exports under `examples/` writes `"audio": null`, and `ingest` carries it).
    */
   audio?: string | null;
+  /**
+   * Carry the stage in the Spine files as a bounding-box attachment — opt-in,
+   * and absent changes no emitted byte (issue #1168). See `RigStageBox`.
+   */
+  stageBox?: RigStageBox;
+}
+
+/**
+ * Where the stage travels in the shipped Spine files: one bounding-box
+ * attachment `build` writes from the stage, never from numbers typed here
+ * (issue #1168).
+ *
+ * ⭐ **Why it is needed.** Since issue #907 the header's `x`, `y`, `width`,
+ * `height` are the setup-pose bounding box — what the format says they are —
+ * and the stage is stated in `skeleton.model.json`. A consumer that ships
+ * `skeleton.json`, the atlas and its pages and nothing else has no stage to
+ * fit the rig to. A key the format does not define would be read by no
+ * runtime and dropped by the editor without a word; a bounding box is returned
+ * by every runtime by slot and name, in JSON and in binary.
+ *
+ * The box's four vertices are the stage's corners in Spine world — `(x, y)`,
+ * `(x + width, y)`, `(x + width, y + height)`, `(x, y + height)`, the
+ * bottom-left first and counter-clockwise, y up — written unweighted in the
+ * slot bone's space. Its numbers come from the stage alone, so they cannot
+ * drift from the frame the coordinate transform reads.
+ *
+ * 🔒 **The rules, each refused by name in `compile`:**
+ *
+ *   - `slot` is a slot `slots` declares, and nothing else fills it — no skin
+ *     entry and no manifest part. The box is the slot's one attachment, filed
+ *     in the `default` skin under `attachment`. Its setup pose is the slot's
+ *     own, stated the way any slot's is (the rig slot's `attachment`, or the
+ *     motion spec's `setup`) — name the box there for a slot that shows it at
+ *     setup, which is what a reader of the slot's current attachment sees.
+ *   - The slot hangs on the **root**, and the root states no setup
+ *     transform — no `x`, `y`, `rotation`, scale or shear. The vertices are
+ *     then the stage's numbers themselves, which a reader of the attachment
+ *     data gets without posing anything. A bone below the root is refused
+ *     even when it states nothing: the runtime spells an unrotated frame's
+ *     `b` as cos 90° at its pi (−2.3e-8), once per level, so the posed box
+ *     lands on the stage through the root's frame — the residue the header's
+ *     own box already carries — and drifts further at every level below it.
+ *     A constraint that moves the root at setup is not seen by `compile`,
+ *     which poses none; `A50_STAGE_BOX_IS_THE_STAGE` names it.
+ *   - The rig declares a stage. Asking for its box with `"width": null,
+ *     "height": null` asks for a box around nothing.
+ *
+ * ⚠️ The claim is the setup pose's. An animation that keys the root moves the
+ * box with it, as it moves anything else on the root; the stage is the
+ * attachment's vertices, read at setup or straight off the data.
+ */
+export interface RigStageBox {
+  /** The slot the box goes in, declared in `slots`; its `bone` is the box's bone. */
+  slot: string;
+  /** The box's attachment name — its placeholder in the `default` skin and its `Attachment.name`. */
+  attachment: string;
 }
 
 /**
@@ -1820,7 +1876,8 @@ function isObj(v: unknown): v is Record<string, unknown> {
  */
 export const RIG_KEYS = {
   RigSpec: ['spec', 'name', 'note', 'skeleton', 'images', 'bones', 'slots', 'skins', 'constraints', 'events', 'invariants'],
-  RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images', 'audio'],
+  RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images', 'audio', 'stageBox'],
+  RigStageBox: ['slot', 'attachment'],
   RigBone: ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inherit', 'skin', 'color', 'icon', 'from'],
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
@@ -1920,8 +1977,9 @@ export const RIG_TYPES = {
   },
   RigSkeletonHeader: {
     x: 'number', y: 'number', width: 'number | null', height: 'number | null', fps: 'number', referenceScale: 'number',
-    images: 'string', audio: 'string | null',
+    images: 'string', audio: 'string | null', stageBox: 'object',
   },
+  RigStageBox: { slot: 'string', attachment: 'string' },
   RigBone: {
     name: 'string', parent: 'string', length: 'number', x: 'number', y: 'number', rotation: 'number', scaleX: 'number',
     scaleY: 'number', shearX: 'number', shearY: 'number', inherit: 'enum', skin: 'boolean', color: 'string', icon: 'string',
@@ -2221,6 +2279,7 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
 
   at(raw, 'RigSpec', 'this rig spec', []);
   at(raw.skeleton, 'RigSkeletonHeader', '"skeleton"', ['skeleton']);
+  if (isObj(raw.skeleton)) at(raw.skeleton.stageBox, 'RigStageBox', 'skeleton.stageBox', ['skeleton', 'stageBox']);
 
   for (const [i, bone] of (Array.isArray(raw.bones) ? raw.bones : []).entries()) {
     const who = isObj(bone) && typeof bone.name === 'string' ? `bone "${bone.name}"` : `bones[${i}]`;
@@ -2485,6 +2544,25 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
           `${origin.length === 1 ? 'That is an origin' : 'Those are an origin'} for a box that is not there: ` +
           'drop them, or state a width and a height',
       );
+    }
+    // The stage's box (issue #1168): both names stated, and a stage to draw it from.
+    const box = header.stageBox;
+    if (box !== undefined) {
+      const missing = (['slot', 'attachment'] as const).filter((key) => typeof box[key] !== 'string' || box[key].length === 0);
+      if (missing.length > 0) {
+        throw new CompileError(
+          `${where}: skeleton.stageBox states no ${missing.map((key) => `"${key}"`).join(' and ')}. It names the slot the ` +
+            'stage box goes in and the attachment name it carries — `{ "slot": "stage", "attachment": "stage" }` — ' +
+            'and both are required: rigc writes the box\'s numbers from the stage and names nothing on its own',
+        );
+      }
+      if (noWidth && noHeight) {
+        throw new CompileError(
+          `${where}: skeleton.stageBox asks for the stage as a bounding box in slot "${box.slot}", and "skeleton" ` +
+            'declares no stage (width: null, height: null) — a box around nothing. State a width and a height, or ' +
+            'drop stageBox',
+        );
+      }
     }
   }
 

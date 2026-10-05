@@ -285,6 +285,7 @@ import {
   INGEST_VOCABULARY,
   UNSPELT_SLOT_TRACKS,
   type IngestFinding,
+  type IngestOptions,
   type IngestResult,
 } from './src/ingest.ts';
 import {
@@ -583,6 +584,7 @@ import {
   type ValidateReport,
 } from './src/validate.ts';
 import { MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
+import { SKIP_NO_STAGE_BOX } from './src/assertions/facts/stage_box.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES } from './src/assertions/model/parse.ts';
 import { fileOrderedEntries, modelSkinEntries } from './src/assertions/model/skin_entries.ts';
 import { modelMeshFacts } from './src/assertions/model/mesh_attachments.ts';
@@ -34778,7 +34780,162 @@ function runPolygonSuite(): number {
     'a NotImplementedError is a promise about the failure mode, and a deferral without its reason is a wall (issue #5)',
   );
 
+  // --- PG06..PG10: the stage as a bounding box (issue #1168) ---------------
+  //
+  // A rig that asks (`skeleton.stageBox`) carries its stage in the Spine files
+  // as a bounding box `compile` writes from the stage; A50 holds it to the
+  // stage on both suppliers. The probe is this suite's own rig with a slot on
+  // the root, so every number below is read off the probe, not written here.
+  runStageBoxCases(say);
+
   return bad;
+}
+
+/** The stage box probe: the static probe's rig with a `stage` slot on the root, asking for the box there — or, with `ask` false, the same slot empty. */
+function writeStageBoxProbe(ask: boolean, edit: (rig: { skeleton: Record<string, unknown>; bones: Array<Record<string, unknown>>; slots: Array<Record<string, unknown>> }) => void = () => {}): ProbeDirs {
+  const rig = {
+    skeleton: { width: 64, height: 48, ...(ask ? { stageBox: { slot: 'stage', attachment: 'stage' } } : {}) } as Record<string, unknown>,
+    bones: [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }] as Array<Record<string, unknown>>,
+    slots: [
+      { name: 'block', bone: 'block', attachment: 'block' },
+      { name: 'marker', bone: 'block', attachment: 'marker' },
+      { name: 'stage', bone: 'root', ...(ask ? { attachment: 'stage' } : {}) },
+    ] as Array<Record<string, unknown>>,
+  };
+  edit(rig);
+  return writeProbeRig(rig);
+}
+
+/** PG06..PG09 (issue #1168), reported through the polygon suite's own `say`, which counts them. */
+function runStageBoxCases(sayHere: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const CODE = 'A50_STAGE_BOX_IS_THE_STAGE';
+  const build = (dirs: ProbeDirs): CompileResult => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(POLYGON_MOTION, null, 2)}\n`);
+    return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  };
+  const runtimeGate = (built: CompileResult, skeletonText: string, modelText: string | undefined, outDir: string, twin?: ModelTwin): ValidateReport =>
+    validate({ skeletonText, atlasText: built.atlasText, atlasDir: outDir, declaredDurations: built.declaredDurations, ...(modelText === undefined ? {} : { modelText }), rig: built.rig, profile: 'spine' }, twin);
+  const modelGate = (modelText: string, outDir: string): ModelReport => validateModel({ modelText, atlasDir: outDir, profile: 'spine' });
+
+  const askDirs = writeStageBoxProbe(true);
+  const plainDirs = writeStageBoxProbe(false);
+  const asked = build(askDirs);
+  const plain = build(plainDirs);
+  const askedDoc = modelDocument(asked.model, asked.skeletonText, asked.atlasText);
+  const plainDoc = modelDocument(plain.model, plain.skeletonText, plain.atlasText);
+  const stage = asked.model.stage;
+  const corners = stage === null ? [] : [stage.x, stage.y, stage.x + stage.width, stage.y, stage.x + stage.width, stage.y + stage.height, stage.x, stage.y + stage.height];
+
+  // PG06 — the box is emitted from the stage, spine-core returns it by slot and name, A50 passes on both suppliers, and the header box does not move.
+  {
+    const probes: string[] = [];
+    const json = JSON.parse(asked.skeletonText) as { skeleton: Record<string, unknown>; skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+    const emitted = json.skins.find((k) => k.name === 'default')?.attachments.stage?.stage;
+    if (emitted?.type !== 'boundingbox' || JSON.stringify(emitted.vertices) !== JSON.stringify(corners)) probes.push(`the emitted box is ${JSON.stringify(emitted)}, not a boundingbox over the stage's corners ${JSON.stringify(corners)}`);
+    const posable = posableFromText(asked.skeletonText, asked.atlasText, askDirs.outDir);
+    const slot = posable.data.findSlot('stage');
+    const loaded = slot === null ? null : posable.data.defaultSkin?.getAttachment(slot.index, 'stage');
+    if (!(loaded instanceof BoundingBoxAttachment) || [...loaded.vertices].join(',') !== corners.join(',')) {
+      probes.push(`spine-core returned ${loaded === null || loaded === undefined ? 'nothing' : loaded.constructor.name} for slot "stage" attachment "stage"${loaded instanceof BoundingBoxAttachment ? ` holding [${[...loaded.vertices].join(', ')}]` : ''}`);
+    }
+    const spineLines = linesOfCode(runtimeGate(asked, asked.skeletonText, askedDoc, askDirs.outDir), CODE);
+    const modelLines = linesOfCode(modelGate(askedDoc, askDirs.outDir), CODE);
+    if (JSON.stringify(spineLines) !== JSON.stringify([`  PASS  ${CODE}`]) || JSON.stringify(modelLines) !== JSON.stringify(spineLines)) probes.push(`A50 printed ${JSON.stringify(spineLines)} through spine-core and ${JSON.stringify(modelLines)} on the model side`);
+    const head = (text: string): string => JSON.stringify((JSON.parse(text) as { skeleton: unknown }).skeleton);
+    if (head(asked.skeletonText) !== head(plain.skeletonText)) probes.push(`the header with the box is ${head(asked.skeletonText)} and without it ${head(plain.skeletonText)}`);
+    const held = probes.length === 0;
+    sayHere(
+      'PG06_A_STAGE_BOX_IS_WRITTEN_FROM_THE_STAGE_RETURNED_BY_NAME_AND_PASSES_A50_ON_BOTH_SUPPLIERS',
+      held,
+      probeDetail(held, probes, `a ${stage?.width}x${stage?.height} stage: the box [${corners.join(', ')}] emitted and loaded back by slot and name, A50 PASS on both suppliers, the header ${head(asked.skeletonText)} identical with and without it`),
+      'issue #1168: a consumer that ships the Spine files alone reads the stage there; a box nobody reads back, or one that moves the header the format defines, is not that',
+    );
+  }
+
+  // PG07 — the mutant: the box moved, on each supplier's own source, fires A50 by name; the bone moved at setup fires the pose clause.
+  {
+    const probes: string[] = [];
+    const said: string[] = [];
+    const moveVertex = (json: { skins: Array<{ name: string; attachments: Record<string, Record<string, { vertices: number[] }>> }> }): void => {
+      const box = json.skins.find((k) => k.name === 'default')?.attachments.stage?.stage;
+      if (box !== undefined) box.vertices[2] += 1;
+    };
+    const skeletonMoved = JSON.parse(asked.skeletonText) as Parameters<typeof moveVertex>[0];
+    moveVertex(skeletonMoved);
+    // The twin: the same vertex moved in the document's own record, which the model side reads in place of the Spine text.
+    const moveRecord = (doc: Record<string, unknown>): void => {
+      const record = (doc as { skins: Array<{ name: string; attachments: Record<string, Record<string, { vertices: { xy: number[] } }>> }> }).skins.find((k) => k.name === 'default')?.attachments.stage?.stage;
+      if (record !== undefined) record.vertices.xy[2] += 1;
+    };
+    const docMoved = JSON.parse(askedDoc) as Record<string, unknown>;
+    moveRecord(docMoved);
+    const spineMoved = linesOfCode(runtimeGate(asked, JSON.stringify(skeletonMoved), askedDoc, askDirs.outDir, { forge: moveRecord }), CODE);
+    const modelMoved = linesOfCode(modelGate(`${JSON.stringify(docMoved, null, 2)}\n`, askDirs.outDir), CODE);
+    if (!spineMoved.some((l) => l.startsWith(`  FAIL  ${CODE}`) && l.includes('vertex 1 is stored as'))) probes.push(`the box's second vertex one unit right came back ${JSON.stringify(spineMoved)} through spine-core`);
+    if (JSON.stringify(modelMoved) !== JSON.stringify(spineMoved)) probes.push(`the same plant on the model's own document printed ${JSON.stringify(modelMoved)}`);
+    said.push(spineMoved[0] ?? '(no line)');
+    // The bone moved at setup: the stored corners still the stage, the posed box not.
+    const skeletonShifted = JSON.parse(asked.skeletonText) as { bones: Array<Record<string, unknown>> };
+    skeletonShifted.bones[0].x = 1;
+    const shiftRoot = (doc: Record<string, unknown>): void => void ((doc as { bones: Array<Record<string, unknown>> }).bones[0].x = 1);
+    const docShifted = JSON.parse(askedDoc) as Record<string, unknown>;
+    shiftRoot(docShifted);
+    const spineShifted = linesOfCode(runtimeGate(asked, JSON.stringify(skeletonShifted), askedDoc, askDirs.outDir, { forge: shiftRoot }), CODE);
+    const modelShifted = linesOfCode(modelGate(`${JSON.stringify(docShifted, null, 2)}\n`, askDirs.outDir), CODE);
+    if (!spineShifted.some((l) => l.startsWith(`  FAIL  ${CODE}`) && l.includes('at the setup pose'))) probes.push(`the root moved one unit at setup came back ${JSON.stringify(spineShifted)} through spine-core`);
+    if (JSON.stringify(modelShifted) !== JSON.stringify(spineShifted)) probes.push(`the same plant on the model's own document printed ${JSON.stringify(modelShifted)}`);
+    said.push(spineShifted[0] ?? '(no line)');
+    const held = probes.length === 0;
+    sayHere(
+      'PG07_A_STAGE_BOX_MOVED_OR_POSED_ELSEWHERE_FAILS_A50_BY_NAME_ON_BOTH_SUPPLIERS',
+      held,
+      probeDetail(held, probes, said.map((l) => l.trim().slice(0, 220)).join(' | ')),
+      'a gate nobody has seen fail is not a gate: the box is held to the stage on the data a consumer reads and on the pose it reads at setup, and both suppliers name the same vertex',
+    );
+  }
+
+  // PG08 — a rig that does not ask: SKIP, never a pass, on both suppliers and with no document at all.
+  {
+    const lines = [
+      linesOfCode(runtimeGate(plain, plain.skeletonText, plainDoc, plainDirs.outDir), CODE),
+      linesOfCode(modelGate(plainDoc, plainDirs.outDir), CODE),
+      linesOfCode(runtimeGate(asked, asked.skeletonText, undefined, askDirs.outDir), CODE),
+    ];
+    const want = `  SKIP  ${CODE}: ${SKIP_NO_STAGE_BOX}`;
+    const off = lines.filter((l) => JSON.stringify(l) !== JSON.stringify([want]));
+    sayHere(
+      'PG08_A_RIG_THAT_ASKS_FOR_NO_STAGE_BOX_SKIPS_A50_NEVER_PASSES',
+      off.length === 0,
+      off.length === 0 ? `the rig without the field, on both suppliers, and the box's own skeleton with no document: ${want.trim().slice(0, 120)}…` : `printed ${JSON.stringify(lines)}`,
+      'an assertion with nothing to measure reports SKIP: a rig that does not ask is unmeasured, not certified',
+    );
+  }
+
+  // PG09 — every refusal names the field, before any slot is built.
+  {
+    const cases: Array<[string, ProbeDirs, string]> = [
+      ['a slot the rig does not declare', writeStageBoxProbe(true, (rig) => void (rig.skeleton.stageBox = { slot: 'nowhere', attachment: 'stage' })), 'slot "nowhere" is not one the rig declares'],
+      ['a slot on a bone below the root', writeStageBoxProbe(true, (rig) => void (rig.slots[2].bone = 'block')), 'which is not the root'],
+      ['a root that states a setup transform', writeStageBoxProbe(true, (rig) => void (rig.bones[0].rotation = 90)), 'states a setup transform (rotation 90)'],
+      ['a slot something else fills', writeStageBoxProbe(true, (rig) => void (rig.skeleton.stageBox = { slot: 'marker', attachment: 'stage' })), 'is also filled by'],
+      ['no attachment name', writeStageBoxProbe(true, (rig) => void (rig.skeleton.stageBox = { slot: 'stage' })), 'states no "attachment"'],
+      ['a stage declared absent', writeStageBoxProbe(true, (rig) => void Object.assign(rig.skeleton, { width: null, height: null })), 'declares no stage (width: null, height: null) — a box around nothing'],
+    ];
+    const missed: string[] = [];
+    const named: string[] = [];
+    for (const [label, dirs, expected] of cases) {
+      const message = refusal(dirs, POLYGON_MOTION);
+      if (message === null || !message.includes(expected) || !message.includes('stageBox')) missed.push(`${label}: ${message === null ? 'the compile went through' : `refused with: ${message.slice(0, 200)}`}`);
+      else named.push(label);
+    }
+    sayHere(
+      'PG09_A_STAGE_BOX_BUILD_COULD_NOT_HOLD_IS_REFUSED_NAMING_THE_FIELD',
+      missed.length === 0,
+      probeDetail(missed.length === 0, missed, `${named.length} refusal(s), each naming skeleton.stageBox: ${named.join('; ')}`),
+      'the compiler never invents a value: a box on a moving bone, in a shared slot or around no stage would be a number nobody can reason about',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -60450,23 +60607,23 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       'adds all 39: the other 14 are one renderer\'s policy and one canvas budget\'s, and they\n' +
       'fire on perfectly correct editor-produced Spine data.\n',
     clean:
-      'adds all 50: the other 16 are one renderer\'s policy and one canvas budget\'s, and they\n' +
+      'adds all 51: the other 16 are one renderer\'s policy and one canvas budget\'s, and they\n' +
       'fire on perfectly correct editor-produced Spine data.\n',
   },
   {
     row: 'README: the benchmark-dossier row (#359)',
     stale: 'the run viewer, the 36 named assertions with their profiles, and the selftest\n',
-    clean: 'the run viewer, the 50 named assertions with their profiles, and the selftest\n',
+    clean: 'the run viewer, the 51 named assertions with their profiles, and the selftest\n',
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
     stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: '| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 50, opt-in |\n',
+    clean: '| `--profile` | `spine` = the 35 validity rules (**the default**) · `spine-html` = all 51, opt-in |\n',
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
     stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: 'Not all 50 rules are about Spine. Some are about **spine-html**, the renderer this\n',
+    clean: 'Not all 51 rules are about Spine. Some are about **spine-html**, the renderer this\n',
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
@@ -60475,7 +60632,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 50 — those 34 plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
+      '| `spine-html` | all 51 — those 35 plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n',
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -99942,6 +100099,106 @@ function runGenerationSuite(): number {
   return bad;
 }
 
+/**
+ * IG101–IG102 (issue #1168): a gallery rig asked to carry its stage as a
+ * bounding box, built, and the pair alone — `skeleton.json` and the atlas, no
+ * model document — ingested with `--stage-box`, the way a consumer that ships
+ * the Spine files would hand them back.
+ */
+function runStageBoxIngestCases(say: (name: string, ok: boolean, detail: string, why: string) => void, galleryDir: string, name: string, root: string): void {
+  mkdirSync(root, { recursive: true });
+  const rig = JSON.parse(readFileSync(join(galleryDir, name, 'rig.json'), 'utf8')) as { name: string; images?: string; skeleton: Record<string, unknown>; bones: Array<{ name: string }>; slots: Array<Record<string, unknown>> };
+  rig.images = resolve(galleryDir, name, rig.images ?? '.');
+  rig.skeleton.stageBox = { slot: 'stage', attachment: 'stage' };
+  rig.slots.push({ name: 'stage', bone: rig.bones[0].name, attachment: 'stage' });
+  writeFileSync(join(root, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  const shipped = join(root, 'shipped');
+  const original = compile({ rigPath: join(root, 'rig.json'), motionPath: join(galleryDir, name, 'motion.json'), outDir: shipped });
+  mkdirSync(shipped, { recursive: true });
+  writeFileSync(join(shipped, 'skeleton.json'), original.skeletonText);
+  writeFileSync(join(shipped, 'skeleton.atlas'), original.atlasText);
+  const source = JSON.parse(original.skeletonText) as Record<string, unknown>;
+  const read = (skeleton: unknown, extra: Partial<IngestOptions>): ReturnType<typeof ingest> =>
+    ingest(skeleton, { name: rig.name, art: 'none', source: 'skeleton.json', version: packageVersion(), ...extra });
+  const rebuild = (result: ReturnType<typeof ingest>, tag: string): CompileResult => {
+    const spec = join(root, `S-${tag}`);
+    mkdirSync(spec, { recursive: true });
+    writeFileSync(join(spec, 'rig.json'), `${JSON.stringify(result.rig, null, 2)}\n`);
+    writeFileSync(join(spec, 'motion.json'), `${JSON.stringify(result.motion, null, 2)}\n`);
+    return compile({ rigPath: join(spec, 'rig.json'), motionPath: join(spec, 'motion.json'), outDir: join(root, `B-${tag}`), atlasInPath: join(shipped, 'skeleton.atlas') });
+  };
+  const stageOf = (r: CompileResult): string => JSON.stringify(r.model.stage);
+
+  // IG101 — read with the flag, the rebuild is the build; read without it, the stage is the header's box and nothing asks for the box.
+  {
+    const withBox = rebuild(read(source, { stageBox: 'stage' }), 'box');
+    const withoutBox = rebuild(read(source, {}), 'header');
+    const doc = modelDocument(original.model, original.skeletonText, original.atlasText);
+    writeFileSync(join(shipped, MODEL_DOCUMENT_FILE), doc);
+    const beside = documentStageBeside(join(shipped, 'skeleton.json'), original.skeletonText);
+    const withDoc = rebuild(read(source, { stageBox: 'stage', ...(beside === undefined ? {} : { documentStage: beside }) }), 'doc');
+    rmSync(join(shipped, MODEL_DOCUMENT_FILE));
+    const probes = [
+      ...(withBox.skeletonText === original.skeletonText ? [] : ['the rebuild from the shipped pair is not the build\'s skeleton.json, byte for byte']),
+      ...(stageOf(withBox) === stageOf(original) ? [] : [`the rebuild's stage is ${stageOf(withBox)}, the build's ${stageOf(original)}`]),
+      ...(withoutBox.model.stage?.box === undefined && stageOf(withoutBox) !== stageOf(original) ? [] : [`without --stage-box the rebuild's stage is ${stageOf(withoutBox)} — the flag is not what read the box`]),
+      ...(beside !== undefined && withDoc.skeletonText === original.skeletonText ? [] : ['with the build\'s own document beside it the read was refused or rebuilt otherwise']),
+    ];
+    say(
+      'IG101_A_STAGE_BOX_IS_READ_BACK_AS_THE_STAGE_FROM_THE_SHIPPED_PAIR_AND_THE_REBUILD_IS_THE_BUILD',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, `gallery/${name} with a stage box on its root, the pair alone ingested with --stage-box stage: the rebuild states the stage ${stageOf(withBox)} and writes skeleton.json byte-identical to the build's; without the flag the stage is the header's box ${stageOf(withoutBox)} and nothing asks for the box; with the build's document beside it, the same rebuild`),
+      'issue #1168: the shipped files carry the stage only if a reader of those files gets it back — and ingest → build is the reader this tree has',
+    );
+  }
+
+  // IG102 — what build could not write back is refused by name; what build spells otherwise is the lossy STAGE_BOX_REWRITTEN.
+  {
+    type Plant = (json: { slots: Array<Record<string, unknown>>; bones: Array<Record<string, unknown>>; skins: Array<{ name: string; attachments: Record<string, Record<string, Record<string, unknown>>> }> }) => void;
+    const planted = (plant: Plant): unknown => {
+      const json = JSON.parse(original.skeletonText) as Parameters<Plant>[0];
+      plant(json);
+      return json;
+    };
+    const box = (json: Parameters<Plant>[0]): Record<string, unknown> => json.skins.find((k) => k.name === 'default')?.attachments.stage?.stage ?? {};
+    const cases: Array<[string, unknown, Partial<IngestOptions>, string]> = [
+      ['a slot the skeleton does not have', source, { stageBox: 'nowhere' }, 'has no slot "nowhere"'],
+      ['a slot on a bone below the root', planted((json) => void (json.slots.find((sl) => sl.name === 'stage')!.bone = json.bones[1].name)), { stageBox: 'stage' }, 'which is not the root'],
+      ['a box that is not a rectangle', planted((json) => void ((box(json).vertices as number[])[2] += 1)), { stageBox: 'stage' }, 'not the four corners of one axis-aligned rectangle'],
+      ['a clipping polygon in the slot', planted((json) => void (box(json).type = 'clipping')), { stageBox: 'stage' }, 'not a bounding box'],
+      ['--stage beside it', source, { stageBox: 'stage', stage: { x: 0, y: 0, width: 1, height: 1 } }, 'two sources for one value'],
+      ['a document stating another stage', source, { stageBox: 'stage', documentStage: { x: 0, y: 0, width: 1, height: 1 } }, 'disagree'],
+    ];
+    const missed: string[] = [];
+    for (const [label, skeleton, extra, expected] of cases) {
+      let message: string | null = null;
+      try {
+        read(skeleton, extra);
+      } catch (err) {
+        message = err instanceof IngestError ? err.message : `NOT an IngestError: ${(err as Error).message}`;
+      }
+      if (message === null || !message.includes(expected)) missed.push(`${label}: ${message === null ? 'read without a word' : message.slice(0, 200)}`);
+    }
+    const respelled = planted((json) => {
+      const b = box(json);
+      const v = b.vertices as number[];
+      b.vertices = [...v.slice(2), ...v.slice(0, 2)];
+      b.color = '60ef00ff';
+    });
+    const rewritten = read(respelled, { stageBox: 'stage' });
+    const finding = rewritten.findings.find((f) => f.code === 'STAGE_BOX_REWRITTEN');
+    const back = rebuild(rewritten, 'respelled');
+    if (finding?.kind !== 'lossy' || !finding.detail.includes('color') || !finding.detail.includes("build's order")) missed.push(`the box in another order with the editor's colour came back with ${JSON.stringify(finding ?? 'no STAGE_BOX_REWRITTEN finding')}`);
+    if (back.skeletonText !== original.skeletonText) missed.push('the respelled box did not rebuild the build\'s skeleton.json');
+    say(
+      'IG102_A_STAGE_BOX_BUILD_COULD_NOT_WRITE_BACK_IS_REFUSED_BY_NAME',
+      missed.length === 0,
+      probeDetail(missed.length === 0, missed, `${cases.length} refusal(s), each by name; the box in another order with the editor's colour is LOSS STAGE_BOX_REWRITTEN and rebuilds the build byte for byte`),
+      'a slot named by the caller that holds no stage is the caller\'s mistake to be told about, not a number to guess',
+    );
+  }
+}
+
 function runIngestSuite(): number {
   console.log('\n── ingest: build(ingest(build(spec))) is the file it was read from ──');
   let bad = 0;
@@ -100701,6 +100958,8 @@ function runIngestSuite(): number {
         probeDetail(probes100.length === 0, probes100, `gallery/${widest.name}'s document beside its skeleton with one byte appended: not read, the rebuild's stage is the header's box ${stageOf(strayBack)}; beside the skeleton it digests, read (${JSON.stringify(matched)})`),
         'issue #907: a document is evidence about the skeleton it digests and no other — reading the stage off a document written beside some other skeleton would hand the rebuild a number about a different file',
       );
+      // IG101–IG102: the stage a rig carried as a bounding box (issue #1168), read back from the files a consumer ships.
+      runStageBoxIngestCases(say, galleryDir, widest.name, join(docRoot, widest.name, 'box'));
     }
     rmSync(docRoot, { recursive: true, force: true });
   }

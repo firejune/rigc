@@ -1101,6 +1101,12 @@ const FLAG_MEANINGS: Record<string, string> = {
     'so the flag is for a file that really has none rather than for editor exports as a class. ⛔ Beside a ' +
     'skeleton that already declares a box it is REFUSED rather than ignored: two sources for one value, and the ' +
     'file is the record of what was measured',
+  'stage-box':
+    'the slot whose bounding box carries the stage — what `build` writes for a rig that asks for one ' +
+    '(`skeleton.stageBox`). Its four corners are read as the rebuild\'s stage in place of the header\'s box, which ' +
+    'is the setup-pose bounding box, and the rebuilt spec asks for the same box rather than transcribing it. Only a ' +
+    'box `build` could write back is read: anything else in that slot is refused by name, and without the flag no ' +
+    'slot is read as the stage because of its name',
   help: "show this command's flags and exit",
 };
 
@@ -1154,6 +1160,7 @@ const FLAG_VALUES: Record<string, string> = {
   name: '<n>',
   art: 'loose|none',
   stage: '<x,y,w,h>',
+  'stage-box': '<slot>',
   dir: '<path>',
 };
 
@@ -1328,8 +1335,8 @@ export const COMMANDS: CommandDoc[] = [
     name: 'ingest',
     runtime: false,
     spineFormat: true,
-    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h]'],
-    flags: ['out', 'name', 'art', 'images', 'stage'],
+    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h] [--stage-box <slot>]'],
+    flags: ['out', 'name', 'art', 'images', 'stage', 'stage-box'],
     overrides: {
       out: {
         value: '<dir>',

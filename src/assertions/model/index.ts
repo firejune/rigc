@@ -63,6 +63,9 @@ import { a38SkinMembersAreSkinRequired } from '../bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from '../bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from '../bodies/a19.ts';
 import { a49PackedFootprintsDoNotOverlap } from '../bodies/a49.ts';
+import { a50StageBoxIsTheStage } from '../bodies/a50.ts';
+import { modelStageBox } from './stage_box.ts';
+import type { StageBoxFacts } from '../facts/stage_box.ts';
 import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
 import { modelAnimatedBones } from './animated_bones.ts';
 import { modelSkinMembers } from './skin_members.ts';
@@ -193,6 +196,8 @@ export interface ModelSupply {
   sliderComposition: (read: ReadDocument) => SliderCompositionFacts;
   constraintTargets: (read: ReadDocument) => ConstraintTargetFacts;
   steppedPoses: (read: ReadDocument) => SteppedPoseFacts;
+  /** The stage box the document asks for and what its default skin holds there (issue #1168, `./stage_box.ts`). */
+  stageBox: (read: ReadDocument) => StageBoxFacts;
   /** The rig info the document declares (issue #1054, `./declared.ts`); a caller's `rig` beside it is refused by name. */
   rigInfo: (read: ReadDocument, input: ModelValidateInput) => RigInfo;
   /** Each animation's declared duration as the document states it (issue #1054); a caller's `declaredDurations` beside it is refused by name. */
@@ -223,6 +228,7 @@ export const MODEL_SUPPLY: ModelSupply = {
   sliderComposition: modelSliderComposition,
   constraintTargets: modelConstraintTargets,
   steppedPoses: modelSteppedPoses,
+  stageBox: modelStageBox,
   rigInfo: (read, input) => {
     refuseDeclaredBeside(read, input, 'rig');
     return modelRigInfo(read);
@@ -306,6 +312,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
   { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), { atlasDir: input.atlasDir, rig: supply.rigInfo(read, input) }), unread: SKIP_NO_ATLAS },
   { code: 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP', run: (v, read, input, supply) => a49PackedFootprintsDoNotOverlap(v, supply.atlasRegions(read, input), supply.regionJoins(read), supply.meshes(read)), unread: SKIP_NO_ATLAS },
+  { code: 'A50_STAGE_BOX_IS_THE_STAGE', run: (v, read, _input, supply) => a50StageBoxIsTheStage(v, supply.stageBox(read)), unread: SKIP_NO_MODEL },
   { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
