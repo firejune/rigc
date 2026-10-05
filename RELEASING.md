@@ -323,8 +323,12 @@ runtime resolves from the package's own location.
 
 | an install with | `rigc` runs | `rigc --version` prints (stdout, then stderr) |
 | --- | --- | --- |
-| no `@esotericsoftware/spine-core` (what `npm install spine-rigc` gives) | `cli_core.ts` — `explain`, `ingest`, `diff`, `check`, `render`, `pose`, `chainfit`, `skills`; every other command refused by name | the version, then `entry: cli_core.ts — @esotericsoftware/spine-core absent — …` |
+| no `@esotericsoftware/spine-core` (what `npm install spine-rigc` gives) | `cli_core.ts` — `build` and `repack` (gated without the parse, `A00_ROUNDTRIP_PARSE` a SKIP), `explain`, `ingest`, `diff`, `check`, `render`, `pose`, `chainfit`, `skills`; every other command refused by name | the version, then `entry: cli_core.ts — @esotericsoftware/spine-core absent — …` |
 | `@esotericsoftware/spine-core` installed beside it | `cli.ts` — every command, `build` through the round trip | the version, then `entry: cli.ts — @esotericsoftware/spine-core <version> present` |
+
+The commands in the first row are the set the command table derives — a
+`runtime` of `false`, or one carrying a body of its own for this entry — and
+`CUR117` holds the row to that set in both directions.
 
 No environment variable and no flag chooses the entry. `CUR113` holds that
 `cli_core.ts`'s static closure, within what `files` ships, reaches none of the
@@ -441,28 +445,41 @@ that has a `package.json` of its own, and runs it in three phases (issue
 
 1. **As installed — no runtime.** The install must not have brought
    `@esotericsoftware/spine-core`; `rigc --version` must name `cli_core.ts`; and
-   `rigc build` on that entry is tried. Until the core entry has a `build` of its
-   own ([#1060](https://github.com/firejune/rigc/issues/1060)) it refuses by name,
-   and the smoke prints that as a `HOLE` line and in its summary — never as a pass.
+   `rigc build` on that entry — the build every install runs — must exit 0 and
+   write `skeleton.json`, `skeleton.atlas`, `skeleton.model.json` and the packed
+   page, print no `FAIL` line, print the rules the fixture reaches, and report
+   `A00_ROUNDTRIP_PARSE` as a SKIP. Anything else is `SMOKE_CORE_ENTRY_BUILDS`,
+   a fault of the case with the first lines the build printed
+   ([#1178](https://github.com/firejune/rigc/issues/1178): until then a non-zero
+   exit here was a `HOLE`, and a `HOLE` does not move the exit code, so a package
+   whose installed `build` was broken printed green).
 2. **The runtime installed beside it**, at the version the installed
    `package.json` declares as its devDependency. The same `rigc --version` must
    now name `cli.ts`, and the build runs through the round trip: compile, the
    round trip against that version (the emitted `skeleton.spine` is compared with
    it rather than with a number written into the smoke), the named assertions the
    fixture reaches, `skeleton.json`, `skeleton.atlas` and the packed page PNG on
-   disk, and `rigc validate` reading it back. The import surface is probed
+   disk, and `rigc validate` reading it back. The two builds of the fixture are
+   then compared file by file — every file each `--out` holds, by name, then
+   byte for byte — and any difference is `SMOKE_ENTRIES_BUILD_THE_SAME_BYTES`,
+   naming the file, both sizes and the first byte at which they part: the core
+   entry's promise is the same files with another gate, and this holds it on an
+   install where `RC29` holds it in a clone. The import surface is probed
    here: every named entry, and every symbol `OBSERVED_SYMBOLS` lists, read
    through its entry.
 3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
    more, every listed entry is imported again and held to whether it needs
-   the runtime, and `rigc render` and `rigc check` run on that build without
-   it.
+   the runtime, and `rigc render` and `rigc check` run without it on the
+   round-tripped build — the same bytes as the core entry's, by the comparison
+   above, and read from that side so a broken core build goes red at one step
+   rather than three.
    `rigc skills install` and the without-Bun shim check run in this phase.
 
 What that proves: the `bin` shim resolves and hands off, and picks its entry by
 whether the runtime resolves; `files` is closed under what each entry needs at
-run time, not just under the imports a scanner can see; the package installs and
-runs without the runtime, and builds through the round trip with it.
+run time, not just under the imports a scanner can see; the package installs,
+builds and runs without the runtime, and builds the same bytes through the round
+trip with it.
 
 The package carries no art and no spec — `gallery/`, `fixtures/` and `examples/`
 are outside the allowlist — so the fixture is authored into the install
@@ -477,8 +494,13 @@ broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of 
 packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
 install then has the runtime, which is not the package this tree packs),
 `cli_core.ts` out of `files` (the install's `rigc --version` dies), the skills
-plant, and four on the import surface (the map removed, the map cut to its
-named entries, one named entry removed, one listed symbol renamed) — each
+plant, four on the import surface (the map removed, the map cut to its
+named entries, one named entry removed, one listed symbol renamed), and two on
+the core entry's build — its body made to refuse, and one byte appended to the
+atlas it wrote, which only the comparison can see; both edit one line of
+`src/cli/core_commands.ts`, because every module that entry reaches is a static
+import and removing one stops `rigc --version` first, and both must go red at
+their one step and no other — each
 patched into an **extraction** of the tarball and packed again from there, so the
 checkout is never modified and there is no restore to forget. A plant case is
 green only when the smoke went red at the step it was supposed to, naming what
