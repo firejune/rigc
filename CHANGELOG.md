@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.1](https://github.com/firejune/rigc/compare/v2.11.0...v2.11.1) (2026-10-05)
+
+
+### Performance Improvements
+
+* **pack:** a footprint pass splits each placed cell's bands over the free-list entries near the cell — the free polygon pack on three production rigs goes from 10.7–41.8 s to 3.4–10.6 s, every page byte-identical, and the docs state where the cost starts ([#1172](https://github.com/firejune/rigc/issues/1172)) ([846b3af](https://github.com/firejune/rigc/commit/846b3afcf894ba8fdf037248f9d4104a9e65ff2e)), closes [#1165](https://github.com/firejune/rigc/issues/1165)
+
 ## [2.11.0](https://github.com/firejune/rigc/compare/v2.10.1...v2.11.0) (2026-10-05)
 
 
