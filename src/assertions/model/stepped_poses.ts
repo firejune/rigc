@@ -42,9 +42,11 @@ const modeOf = (bone: ModelBone): string | null => (foldInheritMode(bone.inherit
 /** A channel the walk computed; a slot row holds `null` only where a rounding wrote one, which the walk does not. */
 const channel = (v: number | null): number => (v === null ? Number.NaN : v);
 
-/** One walk pose as A10 reads it, each bone's mode taken from `posed` (the bones the timelines posed at the pose's time). */
-function frameOf(pose: WalkPose, posed: readonly ModelBone[]): SteppedFrame {
-  const modes = new Map(posed.map((b) => [b.name, modeOf(b)]));
+/** Each bone's posed mode as the facts spell it (`modeOf`), by name. */
+const modesOf = (posed: readonly ModelBone[]): ReadonlyMap<string, string | null> => new Map(posed.map((b) => [b.name, modeOf(b)]));
+
+/** One walk pose as A10 reads it, each bone's mode taken from `modes` (`modesOf` the bones the timelines posed at the pose's time). */
+function frameOf(pose: WalkPose, modes: ReadonlyMap<string, string | null>): SteppedFrame {
   return {
     bones: pose.bones.map((b) => ({ name: b.name, a: b.a, b: b.b, c: b.c, d: b.d, worldX: b.worldX, worldY: b.worldY, inherit: modes.get(b.name) ?? null })),
     drawn: pose.drawn.map((d) => ({ slot: d.slot, attachment: d.attachment, vertices: d.vertices })),
@@ -80,11 +82,15 @@ export function modelSteppedPoses(read: ReadDocument): SteppedPoseFacts {
     },
     // The document's stated mode — asked only of a bone posing none, which the reader leaves this side no document to hold.
     statedInherit: (name) => `${JSON.stringify(read.doc.bones.find((b) => b.name === name)?.inheritMode)}`,
-    setup: () => frameOf(poseWalkSetup(viewOf()), viewOf().bones),
+    setup: () => frameOf(poseWalkSetup(viewOf()), modesOf(viewOf().bones)),
     walk: (animation, step, frames) => {
       const anim = animationOf(animation);
       const poses = poseLoopingWalk(viewOf(), animation, new Array<number>(frames).fill(step));
-      return poses.slice(1).map((pose) => frameOf(pose, posedBones(viewOf(), anim.timelines, pose.animationTime)));
+      // A bone's posed mode moves only by an `inherit` timeline: every other one `posedBones` reads leaves the setup's mode on its copy. So an animation
+      // keying none poses the setup's modes at every time, and they are read once rather than posed again at each of its frames (issue #1179).
+      const keysInherit = anim.timelines.bones.some((target) => target.timelines.some((tl) => tl.kind === 'inherit'));
+      const setupModes = keysInherit ? null : modesOf(viewOf().bones);
+      return poses.slice(1).map((pose) => frameOf(pose, setupModes ?? modesOf(posedBones(viewOf(), anim.timelines, pose.animationTime))));
     },
   };
 }

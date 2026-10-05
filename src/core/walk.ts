@@ -58,7 +58,9 @@
  *   NaN and Infinity stood where spine-core's did.
  *
  * Events are not carried: A10 reads none, and what a looping track fires
- * across the wrap was not measured.
+ * across the wrap was not measured. Nor are the clipped rows, and the walk
+ * does not cut them (issue #1179): every clip it starts is still planned, so
+ * a clip the core does not draw refuses the walk by name, as below.
  *
  * ⛔ **What is still refused** is the raw entry's other refusal: a construct
  * the core would leave out (a block the oracle's core dump names absent) is a

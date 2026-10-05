@@ -74902,7 +74902,7 @@ import { inactiveHistoryProbe, walkBuilt, walkProbes as inactiveWalkProbes } fro
 // Issue #1049: a slider's physics keys under the step (CO31, CO32), its own statement so the controls land as one hunk.
 import { SLIDER_PHYSICS_PROBES, sliderPhysicsPair, sliderPhysicsShape, type SliderPhysicsShape } from './tools/core_gate.ts';
 import { loopedTime } from './src/core/raw.ts';
-import type { WalkPlant } from './src/core/walk.ts';
+import { poseLoopingWalk, type WalkPlant } from './src/core/walk.ts';
 import { historyTaint, type SolverRules } from './src/core/constraints.ts';
 import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.ts';
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
@@ -77981,6 +77981,61 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
       held,
       probeDetail(held, probes, figures),
       'issue #964: the runtime\'s triangle list under a concave or inverse clip is its own decomposition and is not reproduced; the area is the claim a decomposition of the core\'s own can make, and it is held here against the runtime\'s clipper on every case — the pixels are the render\'s (RC08)',
+    );
+  }
+
+  // --- CL06: the looping walk (A10's) plans every clip it starts and cuts no drawn row through it (issue #1179) --
+  if (parent) {
+    const probes: string[] = [];
+    let compared = 0;
+    let rows = 0;
+    try {
+      // Eight steps of 0.1 s inside the probe's one-second animation: the looping walk and the raw entry (reset at the setup pose) apply it at the same times.
+      const steps = new Array<number>(8).fill(0.1);
+      const model = readModel(clipPair(false).model, 'the clipping probe');
+      const loop = poseLoopingWalk(model, 'd', steps);
+      const raw = poseRawAnimation(model, 'd', steps, {}, 'setup');
+      if (loop.length !== raw.length) probes.push(`the looping walk took ${loop.length} pose(s), the raw entry ${raw.length}`);
+      raw.forEach((r, i) => {
+        rows += r.clipped.length;
+        const l = loop[i];
+        if (l === undefined) return;
+        const a = JSON.stringify(r.drawn.map((d) => [d.slot, d.attachment, d.vertices]));
+        const b = JSON.stringify(l.drawn.map((d) => [d.slot, d.attachment, d.vertices]));
+        if (a !== b) probes.push(`pose ${i}: the looping walk drew ${b.slice(0, 120)}…, the raw entry ${a.slice(0, 120)}…`);
+        else compared++;
+      });
+      if (rows === 0) probes.push('the raw entry cut no row through a clip, so the probe holds nothing about the clipper');
+      // A clip whose edges cross is one the core does not draw: the looping walk still plans it, and refuses by name.
+      const bowtie = readModel(clipPair(false, [
+        { slot: 'clipX', bone: 'root', spine: { type: 'clipping', vertexCount: 4, vertices: [-2, -2, 2, 2, 2, -2, -2, 2] }, model: { kind: 'clipping', vertexCount: 4, vertices: { weighted: false, xy: [-2, -2, 2, 2, 2, -2, -2, 2] } } },
+        { slot: 'rIn', bone: 'root', ...clipRegion(0.5, 0.5, 1, 1) },
+      ]).model, 'the clipping probe');
+      let refusal = '';
+      try {
+        poseLoopingWalk(bowtie, 'd', steps);
+      } catch (err) {
+        if (!(err instanceof CoreInputError)) throw err;
+        refusal = err.message;
+      }
+      if (!refusal.includes('slot "clipX" starts clip "a"') || !refusal.includes('cross or touch')) probes.push(`a clip whose edges cross: ${refusal === '' ? 'walked' : `refused as "${refusal}"`}, not naming the clip and its crossing edges`);
+      // A clipper a plant passes is still the one the looping walk cuts through: the walk stands its own in only where none is given.
+      let reached = false;
+      try {
+        poseLoopingWalk(model, 'd', steps, { through: () => { reached = true; return null; } });
+      } catch (err) {
+        probes.push(`a planted clipper: the walk threw ${(err as Error).message}`);
+      }
+      if (!reached) probes.push('a planted clipper was never called by the looping walk');
+    } catch (err) {
+      probes.push(`the probe did not run: ${(err as Error).message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'CL06_THE_LOOPING_WALK_PLANS_EVERY_CLIP_IT_STARTS_AND_DRAWS_WHAT_THE_RAW_ENTRY_DRAWS_WITHOUT_CUTTING_A_ROW',
+      held,
+      probeDetail(held, probes, `${compared} pose(s) of the clipping probe drawn by the looping walk as the raw entry draws them, where the raw entry cut ${rows} row(s) through a clip; a clip whose edges cross refused by name; a planted clipper reached`),
+      'issue #1179: A10 reads no clipped row, so its walk cuts none — what it keeps is the planning of each clip it starts, which is where the core refuses one it does not draw',
     );
   }
 

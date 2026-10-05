@@ -120,7 +120,7 @@ import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.
 import { attachmentStates } from './deform.ts';
 import { drawOrderAt } from './draw_order.ts';
 import { eventsFired } from './events.ts';
-import { REGION_TRIANGLES, REGION_UVS } from './clipping.ts';
+import { REGION_TRIANGLES, REGION_UVS, type ShapeClipper } from './clipping.ts';
 import { poseGeometry, type ShownGeometry } from './vertices.ts';
 import { RUNTIME_DEG, type CoreWorld } from './world.ts';
 import type { SliderApplication } from './constraints_slider.ts';
@@ -240,6 +240,16 @@ function numberOf(v: number | null, what: string, mode: WalkMode): number {
   return mode.keep ? (v === null ? Number.NaN : v) : finite(v, what);
 }
 
+/**
+ * What the looping walk cuts a drawn attachment through under a clip: nothing
+ * (issue #1179). Its one reader, A10, reads no clipped row — `./walk.ts`
+ * narrows them away with the events — so the walk does not cut them; what it
+ * still does is plan every clip it starts (`poseClipped`'s `clipShapeOf`), so
+ * a clip the core does not draw refuses the walk by name as before. Every
+ * number a looping pose carries is computed as it was.
+ */
+const NO_CLIPPED_ROWS: ShapeClipper = () => null;
+
 /** The bones of a pose from the world transforms (the header's `bones`). */
 function rawBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>): RawBone[] {
   const active = activeBones(doc);
@@ -266,7 +276,8 @@ function rawBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>):
 
 /** Every region and mesh the shown records draw, with what the renderer reads past the vertices (the header's `drawn`). */
 function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode = RAW_MODE): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
-  const geometry = poseGeometry(shown, world, sourceOfDoc(doc), mode.keep ? keptNumber : rawNumber, { region: plant.region, vertices: plant.vertices }, drawWalkOf(doc, order, plant));
+  const draw = drawWalkOf(doc, order, plant);
+  const geometry = poseGeometry(shown, world, sourceOfDoc(doc), mode.keep ? keptNumber : rawNumber, { region: plant.region, vertices: plant.vertices }, mode.loop && plant.through === undefined ? { ...draw, through: NO_CLIPPED_ROWS } : draw);
   if (geometry.attachments === null) throw new CoreInputError(`the raw pose leaves the attachments out: ${geometry.attachmentsWhy}`);
   // The drawn rows (issue #964): the oracle's `clipped` rows where it is posed, and a concave or inverse clip cut through the core's own decomposition.
   if (geometry.drawnClipped === null) throw new CoreInputError(`the raw pose leaves the clipped triangles out: ${geometry.drawnClippedWhy}`);
@@ -399,7 +410,8 @@ export function walkIn(doc: CompiledDocument, animation: string, steps: readonly
     const rank = new Map(drawOrder.map((n, r) => [n, r]));
     const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
     const drawn = rawDrawn(doc, shown, posed.world, drawOrder, plant, mode);
-    // A looping walk fires no event here: what fires across the wrap was not measured, and the walk's one reader (A10) reads none.
+    // A looping walk fires no event here: what fires across the wrap was not measured, and the walk's one reader (A10) reads none. Nor does it cut its
+    // drawn attachments through a clip (`NO_CLIPPED_ROWS`), so its `clipped` rows are empty.
     const events = mode.loop ? [] : (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
     last = t;
     poses.push({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown });
