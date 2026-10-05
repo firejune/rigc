@@ -49682,8 +49682,132 @@ function runPackerSuite(): number {
       'issue #1128: a pack run in another process is the same code over the same values only if the values survive the trip; ' +
         'JSON spells -0 as 0 and NaN as null, and a row that changed on the way would print a verdict about another input',
     );
+
+    // --- PK106..PK107: where a free polygon pack's time goes (issue #1165) ----
+    // On production rigs of 90 to 144 parts over two to four pages the pack
+    // took 14–107 s against rect's half second. Measured: almost all of it is
+    // footprint passes a page search throws away — every width below the
+    // page's own runs a pass that places tens of cells and then misses one —
+    // and inside those passes nearly all of it was band splits reading the
+    // whole free list, which `splitFreeByCell` now parts once per cell so a
+    // band reads only the entries near it. The set is `onsetShapes` at the
+    // first size at which the sweep of issue #1165 read the pack's median over
+    // three seeds past 5 s before that change (45 parts, one page — the mechanism is the single page search's
+    // discarded widths, which a spill only repeats per page); the cost is held
+    // as a count, not a clock: the free-list entries a band split reads, on
+    // average (`PassTally` `entriesRead` over `bandSplits`) — measured 138.3
+    // with the partition and 402.4 without, so the bound sits between them.
+    const onsetInputs = writePolypackInputs(join(polyGenDir, `onset-${ONSET_SEED}-${ONSET_PARTS}`), onsetShapes(ONSET_SEED, ONSET_PARTS));
+    const ONSET_READ_BOUND = 200;
+    const onsetCost = (partition: boolean): { tally: PassTally; pack: ReturnType<typeof packAtlas> } => {
+      const tally = emptyTally();
+      const pack = packAtlas(onsetInputs.slice(), { pageEdges: 'free', shape: 'polygon', tally, partition });
+      return { tally, pack };
+    };
+    const onsetOn = onsetCost(true);
+    const onsetOff = onsetCost(false);
+    const perSplit = (t: PassTally): number => (t.bandSplits === 0 ? Infinity : t.entriesRead / t.bandSplits);
+    const onsetRect = packAtlas(onsetInputs.slice(), { pageEdges: 'free' });
+    const onsetProbes = [
+      ...(onsetOn.tally.bandSplits > 0 ? [] : ['no footprint pass split a band, so nothing was measured']),
+      ...(perSplit(onsetOn.tally) <= ONSET_READ_BOUND ? [] : [`a band split read ${perSplit(onsetOn.tally).toFixed(1)} free-list entries on average, past the bound ${ONSET_READ_BOUND}`]),
+      ...(samePack(onsetOn.pack, onsetOff.pack) ? [] : [`the pack with the partition off is ${shapeOfPack(onsetOff.pack)}, with it ${shapeOfPack(onsetOn.pack)}`]),
+    ];
+    const onsetHeld = onsetProbes.length === 0;
+    const onsetLine = (t: PassTally): string =>
+      `${t.bandSplits} band split(s) over ${t.footprintPlaced} footprint-placed cell(s) read ${t.entriesRead} free-list entries, ${perSplit(t).toFixed(1)} per split`;
+    say(
+      'PK106_A_FREE_POLYGON_PACK_OF_A_PRODUCTION_SHAPED_SET_SPLITS_ITS_BANDS_OVER_THE_ENTRIES_NEAR_THEM',
+      onsetHeld,
+      probeDetail(
+        onsetHeld,
+        onsetProbes,
+        `onset set (seed ${ONSET_SEED}, ${ONSET_PARTS} parts): rect ${shapeOfPack(onsetRect)}, polygon ${shapeOfPack(onsetOn.pack)} (${onsetOn.pack.candidate}); ` +
+          `${onsetLine(onsetOn.tally)}, bound ${ONSET_READ_BOUND}; the same pack, byte for byte, with the partition off`,
+      ),
+      'issue #1165: the consumer waits for this pack in build; the work that was removed is the whole free list read by ' +
+        'every band of every cell of every pass a page search throws away, and it is held in the unit that names it',
+    );
+
+    // PK107: the plant. The same pack with the partition off — every band split
+    // over the whole free list, the code before issue #1165 — reads more
+    // entries per split than the bound allows, so PK106 measures the saving it
+    // exists for.
+    const onsetPlantHeld = perSplit(onsetOff.tally) > ONSET_READ_BOUND;
+    say(
+      'PK107_A_FREE_POLYGON_PACK_WITHOUT_THE_PARTITION_IS_PAST_THE_BOUND',
+      onsetPlantHeld,
+      `onset set (seed ${ONSET_SEED}, ${ONSET_PARTS} parts), every band split over the whole free list: ${onsetLine(onsetOff.tally)}, ` +
+        `against the bound ${ONSET_READ_BOUND} (${(perSplit(onsetOff.tally) / perSplit(onsetOn.tally)).toFixed(1)}x the pack's own)`,
+      'a bound nobody has seen fail is not a bound: this is the work every band of a discarded pass did over the list ' +
+        'before the partition, measured in the unit PK106 holds',
+    );
   }
   return bad;
+}
+
+/** The seed and size of the set `PK106` holds the free polygon pack's cost on — a size past the onset issue #1165 measured. */
+const ONSET_SEED = 1166;
+const ONSET_PARTS = 45;
+
+/**
+ * A seeded set of `parts` regions with the size and hull distribution of the
+ * production rigs issue #1165 measured — the set the onset of a free polygon
+ * pack's cost was swept on, and `PK106`'s.
+ *
+ * The bands are fitted to aggregate quantiles of three production rigs (90 to
+ * 144 parts, two to four `free` pages at 2048) and carry no region of theirs:
+ * the long side log-uniform in 50–600 texels, one part in 25 large (600–1300);
+ * the short side 0.2–1 of the long (0.5–1 for a large part); about one part in
+ * seven a whole rectangle, the rest a star hull of 4 to 40 vertices covering
+ * about a tenth to nine tenths of its rectangle (median about half), its
+ * centre off the rectangle's wherever the hull leaves room — so its owned box
+ * is often inset from the cell's corner, as on the rigs. Quantiles read off
+ * five seeds of 120: long side 51/94/179/358/1254 (min, lower quartile,
+ * median, upper quartile, max), hull vertices 4/13/22/31/40, hull over
+ * rectangle 0.09/0.25/0.48/0.71/0.92; cell area about 1.7 pages at 90 parts
+ * and 3 at 150. A pure function of the seed (mulberry32), so two calls agree
+ * to the bit.
+ */
+function onsetShapes(seed: number, parts: number): Array<{ region: string; width: number; height: number; hull: number[] }> {
+  let a = seed >>> 0;
+  const random = (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const at2 = (n: number): number => Math.round(n * 100) / 100;
+  const shapes: Array<{ region: string; width: number; height: number; hull: number[] }> = [];
+  for (let i = 0; i < parts; i++) {
+    const large = random() < 0.04;
+    const long = large ? Math.round(600 + random() * 700) : Math.round(Math.exp(Math.log(50) + random() * (Math.log(600) - Math.log(50))));
+    const short = Math.max(8, Math.round(long * (large ? 0.5 + 0.5 * random() : 0.2 + 0.8 * random())));
+    const wide = random() < 0.5;
+    const width = wide ? long : short;
+    const height = wide ? short : long;
+    let hull: number[];
+    if (random() < 0.15) {
+      hull = [width, height, 0, height, 0, 0, width, 0];
+    } else {
+      const n = 4 + Math.floor(random() * 37);
+      const scale = 0.4 + 0.9 * random();
+      const rx = (width / 2) * scale;
+      const ry = (height / 2) * scale;
+      const cx = width / 2 + (random() - 0.5) * Math.max(0, width - 2 * rx);
+      const cy = height / 2 + (random() - 0.5) * Math.max(0, height - 2 * ry);
+      const phase = random() * 2 * Math.PI;
+      hull = [];
+      for (let k = 0; k < n; k++) {
+        const angle = phase + (2 * Math.PI * k) / n;
+        const f = 0.7 + random() * 0.45;
+        hull.push(at2(Math.min(width, Math.max(0, cx + Math.cos(angle) * rx * f))), at2(Math.min(height, Math.max(0, cy + Math.sin(angle) * ry * f))));
+      }
+    }
+    shapes.push({ region: `part_${String(i).padStart(3, '0')}`, width, height, hull });
+  }
+  return shapes;
 }
 
 /**

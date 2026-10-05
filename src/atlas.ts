@@ -803,6 +803,13 @@ export interface PackOptions {
    * the same either way (`PK94`); only the cost differs.
    */
   stopAtMiss?: boolean;
+  /**
+   * `false` splits every band of every cell a footprint pass places over the
+   * whole free list — issue #1165's partition off (`splitFreeByCell`), for the
+   * selftest's plant (`PK106`) only. The pages are the same either way; only
+   * the cost differs.
+   */
+  partition?: boolean;
 }
 
 /** Where one region landed. `x`/`y` are the REGION's own corner, not its cell's. */
@@ -884,15 +891,16 @@ function smallestPageFor(
   anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
   tally?: PassTally,
   stopAtMiss = true,
+  partition = true,
 ): { width: number; height: number; rects: Rect[] } | null {
-  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge, shapes, anchors, tally, stopAtMiss);
+  if (pageEdges === 'free') return smallestFreePageFor(cells, maxEdge, shapes, anchors, tally, stopAtMiss, partition);
   const edges: number[] = [];
   for (let e = 1; e <= maxEdge; e *= 2) edges.push(e);
   const candidates: Array<{ w: number; h: number }> = [];
   for (const w of edges) for (const h of edges) candidates.push({ w, h });
   candidates.sort((a, b) => a.w * a.h - b.w * b.h || a.w - b.w);
   for (const candidate of candidates) {
-    const attempt = placePass(cells, shapes, candidate.w, candidate.h, Infinity, { wholeOrNothing: stopAtMiss, anchors, tally });
+    const attempt = placePass(cells, shapes, candidate.w, candidate.h, Infinity, { wholeOrNothing: stopAtMiss, anchors, tally, partition });
     if (attempt.some((r) => r === null)) continue;
     return { width: candidate.w, height: candidate.h, rects: attempt as Rect[] };
   }
@@ -947,8 +955,9 @@ function smallestFreePageFor(
   anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
   tally?: PassTally,
   stopAtMiss = true,
+  partition = true,
 ): { width: number; height: number; rects: Rect[] } | null {
-  const search = freePageSearch(cells, maxEdge, shapes, { anchors, stopAtMiss });
+  const search = freePageSearch(cells, maxEdge, shapes, { anchors, stopAtMiss, partition });
   if (tally !== undefined) for (const key of Object.keys(tally) as Array<keyof PassTally>) tally[key] += search.tally[key];
   return search.page;
 }
@@ -970,15 +979,19 @@ export interface FreePageSearch {
 
 /**
  * How `freePageSearch` runs its passes — for the selftest's plants only
- * (`PK94`, `PK95`). Each turns one of issue #1102's savings off: `stopAtMiss:
- * false` runs every footprint pass to its end, `edgeIndex: false` prunes the
- * free list by scanning all of it. The page is the same either way; only what
- * it costs differs, and the plants hold that.
+ * (`PK94`, `PK95`, `PK106`). Each turns one saving off: `stopAtMiss: false`
+ * runs every footprint pass to its end and `edgeIndex: false` splits and
+ * prunes the whole free list by scanning all of it (issue #1102's two);
+ * `partition: false` splits every band over the whole list but keeps the edge
+ * index (issue #1165's). The page is the same either way; only what it costs
+ * differs, and the plants hold that.
  */
 export interface FreePageSearchOptions {
   stopAtMiss?: boolean;
-  /** `false` scans the whole free list for a piece's containers (`splitFree`), as the prune did before issue #1102. */
+  /** `false` splits the whole free list and scans all of it for a piece's containers (`splitFree`), as the prune did before issue #1102. */
   edgeIndex?: boolean;
+  /** `false` splits every band over the whole free list (`splitFreeByCell`), as before issue #1165 — the plant of `PK106`. */
+  partition?: boolean;
   /** Where a candidate may anchor a cell (`FOOTPRINT_ANCHORS`) — `tools/pack_anchor.ts`'s candidate rules; default `box`. */
   anchors?: FootprintAnchors;
 }
@@ -1023,7 +1036,7 @@ export function freePageSearch(
       continue;
     }
     const maxBottom = best === null ? Infinity : Math.floor(bestArea / width);
-    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom, { wholeOrNothing, tally: out.tally, edgeIndex: options.edgeIndex ?? true, anchors: options.anchors });
+    const attempt = placePass(cells, shapes, width, maxEdge, maxBottom, { wholeOrNothing, tally: out.tally, edgeIndex: options.edgeIndex ?? true, anchors: options.anchors, partition: options.partition ?? true });
     let height = 0;
     for (const r of attempt) if (r !== null) height = Math.max(height, r.y + r.h);
     if (height > maxBottom) {
@@ -1231,13 +1244,13 @@ function placePass(
   // greedy pass that places one cell differently places every later one
   // differently too.
   const anchors = pass.anchors ?? DEFAULT_FOOTPRINT_ANCHORS;
-  let byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, anchors === 'best-of' ? 'box' : anchors);
+  let byFootprint = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, anchors === 'best-of' ? 'box' : anchors, pass.partition ?? true);
   if (anchors === 'best-of') {
     // Issue #1104's fourth candidate: both searches on the same page, the
     // better kept and the first anchor's on a tie — so a pass is never worse
     // than the first anchor's on that page.
     if (tally !== undefined) tally.footprintPlaced += placedCount(byFootprint);
-    const byTwo = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, 'box-or-cell');
+    const byTwo = packOnePageByFootprint(shapes, pageW, pageH, maxBottom, wholeOrNothing, pass.edgeIndex ?? true, tally, 'box-or-cell', pass.partition ?? true);
     const bottom = (placed: Array<Rect | null>): number => placed.reduce((n, r) => (r === null ? n : Math.max(n, r.y + r.h)), 0);
     const placedBox = placedCount(byFootprint);
     const placedTwo = placedCount(byTwo);
@@ -1262,6 +1275,8 @@ interface PassOptions {
   edgeIndex?: boolean;
   /** Where a candidate may anchor a cell (`FOOTPRINT_ANCHORS`). */
   anchors?: FootprintAnchors;
+  /** `splitFreeByCell`'s partition (default on); off only for the selftest's plant. */
+  partition?: boolean;
 }
 
 /** How many cells a pass placed. */
@@ -1293,6 +1308,12 @@ export interface PassTally {
   /** Containment tests the footprint passes' prune made (`splitFree`). */
   containmentTests: number;
   /**
+   * Free-list entries the footprint passes' splits read: the list's length at
+   * every band split, and once per placed cell the whole list the partition
+   * reads (`splitFreeByCell`) — the work issue #1165 measured, held by `PK106`.
+   */
+  entriesRead: number;
+  /**
    * Free rectangles that held a cell's owned box and were refused as its
    * first-anchor candidate only because the cell, anchored there, would leave
    * the page — at negative x or y, or past the right or bottom edge (issue
@@ -1307,7 +1328,7 @@ export interface PassTally {
 
 /** A tally with nothing counted. */
 export function emptyTally(): PassTally {
-  return { rectPlaced: 0, footprintPlaced: 0, bandSplits: 0, containmentTests: 0, boxAnchorRefused: 0, missedByAnchor: 0, secondAnchorPlaced: 0 };
+  return { rectPlaced: 0, footprintPlaced: 0, bandSplits: 0, containmentTests: 0, entriesRead: 0, boxAnchorRefused: 0, missedByAnchor: 0, secondAnchorPlaced: 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -1551,57 +1572,81 @@ function shapesMeet(a: CellShape, ax: number, ay: number, b: CellShape, bx: numb
 
 /**
  * MaxRects' split of every free rectangle `put` overlaps, then its prune —
- * `packOnePage`'s, with one saving that changes no rectangle and no order: a
- * free rectangle `put` did not touch is never tested for containment. Before
- * the split no free rectangle lay inside another (the prune's own
- * postcondition), and every new piece lies inside the rectangle it was cut
- * from, so an untouched rectangle inside a new piece would have lain inside
- * that one — so the test `packOnePage` makes for it always answers "not
- * contained", and skipping it keeps the list exactly as that prune leaves it.
+ * `packOnePage`'s, over the first `length` entries of `free`, written back in
+ * place; returns the new length. Four savings, none of which changes a
+ * rectangle or the list's order:
  *
- * ⭐ And a second (issue #1099, measured on production rigs): a free rectangle
- * narrower than `minW` or shorter than `minH` is dropped. The caller passes the
- * least bounding box of every cell the pass places, so such a rectangle can
- * never be a candidate, and neither can any piece later cut from it (a piece
- * lies inside the rectangle it was cut from); and a rectangle a dropped one
- * contains is itself too small. So every rectangle that could ever be a
- * candidate is kept, in the order the full prune keeps it, and the decisions
- * are the same. What it removes is the staircase of slivers an irregular hull's
- * bands cut along its edge: on a production-shaped set (30 regions, 200 to 900
- * px, hulls near their rectangles, a `free` page about 2023x2046) the pack
- * took 18.5 s with the slivers kept and spent 95 % of it in this prune.
+ *   * a free rectangle the placement did not touch is never tested for
+ *     containment. Before the split no free rectangle lay inside another (the
+ *     prune's own postcondition), and every new piece lies inside the
+ *     rectangle it was cut from, so an untouched rectangle inside a new piece
+ *     would have lain inside that one — the test `packOnePage` makes for it
+ *     always answers "not contained";
+ *   * ⭐ (issue #1099, measured on production rigs) a free rectangle narrower
+ *     than `minW` or shorter than `minH` is dropped. The caller passes the
+ *     least bounding box of every cell the pass places, so such a rectangle can
+ *     never be a candidate, and neither can any piece later cut from it (a
+ *     piece lies inside the rectangle it was cut from); and a rectangle a
+ *     dropped one contains is itself too small. So every rectangle that could
+ *     ever be a candidate is kept, in the order the full prune keeps it. What
+ *     it removes is the staircase of slivers an irregular hull's bands cut
+ *     along its edge: on a production-shaped set (30 regions, 200 to 900 px,
+ *     hulls near their rectangles, a `free` page about 2023x2046) the pack took
+ *     18.5 s with the slivers kept and spent 95 % of it in this prune. A piece
+ *     that would be dropped is not made at all (issue #1165): it takes part in
+ *     no test and is not written back, so it changes no other entry's index
+ *     order either;
+ *   * the edge index (issue #1102), below;
+ *   * (issue #1165) the rebuilt list, each entry's side and the edge lists are
+ *     kept between calls (`splitNext` and its neighbours) and the list is
+ *     written back over itself by index, never emptied and refilled: on the
+ *     production rigs the emptying and the pushes that refilled it were most
+ *     of this function's time, and none of it was arithmetic.
  */
-function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1, edgeIndex = true, tally?: PassTally): void {
-  const next: Rect[] = [];
-  /** Per entry of `next`: `UNTOUCHED`, or which side of `put` the piece was cut from. */
-  const side: number[] = [];
-  for (const fr of free) {
-    const overlaps = put.x < fr.x + fr.w && put.x + put.w > fr.x && put.y < fr.y + fr.h && put.y + put.h > fr.y;
-    if (!overlaps) {
-      next.push(fr);
-      side.push(UNTOUCHED);
+function splitFree(free: Rect[], length: number, put: Rect, minW: number, minH: number, edgeIndex: boolean, tally?: PassTally): number {
+  const px0 = put.x;
+  const py0 = put.y;
+  const px1 = put.x + put.w;
+  const py1 = put.y + put.h;
+  // A touched entry yields at most four pieces.
+  if (splitSide.length < length * 4) {
+    const capacity = Math.max(64, length * 8);
+    splitSide = new Int8Array(capacity);
+    splitLeft = new Int32Array(capacity);
+    splitRight = new Int32Array(capacity);
+    splitAbove = new Int32Array(capacity);
+    splitBelow = new Int32Array(capacity);
+  }
+  const next = splitNext;
+  const side = splitSide;
+  let n = 0;
+  for (let k = 0; k < length; k++) {
+    const fr = free[k];
+    const fx1 = fr.x + fr.w;
+    const fy1 = fr.y + fr.h;
+    if (!(px0 < fx1 && px1 > fr.x && py0 < fy1 && py1 > fr.y)) {
+      next[n] = fr;
+      side[n++] = UNTOUCHED;
       continue;
     }
-    if (put.x > fr.x) {
-      next.push({ x: fr.x, y: fr.y, w: put.x - fr.x, h: fr.h });
-      side.push(LEFT_OF_PUT);
+    if (px0 > fr.x && px0 - fr.x >= minW && fr.h >= minH) {
+      next[n] = { x: fr.x, y: fr.y, w: px0 - fr.x, h: fr.h };
+      side[n++] = LEFT_OF_PUT;
     }
-    if (put.x + put.w < fr.x + fr.w) {
-      next.push({ x: put.x + put.w, y: fr.y, w: fr.x + fr.w - (put.x + put.w), h: fr.h });
-      side.push(RIGHT_OF_PUT);
+    if (px1 < fx1 && fx1 - px1 >= minW && fr.h >= minH) {
+      next[n] = { x: px1, y: fr.y, w: fx1 - px1, h: fr.h };
+      side[n++] = RIGHT_OF_PUT;
     }
-    if (put.y > fr.y) {
-      next.push({ x: fr.x, y: fr.y, w: fr.w, h: put.y - fr.y });
-      side.push(ABOVE_PUT);
+    if (py0 > fr.y && fr.w >= minW && py0 - fr.y >= minH) {
+      next[n] = { x: fr.x, y: fr.y, w: fr.w, h: py0 - fr.y };
+      side[n++] = ABOVE_PUT;
     }
-    if (put.y + put.h < fr.y + fr.h) {
-      next.push({ x: fr.x, y: put.y + put.h, w: fr.w, h: fr.y + fr.h - (put.y + put.h) });
-      side.push(BELOW_PUT);
+    if (py1 < fy1 && fr.w >= minW && fy1 - py1 >= minH) {
+      next[n] = { x: fr.x, y: py1, w: fr.w, h: fy1 - py1 };
+      side[n++] = BELOW_PUT;
     }
   }
-  const contains = (a: Rect, b: Rect): boolean => b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
-  const usable = (r: Rect): boolean => r.w >= minW && r.h >= minH;
-  // ⭐ The third saving (issue #1102): a piece's containers are looked for only
+  // ⭐ The edge index (issue #1102): a piece's containers are looked for only
   // among the entries that share the edge it was cut along. A piece cut from
   // the left of `put` ends at `put.x` and keeps its parent's rows, which meet
   // `put`'s rows (the parent overlapped `put`). A rectangle containing it covers
@@ -1617,45 +1662,165 @@ function splitFree(free: Rect[], put: Rect, minW = 1, minH = 1, edgeIndex = true
   // `polygon` pack of it runs): 415,916,651 containment tests by the full scan,
   // 15,407,179 by the index, 3.2 s → 2.3 s; with the early stop off as well,
   // 11,928,721,590 → 537,215,014 and 101 s → 14.5 s. `edgeIndex: false` is
-  // that scan, kept so the selftest can hold that the index finds what the
-  // scan finds (`PK94`) and for nothing else.
-  const scan: number[][] = [[], [], [], []];
-  const all: number[] = [];
-  for (let j = 0; j < next.length; j++) {
+  // that scan — every usable entry in `left` — kept so the selftest can hold
+  // that the index finds what the scan finds (`PK94`) and for nothing else.
+  const left = splitLeft;
+  const right = splitRight;
+  const above = splitAbove;
+  const below = splitBelow;
+  let nLeft = 0;
+  let nRight = 0;
+  let nAbove = 0;
+  let nBelow = 0;
+  for (let j = 0; j < n; j++) {
     const r = next[j];
-    if (!usable(r)) continue;
+    if (r.w < minW || r.h < minH) continue;
     if (!edgeIndex) {
-      all.push(j);
+      left[nLeft++] = j;
       continue;
     }
-    if (r.x + r.w === put.x) scan[LEFT_OF_PUT].push(j);
-    if (r.x === put.x + put.w) scan[RIGHT_OF_PUT].push(j);
-    if (r.y + r.h === put.y) scan[ABOVE_PUT].push(j);
-    if (r.y === put.y + put.h) scan[BELOW_PUT].push(j);
+    if (r.x + r.w === px0) left[nLeft++] = j;
+    if (r.x === px1) right[nRight++] = j;
+    if (r.y + r.h === py0) above[nAbove++] = j;
+    if (r.y === py1) below[nBelow++] = j;
   }
-  free.length = 0;
+  let w = 0;
   let tests = 0;
-  for (let i = 0; i < next.length; i++) {
-    if (!usable(next[i])) continue;
-    if (side[i] === UNTOUCHED) {
-      free.push(next[i]);
+  for (let i = 0; i < n; i++) {
+    const piece = next[i];
+    if (piece.w < minW || piece.h < minH) continue;
+    const cut = side[i];
+    if (cut === UNTOUCHED) {
+      free[w++] = piece;
       continue;
     }
+    const list = !edgeIndex || cut === LEFT_OF_PUT ? left : cut === RIGHT_OF_PUT ? right : cut === ABOVE_PUT ? above : below;
+    const count = !edgeIndex || cut === LEFT_OF_PUT ? nLeft : cut === RIGHT_OF_PUT ? nRight : cut === ABOVE_PUT ? nAbove : nBelow;
     let contained = false;
-    for (const j of edgeIndex ? scan[side[i]] : all) {
+    for (let t = 0; t < count; t++) {
+      const j = list[t];
       if (i === j) continue;
       tests++;
-      if (contains(next[j], next[i]) && (j < i || !contains(next[i], next[j]))) {
+      const other = next[j];
+      // On a mutual containment (two identical rectangles) the later index
+      // loses, so exactly one survives and it is always the same one.
+      if (rectContains(other, piece) && (j < i || !rectContains(piece, other))) {
         contained = true;
         break;
       }
     }
-    if (!contained) free.push(next[i]);
+    if (!contained) free[w++] = piece;
   }
   if (tally !== undefined) {
     tally.bandSplits++;
     tally.containmentTests += tests;
+    tally.entriesRead += length;
   }
+  return w;
+}
+
+/** Whether `a` contains `b`. */
+function rectContains(a: Rect, b: Rect): boolean {
+  return b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+}
+
+/**
+ * `splitFree`'s working storage, kept between calls so a split allocates
+ * nothing but the pieces it cuts (issue #1165). `splitFree` is never
+ * re-entered and reads no entry past the `n` it wrote this call, so what an
+ * earlier call left behind is never read.
+ */
+const splitNext: Rect[] = [];
+let splitSide = new Int8Array(0);
+let splitLeft = new Int32Array(0);
+let splitRight = new Int32Array(0);
+let splitAbove = new Int32Array(0);
+let splitBelow = new Int32Array(0);
+/** `splitFreeByCell`'s near list, kept between calls for the same reason. */
+const splitNear: Rect[] = [];
+
+/**
+ * Every band of one placed cell split out of the first `length` entries of
+ * `free` (`splitFree`, once per band, top to bottom); returns the new length.
+ *
+ * ⭐ **The list is split near the cell only** (issue #1165). Before a cell's
+ * bands are split, the list is parted once into the entries that touch the
+ * bands' bounding box — overlapping it or sharing an edge with it — and the
+ * rest; every band is then split over the near part alone, and the far part is
+ * written back first, the near part after it. Nothing the far part holds could
+ * have been read:
+ *
+ *   * a far entry does not overlap any band (every band lies inside the box),
+ *     so every split leaves it untouched — kept as it is, never tested;
+ *   * a far entry contains no piece any band cuts. A piece cut from the left of
+ *     a band ends at the band's left edge `x` and keeps a row `y` of the band
+ *     (its parent overlapped the band), so a container of it holds the texel
+ *     `(x − 1, y)` — inside the box or against its left edge, which an entry
+ *     that neither overlaps the box nor shares an edge with it cannot hold.
+ *     Likewise for the other three sides. And every piece is cut from a near
+ *     entry, so it is in the near part for the next band.
+ *
+ * So every split makes the decisions over the near part that it makes over the
+ * whole list, and the far part comes through every split unchanged. ⚠️ What
+ * changes is the ORDER of the list: the far entries move ahead of the near ones.
+ * That decides nothing, because nothing that reads the list reads its order:
+ *
+ *   * a split keeps every untouched entry, and keeps a piece unless another
+ *     usable entry contains it, the later index losing only between two equal
+ *     rectangles — and which of two equal rectangles survives is invisible,
+ *     they are the same rectangle — so the SET of rectangles after a split is
+ *     a function of the set before it;
+ *   * a candidate is chosen by a total order on its score, its free
+ *     rectangle's corner and its anchor (`packOnePageByFootprint`); two free
+ *     rectangles that tie on all of those put the cell at the same place.
+ *
+ * So the placements are the ones the whole-list split makes, decision for
+ * decision. What it saves: on three production rigs the near part is 10 to 22 %
+ * of the list (about 90 entries of 940 on the slowest), and each of a cell's
+ * 50 or so bands read the whole list. `partition: false` splits every band over
+ * the whole list in order, as before — kept so the selftest can plant the
+ * work back (`PK106`) and hold that the pages do not move (`PK94`, through
+ * `edgeIndex: false`, which splits the whole list too).
+ */
+function splitFreeByCell(
+  free: Rect[],
+  length: number,
+  cellX: number,
+  cellY: number,
+  rects: readonly Rect[],
+  minW: number,
+  minH: number,
+  edgeIndex: boolean,
+  partition: boolean,
+  tally?: PassTally,
+): number {
+  if (!edgeIndex || !partition) {
+    let n = length;
+    for (const r of rects) n = splitFree(free, n, { x: cellX + r.x, y: cellY + r.y, w: r.w, h: r.h }, minW, minH, edgeIndex, tally);
+    return n;
+  }
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const r of rects) {
+    x0 = Math.min(x0, cellX + r.x);
+    y0 = Math.min(y0, cellY + r.y);
+    x1 = Math.max(x1, cellX + r.x + r.w);
+    y1 = Math.max(y1, cellY + r.y + r.h);
+  }
+  const near = splitNear;
+  let nNear = 0;
+  let nFar = 0;
+  for (let k = 0; k < length; k++) {
+    const fr = free[k];
+    if (fr.x <= x1 && fr.x + fr.w >= x0 && fr.y <= y1 && fr.y + fr.h >= y0) near[nNear++] = fr;
+    else free[nFar++] = fr;
+  }
+  if (tally !== undefined) tally.entriesRead += length;
+  for (const r of rects) nNear = splitFree(near, nNear, { x: cellX + r.x, y: cellY + r.y, w: r.w, h: r.h }, minW, minH, true, tally);
+  for (let k = 0; k < nNear; k++) free[nFar + k] = near[k];
+  return nFar + nNear;
 }
 
 /** Which side of the placed rectangle a free-list piece was cut from (`splitFree`) — an index into its edge lists. */
@@ -1738,8 +1903,11 @@ function packOnePageByFootprint(
   edgeIndex = true,
   tally?: PassTally,
   anchors: FootprintAnchors = DEFAULT_FOOTPRINT_ANCHORS,
+  partition = true,
 ): Array<Rect | null> {
+  // The free list is `free`'s first `freeLength` entries (`splitFree`).
   const free: Rect[] = [{ x: 0, y: 0, w: pageW, h: pageH }];
+  let freeLength = 1;
   const placed: Array<Rect | null> = [];
   const owned: Array<{ shape: CellShape; x: number; y: number }> = [];
   // The least box any cell of this pass needs — what a free rectangle must
@@ -1759,7 +1927,8 @@ function packOnePageByFootprint(
     let held = false;
     // The second anchor differs from the first only when the box is inset.
     const anchorCount = anchors !== 'box' && (box.x !== 0 || box.y !== 0) ? 2 : 1;
-    for (const fr of free) {
+    for (let f = 0; f < freeLength; f++) {
+      const fr = free[f];
       if (fr.w < box.w || fr.h < box.h) continue;
       held = true;
       let firstOffPage = false;
@@ -1834,7 +2003,7 @@ function packOnePageByFootprint(
       while (placed.length < shapes.length) placed.push(null);
       return placed;
     }
-    for (const r of shape.rects) splitFree(free, { x: put.x + r.x, y: put.y + r.y, w: r.w, h: r.h }, minW, minH, edgeIndex, tally);
+    freeLength = splitFreeByCell(free, freeLength, put.x, put.y, shape.rects, minW, minH, edgeIndex, partition, tally);
   }
   return placed;
 }
@@ -2087,8 +2256,9 @@ function layoutPack(
   anchors: FootprintAnchors,
   tally?: PassTally,
   stopAtMiss = true,
+  partition = true,
 ): PackLayout {
-  const single = smallestPageFor(cells, maxEdge, pageEdges, shapes, anchors, tally, stopAtMiss);
+  const single = smallestPageFor(cells, maxEdge, pageEdges, shapes, anchors, tally, stopAtMiss, partition);
 
   /** page index -> the placements on it, in packing order. */
   const perPage: Placement[][] = [];
@@ -2126,7 +2296,7 @@ function layoutPack(
         maxEdge,
         maxEdge,
         Infinity,
-        { anchors, tally },
+        { anchors, tally, partition },
       );
       const onPage: typeof remaining = [];
       const leftOver: typeof remaining = [];
@@ -2157,6 +2327,7 @@ function layoutPack(
         anchors,
         tally,
         stopAtMiss,
+        partition,
       );
       if (shrunk === null) {
         // Unreachable for the same reason as the stall above: these cells were
@@ -2333,11 +2504,11 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   // `pot` on two 2048x2048 pages against `rect`'s 2048x2048 + 1024x2048.
   // `footprintAnchors` names one rule alone instead (the instrument, the plant).
   const candidates: Array<{ name: PackCandidate; layout: PackLayout }> = [];
-  if (shapes === undefined) candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true) });
-  else if (opts.footprintAnchors !== undefined) candidates.push({ name: opts.footprintAnchors, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, opts.footprintAnchors, opts.tally, opts.stopAtMiss ?? true) });
+  if (shapes === undefined) candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true, opts.partition ?? true) });
+  else if (opts.footprintAnchors !== undefined) candidates.push({ name: opts.footprintAnchors, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, opts.footprintAnchors, opts.tally, opts.stopAtMiss ?? true, opts.partition ?? true) });
   else {
-    candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true) });
-    for (const rule of POLYGON_CANDIDATE_RULES) candidates.push({ name: rule, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, rule, opts.tally, opts.stopAtMiss ?? true) });
+    candidates.push({ name: 'rect', layout: layoutPack(sorted, cells, undefined, maxEdge, pageEdges, padding, 'box', opts.tally, opts.stopAtMiss ?? true, opts.partition ?? true) });
+    for (const rule of POLYGON_CANDIDATE_RULES) candidates.push({ name: rule, layout: layoutPack(sorted, cells, shapes, maxEdge, pageEdges, padding, rule, opts.tally, opts.stopAtMiss ?? true, opts.partition ?? true) });
   }
   const areaOf = (layout: PackLayout): number => layout.pageSizes.reduce((n, p) => n + p.width * p.height, 0);
   let chosen = candidates[0];
