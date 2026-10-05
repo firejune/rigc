@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.12.0](https://github.com/firejune/rigc/compare/v2.11.1...v2.12.0) (2026-10-05)
+
+
+### Features
+
+* **cli:** rigc repack &lt;build&gt; --out &lt;dir&gt; — repack a build from its own output under build --pack's flags, written only after every region, the skeleton (or --accept-skeleton-differences, every path named) and the gate hold; --stage-box passthrough ([#1177](https://github.com/firejune/rigc/issues/1177)) ([554bb90](https://github.com/firejune/rigc/commit/554bb907b9f7501f92d8bc05d860d66de55e9f75))
+* **emit:** a rig can carry its stage in the shipped Spine files as a bounding box (`skeleton.stageBox`), held by A50_STAGE_BOX_IS_THE_STAGE on both suppliers and read back by `ingest --stage-box`; the 2.2.0 migration note joins the tree ([#1175](https://github.com/firejune/rigc/issues/1175)) ([5a81e7b](https://github.com/firejune/rigc/commit/5a81e7b33f59dbd09c2392ad38089ff258863421)), closes [#1168](https://github.com/firejune/rigc/issues/1168)
+
 ## [2.11.1](https://github.com/firejune/rigc/compare/v2.11.0...v2.11.1) (2026-10-05)
 
 
