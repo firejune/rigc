@@ -29,12 +29,12 @@
  *
  * 🌱 **The plants are part of the tool, not a story in a pull request.** A smoke
  * that has never been seen to fail proves that a program ran, not that a program
- * was checked, so six of the eight cases rebuild the tarball from a PATCHED COPY
- * of the extracted package — an allowlist entry removed, a module removed, a
- * dependency removed, the skills removed, the `exports` map removed, its deep
- * paths removed — and INVERT the verdict: such a case is green only when the
- * smoke went red at the step it was supposed to, naming the module that went
- * missing. The worktree is never patched; the patch is applied to the extraction
+ * was checked, so every case but the first two rebuilds the tarball from a
+ * PATCHED COPY of the extracted package — an allowlist entry removed, a module
+ * removed, a dependency added back, the skills removed, the `exports` map
+ * removed, its deep paths removed, one named entry removed, one observed symbol
+ * renamed — and INVERTS the verdict: such a case is green only when the smoke
+ * went red at the step it was supposed to, naming what went missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
  *
  * ## The wait, and the two outcomes it separates (issue #563)
@@ -295,13 +295,102 @@ const NAMED_EXPORTS: Record<string, string> = {
   './plate': 'tools/plate.ts',
   './font5x7': 'tools/font5x7.ts',
   './transform': 'src/transform.ts',
+  './render': 'src/render.ts',
+  './png': 'src/png.ts',
+  './compile': 'src/compile.ts',
   './cli': 'cli.ts',
   './package.json': 'package.json',
 };
 
+/** What a symbol has to be when the install hands it over: callable, or present and not callable. */
+type SymbolKind = 'function' | 'constant';
+
+/**
+ * Every symbol a dependant was observed importing, by the named entry it is
+ * promised through (issue #1167). RELEASING.md *The import surface* states the
+ * promise — renaming or removing a symbol listed here is a breaking change —
+ * and this is the one place that list is kept, so the promise and the check
+ * cannot drift apart: the probe imports each entry FROM THE INSTALL and reads
+ * every value symbol as present, with the kind it has today.
+ *
+ * - `values` are held. A rename leaves the old name `undefined` on the module
+ *   namespace, and the line names the entry and the symbol.
+ * - `types` are recorded and NOT held. A type does not exist at run time, and
+ *   type-checking a consumer against the install needs `tsc`, which neither
+ *   the package nor the `installs` job (no dev dependencies, deliberately)
+ *   has. RELEASING.md says so rather than implying otherwise.
+ * - `needsRuntime` is whether importing the entry needs
+ *   `@esotericsoftware/spine-core` installed beside the package (a
+ *   devDependency since 2.0.0). With the runtime taken away again, the probe
+ *   imports every entry: one marked `false` has to load, and one marked `true`
+ *   has to refuse naming the runtime — so the sentence RELEASING.md states
+ *   beside the entry is measured in both directions, not remembered.
+ *
+ * ⚠️ The list grows by observation only. A symbol nobody was seen using is not
+ * promised, however public it looks.
+ */
+interface ObservedEntry {
+  /** The `exports` key, spelled as `NAMED_EXPORTS` spells it. */
+  entry: string;
+  /** Who was seen importing it, and the issue that recorded it. */
+  observed: string;
+  needsRuntime: boolean;
+  values: Record<string, SymbolKind>;
+  types: string[];
+}
+
+const OBSERVED_IN = 'spine-parts 0.8.2, issue #1167';
+
+const OBSERVED_SYMBOLS: ObservedEntry[] = [
+  {
+    entry: './plate',
+    observed: OBSERVED_IN,
+    needsRuntime: false,
+    values: { decodePng: 'function', encodePng: 'function', PNG_SIGNATURE: 'constant', pngChunk: 'function' },
+    types: [],
+  },
+  { entry: './font5x7', observed: OBSERVED_IN, needsRuntime: false, values: { drawText: 'function', GLYPH_H: 'constant' }, types: [] },
+  {
+    entry: './transform',
+    observed: OBSERVED_IN,
+    needsRuntime: false,
+    values: { computeWorldTransforms: 'function', cropToSpineY: 'function', toBoneLocal: 'function' },
+    types: ['BoneTransform'],
+  },
+  {
+    entry: './render',
+    observed: OBSERVED_IN,
+    needsRuntime: true,
+    values: { loadPosable: 'function', sampleAnimation: 'function', sampleSetupPose: 'function' },
+    types: ['BoneSnapshot', 'Frame', 'Mesh'],
+  },
+  { entry: './png', observed: OBSERVED_IN, needsRuntime: false, values: { assertPng: 'function' }, types: [] },
+  { entry: './compile', observed: OBSERVED_IN, needsRuntime: false, values: { headerBoxNumber: 'function' }, types: [] },
+];
+
+/**
+ * The symbol `rename-symbol` renames in the packed copy — the card's own case:
+ * `headerBoxNumber` renamed passed every gate this tree had. The export is
+ * renamed and the function kept, so the module still loads and the build still
+ * runs; only a dependant reading the old name can tell.
+ */
+const RENAME_PLANT = { entry: './compile', symbol: 'headerBoxNumber', renamed: 'headerBoxNumberRenamed' };
+
+/** The named entry `drop-named-entry` takes out of the packed map — one of the three #1167 added. */
+const DROPPED_ENTRY = './render';
+
+// A plant aimed at something the table does not list would prove nothing about
+// the table, so both targets are held to it where they are declared.
+if (OBSERVED_SYMBOLS.find((row) => row.entry === RENAME_PLANT.entry)?.values[RENAME_PLANT.symbol] === undefined) {
+  throw new Error(`install_smoke: RENAME_PLANT names ${RENAME_PLANT.symbol} through ${RENAME_PLANT.entry}, which OBSERVED_SYMBOLS does not list`);
+}
+if (!OBSERVED_SYMBOLS.some((row) => row.entry === DROPPED_ENTRY) || !(DROPPED_ENTRY in NAMED_EXPORTS)) {
+  throw new Error(`install_smoke: DROPPED_ENTRY ${DROPPED_ENTRY} is not a named entry OBSERVED_SYMBOLS lists`);
+}
+
 /**
  * The deep paths a dependant was observed importing before the map existed —
- * spine-parts, on 2026-09-27 — which the one-release courtesy has to keep.
+ * spine-parts, on 2026-09-27 — which the pattern courtesy has to keep.
  * They are also inside the every-shipped-path sweep below; they are named here
  * so that the failure a dependant would hit is the one this prints.
  */
@@ -314,7 +403,10 @@ const OBSERVED_DEEP_PATHS: Record<string, string> = {
 
 /**
  * Imports the package the way a dependant does, from the install directory,
- * and calls one symbol through every route that reaches a module.
+ * calls one symbol through every route that reaches a module, and reads every
+ * symbol `OBSERVED_SYMBOLS` lists through its named entry. Run with
+ * `without-runtime` (phase three) it only imports each observed entry and
+ * holds it to its `needsRuntime`.
  *
  * It prints `EXPORT_BAD <specifier>: <what>` for each failure, so the harness
  * can name the subpath rather than the script, and `EXPORT_COUNTS …` once.
@@ -359,6 +451,36 @@ const load = async (spec) => {
     return null;
   }
 };
+
+// 0. With the runtime taken away (phase three): every entry a dependant imports
+// either loads, or — where it is stated to need the runtime — refuses naming it.
+// Both directions, so a stale statement is as red as a broken entry.
+if (process.argv[2] === 'without-runtime') {
+  let loaded = 0;
+  let refused = 0;
+  for (const row of plan.symbols) {
+    const spec = 'spine-rigc' + row.entry.slice(1);
+    let threw = null;
+    try {
+      await import(spec);
+    } catch (e) {
+      threw = e && e.message ? e.message : String(e);
+    }
+    if (!row.needsRuntime) {
+      if (threw === null) loaded += 1;
+      else said(spec, 'import without ' + plan.runtime + ' threw ' + threw + ', and this entry is stated to need nothing installed beside the package');
+    } else if (threw === null) {
+      said(spec, 'imported without ' + plan.runtime + ', and this entry is stated to need it installed beside the package, so the statement is stale');
+    } else if (!threw.includes(plan.runtime)) {
+      said(spec, 'import without ' + plan.runtime + ' threw ' + threw + ', which does not name the runtime this entry is stated to need');
+    } else {
+      refused += 1;
+    }
+  }
+  for (const line of bad) console.log('EXPORT_BAD ' + line);
+  console.log('EXPORT_COUNTS without ' + plan.runtime + ': ' + loaded + ' entr(ies) loaded, ' + refused + ' refused naming it');
+  process.exit(bad.length === 0 ? 0 : 1);
+}
 
 // 1. Every named entry, and every deep path a dependant was seen using.
 for (const [key, file] of Object.entries(plan.named)) lands('spine-rigc' + key.slice(1), file);
@@ -424,6 +546,27 @@ for (const spec of ['spine-rigc/cli', 'spine-rigc/cli.ts']) {
   if (ran.status !== 0 || out !== version) said(spec, 'bun <resolved> --version exited ' + ran.status + ' printing ' + JSON.stringify(out) + ' and ' + JSON.stringify(version) + ' was required');
 }
 
+// 2b. Every symbol a dependant was observed importing (issue #1167), through
+// the named entry it is promised by, read as present with the kind it has
+// today. Types are not here: they do not exist at run time.
+let held = 0;
+let listed = 0;
+for (const row of plan.symbols) {
+  const spec = 'spine-rigc' + row.entry.slice(1);
+  const m = await load(spec);
+  for (const [name, kind] of Object.entries(row.values)) {
+    listed += 1;
+    if (m === null) {
+      said(spec, 'symbol ' + name + ' could not be read because the entry did not import (observed in ' + row.observed + ')');
+      continue;
+    }
+    const v = m[name];
+    const got = v === undefined ? 'missing' : typeof v === 'function' ? 'function' : 'constant';
+    if (got === kind) held += 1;
+    else said(spec, 'symbol ' + name + ' is ' + (got === 'missing' ? 'not exported' : 'a ' + got) + ' and a ' + kind + ' was required (observed in ' + row.observed + ')');
+  }
+}
+
 // 3. Every path the tarball carries, spelled in full — and, for a module, with
 // its extension left off, which is how Bun resolved it before the map existed.
 let full = 0;
@@ -438,7 +581,7 @@ for (const path of plan.paths) {
   }
 }
 for (const line of bad) console.log('EXPORT_BAD ' + line);
-console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observed deep paths ' + Object.keys(plan.deep).length + ', shipped paths ' + full + '/' + plan.paths.length + ' in full and ' + bare + '/' + bareTried + ' modules without their extension');
+console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observed symbols ' + held + '/' + listed + ' held across ' + plan.symbols.length + ' entries, observed deep paths ' + Object.keys(plan.deep).length + ', shipped paths ' + full + '/' + plan.paths.length + ' in full and ' + bare + '/' + bareTried + ' modules without their extension');
 process.exit(bad.length === 0 ? 0 : 1);
 `;
 
@@ -629,7 +772,17 @@ function waitForRegistry(spec: string, minutes: number, cwd: string, into: strin
 // The tarball, and the plants that patch a COPY of it
 // ---------------------------------------------------------------------------
 
-type Plant = 'none' | 'drop-plate' | 'drop-src-module' | 'add-dependency' | 'drop-core-entry' | 'drop-skills' | 'drop-exports' | 'drop-deep-exports';
+type Plant =
+  | 'none'
+  | 'drop-plate'
+  | 'drop-src-module'
+  | 'add-dependency'
+  | 'drop-core-entry'
+  | 'drop-skills'
+  | 'drop-exports'
+  | 'drop-deep-exports'
+  | 'drop-named-entry'
+  | 'rename-symbol';
 
 /** The module each plant takes out of the package, and the step whose output has to name it. */
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string }> = {
@@ -666,7 +819,17 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   'drop-deep-exports': {
     names: ['spine-rigc/tools/plate.ts'],
     steps: ['exports'],
-    what: '`exports` cut down to its named entries (issue #859), which is the map without its one-release courtesy: `spine-rigc/tools/plate.ts`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it',
+    what: '`exports` cut down to its named entries (issue #859), which is the map without its pattern courtesy: `spine-rigc/tools/plate.ts`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it',
+  },
+  'drop-named-entry': {
+    names: [`spine-rigc${DROPPED_ENTRY.slice(1)}`],
+    steps: ['exports'],
+    what: `the named entry \`${DROPPED_ENTRY}\` removed from \`exports\` (issue #1167), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${DROPPED_ENTRY.slice(1)}\` is the one who finds out, and the line has to name the entry`,
+  },
+  'rename-symbol': {
+    names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
+    steps: ['exports'],
+    what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issue #1167), which is the rename that passed every gate this tree had: the module loads, the build runs, and only a dependant reading the old name can tell — so the line has to name the entry and the symbol`,
   },
 };
 
@@ -744,6 +907,21 @@ function tarballFor(
   } else if (plant === 'drop-deep-exports') {
     pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key in NAMED_EXPORTS));
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'drop-named-entry') {
+    pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key !== DROPPED_ENTRY));
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  } else if (plant === 'rename-symbol') {
+    // The export renamed and the function kept, so nothing inside the package
+    // that calls it changes: `export function X(` becomes `function X(`, and an
+    // `export { X as Renamed }` is appended. Checked below, on the tarball.
+    const victim = join(pkgDir, NAMED_EXPORTS[RENAME_PLANT.entry]);
+    const declared = `export function ${RENAME_PLANT.symbol}(`;
+    const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';
+    if (text.split(declared).length !== 2) {
+      faults.push(`SMOKE_PLANT_APPLIED: ${NAMED_EXPORTS[RENAME_PLANT.entry]} declares \`${declared}\` ${text.split(declared).length - 1} time(s) where once was required, so the rename plants nothing`);
+      return { tgz: '', faults, paths: [], evidence: '' };
+    }
+    writeFileSync(victim, `${text.replace(declared, `function ${RENAME_PLANT.symbol}(`)}\nexport { ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} };\n`);
   } else {
     const victim = join(pkgDir, 'src', 'validate.ts');
     if (!existsSync(victim)) {
@@ -786,6 +964,25 @@ function tarballFor(
       );
     } else {
       evidence = `the packed package.json declares ${RUNTIME} ${deps[RUNTIME]} in dependencies, where the tree declares it only as a devDependency`;
+    }
+  } else if (plant === 'drop-named-entry') {
+    const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
+    const map = shipped.status === 0 ? (JSON.parse(shipped.out) as { exports?: Record<string, string> }).exports : undefined;
+    if (map === undefined || DROPPED_ENTRY in map || !('./plate' in map)) {
+      faults.push(
+        `SMOKE_PLANT_APPLIED: the packed package.json maps ${map === undefined ? 'no exports' : `exports ${Object.keys(map).join(', ')}`}, and a map without ${DROPPED_ENTRY} and with every other named entry was required, so the plant "${plant}" planted something else`,
+      );
+    } else {
+      evidence = `the packed package.json maps ${Object.keys(map).length} exports key(s), ${DROPPED_ENTRY} not among them`;
+    }
+  } else if (plant === 'rename-symbol') {
+    const file = NAMED_EXPORTS[RENAME_PLANT.entry];
+    const shipped = run('tar', ['-xzOf', second, `package/${file}`], work);
+    const renamed = `export { ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} };`;
+    if (shipped.status !== 0 || shipped.out.includes(`export function ${RENAME_PLANT.symbol}(`) || !shipped.out.includes(renamed)) {
+      faults.push(`SMOKE_PLANT_APPLIED: the packed ${file} does not export ${RENAME_PLANT.symbol} under the name ${RENAME_PLANT.renamed} alone, so the plant "${plant}" planted nothing`);
+    } else {
+      evidence = `the packed ${file} exports ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} and no longer under its own name`;
     }
   } else if (plant === 'drop-exports' || plant === 'drop-deep-exports') {
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
@@ -1091,7 +1288,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // never reads `exports` — which is why it is here and not in the selftest.
   writeFileSync(
     join(home, 'exports_probe.json'),
-    `${JSON.stringify({ named: NAMED_EXPORTS, deep: OBSERVED_DEEP_PATHS, paths: built.paths }, null, 2)}\n`,
+    `${JSON.stringify({ named: NAMED_EXPORTS, symbols: OBSERVED_SYMBOLS, runtime: RUNTIME, deep: OBSERVED_DEEP_PATHS, paths: built.paths }, null, 2)}\n`,
   );
   writeFileSync(join(home, 'exports_probe.mjs'), EXPORTS_PROBE_SOURCE);
   const exportsRan = run('bun', [join(home, 'exports_probe.mjs')], home);
@@ -1118,6 +1315,23 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   rmSync(runtimeDir, { recursive: true, force: true });
   if (!existsSync(runtimeDir)) {
     expectVersion('version', 'cli_core.ts', `entry: cli_core.ts — ${RUNTIME} absent`);
+
+    // What each observed entry needs installed beside it (issue #1167), read
+    // from this install with the runtime gone: RELEASING.md states it beside
+    // the entry, and `needsRuntime` in OBSERVED_SYMBOLS is what is checked.
+    const bareRan = run('bun', [join(home, 'exports_probe.mjs'), 'without-runtime'], home);
+    output += bareRan.out;
+    const bareBad = bareRan.out.split('\n').filter((line) => line.startsWith('EXPORT_BAD '));
+    const bareCounts = /^EXPORT_COUNTS (.+)$/m.exec(bareRan.out)?.[1];
+    for (const line of bareBad) fault('exports-without-runtime', `SMOKE_ENTRIES_STATE_WHAT_THEY_NEED: ${line.slice('EXPORT_BAD '.length)}`);
+    if (bareCounts === undefined || (bareRan.status !== 0 && bareBad.length === 0)) {
+      fault(
+        'exports-without-runtime',
+        `SMOKE_ENTRIES_STATE_WHAT_THEY_NEED: the import probe without ${RUNTIME} exited ${bareRan.status} without a verdict. ${bareRan.out.trim().slice(0, 2000)}`,
+      );
+    } else if (bareBad.length === 0) {
+      notes.push(`exports: ${bareCounts}`);
+    }
     if (existsSync(join(outDir, 'skeleton.model.json'))) {
       const rendered = run(bin, ['render', '--candidate', 'build', '--out', 'frames'], home);
       output += rendered.out;
@@ -1216,7 +1430,7 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry; with spine-core installed beside it the same rigc builds through the round trip, resolves every \`exports\` entry and every shipped path; with spine-core taken away again it renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry; with spine-core installed beside it the same rigc builds through the round trip, resolves every \`exports\` entry and every shipped path and reads every observed symbol through its entry; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
@@ -1225,6 +1439,8 @@ cases:
   drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
   drop-exports     \`exports\` out of package.json — importing spine-rigc/plate has to go RED naming it
   drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
+  drop-named-entry   ${DROPPED_ENTRY} out of \`exports\` — importing spine-rigc${DROPPED_ENTRY.slice(1)} has to go RED naming it
+  rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through spine-rigc${RENAME_PLANT.entry.slice(1)} has to go RED naming both
 
 A plant case is green when the smoke failed the way the plant says it must, and
 red when the smoke passed anyway. Nothing is written inside the repository.
@@ -1326,6 +1542,8 @@ function main(): number {
     { name: 'drop-skills', source, installer, plant: 'drop-skills', dirName: 'planted-skills' },
     { name: 'drop-exports', source, installer, plant: 'drop-exports', dirName: 'planted-exports' },
     { name: 'drop-deep-exports', source, installer, plant: 'drop-deep-exports', dirName: 'planted-deep-exports' },
+    { name: 'drop-named-entry', source, installer, plant: 'drop-named-entry', dirName: 'planted-named-entry' },
+    { name: 'rename-symbol', source, installer, plant: 'rename-symbol', dirName: 'planted-rename' },
   ];
   const chosen = only === null ? battery : battery.filter((c) => c.name === only);
   if (chosen.length === 0) {
