@@ -1529,9 +1529,9 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
     if (inactiveWhy(state, c) !== null) skipped.add(i);
   });
   // A path constraint's offset reads its slot bone's world as the runtime last brought it up to date (`./constraints_path.ts`, *Which slot bone*).
-  const plan = records.some((c) => c.kind === 'path') ? slotBonePlan(bones, active, records, skipped) : new Map<number, SlotBoneEvent | null>();
+  const plan = records.some((c) => c.kind === 'path') ? keptPlan(slotBonePlans, state, records, skipped, () => slotBonePlan(bones, active, records, skipped)) : new Map<number, SlotBoneEvent | null>();
   // An ik over an inactive bone reads the frame above it as the pass left it (issue #979).
-  const updated = records.some((c) => c.kind === 'ik' && c.bones.some((b) => !active.has(b))) ? frameUpdatedBefore(bones, active, records, skipped) : new Map<number, boolean>();
+  const updated = records.some((c) => c.kind === 'ik' && c.bones.some((b) => !active.has(b))) ? keptPlan(frameUpdates, state, records, skipped, () => frameUpdatedBefore(bones, active, records, skipped)) : new Map<number, boolean>();
   const snapshots = new Map<number, CoreWorld>();
   // Issue #1049: under the step a slider's physics timelines write the pass's physics records, which a later physics constraint steps with.
   const physicsPose = physics === undefined ? undefined : sliderPhysicsTarget(records, active, physics, rules);
@@ -1578,22 +1578,109 @@ export function applyConstraints(bones: readonly ModelBone[], world: ReadonlyMap
   return state.world;
 }
 
-/** The last bone index each view's active set was asked for, with the names it was built over (`boneIndex`). */
-const indexOfView = new WeakMap<ReadonlySet<string>, { names: string[]; index: Map<string, number> }>();
+/**
+ * What `slotBonePlan` (`./constraints_path.ts`) and `frameUpdatedBefore` read
+ * of a record: its kind and the names it orders — a name by value, a list by
+ * identity. Every pass of a walk poses its records afresh (`posedRecords`,
+ * `pathDeformed`, `stepPhysicsRecords` spread each one), and a spread carries
+ * these lists over as the same arrays.
+ */
+function planShape(c: CoreConstraintRecord): readonly unknown[] {
+  switch (c.kind) {
+    case 'slider':
+      return [c.kind, c.timelines.bones];
+    case 'ik':
+      return [c.kind, c.target, c.bones];
+    case 'physics':
+      return [c.kind, c.bone];
+    case 'transform':
+      return [c.kind, c.source, c.bones];
+    case 'path':
+      return [c.kind, c.bones, c.slotDeps, c.slotBone];
+  }
+}
+
+/** A plan kept per solver index, with the record shapes (`planShape`) and the skipped records it was built over. */
+interface KeptPlan<T> {
+  shapes: ReadonlyArray<readonly unknown[]>;
+  skipped: readonly number[];
+  plan: T;
+}
+const slotBonePlans = new WeakMap<ReadonlyMap<string, number>, KeptPlan<Map<number, SlotBoneEvent | null>>>();
+const frameUpdates = new WeakMap<ReadonlyMap<string, number>, KeptPlan<Map<number, boolean>>>();
+
+/**
+ * A pass's ordering plan — `slotBonePlan` or `frameUpdatedBefore` — reused
+ * from the pass before when nothing it reads has changed (issue #1179): the
+ * bones' names and parents and the active set (one solver index stands for
+ * those, `boneIndex`), each record's shape, and which records are skipped.
+ * Otherwise built again. Both read names and nothing else, so a reused plan is
+ * the plan the pass would have built; neither is written once built.
+ */
+function keptPlan<T>(kept: WeakMap<ReadonlyMap<string, number>, KeptPlan<T>>, state: SolverState, records: readonly CoreConstraintRecord[], skipped: ReadonlySet<number>, build: () => T): T {
+  const shapes = records.map(planShape);
+  const skips = [...skipped];
+  const last = kept.get(state.index);
+  if (
+    last !== undefined &&
+    last.shapes.length === shapes.length &&
+    shapes.every((sh, i) => sh.length === last.shapes[i].length && sh.every((v, j) => v === last.shapes[i][j])) &&
+    last.skipped.length === skips.length &&
+    skips.every((k, i) => k === last.skipped[i])
+  ) {
+    return last.plan;
+  }
+  const plan = build();
+  kept.set(state.index, { shapes, skipped: skips, plan });
+  return plan;
+}
+
+/** The last bone index each view's active set was asked for, with the names and parents it was built over (`boneIndex`). */
+const indexOfView = new WeakMap<ReadonlySet<string>, { names: string[]; parents: Array<string | undefined>; index: Map<string, number> }>();
 
 /**
  * Each bone's position in `bones`, by name — the solver's index. Every pose of
  * a view lists the same bones in the same order (issue #1134: a walk built it
  * anew on each of its passes), so the index last built under the view's
  * active set (`activeBones`, one object per view) is reused when the names
- * agree position by position, and built again otherwise. Read, never written.
+ * and the parents agree position by position, and built again otherwise —
+ * the parents because `repose` keeps each bone's subtree beside the index
+ * (`subtreesOf`), and a subtree is a reading of them. Read, never written.
  */
 function boneIndex(bones: readonly ModelBone[], active: ReadonlySet<string>): Map<string, number> {
   const kept = indexOfView.get(active);
-  if (kept !== undefined && kept.names.length === bones.length && bones.every((b, i) => b.name === kept.names[i])) return kept.index;
+  if (kept !== undefined && kept.names.length === bones.length && bones.every((b, i) => b.name === kept.names[i] && b.parent === kept.parents[i])) return kept.index;
   const index = new Map(bones.map((b, i) => [b.name, i]));
-  indexOfView.set(active, { names: bones.map((b) => b.name), index });
+  indexOfView.set(active, { names: bones.map((b) => b.name), parents: bones.map((b) => b.parent), index });
   return index;
+}
+
+/** Each bone's subtree as `subtreesOf` built it, kept per solver index (one object per view's bones, `boneIndex`). */
+const subtreesOfIndex = new WeakMap<ReadonlyMap<string, number>, ReadonlyArray<readonly number[]>>();
+
+/**
+ * For the bone at each position of `state.bones`, the positions of the bone
+ * and of every bone below it, ascending (issue #1179). Bones are parents
+ * first, so each position is appended to its own list and its ancestors' in
+ * ascending order. Built from the bones' parents once per solver index —
+ * `boneIndex` hands back one index only while the names and the parents are
+ * the ones it was built over, and the other two solver states (`previousPassSlotBones`,
+ * `historyTaint`) build an index of their own.
+ */
+function subtreesOf(state: SolverState): ReadonlyArray<readonly number[]> {
+  const kept = subtreesOfIndex.get(state.index);
+  if (kept !== undefined) return kept;
+  const lists: number[][] = state.bones.map(() => []);
+  for (let k = 0; k < state.bones.length; k++) {
+    let at: number | undefined = k;
+    while (at !== undefined) {
+      lists[at].push(k);
+      const parent: string | undefined = state.bones[at].parent;
+      at = parent === undefined ? undefined : state.index.get(parent);
+    }
+  }
+  subtreesOfIndex.set(state.index, lists);
+  return lists;
 }
 
 /** After a constraint: the bones it moved in world space read back into local values, and every bone below one it moved posed again (the header's update order). */
@@ -1606,13 +1693,17 @@ function repose(state: SolverState, changed: readonly string[], inWorld: readonl
   const moved = changed;
   const below = new Set(changed);
   const keep = inWorld;
-  // Bones are parents first (`readModel` refuses any other order) and a bone joins `below` only through its parent, so none before the first bone moved can: the walk starts there (issue #1134).
-  let from = state.bones.length;
+  // A bone joins `below` only through its parent, so the bones that can are the moved bones' subtrees: the walk visits those, in bone order (issue
+  // #1179), where it visited every bone from the first one moved (issue #1134) — the bones it no longer visits are the ones whose parent `below`
+  // could never hold, so each bone it does visit reads the same `below`, and is posed again in the same order.
+  const subtrees = subtreesOf(state);
+  const lists: Array<readonly number[]> = [];
   for (const name of changed) {
     const at = state.index.get(name);
-    if (at !== undefined && at < from) from = at;
+    if (at !== undefined) lists.push(subtrees[at]);
   }
-  for (let k = from; k < state.bones.length; k++) {
+  const visit = lists.length === 1 ? lists[0] : [...new Set(lists.flat())].sort((x, y) => x - y);
+  for (const k of visit) {
     const b = state.bones[k];
     // Not through an inactive bone the constraint did not move itself (issue #979): the bones below it keep what the constraints wrote into them.
     if (b.parent !== undefined && below.has(b.parent) && (!state.rules.inactiveHoldsItsWorld || state.active.has(b.parent) || moved.includes(b.parent))) below.add(b.name);
