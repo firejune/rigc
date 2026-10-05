@@ -370,12 +370,23 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
 ];
 
 /**
- * The symbol `rename-symbol` renames in the packed copy — the card's own case:
- * `headerBoxNumber` renamed passed every gate this tree had. The export is
- * renamed and the function kept, so the module still loads and the build still
- * runs; only a dependant reading the old name can tell.
+ * The symbol `rename-symbol` renames in the packed copy. The export is renamed
+ * and the function kept, so the module still loads, every call inside it still
+ * reaches the function, and the build still runs; only a dependant reading the
+ * old name can tell.
+ *
+ * ⚠️ That holds only for a symbol no other module in the package imports, and
+ * which the probe's route calls do not read. Every named entry here IS the
+ * module that defines its symbols, so renaming the entry's export renames it
+ * for the package's own importers too: the plant once renamed
+ * `headerBoxNumber`, which `src/assertions/bodies/a50.ts` imports, and then
+ * `rigc --version`, both builds, render and the skills all died on the
+ * missing export while the case stayed green by reading one step (issue
+ * #1184). `loadPosable` is imported by no shipped module, and `alone` on the
+ * plant measures that on every run: the day something inside imports it, the
+ * other steps go red and the case says so.
  */
-const RENAME_PLANT = { entry: './compile', symbol: 'headerBoxNumber', renamed: 'headerBoxNumberRenamed' };
+const RENAME_PLANT = { entry: './render', symbol: 'loadPosable', renamed: 'loadPosableRenamed' };
 
 /** The named entry `drop-named-entry` takes out of the packed map — one of the three #1167 added. */
 const DROPPED_ENTRY = './render';
@@ -864,7 +875,8 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   'rename-symbol': {
     names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
-    what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issue #1167), which is the rename that passed every gate this tree had: the module loads, the build runs, and only a dependant reading the old name can tell — so the line has to name the entry and the symbol`,
+    alone: true,
+    what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issues #1167, #1184), a symbol no module inside the package imports: \`rigc --version\`, both builds, the comparison, render and check still work, and only a dependant reading the old name can tell — so the observed-symbol probe has to go red alone, naming the entry and the symbol`,
   },
   'refuse-core-build': {
     names: ['SMOKE_CORE_ENTRY_BUILDS'],
@@ -958,9 +970,12 @@ function tarballFor(
     pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key !== DROPPED_ENTRY));
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else if (plant === 'rename-symbol') {
-    // The export renamed and the function kept, so nothing inside the package
-    // that calls it changes: `export function X(` becomes `function X(`, and an
-    // `export { X as Renamed }` is appended. Checked below, on the tarball.
+    // The export renamed and the function kept, so every call inside the
+    // defining module still reaches it: `export function X(` becomes
+    // `function X(`, and an `export { X as Renamed }` is appended. A module
+    // that IMPORTS X would not survive this, which is why RENAME_PLANT names a
+    // symbol nothing inside imports and `alone` holds it. Checked below, on
+    // the tarball.
     const victim = join(pkgDir, NAMED_EXPORTS[RENAME_PLANT.entry]);
     const declared = `export function ${RENAME_PLANT.symbol}(`;
     const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';

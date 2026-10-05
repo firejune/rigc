@@ -371,9 +371,10 @@ symbols are listed once, in `OBSERVED_SYMBOLS` in
 dependant and the issue it was observed in, and the smoke imports every entry
 from the install and reads every listed symbol as present with the kind it has
 today. A rename goes red naming the entry and the symbol — its
-`rename-symbol` plant renames `headerBoxNumber`, the case that once passed
-every gate this tree had — and a removed entry goes red naming the entry
-(`drop-named-entry`). The list grows by observation: a module or a symbol
+`rename-symbol` plant renames `loadPosable` in the packed
+`src/render.ts`, a symbol no module inside the package imports, so the
+package still runs and only the probe can tell — and a removed entry goes
+red naming the entry (`drop-named-entry`). The list grows by observation: a module or a symbol
 nobody was seen using is not promised, however public it looks, and one that
 somebody is seen using is added to that table with their name and the issue.
 
@@ -502,7 +503,16 @@ atlas it wrote, which only the comparison can see; both edit one line of
 import and removing one stops `rigc --version` first, and both must go red at
 their one step and no other — each
 patched into an **extraction** of the tarball and packed again from there, so the
-checkout is never modified and there is no restore to forget. A plant case is
+checkout is never modified and there is no restore to forget. The rename is
+held to its one step the same way: each named entry is the module that defines
+its symbols, so renaming a symbol another shipped module imports breaks that
+importer too. The plant once renamed `headerBoxNumber`, which an assertion body
+imports, and `rigc --version`, both builds, render and the skills died with it
+while the case stayed green by reading only the import surface
+([#1184](https://github.com/firejune/rigc/issues/1184)); it now renames a
+symbol nothing inside the package imports and must go red at the
+observed-symbol probe alone. A package whose own import does not resolve is
+what `src/validate.ts` out of the packed tree already shows. A plant case is
 green only when the smoke went red at the step it was supposed to, naming what
 went missing, and the plant itself is refused if it removed nothing from the
 pack. Beside them is the other direction: a *correct* tarball installed at an
