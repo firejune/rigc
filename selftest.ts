@@ -13,17 +13,10 @@
  * manufactures false greens.
  *
  *   bun selftest.ts                      the public suite: everything below
- *   bun selftest.ts --cuts <cuts.json>   plus an extra suite over those cuts
- *   bun selftest.ts --only <suite>[,<suite>…]
- *                                        a PARTIAL run for iterating: only the
- *                                        named suites; never a verdict on the tree
- *   bun selftest.ts --shard <i>/<n> [--tally-out <file>]
- *                                        one shard of the run, every n-th suite
- *                                        by registration order; never a verdict
- *   bun selftest.ts --merge <file>…      every shard's document merged: the verdict
- *   RIGC_SHARD=<i>/<n> RIGC_TALLY_OUT=<file> bun selftest.ts
- *                                        the two shard flags through the environment
- *   RIGC_CUTS=<cuts.json> bun selftest.ts
+ *   bun selftest.ts --help               every argument it takes, from the one
+ *                                        table its readers answer to
+ *                                        (`HARNESS_FLAGS`); any other is refused
+ *                                        by name before anything runs
  *   RIGC_EMIT_HASHES_BASE=<hashes.json> bun selftest.ts
  *                                        the step-1 gates (MB07, MV09, MS12, MA12,
  *                                        MD07) held to that fuller base document
@@ -696,6 +689,161 @@ interface Options {
   imagesDir?: string;
 }
 
+/** How many arguments follow a flag on the command line, as its reader takes them (issue #1174). */
+type FlagArity = 'none' | 'one' | 'optional' | 'two' | 'one or more';
+
+/** One argument the harness takes: a row of `HARNESS_FLAGS`. */
+interface HarnessFlag {
+  /** The one spelling a reader reads. */
+  spelling: string;
+  /** What follows it, as the table prints it; '' when nothing does. */
+  values: string;
+  /**
+   * What the claim pass takes after the flag: `one` the next argument whatever
+   * it is, `two` the next two, `optional` the next unless it starts with `--`,
+   * `one or more` every following argument up to the next that starts with
+   * `--`. The readers refuse a missing or `--` value before the claim pass runs,
+   * so this is the reading they make of a line they accepted.
+   */
+  arity: FlagArity;
+  /** The environment variable its reader also reads, or ''. */
+  environment: string;
+  /** `caller` for a person or CI; `parent` for a flag a run passes a process it starts. */
+  passedBy: 'caller' | 'parent';
+  meaning: string;
+}
+
+/**
+ * Every argument the harness takes (issue #1174). An argument no row claims is
+ * refused by name before anything runs: it used to be ignored, and ignored
+ * meant "run everything" — `bun selftest.ts --help` started a full run.
+ *
+ * 🔒 The table and the readers cannot disagree without the process saying so:
+ * a reader names its flag through `readerOf`, which refuses a spelling with no
+ * row, and before the claim pass every row must have been named by a reader
+ * (`--help` and `-h` by the claim pass, which is theirs). `--help` prints
+ * `flagTableText()`, a refusal prints it on stderr, and CONTRIBUTING.md carries
+ * the same text; `TY45` holds all three.
+ */
+const HARNESS_FLAGS: readonly HarnessFlag[] = [
+  { spelling: '--only', values: '<suite>[,<suite>…]', arity: 'one', environment: '', passedBy: 'caller', meaning: 'a PARTIAL run of the named suites: exits 2 when green, never a verdict' },
+  { spelling: '--cuts', values: '<cuts.json>', arity: 'one', environment: 'RIGC_CUTS', passedBy: 'caller', meaning: 'adds a suite that compiles and gates every cut in that table' },
+  { spelling: '--shard', values: '<i>/<n>', arity: 'one', environment: 'RIGC_SHARD', passedBy: 'caller', meaning: 'runs the suites dealt to shard i of n: exits 2 when green, never a verdict' },
+  { spelling: '--tally-out', values: '<file>', arity: 'one', environment: 'RIGC_TALLY_OUT', passedBy: 'caller', meaning: "with --shard: where the shard writes the tally document --merge reads" },
+  { spelling: '--merge', values: '<file>…', arity: 'one or more', environment: '', passedBy: 'caller', meaning: "every shard's tally document merged: the verdict" },
+  { spelling: '--shards-base', values: '[<file>]', arity: 'optional', environment: '', passedBy: 'caller', meaning: 'with --merge: a green merge writes the durations base, to <file> or over the tracked one' },
+  { spelling: '--memory-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "a green one-process full run writes its platform's memory base" },
+  { spelling: '--memory-base-children', values: '[<file>]', arity: 'optional', environment: '', passedBy: 'caller', meaning: "with --merge: a green merge writes the children's half of the memory base" },
+  { spelling: '--reset-children-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "lets a writer of the children's figure lower it, or replace one read at another --jobs" },
+  { spelling: '--jobs', values: '<n>', arity: 'one', environment: 'RIGC_JOBS', passedBy: 'caller', meaning: "how many of a suite's independent units run at once; the machine's cores by default" },
+  { spelling: '--keep-temp', values: '', arity: 'none', environment: 'RIGC_KEEP_TEMP', passedBy: 'caller', meaning: "keeps this process's temp root and names it on stderr" },
+  { spelling: '--help', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: 'prints this table on stdout and exits 0, before anything is made or swept' },
+  { spelling: '-h', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: 'the same as --help' },
+  { spelling: '--unit', values: '<spec.json> <out.json>', arity: 'two', environment: '', passedBy: 'parent', meaning: 'this process is one unit a suite handed out; runs no suite' },
+];
+
+/** The line `--help` prints above `flagTableText()`. */
+const HELP_HEADER = 'bun selftest.ts [argument…] takes these arguments, and refuses any other by name before it runs anything:';
+
+/** The spellings the readers have named, in the order they named them (`readerOf`). */
+const FLAGS_READ = new Set<string>();
+
+/**
+ * The row a reader reads, by its spelling — refused, exit 2, when the table has
+ * none, because a reader of a flag the table does not list is one whose flag
+ * the claim pass would refuse (issue #1174).
+ */
+function readerOf(spelling: string): HarnessFlag {
+  const row = HARNESS_FLAGS.find((flag) => flag.spelling === spelling);
+  if (row === undefined) {
+    console.error(`selftest: a reader reads ${spelling}, which HARNESS_FLAGS has no row for; add its row, or the claim pass refuses every line that gives it`);
+    process.exit(2);
+  }
+  FLAGS_READ.add(spelling);
+  return row;
+}
+
+/** The table as `--help`, a refusal and CONTRIBUTING.md print it: one line per row, in the table's order. */
+function flagTableText(flags: readonly HarnessFlag[] = HARNESS_FLAGS): string {
+  const left = flags.map((flag) => (flag.values === '' ? flag.spelling : `${flag.spelling} ${flag.values}`));
+  const width = Math.max(...left.map((text) => text.length));
+  return flags
+    .map((flag, k) => {
+      // A flag that takes no value has a switch for a variable, and its reader takes 1 (`parseKeepTemp`).
+      const variable = flag.environment === '' ? [] : [`or ${flag.environment}=${flag.arity === 'none' ? '1' : flag.values}`];
+      const notes = [...variable, ...(flag.passedBy === 'parent' ? ['passed by a run to a process it starts'] : [])];
+      return `  ${left[k].padEnd(width)}  ${flag.meaning}${notes.length === 0 ? '' : ` (${notes.join('; ')})`}`;
+    })
+    .join('\n');
+}
+
+/** One argument the claim pass did not claim: its 1-based position, the argument as given, and why. */
+interface UnclaimedArgument {
+  at: number;
+  argument: string;
+  repeated: boolean;
+}
+
+/**
+ * Walk `argv` by the table (issue #1174): a row's spelling claims itself and
+ * the values its arity takes, and everything else is unclaimed — an unknown
+ * argument, a stray positional, or a flag given again (every reader reads the
+ * first; a repeat, and its values, are read by none). Pure, so `TY45` holds the
+ * arities without starting a process.
+ */
+function unclaimedArguments(argv: readonly string[], flags: readonly HarnessFlag[] = HARNESS_FLAGS): UnclaimedArgument[] {
+  const unclaimed: UnclaimedArgument[] = [];
+  const seen = new Set<string>();
+  for (let k = 0; k < argv.length; k++) {
+    const row = flags.find((flag) => flag.spelling === argv[k]);
+    if (row === undefined) {
+      unclaimed.push({ at: k + 1, argument: argv[k], repeated: false });
+      continue;
+    }
+    if (seen.has(row.spelling)) unclaimed.push({ at: k + 1, argument: argv[k], repeated: true });
+    seen.add(row.spelling);
+    const isValue = (j: number): boolean => j < argv.length && !argv[j].startsWith('--');
+    if (row.arity === 'one') k = Math.min(k + 1, argv.length - 1);
+    else if (row.arity === 'two') k = Math.min(k + 2, argv.length - 1);
+    else if (row.arity === 'optional' && isValue(k + 1)) k++;
+    else if (row.arity === 'one or more') while (isValue(k + 1)) k++;
+  }
+  return unclaimed;
+}
+
+/** The optimal-string-alignment distance between `a` and `b` capped at 2: one insertion, deletion, substitution or swap of neighbours is 1. */
+function editDistanceUpTo2(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 2;
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return Math.min(d[a.length][b.length], 2);
+}
+
+/**
+ * The refusal line for one unclaimed argument. It names a flag only when the
+ * rule leaves no choice: `<flag>=<value>` where `<flag>` is a row, or one edit
+ * (`editDistanceUpTo2`) from exactly one row's spelling — two as near, and it
+ * names neither.
+ */
+function unclaimedLine(entry: UnclaimedArgument, flags: readonly HarnessFlag[] = HARNESS_FLAGS): string {
+  const given = `argument ${entry.at}, ${JSON.stringify(entry.argument)},`;
+  if (entry.repeated) return `selftest: ${given} gives ${entry.argument} a second time; every reader reads the first, so give it once`;
+  const equals = /^(-[^=]*)=/.exec(entry.argument);
+  const joined = equals === null ? undefined : flags.find((flag) => flag.spelling === equals[1]);
+  if (joined !== undefined) {
+    const how = joined.arity === 'none' ? 'takes no value' : 'takes its value as the next argument, not after =';
+    return `selftest: ${given} is not an argument this harness takes; ${joined.spelling} ${how}`;
+  }
+  const near = flags.filter((flag) => editDistanceUpTo2(entry.argument, flag.spelling) === 1);
+  return `selftest: ${given} is not an argument this harness takes${near.length === 1 ? `; one edit from ${near[0].spelling}` : ''}`;
+}
+
 /**
  * The cuts table, if one was named. `null` is a normal outcome, not a failure:
  * the public suite does not need it and the extra suite says so out loud.
@@ -706,7 +854,8 @@ interface Options {
  */
 function readCutTable(): { file: string; dir: string; table: CutTable } | null {
   const argv = process.argv.slice(2);
-  const flag = argv.indexOf('--cuts');
+  const cuts = readerOf('--cuts');
+  const flag = argv.indexOf(cuts.spelling);
   let named: string | null = null;
   if (flag !== -1) {
     const value = argv[flag + 1];
@@ -715,8 +864,8 @@ function readCutTable(): { file: string; dir: string; table: CutTable } | null {
       process.exit(2);
     }
     named = resolve(value);
-  } else if (process.env.RIGC_CUTS) {
-    named = resolve(process.env.RIGC_CUTS);
+  } else if (process.env[cuts.environment]) {
+    named = resolve(process.env[cuts.environment] ?? '');
   }
   if (named === null) return null;
   if (!existsSync(named)) {
@@ -742,9 +891,10 @@ const CUTS = readCutTable();
  * unknown name is refused once the registry has been walked (`onlyRefusal`).
  */
 function readOnlyList(argv: readonly string[]): ReadonlySet<string> | null {
-  const at = argv.indexOf('--only');
+  const { spelling } = readerOf('--only');
+  const at = argv.indexOf(spelling);
   if (at === -1) return null;
-  if (argv.indexOf('--only', at + 1) !== -1) {
+  if (argv.indexOf(spelling, at + 1) !== -1) {
     console.error('selftest: --only was given twice; name every suite in one comma-separated list');
     process.exit(2);
   }
@@ -776,7 +926,7 @@ const ONLY = readOnlyList(process.argv.slice(2));
  */
 const WRITE_MEMORY_BASE = ((): boolean => {
   const argv = process.argv.slice(2);
-  if (!argv.includes('--memory-base')) return false;
+  if (!argv.includes(readerOf('--memory-base').spelling)) return false;
   if (ONLY !== null) {
     console.error('selftest: --memory-base writes the high-water RSS of the FULL run; it cannot be given with --only');
     process.exit(2);
@@ -816,7 +966,8 @@ function parseShardSpec(value: string): ShardSpec | string {
  * names its own shard. `null` when neither names one; a flag with no value
  * exits 2.
  */
-function flagOrEnvironment(argv: readonly string[], flag: string, variable: string): string | null {
+function flagOrEnvironment(argv: readonly string[], row: HarnessFlag): string | null {
+  const { spelling: flag, environment: variable } = row;
   const at = argv.indexOf(flag);
   if (at !== -1) {
     if (argv.indexOf(flag, at + 1) !== -1) {
@@ -843,7 +994,7 @@ function flagOrEnvironment(argv: readonly string[], flag: string, variable: stri
  * neither) and beside `--memory-base` (a shard's high-water is not the run's).
  */
 const SHARD = ((): ShardSpec | null => {
-  const value = flagOrEnvironment(process.argv.slice(2), '--shard', 'RIGC_SHARD');
+  const value = flagOrEnvironment(process.argv.slice(2), readerOf('--shard'));
   if (value === null) return null;
   const read = parseShardSpec(value);
   if (typeof read === 'string') {
@@ -867,7 +1018,7 @@ const SHARD = ((): ShardSpec | null => {
  * document is a shard's, and a full run's tally is its summary.
  */
 const TALLY_OUT = ((): string | null => {
-  const value = flagOrEnvironment(process.argv.slice(2), '--tally-out', 'RIGC_TALLY_OUT');
+  const value = flagOrEnvironment(process.argv.slice(2), readerOf('--tally-out'));
   if (value === null) return null;
   if (SHARD === null) {
     console.error('selftest: --tally-out writes a shard\'s tally document; it needs --shard <i>/<n> (or RIGC_SHARD)');
@@ -884,7 +1035,7 @@ const TALLY_OUT = ((): string | null => {
  */
 const MERGE = ((): string[] | null => {
   const argv = process.argv.slice(2);
-  const at = argv.indexOf('--merge');
+  const at = argv.indexOf(readerOf('--merge').spelling);
   if (at === -1) return null;
   const files: string[] = [];
   for (let k = at + 1; k < argv.length && !argv[k].startsWith('--'); k++) files.push(resolve(argv[k]));
@@ -914,7 +1065,7 @@ const MERGE = ((): string[] | null => {
  */
 const WRITE_SHARDS_BASE = ((): string | null => {
   const argv = process.argv.slice(2);
-  const at = argv.indexOf('--shards-base');
+  const at = argv.indexOf(readerOf('--shards-base').spelling);
   if (at === -1) return null;
   if (MERGE === null) {
     console.error("selftest: --shards-base writes the durations base off a merged run's per-suite seconds; it needs --merge <file>…");
@@ -950,7 +1101,7 @@ const WRITE_SHARDS_BASE = ((): string | null => {
  */
 const WRITE_CHILDREN_BASE = ((): string | null => {
   const argv = process.argv.slice(2);
-  const at = argv.indexOf('--memory-base-children');
+  const at = argv.indexOf(readerOf('--memory-base-children').spelling);
   if (at === -1) return null;
   if (MERGE === null) {
     console.error(
@@ -981,7 +1132,7 @@ const WRITE_CHILDREN_BASE = ((): string | null => {
  */
 const RESET_CHILDREN_BASE = ((): boolean => {
   const argv = process.argv.slice(2);
-  const at = argv.indexOf('--reset-children-base');
+  const at = argv.indexOf(readerOf('--reset-children-base').spelling);
   if (at === -1) return false;
   if (argv.indexOf('--reset-children-base', at + 1) !== -1) {
     console.error('selftest: --reset-children-base was given twice');
@@ -1024,7 +1175,7 @@ function parseJobs(value: string): number | string {
  * reads has finished, in the order the sequential run prints them.
  */
 const JOBS = ((): number => {
-  const value = flagOrEnvironment(process.argv.slice(2), '--jobs', 'RIGC_JOBS');
+  const value = flagOrEnvironment(process.argv.slice(2), readerOf('--jobs'));
   if (value === null) return Math.max(1, Math.floor(navigator.hardwareConcurrency || 1));
   const read = parseJobs(value);
   if (typeof read === 'string') {
@@ -1042,7 +1193,7 @@ const JOBS = ((): number => {
  */
 const UNIT = ((): { input: string; output: string } | null => {
   const argv = process.argv.slice(2);
-  const at = argv.indexOf('--unit');
+  const at = argv.indexOf(readerOf('--unit').spelling);
   if (at === -1) return null;
   const input = argv[at + 1];
   const output = argv[at + 2];
@@ -1078,7 +1229,7 @@ function parseKeepTemp(argv: readonly string[], fromEnvironment: string | undefi
  * asked by its own command line.
  */
 const KEEP_TEMP = ((): boolean => {
-  const read = parseKeepTemp(process.argv.slice(2), process.env.RIGC_KEEP_TEMP);
+  const read = parseKeepTemp(process.argv.slice(2), process.env[readerOf('--keep-temp').environment]);
   if (typeof read === 'string') {
     console.error(`selftest: ${read}`);
     process.exit(2);
@@ -1086,6 +1237,40 @@ const KEEP_TEMP = ((): boolean => {
   return read;
 })();
 delete process.env.RIGC_KEEP_TEMP;
+
+/**
+ * The claim pass (issue #1174), after every reader and before the stale-root
+ * sweep and the temp root: what the readers accepted is walked by the table,
+ * and an argument it does not claim is refused by name, exit 2 — the run
+ * measured nothing — with the table on stderr. `--help` or `-h` on a line with
+ * nothing unclaimed prints the table on stdout and exits 0, as `rigc --help`
+ * prints its usage on stdout and exits 0 while `rigc <unknown>` prints it on
+ * stderr and exits 2. An unclaimed argument beside `--help` is still refused:
+ * the refusal carries the same table, and its exit says the line was wrong.
+ *
+ * Readers first so that each keeps its own refusal: `--keep-temps` is
+ * `parseKeepTemp`'s to name, `--only` with no value `readOnlyList`'s.
+ */
+{
+  // `--help` and `-h` are the claim pass's own rows; every other row a reader above has named.
+  const help = [readerOf('--help').spelling, readerOf('-h').spelling];
+  const unread = HARNESS_FLAGS.filter((flag) => !FLAGS_READ.has(flag.spelling)).map((flag) => flag.spelling);
+  if (unread.length > 0) {
+    console.error(`selftest: HARNESS_FLAGS has a row no reader reads: ${unread.join(', ')}; remove the row, or read the flag through readerOf`);
+    process.exit(2);
+  }
+  const argv = process.argv.slice(2);
+  const unclaimed = unclaimedArguments(argv);
+  if (unclaimed.length > 0) {
+    for (const entry of unclaimed) console.error(unclaimedLine(entry));
+    console.error(`selftest: nothing was run. The arguments it takes:\n${flagTableText()}`);
+    process.exit(2);
+  }
+  if (argv.some((arg) => help.includes(arg))) {
+    console.log(`${HELP_HEADER}\n${flagTableText()}`);
+    process.exit(0);
+  }
+}
 
 /** The system temp directory as this process found it — where the run root is made, and what `TY39` counts. */
 const SYSTEM_TEMP = tmpdir();
@@ -111254,6 +111439,194 @@ function runRunTallySuite(live: RunTally): number {
       probeDetail(held, probes, `in a tmpdir() of planted entries, ${STALE_ROOT_AGE_HOURS} h the line: ${read.join('; ')}`),
       'issue #1156: a run killed by a signal leaves its root and nothing ran to remove it, so every run now removes the ' +
         'roots no run has touched for longer than any run lasts — and only those, since a younger one may be a run in progress',
+    );
+  }
+
+  // --- TY45: an argument no reader claims is refused by name before anything is made or swept (issue #1174) --
+  // Each child is a whole selftest process in an empty TMPDIR of its own holding
+  // one planted root older than the sweep's age: a refusal, or --help, must leave
+  // it there (no sweep ran), make no root of its own and print no suite line.
+  // 🔒 Every child carries `--only draw-order`, the cheapest suite, so a claim
+  // pass that lets an argument through costs that child a second instead of
+  // starting a whole run — on 2026-10-04 a plant started one on a shared
+  // machine. The plants are this file copied, with one edit each, into a
+  // directory of links to the tree, and read by the same children. The arities
+  // and the near-miss rule are held without a process; CONTRIBUTING.md's copy
+  // of the table is held to the text `--help` prints.
+  {
+    const probes: string[] = [];
+    const read: string[] = [];
+    const ONLY_CHEAPEST = ['--only', 'draw-order'];
+    const SUITE_LINE = 'CONTROL_A_DRAW_ORDER_TIMELINE_IS_GREEN';
+    const STALE = 'rigc-selftest-ty45st';
+    const ageMs = STALE_ROOT_AGE_HOURS * 3600 * 1000;
+    const childEnv = (temp: string): Record<string, string> => {
+      const env: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== 'RIGC_KEEP_TEMP') env[key] = value;
+      return { ...env, TMPDIR: temp, RIGC_JOBS: '' };
+    };
+    interface Ty45Run {
+      status: number | null;
+      stdout: string;
+      stderr: string;
+      /** `rigc-selftest-*` roots in the child's TMPDIR other than the planted stale one. */
+      roots: string[];
+      /** Whether the planted stale root is still there — false once a sweep ran. */
+      staleKept: boolean;
+    }
+    const runChild = (cwd: string, args: readonly string[]): Ty45Run => {
+      const temp = mkdtempSync(join(harnessTemp(), 'rigc-ty45-'));
+      mkdirSync(join(temp, STALE));
+      const at = new Date(Date.now() - ageMs - 3600 * 1000);
+      utimesSync(join(temp, STALE), at, at);
+      const run = spawnSync(process.execPath, ['selftest.ts', ...args], { cwd, encoding: 'utf8', env: childEnv(temp), maxBuffer: 64 * 1024 * 1024 });
+      const roots = readdirSync(temp).filter((name) => name.startsWith('rigc-selftest-') && name !== STALE);
+      return { status: run.status, stdout: run.stdout, stderr: run.stderr, roots, staleKept: existsSync(join(temp, STALE)) };
+    };
+    const table = flagTableText();
+    const helpText = `${HELP_HEADER}\n${table}\n`;
+    // What is wrong with a child that should have been refused for `named` saying `words`; empty when nothing is.
+    const refusalFaults = (run: Ty45Run, named: string, words: string): string[] => {
+      const faults: string[] = [];
+      if (run.status !== 2) faults.push(`exit ${String(run.status)}, not 2`);
+      if (run.stdout.includes(SUITE_LINE)) faults.push('it printed the draw-order suite line');
+      else if (run.stdout !== '') faults.push(`it printed ${JSON.stringify(run.stdout.slice(0, 120))} on stdout`);
+      const line = run.stderr.split('\n').find((text) => text.includes(named)) ?? null;
+      if (line === null || !line.includes(words)) faults.push(`its stderr named ${named} as ${JSON.stringify(line)}, not with "${words}"`);
+      if (!run.stderr.includes(table)) faults.push('its stderr does not carry the table');
+      if (run.roots.length > 0) faults.push(`it made [${run.roots.join(', ')}]`);
+      if (!run.staleKept) faults.push('the stale root was swept, so the sweep ran before the refusal');
+      return faults;
+    };
+    const helpFaults = (run: Ty45Run): string[] => {
+      const faults: string[] = [];
+      if (run.status !== 0) faults.push(`exit ${String(run.status)}, not 0`);
+      if (run.stdout.includes(SUITE_LINE)) faults.push('it printed the draw-order suite line');
+      else if (run.stdout !== helpText) faults.push(`its stdout is ${JSON.stringify(run.stdout.slice(0, 120))}, not the table`);
+      if (run.stderr !== '') faults.push(`it wrote ${JSON.stringify(run.stderr.slice(0, 120))} on stderr`);
+      if (run.roots.length > 0) faults.push(`it made [${run.roots.join(', ')}]`);
+      if (!run.staleKept) faults.push('the stale root was swept');
+      return faults;
+    };
+    const POSITIVE = [...ONLY_CHEAPEST, '--jobs', '1'];
+    const positiveFaults = (run: Ty45Run): string[] =>
+      run.status === 2 && run.stdout.includes(SUITE_LINE) ? [] : [`exit ${String(run.status)} without the draw-order suite line: ${JSON.stringify(run.stderr.trim().split('\n')[0]?.slice(0, 200) ?? '')}`];
+    const REFUSALS: ReadonlyArray<readonly [string, readonly string[], string, string]> = [
+      ['an unknown flag', [...ONLY_CHEAPEST, '--ty45-bogus'], 'argument 3, "--ty45-bogus",', 'is not an argument this harness takes'],
+      ['a near miss of a real flag', [...ONLY_CHEAPEST, '--job', '1'], 'argument 3, "--job",', 'one edit from --jobs'],
+      ['a stray positional', ['ty45-stray', ...ONLY_CHEAPEST], 'argument 1, "ty45-stray",', 'is not an argument this harness takes'],
+    ];
+    // The live tree.
+    for (const [how, args, named, words] of REFUSALS) {
+      const faults = refusalFaults(runChild(import.meta.dir, args), named, words);
+      if (faults.length > 0) probes.push(`${how} (${args.join(' ')}): ${faults.join('; ')}`);
+      else read.push(`${how} -> exit 2 naming ${named.replace(/,$/, '')}`);
+    }
+    for (const spelling of ['--help', '-h']) {
+      const faults = helpFaults(runChild(import.meta.dir, [...ONLY_CHEAPEST, spelling]));
+      if (faults.length > 0) probes.push(`${spelling}: ${faults.join('; ')}`);
+      else read.push(`${spelling} -> the table on stdout, exit 0`);
+    }
+    {
+      const faults = positiveFaults(runChild(import.meta.dir, POSITIVE));
+      if (faults.length > 0) probes.push(`the positive control (${POSITIVE.join(' ')}): ${faults.join('; ')}`);
+      else read.push(`${POSITIVE.join(' ')} ran its suite`);
+    }
+    // Without a process: the arities, a repeat, and the near-miss rule's refusal to choose.
+    for (const [argv, want] of [
+      [['--merge', 'a.json', 'b.json', '--shards-base', '--memory-base-children', 'c.json'], ''],
+      [['--merge', 'a.json', '--shards-base', 'x.json', 'y.json'], '5:y.json'],
+      [['--unit', 'a.json', 'b.json', 'c.json'], '4:c.json'],
+      [['--cuts', '--looks-like-a-flag'], ''],
+      [['--memory-base', 'extra'], '2:extra'],
+      [['--memory-base', '--memory-base'], '2:--memory-base(repeated)'],
+    ] as const) {
+      const got = unclaimedArguments(argv).map((entry) => `${entry.at}:${entry.argument}${entry.repeated ? '(repeated)' : ''}`).join(',');
+      if (got !== want) probes.push(`${JSON.stringify(argv)} left ${JSON.stringify(got)} unclaimed, not ${JSON.stringify(want)}`);
+    }
+    {
+      const twin: HarnessFlag[] = ['--abc', '--abd'].map((spelling) => ({ spelling, values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: '' }));
+      const both = unclaimedLine({ at: 1, argument: '--ab', repeated: false }, twin);
+      // `--abcx` is one insertion from --abc and two edits from --abd; `--ab` is one deletion from each.
+      const one = unclaimedLine({ at: 1, argument: '--abcx', repeated: false }, twin);
+      if (both.includes('one edit')) probes.push(`an argument one edit from two rows was given one: ${JSON.stringify(both)}`);
+      if (!one.endsWith('one edit from --abc')) probes.push(`an argument one edit from exactly one row was not given it: ${JSON.stringify(one)}`);
+    }
+    // CONTRIBUTING.md's copy, held to the text; the plant is the same file with one row's meaning edited.
+    const MARKER = '<!-- selftest.ts flagTableText(): TY45 holds this block to `bun selftest.ts --help` -->';
+    const contributingDrift = (text: string): string | null => {
+      const at = text.indexOf(MARKER);
+      if (at === -1) return `it has no line ${JSON.stringify(MARKER)}`;
+      const block = /^```text\n([\s\S]*?)\n```$/m.exec(text.slice(at + MARKER.length));
+      if (block === null) return 'no ```text block follows its marker';
+      if (block[1] === table) return null;
+      const theirs = block[1].split('\n');
+      const ours = table.split('\n');
+      const k = ours.findIndex((line, j) => theirs[j] !== line);
+      const where = k === -1 ? ours.length : k;
+      return `its line ${where + 1} reads ${JSON.stringify(theirs[where] ?? null)} where the table prints ${JSON.stringify(ours[where] ?? null)}`;
+    };
+    {
+      const contributing = readFileSync(join(import.meta.dir, 'CONTRIBUTING.md'), 'utf8');
+      const drift = contributingDrift(contributing);
+      if (drift !== null) probes.push(`CONTRIBUTING.md's flag table drifted from flagTableText(): ${drift}`);
+      else read.push(`CONTRIBUTING.md lists the ${HARNESS_FLAGS.length} rows as --help prints them`);
+      const jobsRow = table.split('\n').find((line) => line.trimStart().startsWith('--jobs ')) ?? '';
+      const planted = contributingDrift(contributing.replace(jobsRow, `${jobsRow} (planted)`));
+      if (jobsRow === '' || planted === null || !planted.includes('(planted)')) probes.push(`a CONTRIBUTING.md whose --jobs row was edited read as ${JSON.stringify(planted)}`);
+      else read.push(`its plant is read: ${planted.replace(/"[^"]*\(planted\)"/, '"…(planted)"').slice(0, 80)}…`);
+    }
+    // The plants: this file, edited once, run from a directory of links to every other entry of the tree.
+    const source = readFileSync(join(import.meta.dir, 'selftest.ts'), 'utf8');
+    const plantRun = (name: string, edit: (text: string) => string | null, args: readonly string[]): Ty45Run | string => {
+      const edited = edit(source);
+      if (edited === null || edited === source) return `the plant "${name}" found nothing to edit`;
+      const dir = mkdtempSync(join(harnessTemp(), `rigc-ty45-${name}-`));
+      const links: string[] = [];
+      try {
+        for (const entry of readdirSync(import.meta.dir).sort()) {
+          if (entry === 'selftest.ts' || entry === '.git') continue;
+          symlinkSync(join(import.meta.dir, entry), join(dir, entry));
+          links.push(join(dir, entry));
+        }
+        writeFileSync(join(dir, 'selftest.ts'), edited);
+        return runChild(dir, args);
+      } finally {
+        // The links go before the root does, so nothing removing it ever walks into the tree.
+        for (const link of links) rmSync(link, { force: true });
+      }
+    };
+    // The needles are assembled, so this control's own text is not a second match.
+    const once = (text: string, needle: string, replacement: string): string | null => (text.split(needle).length === 2 ? text.replace(needle, replacement) : null);
+    {
+      const claim = ['const unclaimed', 'unclaimedArguments(argv);'].join(' = ');
+      const run = plantRun('lets-through', (text) => once(text, claim, 'const unclaimed: UnclaimedArgument[] = [];'), REFUSALS[0][1]);
+      const faults = typeof run === 'string' ? [run] : refusalFaults(run, REFUSALS[0][2], REFUSALS[0][3]);
+      if (!faults.includes('it printed the draw-order suite line')) probes.push(`a claim pass that claims everything was read as [${faults.join('; ') || 'nothing'}]`);
+      else read.push('a claim pass that claims everything is read: the child printed the draw-order suite line');
+    }
+    for (const [name, edit, words] of [
+      ['row-dropped', (text: string): string | null => {
+        const row = /^ {2}\{ spelling: '--jobs', .*\n/m.exec(text);
+        return row === null ? null : once(text, row[0], '');
+      }, 'a reader reads --jobs, which HARNESS_FLAGS has no row for'],
+      ['row-unread', (text: string): string | null =>
+        once(text, ['const HARNESS_FLAGS: readonly HarnessFlag[]', '[\n'].join(' = '), `${['const HARNESS_FLAGS: readonly HarnessFlag[]', '[\n'].join(' = ')}  { spelling: '--ty45-unread', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: '' },\n`),
+        'HARNESS_FLAGS has a row no reader reads: --ty45-unread'],
+    ] as const) {
+      const run = plantRun(name, edit, POSITIVE);
+      const faults = typeof run === 'string' ? [run] : positiveFaults(run);
+      const said = typeof run === 'string' ? '' : run.stderr;
+      if (faults.length === 0 || !said.includes(words)) probes.push(`the plant "${name}" was read as [${faults.join('; ') || 'a green positive control'}] saying ${JSON.stringify(said.trim().split('\n')[0] ?? '')}`);
+      else read.push(`the plant "${name}" fails the positive control: ${words}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'TY45_AN_ARGUMENT_NO_READER_CLAIMS_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_MADE_OR_SWEPT_AND_HELP_PRINTS_THE_TABLE',
+      held,
+      probeDetail(held, probes, `each child under --only draw-order in a tmpdir() holding one stale root: ${read.join('; ')}`),
+      'issue #1174: `bun selftest.ts --help` started a whole one-process run on a shared machine, because an argument no reader ' +
+        'claimed was ignored and ignoring it meant "run everything"; every argument is now claimed by one table or refused by name',
     );
   }
 
