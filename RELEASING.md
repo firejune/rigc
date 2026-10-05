@@ -118,6 +118,77 @@ the commit that introduces these files, and is not maintained afterwards.
 7. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
    attestation linking the tarball to the workflow run.
 
+### What the release notes say about `build`'s bytes
+
+Every release's notes state, **exactly once**, whether `build`'s output moved
+since the previous tag — the version tag immediately before this one — in one
+of these two sentences, written verbatim with that tag in place of `vX.Y.Z`:
+
+```text
+Every file `build` writes is byte-identical to vX.Y.Z's
+`build`'s output is not byte-identical to vX.Y.Z's: <what moved>
+```
+
+Verbatim, because a dependant's release intake reads the release body for
+these exact words and decides between taking the bump and opening a card on
+them ([#1167](https://github.com/firejune/rigc/issues/1167)). A body with
+neither, with both, or with a paraphrase is one that intake cannot read.
+
+⚖️ **What the positive form rests on, and so what it covers.** It is stated
+only when both of these hold:
+
+1. **The two tags' builds compare IDENTICAL.** The release step, with the
+   corpus fetched (`bun run fetch-examples`) in both checkouts:
+
+   ```sh
+   bun tools/emit_hashes.ts recipes --out recipes.json                              # on the release tag
+   bun tools/emit_hashes.ts run --recipes recipes.json --out prev.json --work <dir>  # in a checkout of the previous tag
+   bun tools/emit_hashes.ts run --recipes recipes.json --out new.json --work <dir>   # in a checkout of the release tag
+   bun tools/emit_hashes.ts compare prev.json new.json
+   ```
+
+   and `compare` has to print `IDENTICAL`. For v2.10.1 against v2.10.0 it
+   printed `IDENTICAL — 19 recipe(s), 57 file(s), every exit code, size and
+   hash equal`, at about 11 s a side. This is **one machine's reading of both
+   tags**, which is why `skeleton.model.json` can be in it although the
+   tracked base leaves it out as machine-dependent: across two machines it is
+   not held, on one machine it is.
+2. **`tools/emit_hashes.base.json` is unmoved between the two tags** — the
+   diff of that one file between them is empty. `EH06` holds that file to what
+   `bun tools/emit_hashes.ts base` writes on the tree, so between releases a
+   change that moved a gallery build's Spine files either regenerated it in
+   the same pull request or went red.
+
+What the sentence covers is therefore what that comparison measured, and no
+more:
+
+- **the tree's recipes**, two groups — every `gallery/<name>/` with a
+  `rig.json`, built the way its README states, and every fetched editor export
+  under `examples/`, ingested and rebuilt. How many there are is whatever
+  `recipes` writes on the release tag; 19 is the 2.10.1 reading, not a rule;
+- **every file those builds write** — `skeleton.json`, `skeleton.atlas` and
+  `skeleton.model.json` each;
+- **with the flags those recipes pass** (each row's commands are in
+  `recipes.json`). A flag none of them passes is not exercised — on the
+  2.10.1 recipes that includes `--pack`, so packed atlas pages are outside it.
+
+It is **not** a statement about every possible input. A dependant that needs
+its own rigs held runs `bun tools/emit_hashes.ts run` over its own recipes
+from a clone of each tag — the tool does not ship — and compares the two
+documents.
+
+The negative form names what moved: the rows and files `compare` names, and
+the change that moved them.
+
+🕳️ Nothing in this repository writes or reads a release body — the notes are
+drafted over release-please's generated list — so no selftest control holds
+this rule. `CUR31` and `CUR112` read this document, and each holds it to a file
+in the tree that performs what it states (`release.yml`, the smoke's
+`--help`, `ci.yml`); the release body has no such file here. The tooling that
+drafts the notes is outside this tree: it runs the comparison above before the
+notes are written, and refuses the positive form unless `compare` reads
+`IDENTICAL` and the tracked base is unmoved.
+
 ## Publishing
 
 **Automated, on the release push.** The second `release` run — the one that tags
@@ -259,29 +330,84 @@ command line instead, where it applies to the automated publish only.
 
 `exports` in `package.json` is the second allowlist: `files` decides what is in
 the tarball, `exports` decides what a dependant may import out of it. The
-**named entries are the API** — `spine-rigc/plate`, `spine-rigc/font5x7`,
-`spine-rigc/transform`, `spine-rigc/cli` and `spine-rigc/package.json`, each
-the surface a dependant was observed needing before the map existed (issue
-[#859](https://github.com/firejune/rigc/issues/859)). Moving the file behind a
-named entry is not breaking, because the entry moves with it; **renaming or
-removing a named entry is a breaking change.**
+**named entries are the API**, and an entry is named because a dependant was
+observed needing the module behind it — the map is the list, and this table
+adds what the map cannot say:
 
-⏳ Every other key is a **one-release courtesy**, and says so by being a
-pattern: up to `v1.2.3` the package had no map, so any shipped file resolved
-by its path, and under Bun a module also resolved with its extension left off.
-The patterns keep both spellings of every shipped path working, so a dependant
-that deep-imports `spine-rigc/tools/plate.ts` today does not meet `Cannot find
-module` on this upgrade. **Moving an unnamed file is not a breaking change**;
-the courtesy is what makes it survivable for one release, not a promise that
-it is stable. The patterns may go in the **next major (`2.0.0`)** and no
-earlier.
+| entry | named by | needs installed beside the package |
+| --- | --- | --- |
+| `spine-rigc/plate` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
+| `spine-rigc/font5x7` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
+| `spine-rigc/transform` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
+| `spine-rigc/render` | [#1167](https://github.com/firejune/rigc/issues/1167) | `@esotericsoftware/spine-core` |
+| `spine-rigc/png` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
+| `spine-rigc/compile` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
+| `spine-rigc/cli` | [#859](https://github.com/firejune/rigc/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
+| `spine-rigc/package.json` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
+
+🔒 **The contract.** Renaming or removing a named entry, **or a symbol the
+smoke lists for it**, is a breaking change — and so is a listed symbol
+changing kind, from a function to a constant or back. The file behind an
+entry may move: the entry moves with it, and that is not breaking. The
+symbols are listed once, in `OBSERVED_SYMBOLS` in
+[`scripts/install_smoke.ts`](scripts/install_smoke.ts), each row naming the
+dependant and the issue it was observed in, and the smoke imports every entry
+from the install and reads every listed symbol as present with the kind it has
+today. A rename goes red naming the entry and the symbol — its
+`rename-symbol` plant renames `headerBoxNumber`, the case that once passed
+every gate this tree had — and a removed entry goes red naming the entry
+(`drop-named-entry`). The list grows by observation: a module or a symbol
+nobody was seen using is not promised, however public it looks, and one that
+somebody is seen using is added to that table with their name and the issue.
+
+What is **not** promised, so nobody reads more into an entry than is there:
+
+- **Any other export of an entry's module.** An entry exposes the whole file
+  behind it; only the symbols the smoke lists are held. `spine-rigc/compile`
+  is the compiler's whole module and promises one function out of it.
+- **Types.** `BoneTransform` (through `spine-rigc/transform`) and
+  `BoneSnapshot`, `Frame` and `Mesh` (through `spine-rigc/render`) were
+  observed and are **not held**: a type does not exist at run time, and
+  checking one against the install needs `tsc`, which neither the package nor
+  the `installs` job has — that job installs no dev dependencies, on purpose.
+  A renamed type surfaces in the dependant's own type check, not here.
+- **The paths behind the patterns** — below.
+
+`spine-rigc/render` loads `@esotericsoftware/spine-core` when it is imported,
+and since 2.0.0 the package declares the runtime as a devDependency only
+([#1061](https://github.com/firejune/rigc/issues/1061)), so `npm install
+spine-rigc` does not bring it. A dependant importing that entry installs
+`@esotericsoftware/spine-core` itself, at the version the installed
+`package.json` names under `devDependencies`. The other five importable
+entries load without it. Both halves are measured, not remembered: the smoke
+imports every listed entry once more after taking the runtime away, and holds
+each to the column above — an entry that stops needing the runtime is as red
+as one that starts.
+
+⏳ Every other key is a **courtesy**, and says so by being a pattern: up to
+`v1.2.3` the package had no map, so any shipped file resolved by its path, and
+under Bun a module also resolved with its extension left off. The patterns
+keep both spellings of every shipped path working, so a dependant that
+deep-imports `spine-rigc/tools/plate.ts` does not meet `Cannot find module`.
+**Moving an unnamed file is not a breaking change**; the courtesy is what makes
+it survivable, not a promise that the path is stable. This section once said
+the patterns could go in `2.0.0`; `2.0.0` kept them and they are still in the
+map at 2.x. Removing them breaks every import by path, so it is a major's
+decision: not in any 2.x release, and the major that removes them says so in
+its notes.
+
+📦 **For a dependant: import by entry, not by path.** `spine-rigc/plate`, not
+`spine-rigc/tools/plate.ts` — the two load the same module today, but the entry
+is the contract and moves with the file, while the path spelling is the
+courtesy and stops resolving the day the file moves.
 
 ⚠️ `"./*": "./*"` alone was tried and rejected: under Bun it resolves a path
 spelled in full and **1 of the 42** shipped modules spelled without its
 extension, where the package with no map resolved all 42. Bun does not try an
 array of targets either, so the fallback is spelled per extension instead.
-`bun run smoke` resolves every shipped path both ways from the install, and
-two of its plants take the named entries and the patterns away in turn.
+`bun run smoke` resolves every shipped path both ways from the install, two
+of its plants take the named entries and the patterns away in turn, and two
+more take one named entry away and rename one listed symbol.
 
 ### Whether the tarball runs
 
@@ -311,9 +437,13 @@ that has a `package.json` of its own, and runs it in three phases (issue
    round trip against that version (the emitted `skeleton.spine` is compared with
    it rather than with a number written into the smoke), the named assertions the
    fixture reaches, `skeleton.json`, `skeleton.atlas` and the packed page PNG on
-   disk, and `rigc validate` reading it back. The import surface is probed here.
+   disk, and `rigc validate` reading it back. The import surface is probed
+   here: every named entry, and every symbol `OBSERVED_SYMBOLS` lists, read
+   through its entry.
 3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
-   more, and `rigc render` and `rigc check` run on that build without it.
+   more, every listed entry is imported again and held to whether it needs
+   the runtime, and `rigc render` and `rigc check` run on that build without
+   it.
    `rigc skills install` and the without-Bun shim check run in this phase.
 
 What that proves: the `bin` shim resolves and hands off, and picks its entry by
@@ -333,8 +463,9 @@ repository is on the fixture's path; the tarball is the only thing that crosses.
 broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of the
 packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
 install then has the runtime, which is not the package this tree packs),
-`cli_core.ts` out of `files` (the install's `rigc --version` dies), and the skills
-and `exports` plants — each
+`cli_core.ts` out of `files` (the install's `rigc --version` dies), the skills
+plant, and four on the import surface (the map removed, the map cut to its
+named entries, one named entry removed, one listed symbol renamed) — each
 patched into an **extraction** of the tarball and packed again from there, so the
 checkout is never modified and there is no restore to forget. A plant case is
 green only when the smoke went red at the step it was supposed to, naming what
