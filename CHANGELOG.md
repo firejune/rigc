@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.11.0](https://github.com/firejune/rigc/compare/v2.10.1...v2.11.0) (2026-10-05)
+
+
+### Features
+
+* **package:** name spine-rigc/render, /png and /compile, hold every observed symbol from the install, and state the release notes' byte-identity sentence as a rule ([#1170](https://github.com/firejune/rigc/issues/1170)) ([6867ae7](https://github.com/firejune/rigc/commit/6867ae71c5305fd0631e7c871df188da34e83a00)), closes [#1167](https://github.com/firejune/rigc/issues/1167) [#859](https://github.com/firejune/rigc/issues/859)
+
 ## [2.10.1](https://github.com/firejune/rigc/compare/v2.10.0...v2.10.1) (2026-10-04)
 
 

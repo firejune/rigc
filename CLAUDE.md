@@ -247,8 +247,9 @@ sincere about it. rigc exists to convert that silence into a named failure.
   package is where it throws `Cannot find module`, on the command that needs it.
 - **`exports` in `package.json` is the second allowlist**: `files` says what
   ships, `exports` says what a dependant may import, and RELEASING.md *The
-  import surface* says which entries are API and which are a one-release
-  courtesy. `bun run smoke` is what reads it, from an install.
+  import surface* says which entries are API, which symbols of them are
+  promised, and which keys are a courtesy until a major. `bun run smoke` is
+  what reads it, from an install.
 - Spine data generations — `docs/GENERATIONS.md` is the policy (detect from
   `skeleton.spine`, never guess, play on the matching runtime, the editor is the
   migration path); `src/generation.ts` is its one reader.
