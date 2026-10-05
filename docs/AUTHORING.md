@@ -554,6 +554,20 @@ what changes is that two rectangles may overlap where neither footprint is.
   1107, which `PK93` holds within 25 times. The cost is the placing the
   second anchor makes possible: before #1102 the same search threw its passes
   away and took 260–304 s on the production set.
+- **Where the cost starts** (issue #1165). Under `free` the page search runs
+  a footprint pass at every width below the page it settles on and throws each
+  away when a part misses, so the cost follows how full a page is more than how
+  many parts there are; `build --pack` packs twice (the second pack is
+  `A18`'s). On three production rigs of 90–144 parts over two to four pages the
+  free polygon pack alone takes 3.4–10.6 s against `rect`'s 0.17–0.33 s (12 to
+  56 times; 10.7–41.8 s before #1165's free-list partition, the same pages),
+  and 0.4–0.6 s under `--page-edges pot`. On a generated set fitted to those
+  rigs (three seeds a size, 20 to 150 parts) it is past twice `rect` at every
+  size, 20 parts on one page included — `rect` there takes under 0.2 s and the
+  polygon pack 0.5–1 s — and its median passes 5 s at 60 parts (45 before),
+  worst 14.4 s at 75 parts over two pages. So below about 45 parts on one page
+  `polygon` with `free` costs a build a second or a few; past that, pick
+  `--page-edges pot` or `--pack-shape rect` where build time matters.
 - **The pixels.** Every cell is drawn whole in packing order, then every
   region's owned texels are drawn again with its own values, so every texel a
   region can sample is its own (`PK79`). A texel nobody owns carries the last
