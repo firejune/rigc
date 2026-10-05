@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.13.1](https://github.com/firejune/rigc/compare/v2.13.0...v2.13.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **smoke:** the rename-symbol plant renames loadPosable, which no shipped module imports, and is alone — on main its rename of headerBoxNumber killed --version, both builds, render and skills while the case read one step ([#1189](https://github.com/firejune/rigc/issues/1189)) ([7568718](https://github.com/firejune/rigc/commit/7568718372ed0afccd55a4a0dbea4e77852b1a34)), closes [#1184](https://github.com/firejune/rigc/issues/1184)
+
+
+### Performance Improvements
+
+* **core:** A10's walk re-poses only the moved bones' subtrees, keeps each view's ordering plan, reads setup modes once and cuts no clipped row; core-entry build on 14 production rigs 1.78x to 1.46x the round trip, bytes unmoved ([#1191](https://github.com/firejune/rigc/issues/1191)) ([950af35](https://github.com/firejune/rigc/commit/950af352cfe9f518ca4e996f9beb14b81f629ed9)), closes [#1179](https://github.com/firejune/rigc/issues/1179)
+
 ## [2.13.0](https://github.com/firejune/rigc/compare/v2.12.0...v2.13.0) (2026-10-05)
 
 
