@@ -221,6 +221,18 @@ export interface IngestOptions {
    * document beside the skeleton, only when its digest is that skeleton's).
    */
   documentStage?: IngestStage | null;
+  /**
+   * The slot whose bounding box carries the stage (issue #1168, `--stage-box
+   * <slot>`): a rig built with `skeleton.stageBox` carries its stage there,
+   * in the files a consumer ships, while the header carries the setup-pose
+   * bounding box. Named, that box is read as the stage — in place of the
+   * header's box, as `documentStage` is — and the rebuilt rig spec asks for
+   * the same box (`skeleton.stageBox`) instead of transcribing it as an
+   * attachment. Every shape `build` could not write back is refused by name
+   * (`readStageBox`). Absent, nothing is read from a slot: no box is the stage
+   * because of its name.
+   */
+  stageBox?: string;
   /** The source file's basename, for the provenance note. No path: no leak. */
   source: string;
   /** rigc's own version, for the provenance note. Passed in — `src/` reads no files. */
@@ -725,7 +737,8 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
   // stage is the only value in this whole module that a skeleton cannot answer
   // for. Since #578 a rig spec can SAY that a skeleton declares no stage, and
   // since #714 this is where a file that declares none is carried as saying so.
-  const rigHeader = ingestHeader(obj(root.skeleton), opts, note);
+  const stageBox = opts.stageBox === undefined ? null : readStageBox(root, opts.stageBox, note);
+  const rigHeader = ingestHeader(obj(root.skeleton), opts, note, stageBox);
 
   // -- physics constraints that drive nothing (issue #731) ------------------
   // Read before the skins, because a skin's `physics` member list is one of the
@@ -785,10 +798,13 @@ export function ingest(skeleton: unknown, opts: IngestOptions): IngestResult {
     for (const [slot, placeholders] of objEntries(entry.attachments)) {
       const perSlot: JsonObject = {};
       for (const [placeholder, att] of Object.entries(placeholders)) {
+        // The stage box is the rebuilt spec's `skeleton.stageBox`, which `build` writes from the stage — not an attachment to transcribe (issue #1168).
+        if (stageBox !== null && nameOf(entry) === 'default' && slot === stageBox.slot && placeholder === stageBox.attachment) continue;
         perSlot[placeholder] = ingestAttachment(obj(att), placeholder, boneNames, opts, note, {
           where: `skin "${nameOf(entry)}" slot "${slot}" attachment "${placeholder}"`,
         });
       }
+      if (stageBox !== null && nameOf(entry) === 'default' && slot === stageBox.slot) continue;
       table[slot] = perSlot;
     }
     const lists: JsonObject = {};
@@ -1159,6 +1175,115 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
 }
 
 /**
+ * The rig spec's header fields a skeleton's own header can state — every one
+ * but `stageBox`, which is the caller's reading of a slot (`--stage-box`,
+ * issue #1168) and never a key of the Spine header: a header that carried a
+ * key of that name would otherwise be copied into the rebuilt spec as a
+ * request for a box nobody named.
+ */
+const HEADER_FIELDS_FROM_FILE: readonly string[] = RIG_KEYS.RigSkeletonHeader.filter((field) => field !== 'stageBox');
+
+/** The stage box `--stage-box` read (`readStageBox`): its slot, its attachment and the stage its four corners are. */
+interface StageBoxRead {
+  slot: string;
+  attachment: string;
+  stage: IngestStage;
+}
+
+/**
+ * Read the stage from the bounding box in `slotName` (issue #1168,
+ * `--stage-box`): the box `build` writes for a rig that asks for one
+ * (`skeleton.stageBox`), read back as the rebuild's stage.
+ *
+ * 🔒 **Only a box `build` could write back is read, and everything else is
+ * refused by name** — the slot is named by the caller, so a shape that is not
+ * the stage is a mistake to report, not a guess to make. Refused: a slot the
+ * skeleton does not have; a slot on a bone other than the root, or on a root
+ * that states a setup transform (the box would not be the stage in world
+ * space, and `build` refuses the same); a slot with no attachment in the
+ * `default` skin, more than one, or one in another skin; an attachment that
+ * is not a bounding box, states a `name` other than its placeholder, or is not
+ * four unweighted vertices; four vertices that are not the corners of one
+ * axis-aligned rectangle of positive size.
+ *
+ * The stage is the rectangle's least corner and its extent. What the rebuild
+ * writes differently is one lossy finding, `STAGE_BOX_REWRITTEN`: `build`
+ * writes the corners bottom-left first and counter-clockwise and states no
+ * `color`, so a box in another order or with the editor's colour comes back as
+ * the same rectangle, spelled `build`'s way.
+ */
+function readStageBox(root: JsonObject, slotName: string, note: Note): StageBoxRead {
+  const flag = `--stage-box ${slotName}`;
+  const slot = arr(root.slots).map(obj).find((s) => s.name === slotName);
+  if (slot === undefined) {
+    throw new IngestError(`${flag}: the skeleton has no slot "${slotName}"; it declares [${arr(root.slots).map(nameOf).join(', ')}]`);
+  }
+  const bones = arr(root.bones).map(obj);
+  const bone = bones.find((b) => b.name === slot.bone);
+  if (bone === undefined || bone.parent !== undefined) {
+    throw new IngestError(
+      `${flag}: slot "${slotName}" hangs on bone "${String(slot.bone)}", which is not the root. A stage box is the stage's ` +
+        "corners in world space, and build writes one only on the root — on any other bone the box's numbers are not the stage",
+    );
+  }
+  const moved: string[] = [
+    ...['x', 'y', 'rotation', 'shearX', 'shearY'].filter((key) => bone[key] !== undefined && bone[key] !== 0),
+    ...['scaleX', 'scaleY'].filter((key) => bone[key] !== undefined && bone[key] !== 1),
+  ];
+  if (moved.length > 0) {
+    throw new IngestError(
+      `${flag}: slot "${slotName}" hangs on the root "${nameOf(bone)}", which states ${moved.map((key) => `${key} ${JSON.stringify(bone[key])}`).join(', ')}. ` +
+        "A box on a root that moves at setup is not the stage in world space, and build refuses to write one there",
+    );
+  }
+  const elsewhere = arr(root.skins).map(obj).filter((skin) => skin.name !== 'default' && Object.keys(obj(obj(skin.attachments)[slotName])).length > 0);
+  if (elsewhere.length > 0) {
+    throw new IngestError(
+      `${flag}: slot "${slotName}" is also filled by skin(s) ${elsewhere.map((skin) => `"${nameOf(skin)}"`).join(', ')}. A stage box is its ` +
+        "slot's one attachment, in the default skin, so a reader of that slot finds the stage and nothing else",
+    );
+  }
+  const table = obj(obj(arr(root.skins).map(obj).find((skin) => skin.name === 'default')?.attachments)[slotName]);
+  const placeholders = Object.keys(table);
+  if (placeholders.length !== 1) {
+    throw new IngestError(
+      `${flag}: the default skin holds ${placeholders.length === 0 ? 'no attachment' : `${placeholders.length} attachments [${placeholders.join(', ')}]`} on slot "${slotName}"; ` +
+        "a stage box is its slot's one attachment",
+    );
+  }
+  const attachment = placeholders[0];
+  const att = obj(table[attachment]);
+  const where = `${flag}: attachment "${attachment}" on slot "${slotName}"`;
+  if (att.type !== 'boundingbox') throw new IngestError(`${where} is a ${JSON.stringify(att.type ?? 'region')}, not a bounding box`);
+  if (att.name !== undefined && att.name !== attachment) {
+    throw new IngestError(`${where} states the name ${JSON.stringify(att.name)}; a stage box is named by its placeholder, which is what build writes`);
+  }
+  const vertices = Array.isArray(att.vertices) ? att.vertices : [];
+  if (att.vertexCount !== 4 || vertices.length !== 8 || !vertices.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+    throw new IngestError(
+      `${where} states vertexCount ${JSON.stringify(att.vertexCount)} and ${vertices.length} vertex number(s); the stage is four unweighted ` +
+        'corners — vertexCount 4 and eight finite numbers',
+    );
+  }
+  const xy = vertices as number[];
+  const xs = [...new Set([xy[0], xy[2], xy[4], xy[6]])].sort((a, b) => a - b);
+  const ys = [...new Set([xy[1], xy[3], xy[5], xy[7]])].sort((a, b) => a - b);
+  const corners = new Set([0, 2, 4, 6].map((i) => `${xy[i]},${xy[i + 1]}`));
+  if (xs.length !== 2 || ys.length !== 2 || corners.size !== 4) {
+    throw new IngestError(`${where} holds [${xy.join(', ')}], which is not the four corners of one axis-aligned rectangle of positive size`);
+  }
+  const stage: IngestStage = { x: xs[0], y: ys[0], width: xs[1] - xs[0], height: ys[1] - ys[0] };
+  const rewritten: string[] = [];
+  const order = [xs[0], ys[0], xs[1], ys[0], xs[1], ys[1], xs[0], ys[1]];
+  if (order.some((v, i) => v !== xy[i])) rewritten.push(`its corners [${xy.join(', ')}] in build's order [${order.join(', ')}], bottom-left first and counter-clockwise`);
+  if (att.color !== undefined) rewritten.push(`no color (the source states ${JSON.stringify(att.color)}, an editor affordance build does not write on a stage box)`);
+  if (rewritten.length > 0) {
+    note('lossy', 'STAGE_BOX_REWRITTEN', `skin "default" slot "${slotName}" attachment "${attachment}"`, `the rebuild writes the same rectangle with ${rewritten.join(', and ')}`);
+  }
+  return { slot: slotName, attachment, stage };
+}
+
+/**
  * The rig spec's `skeleton` block — and the one judgement in this module.
  *
  * 🚨 **A skeleton JSON need not carry a box, and a stage cannot be derived.**
@@ -1211,10 +1336,29 @@ function spellStage(x: unknown, y: unknown, width: unknown, height: unknown): st
  * a decompiler that is right for a reason it never states is a decompiler nobody
  * can check.
  */
-function ingestHeader(source: JsonObject, opts: IngestOptions, note: Note): JsonObject {
-  // A rigc build's stage is its model document's (issue #907, `IngestOptions.documentStage`): read in place of the header's box.
-  const head: JsonObject = opts.documentStage === undefined ? source : Object.fromEntries(Object.entries(source).filter(([key]) => !(STAGE_FIELDS as readonly string[]).includes(key)));
-  if (opts.documentStage) Object.assign(head, opts.documentStage);
+function ingestHeader(source: JsonObject, opts: IngestOptions, note: Note, box: StageBoxRead | null = null): JsonObject {
+  // The stage box the caller named (issue #1168) is the file's own statement of its stage, so a second source beside it is refused, as `--stage` beside a declared box is.
+  if (box !== null) {
+    const spelled = spellStage(box.stage.x, box.stage.y, box.stage.width, box.stage.height);
+    if (opts.stage !== undefined) {
+      throw new IngestError(
+        `--stage-box ${box.slot} reads a stage of ${spelled} from the skeleton's bounding box "${box.attachment}" and --stage supplied ` +
+          `${spellStage(opts.stage.x, opts.stage.y, opts.stage.width, opts.stage.height)}: two sources for one value. Drop one of the two flags`,
+      );
+    }
+    const doc = opts.documentStage;
+    if (doc !== undefined && (doc === null || spellStage(doc.x, doc.y, doc.width, doc.height) !== spelled)) {
+      throw new IngestError(
+        `--stage-box ${box.slot} reads a stage of ${spelled} from the skeleton's bounding box "${box.attachment}", and the model document ` +
+          `beside it states ${doc === null ? 'no stage' : spellStage(doc.x, doc.y, doc.width, doc.height)}: two statements of one stage that ` +
+          "disagree, about one build. rigc will not choose between them — A50_STAGE_BOX_IS_THE_STAGE refuses such a build, so one of the files was edited after it",
+      );
+    }
+  }
+  // A rigc build's stage is its model document's (issue #907, `IngestOptions.documentStage`) or its stage box's (issue #1168): read in place of the header's box.
+  const replaced = box !== null ? box.stage : opts.documentStage;
+  const head: JsonObject = replaced === undefined ? source : Object.fromEntries(Object.entries(source).filter(([key]) => !(STAGE_FIELDS as readonly string[]).includes(key)));
+  if (replaced) Object.assign(head, replaced);
   // 🚨 Before a line of transcription, because a header the caller contradicted
   // is not a header to start writing a spec from (issue #626).
   if (declaresStage(head) && opts.stage !== undefined) {
@@ -1226,9 +1370,11 @@ function ingestHeader(source: JsonObject, opts: IngestOptions, note: Note): Json
     );
   }
   const out: JsonObject = {};
-  for (const field of RIG_KEYS.RigSkeletonHeader) if (head[field] !== undefined) out[field] = head[field];
+  for (const field of HEADER_FIELDS_FROM_FILE) if (head[field] !== undefined) out[field] = head[field];
+  // The stage box is the caller's reading of a slot, never a header key: a Spine header has no such field (issue #1168).
+  if (box !== null) out.stageBox = { slot: box.slot, attachment: box.attachment };
   for (const key of Object.keys(head)) {
-    if ((RIG_KEYS.RigSkeletonHeader as readonly string[]).includes(key)) continue;
+    if (HEADER_FIELDS_FROM_FILE.includes(key)) continue;
     if (HEADER_REDERIVED.includes(key)) {
       // Two-sided on purpose: the same fact reads as bookkeeping when the two
       // agree and as a warning when they do not, and a reader needs to be told
@@ -1285,7 +1431,7 @@ function ingestHeader(source: JsonObject, opts: IngestOptions, note: Note): Json
       // The absence, carried: the pair goes where `RIG_KEYS` orders it, so the
       // spec reads like one a transcriber would have written by hand.
       const carried: JsonObject = {};
-      for (const field of RIG_KEYS.RigSkeletonHeader) {
+      for (const field of HEADER_FIELDS_FROM_FILE) {
         if (field === 'width' || field === 'height') carried[field] = null;
         else if (out[field] !== undefined) carried[field] = out[field];
       }

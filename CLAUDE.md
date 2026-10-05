@@ -7,7 +7,7 @@ Guidance for AI-assisted sessions working on this repository.
 rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
 behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
 atlas, then round-trips the result through `@esotericsoftware/spine-core` and
-50 named assertions before anything is written. Read [README.md](README.md) for
+51 named assertions before anything is written. Read [README.md](README.md) for
 the formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the
 rig spec's own documentation.
 
@@ -58,7 +58,7 @@ sincere about it. rigc exists to convert that silence into a named failure.
   the emitted text, which `cli_core.ts build` runs where it is not (the published
   package, since 2.0.0: `spine-core` is a devDependency). The second supplier is
   admitted on measurement, not on its word, and the measurement's scope is
-  stated rather than rounded up: of the 50 assertions, the 41 the model side
+  stated rather than rounded up: of the 51 assertions, the 42 the model side
   runs are held to the round trip's verdict lines by `verdict_gate`, the 8
   restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A18) by
   `RC28`, and `A00_ROUNDTRIP_PARSE` — the parse by the official runtime — does

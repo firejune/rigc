@@ -1107,6 +1107,12 @@ const FLAG_MEANINGS: Record<string, string> = {
     'with both values (default: refused naming them). It says only where the two differ, never why — a build written ' +
     'before 2.2.0, whose header box was the stage, differs in those four fields and nowhere else. Region identity and ' +
     'the gate hold exactly as without it; beside an input that needs none, the check line says it accepted nothing',
+  'stage-box':
+    'the slot whose bounding box carries the stage — what `build` writes for a rig that asks for one ' +
+    '(`skeleton.stageBox`). Its four corners are read as the rebuild\'s stage in place of the header\'s box, which ' +
+    'is the setup-pose bounding box, and the rebuilt spec asks for the same box rather than transcribing it. Only a ' +
+    'box `build` could write back is read: anything else in that slot is refused by name, and without the flag no ' +
+    'slot is read as the stage because of its name',
   help: "show this command's flags and exit",
 };
 
@@ -1160,6 +1166,7 @@ const FLAG_VALUES: Record<string, string> = {
   name: '<n>',
   art: 'loose|none',
   stage: '<x,y,w,h>',
+  'stage-box': '<slot>',
   dir: '<path>',
 };
 
@@ -1395,8 +1402,8 @@ export const COMMANDS: CommandDoc[] = [
     name: 'ingest',
     runtime: false,
     spineFormat: true,
-    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h]'],
-    flags: ['out', 'name', 'art', 'images', 'stage'],
+    usage: ['rigc ingest <skeleton.json> --out <dir> [--name <n>] [--art loose|none] [--images <dir>] [--stage x,y,w,h] [--stage-box <slot>]'],
+    flags: ['out', 'name', 'art', 'images', 'stage', 'stage-box'],
     overrides: {
       out: {
         value: '<dir>',

@@ -243,6 +243,8 @@ export const CORE_PAGE_FIELDS = ['name', 'width', 'height', 'pma', 'scale', 'reg
 export const CORE_PAGE_FIELDS_2: readonly string[] = CORE_PAGE_FIELDS.filter((key) => key !== 'pma' && key !== 'scale');
 /** The stage's fields, as the writer lists them (`MODEL_STAGE_FIELDS` in `src/model.ts`, mirrored). */
 export const CORE_STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
+/** The stage box's fields (issue #1168), as the writer lists them (`MODEL_STAGE_BOX_FIELDS` in `src/model.ts`, mirrored). */
+export const CORE_STAGE_BOX_FIELDS = ['slot', 'attachment'] as const;
 export const CORE_PAGE_REGION_FIELDS = ['name', 'x', 'y', 'width', 'height', 'offsetX', 'offsetY', 'originalWidth', 'originalHeight', 'degrees', 'index'] as const;
 
 /** The fields a bone record may carry, as the writer lists them. A field outside this list is refused. */
@@ -484,12 +486,24 @@ function readStage(value: unknown, problems: string[]): ModelStage | null {
     return null;
   }
   const before = problems.length;
-  unknownFields(value, CORE_STAGE_FIELDS, 'stage', problems);
+  unknownFields(value, [...CORE_STAGE_FIELDS, 'box'], 'stage', problems);
   for (const key of CORE_STAGE_FIELDS) {
     const v = value[key];
     if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`stage: ${key} is ${JSON.stringify(v) ?? 'absent'}, not a finite number`);
   }
-  return problems.length === before ? { x: value.x as number, y: value.y as number, width: value.width as number, height: value.height as number } : null;
+  // The stage box (issue #1168): written only where the rig asked for one, and then exactly its two names.
+  const box = value.box;
+  if (box !== undefined) {
+    if (!isRecord(box)) problems.push(`stage.box is ${JSON.stringify(box)}, not { slot, attachment }`);
+    else {
+      unknownFields(box, CORE_STAGE_BOX_FIELDS, 'stage.box', problems);
+      for (const key of CORE_STAGE_BOX_FIELDS) if (typeof box[key] !== 'string' || box[key] === '') problems.push(`stage.box: ${key} is ${JSON.stringify(box[key]) ?? 'absent'}, not a non-empty string`);
+    }
+  }
+  if (problems.length !== before) return null;
+  const stage: ModelStage = { x: value.x as number, y: value.y as number, width: value.width as number, height: value.height as number };
+  if (isRecord(box)) stage.box = { slot: box.slot as string, attachment: box.attachment as string };
+  return stage;
 }
 
 /**

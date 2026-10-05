@@ -105,6 +105,10 @@
 
 ## [2.2.0](https://github.com/firejune/rigc/compare/v2.1.3...v2.2.0) (2026-10-03)
 
+> ⚠️ **Behaviour change — added 2026-10-05 (#1168).** Up to 2.1.3, `skeleton.json`'s header `x` / `y` / `width` / `height` held the rig's **stage** (the authored canvas, for example `0, 0, 832, 1216`). From this release they hold the **setup-pose bounding box**, as the Spine format defines them. Every build's bytes moved, and a consumer that scaled or placed a figure by reading those four fields as the stage gets a different size and offset — with no error from rigc or from a runtime. **Migration:** read the stage from the rig spec, or from `skeleton.model.json`'s `stage` beside the build; the Spine files themselves no longer state it (#1168 tracks giving them a place for it). This entry is listed under *Bug Fixes* because the header's earlier content contradicted the format; for a reader of the header as the stage it is a breaking change and should have said so here.
+>
+> Since #1168 a rig can carry its stage in the Spine files as well: `skeleton.stageBox` in the rig spec makes `build` write a bounding-box attachment whose four vertices are the stage's corners, which every runtime returns by slot and name (docs/AUTHORING.md §3.1, *For a consumer of the Spine files*), and `ingest --stage-box <slot>` reads it back.
+
 
 ### Features
 

@@ -231,7 +231,7 @@ What the flags mean:
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
-| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 50, opt-in |
+| `--profile` | `spine` = the 35 validity rules (**the default**) · `spine-html` = all 51, opt-in |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. A directory holding no `skeleton.json`, or a path with nothing at it, is refused `nothing at <path>`, exit 2, nothing written, by every command that takes a build — `validate <dir>` and a directory given to `diff` included (`RC27`). `--atlas <path>` names the atlas when it does not sit beside the skeleton. On `render` and `check` a rigc build whose `skeleton.model.json` is `rigc-compiled/3` or `/2` needs no atlas at all: with no `--atlas` and no atlas beside it, it is drawn from the document's `pages`, the same frames, geometry and figures as with it, and the `atlas` line says `— not there`. An atlas that is there is still read, and held to `pages`: one that differs (edited after the build) is drawn through spine-core, and the `poser` line names the first difference. A build drawn through an atlas that is not there — a `rigc-compiled/1` document, or a build the core refuses — is refused `nothing at <the atlas>: … is drawn through its atlas (<why>)`, exit 2, nothing written; a Spine export without its atlas is refused `nothing at <the atlas>` as it always was. A directory whose files are not one build — a `skeleton.json` or a `skeleton.atlas` from another build beside this one's `skeleton.model.json` — is drawn through spine-core where the runtime can load the pair, the `poser` line naming the two digests or the atlas's first difference; where it cannot, it is refused `<skeleton> does not load against <the atlas>: spine-core draws this pair (<the poser line's why>) and could not resolve it — "<the runtime's own words>". <dir> is not one build: …`, exit 2, nothing written (`RC18`) — another build's skeleton beside this build's atlas typically ends `"Region not found in atlas: <region> (attachment: <name>)"`. Rebuild, or put the build's own three files back beside each other. A Spine export beside an atlas it was not exported with is refused in the same words, ending `The skeleton and the atlas are not one pair`. An atlas copied from another build's directory usually stops earlier, at its pages — their paths are relative to the directory it was written in — and is refused naming the first one: `nothing at <the page>: <the atlas> names it as a page, and spine-core draws this pair through that atlas (<why>). … <dir> is not one build: …`, exit 2, nothing written (`RC18`); an export whose atlas names a page that is not there is refused the same way, ending `and the page has to be there`. A build moved or copied whole away from the directory it was built in stops at the same place, on either poser, and is refused naming the page and the file that names it: `nothing at <the page>: <the skeleton.model.json> names it as a page, and the core draws this build from it. A page path is relative to the build's directory, so a build moved or copied away from the directory it was built in names pages that are not here — build it again where it is, or build it with --copy-images, which writes its pages beside it` (under `--poser spine`, `<the atlas> names it as a page, and spine-core draws this pair through that atlas (--poser spine)` with the same ending), exit 2, nothing written (`RC21`); only where the core refused the files does a page refusal say the directory is not one build. `bench --bones` and `rigc bonedist` — on its `--candidate` and on its `--reference` — refuse a pair the runtime cannot load in the words above with `spine-core poses this pair (bonedist's candidate: …)` or `(bonedist's reference: …)`, exit 2, nothing written (`RC20`); they read no page image, so a build whose pages are elsewhere is measured as it is in place. A `skeleton.json` that is not JSON is refused `rigc: cannot read <the file>: <the parser's words> (line N, column N)`, exit 2, by `render`, `check`, `bench` and `bonedist` as by every other command that reads one (`RC22`). With the atlas gone, `check` on a `rigc-compiled/3` build reads its pages' `scale:` lines off the document, so its texture note and `check.json`'s `textureFrom.candidateScales` are what they are with the atlas; on a `/2` build its texture note says whether the atlas declares a `scale:` line is not read (that document does not state one), and `candidateScales` is `null` (`RC13`). **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
@@ -962,6 +962,7 @@ repository builds on every run.
 | `--art none` | state `width`/`height` only, so the rebuild is `build --atlas-in <pack.atlas>` and every part resolves out of the pack |
 | `--images <dir>` | **write** the rig spec's own `images` directory, spelled relative to `--out`, so the rebuild is a plain `build --rig … --motion … --out …`. Without it the field is left out and every `image` resolves against `--out` itself, which holds the specs and no art — so every rebuild has to repeat `build --images <dir>`. Refused together with `--art none`, which writes no `image` for it to be the base of |
 | `--stage x,y,w,h` | a stage to **add** to a skeleton whose header carries no box (a header's box — its setup-pose bounding box — is otherwise read as the rebuild's stage) — without it the absence is carried as `"width": null, "height": null`. An editor export *may* be such a file; every export under `examples/` carries a box and `ingest` reads it straight through — so passing the flag at one of them is **refused**, naming both boxes, rather than silently doing nothing |
+| `--stage-box <slot>` | read the stage from the bounding box in that slot — what `build` writes for a rig that states `skeleton.stageBox` (§3.1) — in place of the header's box, which is the setup-pose bounding box. The rebuilt spec asks for the same box (`skeleton.stageBox`) rather than transcribing it, so a rigc build that carries one rebuilds byte for byte from `skeleton.json` and its atlas alone. Only a box `build` could write back is read; everything else in the slot is refused by name (below). Without the flag no slot is read as the stage because of its name |
 | `--name <n>` | the rig spec's `name`, which the motion spec's `archetype` must equal (default: the file's basename) |
 
 ⚠️ **`ingest --images` and `build --images` point opposite ways.** `build --images`
@@ -997,6 +998,28 @@ is not a loss: the export's box is in the spec, as the stage. (A licensed 4.3.26
 editor's command-line import and export carried a header box through **verbatim** —
 a forged `0, 0, 1, 1` came back as `width 1, height 1` — so the editor does not
 recompute it on a round trip either; whatever box a file states travels.)
+
+📦 **`--stage-box <slot>`: the stage a rig carried in its Spine files** (issue #1168). A
+build whose rig asked for `skeleton.stageBox` carries its stage as a bounding box, and
+a caller holding only `skeleton.json`, the atlas and its pages names the slot. The
+box's four corners are the rebuild's stage — read in place of the header's box, and
+printed as `stage  read from the bounding box in slot "…" (--stage-box)` — and the
+spec states `skeleton.stageBox` instead of an attachment, so `build` writes the box
+again from the stage. Refused by name, as an `IngestError` before anything is written:
+
+| what the slot holds | the refusal names |
+| --- | --- |
+| no such slot | *the skeleton has no slot "…"; it declares [...]* |
+| a slot on a bone below the root, or on a root that states a setup transform | *which is not the root* / *which states rotation 90* |
+| no attachment, several, or one in a skin other than `default` | *the default skin holds no attachment …* / *is also filled by skin(s) …* |
+| an attachment that is not a bounding box, states another `name`, or is not four unweighted vertices | *is a "clipping", not a bounding box* / *states vertexCount … the stage is four unweighted corners* |
+| four vertices that are not one axis-aligned rectangle of positive size | *which is not the four corners of one axis-aligned rectangle of positive size* |
+| `--stage` beside it, or a model document beside the skeleton stating another stage | *two sources for one value* / *two statements of one stage that disagree* |
+
+A box `build` spells differently — its corners in another order, the `color` the
+editor writes on every box it exports — is read, and is the lossy
+`STAGE_BOX_REWRITTEN` ([INGEST.md](INGEST.md) §2.0): the rebuild carries the same
+rectangle, spelled `build`'s way.
 
 ⛔ **The flag is refused beside a box the file states.** Two sources for one value, and
 the file is the one that was measured — so `ingest` names both boxes and stops rather
@@ -1738,6 +1761,7 @@ that is a defect in this guide: report it.
 | `referenceScale` | 4.2+ physics/scale reference: a physics constraint's `wind` and `gravity` act over it | parser default 100. Carried as stated — never rounded — and the header leaves it out at exactly 100. `skeleton.model.json` always states it, as `referenceScale` after `spec`: the number stated, or 100 when none is — the value the Spine file is read as — and rigc's posing core steps wind and gravity over it (issue #958) |
 | `images` | where the editor's import looks for the part PNGs, as a path from the skeleton file | **written for you**: under `--copy-images` the `--out` directory itself, spelled `../<its basename>/` (a literal `./` is dropped by the editor on import; a named directory is kept and every part is found — measured on 4.3.23); otherwise the relative path from `--out` to the one directory the spec names every part PNG in (the rig's images directory, or the manifest's plates). A declared value is carried through verbatim — and overridden by `--copy-images`, which moved the parts. Parts spread over several directories have no single true path, so nothing is written |
 | `audio` | nonessential: where the editor looks for the skeleton's audio files, as a path from the skeleton file — a string, or `null` for none | **not written unless you state it.** rigc has no audio to point at, so this is a value a spec states or does not; stated, it is carried verbatim, `null` included, because `null` is what an editor export writes when no audio folder is set (all twelve under `examples/` do) and `ingest` carries it from there. Anything but a string or `null` is a compile error naming the value |
+| `stageBox` | **rigc's own field**: carry the stage in the Spine files as a bounding-box attachment — `{ "slot": …, "attachment": … }`, see *The stage in the shipped files* below | absent: no box, and no byte of any build moves. Both names required; the numbers are never yours to write |
 
 `spine` and `hash` are not yours to write: rigc emits its own version label
 (`A16` re-checks it is on the 4.3 line) and inventing a hash would claim an export
@@ -1775,6 +1799,62 @@ figure's area on a figure that fills a quarter of its crop. Now:
   refused by `A08` anyway).
 
 You do not author the box and there is no field for it: it is a measurement of the rig.
+
+📦 **For a consumer of the Spine files: the header is not the stage.** Up to 2.1.3
+`skeleton.json`'s header `x`/`y`/`width`/`height` held the rig's stage; from 2.2.0 they
+hold the setup-pose bounding box, as the format defines them — a reader that fits a
+rig by taking the header for the stage is mis-sized in silence (one consumer's rig
+stood 1.108 times larger and shifted up, with no gate failing). The stage is in the
+rig spec and in `skeleton.model.json`'s `stage`, and neither ships with a Spine
+runtime's three files. A rig that has to carry its stage there asks for it:
+
+```json
+"skeleton": { "width": 832, "height": 1216, "stageBox": { "slot": "stage", "attachment": "stage" } },
+"slots": [ …, { "name": "stage", "bone": "root", "attachment": "stage" } ]
+```
+
+and `build` writes a `boundingbox` attachment named `stage` in the `default` skin
+under slot `stage`, whose four vertices are the stage's corners in Spine world —
+`(x, y)`, `(x + width, y)`, `(x + width, y + height)`, `(x, y + height)`, bottom-left
+first and counter-clockwise, y up. The consumer reads it with the runtime it already
+has: the slot's attachment by name (`skeletonData.defaultSkin.getAttachment(slot.index,
+"stage")` in spine-core), whose `vertices` are those four corners, or the slot's
+bounding box at the setup pose (`SkeletonBounds`), and fits the rig to that. A key
+the format does not define would be read by no runtime and dropped by the editor; a
+bounding box is returned by every runtime by slot and name, in JSON and in binary,
+and comes back from the editor with the same vertices (measured: a build carrying one
+imported into Spine 4.3.26 and exported again, the box `[0, 0, 640, 0, 640, 700, 0,
+700]` came back as it went, the editor adding only its own `color`).
+
+- **The numbers are the stage's**, never typed: the field names where the box goes,
+  `build` writes what is in it. Absent, no build writes one and no byte moves.
+- **The slot is yours to declare** in `slots` — where it stands is its place in the
+  draw order, and a bounding box draws nothing — and **nothing else may fill it**: the
+  box is its slot's one attachment. Its setup pose is stated the way any slot's is
+  (the slot's `attachment`, or the motion spec's `setup`); name the box there and a
+  reader of the slot's current attachment sees it at setup.
+- **The slot hangs on the root, and the root states no setup transform** — no `x`,
+  `y`, `rotation`, `scale`, `shear`. The vertices are then the stage's own numbers,
+  readable off the attachment without posing anything. A bone below the root is
+  refused because the runtime spells an unrotated frame's `b` as cos 90° at its pi,
+  −2.3e-8, once per level: on the root that residue is the one the header's own box
+  already carries (gallery/nod's header `x` is `-0.000016`, 700 × −2.3e-8), and the
+  gate holds the posed box through exactly that frame; below it, it compounds.
+- **The claim is the setup pose's.** An animation that keys the root moves the box
+  with everything else on it; the stage is the attachment's vertices, or the box read
+  at setup.
+- **The header box does not move**: a bounding box is not counted in it (above).
+- **`A50_STAGE_BOX_IS_THE_STAGE`** holds the box to the stage on both suppliers — the
+  stored vertices exactly, and the posed box at setup on the header's grid — and
+  SKIPs a rig that does not ask (§5.2). `ingest --stage-box <slot>` reads it back as
+  the stage (§0.3).
+
+Refused at compile, each naming `skeleton.stageBox`: a slot `slots` does not declare
+(*slot "…" is not one the rig declares*); a slot something else fills (*is also
+filled by …*); a slot on a bone below the root (*which is not the root*); a root that
+states a setup transform (*states a setup transform (rotation 90)*); a stage declared
+absent (*declares no stage (width: null, height: null) — a box around nothing*); a
+missing name (*states no "attachment"*).
 
 ⭐ **A skeleton may declare no stage, and saying so is not the same as saying
 nothing.** Write the pair as `null`:
@@ -6320,6 +6400,7 @@ Fix A00 and run it again.
 | `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | an ik constraint resting at `mix` 0 that no animation keys **away from 0** (§4.9, §4.12). `IkConstraint.update` returns on `mix === 0`, so it sits in the update cache and moves nothing. The keys are read the way `A23`/`A36`/`A37` read theirs — every value the loaded timeline poses on its `mix` channel, Bezier samples included — so a timeline keying 0 only is no rescue: [measured] it poses every bone exactly where the same rig with no constraint does. Live is the runtime's `!== 0`, so a negative mix is not refused. `ik constraint "C" has mix 0 at setup and none of the 1 animation keys its mix above 0; update() returns on mix 0, so "upper" never reaches for "goal" — rest it above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "ik", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused: `ik constraint "C" is declared in the rig spec as invariants.consumerDrivenMix, and the file already switches it on — … — so the declaration exempts nothing; drop the entry`. **SKIP** when the skeleton declares no ik constraint, and **SKIP by name** when every ik constraint it declares is declared consumer-driven: `every ik constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the rule measures that one and the stats line names the declared (`ikConsumerDriven`) |
 | `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does. A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "transform", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused as `A47`'s is; one that drives no property is refused with its own sentence declared or not, since no mix it carries is read by anybody. **SKIP** when the skeleton declares no transform constraint, and **SKIP by name** when every transform constraint it declares is declared consumer-driven: `every transform constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the stats line names the declared (`transformConsumerDriven`) |
 | `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` | renderer | two regions on one page whose rectangles overlap **and** whose footprints overlap — so one drawing samples texels that are the other's. A region's **footprint** is what samples it: a region a mesh names (its `path`, else its name, every frame of a `sequence` included) draws the mesh's hull loop and its triangles, its UVs placed on the page as `MeshAttachment.computeUVs` places them (a **linked mesh** draws its source's); a region a region attachment names, or that nothing names, draws its whole rectangle — and so does a mesh region whose UVs leave 0..1, whose hull or triangles do not index its vertices, or that is turned by `rotate:`, and every region when a `sequence` cannot be read. For two rectangles that is exactly the clause `A06` held until issue #1099 — an editor alias, a sequence frame, two rectangles moved over the same texels are refused as they were — and it accepts what `--pack-shape polygon` writes: a neighbour inside a mesh's rectangle where the hull is not (§0.1). **Touching is not overlapping**: interiors are compared, every comparison `FOOTPRINT_SLACK` (1e-6 texels) in favour of apart. `regions "ear_l" (341,696 112x420) and "mouth" (332,709 96x48) overlap on page "skeleton.png", and so do their footprints — "ear_l" draws the hull of mesh "ear_l" (skin "default", slot "ear_l"), "mouth" draws its whole rectangle, which region attachment "mouth" (skin "default", slot "mouth") draws; what they draw overlaps by 1916.5512 texel(s) of area inside 347,709 81x48. One drawing samples texels that are the other's: move one region clear of the other's footprint, or pack the page again` — `gallery/nod`'s polygon pack with `mouth` moved onto a triangle of the `ear_l` mesh (`PK88`). Nothing about the **padding** is read — the atlas and the model document do not state it — and the `2 · padding` the packer keeps is the packer's own (`PK81`). A renderer rule because two regions over the same texels is what an editor's packer writes for an alias or a sequence: 49 pairs on four of the ten atlases in `examples/`. **SKIP** when the atlas declares no page or no region, and when no page carries two regions — every unpacked build |
+| `A50_STAGE_BOX_IS_THE_STAGE` | both | the stage box a rig asked for (`skeleton.stageBox`, §3.1) is not the stage the model document states. Read on the data a consumer reads and on the pose it reads: the slot carries, in the `default` skin under the asked name, an unweighted bounding box of four vertices whose **stored** vertices are the stage's corners exactly — `(x, y)`, `(x + w, y)`, `(x + w, y + h)`, `(x, y + h)`, as the float32 the runtime loads — and whose **world** vertices at the setup pose (constraints applied, no physics, no skin set) are those corners as the runtime poses them on an unrotated root, compared on the header's 1e-6 grid at float32. `the stage box (slot "stage", attachment "stage"): vertex 1 is stored as (65, 0) and the stage's corner is (64, 0) — the stage 0,0 64x48, bottom-left first and counter-clockwise`; a root moved at setup reads *vertex 0 poses at (1, 0) at the setup pose and the stage's corner poses at (0, 0) on an unrotated root, on the header's grid — something moves the box's bone at setup (a constraint, or a pose the root does not state)*; a slot the skeleton lacks, no attachment of that name, another type, or a weighted box are each named too. Through spine-core it reads `findSlot`, `defaultSkin.getAttachment` and `computeWorldVertices` on a fresh skeleton after `setupPose()` and `updateWorldTransform(Physics.none)`; on the model side the document's record and rigc's core poser, held to spine-core's poses at tolerance 0 (`PG06`, `PG07`). **SKIP** where nothing asks: *nothing asks for a stage box: no rigc-compiled/3 model document beside this skeleton states one …* — a rig without the field, and any skeleton with no `/3` document beside it, an export among them |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
