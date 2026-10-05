@@ -1312,6 +1312,7 @@ that lifts them.
 | `--page-size`, `--padding`, `--page-edges`, `--pack-shape` | `build --pack`'s, with the same defaults and the same meaning (§0.1). `repack` always packs |
 | `--profile` | the gate's profile, as on `build` |
 | `--stage x,y,w,h` | handed to `ingest` as its own `--stage` (§0.3) — a box for a skeleton that states none, refused beside one that does |
+| `--stage-box <slot>` | handed to `ingest` as its own `--stage-box` (§0.3): the stage read from the bounding box a build writes for a rig that states `skeleton.stageBox` — the exact way to carry the stage through a repack of the three files alone (*The stage*, below). `ingest`'s refusals reach the caller in its own words |
 | `--accept-skeleton-differences` | write the rebuild even where its `skeleton.json` differs from the input's, with **every** differing path printed and both values (default: refused naming them, check (b) below). Nothing else relaxes: check (a) and the gate hold exactly as without it. Beside a skeleton that comes back byte-identical, check (b)'s line says the flag accepted nothing |
 
 Every other flag `build` takes is refused by name, with the reason `repack` does not
@@ -1417,16 +1418,33 @@ header as its stage must stop: read `skeleton.model.json`'s `stage` — or the s
 box #1168 adds to the build — instead. The selftest builds this shape from a gallery
 rig's own document (`RPK13`–`RPK15`).
 
-**The stage.** `ingest`'s rules decide it, and the `stage` line says which applied:
-`--stage` when given; else the `skeleton.model.json` beside the skeleton, when its
-`spine.sha256` is the skeleton's digest; else the header's box. On a build written
-before 2.2.0 that box is the stage itself (above); on a rigc build since 2.2.0 it is the
-**setup-pose bounding box**, not the stage, and nothing in the skeleton says which — `gallery/nod`'s
-`640 x 700` stage reads back as `640 x 725` without its document — and the line says
-so. `skeleton.json` is held byte-identical below whatever it is (all seven
-document-less repacks above were); the stage the rebuild declares reaches
-`skeleton.model.json` and the rules on the rebuild that measure against a stage.
-Keep `skeleton.model.json` beside the pair to carry the stage.
+**The stage.** `ingest`'s rules decide it, and the `stage` line says which applied.
+A repack learns the stage one of three ways, and each is exact in its own case:
+
+- **`--stage-box <slot>`** — the bounding box a build writes for a rig that states
+  `skeleton.stageBox` (§3.1, issue #1168), read by `ingest --stage-box`. Exact for
+  any build that carries one, from the three files alone: the rebuilt spec asks for
+  the same box, the skeleton comes back byte for byte, and `skeleton.model.json`'s
+  `stage` is the declared one (`RPK17`). `ingest`'s refusals reach the caller as
+  `rigc repack: ingest refused the skeleton: …` (exit 2, nothing written) — a slot that
+  is not such a box, `--stage` beside it, or a `skeleton.model.json` beside the build
+  that states another stage (`RPK19`);
+- **the `skeleton.model.json` beside the skeleton**, when its `spine.sha256` is the
+  skeleton's digest. Exact for any rigc build that kept its document;
+- **the header's box**, when neither is there. On a build written before 2.2.0 that box
+  is the stage itself (above), so this is exact there by construction; on a rigc build
+  since 2.2.0 it is the **setup-pose bounding box**, not the stage, and nothing in the
+  skeleton says which — `gallery/nod`'s `640 x 700` stage reads back as `640 x 725`
+  without its document. The line says so, and names `--stage-box`.
+
+⚠️ A build that carries a stage box, repacked **without** `--stage-box` and without its
+document, is written with its skeleton byte for byte — the box is transcribed as an
+ordinary bounding-box attachment and written back the same — but the rebuilt
+`skeleton.model.json`'s stage is the header's setup-pose box and carries no box
+(`RPK18`). Check (b) cannot see that, because the stage is not in the skeleton's bytes
+either way; the stage line is where it shows. Pass `--stage-box <slot>` for such a
+build. (`--stage` adds a box only to a skeleton that states none, which is `ingest`'s
+rule.)
 
 **What each refusal says, and what to change:**
 

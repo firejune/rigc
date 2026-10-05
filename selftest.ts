@@ -113667,6 +113667,78 @@ function runRepackSuite(): number {
     );
   }
 
+  // --- RPK17..RPK19: a build that carries its stage as a bounding box (issue #1168), repacked from its three kinds of file ---
+  const boxDir = join(work, 'stage-box');
+  mkdirSync(boxDir, { recursive: true });
+  const boxRig = JSON.parse(readFileSync(join('gallery', 'nod', 'rig.json'), 'utf8')) as { images?: string; skeleton?: Record<string, unknown>; bones: Array<{ name: string; parent?: string }>; slots: Array<Record<string, unknown>> };
+  boxRig.images = resolve('gallery', 'nod', 'parts');
+  boxRig.skeleton = { ...(boxRig.skeleton ?? {}), stageBox: { slot: 'stage', attachment: 'stage' } };
+  // On the root, which is where build writes a stage box (the bone with no parent).
+  boxRig.slots = [{ name: 'stage', bone: boxRig.bones.find((b) => b.parent === undefined)?.name ?? '', attachment: 'stage' }, ...boxRig.slots];
+  writeFileSync(join(boxDir, 'rig.json'), `${JSON.stringify(boxRig, null, 2)}\n`);
+  const boxBuilt = join(boxDir, 'built');
+  const boxBuild = runCli(['build', '--rig', join(boxDir, 'rig.json'), '--motion', join('gallery', 'nod', 'motion.json'), '--out', boxBuilt, '--pack']);
+  const declared = boxBuild.status === 0 ? (JSON.parse(readFileSync(join(boxBuilt, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, unknown> }).stage : null;
+  const boxBare = boxBuild.status === 0 ? bareBuildCopy(boxBuilt, join(boxDir, 'bare')) : boxBuilt;
+  const docStage = (dir: string): Record<string, unknown> | null => (existsSync(join(dir, MODEL_DOCUMENT_FILE)) ? (JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, unknown> }).stage : null);
+  const headerBox = boxBuild.status === 0 ? (JSON.parse(readFileSync(join(boxBuilt, 'skeleton.json'), 'utf8')) as { skeleton: Record<string, unknown> }).skeleton : {};
+  {
+    const out = join(work, 'stage-box-flag');
+    const run = repack('stage-box-flag', ['cli.ts', 'repack', boxBare, '--out', out, '--stage-box', 'stage']);
+    const probes: string[] = [];
+    if (boxBuild.status !== 0 || declared === null) probes.push(`nod with a stage box did not build: ${boxBuild.stderr.trim().slice(-300)}`);
+    else if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(boxBuilt, 'skeleton.json')))) probes.push('skeleton.json is not the input\'s bytes');
+      if (JSON.stringify(docStage(out)) !== JSON.stringify(declared)) probes.push(`the rebuilt document's stage is ${JSON.stringify(docStage(out))}, not the declared ${JSON.stringify(declared)}`);
+      if (!run.stdout.includes('read from the bounding box in slot "stage" (--stage-box)')) probes.push('the stage line does not say the stage was read from the slot\'s box');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK17_A_BUILD_CARRYING_A_STAGE_BOX_REPACKED_WITH_STAGE_BOX_KEEPS_ITS_DECLARED_STAGE_EXACTLY',
+      held,
+      probeDetail(held, probes, `gallery/nod built --pack with skeleton.stageBox in slot "stage", reduced to skeleton.json + atlas + page, repacked --stage-box stage: written, skeleton.json the input's bytes, the rebuilt skeleton.model.json's stage ${JSON.stringify(declared)} — the declared stage, carrying the box — and the stage line naming the slot`),
+      'issue #1169 after #1168: the stage box is how a build carries its stage in the three files a consumer keeps, and repack reads it through ingest\'s own --stage-box',
+    );
+  }
+  {
+    const out = join(work, 'stage-box-no-flag');
+    const run = repack('stage-box-no-flag', ['cli.ts', 'repack', boxBare, '--out', out]);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(boxBuilt, 'skeleton.json')))) probes.push('skeleton.json is not the input\'s bytes');
+      const got = docStage(out);
+      const header = { x: headerBox.x, y: headerBox.y, width: headerBox.width, height: headerBox.height };
+      if (JSON.stringify(got) !== JSON.stringify(header)) probes.push(`the rebuilt document's stage is ${JSON.stringify(got)}, not the header box ${JSON.stringify(header)} this case is about`);
+      if (JSON.stringify(got) === JSON.stringify(declared)) probes.push('the stage came back as declared, so this input does not show what the flag is for');
+      if (!run.stdout.includes("read from the skeleton's header box") || !run.stdout.includes('pass --stage-box <slot> to read it exactly')) probes.push('the stage line does not say the header box gave the stage and name --stage-box');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK18_WITHOUT_STAGE_BOX_THE_BOX_IS_TRANSCRIBED_THE_SKELETON_HOLDS_AND_THE_STAGE_LINE_SAYS_THE_HEADER_GAVE_THE_STAGE',
+      held,
+      probeDetail(held, probes, `the same input with no flag: written, skeleton.json the input's bytes (the box transcribed as an ordinary boundingbox attachment), and the rebuilt document's stage ${JSON.stringify(docStage(out))} — the header's setup-pose box, not the declared stage and no box — which the stage line names as the header's and points at --stage-box`),
+      'issue #1169: check (b) cannot see the stage, because the stage is not in the skeleton\'s bytes either way; the stage line is the only place the difference shows, so it has to say which rule gave it',
+    );
+  }
+  {
+    const out = join(work, 'stage-box-wrong');
+    const run = repack('stage-box-wrong', ['cli.ts', 'repack', boxBare, '--out', out, '--stage-box', 'torso']);
+    const probes: string[] = [];
+    if (run.status !== 2) probes.push(`exit ${run.status}, not 2`);
+    if (!run.stderr.includes('rigc repack: ingest refused the skeleton: --stage-box torso:')) probes.push(`ingest's refusal did not reach the caller: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    if (!run.stderr.includes('nothing was written')) probes.push('the refusal does not say nothing was written');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK19_STAGE_BOX_NAMING_A_SLOT_THAT_IS_NOT_A_STAGE_BOX_IS_INGESTS_REFUSAL_WITH_NOTHING_WRITTEN',
+      held,
+      probeDetail(held, probes, '--stage-box torso on the same input: ingest\'s own refusal (the slot hangs on a bone that is not the root) printed after "rigc repack: ingest refused the skeleton:", exit 2, --out never made'),
+      'issue #1169: repack does not restate ingest\'s stage-box rules; it hands the flag through and lets ingest\'s refusal speak',
+    );
+  }
+
   // --- RPK12: no directory left in tmpdir() on any exit path ---
   {
     const probes: string[] = [];
@@ -114849,6 +114921,8 @@ function main(): void {
       '`--accept-skeleton-differences` with every path printed and the setup-pose box in its header, a region difference still ' +
       'refused under the flag, and the flag beside a skeleton that needs none saying it accepted nothing; regions laid turned ' +
       'and trimmed accepted and exact; the flags build --pack takes and no other; the second entry writing the same files; ' +
+      'a build carrying a stage box repacked with `--stage-box` keeping its declared stage, without it keeping its skeleton while ' +
+      'the stage line names the header box and the flag, and `--stage-box` on a slot that is not a box refused in ingest\'s words; ' +
       'and no rigc-* directory left in tmpdir() by any run, a red gate exiting from inside runBuild included)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +

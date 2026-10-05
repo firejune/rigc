@@ -1314,7 +1314,7 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the rebuild it writes is gated by build\'s gate, which round-trips it through spine-core',
       core: {
         usage: [
-          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--accept-skeleton-differences]   (gated without spine-core — see repack --help)`,
+          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]   (gated without spine-core — see repack --help)`,
         ],
         notes: [
           'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
@@ -1335,9 +1335,9 @@ export const COMMANDS: CommandDoc[] = [
     },
     spineFormat: true,
     usage: [
-      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--accept-skeleton-differences]`,
+      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]`,
     ],
-    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'accept-skeleton-differences'],
+    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences'],
     overrides: {
       out: {
         value: '<dir>',

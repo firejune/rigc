@@ -75,7 +75,7 @@ import { basename, dirname, join, resolve } from 'node:path';
  */
 export const ACCEPT_FLAG = 'accept-skeleton-differences';
 
-export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', ACCEPT_FLAG] as const;
+export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', ACCEPT_FLAG] as const;
 
 /** `build`'s flags that `repack` does not take, and why — each refused by name rather than ignored. */
 const BUILD_FLAGS_REFUSED: Readonly<Record<string, string>> = {
@@ -150,8 +150,16 @@ function readOut(flags: Record<string, string>): string {
  * the model document beside the skeleton when it is this skeleton's, else the
  * header. A new `ingest` option goes in here and nowhere else.
  */
-function ingestOptionsFor(skeletonPath: string, specsDir: string, liftDir: string, stage: IngestStage | undefined, documentStage: IngestStage | null | undefined): IngestOptions {
+function ingestOptionsFor(
+  skeletonPath: string,
+  specsDir: string,
+  liftDir: string,
+  stage: IngestStage | undefined,
+  stageBox: string | undefined,
+  documentStage: IngestStage | null | undefined,
+): IngestOptions {
   return {
+    ...(stageBox === undefined ? {} : { stageBox }),
     ...(documentStage === undefined ? {} : { documentStage }),
     name: basename(skeletonPath, '.json'),
     art: 'loose',
@@ -163,7 +171,12 @@ function ingestOptionsFor(skeletonPath: string, specsDir: string, liftDir: strin
 }
 
 /** The stage line: the box the rebuild declares and where it came from (issue #1169's step 6). */
-function stageLine(rig: { skeleton?: { x?: number | null; y?: number | null; width?: number | null; height?: number | null } }, flagged: boolean, documentStage: IngestStage | null | undefined): string {
+function stageLine(
+  rig: { skeleton?: { x?: number | null; y?: number | null; width?: number | null; height?: number | null } },
+  flagged: boolean,
+  stageBox: string | undefined,
+  documentStage: IngestStage | null | undefined,
+): string {
   const head = rig.skeleton;
   const box =
     head !== undefined && typeof head.width === 'number' && typeof head.height === 'number'
@@ -171,11 +184,13 @@ function stageLine(rig: { skeleton?: { x?: number | null; y?: number | null; wid
       : 'none';
   const why = flagged
     ? '— from --stage, which ingest takes only for a skeleton that states no box'
-    : documentStage !== undefined
+    : stageBox !== undefined
+      ? `— read from the bounding box in slot "${stageBox}" (--stage-box), the stage the build carried in its own files${documentStage === undefined ? '' : `, and equal to the ${MODEL_DOCUMENT_FILE} beside it (ingest refuses the two disagreeing)`}`
+      : documentStage !== undefined
       ? `— read from the ${MODEL_DOCUMENT_FILE} beside it (its spine.sha256 is this skeleton's)${documentStage === null ? ', which states the rig declared none' : ''}`
       : box === 'none'
         ? `— the skeleton's header states no box and no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it`
-        : `— read from the skeleton's header box: no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it, and which box it is depends on the rigc that wrote it — on a build written before 2.2.0 it is the stage itself, on one written since it is the setup-pose bounding box, not the stage the rig declared, and nothing in the skeleton says which; keep ${MODEL_DOCUMENT_FILE} beside the pair to carry the stage`;
+        : `— read from the skeleton's header box: no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it, and which box it is depends on the rigc that wrote it — on a build written before 2.2.0 it is the stage itself, on one written since it is the setup-pose bounding box, not the stage the rig declared, and nothing in the skeleton says which; keep ${MODEL_DOCUMENT_FILE} beside the pair to carry the stage, or, for a build that carries it as a bounding box (skeleton.stageBox), pass --stage-box <slot> to read it exactly`;
   return `  ..    stage  ${box} ${why}. skeleton.json is held byte-identical below whatever it is; ${MODEL_DOCUMENT_FILE}'s stage, and the stage rules on the rebuild, read it`;
 }
 
@@ -301,13 +316,13 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
 
     let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
     try {
-      result = ingest(parseJsonNamed(skeletonText, input.skeletonPath), ingestOptionsFor(input.skeletonPath, specsDir, liftDir, stage, documentStage));
+      result = ingest(parseJsonNamed(skeletonText, input.skeletonPath), ingestOptionsFor(input.skeletonPath, specsDir, liftDir, stage, flags['stage-box'], documentStage));
     } catch (err) {
       if (err instanceof IngestError) throw new RepackError(`ingest refused the skeleton: ${err.message} — nothing was written`, 2);
       if (!(err instanceof IngestSpecRefused)) throw err;
       result = { rig: err.rig, motion: err.motion, findings: err.findings };
     }
-    console.log(stageLine(result.rig as Parameters<typeof stageLine>[0], stage !== undefined, documentStage));
+    console.log(stageLine(result.rig as Parameters<typeof stageLine>[0], stage !== undefined, flags['stage-box'], documentStage));
     const blockers = result.findings.filter((f) => f.kind === 'blocker');
     console.log(`  ..    ingest ${result.findings.length} finding(s), ${blockers.length} blocker(s)`);
     for (const line of findingLines(result.findings)) console.log(line);
