@@ -2854,7 +2854,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       partBySlot.has(rigSlot.name) &&
       (slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? []).length > 0,
   );
-  if (skinNames.includes(DEFAULT_SKIN) || partsFillDefault) tableFor(DEFAULT_SKIN);
+  // The stage box (issue #1168): resolved before the slots, so every refusal
+  // names the field before any slot is built — and a `default` skin is one it
+  // files the box under, so it is created here with the others.
+  const stageBox = resolveStageBox(rig, { stageWidth, stageHeight, bones, partBySlot, slotAttachments, rigAttachmentNames });
+  if (skinNames.includes(DEFAULT_SKIN) || partsFillDefault || stageBox !== null) tableFor(DEFAULT_SKIN);
   // ...and every skin the rig declares: a skin can carry `bones`/constraint lists
   // with no attachments at all, and a skin that only switches bones on would
   // otherwise never reach the emitted array.
@@ -2867,7 +2871,8 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
 
   for (const rigSlot of rig.slots) {
     const part = partBySlot.get(rigSlot.name);
-    const names = slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? [];
+    const boxHere = stageBox !== null && stageBox.slot === rigSlot.name;
+    const names = boxHere ? [stageBox.attachment] : (slotAttachments.get(rigSlot.name) ?? rigAttachmentNames.get(rigSlot.name) ?? []);
     // 🔑 A slot nothing fills is EMITTED, empty — it is not dropped (issue #575).
     // A `continue` stood here instead, and what it bought was the format's own
     // silence: the emitted array came back a slot short with no line saying
@@ -2969,6 +2974,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     // As stated: `parseRigSpec` refused every spelling the runtime would read as no mode (issue #946).
     if (rigSlot.blend !== undefined) slot.blend = rigSlot.blend;
     slots.push(slot);
+    // The stage box is the slot's one attachment, in the `default` skin (issue #1168).
+    if (boxHere) {
+      tableFor(DEFAULT_SKIN)[rigSlot.name] = { [stageBox.attachment]: stageBox.record };
+      continue;
+    }
     // ...and nothing below this line has anything to build. An empty entry in a
     // skin's attachment table would be rigc writing a key the editor does not,
     // so the skins array is left exactly as it was before #575 for every slot
@@ -3625,7 +3635,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // model's value into the header, as it writes `referenceScale`.
   const stage: ModelStage | null =
     stageWidth !== undefined && stageHeight !== undefined
-      ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight }
+      ? { x: rig.skeleton?.x ?? 0, y: rig.skeleton?.y ?? 0, width: stageWidth, height: stageHeight, ...(stageBox === null ? {} : { box: { slot: stageBox.slot, attachment: stageBox.attachment } }) }
       : null;
   // What the skeleton carries that the model does not hold: the rest of the header.
   const header: Omit<SkeletonHeader, 'bounds'> = {
@@ -4446,6 +4456,112 @@ function bindingsOnF32(vertices: Extract<ModelVertices, { weighted: true }>): Ex
     weighted: true,
     bindings: vertices.bindings.map((vertex) => vertex.map((b) => ({ bone: b.bone, x: f32(b.x), y: f32(b.y), weight: f32(b.weight) }))),
   };
+}
+
+/**
+ * The stage box a rig asked for (`skeleton.stageBox`, issue #1168), resolved:
+ * its slot and attachment name, and the bounding box `compile` files under
+ * them — or `null` for a rig that did not ask.
+ *
+ * ⭐ **Its numbers are the stage's and nobody else's.** The four vertices are
+ * the stage's corners in Spine world — `(x, y)`, `(x + w, y)`, `(x + w, y + h)`,
+ * `(x, y + h)`, the bottom-left first and counter-clockwise — the same four
+ * fields `ModelStage` holds and the coordinate transform reads, each written on
+ * the float32 grid every other emitted vertex is on. Nothing in the rig spec
+ * states them, so nothing can disagree with the stage.
+ *
+ * 🔒 **The box hangs on the root, and the root states no setup transform —
+ * or the box is refused.** Two readings were weighed. Computing local vertices
+ * through the inverse of any bone's setup transform would admit every bone,
+ * and the posed box would land on the stage only to within the float32
+ * rounding of those local numbers, a tolerance of the gate's own. Requiring an
+ * unmoved root makes the stored vertices the stage's numbers exactly —
+ * readable straight off the attachment by a consumer that poses nothing — and
+ * the posed box is those numbers through the runtime's frame of an unrotated
+ * root, whose `b` is cos 90° at the runtime's pi (−2.3e-8, measured: the
+ * compiler's own world transform of `gallery/nod`'s root, and the `-0.000016`
+ * of that build's header `x`), which `A50_STAGE_BOX_IS_THE_STAGE` holds on the
+ * header's grid with no new tolerance. A bone below the root is refused even
+ * when it states nothing, because that residue is taken once per level. A
+ * constraint that moves the root at setup is not seen here — the compiler
+ * poses no constraint — and is A50's to name, through the runtime.
+ *
+ * Refused by name: a slot `slots` does not declare; a slot something else
+ * fills (a skin entry, a manifest part); a slot on a bone below the root, or
+ * on a root that states a setup transform; a rig with no stage, which `parseRigSpec` already refuses
+ * for a stated absence and which cannot reach here otherwise.
+ */
+function resolveStageBox(
+  rig: RigSpec,
+  ctx: {
+    stageWidth: number | undefined;
+    stageHeight: number | undefined;
+    bones: readonly ModelBone[];
+    partBySlot: ReadonlyMap<string, unknown>;
+    slotAttachments: ReadonlyMap<string, readonly string[]>;
+    rigAttachmentNames: ReadonlyMap<string, readonly string[]>;
+  },
+): { slot: string; attachment: string; record: ModelBoundingBoxAttachment } | null {
+  const asked = rig.skeleton?.stageBox;
+  if (asked === undefined) return null;
+  const field = `skeleton.stageBox (slot "${asked.slot}", attachment "${asked.attachment}")`;
+  if (ctx.stageWidth === undefined || ctx.stageHeight === undefined) {
+    throw new CompileError(`${field}: the rig declares no stage, so there is no box to write — state skeleton.width and skeleton.height`);
+  }
+  const rigSlot = rig.slots.find((s) => s.name === asked.slot);
+  if (rigSlot === undefined) {
+    throw new CompileError(
+      `${field}: slot "${asked.slot}" is not one the rig declares. Declare it in "slots" — where it stands in the ` +
+        `array is its place in the draw order, and its "bone" is the box's bone — e.g. { "name": "${asked.slot}", "bone": "root", "attachment": "${asked.attachment}" }`,
+    );
+  }
+  const filledBy = [
+    ...(ctx.partBySlot.has(asked.slot) ? ['a cut manifest part'] : []),
+    ...((ctx.slotAttachments.get(asked.slot) ?? ctx.rigAttachmentNames.get(asked.slot) ?? []).length > 0
+      ? [`the attachment(s) [${(ctx.slotAttachments.get(asked.slot) ?? ctx.rigAttachmentNames.get(asked.slot) ?? []).join(', ')}]`]
+      : []),
+  ];
+  if (filledBy.length > 0) {
+    throw new CompileError(
+      `${field}: slot "${asked.slot}" is also filled by ${filledBy.join(' and ')}. The stage box is its slot's one ` +
+        'attachment, so a reader of that slot finds the stage and nothing else: give the box a slot of its own',
+    );
+  }
+  // The box's bone: the root, stating no setup transform — as built, so a root placed `from` the manifest is read as placed.
+  const bone = ctx.bones.find((b) => b.name === rigSlot.bone);
+  if (bone === undefined) {
+    throw new CompileError(`${field}: slot "${asked.slot}" names bone "${rigSlot.bone}", which the rig does not declare`);
+  }
+  if (bone.parent !== undefined) {
+    throw new CompileError(
+      `${field}: slot "${asked.slot}" hangs on bone "${rigSlot.bone}", which is not the root. The box's vertices are ` +
+        "the stage's corners in world space, written as they are, and the gate holds them on the header's grid " +
+        "through the runtime's own frame of an unrotated root; every bone below it adds that frame's residue once " +
+        "more (the runtime spells an unrotated b as cos 90° at its pi, -2.3e-8 per level). Put the slot on the root " +
+        `("${ctx.bones[0]?.name ?? 'root'}")`,
+    );
+  }
+  const stated = [
+    ...(['x', 'y', 'rotation', 'shearX', 'shearY'] as const).filter((key) => (bone[key] ?? 0) !== 0).map((key) => `${key} ${bone[key]}`),
+    ...(['scaleX', 'scaleY'] as const).filter((key) => (bone[key] ?? 1) !== 1).map((key) => `${key} ${bone[key]}`),
+  ];
+  if (stated.length > 0) {
+    throw new CompileError(
+      `${field}: slot "${asked.slot}" hangs on the root "${bone.name}", which states a setup transform (${stated.join(', ')}). ` +
+        "The box's vertices are the stage's corners in world space, written as they are, so the root must not move, " +
+        'turn, scale or shear at setup — move what the root carries onto a bone below it, or drop stageBox',
+    );
+  }
+  const x = rig.skeleton?.x ?? 0;
+  const y = rig.skeleton?.y ?? 0;
+  const right = x + ctx.stageWidth;
+  const top = y + ctx.stageHeight;
+  const record: ModelBoundingBoxAttachment = {
+    kind: 'boundingbox',
+    vertexCount: 4,
+    vertices: { weighted: false, xy: [x, y, right, y, right, top, x, top].map(f32) },
+  };
+  return { slot: asked.slot, attachment: asked.attachment, record };
 }
 
 function buildRigBoundingBox(

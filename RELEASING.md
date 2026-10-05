@@ -180,6 +180,19 @@ documents.
 The negative form names what moved: the rows and files `compare` names, and
 the change that moved them.
 
+**Migration:** a draft that uses the negative form also carries a paragraph
+starting `**Migration:**` that says what a reader of the moved bytes has to
+change — which field now means something else, and where the old meaning is
+read instead. "The bytes moved" tells a dependant that it must look; the
+paragraph tells it what to do once it has. 2.2.0 is the case it is written
+from: its header `x`/`y`/`width`/`height` changed from the stage to the
+setup-pose bounding box, the entry said so only as a *Bug Fix*, and a consumer
+that read the header as the stage was mis-sized in silence
+([#1168](https://github.com/firejune/rigc/issues/1168)); its notes and its
+`CHANGELOG.md` entry now open with the paragraph that should have been there.
+The drafting tooling outside this tree refuses a negative-form draft without
+one since 2026-10-05.
+
 🕳️ Nothing in this repository writes or reads a release body — the notes are
 drafted over release-please's generated list — so no selftest control holds
 this rule. `CUR31` and `CUR112` read this document, and each holds it to a file

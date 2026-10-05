@@ -761,6 +761,7 @@ Measured 2026-10-01 at `caee5ab` of `main` and built on top of it. §8's "What t
 **The sections.** `rigc-compiled/3`:
 
 - `stage`, after `referenceScale`: `{ x, y, width, height }`, or `null` for a rig that declares no stage. A model field (`CompiledModel.stage`); the Spine emitter writes the header's four fields from it.
+  Since issue #1168 the stage may carry a fifth field, `box: { slot, attachment }`, written only where the rig spec asks for its stage as a bounding box (`skeleton.stageBox`): it names the slot and attachment of the box `compile` wrote from these four numbers, and `A50_STAGE_BOX_IS_THE_STAGE` reads it on both suppliers. Absent, the section is byte-for-byte what it was; a reader that predates the field refuses it by name (`stage: field "box" is not one this reader knows`).
 - `editorOrder`, after `animations`: `{ skins: [{ name, slots }], animations }`, computed in the compile by the three functions the emitter is handed (`editorSkinOrder`, `editorSlotKeyOrder`, `editorAnimationOrder`), over the same model. A model field (`CompiledModel.editorOrder`).
 - every page of `pages` gains `pma` (the runtime's reading of the page's `pma:` line, `false` without one) and `scale` (the number the page's own `scale:` line states, `null` without one — not defaulted to 1, which is what an importer divides by and not what the line says), spelled from the atlas text written beside the document, so they move with `--pack` and `--copy-images` as the placement does.
 

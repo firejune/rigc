@@ -593,6 +593,22 @@ export interface ModelStage {
   y: number;
   width: number;
   height: number;
+  /**
+   * Where the stage also travels in the Spine files, when the rig asked for it
+   * (`skeleton.stageBox`, issue #1168): the slot and the attachment name of the
+   * bounding box `compile` wrote from these four numbers. Absent where the rig
+   * did not ask, so no document written before the field existed moves a byte;
+   * a `/3` reader that predates it refuses the field by name rather than
+   * reading the document without it. `A50_STAGE_BOX_IS_THE_STAGE` reads it on
+   * both suppliers.
+   */
+  box?: ModelStageBox;
+}
+
+/** The stage box a rig asked for (`ModelStage.box`): the slot it is in and its attachment name. */
+export interface ModelStageBox {
+  slot: string;
+  attachment: string;
 }
 
 /**
@@ -883,7 +899,10 @@ function animationOf(animation: CompiledAnimation, where: string): { [key: strin
 
 /** The stage's fields, in the order the Spine header writes them. */
 export const MODEL_STAGE_FIELDS = ['x', 'y', 'width', 'height'] as const;
-const STAGE_FIELDS: readonly string[] = MODEL_STAGE_FIELDS;
+/** The stage box's fields (issue #1168), in `ModelStageBox`'s order. */
+export const MODEL_STAGE_BOX_FIELDS = ['slot', 'attachment'] as const;
+/** What the `stage` section writes: the four numbers, then the box where the rig asked for one. */
+const STAGE_FIELDS: readonly string[] = [...MODEL_STAGE_FIELDS, 'box'];
 
 /**
  * The `editorOrder` section: `{ skins: [{ name, slots }], animations }`,
@@ -1027,7 +1046,7 @@ export function modelDocument(model: CompiledModel, skeletonText: string, atlasT
   const doc: { [key: string]: DocValue } = {
     spec: MODEL_DOCUMENT_SPEC,
     referenceScale: plain(model.referenceScale, 'referenceScale'),
-    stage: model.stage === null ? null : ordered(model.stage, STAGE_FIELDS, 'stage'),
+    stage: model.stage === null ? null : ordered(model.stage, STAGE_FIELDS, 'stage', (key, v) => (key === 'box' ? ordered(v as object, MODEL_STAGE_BOX_FIELDS, 'stage.box') : plain(v, `stage.${key}`))),
     bones: model.bones.map((bone, i) =>
       ordered(bone, BONE_FIELDS, `bones[${i}]`, (key, v) => (key === 'editor' ? ordered(v as object, ['color', 'icon'], `bones[${i}].editor`) : plain(v, `bones[${i}].${key}`))),
     ),

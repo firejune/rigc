@@ -104,6 +104,8 @@ import { a38SkinMembersAreSkinRequired } from './assertions/bodies/a38.ts';
 import { a06AtlasPageSizeMatchesPng } from './assertions/bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from './assertions/bodies/a19.ts';
 import { a49PackedFootprintsDoNotOverlap } from './assertions/bodies/a49.ts';
+import { a50StageBoxIsTheStage } from './assertions/bodies/a50.ts';
+import { SKIP_NO_STAGE_BOX, type StageBoxFacts } from './assertions/facts/stage_box.ts';
 import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
 import type { MeshEntry as MeshAttachmentEntry, MeshFacts } from './assertions/facts/mesh_attachments.ts';
 import type { ClipEnd, PolygonEntry, PolygonFacts } from './assertions/facts/vertex_polygons.ts';
@@ -1268,6 +1270,61 @@ function documentStage(modelText: string | undefined): StageFacts | undefined {
   if (stage === null) return { width: undefined, height: undefined };
   if (isObj(stage) && typeof stage.width === 'number' && typeof stage.height === 'number') return { width: stage.width, height: stage.height };
   return undefined;
+}
+
+/**
+ * The runtime's supply of `StageBoxFacts` (issue #1168): the box a
+ * `rigc-compiled/3` document's `stage.box` asks for — nothing asks without
+ * one, and an export has none — and what the loaded skeleton holds there: the
+ * `default` skin's attachment of that name on that slot, its vertices as
+ * loaded, and its world vertices on a fresh skeleton at the setup pose —
+ * `setupPose()`, `updateWorldTransform(Physics.none)`, no skin set — which
+ * is the pose `getBounds` reads for the header and the one a consumer that
+ * loads the files and asks for the box sees.
+ */
+export function spineStageBox(data: ReturnType<SkeletonJson['readSkeletonData']>, modelText?: string): StageBoxFacts {
+  const asked = documentStageBox(modelText);
+  if (typeof asked === 'string') return { asked: null, why: asked, slot: false, held: null };
+  const slotData = data.findSlot(asked.slot);
+  if (slotData === null) return { asked, why: '', slot: false, held: null };
+  const attachment = data.defaultSkin?.getAttachment(slotData.index, asked.attachment) ?? null;
+  if (attachment === null) return { asked, why: '', slot: true, held: null };
+  if (!(attachment instanceof BoundingBoxAttachment)) {
+    const type =
+      attachment instanceof RegionAttachment ? 'region' : attachment instanceof MeshAttachment ? 'mesh' : attachment instanceof ClippingAttachment ? 'clipping' : attachment instanceof PathAttachment ? 'path' : 'point';
+    return { asked, why: '', slot: true, held: { type, weighted: false, stored: [], world: '' } };
+  }
+  const weighted = attachment.bones !== null && attachment.bones !== undefined;
+  const stored = weighted ? [] : [...attachment.vertices];
+  const skeleton = new Skeleton(data);
+  skeleton.setupPose();
+  skeleton.updateWorldTransform(Physics.none);
+  const slot = skeleton.slots[slotData.index];
+  let world: number[] | string;
+  if (!slot.bone.active) world = `its bone "${slot.bone.data.name}" is inactive with no skin set, so nothing poses it`;
+  else {
+    const out = new Array<number>(attachment.worldVerticesLength).fill(0);
+    attachment.computeWorldVertices(skeleton, slot, 0, attachment.worldVerticesLength, out, 0, 2);
+    world = out;
+  }
+  return { asked, why: '', slot: true, held: { type: 'boundingbox', weighted, stored, world } };
+}
+
+/** The box a `rigc-compiled/3` document's stage asks for, with that stage — or the SKIP's reason where nothing asks (`spineStageBox`). */
+function documentStageBox(modelText: string | undefined): StageBoxFacts['asked'] & object | string {
+  if (modelText === undefined) return SKIP_NO_STAGE_BOX;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(modelText);
+  } catch {
+    return SKIP_NO_STAGE_BOX;
+  }
+  if (!isObj(doc) || doc.spec !== MODEL_DOCUMENT_SPEC || !isObj(doc.stage)) return SKIP_NO_STAGE_BOX;
+  const { x, y, width, height, box } = doc.stage;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof width !== 'number' || typeof height !== 'number') return SKIP_NO_STAGE_BOX;
+  if (!isObj(box)) return SKIP_NO_STAGE_BOX;
+  if (typeof box.slot !== 'string' || typeof box.attachment !== 'string') return SKIP_NO_STAGE_BOX;
+  return { slot: box.slot, attachment: box.attachment, stage: { x, y, width, height } };
 }
 
 /**
@@ -3242,6 +3299,10 @@ export function validate(input: ValidateInput): ValidateReport {
   // `./assertions/footprints.ts`. The meshes are the loaded skeleton's, and
   // where it did not load every footprint is the rectangle A06 read.
   check('A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP', () => a49PackedFootprintsDoNotOverlap(verdicts, { atlas }, spineRegionJoins(input.atlasText, raw), skeletonData === null ? null : loadedMeshFacts()));
+  // The stage box a rig asked for (issue #1168): the slot's bounding box,
+  // loaded and posed at setup by spine-core, against the stage the document
+  // states. The argument and both readings are `./assertions/bodies/a50.ts`.
+  check('A50_STAGE_BOX_IS_THE_STAGE', () => (skeletonData === null ? skip('A50_STAGE_BOX_IS_THE_STAGE', SKIP_NO_SKELETON) : a50StageBoxIsTheStage(verdicts, spineStageBox(skeletonData, input.modelText))));
 
   // -------------------------------------------------------------------------
   // Archetype assertions — the invariants the RIG declares about itself.

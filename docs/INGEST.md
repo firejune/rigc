@@ -525,6 +525,20 @@ at the policy rather than implying the file was read.
   `(reported)`, so no score reads them and an absurd box is green nearly everywhere.
   ⛔ **The flag is refused beside a box the file states** — two sources for one value,
   both named, and the file is the record of what was measured;
+  📦 **`--stage-box <slot>` reads the stage a rig carried in its Spine files** (issue
+  #1168): a rig whose spec states `skeleton.stageBox` ([AUTHORING §3.1](AUTHORING.md))
+  ships its stage as a bounding box in that slot, and a caller who has only
+  `skeleton.json`, the atlas and its pages names the slot. The box's four corners are
+  read as the stage in place of the header's box, and the rebuilt spec asks for the same
+  box rather than transcribing it, so `build` writes it again from the stage — a rigc
+  build carrying one rebuilds byte for byte. Only a box `build` could write back is read:
+  a slot the skeleton lacks, a slot on a bone other than an unmoved root, a slot holding
+  anything but one bounding box in the `default` skin, a box not four unweighted corners
+  of one axis-aligned rectangle — each is refused by name, as is `--stage` beside the
+  flag, and a model document beside the skeleton stating another stage. A box `build`
+  spells differently (its corners in another order, the editor's `color`) is the lossy
+  `STAGE_BOX_REWRITTEN`. Without the flag no slot is read as the stage because of its
+  name, and the box is transcribed as the attachment it is;
 - **each animation's duration** — the format has no such field. The largest key time
   is used, stated in the motion spec's `note`, and recorded as a finding per
   animation. Edit it if you know the real number.
@@ -571,7 +585,9 @@ under, whether it changes the exit code, what it means, and what to do about it.
 rather than rejected — so an exit of 1 means *a blocker was recorded*, and both specs
 are on disk either way. (The one thing `ingest` does refuse outright is an option that
 contradicts the file, which is not a finding: `--stage` beside a box the skeleton
-declares.)
+declares — and, under `--stage-box <slot>`, a slot that holds no box `build` could
+write back, `--stage` beside it, or a model document beside it stating another
+stage (§2.0's stage box, below).)
 
 | code | gutter | exit | what it means | what to do |
 | --- | --- | --- | --- | --- |
@@ -602,6 +618,7 @@ declares.)
 | `SLOT_FIELD` | `BLOCK` | 1 | as `BONE_FIELD`, on a slot | as `BONE_FIELD` |
 | `SLOT_TIMELINE` | `BLOCK` | 1 | a slot timeline the motion spec has no track for. The spec has a track for all six the format has, so what still reaches this line is a name **outside** the format — `sequence` written on a slot rather than an attachment is the likeliest — and the detail says so: the runtime's own reader throws `Invalid timeline type for a slot` on it, so no player loads that file either. The detail names the tracks the spec does have and, when the format has any it lacks, those too, **both read off the tables**. `rgb` and `alpha` are carried under their own names and on their own key times, never folded into one `rgba` — that would state each channel at the other's key times, a value nobody keyed | fix the timeline's name, or accept that the rebuild plays nothing there |
 | `SPEC_REFUSED` | `BLOCK` | 1 | the specs were written and **rigc's own parser refuses one of them** — the detail carries that refusal word for word, after the file and the spec it is about. It is the one finding that is not about a single construct: it is whatever `parseRigSpec` or `parseMotionSpec` names, from a shape the format holds and the spec cannot say (a constraint that is `skinRequired` under no skin) to a defect in this decompiler | read the quoted sentence against the skeleton: it names the object. Both specs are on disk for exactly that, and `build` will refuse them until the shape has a spelling — [AUTHORING §5.1](AUTHORING.md) is the list of what a parser says |
+| `STAGE_BOX_REWRITTEN` | `LOSS` | 0 | under `--stage-box <slot>`: the bounding box read as the stage states its corners in another order than `build` writes them (bottom-left first, counter-clockwise), or a `color` — the editor writes one on every box it exports. The rebuilt spec asks for the box (`skeleton.stageBox`), and `build` writes it from the stage, so the rebuild carries the same rectangle spelled `build`'s way. The detail names what changes | nothing. The stage is the same four numbers; only the box's spelling moves |
 | `TIMELINE_FIELD` | `BLOCK` | 1 | a key field on a bone, path, physics or slider timeline that is not part of that timeline's shape. On an `inherit` key that includes a `curve`: the parser reads `time` and `inherit` there and nothing else, and `build` refuses a curve on that track by name | check the spelling; the field is dropped from the rebuilt key |
 | `TIMELINE_KEY_RESTATED` | `LOSS` | 0 | an editor omits a channel that equals the parser's default, and the motion spec's `v` is positional, so the omission is written out at that default **in the spec** — and the line is printed only where the **file** will carry it too. The emitter leaves a channel out wherever it is the one the parser reads without it ([AUTHORING §10.6c](AUTHORING.md)), so on every key kind with a row the rebuild is the source's own text and nothing is said — measured on the twelve exports, 0 tracks print it. What still prints it is a timeline whose keys have no row (`shearx`, `alpha`, path `spacing`, …), and an `inherit` key: one that omits the mode is written as `normal` — the parser's default — and one spelled with a capital first letter (`NoScale`) as the editor's `noScale`, the same mode either way | nothing. The same values the runtime reads, spelled out — a larger file and the same animation |
 | `TRANSFORM_KEY_FIELD` | `BLOCK` | 1 | as `IK_KEY_FIELD`, on a `transform` timeline | as `IK_KEY_FIELD` |

@@ -1299,6 +1299,7 @@ export function cmdIngest(flags: Record<string, string>, positional: string[]): 
   if (documentStage !== undefined) {
     console.log(`  ..    stage  ${documentStage === null ? 'none declared' : `${documentStage.width} x ${documentStage.height}`} — read from the ${MODEL_DOCUMENT_FILE} beside it (its spine.sha256 is this skeleton's); the header's box is the setup-pose bounding box`);
   }
+  if (flags['stage-box'] !== undefined) console.log(`  ..    stage  read from the bounding box in slot "${flags['stage-box']}" (--stage-box); the header's box is the setup-pose bounding box`);
   let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
   try {
     result = ingest(readJsonFile(skeletonPath), {
@@ -1307,6 +1308,7 @@ export function cmdIngest(flags: Record<string, string>, positional: string[]): 
       art,
       images: specImages,
       stage,
+      ...(flags['stage-box'] === undefined ? {} : { stageBox: flags['stage-box'] }),
       source: basename(skeletonPath),
       version: readVersion(),
     });
