@@ -1289,6 +1289,7 @@ that lifts them.
 | `--page-size`, `--padding`, `--page-edges`, `--pack-shape` | `build --pack`'s, with the same defaults and the same meaning (§0.1). `repack` always packs |
 | `--profile` | the gate's profile, as on `build` |
 | `--stage x,y,w,h` | handed to `ingest` as its own `--stage` (§0.3) — a box for a skeleton that states none, refused beside one that does |
+| `--accept-skeleton-differences` | write the rebuild even where its `skeleton.json` differs from the input's, with **every** differing path printed and both values (default: refused naming them, check (b) below). Nothing else relaxes: check (a) and the gate hold exactly as without it. Beside a skeleton that comes back byte-identical, check (b)'s line says the flag accepted nothing |
 
 Every other flag `build` takes is refused by name, with the reason `repack` does not
 take it (`--rig`, `--motion`, `--images`, `--manifest`, `--copy-images`, `--pack`,
@@ -1317,8 +1318,12 @@ take it (`--rig`, `--motion`, `--images`, `--manifest`, `--copy-images`, `--pack
   alone says where a region sits, so the pack owns the atlas and the pages and none
   of the skeleton. Measured on every repack below, the rebuilt skeleton was the
   input's bytes. A difference is refused naming each path with both values — it is
-  something other than the pack, and the refusal says to rebuild the skeleton first
-  (`ingest`, then `build`) if that skeleton is the one wanted, and repack that;
+  something other than the pack — and the refusal names
+  `--accept-skeleton-differences`, which writes the rebuild anyway and prints every
+  differing path as `N place(s) differ from the input, accepted by
+  --accept-skeleton-differences`. The flag is general on purpose: the command can say
+  **where** two skeletons differ and never **why**, so a switch for one cause (the
+  header box below) would be a guess about the cause wearing a flag's name;
 - **(c) the gate** is green — `build --pack`'s two reports, on the compile and on the
   packed pair, printed above the three lines.
 
@@ -1372,10 +1377,28 @@ the skeleton with `--art loose`, which names an `image` per attachment after the
 region it draws; the twelve exports rebuilt that way from their lifted regions all
 built green.
 
+**A build written before 2.2.0.** Until 2.2.0 `build` wrote the rig's **stage** into
+the header's `x`, `y`, `width`, `height`; since #907/#1117 it writes the setup-pose
+bounding box there. Such a build repacks with every region identical and is refused by
+(b) on those four fields and nothing else — measured on a consumer's 35 production
+builds kept as the three kinds of file: (a) held on all 35, (b) refused 34 (the one
+that passed had been rebuilt with 2.10.1), every refusal the same four paths, for
+example `skeleton.width: 832 in the input, 321.00003 in the rebuild`. With
+`--accept-skeleton-differences` the repack is written, the four paths are printed as
+accepted, and the output's header is the setup-pose box, as any build of this rigc's
+has. This is the one case where `ingest`'s header rule gives the true stage **by
+construction**: the header it reads *is* the stage the build was made with, so the
+stage line's box is the rig's own, and `skeleton.model.json` carries it from then on.
+⚠️ After the repack the header is no longer the stage, and a consumer that read the
+header as its stage must stop: read `skeleton.model.json`'s `stage` — or the stage
+box #1168 adds to the build — instead. The selftest builds this shape from a gallery
+rig's own document (`RPK13`–`RPK15`).
+
 **The stage.** `ingest`'s rules decide it, and the `stage` line says which applied:
 `--stage` when given; else the `skeleton.model.json` beside the skeleton, when its
-`spine.sha256` is the skeleton's digest; else the header's box. On a rigc build since
-2.2.0 that box is the **setup-pose bounding box**, not the stage — `gallery/nod`'s
+`spine.sha256` is the skeleton's digest; else the header's box. On a build written
+before 2.2.0 that box is the stage itself (above); on a rigc build since 2.2.0 it is the
+**setup-pose bounding box**, not the stage, and nothing in the skeleton says which — `gallery/nod`'s
 `640 x 700` stage reads back as `640 x 725` without its document — and the line says
 so. `skeleton.json` is held byte-identical below whatever it is (all seven
 document-less repacks above were); the stage the rebuild declares reaches
@@ -1389,7 +1412,7 @@ Keep `skeleton.model.json` beside the pair to carry the stage.
 | `<atlas> cannot be lifted exactly — N reason(s), and nothing was written:` then one line per reason (`page … is not on disk`, `page … declares size … and … is …`, `page … states scale: …`, `… pma: true`, `region … is named twice`, `regions … differ only in case`, `region … states index: …`, `region … occupies … which leaves the … page`, `region … keeps … which does not fit inside it`, `region … is not a relative file name …`) | 1 | the atlas or its pages: put the page back, or repack the build a rigc pack wrote — a foreign pack with those shapes is rebuilt from its parts, not repacked |
 | `the atlas and skeleton.model.json beside it disagree — region "…" x: … in the atlas, … in the document` | 1 | one of the two was edited after the build wrote them: restore the atlas, or drop the document if the atlas is the record you mean |
 | `the repack lost something, so nothing was written to <out>:` then `(a) …` region lines | 1 | a region that does not come back, or a texel apart: the input atlas carries regions this skeleton does not draw (repack the build that has only its own), or the lift was not what the pack drew from |
-| the same, then `(b) skeleton.json: the rebuild differs from the input in N place(s) …` | 1 | the skeleton is not what this rigc writes from what it states — rebuild it (`ingest`, then `build`) and repack the result |
+| the same, then `(b) skeleton.json: N place(s) differ from the input, which the pack does not own:` and the paths | 1 | the skeleton is not what this rigc writes from what it states. Read the paths: if the rebuild is the skeleton you want — a build written before 2.2.0, whose four header fields are its stage, is the measured case — pass `--accept-skeleton-differences`; otherwise rebuild it yourself (`ingest`, then `build`) |
 | `ingest found N blocker(s) …` / `ingest refused the skeleton: …` | 1 / 2 | the skeleton cannot be read back exactly (§0.3's findings); `--stage` beside a stated box is `ingest`'s refusal |
 | `--out <dir> is not empty …` / `is a file …` | 2 | name a new directory |
 | `repack takes no --<flag>: …` | 2 | drop the flag |

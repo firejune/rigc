@@ -113247,7 +113247,7 @@ function runRepackSuite(): number {
     const probes: string[] = [];
     if (stripped === text) probes.push('the plant found no skeleton.images to drop');
     if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
-    if (!/\(b\) skeleton\.json: the rebuild differs from the input in \d+ place/.test(run.stderr) || !run.stderr.includes('skeleton.images: absent from the input')) probes.push(`check (b) did not name skeleton.images: ${JSON.stringify(run.stderr.trim().slice(0, 400))}`);
+    if (!/\(b\) skeleton\.json: \d+ place\(s\) differ from the input, which the pack does not own/.test(run.stderr) || !run.stderr.includes('skeleton.images: absent from the input')) probes.push(`check (b) did not name skeleton.images: ${JSON.stringify(run.stderr.trim().slice(0, 400))}`);
     if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
     const held = probes.length === 0;
     say(
@@ -113324,6 +113324,87 @@ function runRepackSuite(): number {
       held,
       probeDetail(held, probes, 'cli_core.ts repack of the same input wrote the four files cli.ts repack wrote, byte for byte, through build\'s gate on that entry (A00 named as not run)'),
       'issue #1169: build --pack is on both entries, so repack is too; the install runs cli_core.ts wherever spine-core is not installed beside the package',
+    );
+  }
+
+  // --- RPK13..RPK16: a skeleton the rebuild does not write byte for byte, accepted only by name ---
+  // The pre-2.2.0 shape: the header box rewritten to the stage the build's own document states, and no document beside it.
+  const oldHeader = bareBuildCopy(nodIn, join(work, 'old-header'));
+  const stage = (JSON.parse(readFileSync(join(nodIn, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, number> }).stage;
+  const builtHeader = (JSON.parse(readFileSync(join(nodIn, 'skeleton.json'), 'utf8')) as { skeleton: Record<string, number> }).skeleton;
+  let oldText = readFileSync(join(oldHeader, 'skeleton.json'), 'utf8');
+  for (const key of ['x', 'y', 'width', 'height']) oldText = oldText.replace(new RegExp(`("${key}": )[-0-9.e]+`), `$1${JSON.stringify(stage[key])}`);
+  writeFileSync(join(oldHeader, 'skeleton.json'), oldText);
+  // Derived, never typed: the paths where the stage and the setup-pose box disagree.
+  const movedPaths = ['x', 'y', 'width', 'height'].filter((k) => stage[k] !== builtHeader[k]).map((k) => `skeleton.${k}: ${JSON.stringify(stage[k])} in the input, ${JSON.stringify(builtHeader[k])} in the rebuild`);
+  {
+    const out = join(work, 'old-header-out');
+    const run = repack('old-header', ['cli.ts', 'repack', oldHeader, '--out', out]);
+    const probes: string[] = [];
+    if (movedPaths.length === 0) probes.push('the stage and the setup-pose box agree on this rig, so the plant moved nothing');
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
+    if (!run.stderr.includes(`(b) skeleton.json: ${movedPaths.length} place(s) differ from the input`)) probes.push(`check (b) did not count ${movedPaths.length} place(s): ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    for (const path of movedPaths) if (!run.stderr.includes(path)) probes.push(`the refusal does not name ${JSON.stringify(path)}`);
+    if (!run.stderr.includes('--accept-skeleton-differences writes the rebuild anyway')) probes.push('the refusal does not name the flag that writes the rebuild');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK13_A_BUILD_WHOSE_HEADER_IS_ITS_STAGE_IS_REFUSED_BY_DEFAULT_NAMING_EVERY_PATH_AND_THE_FLAG',
+      held,
+      probeDetail(held, probes, `nod's header box rewritten to the stage its document states (${movedPaths.length} of the four fields move; no gallery rig's stage and setup-pose box differ in all four), document dropped — the shape of a build written before 2.2.0: refused, check (b) naming ${movedPaths.map((p) => p.split(':')[0]).join(', ')} with both values and --accept-skeleton-differences, exit 1, nothing written`),
+      'issue #1169 field test: 34 of a consumer\'s 35 production builds, written before 2.2.0, were refused on exactly the four header fields; the refusal is honest and stays the default',
+    );
+  }
+  {
+    const out = join(work, 'old-header-accepted');
+    const run = repack('old-header-accepted', ['cli.ts', 'repack', oldHeader, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!run.stdout.includes(`(b) skeleton.json: ${movedPaths.length} place(s) differ from the input, accepted by --accept-skeleton-differences`)) probes.push('check (b) does not say the differences were accepted, by the flag');
+      for (const path of movedPaths) if (!run.stdout.includes(path)) probes.push(`the accepted line does not name ${JSON.stringify(path)}`);
+      if (!run.stdout.includes(`stage  ${stage.width} x ${stage.height} at ${stage.x},${stage.y} — read from the skeleton's header box`)) probes.push('the stage line does not give the header box — the stage itself on this input');
+      if (!run.stdout.includes(`(a) regions: ${nodRegions.length} of ${nodRegions.length} pixel-identical`)) probes.push('check (a) did not hold every region');
+      if (gateReports(run.stdout).green !== 2) probes.push('the gate was not green twice');
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(nodIn, 'skeleton.json')))) probes.push('the written skeleton.json is not the one this rigc builds from the rig (its header the setup-pose box)');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK14_WITH_THE_FLAG_THE_REBUILD_IS_WRITTEN_EVERY_DIFFERENCE_PRINTED_AND_ITS_HEADER_IS_THE_SETUP_POSE_BOX',
+      held,
+      probeDetail(held, probes, `the same input with --accept-skeleton-differences: written, check (b) printing all ${movedPaths.length} path(s) as accepted by the flag, the stage line reading ${stage.width} x ${stage.height} off the header, every region pixel-identical, the gate green twice, and the skeleton.json written byte for byte the one a build of the rig writes today — the setup-pose box in its header`),
+      'issue #1169 field test: a silence is reachable only when it is asked for by name, and an accepted difference that is not shown would be the silence again',
+    );
+  }
+  {
+    const out = join(work, 'accepted-planted-out');
+    const plant = '(dir, first) => { const p = readPlate(join(dir, first)); let i = 0; while (p.data[i + 3] === 0) i += 4; p.data[i] ^= 1; p.writePng(join(dir, first)); }';
+    const run = repack('accepted-planted', ['-e', repackPlantProgram(plant), 'repack', oldHeader, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
+    if (!/\(a\) 1 region\(s\) are not pixel-identical/.test(run.stderr)) probes.push(`check (a) did not refuse the flipped texel under the flag: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    if (!run.stdout.includes('accepted by --accept-skeleton-differences')) probes.push('check (b) was not reached as accepted, so this did not run (a) beside an acceptance');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK15_ACCEPTING_SKELETON_DIFFERENCES_DOES_NOT_LET_A_REGION_DIFFERENCE_THROUGH',
+      held,
+      probeDetail(held, probes, 'the pre-2.2.0 input with the flag and one texel flipped in a lifted part: (b) accepted the header, (a) refused the region, exit 1, nothing written'),
+      'issue #1169 field test: the flag accepts where the skeleton differs and nothing else; check (a) and the gate hold exactly as without it',
+    );
+  }
+  {
+    const out = join(work, 'accept-needless');
+    const run = repack('accept-needless', ['cli.ts', 'repack', nodIn, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}`);
+    if (!run.stdout.includes('(b) skeleton.json: byte-identical to the input\'s — the pack owns none of it; --accept-skeleton-differences accepted nothing')) probes.push('the flag beside a skeleton that needs none passed without a word');
+    const held = probes.length === 0;
+    say(
+      'RPK16_THE_FLAG_BESIDE_A_SKELETON_THAT_NEEDS_NONE_SAYS_IT_ACCEPTED_NOTHING',
+      held,
+      probeDetail(held, probes, 'gallery/nod as built, with the flag: written, and check (b) says the flag accepted nothing because the skeleton came back byte-identical'),
+      'a flag that silently does nothing is worse than one that says why; refused before the work like --page-size without --pack it could not be, because whether it acts is known only after the rebuild, and refusing a green repack would write nothing for nothing',
     );
   }
 
@@ -114504,7 +114585,10 @@ function main(): void {
       'comparison shown to fail there, which is why the footprint is the comparison; a region moved one texel against the ' +
       'build\'s own document, a missing page, a region named twice, a page scale and premultiplied alpha each refused by name ' +
       'before a work directory exists; one texel flipped in a lifted part refused by check (a) on a green gate, and a ' +
-      'skeleton the rebuild does not write byte for byte refused by check (b), neither writing anything; regions laid turned ' +
+      'skeleton the rebuild does not write byte for byte refused by check (b), neither writing anything; a build whose header ' +
+      'is its stage — the shape written before 2.2.0 — refused naming every moved path and the flag, written under ' +
+      '`--accept-skeleton-differences` with every path printed and the setup-pose box in its header, a region difference still ' +
+      'refused under the flag, and the flag beside a skeleton that needs none saying it accepted nothing; regions laid turned ' +
       'and trimmed accepted and exact; the flags build --pack takes and no other; the second entry writing the same files; ' +
       'and no rigc-* directory left in tmpdir() by any run, a red gate exiting from inside runBuild included)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +

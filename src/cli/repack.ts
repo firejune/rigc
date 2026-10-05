@@ -66,7 +66,16 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
 /** The flags `repack` takes: the packing flags `build --pack` takes, the gate's profile, the atlas when it is not beside the skeleton, the stage `ingest` takes, and `--out`. */
-export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage'] as const;
+/**
+ * The switch that writes a rebuild whose skeleton differs from the input's
+ * (issue #1169's follow-up). Default off: check (b) refuses a difference, and
+ * the refusal names this flag. A general acceptance rather than a switch for one
+ * field, because the command cannot know WHY a skeleton differs — only where —
+ * and every path is printed when it is accepted.
+ */
+export const ACCEPT_FLAG = 'accept-skeleton-differences';
+
+export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', ACCEPT_FLAG] as const;
 
 /** `build`'s flags that `repack` does not take, and why — each refused by name rather than ignored. */
 const BUILD_FLAGS_REFUSED: Readonly<Record<string, string>> = {
@@ -166,7 +175,7 @@ function stageLine(rig: { skeleton?: { x?: number | null; y?: number | null; wid
       ? `— read from the ${MODEL_DOCUMENT_FILE} beside it (its spine.sha256 is this skeleton's)${documentStage === null ? ', which states the rig declared none' : ''}`
       : box === 'none'
         ? `— the skeleton's header states no box and no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it`
-        : `— read from the skeleton's header box: no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it, and on a rigc build since 2.2.0 that box is the setup-pose bounding box, not the stage the rig declared; keep ${MODEL_DOCUMENT_FILE} beside the pair to carry the stage`;
+        : `— read from the skeleton's header box: no ${MODEL_DOCUMENT_FILE} of this skeleton is beside it, and which box it is depends on the rigc that wrote it — on a build written before 2.2.0 it is the stage itself, on one written since it is the setup-pose bounding box, not the stage the rig declared, and nothing in the skeleton says which; keep ${MODEL_DOCUMENT_FILE} beside the pair to carry the stage`;
   return `  ..    stage  ${box} ${why}. skeleton.json is held byte-identical below whatever it is; ${MODEL_DOCUMENT_FILE}'s stage, and the stage rules on the rebuild, read it`;
 }
 
@@ -335,17 +344,31 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
             : `${regions.identical - regions.byFootprint} over the whole rectangle, ${regions.byFootprint} that only meshes draw over the footprint a polygon page keeps as its own (the rest of its rectangle may hold a neighbour, by design)`),
       );
     }
-    if (outSkeleton === skeletonText) console.log('  ..    check  (b) skeleton.json: byte-identical to the input\'s — the pack owns none of it');
-    else {
-      const diff = skeletonDifferences(parseJsonNamed(skeletonText, input.skeletonPath), parseJsonNamed(outSkeleton, join(buildDir, 'skeleton.json')), SKELETON_DIFFERENCES_SHOWN);
-      lost.push(
-        diff.total === 0
-          ? `(b) skeleton.json: the rebuild states the same values in other bytes — ${firstLineApart(skeletonText, outSkeleton)}`
-          : `(b) skeleton.json: the rebuild differs from the input in ${diff.total} place(s) the pack does not own${diff.total > diff.lines.length ? ` (the first ${diff.lines.length})` : ''}:`,
-        ...diff.lines.map((d) => `  ${d}`),
-        '  a repack changes where regions sit and nothing in the skeleton; this skeleton is not what this rigc writes from what it states — ' +
-          'rebuild it first (rigc ingest, then rigc build) if that is the skeleton you want, and repack the result',
+    const accepting = flags[ACCEPT_FLAG] !== undefined;
+    if (outSkeleton === skeletonText) {
+      console.log(
+        "  ..    check  (b) skeleton.json: byte-identical to the input's — the pack owns none of it" +
+          (accepting ? `; --${ACCEPT_FLAG} accepted nothing, because there was nothing to accept` : ''),
       );
+    } else {
+      // Accepted, every path is printed: an accepted difference nobody is shown is the silence the check exists to remove.
+      const diff = skeletonDifferences(parseJsonNamed(skeletonText, input.skeletonPath), parseJsonNamed(outSkeleton, join(buildDir, 'skeleton.json')), accepting ? Infinity : SKELETON_DIFFERENCES_SHOWN);
+      const head =
+        diff.total === 0
+          ? `skeleton.json: the rebuild states the same values in other bytes — ${firstLineApart(skeletonText, outSkeleton)}`
+          : `skeleton.json: ${diff.total} place(s) differ from the input`;
+      if (accepting) {
+        console.log(`  ..    check  (b) ${head}, accepted by --${ACCEPT_FLAG} — the output's skeleton is this rigc's rebuild, not the input's bytes:`);
+        for (const line of diff.lines) console.log(`  ..             ${line}`);
+      } else {
+        lost.push(
+          `(b) ${head}, which the pack does not own${diff.total > diff.lines.length ? ` (the first ${diff.lines.length})` : ''}:`,
+          ...diff.lines.map((d) => `  ${d}`),
+          '  a repack changes where regions sit and nothing in the skeleton; this skeleton is not what this rigc writes from what it states. ' +
+            `--${ACCEPT_FLAG} writes the rebuild anyway — the skeleton this rigc writes from what the input states, every difference listed — ` +
+            'with check (a) and the gate exactly as they are; a build written before 2.2.0, whose header was the stage, differs here in its header box and nowhere else',
+        );
+      }
     }
     if (lost.length > 0) throw new RepackError(`the repack lost something, so nothing was written to ${out}:\n${lost.map((l) => `  ${l}`).join('\n')}`);
     console.log('  ..    check  (c) gate: green — the report above, on the compile and on the packed pair');
