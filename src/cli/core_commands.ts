@@ -34,6 +34,7 @@ import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
+import { cmdRepack } from './repack.ts';
 import { ATLAS_ABSENT, COMMANDS, type CommandRun, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -1554,8 +1555,11 @@ export function cmdSkills(flags: Record<string, string>, positional: string[]): 
  * the pages where the compile measured them — the files the round trip's own
  * A17 reads on `cli.ts` — and A18 compares the documents as written, the
  * copies' names in them. Under `--pack` the two are one text.
+ *
+ * Exported for the selftest's `RPK` plants (issue #1169), which run `repack`
+ * through this entry's dispatch with a hook between the lift and the build.
  */
-const MODEL_AND_TEXT_GATE: BuildGate = {
+export const MODEL_AND_TEXT_GATE: BuildGate = {
   heading: (profile) =>
     `  ..    validate (the model side over the document + the round trip's rules restated over the emitted text, profile ${profile}; this entry links no spine-core, so the round trip does not run)`,
   run: ({ result, atlasText, atlasDir, modelText, reEmit, profile }) => {
@@ -1594,10 +1598,13 @@ const MODEL_AND_TEXT_GATE: BuildGate = {
  * The bodies the second entry runs under a name whose full-entry body is the
  * runtime's (`runtime.core` in `COMMANDS`, issue #1060) — registered by
  * `cli_core.ts` alone, beside `CORE_COMMAND_RUNS`. `build` is `runBuild` with
- * this entry's gate: it writes what `cli.ts build` writes.
+ * this entry's gate: it writes what `cli.ts build` writes. `repack` (issue
+ * #1169) is `./repack.ts`'s body with the same gate, for the same reason: it
+ * is `build --pack` run over a build's own lifted regions.
  */
 export const CORE_ENTRY_RUNS: Readonly<Record<string, CommandRun>> = {
   build: ({ flags }) => runBuild(flags, MODEL_AND_TEXT_GATE),
+  repack: (args) => cmdRepack(args, MODEL_AND_TEXT_GATE),
 };
 
 /**

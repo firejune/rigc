@@ -249,8 +249,13 @@ export function pageFootprint(region: { width: number; height: number; degrees: 
  * field". Four values maximum, because that is where the runtime stops (`if (i
  * === 4) return 4`) and a fifth would silently mean something here that it does
  * not mean there.
+ *
+ * Exported for `src/repack.ts` (issue #1169), which reads the keys a page and a
+ * region state — the ones this parser drops (`filter`, `format`, `repeat`,
+ * `split`, `pad`) included — with this function rather than a second spelling
+ * of the format, and holds what it walked to `parseAtlasText`'s regions.
  */
-function readEntry(line: string | null): { key: string; values: string[] } | null {
+export function readEntry(line: string | null): { key: string; values: string[] } | null {
   if (line === null) return null;
   const trimmed = line.trim();
   if (trimmed.length === 0) return null;

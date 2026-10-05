@@ -45,6 +45,7 @@ import { CheckError } from '../check.ts';
 import { IngestError, type IngestStage } from '../ingest.ts';
 import { NotAPngError } from '../png.ts';
 import { PoseError } from '../pose.ts';
+import { RepackError } from '../repack.ts';
 import { SpineRuntimeError, SPINE_SIDE_ABSENT } from '../spine_side.ts';
 import type { CompileResult, DroppedState } from '../types.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -139,7 +140,7 @@ export function readVersion(): string {
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -1101,6 +1102,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     'so the flag is for a file that really has none rather than for editor exports as a class. ⛔ Beside a ' +
     'skeleton that already declares a box it is REFUSED rather than ignored: two sources for one value, and the ' +
     'file is the record of what was measured',
+  'accept-skeleton-differences':
+    'write the repack even where the rebuilt skeleton.json differs from the input\'s, and print every differing path ' +
+    'with both values (default: refused naming them). It says only where the two differ, never why — a build written ' +
+    'before 2.2.0, whose header box was the stage, differs in those four fields and nowhere else. Region identity and ' +
+    'the gate hold exactly as without it; beside an input that needs none, the check line says it accepted nothing',
   'stage-box':
     'the slot whose bounding box carries the stage — what `build` writes for a rig that asks for one ' +
     '(`skeleton.stageBox`). Its four corners are read as the rebuild\'s stage in place of the header\'s box, which ' +
@@ -1300,6 +1306,67 @@ export const COMMANDS: CommandDoc[] = [
       'cut',
       'cuts',
       'profile',
+    ],
+  },
+  {
+    name: 'repack',
+    runtime: {
+      for: 'the rebuild it writes is gated by build\'s gate, which round-trips it through spine-core',
+      core: {
+        usage: [
+          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]   (gated without spine-core — see repack --help)`,
+        ],
+        notes: [
+          'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
+          'pages: every region lifted off its page, the skeleton read back (ingest --art loose),',
+          'and build --pack over the lifted parts, in a work directory under the system temp',
+          'directory that is removed when the command ends. Nothing reaches --out until three',
+          'things are shown, each on its own line: (a) every region lifted off the new pages is',
+          'pixel-identical, by name, to the same region off the input\'s (under --pack-shape',
+          'polygon, a region only meshes draw over the footprint the page keeps as its own); (b) the rebuilt',
+          'skeleton.json is byte-identical to the input\'s — the pack owns the atlas and the pages',
+          'and none of the skeleton; (c) the gate is green. On this entry that gate is build\'s',
+          'here: the model side over the document and the round trip\'s own rules restated over',
+          'the emitted text, A00_ROUNDTRIP_PARSE a SKIP naming spine-core. An atlas the lift',
+          'cannot read exactly is refused by name before anything is made: docs/AUTHORING.md',
+          '§0.4 lists what is accepted and what is refused, and why.',
+        ],
+      },
+    },
+    spineFormat: true,
+    usage: [
+      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]`,
+    ],
+    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences'],
+    overrides: {
+      out: {
+        value: '<dir>',
+        meaning:
+          'the directory the repacked build is written into — skeleton.json, skeleton.atlas, skeleton.model.json and the ' +
+          'pages, exactly what build --pack writes — absent or empty, and refused otherwise: a page an earlier pack wrote ' +
+          'and this one does not would stay beside the new atlas with nothing naming it. Written only after the three checks',
+      },
+      atlas: { meaning: "the build's atlas, when it is not skeleton.atlas beside the skeleton (a skeleton.json path with several .atlas files beside it needs it)" },
+    },
+    notes: [
+      'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
+      'pages: every region lifted off its page, the skeleton read back (ingest --art loose),',
+      'and build --pack over the lifted parts with the packing flags above, which mean what',
+      'they mean to build --pack (repack always packs). The work runs in a directory under the',
+      'system temp directory that is removed when the command ends. Nothing reaches --out until',
+      'three things are shown, each on its own line: (a) every region lifted off the new pages',
+      'is pixel-identical, by name, to the same region off the input\'s (under --pack-shape',
+      'polygon, a region only meshes draw over the footprint the page keeps as its own); (b) the rebuilt',
+      'skeleton.json is byte-identical to the input\'s — the pack owns the atlas and the pages',
+      'and none of the skeleton (--accept-skeleton-differences writes a rebuild that differs,',
+      'every differing path printed); (c) build\'s gate is green. Under the settings the input was',
+      'packed with, a line says the atlas and pages came back byte-identical; under others the',
+      'pages differ by design and (a) is the guarantee. An atlas the lift cannot read exactly',
+      '— a page scale, premultiplied alpha, a region named twice, a region off its page, a page',
+      'that is missing — is refused by name before anything is made: docs/AUTHORING.md §0.4',
+      'lists what is accepted and what is refused, and why. The stage line says which stage the',
+      'rebuild declared and where it was read (--stage, the skeleton.model.json beside the',
+      'pair, or the header\'s box).',
     ],
   },
   {
@@ -1638,6 +1705,18 @@ const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: strin
       '',
       'Every report names the profile that judged it and lists, on PROF lines, the',
       'rules that profile left out.',
+    ],
+  },
+  {
+    about: ['repack'],
+    lines: () => [
+      'repack takes a packed build whose parts were not kept — skeleton.json, skeleton.atlas and',
+      'the pages — and packs it again under build --pack\'s packing flags, so a packer',
+      'improvement reaches a build without its parts:',
+      '  rigc repack build/ --out build.free/ --page-edges free --pack-shape polygon',
+      'It writes only after every region is shown pixel-identical, the skeleton byte-identical',
+      'and the gate green, and refuses by name an atlas it cannot lift exactly. See',
+      '`rigc repack --help`.',
     ],
   },
   {
@@ -2536,6 +2615,13 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
   if (err instanceof IngestError) {
     console.error(`rigc ingest: ${err.message}`);
     process.exit(2);
+  }
+  // A repack refused (issue #1169): an atlas it cannot lift exactly, a repack that lost something, or an `--out`
+  // it will not write into. The message names every reason and says that nothing was written; `status` is 1 for a
+  // file that is not what a repack needs and 2 for an invocation that has to change.
+  if (err instanceof RepackError) {
+    console.error(`rigc repack: ${err.message}`);
+    process.exit(err.status);
   }
   // A page or frame that is not a PNG rigc can read, from any command that
   // opens one (`render`, `check`, `preview`, …) — issue #732. The sentence is

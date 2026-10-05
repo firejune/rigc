@@ -113194,6 +113194,582 @@ function runVerdictSuppliersSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// repack — a packed build repacked from its own output (issue #1169)
+// ---------------------------------------------------------------------------
+
+import { atlasRefusals as repackAtlasRefusals, liftAtlas as repackLift, polygonOwnedTexels, regionDifferences as repackRegionDifferences, REPACK_WORK_PREFIX } from './src/repack.ts';
+
+/** One `rigc repack` (or any `bun <argv>`) in a child of its own, with a private `TMPDIR` under `parent`, as a caller runs it: both streams, and what it left in `tmpdir()`. */
+function repackRun(parent: string, label: string, argv: readonly string[]): { status: number | null; stdout: string; stderr: string; left: string[]; made: string | null } {
+  const tmp = join(parent, `tmp-${label}`);
+  mkdirSync(tmp, { recursive: true });
+  const before = tempCensus(tmp);
+  const result = spawnSync(process.execPath, [...argv], { cwd: import.meta.dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: { ...process.env, TMPDIR: tmp } });
+  const made = /^rigc repack: work directory (.+)$/m.exec(result.stderr)?.[1] ?? null;
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr, left: tempGrowth(before, tempCensus(tmp)), made };
+}
+
+/** A build's three kinds of file a consumer keeps — `skeleton.json`, `skeleton.atlas` and the pages — copied without its model document. */
+function bareBuildCopy(from: string, to: string): string {
+  mkdirSync(to, { recursive: true });
+  const atlas = readFileSync(join(from, 'skeleton.atlas'), 'utf8');
+  for (const name of ['skeleton.json', 'skeleton.atlas', ...parseAtlasText(atlas).pages.map((p) => p.name)]) copyFileSync(join(from, name), join(to, name));
+  return to;
+}
+
+/** Every file of a directory, by name, as bytes — what two builds are compared by. */
+function buildBytes(dir: string): Map<string, Buffer> {
+  return new Map(readdirSync(dir).sort().map((name) => [name, readFileSync(join(dir, name))] as const));
+}
+
+/** The names two `buildBytes` maps disagree on. */
+function bytesApart(a: ReadonlyMap<string, Buffer>, b: ReadonlyMap<string, Buffer>): string[] {
+  const names = [...new Set([...a.keys(), ...b.keys()])].sort();
+  return names.filter((n) => !(a.get(n)?.equals(b.get(n) ?? Buffer.alloc(0)) ?? false));
+}
+
+/** How many gate reports a run printed with nothing failed, against how many it printed. */
+function gateReports(stdout: string): { green: number; all: number } {
+  const all = [...stdout.matchAll(/assertions: \d+ measured \((\d+) passed, (\d+) failed\)/g)];
+  return { green: all.filter((m) => m[2] === '0').length, all: all.length };
+}
+
+/**
+ * The input atlas of `from` re-laid as a foreign packer lays one: every region
+ * trimmed of its transparent border (`offsets:`) and turned a quarter
+ * (`rotate: 90`) on one page — what `extractRegion` reads back, written by its
+ * inverse at 90 — beside a copy of the skeleton. The shapes the corpus has and
+ * rigc's own packer never writes, on a rig whose skeleton rigc wrote.
+ */
+function relaidTurnedTrimmed(from: string, to: string): { turned: number; trimmed: number } {
+  mkdirSync(to, { recursive: true });
+  const parsed = parseAtlasText(readFileSync(join(from, 'skeleton.atlas'), 'utf8'));
+  const parts: Array<{ name: string; plate: Plate; x0: number; y0: number; w: number; h: number }> = [];
+  for (const page of parsed.pages) {
+    const plate = readPlate(join(from, page.name));
+    for (const region of page.regions) {
+      const part = extractRegion(plate, region);
+      let x0 = part.width;
+      let y0 = part.height;
+      let x1 = -1;
+      let y1 = -1;
+      for (let y = 0; y < part.height; y++) {
+        for (let x = 0; x < part.width; x++) {
+          if (part.data[(y * part.width + x) * 4 + 3] === 0) continue;
+          x0 = Math.min(x0, x);
+          y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x);
+          y1 = Math.max(y1, y);
+        }
+      }
+      if (x1 < 0) [x0, y0, x1, y1] = [0, 0, part.width - 1, part.height - 1];
+      parts.push({ name: region.name.trim(), plate: part, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
+    }
+  }
+  const gap = 2;
+  const width = parts.reduce((sum, p) => sum + p.h + gap, gap);
+  const height = Math.max(...parts.map((p) => p.w)) + 2 * gap;
+  const page = new Plate(width, height);
+  const lines = ['relaid.png', `size: ${width}, ${height}`, 'filter: Linear, Linear', 'pma: false'];
+  let at = gap;
+  let trimmed = 0;
+  for (const p of parts) {
+    // Kept pixel (x, y) of the drawing's trimmed rectangle sits at (X + y, Y + w - 1 - x) on a page turned 90.
+    for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) page.set(at + y, gap + p.w - 1 - x, p.plate.get(p.x0 + x, p.y0 + y));
+    if (p.w !== p.plate.width || p.h !== p.plate.height) trimmed++;
+    lines.push(p.name, `bounds: ${at}, ${gap}, ${p.w}, ${p.h}`, `offsets: ${p.x0}, ${p.plate.height - p.y0 - p.h}, ${p.plate.width}, ${p.plate.height}`, 'rotate: 90');
+    at += p.h + gap;
+  }
+  page.writePng(join(to, 'relaid.png'));
+  writeFileSync(join(to, 'skeleton.atlas'), `${lines.join('\n')}\n`);
+  copyFileSync(join(from, 'skeleton.json'), join(to, 'skeleton.json'));
+  return { turned: parts.length, trimmed };
+}
+
+/** The `-e` program the plants run: `rigc repack` through the second entry's own dispatch, with a hook between the lift and the build. */
+function repackPlantProgram(hook: string): string {
+  return (
+    "import { runCli } from './src/cli/shared.ts';" +
+    "import { CORE_COMMAND_RUNS, CORE_ENTRY_RUNS, MODEL_AND_TEXT_GATE } from './src/cli/core_commands.ts';" +
+    "import { cmdRepack } from './src/cli/repack.ts';" +
+    "import { readdirSync, readFileSync, writeFileSync } from 'node:fs';" +
+    "import { join } from 'node:path';" +
+    "import { PNG_SIGNATURE, pngChunk, readPlate } from './tools/plate.ts';" +
+    `const hook = ${hook};` +
+    "runCli({ checkout: 'cli_core.ts', linksRuntime: false, runs: { ...CORE_COMMAND_RUNS, ...CORE_ENTRY_RUNS, repack: (a) => cmdRepack(a, MODEL_AND_TEXT_GATE, (dir) => hook(dir, readdirSync(dir).sort()[0])) } }, process.argv.slice(1));"
+  );
+}
+
+function runRepackSuite(): number {
+  console.log('\n── repack: a packed build repacked from its own output (issue #1169) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-repack-suite-'));
+  const runs: Array<{ label: string; left: string[] }> = [];
+  const repack = (label: string, argv: readonly string[]): ReturnType<typeof repackRun> => {
+    const run = repackRun(work, label, argv);
+    runs.push({ label, left: run.left });
+    return run;
+  };
+  const build = (rig: string, out: string): ReturnType<typeof runCli> =>
+    runCli(['build', '--rig', join('gallery', rig, 'rig.json'), '--motion', join('gallery', rig, 'motion.json'), '--out', out, '--pack']);
+
+  // The inputs: two gallery rigs built `--pack` under the defaults, as a consumer's build directory holds them.
+  const nodIn = join(work, 'nod-in');
+  const flexIn = join(work, 'flex-in');
+  const builtNod = build('nod', nodIn);
+  const builtFlex = build('flex', flexIn);
+  if (builtNod.status !== 0 || builtFlex.status !== 0) {
+    say('RPK01_A_REPACK_UNDER_THE_INPUTS_OWN_SETTINGS_GIVES_BACK_ITS_SKELETON_ATLAS_AND_PAGES_BYTE_FOR_BYTE', false, `the inputs did not build: nod exit ${builtNod.status}, flex exit ${builtFlex.status}: ${(builtNod.stderr + builtFlex.stderr).trim().slice(0, 300)}`, '');
+    rmSync(work, { recursive: true, force: true });
+    return bad;
+  }
+  const nodRegions = parseAtlasText(readFileSync(join(nodIn, 'skeleton.atlas'), 'utf8')).regions.map((r) => r.name.trim());
+
+  // --- RPK01: the round trip under the input's own settings -------------------
+  {
+    const out = join(work, 'nod-same');
+    const run = repack('same', ['cli.ts', 'repack', nodIn, '--out', out]);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-400)}`);
+    else {
+      // The model document is the rebuild's own record — of a rig read back out of the skeleton — and is held to name this skeleton, not to be the input's bytes.
+      const apart = bytesApart(buildBytes(nodIn), buildBytes(out)).filter((n) => n !== MODEL_DOCUMENT_FILE);
+      if (apart.length > 0) probes.push(`the repacked build differs from the input in ${apart.join(', ')}`);
+      const doc = JSON.parse(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8')) as { spine?: { sha256?: string } };
+      if (doc.spine?.sha256 !== spineFileSha256(readFileSync(join(out, 'skeleton.json'), 'utf8'))) probes.push(`${MODEL_DOCUMENT_FILE} does not name the skeleton.json written beside it`);
+      const gates = gateReports(run.stdout);
+      if (gates.all !== 2 || gates.green !== 2) probes.push(`${gates.green} of ${gates.all} gate report(s) green, not 2 of 2 (the compile and the packed pair)`);
+      for (const line of [`(a) regions: ${nodRegions.length} of ${nodRegions.length} pixel-identical`, '(b) skeleton.json: byte-identical', '(c) gate: green', 'byte-identical to the input\'s — these settings pack these regions as the input was packed']) {
+        if (!run.stdout.includes(line)) probes.push(`stdout does not say ${JSON.stringify(line)}`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK01_A_REPACK_UNDER_THE_INPUTS_OWN_SETTINGS_GIVES_BACK_ITS_SKELETON_ATLAS_AND_PAGES_BYTE_FOR_BYTE',
+      held,
+      probeDetail(held, probes, `gallery/nod built --pack, repacked with the same settings: skeleton.json, skeleton.atlas and the page byte-identical to the input's (read back here, file by file), ${MODEL_DOCUMENT_FILE} the rebuild's own record naming that skeleton's digest, both gate reports green, and the three checks and the pages line printed`),
+      'issue #1169: a consumer that keeps only the build output measured cut-by-bounds, ingest, build --pack lossless on 35 rigs by hand; the command is that route, and under the input\'s own settings it must give the input back',
+    );
+  }
+
+  // --- RPK02: under free page edges and polygon packing, every region the page owns -----
+  {
+    const out = join(work, 'flex-free-polygon');
+    const run = repack('free-polygon', ['cli.ts', 'repack', flexIn, '--out', out, '--page-edges', 'free', '--pack-shape', 'polygon']);
+    const probes: string[] = [];
+    let said = '';
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-400)}`);
+    else {
+      const lift = (dir: string): Map<string, Plate> => repackLift(repackAtlasRefusals(parseAtlasText(readFileSync(join(dir, 'skeleton.atlas'), 'utf8')), dir).pages).parts;
+      const before = lift(flexIn);
+      const after = lift(out);
+      const skeleton = readFileSync(join(out, 'skeleton.json'), 'utf8');
+      const owned = repackRegionDifferences(before, after, polygonOwnedTexels(skeleton, before, DEFAULT_PADDING));
+      const whole = repackRegionDifferences(before, after);
+      if (owned.differences.length > 0) probes.push(...owned.differences);
+      if (owned.byFootprint === 0) probes.push('no region was compared over a footprint, so this run never reached the polygon case');
+      if (whole.differences.length === 0) probes.push('every region is identical over its whole rectangle too, so nothing here shows the footprint is what the comparison has to be held to');
+      if (!readFileSync(join(flexIn, 'skeleton.json')).equals(Buffer.from(skeleton))) probes.push('skeleton.json is not the input\'s bytes');
+      const gates = gateReports(run.stdout);
+      if (gates.green !== 2 || gates.all !== 2) probes.push(`${gates.green} of ${gates.all} gate report(s) green`);
+      said =
+        `gallery/flex repacked --page-edges free --pack-shape polygon, lifted back here off both page sets: ${owned.identical} of ${before.size} regions identical over the texels the new page owns ` +
+        `(${owned.byFootprint} only meshes draw, over their footprint), skeleton.json the input's bytes, both gate reports green — and ${whole.differences.length} region(s) NOT identical over the whole rectangle, ` +
+        'the neighbour a polygon page places inside a mesh\'s rectangle by design, which is why the comparison is the footprint';
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK02_A_REPACK_UNDER_FREE_POLYGON_KEEPS_EVERY_TEXEL_EACH_REGION_OWNS_AND_THE_SKELETON',
+      held,
+      probeDetail(held, probes, said),
+      'issue #1169: under another pack the pages differ by design, so the guarantee is the regions and the skeleton; measured, a whole-rectangle comparison refuses every polygon repack of a rig whose meshes leave room in their rectangles',
+    );
+  }
+
+  // --- RPK03..RPK06: what cannot be lifted exactly, refused by name with nothing made ---
+  const refusal = (label: string, input: string, wants: string[], extra: readonly string[] = []): string[] => {
+    const out = join(work, `${label}-out`);
+    const run = repack(label, ['cli.ts', 'repack', input, '--out', out, ...extra]);
+    const probes: string[] = [];
+    if (run.status !== 1) probes.push(`${label}: exit ${run.status}, not 1`);
+    for (const want of wants) if (!run.stderr.includes(want)) probes.push(`${label}: stderr does not name ${JSON.stringify(want)}: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    if (!run.stderr.includes('nothing was written')) probes.push(`${label}: the refusal does not say nothing was written`);
+    if (existsSync(out)) probes.push(`${label}: --out ${out} exists after the refusal`);
+    if (run.made !== null) probes.push(`${label}: a work directory was made before the refusal (${run.made})`);
+    return probes;
+  };
+  {
+    const input = join(work, 'moved');
+    cpSync(nodIn, input, { recursive: true });
+    const atlasPath = join(input, 'skeleton.atlas');
+    const text = readFileSync(atlasPath, 'utf8');
+    const first = parseAtlasText(text).regions[0];
+    const moved = text.replace(`bounds: ${first.x}, ${first.y},`, `bounds: ${first.x + 1}, ${first.y},`);
+    writeFileSync(atlasPath, moved);
+    const name = first.name.trim();
+    const probes = moved === text ? ['the plant found no bounds line to move'] : refusal('moved', input, [`region "${name}" x: ${first.x + 1} in the atlas, ${first.x} in the document`, 'disagree']);
+    const held = probes.length === 0;
+    say(
+      'RPK03_A_REGION_WHOSE_BOUNDS_MOVED_ONE_TEXEL_AGAINST_ITS_BUILDS_DOCUMENT_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, `nod's first region "${name}" moved one texel right in the atlas text, beside the build's skeleton.model.json: refused naming the region, both values and the document, exit 1, nothing made`),
+      'issue #1169: a lift by bounds that moved is still a plausible part, so the one record of where the build placed each region — the model document beside the pair — is what the atlas is held to',
+    );
+  }
+  {
+    const input = bareBuildCopy(nodIn, join(work, 'missing'));
+    const pageName = parseAtlasText(readFileSync(join(input, 'skeleton.atlas'), 'utf8')).pages[0].name;
+    rmSync(join(input, pageName));
+    const probes = refusal('missing', input, [`page "${pageName}" is not on disk`]);
+    const held = probes.length === 0;
+    say(
+      'RPK04_A_PAGE_THE_ATLAS_NAMES_AND_THE_DISK_DOES_NOT_HOLD_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, `nod's ${pageName} removed from a copy of its three kinds of file: refused naming the page and the path, exit 1, nothing made`),
+      'issue #1169: a lift with no page has no texels to read; refusing by name before anything is made is the whole difference from a script',
+    );
+  }
+  {
+    const input = bareBuildCopy(nodIn, join(work, 'twice'));
+    const atlasPath = join(input, 'skeleton.atlas');
+    const parsed = parseAtlasText(readFileSync(atlasPath, 'utf8'));
+    const [a, b] = parsed.regions;
+    const lines = parsed.lines.slice();
+    const at = lines.indexOf(b.name);
+    lines[at] = a.name;
+    writeFileSync(atlasPath, lines.join('\n'));
+    const probes = at < 0 ? ['the plant found no second region line'] : refusal('twice', input, [`region "${a.name.trim()}" is named twice`]);
+    const held = probes.length === 0;
+    say(
+      'RPK05_A_REGION_THE_ATLAS_NAMES_TWICE_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, `nod's second region renamed "${a.name.trim()}", the first's name: refused naming it, exit 1, nothing made`),
+      'issue #1169: one part per name is how the lift hands parts to ingest --art loose, and the runtime draws the first of two regions alike — so the second has no part to become',
+    );
+  }
+  {
+    const input = bareBuildCopy(nodIn, join(work, 'scaled'));
+    const atlasPath = join(input, 'skeleton.atlas');
+    const text = readFileSync(atlasPath, 'utf8');
+    const sizeLine = text.split('\n')[1];
+    writeFileSync(atlasPath, text.replace(`${sizeLine}\n`, `${sizeLine}\nscale: 0.5\n`));
+    const pma = bareBuildCopy(nodIn, join(work, 'pma'));
+    writeFileSync(join(pma, 'skeleton.atlas'), text.replace('pma: false', 'pma: true'));
+    const pageName = parseAtlasText(text).pages[0].name;
+    const probes = [
+      ...(sizeLine.startsWith('size:') ? refusal('scaled', input, [`page "${pageName}" states scale: 0.5`, 'rigc\'s packer writes every page at scale 1']) : [`the page's second line is ${JSON.stringify(sizeLine)}, not its size`]),
+      ...refusal('pma', pma, [`page "${pageName}" states pma: true`, 'premultiplied']),
+    ];
+    const held = probes.length === 0;
+    say(
+      'RPK06_A_PAGE_SCALE_AND_PREMULTIPLIED_ALPHA_ARE_REFUSED_BY_THEIR_REASON',
+      held,
+      probeDetail(held, probes, `nod's page given scale: 0.5, and separately pma: true: each refused by the fact the repacked atlas would contradict — texels coarser than the drawings, and premultiplied texels read as straight — exit 1, nothing made`),
+      'issue #1169: every editor export under examples/ packs at scale 0.4 or 0.5, and rigc\'s packer writes neither a scale nor premultiplied pages, so the shapes the corpus brings that the repacked atlas cannot state are refused rather than silently restated',
+    );
+  }
+
+  // --- RPK07: the lossless check itself, seen failing before anything is written ---
+  {
+    const out = join(work, 'planted-out');
+    const plant = '(dir, first) => { const p = readPlate(join(dir, first)); let i = 0; while (p.data[i + 3] === 0) i += 4; p.data[i] ^= 1; p.writePng(join(dir, first)); }';
+    const run = repack('planted', ['-e', repackPlantProgram(plant), 'repack', nodIn, '--out', out]);
+    const firstPart = [...nodRegions].sort()[0];
+    const probes: string[] = [];
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1: ${run.stderr.trim().slice(-300)}`);
+    if (!run.stderr.includes('the repack lost something')) probes.push('the refusal does not say the repack lost something');
+    if (!new RegExp(`region "${firstPart}": texel \\d+,\\d+ is [\\d,]+ off the input's pages and [\\d,]+ off the repacked ones`).test(run.stderr)) probes.push(`check (a) did not name region "${firstPart}" and the texel apart: ${JSON.stringify(run.stderr.trim().slice(0, 400))}`);
+    if (gateReports(run.stdout).green !== 2) probes.push('the gate was not green on the planted build, so this did not isolate check (a)');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK07_ONE_TEXEL_ALTERED_IN_A_LIFTED_PART_BEFORE_THE_PACK_IS_REFUSED_BY_CHECK_A_WITH_NOTHING_WRITTEN',
+      held,
+      probeDetail(held, probes, `one colour bit of the first opaque texel of "${firstPart}" flipped between the lift and the build: both gate reports green, check (a) names the region and the texel apart with both values, exit 1, --out never made`),
+      'issue #1169: the gate cannot see a part that changed — it is valid art — so a repack that is written on the gate alone would carry the change; this is the check the command adds over the gate',
+    );
+  }
+
+  // --- RPK08: check (b), a skeleton the rebuild does not write byte for byte ---
+  {
+    const input = bareBuildCopy(nodIn, join(work, 'no-images'));
+    const skeletonPath = join(input, 'skeleton.json');
+    const text = readFileSync(skeletonPath, 'utf8');
+    const stripped = text.replace(/,\n\s*"images": "[^"]*"/, '');
+    writeFileSync(skeletonPath, stripped);
+    const out = join(work, 'no-images-out');
+    const run = repack('no-images', ['cli.ts', 'repack', input, '--out', out]);
+    const probes: string[] = [];
+    if (stripped === text) probes.push('the plant found no skeleton.images to drop');
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
+    if (!/\(b\) skeleton\.json: \d+ place\(s\) differ from the input, which the pack does not own/.test(run.stderr) || !run.stderr.includes('skeleton.images: absent from the input')) probes.push(`check (b) did not name skeleton.images: ${JSON.stringify(run.stderr.trim().slice(0, 400))}`);
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK08_A_SKELETON_THE_REBUILD_DOES_NOT_WRITE_BYTE_FOR_BYTE_IS_REFUSED_NAMING_THE_PATH',
+      held,
+      probeDetail(held, probes, 'nod\'s skeleton.json with skeleton.images taken out: the rebuild writes one (the lift directory, which is where its parts are), and check (b) names skeleton.images with both values, exit 1, nothing written'),
+      'issue #1169: a repack is entitled to change nothing in the skeleton — attachments name regions and the atlas alone says where they sit — so any difference is something other than the pack, and is named rather than written',
+    );
+  }
+
+  // --- RPK09: the shapes rigc never writes and the corpus does — turned and trimmed — accepted and exact ---
+  {
+    const input = join(work, 'relaid');
+    const shape = relaidTurnedTrimmed(nodIn, input);
+    const out = join(work, 'relaid-out');
+    const run = repack('relaid', ['cli.ts', 'repack', input, '--out', out]);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-400)}`);
+    else {
+      if (!run.stdout.includes(`${shape.turned} turned on its page, ${shape.trimmed} trimmed of whitespace`)) probes.push(`the lift line does not read ${shape.turned} turned and ${shape.trimmed} trimmed`);
+      if (!run.stdout.includes(`(a) regions: ${nodRegions.length} of ${nodRegions.length} pixel-identical`)) probes.push('check (a) did not hold every region');
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(nodIn, 'skeleton.json')))) probes.push('skeleton.json is not the input\'s');
+      const apart = bytesApart(buildBytes(nodIn), buildBytes(out)).filter((n) => n !== MODEL_DOCUMENT_FILE);
+      if (apart.length > 0) probes.push(`repacked under the defaults, the turned and trimmed input does not come back as the build it was laid from: ${apart.join(', ')} differ`);
+    }
+    if (shape.trimmed === 0) probes.push('no region was trimmed, so the offsets case was not reached');
+    const held = probes.length === 0;
+    say(
+      'RPK09_TURNED_AND_TRIMMED_REGIONS_ARE_LIFTED_EXACTLY_AND_COME_BACK_AS_THE_BUILD_THEY_WERE_LAID_FROM',
+      held,
+      probeDetail(held, probes, `nod's ${shape.turned} region(s) laid on one page turned 90 and ${shape.trimmed} trimmed of their transparent border with offsets: accepted, every region pixel-identical, and the repack under the defaults is the original build's skeleton, atlas and page byte for byte`),
+      'issue #1169: rotated and whitespace-stripped regions occur in the editor exports and never in a rigc pack; the lift reads them as the drawing the runtime draws (PKR02 holds that mapping to spine-core), so they are accepted rather than refused',
+    );
+  }
+
+  // --- RPK10: the flags build --pack takes and no other, and an --out it will not write into ---
+  {
+    const probes: string[] = [];
+    const usage = (label: string, argv: readonly string[], want: string, status: number): void => {
+      const run = repack(label, ['cli.ts', 'repack', ...argv]);
+      if (run.status !== status) probes.push(`${label}: exit ${run.status}, not ${status}`);
+      if (!run.stderr.includes(want)) probes.push(`${label}: stderr does not say ${JSON.stringify(want)}: ${JSON.stringify(run.stderr.trim().slice(0, 200))}`);
+      if (run.made !== null) probes.push(`${label}: made a work directory`);
+    };
+    usage('rig', [nodIn, '--out', join(work, 'x'), '--rig', 'r.json'], 'repack takes no --rig: repack reads the rig back out of the skeleton', 2);
+    usage('atlas-in', [nodIn, '--out', join(work, 'x'), '--atlas-in', 'a.atlas'], 'repack takes no --atlas-in', 2);
+    usage('bogus', [nodIn, '--out', join(work, 'x'), '--bogus', '1'], 'repack takes no --bogus; it takes --out, --atlas', 2);
+    usage('edges', [nodIn, '--out', join(work, 'x'), '--page-edges', 'round'], '--page-edges "round"; known values: pot, free', 2);
+    usage('no-out', [nodIn], 'repack needs --out <dir>', 2);
+    usage('not-empty', [nodIn, '--out', nodIn], 'is not empty', 2);
+    const held = probes.length === 0;
+    say(
+      'RPK10_REPACK_TAKES_THE_PACKING_FLAGS_AND_REFUSES_EVERY_OTHER_AND_A_NON_EMPTY_OUT_BY_NAME',
+      held,
+      probeDetail(held, probes, '--rig and --atlas-in refused with the reason repack does not take them, an unknown flag refused listing the flags it takes, a misspelled --page-edges refused by readPageEdges, no --out and --out the input directory (not empty) refused — each exit 2, no work directory made'),
+      'issue #1169: the packing flags are build --pack\'s and nothing else; a flag that is silently ignored, and an --out holding an earlier pack\'s page, are both answers nobody asked for',
+    );
+  }
+
+  // --- RPK11: the second entry writes the same build ---
+  {
+    const out = join(work, 'core-same');
+    const run = repack('core', ['cli_core.ts', 'repack', nodIn, '--out', out]);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      const apart = bytesApart(buildBytes(join(work, 'nod-same')), buildBytes(out));
+      if (apart.length > 0) probes.push(`cli_core.ts repack wrote ${apart.join(', ')} differently from cli.ts repack`);
+      if (!run.stdout.includes('not run: A00_ROUNDTRIP_PARSE')) probes.push('the core gate\'s line naming what it did not run is missing');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK11_THE_ENTRY_THAT_LINKS_NO_SPINE_CORE_REPACKS_TO_THE_SAME_FILES_THROUGH_ITS_OWN_GATE',
+      held,
+      probeDetail(held, probes, 'cli_core.ts repack of the same input wrote the four files cli.ts repack wrote, byte for byte, through build\'s gate on that entry (A00 named as not run)'),
+      'issue #1169: build --pack is on both entries, so repack is too; the install runs cli_core.ts wherever spine-core is not installed beside the package',
+    );
+  }
+
+  // --- RPK13..RPK16: a skeleton the rebuild does not write byte for byte, accepted only by name ---
+  // The pre-2.2.0 shape: the header box rewritten to the stage the build's own document states, and no document beside it.
+  const oldHeader = bareBuildCopy(nodIn, join(work, 'old-header'));
+  const stage = (JSON.parse(readFileSync(join(nodIn, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, number> }).stage;
+  const builtHeader = (JSON.parse(readFileSync(join(nodIn, 'skeleton.json'), 'utf8')) as { skeleton: Record<string, number> }).skeleton;
+  let oldText = readFileSync(join(oldHeader, 'skeleton.json'), 'utf8');
+  for (const key of ['x', 'y', 'width', 'height']) oldText = oldText.replace(new RegExp(`("${key}": )[-0-9.e]+`), `$1${JSON.stringify(stage[key])}`);
+  writeFileSync(join(oldHeader, 'skeleton.json'), oldText);
+  // Derived, never typed: the paths where the stage and the setup-pose box disagree.
+  const movedPaths = ['x', 'y', 'width', 'height'].filter((k) => stage[k] !== builtHeader[k]).map((k) => `skeleton.${k}: ${JSON.stringify(stage[k])} in the input, ${JSON.stringify(builtHeader[k])} in the rebuild`);
+  {
+    const out = join(work, 'old-header-out');
+    const run = repack('old-header', ['cli.ts', 'repack', oldHeader, '--out', out]);
+    const probes: string[] = [];
+    if (movedPaths.length === 0) probes.push('the stage and the setup-pose box agree on this rig, so the plant moved nothing');
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
+    if (!run.stderr.includes(`(b) skeleton.json: ${movedPaths.length} place(s) differ from the input`)) probes.push(`check (b) did not count ${movedPaths.length} place(s): ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    for (const path of movedPaths) if (!run.stderr.includes(path)) probes.push(`the refusal does not name ${JSON.stringify(path)}`);
+    if (!run.stderr.includes('--accept-skeleton-differences writes the rebuild anyway')) probes.push('the refusal does not name the flag that writes the rebuild');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK13_A_BUILD_WHOSE_HEADER_IS_ITS_STAGE_IS_REFUSED_BY_DEFAULT_NAMING_EVERY_PATH_AND_THE_FLAG',
+      held,
+      probeDetail(held, probes, `nod's header box rewritten to the stage its document states (${movedPaths.length} of the four fields move; no gallery rig's stage and setup-pose box differ in all four), document dropped — the shape of a build written before 2.2.0: refused, check (b) naming ${movedPaths.map((p) => p.split(':')[0]).join(', ')} with both values and --accept-skeleton-differences, exit 1, nothing written`),
+      'issue #1169 field test: 34 of a consumer\'s 35 production builds, written before 2.2.0, were refused on exactly the four header fields; the refusal is honest and stays the default',
+    );
+  }
+  {
+    const out = join(work, 'old-header-accepted');
+    const run = repack('old-header-accepted', ['cli.ts', 'repack', oldHeader, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!run.stdout.includes(`(b) skeleton.json: ${movedPaths.length} place(s) differ from the input, accepted by --accept-skeleton-differences`)) probes.push('check (b) does not say the differences were accepted, by the flag');
+      for (const path of movedPaths) if (!run.stdout.includes(path)) probes.push(`the accepted line does not name ${JSON.stringify(path)}`);
+      if (!run.stdout.includes(`stage  ${stage.width} x ${stage.height} at ${stage.x},${stage.y} — read from the skeleton's header box`)) probes.push('the stage line does not give the header box — the stage itself on this input');
+      if (!run.stdout.includes(`(a) regions: ${nodRegions.length} of ${nodRegions.length} pixel-identical`)) probes.push('check (a) did not hold every region');
+      if (gateReports(run.stdout).green !== 2) probes.push('the gate was not green twice');
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(nodIn, 'skeleton.json')))) probes.push('the written skeleton.json is not the one this rigc builds from the rig (its header the setup-pose box)');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK14_WITH_THE_FLAG_THE_REBUILD_IS_WRITTEN_EVERY_DIFFERENCE_PRINTED_AND_ITS_HEADER_IS_THE_SETUP_POSE_BOX',
+      held,
+      probeDetail(held, probes, `the same input with --accept-skeleton-differences: written, check (b) printing all ${movedPaths.length} path(s) as accepted by the flag, the stage line reading ${stage.width} x ${stage.height} off the header, every region pixel-identical, the gate green twice, and the skeleton.json written byte for byte the one a build of the rig writes today — the setup-pose box in its header`),
+      'issue #1169 field test: a silence is reachable only when it is asked for by name, and an accepted difference that is not shown would be the silence again',
+    );
+  }
+  {
+    const out = join(work, 'accepted-planted-out');
+    const plant = '(dir, first) => { const p = readPlate(join(dir, first)); let i = 0; while (p.data[i + 3] === 0) i += 4; p.data[i] ^= 1; p.writePng(join(dir, first)); }';
+    const run = repack('accepted-planted', ['-e', repackPlantProgram(plant), 'repack', oldHeader, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 1) probes.push(`exit ${run.status}, not 1`);
+    if (!/\(a\) 1 region\(s\) are not pixel-identical/.test(run.stderr)) probes.push(`check (a) did not refuse the flipped texel under the flag: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    if (!run.stdout.includes('accepted by --accept-skeleton-differences')) probes.push('check (b) was not reached as accepted, so this did not run (a) beside an acceptance');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK15_ACCEPTING_SKELETON_DIFFERENCES_DOES_NOT_LET_A_REGION_DIFFERENCE_THROUGH',
+      held,
+      probeDetail(held, probes, 'the pre-2.2.0 input with the flag and one texel flipped in a lifted part: (b) accepted the header, (a) refused the region, exit 1, nothing written'),
+      'issue #1169 field test: the flag accepts where the skeleton differs and nothing else; check (a) and the gate hold exactly as without it',
+    );
+  }
+  {
+    const out = join(work, 'accept-needless');
+    const run = repack('accept-needless', ['cli.ts', 'repack', nodIn, '--out', out, '--accept-skeleton-differences']);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}`);
+    if (!run.stdout.includes('(b) skeleton.json: byte-identical to the input\'s — the pack owns none of it; --accept-skeleton-differences accepted nothing')) probes.push('the flag beside a skeleton that needs none passed without a word');
+    const held = probes.length === 0;
+    say(
+      'RPK16_THE_FLAG_BESIDE_A_SKELETON_THAT_NEEDS_NONE_SAYS_IT_ACCEPTED_NOTHING',
+      held,
+      probeDetail(held, probes, 'gallery/nod as built, with the flag: written, and check (b) says the flag accepted nothing because the skeleton came back byte-identical'),
+      'a flag that silently does nothing is worse than one that says why; refused before the work like --page-size without --pack it could not be, because whether it acts is known only after the rebuild, and refusing a green repack would write nothing for nothing',
+    );
+  }
+
+  // --- RPK17..RPK19: a build that carries its stage as a bounding box (issue #1168), repacked from its three kinds of file ---
+  const boxDir = join(work, 'stage-box');
+  mkdirSync(boxDir, { recursive: true });
+  const boxRig = JSON.parse(readFileSync(join('gallery', 'nod', 'rig.json'), 'utf8')) as { images?: string; skeleton?: Record<string, unknown>; bones: Array<{ name: string; parent?: string }>; slots: Array<Record<string, unknown>> };
+  boxRig.images = resolve('gallery', 'nod', 'parts');
+  boxRig.skeleton = { ...(boxRig.skeleton ?? {}), stageBox: { slot: 'stage', attachment: 'stage' } };
+  // On the root, which is where build writes a stage box (the bone with no parent).
+  boxRig.slots = [{ name: 'stage', bone: boxRig.bones.find((b) => b.parent === undefined)?.name ?? '', attachment: 'stage' }, ...boxRig.slots];
+  writeFileSync(join(boxDir, 'rig.json'), `${JSON.stringify(boxRig, null, 2)}\n`);
+  const boxBuilt = join(boxDir, 'built');
+  const boxBuild = runCli(['build', '--rig', join(boxDir, 'rig.json'), '--motion', join('gallery', 'nod', 'motion.json'), '--out', boxBuilt, '--pack']);
+  const declared = boxBuild.status === 0 ? (JSON.parse(readFileSync(join(boxBuilt, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, unknown> }).stage : null;
+  const boxBare = boxBuild.status === 0 ? bareBuildCopy(boxBuilt, join(boxDir, 'bare')) : boxBuilt;
+  const docStage = (dir: string): Record<string, unknown> | null => (existsSync(join(dir, MODEL_DOCUMENT_FILE)) ? (JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: Record<string, unknown> }).stage : null);
+  const headerBox = boxBuild.status === 0 ? (JSON.parse(readFileSync(join(boxBuilt, 'skeleton.json'), 'utf8')) as { skeleton: Record<string, unknown> }).skeleton : {};
+  {
+    const out = join(work, 'stage-box-flag');
+    const run = repack('stage-box-flag', ['cli.ts', 'repack', boxBare, '--out', out, '--stage-box', 'stage']);
+    const probes: string[] = [];
+    if (boxBuild.status !== 0 || declared === null) probes.push(`nod with a stage box did not build: ${boxBuild.stderr.trim().slice(-300)}`);
+    else if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(boxBuilt, 'skeleton.json')))) probes.push('skeleton.json is not the input\'s bytes');
+      if (JSON.stringify(docStage(out)) !== JSON.stringify(declared)) probes.push(`the rebuilt document's stage is ${JSON.stringify(docStage(out))}, not the declared ${JSON.stringify(declared)}`);
+      if (!run.stdout.includes('read from the bounding box in slot "stage" (--stage-box)')) probes.push('the stage line does not say the stage was read from the slot\'s box');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK17_A_BUILD_CARRYING_A_STAGE_BOX_REPACKED_WITH_STAGE_BOX_KEEPS_ITS_DECLARED_STAGE_EXACTLY',
+      held,
+      probeDetail(held, probes, `gallery/nod built --pack with skeleton.stageBox in slot "stage", reduced to skeleton.json + atlas + page, repacked --stage-box stage: written, skeleton.json the input's bytes, the rebuilt skeleton.model.json's stage ${JSON.stringify(declared)} — the declared stage, carrying the box — and the stage line naming the slot`),
+      'issue #1169 after #1168: the stage box is how a build carries its stage in the three files a consumer keeps, and repack reads it through ingest\'s own --stage-box',
+    );
+  }
+  {
+    const out = join(work, 'stage-box-no-flag');
+    const run = repack('stage-box-no-flag', ['cli.ts', 'repack', boxBare, '--out', out]);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else {
+      if (!readFileSync(join(out, 'skeleton.json')).equals(readFileSync(join(boxBuilt, 'skeleton.json')))) probes.push('skeleton.json is not the input\'s bytes');
+      const got = docStage(out);
+      const header = { x: headerBox.x, y: headerBox.y, width: headerBox.width, height: headerBox.height };
+      if (JSON.stringify(got) !== JSON.stringify(header)) probes.push(`the rebuilt document's stage is ${JSON.stringify(got)}, not the header box ${JSON.stringify(header)} this case is about`);
+      if (JSON.stringify(got) === JSON.stringify(declared)) probes.push('the stage came back as declared, so this input does not show what the flag is for');
+      if (!run.stdout.includes("read from the skeleton's header box") || !run.stdout.includes('pass --stage-box <slot> to read it exactly')) probes.push('the stage line does not say the header box gave the stage and name --stage-box');
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK18_WITHOUT_STAGE_BOX_THE_BOX_IS_TRANSCRIBED_THE_SKELETON_HOLDS_AND_THE_STAGE_LINE_SAYS_THE_HEADER_GAVE_THE_STAGE',
+      held,
+      probeDetail(held, probes, `the same input with no flag: written, skeleton.json the input's bytes (the box transcribed as an ordinary boundingbox attachment), and the rebuilt document's stage ${JSON.stringify(docStage(out))} — the header's setup-pose box, not the declared stage and no box — which the stage line names as the header's and points at --stage-box`),
+      'issue #1169: check (b) cannot see the stage, because the stage is not in the skeleton\'s bytes either way; the stage line is the only place the difference shows, so it has to say which rule gave it',
+    );
+  }
+  {
+    const out = join(work, 'stage-box-wrong');
+    const run = repack('stage-box-wrong', ['cli.ts', 'repack', boxBare, '--out', out, '--stage-box', 'torso']);
+    const probes: string[] = [];
+    if (run.status !== 2) probes.push(`exit ${run.status}, not 2`);
+    if (!run.stderr.includes('rigc repack: ingest refused the skeleton: --stage-box torso:')) probes.push(`ingest's refusal did not reach the caller: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+    if (!run.stderr.includes('nothing was written')) probes.push('the refusal does not say nothing was written');
+    if (existsSync(out)) probes.push(`--out ${out} exists after the refusal`);
+    const held = probes.length === 0;
+    say(
+      'RPK19_STAGE_BOX_NAMING_A_SLOT_THAT_IS_NOT_A_STAGE_BOX_IS_INGESTS_REFUSAL_WITH_NOTHING_WRITTEN',
+      held,
+      probeDetail(held, probes, '--stage-box torso on the same input: ingest\'s own refusal (the slot hangs on a bone that is not the root) printed after "rigc repack: ingest refused the skeleton:", exit 2, --out never made'),
+      'issue #1169: repack does not restate ingest\'s stage-box rules; it hands the flag through and lets ingest\'s refusal speak',
+    );
+  }
+
+  // --- RPK12: no directory left in tmpdir() on any exit path ---
+  {
+    const probes: string[] = [];
+    const exits = (label: string, hook: string, status: number, word: string): void => {
+      const run = repack(label, ['-e', repackPlantProgram(hook), 'repack', nodIn, '--out', join(work, `${label}-out`)]);
+      if (run.status !== status) probes.push(`${label}: exit ${run.status}, not ${status}`);
+      if (run.made === null || !run.made.startsWith(join(work, `tmp-${label}`, REPACK_WORK_PREFIX))) probes.push(`${label}: named no ${REPACK_WORK_PREFIX}XXXXXX work directory in its tmpdir(), so it never reached the case`);
+      if (!run.stderr.includes(word)) probes.push(`${label}: stderr does not say ${JSON.stringify(word)}`);
+    };
+    // A gate that goes red exits from inside `runBuild`, where no `finally` runs: a lifted part whose image data does not decode.
+    exits('red-gate', "(dir, first) => { const b = readFileSync(join(dir, first)); writeFileSync(join(dir, first), Buffer.concat([Buffer.from(PNG_SIGNATURE), b.subarray(8, 33), Buffer.from(pngChunk('IDAT', new Uint8Array(64).fill(7))), Buffer.from(pngChunk('IEND', new Uint8Array(0)))])); }", 1, 'assertion(s) failed — nothing written');
+    exits('throw', "() => { throw new Error('planted throw'); }", 1, 'planted throw');
+    const census = repackRun(work, 'census', ['-e', `import { mkdtempSync } from 'node:fs'; import { tmpdir } from 'node:os'; import { join } from 'node:path'; mkdtempSync(join(tmpdir(), ${JSON.stringify(REPACK_WORK_PREFIX)}));`]);
+    const censusRead = census.status === 0 && census.left.join(', ') === `${REPACK_WORK_PREFIX} +1`;
+    if (!censusRead) probes.push(`the census plant (a ${REPACK_WORK_PREFIX} directory made and never removed) read exit ${census.status} and ${census.left.join(', ') || 'nothing'}, so a skipped removal would not be seen`);
+    const leaked = runs.filter((r) => r.left.length > 0).map((r) => `${r.label} left ${r.left.join(', ')}`);
+    probes.push(...leaked);
+    const made = runs.length;
+    const held = probes.length === 0;
+    say(
+      'RPK12_A_REPACK_LEAVES_NO_DIRECTORY_IN_TMPDIR_ON_ANY_EXIT_PATH',
+      held,
+      probeDetail(held, probes, `every one of this suite's ${made} repack run(s), each in a private tmpdir() — green, refused before the work directory, refused by check (a) or (b) after it, a red gate exiting from inside runBuild, an uncaught throw — left 0 rigc-* entries; the census reads a planted directory nobody removed as ${REPACK_WORK_PREFIX} +1`),
+      'issue #1169 (and #1137, #1140): a temporary directory nobody empties is a cost every later Bun start pays, and a gate that exits from inside runBuild runs no finally — the exit listener is what removes the directory there',
+    );
+  }
+
+  rmSync(work, { recursive: true, force: true });
+  return bad;
+}
+
 function main(): void {
   // `--unit` (issue #1128): this process is one of `inUnits`' units — it runs the
   // one unit its spec names, writes the value, and runs no suite.
@@ -113330,6 +113906,7 @@ function main(): void {
   tally.of('copy-images', runCopyImagesSuite);
   tally.of('bilinear-sampling', runSamplingSuite);
   tally.of('packer', runPackerSuite);
+  tally.of('repack', runRepackSuite);
   const atlasReaderBad = tally.of('atlas-reader', runAtlasReaderSuite, { ran: ranIt });
   const diffBad = tally.of('diff', () => runDiffSuite(tally), { ran: ranIt });
   const boneDistBad = tally.of('bonedist', runBoneDistSuite, { ran: ranIt });
@@ -114333,6 +114910,20 @@ function main(): void {
       'pack byte for byte, the pack line ending in the shape under both, the flag refused by name, and the ' +
       'footprint set equal to the closed polygon on dyadic shapes and only ever grown elsewhere, and a polygon pack ' +
       'that spills writing no more pages than rect where a cell-area bound refused every width of its first page)' +
+      ', + ' + n('repack') + ' repack controls (issue #1169 — `rigc repack`, a packed build repacked from its own output: a gallery ' +
+      'rig repacked under its own settings comes back byte for byte, and under `--page-edges free --pack-shape polygon` keeps ' +
+      'every texel each region owns and the skeleton\'s bytes, read back here off both page sets — with the whole-rectangle ' +
+      'comparison shown to fail there, which is why the footprint is the comparison; a region moved one texel against the ' +
+      'build\'s own document, a missing page, a region named twice, a page scale and premultiplied alpha each refused by name ' +
+      'before a work directory exists; one texel flipped in a lifted part refused by check (a) on a green gate, and a ' +
+      'skeleton the rebuild does not write byte for byte refused by check (b), neither writing anything; a build whose header ' +
+      'is its stage — the shape written before 2.2.0 — refused naming every moved path and the flag, written under ' +
+      '`--accept-skeleton-differences` with every path printed and the setup-pose box in its header, a region difference still ' +
+      'refused under the flag, and the flag beside a skeleton that needs none saying it accepted nothing; regions laid turned ' +
+      'and trimmed accepted and exact; the flags build --pack takes and no other; the second entry writing the same files; ' +
+      'a build carrying a stage box repacked with `--stage-box` keeping its declared stage, without it keeping its skeleton while ' +
+      'the stage line names the header box and the flag, and `--stage-box` on a slot that is not a box refused in ingest\'s words; ' +
+      'and no rigc-* directory left in tmpdir() by any run, a red gate exiting from inside runBuild included)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
       'reached, so neither a loosened nor a tightened cell survives — with the parse itself asserted first, the ' +

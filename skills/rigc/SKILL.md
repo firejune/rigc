@@ -81,7 +81,12 @@ entry that ran.
    `rigc vote --candidate <a> --candidate <b>` when several candidates are green and
    only a person can choose between them.
 6. `rigc validate <out>` re-gates artifacts already on disk, and
-   `rigc <command> --help` is each command's own flag table.
+   `rigc <command> --help` is each command's own flag table. `rigc repack <out>
+   --out <dir>` packs a build again under `build --pack`'s packing flags when its
+   parts were not kept, and writes only after every region and the skeleton are
+   shown unchanged (`--accept-skeleton-differences` writes a rebuild whose skeleton
+   differs, every difference printed; `--stage-box <slot>` reads a build's stage box)
+   — AUTHORING §0.4.
 7. Every finished unit ends with `rigc preview --candidate <out>`, and the report
    names the `.html` it wrote. The hand-off to a person is part of the work.
 
