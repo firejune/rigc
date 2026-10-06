@@ -2,7 +2,7 @@
  * The constraints and the timelines that key them, as the bodies that ask
  * "does this constraint do anything" read them (issue #1025, step 4c of
  * #380) — the census's F12 to F17 and F19 with R1 and R2, for A23, A36, A37,
- * A41, A42, A47 and A48.
+ * A42, A47 and A48.
  *
  * ⭐ **The order is the runtime's update order**, which is the file's
  * `constraints` array and the document's: a body that prints one line per
@@ -130,7 +130,7 @@ export interface ConstraintTimeline {
   readonly posed?: (value: number) => number;
 }
 
-/** What A23, A36, A37, A41, A42, A47 and A48 read. */
+/** What A23, A36, A37, A42, A47 and A48 read. */
 export interface ConstraintFacts {
   /** How many animations the skeleton declares. */
   readonly animations: number;

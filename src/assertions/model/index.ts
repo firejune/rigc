@@ -85,7 +85,6 @@ import { a28RibbonRowsShareWeights } from '../bodies/a28.ts';
 import { a33VertexAttachmentGeometry } from '../bodies/a33.ts';
 import { a36PathConstraintEffective } from '../bodies/a36.ts';
 import { a37SliderConstraintEffective } from '../bodies/a37.ts';
-import { a41PhysicsSurvivesEditorRoundTrip } from '../bodies/a41.ts';
 import { a42DrivenConstraintsUpdateAfterTheirDriver } from '../bodies/a42.ts';
 import { a44LinkedMeshStatesNoGeometryOfItsOwn } from '../bodies/a44.ts';
 import { a47IkConstraintNotMutedThroughout } from '../bodies/a47.ts';
@@ -294,7 +293,6 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
   { code: 'A39_DEFORM_KEEPS_TRIANGLE_WINDING', run: (v, read, input, supply) => a39DeformKeepsTriangleWinding(v, supply.deformSurvey(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a23PhysicsConstraintEffective(v, supply.constraints(read), supply.meshes(read)), unread: SKIP_NO_MODEL },
-  { code: 'A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', run: (v, read, input, supply) => a41PhysicsSurvivesEditorRoundTrip(v, supply.constraints(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A36_PATH_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a36PathConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A37_SLIDER_CONSTRAINT_EFFECTIVE', run: (v, read, _input, supply) => a37SliderConstraintEffective(v, supply.constraints(read)), unread: SKIP_NO_MODEL },
   { code: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT', run: (v, read, input, supply) => a47IkConstraintNotMutedThroughout(v, supply.constraints(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },

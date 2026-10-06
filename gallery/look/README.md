@@ -56,28 +56,17 @@ slider — but the answer no longer depends on one. What came back
   emits animations in the editor's order; on the same rig through the same editor
   that restored `yaw -> "turn"` and took the re-rendered mean absolute error from
   10.4655 / 8.4961 / 8.7140 to 0.3035 / 0.0769 / 0.0588.
-- 🚨 **The cowlick stops.** Its physics constraint drives `rotate`, and the
-  editor's physics model holds `x` and `y` and nothing else
-  ([#540](https://github.com/firejune/rigc/issues/540)), so the export states
-  *drives nothing* and `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses it by name
-  ([#536](https://github.com/firejune/rigc/issues/536)). ⇒ **Round-trip this
-  example through the editor and the hair below stops moving.** Nothing in the
-  returned file says so; the refusal is the only thing that does.
-
-  ✅ **Said before the trip since [#540](https://github.com/firejune/rigc/issues/540),
-  and this example is where you can read it.** Every build of `look` prints
-
-  ```
-  SKIP  A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP: the rig "look" does not declare `invariants.editorRoundTrip`, so nothing here is gated against the Spine editor. What is here: physics "whip" drives rotate, and the editor's physics model holds x and y only, so a round trip returns that constraint driving nothing at all (issue #540)
-  ```
-
-  🚫 **And this rig deliberately does not declare it**, which is a claim about the
-  example rather than a gap: `look` exists to be *played*, and a rotation-driven
-  jiggle is valid Spine 4.3 that every runtime runs correctly. Add
-  `"editorRoundTrip": true` to its `invariants` and that SKIP becomes a **refusal**
-  — a true statement about a rig that would then be promising something it does not
-  keep. A face rig authored for the editor declares it and drives `whip` in `x`/`y`
-  instead ([docs/FACE.md §8](../../docs/FACE.md), AUTHORING §3.7).
+- 🚨 **The cowlick stopped, and the bone was the reason.** Its physics constraint
+  drives `rotate` on `ahoge_whip`, which was emitted with no length, and the
+  editor's export drops a physics constraint's `rotate`, `scaleX` and `shearX`
+  **only on a zero-length bone** — on any bone with a length all three come back
+  (measured on Spine 4.3.23 and 4.3.26,
+  [#1196](https://github.com/firejune/rigc/issues/1196); #540 had read the same
+  loss as *"the editor holds `x` and `y` only"*). So the export stated *drives
+  nothing* and `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refused it by name
+  ([#536](https://github.com/firejune/rigc/issues/536)). ⇒ With `ahoge_whip`
+  given a length ([#1195](https://github.com/firejune/rigc/issues/1195)), the
+  cowlick survives the round trip.
 
 ```
 bun install                                     # once
@@ -684,14 +673,14 @@ instead of being kept by hand
 
 ```
 PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
-..    51 assertions: 20 measured (20 passed, 0 failed), 15 skipped, 16 not in profile "spine"
+..    50 assertions: 20 measured (20 passed, 0 failed), 14 skipped, 16 not in profile "spine"
 ```
 
 `rigc build --profile spine-html`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 29 measured (29 passed, 0 failed), 22 skipped, 0 not in profile "spine-html"
+..    50 assertions: 29 measured (29 passed, 0 failed), 21 skipped, 0 not in profile "spine-html"
 ```
 
 🚨 **The loop does not close, and the reason is the spring, not the timeline.**

@@ -837,13 +837,13 @@ const SKIN_ORDER: OrderedCollection = {
  * choosing a member of it.
  *
  * It is deliberately **not** conditional on anything: not on the rig declaring a
- * slider, and not on the rig declaring the editor as a consumer. A slider is what
- * makes the difference bite today and `invariants.editorRoundTrip` is how a rig
- * says the editor is downstream, but the emitted order is a claim about the
- * editor either way, and a check that only ran for some rigs would make the claim
- * hold for some and not others with nothing in the file saying which — adding the
- * slider, or the declaration, would then be the edit that refuses a rig that built
- * yesterday. What issue #543 changed is the size of what is claimed, not who it is
+ * slider, and not on whether the editor is downstream of it, which a rig spec
+ * does not state (the one declaration that did, `invariants.editorRoundTrip`,
+ * was retired in issue #1196). A slider is what makes the difference bite today,
+ * but the emitted order is a claim about the editor either way, and a check that
+ * only ran for some rigs would make the claim hold for some and not others with
+ * nothing in the file saying which — adding the slider would then be the edit
+ * that refuses a rig that built yesterday. What issue #543 changed is the size of what is claimed, not who it is
  * claimed for.
  *
  * ⚠️ `what` is a parameter and not a second copy of this walk because issue #541
@@ -7551,7 +7551,6 @@ function buildRigInfo(
     meshDeclaredBones,
     meshSoftBones,
     deformMayFold,
-    editorRoundTrip: rig.invariants?.editorRoundTrip === true,
     // `parseRigSpec` resolved every entry against the rig's own constraints.
     consumerDrivenMix: (rig.invariants?.consumerDrivenMix ?? []).map((e) => ({ type: e.type, constraint: e.constraint, why: e.why })),
     // `parseRigSpec` refused every shape but a non-blank `why`.
