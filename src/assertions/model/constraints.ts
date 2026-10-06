@@ -103,6 +103,8 @@ function entryOf(doc: CompiledDocument, kind: ConstraintKind, name: string, reco
         ...base,
         physics: {
           bone: record.bone,
+          // The length the core's step is handed (`bone(state, c.bone).length ?? 0` in `src/core/constraints.ts`): the parser's 0 where the document leaves it out.
+          boneLength: doc.bones.find((b) => b.name === record.bone)?.length ?? 0,
           components: { x: record.x, y: record.y, rotate: record.rotate, scaleX: record.scaleX, shearX: record.shearX },
           setup: { mix: record.mix, massInverse: record.massInverse, strength: record.strength, damping: record.damping },
           step: record.step,

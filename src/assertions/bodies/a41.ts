@@ -26,10 +26,12 @@
  * constraint driving NOTHING — which is what the editor hands back, after
  * the loss — and it is what fires today on a round-tripped `look`. This
  * refuses a constraint driving something the editor will not keep, before
- * the trip. They cannot both fire on one constraint: A23's condition is an
- * empty driven set and this one's is a non-empty one (see
- * `PHYSICS_COMPONENTS`), so the two are disjoint by construction rather than
- * by agreement.
+ * the trip. A23's *drives no component* clause and this rule cannot both
+ * fire on one constraint: that clause's condition is an empty driven set and
+ * this one's is a non-empty one (see `PHYSICS_COMPONENTS`), so the two are
+ * disjoint by construction rather than by agreement. A23's length clause
+ * (issue #1195) can name the same constraint as this rule, for a different
+ * fact: the bone it sits on has no length, which no round trip changes.
  *
  * Moved out of `src/validate.ts` whole: the components are the document's
  * physics records, the declaration the rig's.

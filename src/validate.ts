@@ -1615,6 +1615,7 @@ export function spineConstraintFacts(data: ReturnType<SkeletonJson['readSkeleton
         runtimeClass,
         physics: {
           bone: c.bone.name,
+          boneLength: c.bone.length,
           components: { x: c.x, y: c.y, rotate: c.rotate, scaleX: c.scaleX, shearX: c.shearX },
           setup: { mix: pose.mix, massInverse: pose.massInverse, strength: pose.strength, damping: pose.damping },
           step: c.step,

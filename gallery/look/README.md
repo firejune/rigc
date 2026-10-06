@@ -554,9 +554,39 @@ is the nose, and a nose does not wobble
 
 📏 **What the spring buys, measured** — the cowlick's tip against a control
 build with the same rig and `inertia: 0`, tracked over the 81 frames of `sweep`
-at `--max 640`: **7.24 px** of horizontal lag at worst, at `f0059`, which is
-just after the head arrives at −19° and stops. That is the whole claim; it is a
-small part and a small impulse.
+at `--max 640`: **2.78 px** of horizontal lag at worst, at `f0040`. The tip is
+the top-right vertex of the `ahoge` mesh in `render --geometry`'s
+`geometry.json` (vertex 4, the highest at rest), and the lag is the difference
+of its world `x` between the two builds times the frames' 0.673401 px per unit.
+That is the whole claim; it is a small part and a small impulse.
+
+📐 **`ahoge_whip` has a `length`, and the number is measured rather than
+chosen** ([#1195](https://github.com/firejune/rigc/issues/1195)). A physics
+constraint driving `rotate` steps off the bone's tip, `length` along its own x
+axis, so a bone with no length has no tip — and with nothing to aim at, the
+solver aims the bone at world angle 0, which `A23_PHYSICS_CONSTRAINT_EFFECTIVE`
+now refuses by name. The figure is the strand's extent along that axis: the mesh
+window is the plate (100 × 130) centred on `ahoge`, so the bone's origin at
+`(-16, -55)` is crop pixel `(34, 120)`; its world x axis is +x (no bone above it
+turns, setup matrix `[1 0; 0 1]`), and the drawing's last opaque column that
+`ahoge_soft.png` hands to it at all is column 99, whose far edge is crop `x` 100
+— **100 − 34 = 66**. The fully carried pixels and every opaque pixel read the
+same 66, because the strand runs to the plate's right edge. The reading that was
+**not** taken is the chord to the strand's tip (129.3 to the farthest carried
+pixel centre): it is a length along a direction the bone does not point in.
+
+What the length changed, through rigc's own poser at 60 fps against the same
+rig with physics off, the largest |rotation| of `ahoge_whip` and the offset at
+the animation's end:
+
+| `ahoge_whip` length | `turn` | `tilt` | `sweep` |
+| ---: | --- | --- | --- |
+| 0 (before #1195) | 3.390° / 3.390° | 4.652° / 4.576° | **173.810° / 27.600°** |
+| **66** | 0.204° / −0.178° | 1.562° / −1.562° | **1.940° / −0.667°** |
+
+With no length the strand spun nearly half a turn in `sweep` and the tip lagged
+88.03 px at `f0057` by the measure above — which is also why the 7.24 px this
+paragraph used to state is not reproduced by it.
 
 🗒️ **A soft mesh could not also take a turn key when this example was built**,
 which is why the cowlick has no depth sheet and the face has no mask — a carried
@@ -610,7 +640,7 @@ reason. The parts list is a subset of hers: no lids, because nothing blinks.
 | --- | --- |
 | `iris_?` and `spark_?` are children of **`faceshift`**, not of `eye_?` | ⭐ and this is where the construction differs from `portrait`'s. There, the iris inherited the socket's `scaleX` and a circle under `scaleX 0.89` is an ellipse, so two reciprocal tracks had to undo it. Here the pupil is simply **not parented into the thing that foreshortens**: the socket narrows, the pupil does not, and the reciprocal is not needed at all — [FACE §5](../../docs/FACE.md)'s finding with the fix moved into the skeleton |
 | `sockets` is a second group beside `features` | `features` (10 members) takes the parallax; `sockets` (6) takes the `scaleX`. The irises are in the first and not the second, which is the sentence above as data |
-| `ahoge` sits at the cowlick's **plate centre** with `ahoge_whip` at its base | a mesh has no attachment offset — its window is centred on the slot bone — so the offset `portrait` writes on the attachment becomes a bone position here, and the spring bone goes where the strand actually hinges |
+| `ahoge` sits at the cowlick's **plate centre** with `ahoge_whip` at its base | a mesh has no attachment offset — its window is centred on the slot bone — so the offset `portrait` writes on the attachment becomes a bone position here, and the spring bone goes where the strand actually hinges, with a `length` of 66 — the strand's measured extent along its axis, which a `rotate` spring steps off (see *The cowlick answers a stop*) |
 | `yaw_gauge` / `yaw_dial` (and the tilt pair) | the gauge face is on a still bone and only the needle bone turns, so the printed scale cannot rotate with the value it is measuring |
 
 **The gauge faces are marked from `rig.json`'s own slider ranges.**
@@ -639,9 +669,9 @@ gauge read backwards while both files stayed self-consistent.
 | `turn` is measured in the frame the slider puts it in | `A39` + the `DEFORM` block | `deformFrames=turn:slider/yaw`, and each key line names the dial value its mapping inverts to |
 | the two sliders compose | posed through `spine-core`, **and gated** | 1.90 + 5.00 = **6.90°** on `headroll`; `A40` PASSes since [#407](https://github.com/firejune/rigc/issues/407) let both sliders sit at `mix: 1` |
 | the `local: false` refusal fires on this rig | flipping the flag and building | refused at compile, message quoted above |
-| `sweep` closes on its opening pose | `loop_seam.ts --duration 3.2` at `--max 640` | **169 / 255**, 941 px of 375 040 — see below |
+| `sweep` closes on its opening pose | `loop_seam.ts --duration 3.2` at `--max 640` | **160 / 255**, 565 px of 375 040 — see below |
 | …with the spring inert | the same, on a control build with `inertia: 0` | **1 / 255**, 1 px |
-| the cowlick's spring does something | the same control, tracking the tip | 7.24 px of lag at `f0059` |
+| the cowlick's spring does something | the same control, tracking the tip | 2.78 px of lag at `f0040` |
 | it looks like a turn and not a slide | looking at `f0000` / `f0020` / `f0060` at 1:1, twice, plus both contact sheets | the far socket narrows to 0.778 while the near one widens, the mesh's own bands run ×0.017 to ×1.87 across the plate, the back hair swings the **other** way, and the far lock leaves |
 
 **The two verdicts, verbatim** — the report's last rule line and the summary under
@@ -665,8 +695,9 @@ SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_co
 ```
 
 🚨 **The loop does not close, and the reason is the spring, not the timeline.**
-`loop_seam.ts` reads **169 / 255** over 941 pixels, worst at `(311, 41)` — the
-cowlick's tip. A physics constraint's state is not a function of time: the first
+`loop_seam.ts` reads **160 / 255** over 565 pixels, worst at `(321, 45)` — the
+cowlick's tip (169 / 255 over 941 pixels, worst at `(311, 41)`, before
+`ahoge_whip` had a length — [#1195](https://github.com/firejune/rigc/issues/1195)). A physics constraint's state is not a function of time: the first
 frame is rendered from `Physics.reset` and the last carries 3.2 s of accumulated
 motion. The control makes that exact: the same cycle with `inertia: 0` reads
 **1 / 255** at one pixel, so the *keyed* pose closes and what does not is the
