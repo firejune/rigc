@@ -74981,7 +74981,12 @@ import { inactiveHistoryProbe, walkBuilt, walkProbes as inactiveWalkProbes } fro
 // Issue #1049: a slider's physics keys under the step (CO31, CO32), its own statement so the controls land as one hunk.
 import { SLIDER_PHYSICS_PROBES, sliderPhysicsPair, sliderPhysicsShape, type SliderPhysicsShape } from './tools/core_gate.ts';
 import { loopedTime } from './src/core/raw.ts';
-import { poseLoopingWalk, type WalkPlant } from './src/core/walk.ts';
+import { poseLoopingWalk, poseWalkSetup, scanLoopingWalk, scanWalkSetup, type WalkPlant, type WalkPose } from './src/core/walk.ts';
+import type { ScanPose } from './src/core/raw.ts';
+import { noSkinView } from './src/render_core.ts';
+import { modelRead as readModelDocument } from './src/assertions/model/parse.ts';
+import { modelSteppedPoses } from './src/assertions/model/stepped_poses.ts';
+import { a10NoNanAfterStepping, STEP_FRAMES } from './src/assertions/bodies/a10.ts';
 import { historyTaint, type SolverRules } from './src/core/constraints.ts';
 import { COLLAPSED_X_AXIS_SQ, type InheritComputation } from './src/core/world.ts';
 import { CORE_INHERIT_MODES as CORE_INHERIT_MODES_ALL } from './src/core/index.ts';
@@ -86672,6 +86677,282 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
         ok,
         probeDetail(ok, probes, `over ${population.length} walk(s) — the seeded rigs and the forged gallery walks: ${read.join('; ')}; each red only where the walk reads what the plant changes (a wrap, a physics constraint, a non-finite value, a reset key on a wrapping walk), and every forged walk holding a non-finite value red under the swallowing plant`),
         'issue #1025, cut 4c-5a: a walk held equal on a population is a measurement only while a wrong walk is seen to differ on it — the wrap\'s time, the physics clock across the wrap, the reset keys the wrap fires and a value that is not finite are each one plant',
+      );
+    }
+    // --- CO43: the scan's walk (A10's) hands the scan the numbers the public walk computes, on every document A10's controls walk --
+    //
+    // Issue #1179, the second part: `scanLoopingWalk` and `scanWalkSetup` are `poseLoopingWalk` and `poseWalkSetup` with another
+    // assembler — the readings, rows and copies A10 does not read left out. Every number A10 scans (each bone's matrix and origin, each
+    // slot row, each drawn attachment's vertices) and the time it reads a mode at must be the public walk's, bit for bit (`Object.is`, so
+    // a NaN is itself and −0 is not 0), and a refusal must be the same sentence — on the built rows, the seeded rigs, the forged walks
+    // holding a non-finite value and the clipping probe (a clip, a linked mesh, two deforms, a physics constraint).
+    const scannedDiff = (pub: WalkPose, scan: ScanPose, at: string): string | null => {
+      const num = (x: number | null, y: number | null): boolean => Object.is(x, y);
+      if (!num(pub.animationTime, scan.animationTime)) return `${at}: the time ${scan.animationTime}, the public walk's ${pub.animationTime}`;
+      if (pub.bones.length !== scan.bones.length) return `${at}: ${scan.bones.length} bone(s), the public walk's ${pub.bones.length}`;
+      for (let k = 0; k < pub.bones.length; k++) {
+        const p = pub.bones[k];
+        const s = scan.bones[k];
+        if (p.name !== s.name) return `${at}: bone ${k} is "${s.name}", the public walk's "${p.name}"`;
+        for (const f of ['a', 'b', 'c', 'd', 'worldX', 'worldY'] as const) if (!num(p[f], s[f])) return `${at}: bone "${p.name}" ${f} ${s[f]}, the public walk's ${p[f]}`;
+      }
+      if (pub.slots.length !== scan.slots.length) return `${at}: ${scan.slots.length} slot row(s), the public walk's ${pub.slots.length}`;
+      for (let k = 0; k < pub.slots.length; k++) {
+        const p = pub.slots[k];
+        const s = scan.slots[k];
+        const pd = p[6];
+        const sd = s[6];
+        const same = p[0] === s[0] && [2, 3, 4, 5].every((i) => num(p[i] as number | null, s[i] as number | null)) && (pd === null ? sd === null : sd !== null && [0, 1, 2].every((i) => num(pd[i], sd[i])));
+        if (!same) return `${at}: slot row ${JSON.stringify(s)}, the public walk's ${JSON.stringify(p)}`;
+      }
+      if (pub.drawn.length !== scan.drawn.length) return `${at}: ${scan.drawn.length} drawn attachment(s), the public walk's ${pub.drawn.length}`;
+      for (let k = 0; k < pub.drawn.length; k++) {
+        const p = pub.drawn[k];
+        const s = scan.drawn[k];
+        if (p.slot !== s.slot || p.attachment !== s.attachment || p.vertices.length !== s.vertices.length) return `${at}: drawn ${k} is ${s.slot}/${s.attachment} (${s.vertices.length}), the public walk's ${p.slot}/${p.attachment} (${p.vertices.length})`;
+        const v = p.vertices.findIndex((x, i) => !num(x, s.vertices[i]));
+        if (v >= 0) return `${at}: slot "${p.slot}" vertex number ${v} ${s.vertices[v]}, the public walk's ${p.vertices[v]}`;
+      }
+      return null;
+    };
+    /** Both walks of one document under A10's view, schedule and order, compared; a refusal is compared by its sentence. */
+    const scanAgainstPublic = (modelText: string, where: string, census?: { poses: number; nonFinite: number }): string | null => {
+      const view = noSkinView(readModel(modelText, where));
+      const both = <T,>(f: () => T): { value: T } | { refused: string } => {
+        try {
+          return { value: f() };
+        } catch (err) {
+          if (err instanceof CoreInputError) return { refused: err.message };
+          throw err;
+        }
+      };
+      const pairs: Array<[string, () => WalkPose[], () => ScanPose[]]> = [['the setup pose', () => [poseWalkSetup(view)], () => [scanWalkSetup(view)]]];
+      for (const name of fileAnimationOrder(view)) {
+        const anim = view.animations.find((a) => a.name === name);
+        if (anim === undefined) continue;
+        const steps = new Array<number>(STEP_FRAMES).fill(Math.max(anim.timelines.duration, 1) / STEP_FRAMES);
+        pairs.push([`animation "${name}"`, () => poseLoopingWalk(view, name, steps), () => scanLoopingWalk(view, name, steps)]);
+      }
+      for (const [label, pub, scan] of pairs) {
+        const p = both(pub);
+        const s = both(scan);
+        if ('refused' in p || 'refused' in s) {
+          const ps = 'refused' in p ? p.refused : 'walked';
+          const ss = 'refused' in s ? s.refused : 'walked';
+          if (ps !== ss) return `${where}, ${label}: the scan ${ss === 'walked' ? 'walked' : `refused "${ss}"`}, the public walk ${ps === 'walked' ? 'walked' : `refused "${ps}"`}`;
+          continue;
+        }
+        if (p.value.length !== s.value.length) return `${where}, ${label}: ${s.value.length} pose(s), the public walk's ${p.value.length}`;
+        for (let i = 0; i < p.value.length; i++) {
+          const d = scannedDiff(p.value[i], s.value[i], `${where}, ${label} pose ${i}`);
+          if (d !== null) return d;
+          if (census !== undefined) {
+            census.poses++;
+            const pose = s.value[i];
+            if (pose.bones.some((b) => ![b.a, b.b, b.c, b.d, b.worldX, b.worldY].every(Number.isFinite)) || pose.drawn.some((dr) => !dr.vertices.every(Number.isFinite))) census.nonFinite++;
+          }
+        }
+      }
+      return null;
+    };
+    const clipModels = [clipPair(true).model, clipPair(false).model];
+    const scanPopulation: Array<{ where: string; model: string }> = [
+      ...built.filter((b) => b.exits.every((e) => e === 0)).map((b) => ({ where: b.name, model: readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8') })),
+      ...walkProbes.map((p) => ({ where: `walk probe ${p.i}`, model: p.model })),
+      ...forged.map((f) => ({ where: `${f.row} with ${f.label}`, model: f.model })),
+      ...clipModels.map((model, i) => ({ where: `the clipping probe${i === 0 ? ' with physics' : ''}`, model })),
+    ];
+    {
+      const probes: string[] = [];
+      const census = { poses: 0, nonFinite: 0 };
+      const kinds = new Map<string, number>();
+      const see = (kind: string): void => void kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+      for (const { where, model } of scanPopulation) {
+        const diff = scanAgainstPublic(model, where, census);
+        if (diff !== null) probes.push(diff);
+        const doc = readModel(model, where);
+        for (const c of doc.constraints) see(c.kind);
+        for (const skin of doc.skins) for (const slot of Object.values(skin.attachments)) for (const a of Object.values(slot)) if (a.geometry !== undefined) see(a.geometry.kind);
+        if (doc.animations.some((a) => a.timelines.attachments.some((t) => t.deform !== null))) see('deform');
+        if (doc.animations.some((a) => a.timelines.slots.length > 0)) see('slot timelines');
+      }
+      const count = (k: string): number => kinds.get(k) ?? 0;
+      probes.push(
+        ...floorProbes(
+          [
+            ...(['region', 'mesh', 'linkedmesh', 'clipping', 'deform', 'slot timelines', 'ik', 'transform', 'path', 'physics', 'slider'] as const).map((k): [number, number, string] => [count(k), 1, `${count(k)} document(s) or record(s) of kind ${k}`]),
+            [census.nonFinite, 1, `${census.nonFinite} pose(s) holding a non-finite number`],
+          ],
+          'so the scan was not held where it reads that kind',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO43_THE_SCANS_WALK_HANDS_A10_THE_NUMBERS_THE_PUBLIC_WALK_COMPUTES_ON_EVERY_DOCUMENT_A10S_CONTROLS_WALK',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${scanPopulation.length} document(s) — the built rows, ${walkProbes.length} seeded rig(s), ${forged.length} forged walk(s) and the clipping probe twice — walked by both entries on A10's schedule: ` +
+            `${census.poses} pose(s) equal in every number A10 scans (bit for bit), ${census.nonFinite} of them holding a non-finite one, every refusal the same sentence; kinds walked: ${[...kinds].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(', ')}`,
+        ),
+        'issue #1179, the second part: A10 reads its poses off a narrow assembler of the one walk; a narrow path is worth having only while it hands the scan what the public walk computes, which only a comparison over every kind the scan reads can show',
+      );
+    }
+
+    // --- CO44: what the scan leaves out moves no number it scans, and what it keeps turns A10 red by A10's own sentence --
+    //
+    // Skipped: a mesh's UVs and triangles and an attachment's colour are read by the public walk's drawn rows and by nothing the
+    // scan reads, so rewriting them in the document moves the public walk and leaves every scan pose byte for byte as it was.
+    // Kept: the comparison itself is seen to fail with one scanned number taken from a reading the scan does not form (a bone's
+    // rotationX in place of its a), and the forged walks that hold a non-finite bone or vertex turn the model side's A10 red with
+    // its own sentence, read through the scan.
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const spell = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' && !Number.isFinite(v) ? `#${String(v)}` : v));
+      const scanSpelled = (modelText: string, where: string): string => {
+        const view = noSkinView(readModel(modelText, where));
+        return spell([scanWalkSetup(view), ...fileAnimationOrder(view).map((name) => scanLoopingWalk(view, name, new Array<number>(12).fill(0.1)))]);
+      };
+      const publicSpelled = (modelText: string, where: string): string => {
+        const view = noSkinView(readModel(modelText, where));
+        return spell([poseWalkSetup(view), ...fileAnimationOrder(view).map((name) => poseLoopingWalk(view, name, new Array<number>(12).fill(0.1)))]);
+      };
+      type ModelJson = { skins: Array<{ attachments: Record<string, Record<string, Record<string, unknown>>> }> };
+      const rewrite = (modelText: string, edit: (record: Record<string, unknown>) => boolean): { text: string; edited: number } => {
+        const json = JSON.parse(modelText) as ModelJson;
+        let edited = 0;
+        for (const skin of json.skins) for (const slot of Object.values(skin.attachments)) for (const record of Object.values(slot)) if (edit(record)) edited++;
+        return { text: JSON.stringify(json), edited };
+      };
+      const skipped: Array<[string, (record: Record<string, unknown>) => boolean]> = [
+        ['every mesh\'s UVs mirrored and every triangle turned', (r) => {
+          if (r.kind !== 'mesh' || !Array.isArray(r.uvs) || !Array.isArray(r.triangles)) return false;
+          r.uvs = (r.uvs as number[]).map((u) => 1 - u);
+          const t = r.triangles as number[];
+          r.triangles = t.map((_v, i) => t[i - (i % 3) + ((i + 1) % 3)]);
+          return true;
+        }],
+        ['every region\'s and mesh\'s colour set', (r) => {
+          if (r.kind !== 'region' && r.kind !== 'mesh' && r.kind !== 'linkedmesh') return false;
+          r.color = '336699cc';
+          return true;
+        }],
+      ];
+      const subjects = [...clipModels.map((model, i) => ({ where: `the clipping probe${i === 0 ? ' with physics' : ''}`, model })), ...scanPopulation.filter((p) => p.where.startsWith('gallery/'))];
+      for (const [label, edit] of skipped) {
+        let moved = 0;
+        let edited = 0;
+        for (const { where, model } of subjects) {
+          const planted = rewrite(model, edit);
+          if (planted.edited === 0) continue;
+          edited += planted.edited;
+          if (publicSpelled(planted.text, where) !== publicSpelled(model, where)) moved++;
+          if (scanSpelled(planted.text, where) !== scanSpelled(model, where)) probes.push(`${label} on ${where}: the scan's poses moved`);
+        }
+        if (moved === 0) probes.push(`${label}: no public walk moved, so the plant reaches nothing either walk carries`);
+        read.push(`${label} (${edited} record(s)): ${moved} public walk(s) moved, the scan's unmoved`);
+      }
+      // The comparison seen failing: one scanned number taken from a reading the scan does not form.
+      {
+        const view = noSkinView(readModel(clipModels[0], 'the clipping probe'));
+        const pub = poseWalkSetup(view);
+        const scan = scanWalkSetup(view);
+        const k = pub.bones.findIndex((b) => !Object.is(b.a, b.rotationX));
+        if (k < 0) probes.push('no bone of the clipping probe reads a rotationX unlike its a, so the plant changes nothing');
+        else {
+          const planted: ScanPose = { ...scan, bones: scan.bones.map((b, i) => (i === k ? { ...b, a: pub.bones[i].rotationX } : b)) };
+          if (scannedDiff(pub, planted, 'planted') === null) probes.push('a scan reading rotationX in place of a compared equal');
+          if (scannedDiff(pub, scan, 'unplanted') !== null) probes.push('the unplanted setup pose compared unequal');
+          read.push(`a scan reading bone "${pub.bones[k].name}"'s rotationX for its a: compared unequal`);
+        }
+      }
+      // What the scan keeps, through the model side's A10: each forged walk holding a non-finite number fails with A10's own sentence.
+      let reddened = 0;
+      for (const f of forged) {
+        const fails: string[] = [];
+        const verdicts = { fail: (_code: string, detail: string) => void fails.push(detail), skip: () => {}, stats: {} };
+        const modelRead = readModelDocument(verdicts, f.model);
+        if (modelRead === null) {
+          probes.push(`${f.row} with ${f.label}: the model side did not read the forged document`);
+          continue;
+        }
+        a10NoNanAfterStepping(verdicts, modelBoneTimelines(modelRead), modelSteppedPoses(modelRead));
+        const sentence = fails.find((d) => / has (a|b|c|d|worldX|worldY) \S+; a world transform is finite$/.test(d) || / vertex \d+ has [xy] \S+; a posed vertex is finite$/.test(d));
+        if (sentence !== undefined) reddened++;
+        else if (f.label.includes('past the largest double')) probes.push(`${f.row} with ${f.label}: A10 read ${fails.length === 0 ? 'nothing' : JSON.stringify(fails[0]).slice(0, 160)}, not its non-finite sentence`);
+      }
+      if (reddened === 0) probes.push('no forged walk turned the model side\'s A10 red through the scan');
+      read.push(`${reddened} of ${forged.length} forged walk(s) red by A10's own sentence through the scan`);
+      const ok = probes.length === 0;
+      say(
+        'CO44_WHAT_THE_SCAN_LEAVES_OUT_MOVES_NO_NUMBER_IT_SCANS_AND_WHAT_IT_KEEPS_TURNS_A10_RED_BY_ITS_OWN_SENTENCE',
+        ok,
+        probeDetail(ok, probes.slice(0, 12), read.join('; ')),
+        'issue #1179, the second part: a narrow path is safe only where what it leaves out feeds nothing it keeps — shown by planting the left-out inputs and reading the scan unmoved — and where what it keeps still reaches the verdict',
+      );
+    }
+
+    // --- CO45: the scan hands A10 the pose's own vertex arrays, and a frame kept past its step still reads its own pose --
+    //
+    // Issue #1179, the second part: the scan no longer copies a drawn row's vertices (`scanDrawn`), so A10 — which collects an
+    // animation's frames before it scans any — reads arrays the walk made. That is sound only while every pose's arrays are its own:
+    // `poseGeometry` maps each row's vertices into a new array per attachment per pose. Live: every array of a whole walk is a
+    // distinct object, and the frames, kept to the walk's end, read the public walk's numbers. Planted: a poser handing every pose
+    // one buffer per slot (`ScanPlant`) is read red on every walk whose vertices move, by the comparison CO43 runs.
+    {
+      const probes: string[] = [];
+      const steps = new Array<number>(12).fill(0.1);
+      let walks = 0;
+      let moving = 0;
+      let arrays = 0;
+      let liveShared = 0;
+      let plantedRed = 0;
+      let plantedMissed = 0;
+      const subjects = [...clipModels.map((model, i) => ({ where: `the clipping probe${i === 0 ? ' with physics' : ''}`, model })), ...scanPopulation.filter((p) => p.where.startsWith('gallery/'))];
+      for (const { where, model } of subjects) {
+        const view = noSkinView(readModel(model, where));
+        for (const name of fileAnimationOrder(view)) {
+          const pub = poseLoopingWalk(view, name, steps);
+          const live = scanLoopingWalk(view, name, steps);
+          const buffers = new Map<string, number[]>();
+          const planted = scanLoopingWalk(view, name, steps, {
+            vertices: (v, slot) => {
+              const b = buffers.get(slot) ?? [];
+              b.length = 0;
+              b.push(...v);
+              buffers.set(slot, b);
+              return b;
+            },
+          });
+          walks++;
+          const seen = new Set<number[]>();
+          for (const pose of live) {
+            for (const d of pose.drawn) {
+              arrays++;
+              if (seen.has(d.vertices)) liveShared++;
+              seen.add(d.vertices);
+            }
+          }
+          const liveDiff = live.map((p, i) => scannedDiff(pub[i], p, `${where} "${name}" pose ${i}`)).find((d) => d !== null);
+          if (liveDiff !== undefined) probes.push(`kept to the walk's end, the scan read ${liveDiff}`);
+          const moves = pub.some((p, i) => i > 0 && JSON.stringify(p.drawn.map((d) => d.vertices)) !== JSON.stringify(pub[0].drawn.map((d) => d.vertices)));
+          if (!moves) continue;
+          moving++;
+          if (planted.some((p, i) => scannedDiff(pub[i], p, 'planted') !== null)) plantedRed++;
+          else plantedMissed++;
+        }
+      }
+      if (liveShared > 0) probes.push(`${liveShared} of ${arrays} vertex array(s) the live scan handed on were handed on by an earlier drawn row too`);
+      if (plantedMissed > 0) probes.push(`a poser reusing one buffer per slot read green on ${plantedMissed} walk(s) whose vertices move`);
+      probes.push(...floorProbes([[moving, 1, `${moving} walk(s) whose vertices move`], [plantedRed, 1, `${plantedRed} planted walk(s) read red`]], 'so the plant was not seen to fail'));
+      const ok = probes.length === 0;
+      say(
+        'CO45_THE_SCAN_HANDS_A10_EACH_POSES_OWN_VERTEX_ARRAYS_AND_A_POSER_REUSING_ONE_BUFFER_IS_READ_RED',
+        ok,
+        probeDetail(ok, probes, `${walks} walk(s) of the clipping probe and the gallery rows, each kept whole before it is read: ${arrays} vertex array(s) handed on, ${liveShared} of them shared with another row, every frame the public walk's numbers; a poser reusing one buffer per slot read red on ${plantedRed} of the ${moving} walk(s) whose vertices move`),
+        'issue #1179, the second part: without its copy the scan hands A10 arrays the walk made, which A10 keeps until the animation is walked; that holds only while each pose\'s arrays are its own',
       );
     }
   });

@@ -114,14 +114,14 @@
  * missing would draw a different picture in silence.
  */
 import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, underNoSkin, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
-import { posedBoneWorld, posedSlots, type TimelinePlant } from './animation.ts';
+import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type TimelinePlant } from './animation.ts';
 import { constraintsAbsentWhy, pathAnimationsWhy } from './constraints.ts';
 import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.ts';
 import { attachmentStates } from './deform.ts';
 import { drawOrderAt } from './draw_order.ts';
 import { eventsFired } from './events.ts';
-import { REGION_TRIANGLES, REGION_UVS, type ShapeClipper } from './clipping.ts';
-import { poseGeometry, type ShownGeometry } from './vertices.ts';
+import { REGION_TRIANGLES, REGION_UVS, type CoreClippedRow, type ShapeClipper } from './clipping.ts';
+import { poseGeometry, type CoreAttachmentRow, type CoreClipRow, type ShownGeometry } from './vertices.ts';
 import { RUNTIME_DEG, type CoreWorld } from './world.ts';
 import type { SliderApplication } from './constraints_slider.ts';
 
@@ -193,6 +193,43 @@ export interface RawPose {
    */
   shown: ShownGeometry[];
   // --- #968 render: end ---
+}
+
+/**
+ * One bone as the scan reads it (issue #1179, the second part): the world
+ * matrix and origin `RawBone` carries, and none of the readings it forms from
+ * them. `A10_NO_NAN_AFTER_STEPPING` reads these six numbers and the name off a
+ * bone, and nothing else (`firstNonFinite` in `src/nonfinite.ts`).
+ */
+export interface ScanBone {
+  name: string;
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  worldX: number;
+  worldY: number;
+}
+
+/**
+ * One pose as the scan reads it (issue #1179, the second part) — the scan's
+ * walk (`scanWalkIn`, `scanSetupIn`): the time the animation was applied at,
+ * and the bones, slot rows and drawn attachments computed exactly as a
+ * `RawPose`'s are. Internal to A10's walk (`./walk.ts`); no exported pose type
+ * changed for it.
+ */
+export interface ScanPose {
+  animationTime: number;
+  bones: ScanBone[];
+  slots: CoreSlotRow[];
+  drawn: ScanDrawn[];
+}
+
+/** One region or mesh drawn, as the scan reads it: its slot, its name and its world vertices, as `RawDrawn` carries them. */
+export interface ScanDrawn {
+  slot: string;
+  attachment: string;
+  vertices: number[];
 }
 
 // --- #968 render: begin ---
@@ -274,17 +311,96 @@ function rawBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>):
   });
 }
 
-/** Every region and mesh the shown records draw, with what the renderer reads past the vertices (the header's `drawn`). */
-function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode = RAW_MODE): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
+/**
+ * The bones of a scan pose (`ScanBone`): `rawBones` less the parent, the
+ * active flag and the four getter readings, which nothing the scan reads is
+ * computed from — each reading is formed from the world after it is posed,
+ * and the matrix and origin are copied as they are.
+ */
+function scanBones(doc: CompiledDocument, world: ReadonlyMap<string, CoreWorld>): ScanBone[] {
+  return doc.bones.map((b): ScanBone => {
+    const w = world.get(b.name);
+    if (w === undefined) throw new CoreInputError(`bone "${b.name}" has no world transform`);
+    return { name: b.name, a: w.a, b: w.b, c: w.c, d: w.d, worldX: w.worldX, worldY: w.worldY };
+  });
+}
+
+/**
+ * What a pose draws, posed and refused where the core leaves it out: the
+ * attachment rows, the clip rows and the drawn clipped rows — what `rawDrawn`
+ * and `scanDrawn` both assemble from.
+ */
+function drawnGeometry(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode): { rows: CoreAttachmentRow[]; clips: CoreClipRow[]; drawnClipped: CoreClippedRow[] } {
   const draw = drawWalkOf(doc, order, plant);
   const geometry = poseGeometry(shown, world, sourceOfDoc(doc), mode.keep ? keptNumber : rawNumber, { region: plant.region, vertices: plant.vertices }, mode.loop && plant.through === undefined ? { ...draw, through: NO_CLIPPED_ROWS } : draw);
   if (geometry.attachments === null) throw new CoreInputError(`the raw pose leaves the attachments out: ${geometry.attachmentsWhy}`);
   // The drawn rows (issue #964): the oracle's `clipped` rows where it is posed, and a concave or inverse clip cut through the core's own decomposition.
   if (geometry.drawnClipped === null) throw new CoreInputError(`the raw pose leaves the clipped triangles out: ${geometry.drawnClippedWhy}`);
+  return { rows: geometry.attachments, clips: geometry.clips, drawnClipped: geometry.drawnClipped };
+}
+
+/**
+ * The drawn attachments of a scan pose (`ScanDrawn`): `rawDrawn`'s rows, each
+ * its slot, its name and its world vertices through the same `numberOf`, and
+ * none of what `rawDrawn` reads past them for a renderer — the UVs and
+ * triangles it copies, the record it looks up for the colour and the sequence
+ * frame, the hull, the clip rows' numbers. No vertex is computed from any of
+ * those. The one refusal `rawDrawn` makes past the rows, a linked mesh whose
+ * source carries no mesh, is not reachable here: `poseGeometry` resolved the
+ * same source by the same lookup (`sourceOfDoc`) and throws before it returns.
+ *
+ * 🔁 **No copy of the vertices** (issue #1179, the second part): `rawDrawn`
+ * maps each row through `numberOf` into a new array; under `keep` that map is
+ * the identity on every number and turns only a `null` into NaN. The scan
+ * hands the row's own array on wherever it holds no `null` (`allNumbers`) and
+ * maps it as before where it does, so A10 reads the same values either way.
+ * What makes the row's array safe to keep past the step — A10 collects an
+ * animation's 120 frames before it scans one — is that it is the pose's own:
+ * `poseGeometry` (`./vertices.ts`) builds every row's vertices with
+ * `.map(round)` over the corners or the skinned vertices it just computed, a
+ * new array per attachment per pose, held by nothing but the row. The core
+ * suite's `CO45` plants a poser that hands every pose the same array and reads
+ * the retained frames red.
+ */
+function scanDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode, scanPlant: ScanPlant = {}): ScanDrawn[] {
+  const { rows } = drawnGeometry(doc, shown, world, order, plant, mode);
+  const drawn: ScanDrawn[] = [];
+  let k = 0;
+  for (const s of shown) {
+    const g = s.geometry;
+    if (g.kind !== 'region' && g.kind !== 'mesh' && g.kind !== 'linkedmesh') continue;
+    const row = rows[k++];
+    if (row === undefined || row[0] !== s.slot) throw new CoreInputError(`slot "${s.slot}": the attachment rows are not in the shown records' order`);
+    const vertices = row[3];
+    const kept = mode.keep && allNumbers(vertices) ? vertices : vertices.map((v) => numberOf(v, `vertex of slot "${s.slot}"`, mode));
+    drawn.push({ slot: s.slot, attachment: row[1], vertices: scanPlant.vertices === undefined ? kept : scanPlant.vertices(kept, s.slot) });
+  }
+  return drawn;
+}
+
+/** Whether a row's vertices hold no `null` — what `numberOf` would map — so the row's own array can be handed on as numbers. */
+function allNumbers(values: Array<number | null>): values is number[] {
+  for (const v of values) if (v === null) return false;
+  return true;
+}
+
+/**
+ * The scan's one plant (the core suite's `CO45`): what a drawn row's vertices
+ * are handed on as, given the array the scan would hand on. A poser that
+ * reuses one buffer per slot across steps is the plant `CO45` passes.
+ * Nothing but a control passes one.
+ */
+export interface ScanPlant {
+  vertices?: (vertices: number[], slot: string) => number[];
+}
+
+/** Every region and mesh the shown records draw, with what the renderer reads past the vertices (the header's `drawn`). */
+function rawDrawn(doc: CompiledDocument, shown: readonly ShownGeometry[], world: ReadonlyMap<string, CoreWorld>, order: readonly string[], plant: CorePlant, mode: WalkMode = RAW_MODE): { drawn: RawDrawn[]; clips: RawClip[]; clipped: RawClipped[] } {
+  const geometry = drawnGeometry(doc, shown, world, order, plant, mode);
   // Under a concave or inverse clip the oracle's `clipped` block is absent (the runtime's own triangle list); what the core draws is `drawnClipped`,
   // its own decomposition, and the render samples each drawn triangle at its source triangle's affine UV, so the pixels are the decomposition's
   // coverage alone (issue #964, `Mesh.source` in src/render.ts).
-  const rows = geometry.attachments;
+  const rows = geometry.rows;
   const drawn: RawDrawn[] = [];
   let k = 0;
   for (const s of shown) {
@@ -326,14 +442,27 @@ export function poseRawSetup(doc: CompiledDocument, plant: CorePlant = {}): RawP
 
 /** `poseRawSetup` in `mode` — under `keep`, a value that is not finite stays in the pose (`./walk.ts`). */
 export function setupPoseIn(doc: CompiledDocument, plant: CorePlant, mode: WalkMode): RawPose {
+  const { world, shown, slots, drawOrder } = setupPosed(doc, plant, mode);
+  const drawn = rawDrawn(doc, shown, world, drawOrder, plant, mode);
+  return { trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots, drawOrder, ...drawn, events: [], shown: drawOrderOf(shown, drawOrder) };
+}
+
+/** `setupPoseIn` as the scan reads it (`ScanPose`): the same setup pose, the same refusals in the same order, assembled into the scan's pose. */
+export function scanSetupIn(doc: CompiledDocument, plant: CorePlant, mode: WalkMode, scanPlant: ScanPlant = {}): ScanPose {
+  const { world, shown, slots, drawOrder } = setupPosed(doc, plant, mode);
+  const drawn = scanDrawn(doc, shown, world, drawOrder, plant, mode, scanPlant);
+  return { animationTime: 0, bones: scanBones(doc, world), slots, drawn };
+}
+
+/** The setup pose `setupPoseIn` and `scanSetupIn` assemble, refused by name where the core leaves a block of it out. */
+function setupPosed(doc: CompiledDocument, plant: CorePlant, mode: WalkMode): { world: Map<string, CoreWorld>; shown: ShownGeometry[]; slots: CoreSlotRow[]; drawOrder: string[] } {
   const posed = poseSetup(doc, { ...plant, ...roundPlant(mode) }, freshStepContext(plant.physicsStep));
   // `setup.clipped` is the oracle's block, left out under a concave or inverse clip whose triangle list is the runtime's own; what the core draws there is `rawDrawn`'s to refuse or pose (issue #964).
   const absent = posed.absent.filter(([block]) => block !== 'setup.clipped');
   if (absent.length > 0) throw new CoreInputError(`the raw setup pose leaves ${absent.map(([b, why]) => `${b} out (${why})`).join('; ')}`);
   const { setup, world, shown } = posed;
   if (world === null || shown === null || setup.slots === null || setup.drawOrder === null) throw new CoreInputError('the raw setup pose was not posed');
-  const drawn = rawDrawn(doc, shown, world, setup.drawOrder, plant, mode);
-  return { trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots: setup.slots, drawOrder: setup.drawOrder, ...drawn, events: [], shown: drawOrderOf(shown, setup.drawOrder) };
+  return { world, shown, slots: setup.slots, drawOrder: setup.drawOrder };
 }
 
 /**
@@ -361,7 +490,7 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
  * poses before it.
  */
 export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void): void {
-  walkEach(doc, animation, steps, plant, reset, RAW_MODE, visit);
+  walkEach(doc, animation, steps, plant, reset, RAW_MODE, RAW_SHAPE, visit);
 }
 
 /**
@@ -381,12 +510,81 @@ export function loopedTime(trackTime: number, duration: number): number {
  */
 export function walkIn(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode): RawPose[] {
   const poses: RawPose[] = [];
-  walkEach(doc, animation, steps, plant, reset, mode, (pose) => poses.push(pose));
+  walkEach(doc, animation, steps, plant, reset, mode, RAW_SHAPE, (pose) => poses.push(pose));
   return poses;
 }
 
-/** `walkIn`'s walk, each pose handed to `visit` in order as it is posed (`poseRawAnimationEach`). */
-function walkEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, visit: (pose: RawPose, index: number) => void): void {
+/**
+ * `walkIn` as the scan reads it (`ScanPose`, issue #1179, the second part):
+ * the same walk — every pose posed by the same operations in the same order,
+ * every refusal at the same place — each pose assembled into what A10 reads.
+ * `./walk.ts`'s `scanLoopingWalk` is its one caller.
+ */
+export function scanWalkIn(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, scanPlant: ScanPlant = {}): ScanPose[] {
+  const poses: ScanPose[] = [];
+  walkEach(doc, animation, steps, plant, reset, mode, scanPlant.vertices === undefined ? SCAN_SHAPE : scanShape(scanPlant), (pose) => poses.push(pose));
+  return poses;
+}
+
+/** What one step of a walk posed, before a pose is assembled from it (`PoseShape`). */
+interface WalkStep {
+  trackTime: number;
+  animationTime: number;
+  world: Map<string, CoreWorld>;
+  slots: CoreSlotRow[];
+  drawOrder: string[];
+  shown: ShownGeometry[];
+  /** The events the step fired, computed when called — after the drawn rows, as the raw entry has always ordered its refusals. */
+  events: () => RawEvent[];
+}
+
+/**
+ * What a walk assembles each pose into (issue #1179, the second part): the raw
+ * entry's whole pose (`RAW_SHAPE`), or the scan's (`SCAN_SHAPE`). The walk
+ * (`walkEach`) is one body: every number a pose carries is computed there and
+ * in the two assemblers below, by the same calls, whatever the shape. A shape
+ * chooses only what is assembled from what was posed — the scan drops the
+ * readings, rows and copies nothing it reads is computed from — and keeps the
+ * order of every call that can refuse.
+ */
+interface PoseShape<P> {
+  /** Whether a step forms the oracle's bone rows beside its world (`posedBoneWorld`), which no walk pose carries; `false` poses the world alone (`posedBoneWorldAlone`). */
+  rows: boolean;
+  /** The reset pose at the setup (`reset: 'setup'`). */
+  setup: (doc: CompiledDocument, world: Map<string, CoreWorld>, slots: CoreSlotRow[], drawOrder: string[], shown: ShownGeometry[], plant: CorePlant, mode: WalkMode) => P;
+  /** One step's pose. */
+  step: (doc: CompiledDocument, posed: WalkStep, plant: CorePlant, mode: WalkMode) => P;
+}
+
+/** The raw entry's pose, assembled as it always was: at the reset the bones, then the drawn rows; at a step the drawn rows, the events, then the bones. */
+const RAW_SHAPE: PoseShape<RawPose> = {
+  rows: true,
+  setup: (doc, world, slots, drawOrder, shown, plant, mode) => ({ trackTime: 0, animationTime: 0, bones: rawBones(doc, world), slots, drawOrder, ...rawDrawn(doc, shown, world, drawOrder, plant, mode), events: [], shown: drawOrderOf(shown, drawOrder) }),
+  step: (doc, p, plant, mode) => {
+    const drawn = rawDrawn(doc, p.shown, p.world, p.drawOrder, plant, mode);
+    const events = p.events();
+    return { trackTime: p.trackTime, animationTime: p.animationTime, bones: rawBones(doc, p.world), slots: p.slots, drawOrder: p.drawOrder, ...drawn, events, shown: p.shown };
+  },
+};
+
+/** The scan's pose (`ScanPose`), in the raw shape's order: the scan's walk is a looping one, which fires no event. */
+function scanShape(scanPlant: ScanPlant): PoseShape<ScanPose> {
+  return {
+    rows: false,
+    setup: (doc, world, slots, drawOrder, shown, plant, mode) => {
+      const bones = scanBones(doc, world);
+      return { animationTime: 0, bones, slots, drawn: scanDrawn(doc, shown, world, drawOrder, plant, mode, scanPlant) };
+    },
+    step: (doc, p, plant, mode) => {
+      const drawn = scanDrawn(doc, p.shown, p.world, p.drawOrder, plant, mode, scanPlant);
+      return { animationTime: p.animationTime, bones: scanBones(doc, p.world), slots: p.slots, drawn };
+    },
+  };
+}
+const SCAN_SHAPE: PoseShape<ScanPose> = scanShape({});
+
+/** `walkIn`'s walk, each pose assembled in `shape` and handed to `visit` in order as it is posed (`poseRawAnimationEach`). */
+function walkEach<P>(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, visit: (pose: P, index: number) => void): void {
   const anim = doc.animations.find((a) => a.name === animation);
   if (anim === undefined) throw new CoreInputError(`animation "${animation}" is not one of this document's [${doc.animations.map((a) => a.name).join(', ')}]`);
   const bad = steps.findIndex((s) => !Number.isFinite(s) || s < 0);
@@ -408,7 +606,7 @@ function walkEach(doc: CompiledDocument, animation: string, steps: readonly numb
     if (absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
     if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
     ctx.phase = 'update';
-    visit({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant, mode), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) }, visited++);
+    visit(shape.setup(doc, setup.world, setup.setup.slots, setup.setup.drawOrder, setup.shown, plant, mode), visited++);
   }
   for (let i = reset === 'setup' ? 1 : 0; i <= steps.length; i++) {
     const dt = i === 0 ? 0 : steps[i - 1];
@@ -417,7 +615,7 @@ function walkEach(doc: CompiledDocument, animation: string, steps: readonly numb
     const before = ctx.time;
     ctx.time += mode.clock === undefined ? dt : mode.clock(dt, t - (i === 0 ? 0 : Math.max(last, 0)));
     const sliders: SliderApplication[] = [];
-    const posed = posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before });
+    const world = shape.rows ? posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before }).world : posedBoneWorldAlone(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before });
     if (i === 0) ctx.phase = 'update';
     const placeholders = new Map<string, string | null>();
     const slots = posedSlots(doc, anim.timelines, t, raw, sliders, placeholders);
@@ -430,12 +628,13 @@ function walkEach(doc: CompiledDocument, animation: string, steps: readonly numb
     if (states.why.length > 0) throw new CoreInputError(`the raw walk leaves the attachments out: ${states.why.join('; ')}`);
     const rank = new Map(drawOrder.map((n, r) => [n, r]));
     const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
-    const drawn = rawDrawn(doc, shown, posed.world, drawOrder, plant, mode);
     // A looping walk fires no event here: what fires across the wrap was not measured, and the walk's one reader (A10) reads none. Nor does it cut its
     // drawn attachments through a clip (`NO_CLIPPED_ROWS`), so its `clipped` rows are empty.
-    const events = mode.loop ? [] : (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
+    const from = last;
+    const events = (): RawEvent[] => (mode.loop ? [] : (plant.events ?? eventsFired)(anim.timelines.events, from, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]));
+    const pose = shape.step(doc, { trackTime, animationTime: t, world, slots: slots.rows, drawOrder, shown, events }, plant, mode);
     last = t;
-    visit({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown }, visited++);
+    visit(pose, visited++);
   }
 }
 

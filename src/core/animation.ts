@@ -798,6 +798,17 @@ export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTi
 }
 
 /**
+ * `posedBoneWorld`'s world transforms without its rows (issue #1179, the
+ * second part): the same pose by the same operations in the same order, since
+ * `stepRows` only reads the world once it is posed. A walk reads `world` and
+ * no row, so the scan's walk (`scanWalkIn` in `./raw.ts`, A10's) asks for
+ * this; the raw entry's walk still forms the rows it does not read, unchanged.
+ */
+export function posedBoneWorldAlone(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: { ctx: PhysicsStepContext; before: number } | undefined): Map<string, CoreWorld> {
+  return posedBoneStep(doc, timelines, t, plant, constraints, sliders, step).world;
+}
+
+/**
  * One pose of the bones before its rows are read: the world transforms, and
  * what the rows are rounded from. A stepped walk reads rows only off the step
  * that lands on a sample (issue #1134: of the stepped run's poses, nine in ten
