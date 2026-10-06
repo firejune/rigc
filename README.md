@@ -688,7 +688,13 @@ bun tools/editor_roundtrip.ts --build build/ --editor /Applications/Spine.app/Co
 Of the editor's `--version` it records one line, the `Spine <x.y.z> …` line that
 carries the version, and nothing else that command prints — the rest of it
 names the licence holder — or `editor version: not found in --version output`
-where no such line is there. It prints the import and export exit codes, the
+where no such line is there. That call carries the same `-u` as the import and
+the export, so a trip pinned with `--editor-version <v>` names the editor it
+pinned and says so on the line (`(read from --version under -u <v>, …)`); an
+unpinned trip names the launcher's default. Once the export exists the version
+is held against the export's own `skeleton.spine`, and a disagreement is a FAIL
+naming both values — the line would otherwise name an editor the trip did not
+run on. It prints the import and export exit codes, the
 validator's verdict on the export, every `diff` measure that moved, `check`'s mean MAE and worst drift per
 animation **for each skin the build and the export both declare** — one
 render-and-check block per skin, with a per-skin roll-up under them, because a
