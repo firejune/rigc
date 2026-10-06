@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.15.0](https://github.com/firejune/rigc/compare/v2.14.1...v2.15.0) (2026-10-06)
+
+
+### Features
+
+* **validate:** an ik over more than two bones, or over a pair whose second bone is not the first's child, is refused by name — by the rig-spec parser and as a clause of A47 ([#1208](https://github.com/firejune/rigc/issues/1208)) ([936c1e1](https://github.com/firejune/rigc/commit/936c1e16484c598c99f998f40984c9900203d6c9)), closes [#1205](https://github.com/firejune/rigc/issues/1205)
+
+
+### Bug Fixes
+
+* **tools:** editor_roundtrip reads the editor's version under the trip's own -u and holds it against the export's skeleton.spine, failing by name when they disagree ([#1206](https://github.com/firejune/rigc/issues/1206)) ([65cbab3](https://github.com/firejune/rigc/commit/65cbab3eccd8a711d7381882f15a6087f599085c)), closes [#1199](https://github.com/firejune/rigc/issues/1199)
+
 ## [2.14.1](https://github.com/firejune/rigc/compare/v2.14.0...v2.14.1) (2026-10-06)
 
 
