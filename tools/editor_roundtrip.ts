@@ -20,6 +20,22 @@
  * It ran from a shell script in a local scratch directory. A tool nobody can
  * find is not a tool, hence this file.
  *
+ * ## Which editor the report names
+ *
+ * Step 0's version line is the one place the report says which editor the trip
+ * ran on. It is read from the editor's `--version` started with the SAME `-u`
+ * the import and the export carry (`--editor-version`), so a pinned run names
+ * the pinned editor, and says so on that line: `(read from --version under -u
+ * <v>, …)`. An unpinned run prints the line alone, read from `--version` with no
+ * `-u` — the editor the launcher starts by default. Once the export exists,
+ * step 2 holds that version against the export's own `skeleton.spine`, prints
+ * one line saying which it read and that the two agree, and when they DISAGREE
+ * prints a `FAIL` naming both values and ends the run non-zero: a version line
+ * that names an editor the trip did not export on is a fault in the instrument,
+ * and a green run carrying it would be a measurement naming the wrong
+ * instrument (issue #1199, where a bare `--version` named the launcher's
+ * default, 4.3.26, on a trip pinned to and exported by 4.3.23).
+ *
  * ## What it is not
  *
  * 🔒 **It is not a way to get Spine data without the editor** — it is the
@@ -182,10 +198,82 @@ function bundleName(plist: string): string | null {
  */
 const EDITOR_VERSION_LINE = /^Spine[ \t]+\d+\.\d+\.\d+\b[^\n]*$/m;
 
-/** What step 0 prints for the editor's version: its own line, or a sentence saying it was not there. */
-function editorVersionLine(output: string): string {
-  const line = EDITOR_VERSION_LINE.exec(output);
-  return line === null ? 'editor version: not found in --version output' : line[0].trim();
+/**
+ * What step 0 prints for the editor's version — its own line, or a sentence
+ * saying it was not there — and the `x.y.z` that line names, which is what the
+ * export's own `skeleton.spine` is checked against once the export exists
+ * (issue #1199). `version` is null exactly when `line` is the absence.
+ */
+function editorVersion(output: string): { line: string; version: string | null } {
+  const found = EDITOR_VERSION_LINE.exec(output);
+  if (found === null) return { line: 'editor version: not found in --version output', version: null };
+  return { line: found[0].trim(), version: /^Spine[ \t]+(\d+\.\d+\.\d+)/.exec(found[0])?.[1] ?? null };
+}
+
+/**
+ * Where step 0 read the editor's version, in the words the report prints it in
+ * (issue #1199): the `--version` call, and the `-u` it carried or the absence of
+ * one — which on an unpinned run means the editor the launcher starts by default.
+ */
+function versionSource(pinned: string | null): string {
+  return pinned === null
+    ? "read from --version with no -u: the editor the launcher starts by default"
+    : `read from --version under -u ${pinned}, the pin every editor call of this trip carries`;
+}
+
+/**
+ * The `skeleton.spine` an export declares, or null when it declares none or the
+ * file cannot be read as a skeleton — read off the FILE, as `shapeOf` reads it,
+ * because it is the editor's own statement of the data version it exported.
+ * Null is not swallowed: the caller states that nothing was there to check.
+ */
+function declaredSpineVersion(path: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || !isRecord(parsed.skeleton)) return null;
+    const spine = parsed.skeleton.spine;
+    return typeof spine === 'string' ? spine : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The line step 2 prints once the export exists: the version step 0 read held
+ * against the export's own `skeleton.spine` (issue #1199). `fail` is true only
+ * when both are there and differ — a disagreement is a finding about the
+ * INSTRUMENT, not a pass, so it fails the trip; a side with nothing to compare is
+ * stated and fails nothing, the way an absent version line has never been a
+ * refusal (#1077).
+ */
+export function versionAgreement(
+  read: string | null,
+  pinned: string | null,
+  declared: string | null,
+): { line: string; fail: boolean } {
+  const source = versionSource(pinned);
+  if (declared === null) {
+    return {
+      line: `  the export declares no skeleton.spine, so the version step 0 ${read === null ? 'did not find' : `read (${read}, ${source})`} is not checked against it`,
+      fail: false,
+    };
+  }
+  if (read === null) {
+    return {
+      line: `  the export declares skeleton.spine "${declared}"; step 0 found no version line (${source}) to check it against`,
+      fail: false,
+    };
+  }
+  if (read === declared) {
+    return { line: `  the export declares skeleton.spine "${declared}", the version step 0 read (${source})`, fail: false };
+  }
+  return {
+    line:
+      `  FAIL  step 0 read the editor as ${read} (${source}) and the export declares skeleton.spine "${declared}" — ` +
+      'the version line names an editor this trip did not export on, which is a fault in the instrument rather ' +
+      'than in the rig, so the trip is not green',
+    fail: true,
+  };
 }
 
 /** The trial naming itself in its own `--version` output, or null. */
@@ -1286,6 +1374,10 @@ function main(): void {
   emit(`  ${run(rigc.cmd, [...rigc.prefix, '--version'], 60).stdout.trim()}`);
 
   let exportedJson: string;
+  /** The `x.y.z` step 0 read off the editor, held against the export at step 2 (issue #1199). */
+  let editorRead: string | null = null;
+  /** True when the export's `skeleton.spine` and step 0's version both exist and differ. */
+  let versionDisagrees = false;
   if (opts.exported !== null) {
     exportedJson = opts.exported;
     emit(`  editor   NOT RUN — measuring an export the editor already made: ${opts.exported}`);
@@ -1309,16 +1401,26 @@ function main(): void {
     const named = trialSignalsFromPath(opts.editor);
     if (named.length > 0) fail(trialRefusal(opts.editor, named));
 
-    const ver = run(opts.editor, ['--version'], 60);
+    const pin = opts.editorVersion === null ? [] : ['-u', opts.editorVersion];
+    // 🚨 Under the same `-u` the import and the export carry (issue #1199). The
+    // call used to be a bare `--version`, which names the editor the LAUNCHER
+    // starts by default: measured 2026-10-07 on a launcher whose default is
+    // 4.3.26, a trip pinned with `-u 4.3.23` exported `"spine": "4.3.23"` and
+    // step 0 printed `Spine 4.3.26 Professional` — the one line that says which
+    // editor the trip ran on, naming one it did not run on.
+    const ver = run(opts.editor, [...pin, '--version'], 60);
     emit(`  editor   ${opts.editor}`);
     // One line, never the output's tail: the tail is the licensee's (issue #1077).
-    emit(`           ${editorVersionLine(`${ver.stdout}\n${ver.stderr}`)}`);
+    // A pinned run says where the line came from; an unpinned run prints the line
+    // alone, as it always has, and step 2 states its source beside the export's.
+    const stated = editorVersion(`${ver.stdout}\n${ver.stderr}`);
+    editorRead = stated.version;
+    emit(`           ${stated.line}${opts.editorVersion === null ? '' : `  (${versionSource(opts.editorVersion)})`}`);
     // The second signal, and the only one that works on a platform whose trial
     // path this repository has never seen: the binary's own banner. It costs no
     // extra call — `--version` above is one the tool already made.
     const introduced = trialSignalFromVersion(`${ver.stdout}\n${ver.stderr}`);
     if (introduced !== null) fail(trialRefusal(opts.editor, [introduced]));
-    const pin = opts.editorVersion === null ? [] : ['-u', opts.editorVersion];
 
     emit('');
     emit('## 1 import  (json -> project)');
@@ -1353,6 +1455,11 @@ function main(): void {
       );
     }
     exportedJson = join(opts.out, 'export', written[0]);
+    // 🔒 The version line checked against what the trip measured, once there is
+    // an export to read (issue #1199): the editor's own `skeleton.spine`.
+    const agreement = versionAgreement(editorRead, opts.editorVersion, declaredSpineVersion(exportedJson));
+    emit(agreement.line);
+    versionDisagrees = agreement.fail;
   }
 
   // The candidate: the export beside the build's atlas and pages, which were
@@ -1518,7 +1625,9 @@ function main(): void {
   // The verdict is the gate's and EVERY skin's check, not this tool's opinion of
   // them: one skin coming back wrong is the whole run coming back wrong, which
   // is the half a single un-skinned check could not say.
-  process.exit(gate.status === 0 && checksClean && rosterClean ? 0 : 1);
+  // A version line that disagrees with the export is red too (issue #1199): the
+  // report would otherwise name an editor the trip did not run on, green.
+  process.exit(gate.status === 0 && checksClean && rosterClean && !versionDisagrees ? 0 : 1);
 }
 
 // ⭐ Guarded so `shapeOf`, `shapeDiff`, `skinsDeclaredBy` and `skinBlocks` can be

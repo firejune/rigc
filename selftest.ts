@@ -57543,6 +57543,194 @@ function runEditorRoundtripSuite(): number {
       "ERT84's reading is a predicate over the run, and one that has never seen the editor started, a stack or a " +
         'file measured to the end could be reading nothing',
     );
+
+    // --- ERT87-89: which editor step 0 names on a pinned run — issue #1199 ----
+    //
+    // 🚨 Step 0 read the editor's version with a bare `--version`, while the
+    // import and the export carried `-u <v>`. Measured 2026-10-07: on a launcher
+    // whose default is 4.3.26, a trip pinned to 4.3.23 exported `"spine":
+    // "4.3.23"` and step 0 printed `Spine 4.3.26 Professional`. The stub below
+    // is that launcher's shape: `--version` names its DEFAULT unless `-u` picks
+    // another, and an export declares whatever export file the version it was
+    // started under is mapped to — so whether the line follows the pin, and
+    // whether a disagreement with the export is caught, are both answerable with
+    // no editor. Placeholder versions and a placeholder licence block throughout.
+    //
+    // ⭐ ERT89 plants the bare `--version` back into a copy and requires ERT87's
+    // own reading to call the pinned run red by name. The copy is also pointed
+    // at this checkout's `cli.ts`, a neutral rewrite: the copy sits outside
+    // `tools/`, and the tool otherwise falls back to an INSTALLED `rigc` for
+    // steps 3-6, which is not the program under test.
+    const DEFAULT_V = '4.3.98';
+    const PINNED_V = '4.3.97';
+    const OTHER_V = '4.3.96';
+    const pinRoot = join(root, 'pin');
+    mkdirSync(pinRoot, { recursive: true });
+    let pinRuns = 0;
+    /**
+     * A launcher stub. `exportsBy` maps the version the call was started under
+     * to the `skeleton.spine` its export declares; a version absent from it
+     * exports nothing.
+     */
+    const pinStub = (label: string, exportsBy: Record<string, string>): string => {
+      const bundle = join(pinRoot, label, 'Spine.app');
+      const editor = join(bundle, 'Contents', 'MacOS', 'Spine');
+      const exportsDir = join(pinRoot, label, 'exports');
+      mkdirSync(exportsDir, { recursive: true });
+      for (const [startedAs, declares] of Object.entries(exportsBy)) {
+        const skeleton = JSON.parse(readFileSync(okSkeleton, 'utf8')) as { skeleton: { spine?: string } };
+        skeleton.skeleton.spine = declares;
+        writeFileSync(join(exportsDir, `${startedAs}.json`), `${JSON.stringify(skeleton, null, 2)}\n`);
+      }
+      writeStubEditor(editor, join(pinRoot, `${label}-ran`), [], [
+        `v='${DEFAULT_V}'`,
+        'if [ "$1" = "-u" ]; then v="$2"; shift 2; fi',
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'Spine Launcher 4.3.08 (macOS Apple Silicon)'",
+        "  echo 'Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com'",
+        "  echo 'Mac OS X aarch64 99.9.9'",
+        '  echo "Starting: Spine $v Professional"',
+        '  echo "Spine $v Professional"',
+        "  echo 'Licensed to:'",
+        `  echo '${licensee}'`,
+        `  echo '${licenseeMail}'`,
+        "  echo 'Complete.'",
+        '  exit 0',
+        'fi',
+        'if [ "$5" = "-r" ]; then : > "$4"; exit 0; fi',
+        `if [ "$5" = "-e" ]; then cp '${exportsDir}/'"$v"'.json' "$4/skeleton.json" || exit 1; exit 0; fi`,
+        'exit 1',
+      ]);
+      writeBundlePlist(bundle, 'Spine');
+      return editor;
+    };
+    const pinTrip = (
+      tool: string,
+      editor: string,
+      pinned: string | null,
+    ): { status: number | null; stdout: string; stderr: string; log: string; step0: string[]; step2: string[] } => {
+      const out = join(pinRoot, `out-${pinRuns++}`);
+      const r = spawnSync(
+        process.execPath,
+        [tool, '--build', okBuild, '--out', out, '--editor', editor, ...(pinned === null ? [] : ['--editor-version', pinned])],
+        { cwd: import.meta.dir, encoding: 'utf8' },
+      );
+      const log = logOf(out);
+      return {
+        status: r.status,
+        stdout: r.stdout,
+        stderr: r.stderr,
+        log,
+        step0: reportBlock(r.stdout, '## 0 versions').map((l) => l.trim()),
+        step2: reportBlock(r.stdout, '## 2 export').map((l) => l.trim()),
+      };
+    };
+    const lineOf = (v: string): string => `Spine ${v} Professional`;
+    const sourcePinned = (v: string): string => `(read from --version under -u ${v}, the pin every editor call of this trip carries)`;
+    const sourceUnpinned = "(read from --version with no -u: the editor the launcher starts by default)";
+    const agrees = (v: string, source: string): string => `the export declares skeleton.spine "${v}", the version step 0 read ${source}`;
+    /**
+     * ERT87's reading of a pinned run: null when step 0 names the pinned
+     * version and says where it read it, step 2 says the export agrees, the run
+     * is green and nothing of the licence block reached it — else the first
+     * thing that is not, naming the version step 0 printed.
+     */
+    const pinnedReading = (r: ReturnType<typeof pinTrip>): string | null => {
+      const versionLines = r.step0.filter((l) => /^Spine \d/.test(l));
+      if (!r.step0.includes(`${lineOf(PINNED_V)}  ${sourcePinned(PINNED_V)}`)) {
+        return `step 0 printed ${JSON.stringify(versionLines)} on a run pinned to ${PINNED_V}`;
+      }
+      if (!r.step2.includes(agrees(PINNED_V, sourcePinned(PINNED_V)))) {
+        return `step 2 printed ${JSON.stringify(r.step2.slice(1))}, not the export's agreement with ${PINNED_V}`;
+      }
+      const leaks = [licensee, licenseeMail, 'Licensed to'].filter((t) => `${r.stdout}\n${r.stderr}\n${r.log}`.includes(t));
+      if (leaks.length > 0) return `the licence block reached the run: ${JSON.stringify(leaks)}`;
+      if (r.status !== 0) return `exit=${String(r.status)}: ${JSON.stringify(r.stderr.trim().split('\n').pop()?.slice(0, 120) ?? '')}`;
+      return null;
+    };
+    const twoVersions = built.status === 0 ? pinStub('two-versions', { [DEFAULT_V]: DEFAULT_V, [PINNED_V]: PINNED_V }) : null;
+    const pinnedRun = twoVersions === null ? null : pinTrip(tool, twoVersions, PINNED_V);
+    const unpinnedRun = twoVersions === null ? null : pinTrip(tool, twoVersions, null);
+    const pinnedWhy = pinnedRun === null ? `the build was refused (exit ${String(built.status)})` : pinnedReading(pinnedRun);
+    const unpinnedProbes =
+      unpinnedRun === null
+        ? ['the unpinned run was not taken']
+        : [
+            ...(unpinnedRun.step0.includes(lineOf(DEFAULT_V)) ? [] : [`unpinned step 0 printed ${JSON.stringify(unpinnedRun.step0.filter((l) => /^Spine \d/.test(l)))}, not "${lineOf(DEFAULT_V)}" alone`]),
+            ...(unpinnedRun.step2.includes(agrees(DEFAULT_V, sourceUnpinned)) ? [] : [`unpinned step 2 printed ${JSON.stringify(unpinnedRun.step2.slice(1))}`]),
+            ...(unpinnedRun.status === 0 ? [] : [`unpinned exit=${String(unpinnedRun.status)}`]),
+          ];
+    say(
+      'ERT87_A_PINNED_TRIP_NAMES_THE_EDITOR_ITS_PIN_STARTED_AND_THE_EXPORT_AGREES',
+      pinnedWhy === null && unpinnedProbes.length === 0,
+      `pinned to ${PINNED_V} on a launcher whose default is ${DEFAULT_V}: ${pinnedWhy ?? `step 0 "${lineOf(PINNED_V)}" with its source, the export agrees, exit 0`}; ` +
+        `unpinned: ${unpinnedProbes.length === 0 ? `step 0 "${lineOf(DEFAULT_V)}" alone, as before #1199, the export agrees, exit 0` : unpinnedProbes.join('; ')}`,
+      'the version line is the one place the report names the editor the trip ran on, and a bare `--version` names ' +
+        "the launcher's default however the trip was pinned — measured: a 4.3.23 trip reported 4.3.26. The unpinned " +
+        'half is the line as it always was, so the fix is held to moving only the pinned run',
+    );
+
+    // ERT88 — the instrument disagreeing with itself: `--version` under the pin
+    // names it, and the export the same pin produced declares another version.
+    // The sentence names both and the run is not green — and nothing ELSE is red,
+    // so the exit is the disagreement's.
+    const mismatched = built.status === 0 ? pinStub('mismatched', { [PINNED_V]: OTHER_V }) : null;
+    const mismatch = mismatched === null ? null : pinTrip(tool, mismatched, PINNED_V);
+    const disagreement =
+      `FAIL  step 0 read the editor as ${PINNED_V} ${sourcePinned(PINNED_V)} and the export declares skeleton.spine ` +
+      `"${OTHER_V}" — the version line names an editor this trip did not export on, which is a fault in the ` +
+      'instrument rather than in the rig, so the trip is not green';
+    const mismatchProbes =
+      mismatch === null
+        ? [`the build was refused (exit ${String(built.status)})`]
+        : [
+            ...(mismatch.step2.includes(disagreement) ? [] : [`step 2 printed ${JSON.stringify(mismatch.step2.slice(1))}`]),
+            ...(mismatch.status === 1 ? [] : [`exit=${String(mismatch.status)}`]),
+            ...(reportBlock(mismatch.stdout, '## 3 validate').some((l) => l.trim() === 'exit=0') ? [] : ['the gate on the export was not green, so the exit is not the disagreement\'s alone']),
+            ...(mismatch.stdout.split('\n').filter((l) => l.trim().startsWith('FAIL')).length === 1 ? [] : ['a FAIL other than the disagreement was printed']),
+            ...(logOf(join(pinRoot, `out-${pinRuns - 1}`)).includes(disagreement) ? [] : ['roundtrip.log does not carry the disagreement']),
+          ];
+    say(
+      'ERT88_AN_EXPORT_DECLARING_ANOTHER_VERSION_THAN_STEP_0_READ_IS_A_NAMED_FAILURE_AND_THE_TRIP_IS_NOT_GREEN',
+      mismatchProbes.length === 0,
+      probeDetail(
+        mismatchProbes.length === 0,
+        mismatchProbes,
+        `step 2 named ${PINNED_V} read under -u and "${OTHER_V}" declared by the export, the gate on the export was ` +
+          'green, the disagreement is the run\'s only FAIL, and the run exited 1',
+      ),
+      'a version line the export contradicts names an instrument the trip did not use, and printing it on a green ' +
+        'run is the defect #1199 found with a different cause — the export is what the trip measured, so it is the ' +
+        'reading the line is held to',
+    );
+
+    // ERT89 — the plant: the bare `--version` back, in a copy. ERT87's reading
+    // must call the pinned run red by naming the launcher's default.
+    const pinPlants: Array<[string, string]> = [
+      ["const ver = run(opts.editor, [...pin, '--version'], 60);", "const ver = run(opts.editor, ['--version'], 60);"],
+      ["const local = join(import.meta.dir, '..', 'cli.ts');", `const local = ${JSON.stringify(join(import.meta.dir, 'cli.ts'))};`],
+    ];
+    const pinAnchors = pinPlants.map(([anchor]) => ({ anchor, count: original.split(anchor).length - 1 }));
+    const pinAnchored = pinAnchors.every((a) => a.count === 1);
+    const pinPlanted = join(root, 'planted-pin', 'editor_roundtrip.ts');
+    mkdirSync(dirname(pinPlanted), { recursive: true });
+    writeFileSync(pinPlanted, pinPlants.reduce((text, [anchor, plant]) => text.replace(anchor, plant), original));
+    const plantedRun = pinAnchored && twoVersions !== null ? pinTrip(pinPlanted, twoVersions, PINNED_V) : null;
+    const plantedWhy = plantedRun === null ? null : pinnedReading(plantedRun);
+    const plantedNamesDefault = plantedWhy !== null && plantedWhy.includes(lineOf(DEFAULT_V));
+    const plantedDisagrees =
+      plantedRun !== null && plantedRun.step2.some((l) => l.startsWith(`FAIL  step 0 read the editor as ${DEFAULT_V} `)) && plantedRun.status === 1;
+    say(
+      'ERT89_THE_BARE_VERSION_CALL_PLANTED_BACK_NAMES_THE_LAUNCHERS_DEFAULT_AND_ERT87_READS_IT_RED',
+      pinAnchored && plantedNamesDefault && plantedDisagrees,
+      !pinAnchored
+        ? `the plant's anchors occur ${pinAnchors.map((a) => `${JSON.stringify(a.anchor)} ${a.count} time(s)`).join(', ')} in ` +
+            'tools/editor_roundtrip.ts, not once each — nothing was planted'
+        : `planted: ERT87 reads ${plantedWhy === null ? 'GREEN' : `red — ${plantedWhy}`}; step 2 names the disagreement ` +
+            `with ${DEFAULT_V} and exits 1 = ${plantedDisagrees}`,
+      "ERT87's reading is a predicate over step 0, and one that has never seen the launcher's default printed on a " +
+        'pinned run could be reading nothing — this is the defect itself, put back',
+    );
   }
 
   // --- ERT18: step 5 renders and checks every skin — issue #571 --------------
