@@ -120,7 +120,13 @@ they were read at (`TY40`), each suite's heaviest child held under its own
 figure times `CHILDREN_MARGIN`. A platform with no entry, or no children's
 figures, is a `SKIP` naming the command that writes them: `bun selftest.ts
 --memory-base` on a green one-process full run at `--jobs 2` or more writes
-both halves. Never type them. A shard holds its own figures and the merge
+both halves. Never type them. `TY40`'s plant is a `SKIP` too, never a `FAIL`,
+when the driver read its peak below what its unit reports having written
+(issue #1185): under memory pressure macOS compresses or swaps written pages
+out of the resident set, which is all `maxRSS` counts, so that run did not
+register the plant. The line states the figure held, the figure read, the
+platform and, on darwin, the unit's own `phys_footprint`, which counts those
+pages. A shard holds its own figures and the merge
 holds every shard's. The children's figures have a second writer, because a
 child's peak is its own process's whichever shard started it: `bun selftest.ts
 --merge <file>… --memory-base-children [<file>]` writes only the children's
