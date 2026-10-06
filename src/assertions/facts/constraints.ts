@@ -56,7 +56,19 @@ export interface ConstraintEntry {
   readonly name: string;
   /** The runtime class the constraint updates as (`IkConstraint`, `Slider`, …) — the word A42's sentence names `update` on. */
   readonly runtimeClass: string;
-  readonly physics?: { readonly bone: string; readonly components: PhysicsComponents; readonly setup: PhysicsSetup; readonly step: number };
+  readonly physics?: {
+    readonly bone: string;
+    /**
+     * The bone's `length`, as the runtime holds it after its parse (0 where the
+     * file leaves it out) — the lever a `rotate`, `shearX` or `scaleX` drive is
+     * stepped with (issue #1195): the tip `length·(a, c)` the rotation chases,
+     * and the radius the along-bone motion is divided by for `scaleX`.
+     */
+    readonly boneLength: number;
+    readonly components: PhysicsComponents;
+    readonly setup: PhysicsSetup;
+    readonly step: number;
+  };
   readonly path?: { readonly bones: readonly string[]; readonly slot: string; readonly setup: { readonly mixRotate: number; readonly mixX: number; readonly mixY: number } };
   readonly slider?: {
     /** The animation it applies — its name, how many timelines it carries and its duration — or `null` when it applies none. */

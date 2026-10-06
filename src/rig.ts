@@ -315,7 +315,12 @@ export interface RigBone {
   name: string;
   /** Omitted only by the skeleton's single root bone. */
   parent?: string;
-  /** Default 0. Cosmetic in a renderer; part of a faithful reproduction. */
+  /**
+   * Default 0. Drawing reads it nowhere, but a physics constraint driving
+   * `rotate`, `shearX` or `scaleX` on this bone steps off its tip — `length`
+   * along the bone's x axis is the solver's lever — so a length of 0 there is
+   * refused by `A23_PHYSICS_CONSTRAINT_EFFECTIVE` (issue #1195).
+   */
   length?: number;
   /** Local to the parent. Default 0. Supplied by `from` when that is given. */
   x?: number;

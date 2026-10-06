@@ -25,7 +25,7 @@
     { "name": "lock_r", "parent": "head", "x": 150, "y": -80 },
 
     { "name": "ahoge", "parent": "head", "x": -8, "y": 205 },
-    { "name": "ahoge_whip", "parent": "ahoge", "x": -16, "y": -55 },
+    { "name": "ahoge_whip", "parent": "ahoge", "x": -16, "y": -55, "length": 66 },
 
     { "name": "faceshift", "parent": "head" },
 

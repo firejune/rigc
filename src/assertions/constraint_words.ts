@@ -21,7 +21,10 @@ import type { RigInfo } from '../types.ts';
  * two rules is the thing most worth keeping true: A23 fires when the driven set
  * is EMPTY, A41 when it contains something outside `EDITOR_PHYSICS_COMPONENTS`.
  * Written against one array those conditions cannot both hold on one constraint,
- * and a reader can see that they cannot. Two copies of the vocabulary could
+ * and a reader can see that they cannot. (A23's other clause about components,
+ * a `rotate`, `shearX` or `scaleX` drive on a bone of length 0 — issue #1195 —
+ * reads the bone as well, and can name a constraint A41 also names: two facts
+ * about one constraint, not one fact refused twice.) Two copies of the vocabulary could
  * drift into overlapping, and a rig refused twice for one fact is a report that
  * has stopped saying what is wrong with it.
  *

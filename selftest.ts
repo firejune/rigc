@@ -5701,7 +5701,115 @@ const ARTICULATED_MUTANTS: Mutant[] = [
       }),
     }),
   },
+  // ─── a lever drive on a bone with no lever (issue #1195) ──────────────────
+  //
+  // The fixture's first physics constraint (`mass_a_settle`) drives `x` and `y`
+  // on `mass_a`, which states no `length` — the case that must stay accepted
+  // (`M98e`). Each break switches one lever component on and leaves the bone at
+  // 0; `M98d` gives the same bone a length and switches all three on, which the
+  // clause must let past. The sentence is the product, so each break holds the
+  // whole of it rather than the code alone.
+  leverMutant('M98_rotate_physics_on_a_zero_length_bone_is_aimed_at_world_0', 'rotate'),
+  leverMutant('M98b_shearx_physics_on_a_zero_length_bone_is_aimed_at_world_0', 'shearX'),
+  leverMutant('M98c_scalex_physics_on_a_zero_length_bone_drives_nothing', 'scaleX'),
+  {
+    name: 'M98d_the_same_three_drives_on_a_bone_with_a_length_are_accepted',
+    origin: 'the positive control of issue #1195: any tip at all makes the rotation chase the bone\'s own direction and gives scaleX a radius',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        c.rotate = 1;
+        c.shearX = 1;
+        c.scaleX = 1;
+        (j as any).bones.find((b: any) => b.name === c.bone).length = 20;
+      }),
+    }),
+    holds: (report, broken) => {
+      const { name, bone, length } = firstPhysicsLever(broken.skeletonText);
+      return {
+        held: report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') && length === 20,
+        read: `physics "${name}" drives rotate, shearX and scaleX on bone "${bone}" of length ${length}; A23 ${report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? 'PASS' : 'not PASS'}`,
+      };
+    },
+  },
+  {
+    name: 'M98e_x_and_y_on_a_zero_length_bone_are_accepted',
+    origin:
+      'x and y read the origin and never the tip: the editor\'s example exports and rigc\'s public builds carry them on ' +
+      'bones of length 0 and they step as authored, so the clause of issue #1195 must not reach them',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        delete (j as any).bones.find((b: any) => b.name === c.bone).length;
+      }),
+    }),
+    holds: (report, broken) => {
+      const { name, bone, length, drives } = firstPhysicsLever(broken.skeletonText);
+      const xyOnly = drives.length > 0 && drives.every((k) => k === 'x' || k === 'y');
+      return {
+        held: report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') && length === 0 && xyOnly,
+        read: `physics "${name}" drives [${drives.join(', ')}] on bone "${bone}" of length ${length}; A23 ${report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? 'PASS' : 'not PASS'}`,
+      };
+    },
+  },
 ];
+
+/** The first physics constraint of a skeleton text: its name, its bone, the bone's length (0 where the file states none) and what it drives. */
+function firstPhysicsLever(skeletonText: string): { name: string; bone: string; length: number; drives: string[] } {
+  const j = JSON.parse(skeletonText) as any;
+  const c = j.constraints.find((x: any) => x.type === 'physics');
+  const length = j.bones.find((b: any) => b.name === c.bone).length ?? 0;
+  return { name: c.name, bone: c.bone, length, drives: ['x', 'y', 'rotate', 'scaleX', 'shearX'].filter((k) => (c[k] ?? 0) > 0) };
+}
+
+/**
+ * A break of issue #1195: the first physics constraint switched to `component`
+ * alone, on a bone that states no length — and the model-side twin of it,
+ * which the document carries in the same two fields.
+ */
+function leverMutant(name: string, component: 'rotate' | 'shearX' | 'scaleX'): Mutant {
+  const lever = (c: any): void => {
+    c.x = 0;
+    c.y = 0;
+    c[component] = 1;
+  };
+  return {
+    name,
+    origin:
+      component === 'scaleX'
+        ? 'scaleX divides the along-bone motion by length·|x column| and adds nothing when that is 0, so the drive parses and does nothing'
+        : `${component} chases atan2 of the bone's tip, and with no tip that is a world direction: a length-0 bone held still turns 53.204° from a 90° rest`,
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        lever(c);
+        delete (doc.bones as DocRecord[]).find((b) => b.name === c.bone)?.length;
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        lever(c);
+        delete (j as any).bones.find((b: any) => b.name === c.bone).length;
+      }),
+    }),
+    holds: (report, broken) => {
+      const { name: constraint, bone } = firstPhysicsLever(broken.skeletonText);
+      const want =
+        component === 'scaleX'
+          ? `physics "${constraint}" drives scaleX on bone "${bone}" whose length is 0, which the solver divides the motion by, so it drives nothing; give "${bone}" a length`
+          : `physics "${constraint}" drives ${component} on bone "${bone}" whose length is 0 — with no tip the solver aims the bone at world angle 0 and holds it there; give "${bone}" a length or drive x/y instead`;
+      const lines = report.failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE').map((f) => f.detail);
+      return { held: lines.length === 1 && lines[0] === want, read: `A23 printed ${lines.length} line(s): ${JSON.stringify(lines)}` };
+    },
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -100235,7 +100343,10 @@ const INGEST_PROBE_RIG: Record<string, unknown> = {
     { name: 'aim', parent: 'root', x: 20 },
     { name: 'cart', parent: 'root' },
     { name: 'dial', parent: 'root', x: -20 },
-    { name: 'spring', parent: 'block', y: 10 },
+    // A `length`, because `wobble` drives `rotate` on it: the solver steps a
+    // rotation off the bone's tip, and a length-0 bone has none — A23 refuses
+    // that by name since issue #1195, and this probe was the first it refused.
+    { name: 'spring', parent: 'block', y: 10, length: 10 },
   ],
   slots: [
     { name: 'block', bone: 'block', attachment: 'block' },

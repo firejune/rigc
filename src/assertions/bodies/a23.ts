@@ -173,6 +173,56 @@ export function a23PhysicsConstraintEffective({ fail, skip, stats }: Verdicts, f
     if (!components.length) {
       fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} drives no component; it parses and does nothing`);
     }
+    // --- a lever drive on a bone with no lever (issue #1195) ---------------
+    //
+    // `rotate`, `shearX` and `scaleX` are stepped off the bone's tip,
+    // `length·(a, c)` (`stepPhysics` in `src/core/constraints_physics.ts`,
+    // held to spine-core at tolerance 0); `x` and `y` read only the origin, so
+    // they are not refused here — the editor's own example exports and
+    // rigc's public builds carry them on bones of length 0 and they step as
+    // authored. The two lever readings fail in opposite directions, so they
+    // print two sentences:
+    //
+    // 📏 rotate / shearX: the offset chases `atan2(dy + ty, dx + tx)`, and with
+    // no tip and no motion that is `atan2(0, 0)` = 0 — a WORLD direction —
+    // where any tip at all makes it the bone's own previous direction.
+    // Measured through the core on a four-bone chain held still for 3 s
+    // (inertia 0.5, strength 100, damping 0.85, weight 0.2794): at length 0
+    // the bone turns 26.602° from a 45° rest, 53.204° from 90°, 106.408° from
+    // 180°, and holds there; at length 0.01 it moves 0.0000. The swing under
+    // motion, by contrast, is continuous in the length (0.914° at 36.5 up to
+    // 64.934° at 0 on one bounce) — that is the author's tuning, not a defect,
+    // and this clause does not judge it.
+    //
+    // ⚠️ The rest ANGLE is not read. The same probe resting at world 0° moves
+    // 0.000° at length 0 — but only because the bone already points where the
+    // solver aims it. A key that turns the bone, or a parent that turns it,
+    // breaks that, so a length-0 bone resting at 0° is the same defect waiting
+    // for its first rotation, and refusing it by the angle would refuse a
+    // pose rather than a rig.
+    //
+    // 📏 scaleX: the along-bone motion is divided by `length·|x column|` and
+    // nothing is added when that is 0, so the drive does nothing — every
+    // length-0 rung of the same probe read 0.0000, where 0.01 threw the tip
+    // 806 units. It is this assertion's first clause reached through the bone
+    // rather than the component fields.
+    if (physics.boneLength === 0) {
+      const turns = components.filter((k) => k === 'rotate' || k === 'shearX');
+      if (turns.length) {
+        fail(
+          'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+          `${where} drives ${turns.join(' and ')} on bone "${physics.bone}" whose length is 0 — with no tip the solver aims the bone ` +
+            `at world angle 0 and holds it there; give "${physics.bone}" a length or drive x/y instead`,
+        );
+      }
+      if (components.includes('scaleX')) {
+        fail(
+          'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+          `${where} drives scaleX on bone "${physics.bone}" whose length is 0, which the solver divides the motion by, so it drives ` +
+            `nothing; give "${physics.bone}" a length`,
+        );
+      }
+    }
     const pose = physics.setup;
     // The four bounded fields, each judged by its `PHYSICS_POSE_RULES` row.
     // The wording is per-field and stays so: "it is muted" and "nothing
