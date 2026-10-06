@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.1](https://github.com/firejune/rigc/compare/v2.14.0...v2.14.1) (2026-10-06)
+
+
+### Performance Improvements
+
+* **core:** A10's walk assembles only what it scans — no getter readings, oracle bone rows, UV/triangle or vertex copies; three cuts of 6–9 % of A10 each, core-entry build −5.0 % (installed −3.4 to −5.6 %), peak memory up to −25 %, bytes unmoved ([#1203](https://github.com/firejune/rigc/issues/1203)) ([d28f4d9](https://github.com/firejune/rigc/commit/d28f4d9a1d12eb7f06474c2622924914048a55ed))
+
 ## [2.14.0](https://github.com/firejune/rigc/compare/v2.13.3...v2.14.0) (2026-10-06)
 
 
