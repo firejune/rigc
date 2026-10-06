@@ -1479,13 +1479,6 @@ export interface RigInfo {
    */
   deformMayFold: string[];
   /**
-   * The rig declared `invariants.editorRoundTrip: true` — it is authored to come
-   * back out of the Spine editor, so `A41` gates what that consumer cannot hold.
-   * False is the ordinary case and is not a weaker gate: A41 then SKIPs, and the
-   * SKIP still names anything a round trip would drop.
-   */
-  editorRoundTrip: boolean;
-  /**
    * Ik and transform constraints whose mix the consumer sets, from
    * `invariants.consumerDrivenMix`, in the rig spec's order. `A47` / `A48` do
    * not measure these: a declared constraint is named on the stats line, and it

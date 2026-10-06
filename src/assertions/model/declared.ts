@@ -45,7 +45,6 @@ void MESH_KINDS_COMPLETE;
 type Check = (value: unknown, at: string, problems: string[]) => void;
 const say = (problems: string[], at: string, value: unknown, what: string): void => void problems.push(`${at} is ${JSON.stringify(value) ?? 'absent'}, not ${what}`);
 const str: Check = (v, at, p) => (typeof v === 'string' ? undefined : say(p, at, v, 'a string'));
-const bool: Check = (v, at, p) => (typeof v === 'boolean' ? undefined : say(p, at, v, 'true or false'));
 const num: Check = (v, at, p) => (typeof v === 'number' && Number.isFinite(v) ? undefined : say(p, at, v, 'a finite number'));
 const nullable = (inner: Check): Check => (v, at, p) => (v === null ? undefined : inner(v, at, p));
 const list = (inner: Check, length?: number): Check => (v, at, p) => {
@@ -74,7 +73,6 @@ const RIG_FIELDS: Readonly<Record<keyof RigInfo, Check>> = {
   meshDeclaredBones: record(list(str)),
   meshSoftBones: record(str),
   deformMayFold: list(str),
-  editorRoundTrip: bool,
   consumerDrivenMix: list(shape({ type: oneOf(['ik', 'transform']), constraint: str, why: str })),
   idleDrivesMeshes: nullable(str),
   basePlates: list(str),

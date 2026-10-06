@@ -1347,14 +1347,26 @@ which declares no constraints at all and so can carry no slider. What it found:
   omitting a default — which is why `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses it
   by name. Independent of the ordering.
 
-  ✅ **Why, measured.** It is not elision and not a defect in one field:
-  the editor's physics model holds `x` and `y` and nothing else, with no limit on
-  how many at once. Three rigs, twelve constraints, predictions written before the
-  round trip — a lone `y` came back, `x` and `y` together came back, and a lone
-  `rotate`, a lone `scaleX` and a lone `shearX` each came back as **no components
-  at all**, with every constraint's fixed-point `strength` returning exactly so a
-  silent harness failure could not read as a finding. ⇒ **A rotation-driven
-  jiggle does not survive the editor, and no `scaleY` mode substitutes for it.**
+  ✅ **Why, measured** — and corrected. It is not elision and not a defect in
+  one field. Issue #540 measured three rigs and twelve constraints, predictions
+  written before the round trip: a lone `y` came back, `x` and `y` together came
+  back, and a lone `rotate`, a lone `scaleX` and a lone `shearX` each came back as
+  **no components at all**, with every constraint's fixed-point `strength`
+  returning exactly. It read that as *"the editor's physics model holds `x` and
+  `y` and nothing else"*, and that reading was wrong.
+
+  🔁 **Corrected 2026-10-06 (issue #1196), on Spine 4.3.23 and 4.3.26:** what
+  decides the loss is the **bone's length**, not the component. The editor's own
+  example export `sack-pro` keeps 18 of 18 `rotate` constraints through the same
+  import and export, and deleting the `length` of one of its bones loses `rotate`
+  on exactly that one constraint. `look` with a 40-unit `ahoge_whip` keeps
+  `rotate`, `scaleX` and `shearX` each; at 0.01 and 1 `rotate` is kept too; with no
+  length all three are lost, on both versions. `look`'s `ahoge_whip` was emitted
+  with no length; #540's rigs were not at hand to read, but every row it reported
+  is reproduced here at length 0. ⇒
+  **A rotation-driven jiggle survives the editor on a bone that has a length**,
+  and `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refuses one on a bone that has none
+  (issue #1195).
 
   ✅ **And the locus is measured: the loss is at EXPORT** — against Spine
   4.3.26 and without decoding the project format. `gallery/look`'s build and three variants of its
@@ -1371,18 +1383,17 @@ which declares no constraints at all and so can carry no slider. What it found:
   the exporter wrote nothing for it. It is the editor's **writer**, not its
   reader, and not rigc's emitter.
 
-  ✅ **And the gate says so before the trip, not after.** A face rig that is
-  authored to come back out of the editor declares
-  `"invariants": { "editorRoundTrip": true }` (AUTHORING §3.7) and
-  `A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP` refuses the constraint by name at build
-  time, with the fix in the message: drive it in `x`/`y`, or drop the declaration.
-  ⚠️ A rig that declares nothing is **not** silent either — A41 SKIPs and the skip
-  names the constraint and the component, which is the whole reason the rule is
-  opt-in rather than default-off. rigc's own output is not wrong here: a
-  rotation jiggle is valid Spine 4.3 that every runtime plays, and refusing it for
-  everybody would be refusing correct data on behalf of one consumer. ⇒ A23 and
-  A41 are the same loss from opposite sides of the trip: A41 fires on what goes
-  in, A23 on what comes back.
+  The importer stores the value on a zero-length bone too, at 4.3.23 as well as
+  4.3.26 (issue #1196: `rotate: 0.234375` lands as `3e 70 00 00` in the project,
+  and the JSON and binary exports both omit it — the binary export of a project
+  holding `rotate: 1` is byte-identical to one holding NaN).
+
+  🗑️ **A41, the rule that gated the editor round trip, and its declaration
+  `invariants.editorRoundTrip` were retired in issue #1196.** They gated the
+  components rather than the bone, so they refused rotation physics the editor
+  keeps, and once A23 refuses those components on a zero-length bone a rig that
+  passes it has nothing the editor's export drops — the declaration could no
+  longer move a verdict.
 - 🔸 Unexplained, and **unreproduced by anything in this tree**: `diff` reports
   `animations.curve_kinds` moved on **196 of 200** keys in every round trip taken,
   the clean one included. Visually small once the ordering is fixed — but it is

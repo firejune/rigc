@@ -14,32 +14,21 @@ import type { ConstraintFacts, ConstraintTimeline } from './facts/constraints.ts
 import type { RigInfo } from '../types.ts';
 
 /**
- * Every component a physics constraint can drive (`PhysicsConstraintData`), and
- * the subset the **Spine editor** models.
+ * Every component a physics constraint can drive (`PhysicsConstraintData`), the
+ * vocabulary A23 reads when it asks whether a constraint drives anything.
  *
- * ⭐ One list, read by both A23 and A41, because the relationship between those
- * two rules is the thing most worth keeping true: A23 fires when the driven set
- * is EMPTY, A41 when it contains something outside `EDITOR_PHYSICS_COMPONENTS`.
- * Written against one array those conditions cannot both hold on one constraint,
- * and a reader can see that they cannot. (A23's other clause about components,
- * a `rotate`, `shearX` or `scaleX` drive on a bone of length 0 — issue #1195 —
- * reads the bone as well, and can name a constraint A41 also names: two facts
- * about one constraint, not one fact refused twice.) Two copies of the vocabulary could
- * drift into overlapping, and a rig refused twice for one fact is a report that
- * has stopped saying what is wrong with it.
- *
- * 📏 The subset is measured rather than read off a document, and it is the whole
- * of issue #540: three rigs, twelve constraints, predictions recorded before the
- * round trip and scored by the code that printed them. A lone `y` came back, `x`
- * and `y` together came back — so the rule is membership and not arity — and a
- * lone `rotate`, a lone `scaleX` and a lone `shearX` each came back driving no
- * component at all, with neither `scaleY` mode rescuing `scaleX`. Every
- * constraint carried a fixed-point `strength` and all twelve returned exactly,
- * so the rows that reported nothing were reading live data. Measured on Spine
- * 4.3.26 Professional.
+ * 📏 It stood beside a second set, the components "the Spine editor models",
+ * read by A41 (the editor round-trip rule) and measured in issue #540 as
+ * `x` and `y`. Issue #1196 measured what that was really seeing, on Spine 4.3.23
+ * and 4.3.26: the editor imports a physics constraint's `rotate`, `scaleX` and
+ * `shearX` into its project and its JSON and binary exports omit them **only on
+ * a bone with no length** — on any bone with a length (0.01, 1, 40 tried) all
+ * three come back, and the editor's own example export keeps 18 of 18 `rotate`
+ * constraints through the same trip. A23 refuses those components on a
+ * zero-length bone (issue #1195), so a rig that passes it has nothing the editor drops, and
+ * A41, its declaration and its set were retired rather than reworded.
  */
 export const PHYSICS_COMPONENTS = ['x', 'y', 'rotate', 'scaleX', 'shearX'] as const;
-export const EDITOR_PHYSICS_COMPONENTS: ReadonlySet<(typeof PHYSICS_COMPONENTS)[number]> = new Set(['x', 'y'] as const);
 
 /**
  * The half of a muted-at-rest refusal that says what was searched, and how

@@ -120,7 +120,6 @@ import { a28RibbonRowsShareWeights } from './assertions/bodies/a28.ts';
 import { a33VertexAttachmentGeometry } from './assertions/bodies/a33.ts';
 import { a36PathConstraintEffective } from './assertions/bodies/a36.ts';
 import { a37SliderConstraintEffective } from './assertions/bodies/a37.ts';
-import { a41PhysicsSurvivesEditorRoundTrip } from './assertions/bodies/a41.ts';
 import { a42DrivenConstraintsUpdateAfterTheirDriver } from './assertions/bodies/a42.ts';
 import { a44LinkedMeshStatesNoGeometryOfItsOwn } from './assertions/bodies/a44.ts';
 import { a47IkConstraintNotMutedThroughout } from './assertions/bodies/a47.ts';
@@ -2799,7 +2798,7 @@ export function validate(input: ValidateInput): ValidateReport {
     // survey the two hand it held to one by `tools/survey_hashes.ts`.
     check('A39_DEFORM_KEEPS_TRIANGLE_WINDING', () => a39DeformKeepsTriangleWinding(verdicts, spineDeformSurvey(data), input.rig));
 
-    // --- A23, A41, A36, A37, A47, A48: a constraint that does nothing, quietly -
+    // --- A23, A36, A37, A47, A48: a constraint that does nothing, quietly -
     //
     // Their bodies, the reasoning each states and the one reading of "does an
     // animation switch this on" they share (`switchedOn`, which replaced the
@@ -2808,13 +2807,6 @@ export function validate(input: ValidateInput): ValidateReport {
     // #1025 (cut 4c-2): every clause is about the rig, and each reads
     // `ConstraintFacts`, which `spineConstraintFacts` supplies here.
     check('A23_PHYSICS_CONSTRAINT_EFFECTIVE', () => a23PhysicsConstraintEffective(verdicts, constraintFacts(), loadedMeshFacts()));
-
-    // A41 — `validity` rather than policy, on A09's precedent: what it measures
-    // is the artifact against a claim the artifact's own spec makes, and a rig
-    // that makes no such claim has nothing to be measured against and SKIPs.
-    // Nothing here is one renderer's taste or one formation's shape, so there is
-    // no profile it should be hidden behind.
-    check('A41_PHYSICS_SURVIVES_EDITOR_ROUND_TRIP', () => a41PhysicsSurvivesEditorRoundTrip(verdicts, constraintFacts(), input.rig));
 
     check('A36_PATH_CONSTRAINT_EFFECTIVE', () => a36PathConstraintEffective(verdicts, constraintFacts()));
 
