@@ -3600,6 +3600,54 @@ function a10SaysOnAStaticRig(report: ReturnType<typeof validate>, sentence: stri
   };
 }
 
+/**
+ * Issue #1205's probe chain: the first three bones `[a, b, c]` where `c` is a
+ * child of `b`, `b` of `a`, and `a` is not the root — spine-core throws posing
+ * an ik whose first bone is the root, which would be a different refusal.
+ * Found structurally, so a fixture edit moves the probe rather than breaking it.
+ */
+function ikProbeChain(bones: ReadonlyArray<{ name: string; parent?: string }>): [string, string, string] {
+  for (const c of bones) {
+    const b = bones.find((x) => x.name === c.parent);
+    const a = bones.find((x) => x.name === b?.parent);
+    if (b !== undefined && a !== undefined && a.parent !== undefined) return [a.name, b.name, c.name];
+  }
+  throw new Error('the fixture holds no chain of three bones below its root');
+}
+
+/**
+ * One break of issue #1205: ik constraints over `pick(chain)` reaching for the
+ * root at mix 1 — live, so the mute clause has nothing to say — forged into
+ * the Spine file and, as the twin, into the model document.
+ */
+function ikShapeBreak(constraints: ReadonlyArray<{ name: string; pick: (chain: [string, string, string]) => string[] }>): Pick<Mutant, 'twin' | 'mutate'> {
+  const forged = (bones: ReadonlyArray<{ name: string; parent?: string }>): Array<{ name: string; bones: string[]; target: string }> =>
+    constraints.map((c) => ({ name: c.name, bones: c.pick(ikProbeChain(bones)), target: bones[0].name }));
+  return {
+    twin: {
+      forge: (doc) => {
+        for (const c of forged(doc.bones as Array<{ name: string; parent?: string }>)) (doc.constraints as DocRecord[]).push({ kind: 'ik', declaredIn: 'rig', ...c, mix: 1 });
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const list = (Array.isArray(j.constraints) ? j.constraints : []) as unknown[];
+        j.constraints = [...list, ...forged(j.bones as Array<{ name: string; parent?: string }>).map((c) => ({ type: 'ik', ...c, mix: 1 }))];
+      }),
+    }),
+  };
+}
+
+/** A47's lines on a report, and whether exactly one of them opens with `head` and carries `tail`. */
+function oneA47Line(report: ReturnType<typeof validate>, head: string, tail: string): { held: boolean; read: string } {
+  const lines = report.failures.filter((f) => f.assertion === 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT').map((f) => f.detail);
+  return {
+    held: lines.length === 1 && lines[0].startsWith(head) && lines[0].includes(tail),
+    read: `${lines.length} A47 line(s)${lines.length ? `: ${lines.join(' | ')}` : ''}`,
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MUTANTS: Mutant[] = [
   {
@@ -4913,6 +4961,64 @@ const MUTANTS: Mutant[] = [
         ];
       }),
     }),
+  },
+  // ─── an ik whose `bones` the solver cannot apply as drawn (issue #1205) ────
+  //
+  // Three breaks on one chain of the fixture, `[a, b, c]` (`ikProbeChain`), each
+  // live at mix 1 so the mute clause stays silent and the shape clause is the
+  // only A47 line: the three bones, which the runtime's update applies none of;
+  // the pair `a, c`, whose solve leaves `b` out; and the pair `c, b`, whose
+  // first bone is not above the second at all. The model side's reader refuses
+  // each forged document by the constraint's name.
+  {
+    name: 'M99_an_ik_over_three_bones_moves_nothing',
+    origin:
+      'issue #1205: the runtime\'s ik update has a case for one bone and one for two, so a constraint over three is in the ' +
+      'update cache and applies nothing — measured, every bone where the rig with no constraint has it, and green on both profiles',
+    expect: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+    ...ikShapeBreak([{ name: 'forged_shape', pick: (chain) => [...chain] }]),
+    holds: (report, broken) => {
+      const chain = ikProbeChain((JSON.parse(broken.skeletonText) as { bones: Array<{ name: string; parent?: string }> }).bones);
+      return oneA47Line(report, `ik constraint "forged_shape" names 3 bones ("${chain.join('", "')}"); the solver applies one or two`, 'moves nothing');
+    },
+  },
+  {
+    name: 'M99b_an_ik_pair_with_a_bone_between_solves_another_triangle',
+    origin:
+      'issue #1205: the two-bone solve places the second bone through the first\'s matrix from its own local offset, so a bone ' +
+      'standing between them is left out — measured 18.95–22.25 off the target in every frame, green on both profiles',
+    expect: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+    ...ikShapeBreak([{ name: 'forged_shape', pick: ([a, , c]) => [a, c] }]),
+    holds: (report, broken) => {
+      const [a, b, c] = ikProbeChain((JSON.parse(broken.skeletonText) as { bones: Array<{ name: string; parent?: string }> }).bones);
+      return oneA47Line(report, `ik constraint "forged_shape": "${c}" is not a child of "${a}" ("${b}" stands between)`, 'so the two-bone solve is not of the chain drawn');
+    },
+  },
+  {
+    name: 'M99c_an_ik_pair_whose_first_bone_is_not_above_the_second_is_named_with_its_parent',
+    origin: 'issue #1205: the same solve, over a pair whose first bone is the second\'s descendant rather than its ancestor',
+    expect: 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT',
+    ...ikShapeBreak([{ name: 'forged_shape', pick: ([, b, c]) => [c, b] }]),
+    holds: (report, broken) => {
+      const [a, b, c] = ikProbeChain((JSON.parse(broken.skeletonText) as { bones: Array<{ name: string; parent?: string }> }).bones);
+      return oneA47Line(report, `ik constraint "forged_shape": "${b}" is not a child of "${c}" ("${c}" is not above it; its parent is "${a}")`, 'so the two-bone solve is not of the chain drawn');
+    },
+  },
+  {
+    name: 'M99d_an_ik_over_one_bone_and_one_over_a_parent_and_its_child_are_accepted',
+    origin:
+      'issue #1205\'s positive control: the two shapes the solver applies as drawn, on the same chain the three breaks above use, ' +
+      'live at mix 1 — a shape rule that refused them would refuse every ik in every corpus measured',
+    expect: null,
+    // The break only: it fails no moved assertion, so a twin would be one nothing runs (`VF03`).
+    mutate: ikShapeBreak([
+      { name: 'forged_one', pick: ([a]) => [a] },
+      { name: 'forged_pair', pick: ([, b, c]) => [b, c] },
+    ]).mutate,
+    holds: (report) => {
+      const passed = report.passed.includes('A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT');
+      return { held: passed, read: `A47 ${passed ? 'PASS' : 'did not pass'} over "forged_one" and "forged_pair"` };
+    },
   },
   // ─── an overlay region moved onto the base plate's own page (issue #770) ───
   //
@@ -11822,6 +11928,28 @@ const RIG_MUTANTS: RigMutant[] = [
       (rig as any).slots.find((sl: any) => sl.name === 'near').blend = 'ADDITIVE';
     },
   },
+  {
+    name: 'RF142_an_ik_over_three_bones_is_refused_by_count',
+    origin:
+      'issue #1205: an ik over three bones loaded, built green on both profiles and moved nothing — the runtime\'s update ' +
+      'applies one bone or two',
+    expect:
+      'ik constraint "probe_ik" names 3 bones ("trail_a", "trail_b", "trail_c"); the solver applies one or two, so a ' +
+      'constraint over 3 moves nothing',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'probe_ik', type: 'ik', bones: ['trail_a', 'trail_b', 'trail_c'], target: 'plunger_tip' }];
+    },
+  },
+  {
+    name: 'RF143_an_ik_pair_with_a_bone_between_is_refused_naming_the_bone',
+    origin:
+      'issue #1205: a two-bone ik whose second bone is not the first\'s child built green and solved a triangle nobody drew, ' +
+      'the bone between left out of it',
+    expect: 'ik constraint "probe_ik": "trail_c" is not a child of "trail_a" ("trail_b" stands between), so the two-bone solve is not of the chain drawn',
+    mutate: (rig) => {
+      (rig as any).constraints = [{ name: 'probe_ik', type: 'ik', bones: ['trail_a', 'trail_c'], target: 'plunger_tip' }];
+    },
+  },
 ];
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -11896,6 +12024,34 @@ function runRigSuite(): number {
           (message === null ? 'a clean compile — the broken rig went through' : message),
       );
     }
+  }
+
+  // --- the other side of RF142/RF143 (issue #1205) -----------------------------
+  //
+  // The two ik shapes the solver applies as drawn, on the chain those two broke:
+  // one bone, and a parent with its child. A shape rule that refused either would
+  // refuse every ik of every corpus counted for the issue.
+  {
+    const rig = JSON.parse(sourceText) as Record<string, unknown>;
+    rig.constraints = [
+      { name: 'probe_one', type: 'ik', bones: ['trail_a'], target: 'plunger_tip' },
+      { name: 'probe_pair', type: 'ik', bones: ['trail_b', 'trail_c'], target: 'plunger_tip' },
+    ];
+    writeJsonAsAuthored(rigPath, rig);
+    let message: string | null = null;
+    let emitted = 0;
+    try {
+      const built = JSON.parse(compile({ ...opts, rigPath }).skeletonText) as { constraints?: Array<{ type?: string }> };
+      emitted = (built.constraints ?? []).filter((c) => c.type === 'ik').length;
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    bad += reportCase(
+      'RF144_an_ik_over_one_bone_and_one_over_a_parent_and_its_child_compile',
+      message === null && emitted === 2,
+      message === null ? `compiled; the skeleton carries ${emitted} ik constraint(s) of the 2 stated` : `refused: ${message}`,
+      'issue #1205\'s positive control: the shape rule reads the count and the second bone\'s parent, and both of these are the shapes the solver applies',
+    );
   }
 
   // --- the other side of the unknown-key refusal (issue #545) ---------------

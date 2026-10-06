@@ -79,7 +79,19 @@ export interface ConstraintEntry {
     readonly scale: number;
     readonly mix: number;
   };
-  readonly ik?: { readonly bones: readonly string[]; readonly target: string; readonly mix: number };
+  readonly ik?: {
+    readonly bones: readonly string[];
+    readonly target: string;
+    readonly mix: number;
+    /**
+     * For an ik over exactly two bones, the second bone's ancestors, its
+     * parent first and the root last; empty for any other count (issue
+     * #1205). The two-bone solve places the second bone through the first's
+     * matrix from the second's own local offset, so it is the solve of the
+     * chain drawn only when the first entry here is the first bone.
+     */
+    readonly secondAncestors: readonly string[];
+  };
   /**
    * A transform constraint's six mix channels in frame order — `mixRotate`,
    * `mixX`, `mixY`, `mixScaleX`, `mixScaleY`, `mixShearY` — each the field's
