@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.2](https://github.com/firejune/rigc/compare/v2.13.1...v2.13.2) (2026-10-06)
+
+
+### Performance Improvements
+
+* **render:** the core poser's render holds one framing set, one pose and one UV and triangle array per drawn part at a time; peak 3,981 to 1,809 MiB on the worst production rig, every frame identical, wall time unmoved ([#1193](https://github.com/firejune/rigc/issues/1193)) ([db4de90](https://github.com/firejune/rigc/commit/db4de90376ab7c13977873a286d1c5318e33ed6e)), closes [#1180](https://github.com/firejune/rigc/issues/1180)
+
 ## [2.13.1](https://github.com/firejune/rigc/compare/v2.13.0...v2.13.1) (2026-10-05)
 
 
