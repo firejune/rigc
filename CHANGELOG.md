@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.14.0](https://github.com/firejune/rigc/compare/v2.13.3...v2.14.0) (2026-10-06)
+
+
+### Features
+
+* **validate:** A23 names a rotate, shearX or scaleX physics constraint on a zero-length bone, one sentence per reading; gallery/look's whip gets its measured length, 66 ([#1200](https://github.com/firejune/rigc/issues/1200)) ([39fb4b6](https://github.com/firejune/rigc/commit/39fb4b66f93ccc4f3d65e92f2c9e681a88e8fdcb)), closes [#1195](https://github.com/firejune/rigc/issues/1195)
+
+
+### Bug Fixes
+
+* **validate:** A41 is retired: the Spine editor drops a physics constraint's rotate, scaleX and shearX only on a zero-length bone, at export (4.3.23, 4.3.26), which A23 now refuses; the editorRoundTrip declaration goes with it ([#1202](https://github.com/firejune/rigc/issues/1202)) ([60f4154](https://github.com/firejune/rigc/commit/60f41541d18e67d2a1aa0df329264d9d28d32b02)), closes [#1196](https://github.com/firejune/rigc/issues/1196)
+
 ## [2.13.3](https://github.com/firejune/rigc/compare/v2.13.2...v2.13.3) (2026-10-06)
 
 
