@@ -76,7 +76,7 @@
  * poses the class as the raw entry does, and refuses nothing the raw entry
  * does not.
  */
-import { setupPoseIn, walkIn, type RawBone, type RawDrawn, type WalkMode } from './raw.ts';
+import { scanSetupIn, scanWalkIn, setupPoseIn, walkIn, type RawBone, type RawDrawn, type ScanPlant, type ScanPose, type WalkMode } from './raw.ts';
 import { activeBones, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
 import { historyTaint } from './constraints.ts';
 import type { TimelinePlant } from './animation.ts';
@@ -174,4 +174,24 @@ export function poseWalkSetup(doc: CompiledDocument, plant: CorePlant = {}, walk
 export function poseLoopingWalk(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant = {}, walkPlant: WalkPlant = {}): WalkPose[] {
   const mode: WalkMode = { ...LOOPING, ...(walkPlant.time === undefined ? {} : { time: walkPlant.time }), ...(walkPlant.clock === undefined ? {} : { clock: walkPlant.clock }), ...(walkPlant.wrapResets === undefined ? {} : { wrapResets: walkPlant.wrapResets }) };
   return walkIn(doc, animation, steps, plant, 'setup', mode).map((p) => narrow(p, walkPlant.number));
+}
+
+/**
+ * The scan's walk (issue #1179, the second part): `poseLoopingWalk` and
+ * `poseWalkSetup` as A10 reads them, each pose a `ScanPose` — the bones' world
+ * matrix and origin, the slot rows and the drawn attachments, and nothing the
+ * walk forms beside them for other readers (the bones' oracle rows and getter
+ * readings). The same walk: `walkIn`'s body in `./raw.ts`, posing each step by
+ * the same operations in the same order and refusing at the same places, with
+ * another assembler (`PoseShape`). `src/assertions/model/stepped_poses.ts` is
+ * its one caller; the public entries above are unchanged, and the core suite
+ * holds the two to the same numbers (`CO43`, `CO44`, `CO45`).
+ */
+export function scanLoopingWalk(doc: CompiledDocument, animation: string, steps: readonly number[], scanPlant: ScanPlant = {}): ScanPose[] {
+  return scanWalkIn(doc, animation, steps, {}, 'setup', LOOPING, scanPlant);
+}
+
+/** `poseWalkSetup` as the scan reads it (`scanLoopingWalk`). */
+export function scanWalkSetup(doc: CompiledDocument): ScanPose {
+  return scanSetupIn(doc, {}, LOOPING);
 }

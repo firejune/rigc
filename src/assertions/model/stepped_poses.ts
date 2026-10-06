@@ -13,7 +13,15 @@
  *   rather than refusing it. It is held equal to spine-core's walk at
  *   tolerance 0 by `tools/core_gate.ts`'s walk block and the selftest's
  *   `CO25`, and the poses A10 asks for here are compared with spine-core's on
- *   every call with a model in hand (`VF13`).
+ *   every call with a model in hand (`VF13`). Since issue #1179's second part
+ *   the poses come through that walk's scan assembler (`scanWalkSetup`,
+ *   `scanLoopingWalk`): the same walk, each pose carrying what A10 reads — the
+ *   bones' matrix and origin, the slot rows, the drawn attachments' slot, name
+ *   and vertices — and none of the bones' getter readings and oracle rows or
+ *   the drawn rows' UVs, triangles and colour, which nothing it reads is
+ *   computed from. The core suite's `CO43` holds the scan to the public walk's
+ *   numbers bit for bit, `CO44` what it leaves out to move none of them, and
+ *   `CO45` that the vertex arrays it hands on uncopied are each pose's own.
  * - **A bone's mode**: the mode the core's bone timelines pose at the time
  *   (`posedBones`, a fresh non-looping track: the time held at the duration),
  *   folded as the runtime's lookup folds it (`foldInheritMode`). `readModel`
@@ -30,7 +38,8 @@
 import { fileAnimationOrder } from '../../compile.ts';
 import { foldInheritMode, type CompiledDocument } from '../../core/index.ts';
 import { posedBones } from '../../core/animation.ts';
-import { poseLoopingWalk, poseWalkSetup, type WalkPose } from '../../core/walk.ts';
+import { scanLoopingWalk, scanWalkSetup } from '../../core/walk.ts';
+import type { ScanPose } from '../../core/raw.ts';
 import { noSkinView } from '../../render_core.ts';
 import type { ModelBone } from '../../model.ts';
 import type { SteppedFrame, SteppedPoseFacts } from '../facts/stepped_poses.ts';
@@ -45,11 +54,11 @@ const channel = (v: number | null): number => (v === null ? Number.NaN : v);
 /** Each bone's posed mode as the facts spell it (`modeOf`), by name. */
 const modesOf = (posed: readonly ModelBone[]): ReadonlyMap<string, string | null> => new Map(posed.map((b) => [b.name, modeOf(b)]));
 
-/** One walk pose as A10 reads it, each bone's mode taken from `modes` (`modesOf` the bones the timelines posed at the pose's time). */
-function frameOf(pose: WalkPose, modes: ReadonlyMap<string, string | null>): SteppedFrame {
+/** One scan pose as A10 reads it, each bone's mode taken from `modes` (`modesOf` the bones the timelines posed at the pose's time); the drawn attachments are the scan's own rows, already in the shape A10 reads. */
+function frameOf(pose: ScanPose, modes: ReadonlyMap<string, string | null>): SteppedFrame {
   return {
     bones: pose.bones.map((b) => ({ name: b.name, a: b.a, b: b.b, c: b.c, d: b.d, worldX: b.worldX, worldY: b.worldY, inherit: modes.get(b.name) ?? null })),
-    drawn: pose.drawn.map((d) => ({ slot: d.slot, attachment: d.attachment, vertices: d.vertices })),
+    drawn: pose.drawn,
     slots: pose.slots.map((row) => ({
       name: row[0],
       colour: [channel(row[2]), channel(row[3]), channel(row[4]), channel(row[5])] as const,
@@ -82,10 +91,10 @@ export function modelSteppedPoses(read: ReadDocument): SteppedPoseFacts {
     },
     // The document's stated mode — asked only of a bone posing none, which the reader leaves this side no document to hold.
     statedInherit: (name) => `${JSON.stringify(read.doc.bones.find((b) => b.name === name)?.inheritMode)}`,
-    setup: () => frameOf(poseWalkSetup(viewOf()), modesOf(viewOf().bones)),
+    setup: () => frameOf(scanWalkSetup(viewOf()), modesOf(viewOf().bones)),
     walk: (animation, step, frames) => {
       const anim = animationOf(animation);
-      const poses = poseLoopingWalk(viewOf(), animation, new Array<number>(frames).fill(step));
+      const poses = scanLoopingWalk(viewOf(), animation, new Array<number>(frames).fill(step));
       // A bone's posed mode moves only by an `inherit` timeline: every other one `posedBones` reads leaves the setup's mode on its copy. So an animation
       // keying none poses the setup's modes at every time, and they are read once rather than posed again at each of its frames (issue #1179).
       const keysInherit = anim.timelines.bones.some((target) => target.timelines.some((tl) => tl.kind === 'inherit'));
