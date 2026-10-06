@@ -1641,7 +1641,9 @@ export function spineConstraintFacts(data: ReturnType<SkeletonJson['readSkeleton
       };
     }
     if (c instanceof IkConstraintData) {
-      return { kind: 'ik', name: c.name, runtimeClass, ik: { bones: c.bones.map((b) => b.name), target: c.target.name, mix: c.setupPose.mix } };
+      const secondAncestors: string[] = [];
+      if (c.bones.length === 2) for (let at = c.bones[1].parent; at !== null; at = at.parent) secondAncestors.push(at.name);
+      return { kind: 'ik', name: c.name, runtimeClass, ik: { bones: c.bones.map((b) => b.name), target: c.target.name, mix: c.setupPose.mix, secondAncestors } };
     }
     if (c instanceof TransformConstraintData) {
       const pose = c.setupPose;

@@ -125,8 +125,14 @@ function entryOf(doc: CompiledDocument, kind: ConstraintKind, name: string, reco
         },
       };
     }
-    case 'ik':
-      return { ...base, ik: { bones: record.bones, target: record.target, mix: record.mix } };
+    case 'ik': {
+      // The second bone's ancestors, parent first (issue #1205). The core's reader refuses a pair that is not a parent and its child, so on this side the first entry is always the first bone.
+      const secondAncestors: string[] = [];
+      if (record.bones.length === 2) {
+        for (let at = doc.bones.find((b) => b.name === record.bones[1])?.parent; at !== undefined; at = doc.bones.find((b) => b.name === at)?.parent) secondAncestors.push(at);
+      }
+      return { ...base, ik: { bones: record.bones, target: record.target, mix: record.mix, secondAncestors } };
+    }
     case 'transform':
       return {
         ...base,

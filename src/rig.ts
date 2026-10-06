@@ -59,6 +59,7 @@
  * `slots` below for the join rule) and leaves `skins` empty. A foreign skeleton
  * with no manifest at all declares them here.
  */
+import { ikShapeFault } from './assertions/bodies/a47.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
 import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
 import type { ShapeVisit, SpecEnumTable, SpecValueType } from './keys.ts';
@@ -1352,7 +1353,13 @@ export type RigScaleYMode = 'none' | 'uniform' | 'volume' | 'None' | 'Uniform' |
 /** `type: "ik"` (`:149-176`). `scaleY` is 4.3's replacement for 4.2's `uniform`. */
 export interface RigIkConstraint extends RigConstraintCommon {
   type: 'ik';
-  /** At least one, resolved by name; a miss throws in the parser. */
+  /**
+   * One bone, or two where the second's parent is the first; resolved by
+   * name, and a miss throws in the parser. Any other shape is refused by name
+   * (issue #1205): the runtime applies nothing for three or more, and solves
+   * a pair through the first bone's matrix from the second's local offset, so
+   * a bone standing between them is left out of the triangle it solves.
+   */
   bones: string[];
   target: string;
   /** `ConstraintData.ts:50`. Absent → `None`. */
@@ -2682,6 +2689,20 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     constraintsDeclared.push(declared);
     constraintFacts.set(constraintAt(declared.type, declared.name), declared);
     constraintKinds.set(declared.name, [...(constraintKinds.get(declared.name) ?? []), declared.type]);
+    // An ik's `bones` as a shape (issue #1205): more than two, or a pair that is
+    // not a parent and its child, both load and build green and the solver then
+    // moves nothing or solves a triangle nobody drew — `ikShapeFault` says which.
+    // Read only once every name resolves to a declared bone, so a misspelling is
+    // still the compiler's refusal by name rather than a shape it does not have.
+    const ikBones = constraint.type === 'ik' ? constraint.bones : undefined;
+    if (Array.isArray(ikBones) && ikBones.every((b): b is string => typeof b === 'string' && seen.has(b))) {
+      const secondAncestors: string[] = [];
+      if (ikBones.length === 2) {
+        for (let at = spec.bones.find((b) => b.name === ikBones[1])?.parent; at !== undefined; at = spec.bones.find((b) => b.name === at)?.parent) secondAncestors.push(at);
+      }
+      const fault = ikShapeFault(constraint.name, ikBones, secondAncestors);
+      if (fault !== null) throw new CompileError(`${where}: ${fault}`);
+    }
   }
 
   // `invariants.consumerDrivenMix` — the second field in `invariants` that TURNS
