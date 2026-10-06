@@ -95,7 +95,9 @@
  * the driver read it of the child (issue #1143) — and each suite's is held
  * under that suite's own children's figure in the same base, × a margin sized
  * on CI's spread (issue #1166): `TY40` holds the live run, and its plant, a
- * unit holding one MB over the heaviest suite's bound, is named by label.
+ * unit holding one MB over the heaviest suite's bound, is named by label — or,
+ * when the driver read the plant's peak below what it held (macOS under memory
+ * pressure, issue #1185), `TY40` is a SKIP stating both figures, never a FAIL.
  *
  * ## What `--shard` and `--merge` do
  *
@@ -46416,6 +46418,62 @@ interface AllocateUnitValue {
   megabytes: number;
   touched: number;
   refused?: string;
+  /**
+   * Present only when the unit's own resident set, read after its last write,
+   * was below what it wrote (issue #1185) — the one case in which the
+   * driver's `maxRSS` can read below the plant, since that figure is never
+   * below this one. It carries a reading that counts the pages the resident
+   * set does not, where the platform has one (`unitFootprint`).
+   */
+  unresident?: UnitFootprint;
+}
+
+/**
+ * What `TY40`'s scratch unit read of itself when its resident set came out
+ * below what it wrote (issue #1185): its `rss` in bytes, and darwin's
+ * `phys_footprint` and its peak as `/usr/bin/footprint` printed them — the
+ * figure that counts compressed and swapped pages, which a resident-set
+ * high-water does not — or `null` with the reason. The driver's reading is
+ * not enough for this: it is the resident-set high-water, which is exactly
+ * the figure that went under, and the unit's own `maxRSS` read the same
+ * figure as the driver's on every under-read measured (954 and 954, 1,217
+ * and 1,217 MB holding 1,397), so neither can say whether the pages were
+ * still held.
+ */
+interface UnitFootprint {
+  rssBytes: number;
+  footprintBytes: number | null;
+  peakBytes: number | null;
+  why: string;
+}
+
+/**
+ * The two figures `/usr/bin/footprint <pid>` prints under "Auxiliary data" —
+ * `phys_footprint: 1410 MB` and `phys_footprint_peak: 1410 MB` — in bytes, or
+ * `null` for a line it did not print. Units B, KB, MB, GB, each 1,024 of the
+ * one before (the tool's own header reads `1328 KB (16384 bytes per page)`).
+ */
+function footprintOf(text: string): { footprintBytes: number | null; peakBytes: number | null } {
+  const read = (name: string): number | null => {
+    const m = new RegExp(`^\\s*${name}:\\s+([\\d.]+)\\s+(B|KB|MB|GB)\\s*$`, 'm').exec(text);
+    if (m === null) return null;
+    const scale = { B: 1, KB: 1024, MB: 1024 * 1024, GB: 1024 * 1024 * 1024 }[m[2] as 'B' | 'KB' | 'MB' | 'GB'];
+    return Math.round(Number(m[1]) * scale);
+  };
+  return { footprintBytes: read('phys_footprint'), peakBytes: read('phys_footprint_peak') };
+}
+
+/** This process's `UnitFootprint`: darwin's `/usr/bin/footprint` over its own pid (about 10 ms, measured), nothing elsewhere. */
+function unitFootprint(rssBytes: number): UnitFootprint {
+  if (process.platform !== 'darwin') {
+    return { rssBytes, footprintBytes: null, peakBytes: null, why: `no reading that counts compressed or swapped pages is taken on ${process.platform}` };
+  }
+  const run = spawnSync('/usr/bin/footprint', [String(process.pid)], { encoding: 'utf8' });
+  if (run.status !== 0) {
+    return { rssBytes, footprintBytes: null, peakBytes: null, why: `/usr/bin/footprint exited ${String(run.status)}${run.error === undefined ? '' : ` (${run.error.message})`}` };
+  }
+  const read = footprintOf(run.stdout);
+  return { rssBytes, ...read, why: read.footprintBytes === null ? '/usr/bin/footprint printed no phys_footprint line' : '' };
 }
 
 /** `TY40`'s scratch unit's work: `megabytes` MiB allocated and every page written, held until the value is returned. */
@@ -46434,6 +46492,12 @@ function allocateUnitWork(spec: AllocateUnitSpec): AllocateUnitValue {
     held[at] = 1;
     touched += held[at];
   }
+  // Issue #1185: under memory pressure macOS compresses the plant's pages out
+  // of its resident set as it writes them, so the driver's peak can read below
+  // the plant. `rss` is bytes on every platform and never above the peak the
+  // driver reads, so a resident set at what was written rules that out here.
+  const rssBytes = process.memoryUsage().rss;
+  if (rssBytes < touched * 4096) return { megabytes: spec.megabytes, touched, unresident: unitFootprint(rssBytes) };
   return { megabytes: spec.megabytes, touched };
 }
 
@@ -110839,10 +110903,26 @@ function runRunTallySuite(live: RunTally): number {
     // ⚠️ Their peaks are taken back out of `UNIT_PEAKS_TAKEN` once read: the
     // plant's child is deliberate, and left in it would become `run-tally`'s
     // own children's high-water — the reading the plant exists to test.
+    //
+    // 🔍 A reading of the plant below what the plant held is not a verdict on
+    // the tree (issue #1185). The driver's figure is a resident-set high-water,
+    // and under memory pressure macOS compresses the plant's pages out of the
+    // resident set as it writes them: holding 1,397 MB the plant read 610–1,217
+    // MB beside a sibling holding 8–16 GB, while `/usr/bin/footprint` counted
+    // 1,410. Such a run did not register the plant, so whether the rule names
+    // it cannot be concluded: a SKIP that states the figure held, the figure
+    // read, the platform and what the unit read of its own footprint — never a
+    // FAIL of the tree, never a PASS. Everything else here keeps running and
+    // keeps failing. The verdict is held both ways on every run by forged
+    // readings through the same judgement: one byte under what was held is that
+    // SKIP, what was held is named.
     {
       const probes: string[] = [];
       let plantWords = '';
+      let plantUnread: string | null = null;
       let unitWord = 'not read here: no plant child ran';
+      const name = 'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE';
+      const skipLine = (reason: string): string => `  SKIP  ${name}: ${reason}`;
       const jobs = Math.max(2, JOBS);
       const base = readMemoryBase(import.meta.dir);
       const entry = base?.platforms[process.platform];
@@ -110922,12 +111002,70 @@ function runRunTallySuite(live: RunTally): number {
               const cleanRun = new Map([[heaviest, suiteOf([beside])], ['ty40-idle', suiteOf([])]]);
               const plantedRun = new Map([[heaviest, suiteOf([beside, plant])]]);
               const clean = childrenCeiling(cleanRun, entry, 'plant');
-              const planted = childrenCeiling(plantedRun, entry, 'plant');
               const noBase = childrenCeiling(plantedRun, { highWater: entry.highWater, suites: entry.suites, bun: entry.bun }, 'plant');
               const noChildren = childrenCeiling(new Map([['ty40-idle', suiteOf([])]]), entry, 'plant');
               if (clean.verdict !== 'held') probes.push(`the unit holding nothing, held to the ${process.platform} "${heaviest}" figure, read ${clean.verdict}: ${clean.faults.join('; ')}`);
-              if (planted.verdict !== 'over' || planted.faults.length !== 1 || !planted.faults[0].includes(`"${plantLabel}"`) || !planted.faults[0].includes(`"${heaviest}"`) || !planted.faults[0].includes(`${megabytes(plant.peakBytes)} MB`)) {
-                probes.push(`the unit holding ${plantMegabytes} MB (peak ${megabytes(plant.peakBytes)} MB, "${heaviest}" bound ${ceiling} MB) is not named by unit, suite and figure: ${planted.verdict} ${planted.faults.join('; ')}`);
+              // Issue #1185: what the plant held is what its unit reports writing (one byte per 4 KiB), never the figure it was asked for.
+              const heldBytes = values[0].touched * 4096;
+              const mb = (bytes: number): string => `${megabytes(bytes)} MB (${bytes} bytes)`;
+              const unresidentWords = (u: UnitFootprint | undefined): string =>
+                u === undefined
+                  ? "the unit's own resident set after its writes was not below them, so it took no reading that counts compressed pages"
+                  : u.footprintBytes !== null
+                    ? `the unit's own resident set after its writes was ${mb(u.rssBytes)}, and its phys_footprint, which counts compressed and swapped pages, ${mb(u.footprintBytes)}` +
+                      (u.peakBytes === null ? '' : `, peak ${mb(u.peakBytes)}`) +
+                      ' (/usr/bin/footprint, read by the unit)'
+                    : `the unit's own resident set after its writes was ${mb(u.rssBytes)}, and ${u.why}`;
+              // The judgement on one reading of the plant: unread when its peak is below what it held, else named — or the faults saying why not.
+              const judgePlant = (p: UnitPeak, value: AllocateUnitValue): { unread: string | null; named: string; faults: string[] } => {
+                if (p.peakBytes < value.touched * 4096) {
+                  return {
+                    unread:
+                      `the plant held ${mb(value.touched * 4096)} and the driver read its peak as ${mb(p.peakBytes)} through Bun.spawn's maxRSS on ${process.platform} — ` +
+                      `below what it held, so the reading did not register the plant and whether a "${heaviest}" child one MB over its bound of ${ceiling} MB is named ` +
+                      'cannot be concluded on this run (issue #1185, measured on macOS: under memory pressure the compressor takes written pages out of the resident set, which is all maxRSS counts); ' +
+                      unresidentWords(value.unresident),
+                    named: '',
+                    faults: [],
+                  };
+                }
+                const run = childrenCeiling(new Map([[heaviest, suiteOf([beside, p])]]), entry, 'plant');
+                const named = run.verdict === 'over' && run.faults.length === 1 && run.faults[0].includes(`"${plantLabel}"`) && run.faults[0].includes(`"${heaviest}"`) && run.faults[0].includes(`${megabytes(p.peakBytes)} MB`);
+                return {
+                  unread: null,
+                  named: run.faults[0] ?? 'nothing',
+                  faults: named ? [] : [`the unit holding ${plantMegabytes} MB (peak ${megabytes(p.peakBytes)} MB, "${heaviest}" bound ${ceiling} MB) is not named by unit, suite and figure: ${run.verdict} ${run.faults.join('; ')}`],
+                };
+              };
+              const real = judgePlant(plant, values[0]);
+              if (heldBytes !== plantMegabytes * 1024 * 1024) probes.push(`the plant's unit reports writing ${mb(heldBytes)} where it was asked for ${plantMegabytes} MB`);
+              if (real.unread === null) probes.push(...real.faults);
+              else plantUnread = real.unread;
+              // The verdict held both ways, through the same judgement, on every run: a peak one byte under what was held is the SKIP; a peak at it is named.
+              const forgedSkip = (peakBytes: number, value: AllocateUnitValue, wants: readonly string[], what: string): string => {
+                const forged = judgePlant({ ...plant, peakBytes }, value);
+                const line = forged.unread === null ? null : skipLine(forged.unread);
+                if (line === null || !line.startsWith(`  SKIP  ${name}: `) || !wants.every((w) => line.includes(w))) {
+                  probes.push(`${what} is not the SKIP naming ${wants.map((w) => JSON.stringify(w)).join(', ')}: ${line ?? `read as ${forged.faults.length === 0 ? 'named' : forged.faults.join('; ')}`}`);
+                  return '';
+                }
+                return line;
+              };
+              const plainValue: AllocateUnitValue = { megabytes: values[0].megabytes, touched: values[0].touched };
+              const oneUnder = forgedSkip(heldBytes - 1, plainValue, [`held ${mb(heldBytes)}`, `as ${mb(heldBytes - 1)}`, `on ${process.platform}`], 'a peak one byte under what the plant held');
+              const compressedLike: AllocateUnitValue = { ...plainValue, unresident: { rssBytes: beside.peakBytes, footprintBytes: heldBytes + beside.peakBytes, peakBytes: heldBytes + beside.peakBytes, why: '' } };
+              forgedSkip(beside.peakBytes, compressedLike, [`held ${mb(heldBytes)}`, `as ${mb(beside.peakBytes)}`, `phys_footprint, which counts compressed and swapped pages, ${mb(heldBytes + beside.peakBytes)}`], 'a peak at the unit beside it with a footprint at what was held');
+              const atHeld = judgePlant({ ...plant, peakBytes: heldBytes }, plainValue);
+              if (atHeld.unread !== null || atHeld.faults.length > 0) probes.push(`a peak at what the plant held, ${mb(heldBytes)}, is not named: ${atHeld.unread ?? atHeld.faults.join('; ')}`);
+              const footprintTable: ReadonlyArray<readonly [string, number | null, number | null]> = [
+                ['    phys_footprint: 1410 MB\n    phys_footprint_peak: 1410 MB\n', 1410 * 1024 * 1024, 1410 * 1024 * 1024],
+                ['    phys_footprint: 1328 KB\n    phys_footprint_peak: 1.5 GB\n', 1328 * 1024, Math.round(1.5 * 1024 * 1024 * 1024)],
+                ['    phys_footprint_peak: 1410 MB\n', null, 1410 * 1024 * 1024],
+                ['nothing it reads\n', null, null],
+              ];
+              for (const [text, footprintBytes, peakBytes] of footprintTable) {
+                const got = footprintOf(text);
+                if (got.footprintBytes !== footprintBytes || got.peakBytes !== peakBytes) probes.push(`footprintOf(${JSON.stringify(text)}) reads ${JSON.stringify(got)} where it is ${JSON.stringify({ footprintBytes, peakBytes })}`);
               }
               if (noBase.verdict !== 'no base' || noBase.faults.length > 0) probes.push(`an entry with no children's figures reads ${noBase.verdict}, where it is no verdict at all`);
               if (noChildren.verdict !== 'no children' || noChildren.faults.length > 0) probes.push(`a run that measured no child reads ${noChildren.verdict}, where it is no verdict at all`);
@@ -110948,13 +111086,20 @@ function runRunTallySuite(live: RunTally): number {
               if (JSON.stringify(kept.platforms.alpha?.children) !== JSON.stringify(children) || kept.platforms.zeta?.children !== undefined || kept.spec !== MEMORY_BASE_SPEC) {
                 probes.push(`writing the children's figures for one platform did not keep them, or touched another's: ${JSON.stringify(kept)}`);
               }
-              plantWords =
-                `the plant held — sized from the base alone at the growth the rule names (the "${heaviest}" figure ${plantFigure} MB × ${CHILDREN_MARGIN} = ${ceiling} MB, ` +
-                `+ ${TY40_PLANT_OVER_MB}, under its limit of ${TY40_PLANT_LIMIT_MB} MB), the unit holding ${plantMegabytes} MB ` +
-                `beside one holding nothing (${megabytes(beside.peakBytes)} MB) peaks at ${megabytes(plant.peakBytes)} MB through the driver at --jobs ${jobs} and is named over the bound ` +
-                `of ${ceiling} MB — ${planted.faults[0] ?? 'nothing'} — while each tracked suite's child one MB over its bound is named and one at it is not, ` +
+              const restWords =
+                "each tracked suite's child one MB over its bound is named and one at it is not, " +
                 "a suite with no figure is listed as held to nothing, an entry with no children's figures and a run with no child give no verdict, " +
                 "the suite line carries the unit and its figure and one that drops them is named, and writing one platform's figures keeps every other platform's";
+              const sizedWords =
+                `sized from the base alone at the growth the rule names (the "${heaviest}" figure ${plantFigure} MB × ${CHILDREN_MARGIN} = ${ceiling} MB, ` +
+                `+ ${TY40_PLANT_OVER_MB}, under its limit of ${TY40_PLANT_LIMIT_MB} MB)`;
+              plantWords =
+                real.unread !== null
+                  ? `${real.unread}; the plant was ${sizedWords}, and the rest of this control ran: ${restWords}`
+                  : `the plant held — ${sizedWords}, the unit holding ${plantMegabytes} MB ` +
+                    `beside one holding nothing (${megabytes(beside.peakBytes)} MB) peaks at ${megabytes(plant.peakBytes)} MB through the driver at --jobs ${jobs} and is named over the bound ` +
+                    `of ${ceiling} MB — ${real.named} — while ${restWords}; a peak at what the plant held is named and one a byte under it is not a verdict (issue #1185) — ` +
+                    `forged, it reads ${JSON.stringify(oneUnder.trim())}`;
             }
           } catch (err) {
             probes.push(`the plant's units did not complete, so the plant is at fault rather than the run: ${(err as Error).message.slice(0, 400)}`);
@@ -110981,8 +111126,15 @@ function runRunTallySuite(live: RunTally): number {
       probes.push(...sofar.faults);
       const unheldSoFar = sofar.verdict === 'held' ? sofar.suites.filter((s) => s.bound === null) : [];
       const soFarWords = (suites: readonly SuiteChildrenHeld[]): string => suites.map((s) => `"${s.suite}" ${s.highWater} MB ("${s.unit}")`).join(', ');
-      const name = 'TY40_THE_RUNS_CHILDREN_ARE_UNDER_ITS_PLATFORMS_CHILDREN_CEILING_AND_A_PLANTED_UNIT_IS_NAMED_BY_ITS_FIGURE';
-      if (probes.length === 0 && (sofar.verdict === 'no base' || sofar.verdict === 'no children' || unheldSoFar.length > 0)) {
+      const sofarSkips = sofar.verdict === 'no base' || sofar.verdict === 'no children' || unheldSoFar.length > 0;
+      if (probes.length === 0 && !sofarSkips && plantUnread !== null) {
+        console.log(
+          skipLine(
+            `${plantWords}; each suite so far that measured a child is under its own bound: ${childrenHeldText(sofar.suites, process.platform) || 'none'}, ` +
+              `and the whole run's are held the same way after the tables; Bun.spawn's maxRSS reads in ${unitWord} on ${process.platform}`,
+          ),
+        );
+      } else if (probes.length === 0 && sofarSkips) {
         console.log(
           `  SKIP  ${name}: ` +
             (sofar.verdict === 'no base'
