@@ -26,7 +26,9 @@
  *   `min(sum, duration)`, physics reset at pose 0 and stepped by `1/fps` after
  *   — the recipe `spinePoser` runs, measured bit-exact against it on every
  *   frame of the nineteen tree rows by the core suite's `CR03`. The setup pose
- *   is `poseRawSetup`.
+ *   is `poseRawSetup`. Since issue #1180 the walk is `poseRawAnimationEach`,
+ *   the same walk handing each pose over as it is posed (`CORE_RAW_WALK`), so
+ *   one pose is held at a time.
  * - **Vertices, triangles, bones, slot colours, draw order** are the raw
  *   pose's, unchanged: the same doubles `computeWorldVertices`,
  *   `getWorldRotationX` and the slot pose hold (`CR03`).
@@ -94,7 +96,8 @@ import { atlasRegionLookup, parseAtlasText } from './atlas.ts';
 import { pagesOfAtlas, spineFileSha256, type ModelPage } from './model.ts';
 import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
 import { activeBones, CoreInputError, readModel, sourceOfDoc, underNoSkin, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
-import { poseRawAnimation, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
+import { poseRawAnimationEach, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
+import type { TimelinePlant } from './core/animation.ts';
 import { CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
 import { documentPageLookup, drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvRegion, type UvSource } from './core/uvs.ts';
 import { regionCorners, worldVertices } from './core/vertices.ts';
@@ -273,6 +276,98 @@ interface CoreInput {
   source: UvSource;
   /** The region a name draws — the document's `pages`, or for a `/1` document the atlas's — what an original-art UV reads its trim from. */
   region: (name: string) => TextureRegion | null;
+  /** The page UVs and triangle lists the pieces hold (`PieceArrays`), one table for every pose of this poser. */
+  arrays: PieceArrays;
+}
+
+/**
+ * The two arrays a drawn piece holds that are not a function of the pose
+ * (issue #1180): its page UVs — a function of the region it samples and,
+ * for a mesh, the attachment's own UVs — and a mesh's triangle list.
+ *
+ * ⭐ Why a table rather than an array per piece. A render holds its frames
+ * before it writes one (every animation at `PROTOCOL_FPS`), and the framing
+ * reads every animation at `FRAMING_FPS`; a fresh copy of both arrays in every
+ * piece of every frame was what made the core poser's render peak at 3.3x
+ * spine-core's resident size on a production rig (4,015 against 1,214 MiB,
+ * n = 5), where spine-core's pieces hold the attachment's own `uvs` and
+ * `triangles` and only the world vertices are per frame. Held here, the count
+ * of these arrays is bounded by what the rig draws — one per region and
+ * attachment UVs, one per distinct triangle list of a slot's attachment — and
+ * not by how many frames are posed (`RC43`).
+ *
+ * The values are the same doubles either way: the UVs are computed once by
+ * the same call from the same inputs, and a triangle list is reused only where
+ * it is equal, index for index, to the one the pose carries. No reader writes
+ * into a piece's arrays — spine-core's pieces have always shared theirs.
+ */
+export interface PieceArrays {
+  /** The page UVs `found` is drawn with: `regionPageUvs` for a region, `meshPageUvs` over the attachment's UVs for a mesh. */
+  uvs(found: DrawnRegion): number[];
+  /** A triangle list equal, index for index, to `drawn.triangles`. */
+  triangles(drawn: RawDrawn): number[];
+}
+
+/** `PieceArrays` kept for the poser's lifetime — what `corePoser` builds unless a plant passes another. */
+export function keptPieceArrays(): PieceArrays {
+  // Keyed on the placement's own object (one per region name, `documentPageLookup`/`atlasRegionLookup`) and the
+  // document's UV array (or `null` for a region): both live as long as the poser, so a key is never a copy.
+  const uvs = new WeakMap<object, Map<readonly number[] | null, number[]>>();
+  // Keyed by slot and attachment, and each list compared index for index before it is reused: a key names where
+  // a list was drawn, the comparison is what makes reusing it exact.
+  const triangles = new Map<string, number[][]>();
+  return {
+    uvs: (found) => {
+      let byArt = uvs.get(found.found);
+      if (byArt === undefined) {
+        byArt = new Map();
+        uvs.set(found.found, byArt);
+      }
+      let kept = byArt.get(found.art);
+      if (kept === undefined) {
+        kept = found.art === null ? regionPageUvs(found.found.region, found.found.page) : meshPageUvs(found.found.region, found.found.page, found.art);
+        byArt.set(found.art, kept);
+      }
+      return kept;
+    },
+    triangles: (drawn) => {
+      const key = `${drawn.slot}\u0000${drawn.attachment}`;
+      let lists = triangles.get(key);
+      if (lists === undefined) {
+        lists = [];
+        triangles.set(key, lists);
+      }
+      const wanted = drawn.triangles;
+      const equal = (list: readonly number[]): boolean => {
+        if (list.length !== wanted.length) return false;
+        for (let i = 0; i < list.length; i++) if (list[i] !== wanted[i]) return false;
+        return true;
+      };
+      let kept = lists.find(equal);
+      if (kept === undefined) {
+        kept = [...wanted];
+        lists.push(kept);
+      }
+      return kept;
+    },
+  };
+}
+
+/**
+ * The raw walk the core poser steps an animation with (issue #1180):
+ * `poseRawAnimationEach`, which hands each pose to `visit` as it is posed, so
+ * one pose is held at a time rather than the animation's whole series. A plant
+ * passes another (`RC44`).
+ */
+export type CoreRawWalk = (doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, visit: (pose: RawPose, index: number) => void) => void;
+
+/** The walk `corePoser` steps with unless a plant passes another: one pose posed, drawn and released before the next. */
+export const CORE_RAW_WALK: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimationEach(doc, animation, steps, plant, 'animation', visit);
+
+/** What a suite passes `corePoser` in place of the poser's own parts — `PieceArrays` (`RC43`) and the raw walk (`RC44`). */
+export interface CorePoserPlants {
+  arrays?: () => PieceArrays;
+  walk?: CoreRawWalk;
 }
 
 /**
@@ -419,7 +514,7 @@ function pieces(
     if (!drawn) continue;
     const found = regions.get(d.slot);
     if (found === undefined) throw new CoreInputError(`slot "${d.slot}" drew "${d.attachment}", and no atlas region was resolved for it`);
-    const uvs = found.art === null ? regionPageUvs(found.found.region, found.found.page) : meshPageUvs(found.found.region, found.found.page, found.art);
+    const uvs = input.arrays.uvs(found);
     const atlasRegion = draw.texture ? input.region(found.region) : null;
     if (draw.texture && atlasRegion === null) throw new CoreInputError(`slot "${d.slot}": atlas region "${found.region}" is not in the atlas`);
     const texture = atlasRegion === null ? undefined : artUvsOf(d, atlasRegion);
@@ -427,7 +522,7 @@ function pieces(
     const world = [...d.vertices];
     const piece: Piece =
       d.kind === 'mesh'
-        ? { kind: 'mesh', ...common, texture, world, uvs, triangles: [...d.triangles] }
+        ? { kind: 'mesh', ...common, texture, world, uvs, triangles: input.arrays.triangles(d) }
         : { kind: 'region', ...common, texture, world, uvs };
     const shape = cover.get(d.slot);
     out.push(shape === undefined ? piece : clippedPiece(piece, d, shape, uvs, rows.get(d.slot), through));
@@ -592,7 +687,14 @@ function placementOf(doc: CompiledDocument, atlasText: string, where: string): {
  * `CoreInputError`, naming why, where the document or the atlas cannot be read; a pose the core leaves a block of out
  * is refused the same way when it is asked for (the header).
  */
-export function corePoser(modelText: string, atlasText: string, where = 'skeleton.model.json', skeleton?: { path: string; bytes: Uint8Array }, through: ShapeClipper = clipThrough): Poser {
+export function corePoser(
+  modelText: string,
+  atlasText: string,
+  where = 'skeleton.model.json',
+  skeleton?: { path: string; bytes: Uint8Array },
+  through: ShapeClipper = clipThrough,
+  plants: CorePoserPlants = {},
+): Poser {
   const doc = readModel(modelText, where);
   // The document poses the rig it was built with; the Spine file beside it must be that build's (issue #968).
   if (skeleton !== undefined) {
@@ -613,6 +715,8 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
   const sequences = readUvSequences(parsed);
   const { lookup, region } = placementOf(doc, atlasText, where);
   const views = new Map<string, CompiledDocument>();
+  const arrays = (plants.arrays ?? keptPieceArrays)();
+  const walk = plants.walk ?? CORE_RAW_WALK;
   const inputOf = (skin: string | undefined): CoreInput => {
     const key = skin === undefined ? '' : `=${skin}`;
     let view = views.get(key);
@@ -620,7 +724,7 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
       view = skin === undefined ? noSkinView(doc) : underSkin(doc, skin);
       views.set(key, view);
     }
-    return { doc: view, source: { lookup, sequences }, region };
+    return { doc: view, source: { lookup, sequences }, region, arrays };
   };
   const roster: SubsetRoster = {
     declared: doc.slots.map((s) => s.name),
@@ -639,8 +743,20 @@ export function corePoser(modelText: string, atlasText: string, where = 'skeleto
     animation: (name, skin, fps, count, visit) => {
       const input = inputOf(skin);
       const step = 1 / fps;
-      const poses = poseRawAnimation(input.doc, name, new Array<number>(count).fill(step), { through }, 'animation');
-      poses.forEach((pose, i) => visit(i, corePosed(input, pose, through)));
+      // Each pose is drawn as it is posed and released before the next (issue #1180), so the walk holds one pose and not
+      // the animation's series. What is thrown is what was thrown when the series was posed first and drawn after: a
+      // walk that refuses a later pose still refuses the call, and a draw that throws is re-thrown once the walk has
+      // finished without refusing — the first such throw, by frame — and no frame after it is drawn.
+      const drawFailed: unknown[] = [];
+      walk(input.doc, name, new Array<number>(count).fill(step), { through }, (pose, i) => {
+        if (drawFailed.length > 0) return;
+        try {
+          visit(i, corePosed(input, pose, through));
+        } catch (thrown) {
+          drawFailed.push(thrown);
+        }
+      });
+      if (drawFailed.length > 0) throw drawFailed[0];
     },
     rest: (skin, shown) => {
       const input = inputOf(skin);

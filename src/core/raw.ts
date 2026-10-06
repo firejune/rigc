@@ -351,6 +351,20 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
 }
 
 /**
+ * `poseRawAnimation`, each pose handed to `visit` as it is posed rather than
+ * collected (issue #1180): the same walk, the same poses in the same order,
+ * and the caller holds as many of them as it keeps. `src/render_core.ts`
+ * draws each and lets it go, so a render holds one pose and not an
+ * animation's series — on the production rig the core poser's render peaked
+ * highest on, the largest animation's series was 153 MiB of retained heap.
+ * A refusal is thrown from the pose it is met at, after `visit` has seen the
+ * poses before it.
+ */
+export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void): void {
+  walkEach(doc, animation, steps, plant, reset, RAW_MODE, visit);
+}
+
+/**
  * The animation time a looping track applies its animation at (`./walk.ts`,
  * *The time*): the track time wrapped by the duration, and 0 over a duration
  * of 0.
@@ -366,6 +380,13 @@ export function loopedTime(trackTime: number, duration: number): number {
  * `mode` here, so the raw entry's walk is the one it was.
  */
 export function walkIn(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode): RawPose[] {
+  const poses: RawPose[] = [];
+  walkEach(doc, animation, steps, plant, reset, mode, (pose) => poses.push(pose));
+  return poses;
+}
+
+/** `walkIn`'s walk, each pose handed to `visit` in order as it is posed (`poseRawAnimationEach`). */
+function walkEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, visit: (pose: RawPose, index: number) => void): void {
   const anim = doc.animations.find((a) => a.name === animation);
   if (anim === undefined) throw new CoreInputError(`animation "${animation}" is not one of this document's [${doc.animations.map((a) => a.name).join(', ')}]`);
   const bad = steps.findIndex((s) => !Number.isFinite(s) || s < 0);
@@ -377,7 +398,7 @@ export function walkIn(doc: CompiledDocument, animation: string, steps: readonly
   const duration = anim.timelines.duration;
   const ctx = freshStepContext(plant.physicsStep);
   if (mode.loop && mode.wrapResets !== false) ctx.loop = true;
-  const poses: RawPose[] = [];
+  let visited = 0;
   let trackTime = 0;
   let last = -1;
   if (reset === 'setup') {
@@ -387,7 +408,7 @@ export function walkIn(doc: CompiledDocument, animation: string, steps: readonly
     if (absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
     if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
     ctx.phase = 'update';
-    poses.push({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant, mode), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) });
+    visit({ trackTime: 0, animationTime: 0, bones: rawBones(doc, setup.world), slots: setup.setup.slots, drawOrder: setup.setup.drawOrder, ...rawDrawn(doc, setup.shown, setup.world, setup.setup.drawOrder, plant, mode), events: [], shown: drawOrderOf(setup.shown, setup.setup.drawOrder) }, visited++);
   }
   for (let i = reset === 'setup' ? 1 : 0; i <= steps.length; i++) {
     const dt = i === 0 ? 0 : steps[i - 1];
@@ -414,9 +435,8 @@ export function walkIn(doc: CompiledDocument, animation: string, steps: readonly
     // drawn attachments through a clip (`NO_CLIPPED_ROWS`), so its `clipped` rows are empty.
     const events = mode.loop ? [] : (plant.events ?? eventsFired)(anim.timelines.events, last, t, rawNumber).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
     last = t;
-    poses.push({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown });
+    visit({ trackTime, animationTime: t, bones: rawBones(doc, posed.world), slots: slots.rows, drawOrder, ...drawn, events, shown }, visited++);
   }
-  return poses;
 }
 
 // --- #907 the setup-pose bounding box: begin ---

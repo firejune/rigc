@@ -2148,6 +2148,37 @@ export function unframeableSentence(
   );
 }
 
+/** A box being widened over vertices: `minX`…`maxY`, empty at ±Infinity. */
+interface FramingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/** `box` widened over the `[x, y, …]` pairs of `world` — `unionBounds`'s arithmetic, in its order of reading. */
+function extendBox(box: FramingBox, world: ArrayLike<number>): void {
+  for (let i = 0; i < world.length; i += 2) {
+    box.minX = Math.min(box.minX, world[i]);
+    box.maxX = Math.max(box.maxX, world[i]);
+    box.minY = Math.min(box.minY, world[i + 1]);
+    box.maxY = Math.max(box.maxY, world[i + 1]);
+  }
+}
+
+/**
+ * How `framingViewport` is handed its frame sets: `sample` called for each of
+ * `animations` (`null` the setup pose of a skeleton with none), the sets
+ * yielded in that order. The framing reads each set whole before it asks for
+ * the next.
+ */
+export type FramingSets = (sample: (animation: string | null) => Frame[], animations: ReadonlyArray<string | null>) => Iterable<Frame[]>;
+
+/** Each set sampled only when the framing asks for it, so the one before it is no longer held (issue #1180). */
+export const ONE_SET_AT_A_TIME: FramingSets = function* (sample, animations) {
+  for (const animation of animations) yield sample(animation);
+};
+
 /**
  * The viewport a skeleton is framed to: its union box at `FRAMING_FPS`, padded,
  * scaled so the long side is `maxSide` pixels.
@@ -2174,8 +2205,24 @@ export function unframeableSentence(
  * that pose one. Spine data as the source is its own. A bare `Poser` with no
  * roster cannot tell an unposed bone from a posed one, so every drawn slot
  * counts there; every CLI caller passes the roster, so both posers frame alike.
+ *
+ * ⭐ One animation's frames at a time (issue #1180). The box is a minimum and
+ * a maximum per axis, which no order of reading changes, so each animation's
+ * frames are read into a box per slot and released before the next animation
+ * is sampled; the box over the slots that pose is the union of theirs. Held
+ * all at once — every animation at 60 fps — they were the largest single
+ * holder of a render's heap: on the production rig whose core-poser render
+ * peaked highest, 961 MiB retained at the framing's high-water under the core
+ * poser and 293 MiB under spine-core's. `RC42` reads that no animation's
+ * frames are read once the next one is sampled; `sets` is a plant's way in.
  */
-export function framingViewport(source: PoseSource, maxSide: number, opts?: PoseOptions, rosterGiven?: SkinRoster): Viewport | null {
+export function framingViewport(
+  source: PoseSource,
+  maxSide: number,
+  opts?: PoseOptions,
+  rosterGiven?: SkinRoster,
+  sets: FramingSets = ONE_SET_AT_A_TIME,
+): Viewport | null {
   const poser = poserOf(source);
   // The skin belongs here as much as in the frames: the union box is over the
   // attachments that POSE, and two skins fill a slot with art of different sizes
@@ -2194,10 +2241,25 @@ export function framingViewport(source: PoseSource, maxSide: number, opts?: Pose
   // both would be taken at `FRAMING_FPS` for every animation only to be dropped.
   const { slots: _drawn, hidden: _hidden, bones: _bones, geometry: _geometry, ...whole } = opts ?? {};
   const framed: PoseOptions = { ...whole, unclipped: true };
-  const sets =
-    poser.animations.length === 0
-      ? [sampleSetupPose(poser, framed)]
-      : poser.animations.map((a) => sampleAnimation(poser, a.name, FRAMING_FPS, framed));
+  const sample = (animation: string | null): Frame[] =>
+    animation === null ? sampleSetupPose(poser, framed) : sampleAnimation(poser, animation, FRAMING_FPS, framed);
+  const animations: Array<string | null> = poser.animations.length === 0 ? [null] : poser.animations.map((a) => a.name);
+  // Per slot, in the order a slot first drew: the box over its vertices and whether it drew one. Min and max select, so the
+  // union over any grouping of the same vertices is the same four numbers — NaN and the sign of a zero included.
+  const bySlot = new Map<string, { box: FramingBox; drew: boolean }>();
+  for (const frames of sets(sample, animations)) {
+    for (const frame of frames) {
+      for (const piece of frame.pieces) {
+        let slot = bySlot.get(piece.slot);
+        if (slot === undefined) {
+          slot = { box: { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }, drew: false };
+          bySlot.set(piece.slot, slot);
+        }
+        if (piece.world.length > 0) slot.drew = true;
+        extendBox(slot.box, piece.world);
+      }
+    }
+  }
   // ⚠️ Two different reasons a box is not finite, told apart here and nowhere
   // else (issue #873). A skeleton that posed no vertex at all has nothing to
   // draw, and that is `null`. One that posed a vertex at Infinity or NaN has a
@@ -2206,20 +2268,23 @@ export function framingViewport(source: PoseSource, maxSide: number, opts?: Pose
   // this, the first case's `null` covered both, and a single overflowing bone
   // among finite ones reached neither: its box was finite on one side, and
   // `render` wrote a NaN-by-NaN frame set with exit 0.
-  const drewAny = (frameSets: ReadonlyArray<readonly Frame[]>): boolean =>
-    frameSets.some((frames) => frames.some((frame) => frame.pieces.some((piece) => piece.world.length > 0)));
-  if (!drewAny(sets)) return null;
+  if (![...bySlot.values()].some((slot) => slot.drew)) return null;
   // ⭐ The box is over the slots that pose (issue #1000). A drawn slot on a bone
   // the skin leaves unposed is taken off — it draws no pixel — unless nothing
-  // else drew, in which case every set is kept whole so the pose reaches #997's
+  // else drew, in which case every slot is kept so the pose reaches #997's
   // refusal below exactly as it did before this: the same inputs, the same
   // sentence, never an empty box framed to something.
   const roster = rosterBehind(source, rosterGiven);
   const offBox = slotsOnUnposedBones(poser.slots, framed.skin, roster);
-  const posedSets =
-    offBox.size === 0 ? sets : sets.map((frames) => frames.map((frame) => ({ ...frame, pieces: frame.pieces.filter((piece) => !offBox.has(piece.slot)) })));
-  const boxed = drewAny(posedSets) ? posedSets : sets;
-  const box = unionBounds(boxed);
+  const posed = [...bySlot].filter(([name]) => !offBox.has(name));
+  const posedOnly = posed.some(([, slot]) => slot.drew);
+  const box: FramingBox = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (const [, slot] of posedOnly ? posed : [...bySlot]) {
+    box.minX = Math.min(box.minX, slot.box.minX);
+    box.maxX = Math.max(box.maxX, slot.box.maxX);
+    box.minY = Math.min(box.minY, slot.box.minY);
+    box.maxY = Math.max(box.maxY, slot.box.maxY);
+  }
   if (![box.minX, box.minY, box.maxX, box.maxY].every(Number.isFinite)) {
     const found = nonFinitePoseOf(
       poser,
@@ -2241,8 +2306,14 @@ export function framingViewport(source: PoseSource, maxSide: number, opts?: Pose
   // A finite box over one point (issue #997): every drawn slot on a bone the
   // skin leaves unposed, or every vertex collapsed. Framed, it is a scale of
   // Infinity and a frame of NaN by NaN pixels, written as 0x0 with exit 0.
-  const unframeable = unframeableSentence(boxed, poser.slots, framed.skin, roster);
-  if (unframeable !== null) throw new UnframeablePoseError(unframeable);
+  // Only a box with no extent can be refused, and only then are the frames
+  // sampled again to be read whole — by the sentence's one derivation.
+  if (box.maxX - box.minX === 0 && box.maxY - box.minY === 0) {
+    const whole = animations.map(sample);
+    const boxed = posedOnly ? whole.map((frames) => frames.map((frame) => ({ ...frame, pieces: frame.pieces.filter((piece) => !offBox.has(piece.slot)) }))) : whole;
+    const unframeable = unframeableSentence(boxed, poser.slots, framed.skin, roster);
+    if (unframeable !== null) throw new UnframeablePoseError(unframeable);
+  }
   const pad = Math.max(box.maxX - box.minX, box.maxY - box.minY) * PAD;
   return viewportFor(box.minX - pad, box.minY - pad, box.maxX + pad, box.maxY + pad, maxSide);
 }

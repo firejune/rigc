@@ -74871,7 +74871,8 @@ import { regionCorners, worldVertices, type VertexPoser } from './src/core/verti
 import { clipShapeOf, clipThrough, clipTriangles, convexPieces, signedArea2, type ClipReading, type ClipShape, type TriangleClipper } from './src/core/clipping.ts';
 import { asOracleDocument, blockOf, coreDump, ORACLE_BLOCKS, OracleInputError, sampleTime as oracleSampleTime, type OracleDocument, type SlotRow } from './tools/pose_oracle.ts';
 import { runRecipe } from './tools/emit_hashes.ts';
-import { corePoser, firstPageDifference } from './src/render_core.ts';
+import { CORE_RAW_WALK, corePoser, firstPageDifference, type CorePoserPlants, type CoreRawWalk, type PieceArrays } from './src/render_core.ts';
+import type { FramingSets, MakeCorePoser } from './src/render_shared.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
 import { DEFORM_CURVE_END, deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
@@ -90600,6 +90601,178 @@ function runRenderHashesSuite(): number | null {
       'issue #964: the runtime\'s triangle list under a concave or inverse clip is its own decomposition and is not reproduced. The render samples a ' +
         'clipped triangle at its source triangle\'s affine UV, so any decomposition that covers the same area draws the same pixels — ' +
         'measured before that change at up to 50 pixels one level off per frame set, and the reference itself moved as much when the same polygon was spelled from another vertex',
+    );
+  }
+
+  {
+    // RC42–RC44 — issue #1180: what a render holds is bounded by the rig, not by how much of it is posed. Each is a COUNT the tree
+    // reads off the posers it builds, never a resident size (a shared machine's resident size is not a reading). RC42: no animation's
+    // framing frames are read once the next animation is sampled, so the framing holds one set at a time; the plant hands it every set
+    // at once (the walk before #1180). RC43: posing every frame a second time through one core poser adds no page-UV or triangle
+    // array to what its pieces hold — they are the rig's, not the frames'; the plant copies both into every piece (before #1180). RC44: the
+    // core poser's walk is never more than one pose ahead of the frame being drawn; the plant posts the whole series first (before
+    // #1180). Every plant leaves every digest RC01 read unmoved — which is why the counts, and not the pixels, are what can see them.
+    const probes42: string[] = [];
+    const probes43: string[] = [];
+    const probes44: string[] = [];
+    const read42: string[] = [];
+    const read43: string[] = [];
+    const read44: string[] = [];
+    const holdEverySet: FramingSets = (sample, animations) => animations.map(sample);
+    /** `poser` with every piece's world vertices counted when read after the set they belong to was released — the next animation sampled. */
+    const releasing = (poser: Poser): { poser: Poser; lateReads: () => number } => {
+      let generation = 0;
+      let late = 0;
+      const watched = (world: number[], born: number): number[] =>
+        new Proxy(world, {
+          get(target, key, receiver) {
+            if (generation !== born && typeof key === 'string' && (key === 'length' || /^\d+$/.test(key))) late++;
+            return Reflect.get(target, key, receiver) as unknown;
+          },
+        });
+      const wrap = (posed: Posed, born: number): Posed => ({ ...posed, pieces: (draw) => posed.pieces(draw).map((p) => ({ ...p, world: watched(p.world, born) })) });
+      return {
+        poser: {
+          ...poser,
+          setup: (skin) => wrap(poser.setup(skin), ++generation),
+          animation: (name, skin, fps, count, visit) => {
+            const born = ++generation;
+            poser.animation(name, skin, fps, count, (i, posed) => visit(i, wrap(posed, born)));
+          },
+        },
+        lateReads: () => late,
+      };
+    };
+    /** The core poser's pieces as they were before #1180: both arrays computed or copied afresh for every piece. */
+    const freshArrays = (): PieceArrays => ({
+      uvs: (found) => (found.art === null ? regionPageUvs(found.found.region, found.found.page) : meshPageUvs(found.found.region, found.found.page, found.art)),
+      triangles: (drawn) => [...drawn.triangles],
+    });
+    /** A walk counted: how many poses it has posed (one `events` reading per pose of a walk that does not loop) ahead of the frame drawn. */
+    const counted = (inner: CoreRawWalk, ahead: { most: number }): CoreRawWalk => (doc, animation, steps, plant, visit) => {
+      let walked = 0;
+      inner(doc, animation, steps, { ...plant, events: (keys, last, t, round) => {
+        walked++;
+        return eventsFired(keys, last, t, round);
+      } }, (pose, i) => {
+        ahead.most = Math.max(ahead.most, walked - i);
+        visit(pose, i);
+      });
+    };
+    const postedFirst: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimation(doc, animation, steps, plant, 'animation').forEach((pose, i) => visit(pose, i));
+    /** Distinct arrays of one piece field over every frame of `sets`, and the pieces holding one. */
+    const arrayCount = (sets: Iterable<Frame[]>, field: 'uvs' | 'triangles'): { pieces: number; arrays: number } => {
+      const arrays = new Set<unknown>();
+      let pieces = 0;
+      for (const frames of sets) {
+        for (const frame of frames) {
+          for (const p of frame.pieces) {
+            const held = field === 'uvs' ? p.uvs : p.kind === 'mesh' ? p.triangles : undefined;
+            if (held === undefined) continue;
+            pieces++;
+            arrays.add(held);
+          }
+        }
+      }
+      return { pieces, arrays: arrays.size };
+    };
+    for (const { name, out } of galleryBuilds) {
+      try {
+        const skeleton = join(out, 'skeleton.json');
+        const atlas = join(out, 'skeleton.atlas');
+        const { data, pages } = loadPosable(skeleton, atlas, out);
+        const choice = candidatePosers(data, skeleton, atlas, undefined);
+        if (choice.core === null) {
+          probes42.push(`${name}: the core poser was not chosen — ${choice.why}`);
+          continue;
+        }
+        const reference = coreDigests.get(name);
+        if (choice.core.animations.length >= 2) {
+          for (const [label, poser] of [['the core', choice.core], ['spine-core', choice.spine]] as const) {
+            const roster = choice.rosterOf(poser);
+            const plain = JSON.stringify(framingViewport(poser, 256, undefined, roster));
+            const tree = releasing(poser);
+            const kept = JSON.stringify(framingViewport(tree.poser, 256, undefined, roster));
+            const plant = releasing(poser);
+            const held = JSON.stringify(framingViewport(plant.poser, 256, undefined, roster, holdEverySet));
+            if (kept !== plain || held !== plain) probes42.push(`${name} through ${label}: the framing moved — ${plain} plain, ${kept} counted, ${held} under the plant`);
+            if (tree.lateReads() !== 0) probes42.push(`${name} through ${label}: ${tree.lateReads()} read(s) of a frame set after the next animation was sampled`);
+            if (plant.lateReads() === 0) probes42.push(`${name} through ${label}: every set held at once (the plant) read nothing late, so the count cannot see the release`);
+            else read42.push(`${name} via ${label} ${tree.lateReads()} late, plant ${plant.lateReads()}`);
+          }
+        }
+        const make = (plants: CorePoserPlants): MakeCorePoser => (modelText, atlasText, where, sk) => corePoser(modelText, atlasText, where, sk, clipThrough, plants);
+        const fresh = candidatePosers(data, skeleton, atlas, undefined, make({ arrays: freshArrays })).core;
+        if (fresh === null) {
+          probes43.push(`${name}: the planted core poser was not chosen`);
+          continue;
+        }
+        // One pass is a render's frames and its framing's; the second poses the same frames again through the same poser. What a
+        // second pass adds is what posing more adds — nothing, when the arrays are the rig's; a pass's worth, when they are the frames'.
+        const pass = (poser: Poser): Frame[][] => [...sampleAll(poser, PROTOCOL_FPS).values(), ...poser.animations.map((a) => sampleAnimation(poser, a.name, FRAMING_FPS, { unclipped: true }))];
+        const treeOnce = pass(choice.core);
+        const treeTwice = [...treeOnce, ...pass(choice.core)];
+        const freshOnce = pass(fresh);
+        const freshTwice = [...freshOnce, ...pass(fresh)];
+        for (const field of ['uvs', 'triangles'] as const) {
+          const once = arrayCount(treeOnce, field);
+          const twice = arrayCount(treeTwice, field);
+          const plantOnce = arrayCount(freshOnce, field);
+          const plantTwice = arrayCount(freshTwice, field);
+          if (once.pieces === 0) continue;
+          if (twice.arrays !== once.arrays) probes43.push(`${name}: posing the frames a second time took the ${field} arrays from ${once.arrays} to ${twice.arrays}`);
+          if (plantTwice.arrays <= plantOnce.arrays) probes43.push(`${name}: a fresh ${field} array in every piece (the plant) counted ${plantOnce.arrays} then ${plantTwice.arrays}, so the count cannot see it`);
+          else read43.push(`${name} ${field} ${once.arrays} array(s) over ${once.pieces} piece(s) and ${twice.arrays} after a second pass, plant ${plantOnce.arrays} then ${plantTwice.arrays}`);
+        }
+        const freshDigests = posedDigests(fresh, pages, undefined);
+        if (reference === undefined || digestDifferences(reference, freshDigests).length > 0) probes43.push(`${name}: fresh arrays moved ${reference === undefined ? 'a render RC01 did not read' : digestDifferences(reference, freshDigests).join(', ')}`);
+        const tree44 = { most: 0 };
+        const plant44 = { most: 0 };
+        const walkedTree = candidatePosers(data, skeleton, atlas, undefined, make({ walk: counted(CORE_RAW_WALK, tree44) })).core;
+        const walkedPlant = candidatePosers(data, skeleton, atlas, undefined, make({ walk: counted(postedFirst, plant44) })).core;
+        if (walkedTree === null || walkedPlant === null) {
+          probes44.push(`${name}: a counted core poser was not chosen`);
+          continue;
+        }
+        const treeDigests = posedDigests(walkedTree, pages, undefined);
+        const plantDigests = posedDigests(walkedPlant, pages, undefined);
+        for (const [label, digests] of [['the counted walk', treeDigests], ['the posted-first walk', plantDigests]] as const) {
+          const moved = reference === undefined ? ['a render RC01 did not read'] : digestDifferences(reference, digests);
+          if (moved.length > 0) probes44.push(`${name}: ${label} moved ${moved.join(', ')}`);
+        }
+        if (tree44.most !== 1) probes44.push(`${name}: the walk was ${tree44.most} pose(s) ahead of the frame drawn, not 1`);
+        if (plant44.most <= 1) probes44.push(`${name}: the series posted first (the plant) was ${plant44.most} pose(s) ahead, so the count cannot see it`);
+        else read44.push(`${name} ${tree44.most} ahead, plant ${plant44.most}`);
+      } catch (err) {
+        probes42.push(`${name}: ${(err as Error).message}`);
+      }
+    }
+    if (read42.length === 0) probes42.push('no gallery build with two animations was framed');
+    if (read43.length === 0) probes43.push('no gallery build was counted');
+    if (read44.length === 0) probes44.push('no gallery build was walked');
+    const held42 = probes42.length === 0;
+    say(
+      'RC42_THE_FRAMING_READS_NO_ANIMATION_S_FRAMES_ONCE_THE_NEXT_IS_SAMPLED_AND_HOLDING_EVERY_SET_IS_RED',
+      held42,
+      probeDetail(held42, probes42, `the framing of every gallery build with two or more animations, through both posers, the same viewport counted and planted: ${read42.join('; ')}`),
+      'issue #1180: the framing held every animation at 60 fps at once — on the production rig the core poser rendered highest, 961 MiB of retained heap ' +
+        'at its high-water against 293 under spine-core. A box is a minimum and a maximum, so each set is read whole and released',
+    );
+    const held43 = probes43.length === 0;
+    say(
+      'RC43_THE_CORE_POSER_S_PIECES_HOLD_NO_NEW_UV_OR_TRIANGLE_ARRAY_WHEN_MORE_FRAMES_ARE_POSED_AND_A_COPY_PER_PIECE_IS_RED',
+      held43,
+      probeDetail(held43, probes43, `every gallery build, every animation at the protocol rate and the framing rate, posed twice through one poser: ${read43.join('; ')}; every render digest RC01 read unmoved under the plant`),
+      'issue #1180: a fresh copy of both arrays in every piece of every frame was 535 MiB of the production rig\'s framing heap, where spine-core\'s ' +
+        'pieces hold the attachment\'s own arrays; the count is the bound, since the pixels are the same either way',
+    );
+    const held44 = probes44.length === 0;
+    say(
+      'RC44_THE_CORE_POSER_S_WALK_IS_ONE_POSE_AHEAD_OF_THE_FRAME_DRAWN_AND_POSTING_THE_SERIES_FIRST_IS_RED',
+      held44,
+      probeDetail(held44, probes44, `every gallery build, every animation: ${read44.join('; ')}; every render digest RC01 read unmoved under both walks`),
+      'issue #1180: the walk posed an animation\'s whole series before the first frame was drawn — 153 MiB retained for the longest animation of the ' +
+        'production rig at the framing rate; drawn as posed, one pose is held',
     );
   }
 

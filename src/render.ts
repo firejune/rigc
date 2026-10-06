@@ -560,7 +560,7 @@ export function candidatePosers(
   skeletonPath: string,
   atlasPath: string,
   forced: PoserName | undefined,
-  /** What builds the core poser: `corePoser` — the suite's `RC02` passes a planted copy, and nothing else passes any. */
+  /** What builds the core poser: `corePoser` — the suite's `RC02`, `RC43` and `RC44` pass planted or counted copies, and nothing else passes any. */
   make: MakeCorePoser = corePoser,
 ): PoserChoice {
   return refuseUnchosen(choosePosers(skeletonPath, atlasPath, readFileSync(atlasPath, 'utf8'), forced, () => data, make).choice);
