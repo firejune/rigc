@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.13.3](https://github.com/firejune/rigc/compare/v2.13.2...v2.13.3) (2026-10-06)
+
+
+### Bug Fixes
+
+* **selftest:** TY40 is a SKIP stating both figures, never a FAIL, when the driver reads the plant below what its unit wrote; reproduced on macOS under an 8–16 GB sibling: 6 of 46 plants read 610–1,217 MB holding 1,397 ([#1197](https://github.com/firejune/rigc/issues/1197)) ([7159809](https://github.com/firejune/rigc/commit/71598091cc292d7dfa18521b3ae3061f435212b3)), closes [#1185](https://github.com/firejune/rigc/issues/1185)
+
 ## [2.13.2](https://github.com/firejune/rigc/compare/v2.13.1...v2.13.2) (2026-10-06)
 
 
