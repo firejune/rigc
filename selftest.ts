@@ -549,6 +549,7 @@ import {
 import { pngProblem, readPngHeader, readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineAnimation, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
+import { BUILD_REPORT_SPEC } from './src/assertions/report.ts';
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
@@ -53765,6 +53766,398 @@ function meshesBlock(stdout: string): string {
   return stdout.slice(at + 1, end < 0 ? undefined : end);
 }
 
+// ---------------------------------------------------------------------------
+// build --report / repack --report: the build report document (issue #1213)
+// ---------------------------------------------------------------------------
+
+/** A build's report as its printed lines state it, read off the lines alone — the reader `BR` holds the document to, written without the serialiser. */
+interface ReportStatedByLines {
+  gates: Array<{
+    atlas: 'compiled' | 'packed';
+    passed: string[];
+    skipped: Array<{ code: string; reason: string }>;
+    failures: Array<{ code: string; detail: string }>;
+    summary: { assertions: number; measured: number; passed: number; failed: number; skipped: number; notInProfile: number; profile: string } | null;
+    stats: Array<[string, string]>;
+    here: { modelSide: number; restated: number; notRun: string[] } | null;
+  }>;
+  pack: Array<{ page: string; width: number; height: number; regions: number; coveredPct: number; padding: number; pageEdges: 'pot' | 'free'; packShape: string }>;
+}
+
+/**
+ * Every field the sentences state, read the way a dependant reads them: a gate
+ * opens on its `profile` line (`packed` when the line before it is the packed
+ * gate's heading), its rows are the `PASS`, `SKIP` and `FAIL` lines, its
+ * summary the `N assertions:` line and its stats the `k=v` line after it, the
+ * core entry's `here:` line its `here`, and every `pack:` line a pack entry.
+ */
+function reportStatedByLines(stdout: string): ReportStatedByLines {
+  const out: ReportStatedByLines = { gates: [], pack: [] };
+  const lines = stdout.split('\n');
+  let afterSummary = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const gate = out.gates[out.gates.length - 1];
+    if (/^ {2}\.\. {4}profile \S+ — /.test(line)) {
+      out.gates.push({ atlas: lines[i - 1] === '  ..    validate (packed atlas, pages on disk)' ? 'packed' : 'compiled', passed: [], skipped: [], failures: [], summary: null, stats: [], here: null });
+      afterSummary = false;
+      continue;
+    }
+    const pass = /^ {2}PASS {2}([A-Z0-9_]+)$/.exec(line);
+    const skip = /^ {2}SKIP {2}([A-Z0-9_]+): (.*)$/.exec(line);
+    const fail = /^ {2}FAIL {2}([A-Z0-9_]+): (.*)$/.exec(line);
+    const summary = /^ {2}\.\. {4}(\d+) assertions: (\d+) measured \((\d+) passed, (\d+) failed\), (\d+) skipped, (\d+) not in profile "([^"]+)"$/.exec(line);
+    const here = /^ {2}\.\. {4}here: (\d+) rule\(s\) on the model side over the document, (\d+) of the round trip's own restated over the emitted text; not run: (.*?) — /.exec(line);
+    const pack = /^ {2}\.\. {4}pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% covered, padding (\d+)(, page edges free)?, shape (\S+)$/.exec(line);
+    if (gate !== undefined && pass !== null) gate.passed.push(pass[1]);
+    else if (gate !== undefined && skip !== null) gate.skipped.push({ code: skip[1], reason: skip[2] });
+    else if (gate !== undefined && fail !== null) gate.failures.push({ code: fail[1], detail: fail[2] });
+    else if (gate !== undefined && summary !== null) {
+      const n = summary.slice(1, 7).map(Number);
+      gate.summary = { assertions: n[0], measured: n[1], passed: n[2], failed: n[3], skipped: n[4], notInProfile: n[5], profile: summary[7] };
+      afterSummary = true;
+      continue;
+    } else if (gate !== undefined && afterSummary && /^ {2}\.\. {4}\S+=\S*( \S+=\S*)*$/.test(line)) {
+      gate.stats = line
+        .slice('  ..    '.length)
+        .split(' ')
+        .map((kv): [string, string] => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]);
+    } else if (gate !== undefined && here !== null) gate.here = { modelSide: Number(here[1]), restated: Number(here[2]), notRun: here[3] === 'none' ? [] : here[3].split(', ') };
+    else if (pack !== null) {
+      out.pack.push({
+        page: pack[1],
+        width: Number(pack[2]),
+        height: Number(pack[3]),
+        regions: Number(pack[4]),
+        coveredPct: Number(pack[5]),
+        padding: Number(pack[6]),
+        pageEdges: pack[7] === undefined ? 'pot' : 'free',
+        packShape: pack[8],
+      });
+    }
+    afterSummary = false;
+  }
+  return out;
+}
+
+/** The first place two JSON values differ, as a path and both values — `null` when they are equal. */
+function firstJsonDifference(a: unknown, b: unknown, at = '$'): string | null {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      if (i >= a.length || i >= b.length) return `${at} has ${a.length} entr(ies) in the document and ${b.length} on the lines`;
+      const d = firstJsonDifference(a[i], b[i], `${at}[${i}]`);
+      if (d !== null) return d;
+    }
+    return null;
+  }
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null && !Array.isArray(a) && !Array.isArray(b)) {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.join(',') !== kb.join(',')) return `${at} has keys [${ka.join(', ')}] in the document and [${kb.join(', ')}] on the lines`;
+    for (const k of ka) {
+      const d = firstJsonDifference((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${at}.${k}`);
+      if (d !== null) return d;
+    }
+    return null;
+  }
+  return a === b ? null : `${at} is ${JSON.stringify(a)} in the document and ${JSON.stringify(b)} on the lines`;
+}
+
+/**
+ * Where a report document and the lines its build printed disagree: the
+ * document with its stats spelled as the line spells them (`k=v`, in order)
+ * set against `reportStatedByLines`, and its `spec`, `command` and `supplier`
+ * against what the run was. Empty when every field the sentences state is the
+ * document's and the document states nothing else of a gate or a pack line.
+ */
+function reportAgainstLines(docText: string, stdout: string, command: 'build' | 'repack', supplier: 'round-trip' | 'model'): string[] {
+  let doc: { spec?: unknown; command?: unknown; supplier?: unknown; gates?: Array<Record<string, unknown>>; pack?: unknown };
+  try {
+    doc = JSON.parse(docText) as typeof doc;
+  } catch (err) {
+    return [`the document does not parse: ${(err as Error).message}`];
+  }
+  const problems: string[] = [];
+  if (doc.spec !== BUILD_REPORT_SPEC) problems.push(`spec is ${JSON.stringify(doc.spec)}, not ${JSON.stringify(BUILD_REPORT_SPEC)}`);
+  if (doc.command !== command) problems.push(`command is ${JSON.stringify(doc.command)}, not ${JSON.stringify(command)}`);
+  if (doc.supplier !== supplier) problems.push(`supplier is ${JSON.stringify(doc.supplier)}, not ${JSON.stringify(supplier)}`);
+  const lines = reportStatedByLines(stdout);
+  const gates = (doc.gates ?? []).map((g) => ({ ...g, stats: Object.entries((g.stats ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v)]) }));
+  const gateDiff = firstJsonDifference(gates, lines.gates, '$.gates');
+  if (gateDiff !== null) problems.push(gateDiff);
+  const packDiff = firstJsonDifference(doc.pack, lines.pack.length === 0 ? null : lines.pack, '$.pack');
+  if (packDiff !== null) problems.push(packDiff);
+  return problems;
+}
+
+/**
+ * The census (issue #1213, step 1): every key the document may carry, by path,
+ * with the type it has — each one a field a dependant reads off the printed
+ * sentences today or a figure the summary line states. `*` is any key of a
+ * map; `[]` an array's members. An object in the document whose keys are not
+ * exactly its census children is named, so a field added without a census row
+ * — or a census row the serialiser stopped writing — is red here.
+ */
+const BUILD_REPORT_CENSUS: Readonly<Record<string, string>> = {
+  '$': 'object',
+  '$.spec': 'string',
+  '$.command': 'string',
+  '$.supplier': 'string',
+  '$.gates': 'array',
+  '$.gates[]': 'object',
+  '$.gates[].atlas': 'string',
+  '$.gates[].passed': 'array',
+  '$.gates[].passed[]': 'string',
+  '$.gates[].skipped': 'array',
+  '$.gates[].skipped[]': 'object',
+  '$.gates[].skipped[].code': 'string',
+  '$.gates[].skipped[].reason': 'string',
+  '$.gates[].failures': 'array',
+  '$.gates[].failures[]': 'object',
+  '$.gates[].failures[].code': 'string',
+  '$.gates[].failures[].detail': 'string',
+  '$.gates[].summary': 'object',
+  '$.gates[].summary.assertions': 'number',
+  '$.gates[].summary.measured': 'number',
+  '$.gates[].summary.passed': 'number',
+  '$.gates[].summary.failed': 'number',
+  '$.gates[].summary.skipped': 'number',
+  '$.gates[].summary.notInProfile': 'number',
+  '$.gates[].summary.profile': 'string',
+  '$.gates[].stats': 'object',
+  '$.gates[].stats.*': 'number|string',
+  '$.gates[].here': 'object|null',
+  '$.gates[].here.modelSide': 'number',
+  '$.gates[].here.restated': 'number',
+  '$.gates[].here.notRun': 'array',
+  '$.gates[].here.notRun[]': 'string',
+  '$.pack': 'array|null',
+  '$.pack[]': 'object',
+  '$.pack[].page': 'string',
+  '$.pack[].width': 'number',
+  '$.pack[].height': 'number',
+  '$.pack[].regions': 'number',
+  '$.pack[].coveredPct': 'number',
+  '$.pack[].padding': 'number',
+  '$.pack[].pageEdges': 'string',
+  '$.pack[].packShape': 'string',
+};
+
+/** Every place a parsed document leaves the census: a key with no row, a row's key missing, a value of another type. */
+function censusProblems(value: unknown, at = '$'): string[] {
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  const row = BUILD_REPORT_CENSUS[at];
+  if (row === undefined) return [`${at}: no census row — a field nobody was observed reading`];
+  if (!row.split('|').includes(kind)) return [`${at} is ${kind}; the census states ${row}`];
+  if (kind === 'array') return (value as unknown[]).flatMap((v) => censusProblems(v, `${at}[]`));
+  if (kind !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  if (BUILD_REPORT_CENSUS[`${at}.*`] !== undefined) return Object.values(record).flatMap((v) => censusProblems(v, `${at}.*`));
+  const children = Object.keys(BUILD_REPORT_CENSUS).filter((p) => p.startsWith(`${at}.`) && !p.slice(at.length + 1).includes('.') && !p.slice(at.length + 1).includes('['));
+  const named = children.map((p) => p.slice(at.length + 1));
+  return [
+    ...named.filter((k) => !(k in record)).map((k) => `${at}.${k}: in the census, absent from the document`),
+    ...Object.keys(record).flatMap((k) => censusProblems(record[k], `${at}.${k}`)),
+  ];
+}
+
+/** The `BR` controls (issue #1213), run inside the `cli` suite: they spawn both entries, as a dependant does. */
+function buildReportControls(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-build-report-'));
+  const nod = join(import.meta.dir, 'gallery', 'nod');
+  const entryRun = (entry: string, args: string[]): { status: number | null; stdout: string; stderr: string } => {
+    const r = spawnSync(process.execPath, [entry, ...args], { cwd: import.meta.dir, encoding: 'utf8' });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const nodBuild = (out: string, extra: string[]): string[] => ['build', '--rig', join(nod, 'rig.json'), '--motion', join(nod, 'motion.json'), '--out', out, '--pack', ...extra];
+  const entries = [
+    { entry: 'cli.ts', supplier: 'round-trip' as const, tag: 'BR01_THE_ROUND_TRIP_BUILDS_REPORT_STATES_EVERY_FIELD_ITS_LINES_STATE_ON_A_GREEN_PACKED_BUILD' },
+    { entry: 'cli_core.ts', supplier: 'model' as const, tag: 'BR02_THE_CORE_BUILDS_REPORT_STATES_EVERY_FIELD_ITS_LINES_STATE_AND_SAYS_THE_MODEL_SIDE_JUDGED' },
+  ];
+  const docs: Array<{ label: string; text: string }> = [];
+  const stdoutProbes: string[] = [];
+  const twinProbes: string[] = [];
+  for (const { entry, supplier, tag } of entries) {
+    const outA = join(work, `${entry}-a`);
+    const reportA = join(work, `${entry}-a.report.json`);
+    const reportB = join(work, `${entry}-b.report.json`);
+    const bare = entryRun(entry, nodBuild(outA, []));
+    const flagged = entryRun(entry, nodBuild(outA, ['--report', reportA]));
+    const twin = entryRun(entry, nodBuild(join(work, `${entry}-b`), ['--report', reportB]));
+    const text = existsSync(reportA) ? readFileSync(reportA, 'utf8') : '';
+    const lines = reportStatedByLines(flagged.stdout);
+    const probes = [
+      ...(flagged.status === 0 ? [] : [`exit ${String(flagged.status)}: ${flagged.stderr.trim().split('\n')[0]}`]),
+      ...(text === '' ? ['no document at --report'] : reportAgainstLines(text, flagged.stdout, 'build', supplier)),
+      // The premise: a comparison over a build whose lines state nothing compares nothing.
+      ...(lines.gates.length === 2 && lines.pack.length > 0 && lines.gates.every((g) => g.passed.length > 0 && g.skipped.length > 0) ? [] : [`the lines state ${lines.gates.length} gate(s) and ${lines.pack.length} pack line(s) — a packed build prints two and at least one`]),
+      ...(supplier === 'model' && lines.gates.some((g) => g.here === null) ? ['a core gate printed no here: line'] : []),
+    ];
+    say(
+      tag,
+      probes.length === 0,
+      probeDetail(
+        probes.length === 0,
+        probes,
+        `gallery/nod --pack through ${entry}: ${lines.gates.length} gates (${lines.gates.map((g) => `${g.atlas} ${g.passed.length} PASS, ${g.skipped.length} SKIP`).join('; ')}), ` +
+          `${lines.pack.length} pack line(s), the stats and ${supplier === 'model' ? 'the here: line' : 'no here: line'} — every field equal to the document's, and the document states nothing else`,
+        (count) => `${count} way(s) the document is not what the lines state:`,
+      ),
+      'a dependant read these figures off sentences with regular expressions (issue #1213); the document replaces the sentences only if it states exactly what they state',
+    );
+    if (text !== '') docs.push({ label: `${entry} green`, text });
+    if (bare.stdout !== flagged.stdout) stdoutProbes.push(`${entry}: stdout differs with --report — ${firstLineApartOf(bare.stdout, flagged.stdout)}`);
+    if (bare.stderr !== flagged.stderr) stdoutProbes.push(`${entry}: stderr differs with --report — ${firstLineApartOf(bare.stderr, flagged.stderr)}`);
+    if (bare.status !== flagged.status) stdoutProbes.push(`${entry}: exit ${String(bare.status)} without, ${String(flagged.status)} with`);
+    const textB = existsSync(reportB) ? readFileSync(reportB, 'utf8') : '';
+    if (twin.status !== 0 || textB === '' || textB !== text) twinProbes.push(`${entry}: ${twin.status !== 0 ? `the second build exited ${String(twin.status)}` : textB === '' ? 'the second build wrote no document' : `the two documents differ — ${firstLineApartOf(text, textB)}`}`);
+  }
+
+  say(
+    'BR03_A_BUILDS_PRINTED_LINES_ARE_THE_SAME_BYTES_WITH_REPORT_AND_WITHOUT',
+    stdoutProbes.length === 0,
+    probeDetail(stdoutProbes.length === 0, stdoutProbes, 'gallery/nod --pack into one --out, through both entries: stdout, stderr and the exit code are byte-identical with --report and without it', (count) => `${count} difference(s) the flag made:`),
+    'the printed sentences are the UI and a reader of them was never told about the document; a flag that moved a byte of them would break that reader to serve another',
+  );
+  say(
+    'BR04_TWO_REPORTS_OF_ONE_BUILD_INTO_TWO_DIRECTORIES_ARE_BYTE_IDENTICAL',
+    twinProbes.length === 0,
+    probeDetail(twinProbes.length === 0, twinProbes, 'gallery/nod --pack built twice per entry into two --out directories with two --report paths: each pair of documents byte-identical, so no path, time or machine detail is in either', (count) => `${count} pair(s) that differ:`),
+    'the build\'s own files are held byte-identical (A18, emit_hashes); a report of that build that carried a time or a path could not be, and a dependant comparing two runs would read a change that is not there',
+  );
+
+  // A red build: the A19 probe of CLI07 — an opaque indexed PNG with no tRNS — under spine-html, where A19 FAILs and the static probe SKIPs.
+  {
+    const dirs = writeProbeRig();
+    writeTypedPng(join(dirs.dir, 'block.png'), 12, 8, { colourType: 3, trns: false });
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
+    const report = join(dirs.dir, 'red.report.json');
+    const red = entryRun('cli.ts', ['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--profile', 'spine-html', '--report', report]);
+    const text = existsSync(report) ? readFileSync(report, 'utf8') : '';
+    const lines = reportStatedByLines(red.stdout);
+    const fails = lines.gates.flatMap((g) => g.failures);
+    const skips = lines.gates.flatMap((g) => g.skipped);
+    const probes = [
+      ...(red.status === 1 ? [] : [`exit ${String(red.status)}, not 1`]),
+      ...(existsSync(dirs.outDir) ? ['the red build wrote --out'] : []),
+      ...(fails.some((f) => f.code === A19) && skips.length > 0 ? [] : [`the lines state ${fails.length} FAIL (${A19} ${fails.some((f) => f.code === A19) ? 'among them' : 'not among them'}) and ${skips.length} SKIP — the control needs both`]),
+      ...(text === '' ? ['no document at --report on a red gate'] : reportAgainstLines(text, red.stdout, 'build', 'round-trip')),
+    ];
+    say(
+      'BR05_A_RED_BUILDS_REPORT_STATES_ITS_FAIL_AND_SKIP_ROWS_AND_IS_WRITTEN_BEFORE_THE_EXIT',
+      probes.length === 0,
+      probeDetail(
+        probes.length === 0,
+        probes,
+        `the opaque probe under spine-html: exit 1, --out absent, and the document states its ${fails.length} FAIL row(s) (${fails.map((f) => f.code).join(', ')}), ${skips.length} SKIP row(s) with their reasons and the summary's ${lines.gates[0]?.summary?.failed ?? '?'} failed, as the lines do`,
+        (count) => `${count} way(s) the red build's document is not its lines:`,
+      ),
+      'a red build is the one a dependant most needs to read, and the document has to reach the disk before the exit that leaves the build unwritten',
+    );
+    if (text !== '') docs.push({ label: 'cli.ts red', text });
+  }
+
+  // Refused inside --out, by name, with nothing written; and a stale document never outlives a run that reaches no gate.
+  {
+    const out = join(work, 'inside-out');
+    const inside = entryRun('cli.ts', nodBuild(out, ['--report', join(out, 'report.json')]));
+    const same = entryRun('cli_core.ts', nodBuild(out, ['--report', out]));
+    const probes = [
+      ...[inside, same].flatMap((r, i) =>
+        r.status === 2 && r.stderr.includes('--report') && r.stderr.includes('is inside --out') ? [] : [`${i === 0 ? 'a file inside --out' : '--out itself'}: exit ${String(r.status)}, stderr ${JSON.stringify(r.stderr.split('\n')[0].slice(0, 160))}`],
+      ),
+      ...(existsSync(out) ? ['--out was created by a refused run'] : []),
+    ];
+    say(
+      'BR06_A_REPORT_INSIDE_OUT_IS_REFUSED_BY_NAME_BEFORE_ANYTHING_IS_WRITTEN',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, `--report inside --out (cli.ts) and --report equal to --out (cli_core.ts): exit 2, the refusal names --report and --out, and --out was never made — ${inside.stderr.split('\n')[0].slice(0, 120)}`, (count) => `${count} way(s) the refusal failed:`),
+      '--out holds the files A18 and emit_hashes hold byte-identical; a report inside it would be a file of the build that is not the build',
+    );
+
+    const cut = join(work, 'no-parts');
+    mkdirSync(cut, { recursive: true });
+    copyFileSync(join(nod, 'rig.json'), join(cut, 'rig.json'));
+    copyFileSync(join(nod, 'motion.json'), join(cut, 'motion.json'));
+    const stale = join(work, 'stale.report.json');
+    writeFileSync(stale, '{"spec":"build-report/1","planted":"an earlier run"}\n');
+    const errored = entryRun('cli.ts', ['build', '--rig', join(cut, 'rig.json'), '--motion', join(cut, 'motion.json'), '--out', join(cut, 'out'), '--report', stale]);
+    const staleProbes = [
+      ...(errored.status === 1 && errored.stderr.includes('rigc compile error') ? [] : [`exit ${String(errored.status)}, stderr ${JSON.stringify(errored.stderr.split('\n')[0].slice(0, 160))} — the plant needs a compile error`]),
+      ...(existsSync(stale) ? ['the earlier document is still at --report after a run that reached no gate'] : []),
+    ];
+    say(
+      'BR07_A_RUN_THAT_REACHES_NO_GATE_LEAVES_NO_DOCUMENT_NOT_AN_EARLIER_ONE',
+      staleProbes.length === 0,
+      probeDetail(staleProbes.length === 0, staleProbes, 'a document planted at --report, then a build whose parts are not on disk: a compile error, and nothing at --report', (count) => `${count} way(s) a stale document survived:`),
+      'a compile error names an absolute path, so it cannot go in the document; then the absence of a document is what says the gate did not run, and an earlier run\'s file at the same path would say the opposite',
+    );
+  }
+
+  // repack writes the same document, command "repack", over its build's two gates.
+  {
+    const input = join(work, 'cli.ts-a');
+    const out = join(work, 'repacked');
+    const report = join(work, 'repack.report.json');
+    const r = entryRun('cli.ts', ['repack', input, '--out', out, '--page-edges', 'free', '--report', report]);
+    const text = existsSync(report) ? readFileSync(report, 'utf8') : '';
+    const lines = reportStatedByLines(r.stdout);
+    const probes = [
+      ...(r.status === 0 ? [] : [`exit ${String(r.status)}: ${r.stderr.trim().split('\n').slice(-1)[0]}`]),
+      ...(lines.gates.length === 2 && lines.pack.length > 0 ? [] : [`the lines state ${lines.gates.length} gate(s) and ${lines.pack.length} pack line(s)`]),
+      ...(text === '' ? ['no document at --report'] : reportAgainstLines(text, r.stdout, 'repack', 'round-trip')),
+    ];
+    say(
+      'BR08_REPACK_WRITES_THE_SAME_DOCUMENT_OVER_ITS_BUILDS_TWO_GATES',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, `gallery/nod's packed build repacked --page-edges free: command "repack", ${lines.gates.length} gates and pack ${lines.pack.map((p) => `${p.page} ${p.width}x${p.height} ${p.pageEdges}`).join(', ')} — equal to its lines`, (count) => `${count} way(s) repack's document is not its lines:`),
+      'repack runs build --pack over the lifted parts and prints its report; a reader moving off the sentences reads both commands the same way',
+    );
+    if (text !== '') docs.push({ label: 'repack', text });
+  }
+
+  // The census: every key of every document above is a row of BUILD_REPORT_CENSUS and every row of an object is there —
+  // with the plants that make it fire: the field the brief proposed and the census has no reader for, a time, and spec removed.
+  {
+    const probes = docs.flatMap(({ label, text }) => censusProblems(JSON.parse(text)).map((p) => `${label}: ${p}`));
+    const base = docs.length > 0 ? (JSON.parse(docs[0].text) as Record<string, unknown> & { gates: Array<{ summary: Record<string, unknown> }> }) : null;
+    const plants: Array<{ what: string; doc: unknown; names: string }> =
+      base === null
+        ? []
+        : [
+            { what: 'an `outputs` list beside the gates', doc: { ...base, outputs: ['skeleton.json'] }, names: '$.outputs' },
+            { what: 'a time in a summary', doc: { ...base, gates: [{ ...base.gates[0], summary: { ...base.gates[0].summary, seconds: 1.5 } }] }, names: '$.gates[].summary.seconds' },
+            { what: 'no spec', doc: Object.fromEntries(Object.entries(base).filter(([k]) => k !== 'spec')), names: '$.spec' },
+          ];
+    const unfired = plants.filter((p) => !censusProblems(p.doc).some((line) => line.startsWith(p.names))).map((p) => `the plant "${p.what}" was not named at ${p.names}`);
+    const all = [...(docs.length >= 4 ? [] : [`${docs.length} document(s) to read — the controls above wrote fewer than four`]), ...probes, ...unfired];
+    say(
+      'BR09_THE_DOCUMENTS_KEYS_ARE_THE_CENSUS_AND_A_KEY_OUTSIDE_IT_IS_NAMED',
+      all.length === 0,
+      probeDetail(
+        all.length === 0,
+        all,
+        `${docs.length} documents (${docs.map((d) => d.label).join(', ')}) hold exactly the ${Object.keys(BUILD_REPORT_CENSUS).length} census rows' keys with their types, spec "${BUILD_REPORT_SPEC}"; ` +
+          `${plants.length} plants (${plants.map((p) => p.what).join('; ')}) each named at its path`,
+        (count) => `${count} way(s) the documents leave the census:`,
+      ),
+      'issue #1213: the first version carries only what a dependant reads today — a field added without a reader is a promise nobody asked for, and a spec that moves is how that promise is kept',
+    );
+  }
+  rmSync(work, { recursive: true, force: true });
+}
+
+/** The first line two texts differ on, quoted short, for a FAIL detail. */
+function firstLineApartOf(a: string, b: string): string {
+  const la = a.split('\n');
+  const lb = b.split('\n');
+  for (let i = 0; i < Math.max(la.length, lb.length); i++) {
+    if (la[i] !== lb[i]) return `line ${i + 1}: ${JSON.stringify((la[i] ?? '(none)').slice(0, 100))} vs ${JSON.stringify((lb[i] ?? '(none)').slice(0, 100))}`;
+  }
+  return 'equal';
+}
+
 function runCliSuite(): number {
   console.log('\n── cli ergonomics (subprocess: bun cli.ts …) ──');
   let bad = 0;
@@ -56546,6 +56939,8 @@ function runCliSuite(): number {
     );
     rmSync(work, { recursive: true, force: true });
   }
+  // The build report document (issue #1213): `build --report` and `repack --report`, through both entries.
+  buildReportControls(say);
   return bad;
 }
 

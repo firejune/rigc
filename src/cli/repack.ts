@@ -46,6 +46,7 @@ import { MODEL_DOCUMENT_FILE } from '../model.ts';
 import { atlasRefusals, documentDisagreements, firstLineApart, type InputPage, liftAtlas, polygonOwnedTexels, regionDifferences, REPACK_WORK_PREFIX, RepackError, skeletonDifferences } from '../repack.ts';
 import {
   type BuildGate,
+  type BuildReport,
   type CommandArgs,
   documentStageBeside,
   modelTextBeside,
@@ -54,11 +55,13 @@ import {
   readPackShape,
   readPageEdges,
   readProfile,
+  readReportFlag,
   readSkeletonText,
   readVersion,
   resolveBuild,
   runBuild,
   UsageError,
+  writeBuildReport,
 } from './shared.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE } from '../atlas.ts';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -75,7 +78,7 @@ import { basename, dirname, join, resolve } from 'node:path';
  */
 export const ACCEPT_FLAG = 'accept-skeleton-differences';
 
-export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', ACCEPT_FLAG] as const;
+export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', ACCEPT_FLAG, 'report'] as const;
 
 /** `build`'s flags that `repack` does not take, and why — each refused by name rather than ignored. */
 const BUILD_FLAGS_REFUSED: Readonly<Record<string, string>> = {
@@ -211,7 +214,7 @@ function findingLines(findings: readonly IngestFinding[]): string[] {
  * `repack` names `--out` itself once it has written there. Every other line is
  * printed as it comes, so a gate that exits mid-way loses none.
  */
-function stagedBuild(flags: Record<string, string>, gate: BuildGate): void {
+function stagedBuild(flags: Record<string, string>, gate: BuildGate, record: BuildReport | null): void {
   const print = console.log;
   console.log = (...args: unknown[]): void => {
     const line = args.map((a) => (typeof a === 'string' ? a : String(a))).join(' ');
@@ -219,7 +222,7 @@ function stagedBuild(flags: Record<string, string>, gate: BuildGate): void {
     else if (!line.startsWith(LOOK_LINE)) print(...args);
   };
   try {
-    runBuild(flags, gate);
+    runBuild(flags, gate, record);
   } finally {
     console.log = print;
   }
@@ -258,6 +261,8 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
   };
   const stage = readStageFlag(flags.stage);
   const out = readOut(flags);
+  // `--report` (issue #1213): refused inside --out, written on a red gate by the build body and here once --out is written.
+  const record = readReportFlag(flags, 'repack', out, gate.supplier);
   const input = resolveBuild(positional[0], flags.atlas);
   if (input.atlas !== 'there') throw new UsageError(input.atlasRefusal);
   const skeletonText = readSkeletonText(input.skeletonPath);
@@ -338,7 +343,7 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
     writeFileSync(motionPath, `${JSON.stringify(result.motion, null, 2)}\n`);
 
     // (c) `build --pack` through the entry's own gate. It returns only green; a red gate exits from inside it.
-    stagedBuild({ rig: rigPath, motion: motionPath, out: buildDir, pack: 'true', ...packing }, gate);
+    stagedBuild({ rig: rigPath, motion: motionPath, out: buildDir, pack: 'true', ...packing }, gate, record);
 
     // (a) and (b), both before the first write.
     const outAtlas = readFileSync(join(buildDir, 'skeleton.atlas'), 'utf8');
@@ -400,6 +405,7 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
       copyFileSync(join(buildDir, name), join(out, name));
       console.log(`rigc: wrote ${join(out, name)}`);
     }
+    if (record !== null) writeBuildReport(record);
     console.log(gate.look(out));
   } finally {
     removeWork();

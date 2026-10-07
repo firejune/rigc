@@ -234,6 +234,7 @@ What the flags mean:
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
 | `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 50, opt-in |
+| `--report` | `build` and `repack`: also write the gate's report as a JSON document (`build-report/1`) to this file — every gate's `PASS`, `SKIP` and `FAIL` rows, its summary figures and stats line, which supplier judged it, and every `pack:` line's figures. Written when the command writes `--out` and when a gate is red, before the exit; a file already at the path is removed first, so a compile error or a refused repack leaves none. Never inside `--out`, refused by name. The printed lines are byte-identical with it and without it — **§5.3** |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. A directory holding no `skeleton.json`, or a path with nothing at it, is refused `nothing at <path>`, exit 2, nothing written, by every command that takes a build — `validate <dir>` and a directory given to `diff` included (`RC27`). `--atlas <path>` names the atlas when it does not sit beside the skeleton. On `render` and `check` a rigc build whose `skeleton.model.json` is `rigc-compiled/3` or `/2` needs no atlas at all: with no `--atlas` and no atlas beside it, it is drawn from the document's `pages`, the same frames, geometry and figures as with it, and the `atlas` line says `— not there`. An atlas that is there is still read, and held to `pages`: one that differs (edited after the build) is drawn through spine-core, and the `poser` line names the first difference. A build drawn through an atlas that is not there — a `rigc-compiled/1` document, or a build the core refuses — is refused `nothing at <the atlas>: … is drawn through its atlas (<why>)`, exit 2, nothing written; a Spine export without its atlas is refused `nothing at <the atlas>` as it always was. A directory whose files are not one build — a `skeleton.json` or a `skeleton.atlas` from another build beside this one's `skeleton.model.json` — is drawn through spine-core where the runtime can load the pair, the `poser` line naming the two digests or the atlas's first difference; where it cannot, it is refused `<skeleton> does not load against <the atlas>: spine-core draws this pair (<the poser line's why>) and could not resolve it — "<the runtime's own words>". <dir> is not one build: …`, exit 2, nothing written (`RC18`) — another build's skeleton beside this build's atlas typically ends `"Region not found in atlas: <region> (attachment: <name>)"`. Rebuild, or put the build's own three files back beside each other. A Spine export beside an atlas it was not exported with is refused in the same words, ending `The skeleton and the atlas are not one pair`. An atlas copied from another build's directory usually stops earlier, at its pages — their paths are relative to the directory it was written in — and is refused naming the first one: `nothing at <the page>: <the atlas> names it as a page, and spine-core draws this pair through that atlas (<why>). … <dir> is not one build: …`, exit 2, nothing written (`RC18`); an export whose atlas names a page that is not there is refused the same way, ending `and the page has to be there`. A build moved or copied whole away from the directory it was built in stops at the same place, on either poser, and is refused naming the page and the file that names it: `nothing at <the page>: <the skeleton.model.json> names it as a page, and the core draws this build from it. A page path is relative to the build's directory, so a build moved or copied away from the directory it was built in names pages that are not here — build it again where it is, or build it with --copy-images, which writes its pages beside it` (under `--poser spine`, `<the atlas> names it as a page, and spine-core draws this pair through that atlas (--poser spine)` with the same ending), exit 2, nothing written (`RC21`); only where the core refused the files does a page refusal say the directory is not one build. `bench --bones` and `rigc bonedist` — on its `--candidate` and on its `--reference` — refuse a pair the runtime cannot load in the words above with `spine-core poses this pair (bonedist's candidate: …)` or `(bonedist's reference: …)`, exit 2, nothing written (`RC20`); they read no page image, so a build whose pages are elsewhere is measured as it is in place. A `skeleton.json` that is not JSON is refused `rigc: cannot read <the file>: <the parser's words> (line N, column N)`, exit 2, by `render`, `check`, `bench` and `bonedist` as by every other command that reads one (`RC22`). With the atlas gone, `check` on a `rigc-compiled/3` build reads its pages' `scale:` lines off the document, so its texture note and `check.json`'s `textureFrom.candidateScales` are what they are with the atlas; on a `/2` build its texture note says whether the atlas declares a `scale:` line is not read (that document does not state one), and `candidateScales` is `null` (`RC13`). **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
@@ -6425,6 +6426,53 @@ Fix A00 and run it again.
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.
+
+### 5.3 The report as a document — `--report <file>`
+
+The lines above are written for an agent to read. A program that acts on a build —
+take it or refuse it, read where the packer put the pages — should not read them with
+regular expressions: every wording change this guide tracks as the interface would
+break it, and nothing promised it the wording. `build --report <file>` and
+`repack --report <file>` write the same report as a JSON document beside the build,
+and **the printed lines do not change by a byte** with the flag (`BR03`).
+
+| key | what it is | the line it restates |
+| --- | --- | --- |
+| `spec` | `"build-report/1"` | — |
+| `command` | `"build"` or `"repack"` | the command that ran |
+| `supplier` | `"round-trip"` (the entry that links spine-core) or `"model"` (`cli_core.ts`, the model side and the rules restated over the emitted text) | the `validate (…)` heading |
+| `gates[]` | one per gate, in the order run: the compile's, then under `--pack` the packed pages' | each `profile` line opens one |
+| `gates[].atlas` | `"compiled"` or `"packed"` | `validate (packed atlas, pages on disk)` before the second |
+| `gates[].passed` | the rule names, in the order printed | the `PASS` lines |
+| `gates[].skipped[]` | `{ code, reason }`, in the order printed | the `SKIP` lines |
+| `gates[].failures[]` | `{ code, detail }`, one per line — a rule that fails twice is two entries | the `FAIL` lines |
+| `gates[].summary` | `{ assertions, measured, passed, failed, skipped, notInProfile, profile }`, every figure a count of assertions | the `N assertions: …` line |
+| `gates[].stats` | the keys and values, in order | the `pages=… regions=…` line |
+| `gates[].here` | `{ modelSide, restated, notRun }` on the core entry, `null` on the round trip | the `here:` line |
+| `pack` | `null` without `--pack`; else one `{ page, width, height, regions, coveredPct, padding, pageEdges, packShape }` per page, `coveredPct` at the line's one decimal and `pageEdges` `"pot"` or `"free"` | the `pack:` lines |
+
+A `PROF` row is counted in `summary.notInProfile` and not listed; the per-region
+placement lines under `pack:`, the `MESH`, `DROP` and `copy-images` lines and the
+`rigc: wrote` lines are not in it. That is not an oversight: the first version carries
+the fields a dependant was observed reading off the sentences and the figures the
+summary line states, and nothing else (`BR09` holds the keys to that census and names a
+key outside it). Every value is read from the lists the lines are printed from, so the
+document and the lines cannot disagree (`BR01`, `BR02`, `BR05`, `BR08`).
+
+- **When it is written.** When the command writes `--out`, after the last file; and
+  when a gate is red, before the exit — so a red build's document carries its `FAIL`
+  rows (`BR05`). A file already at the path is removed before anything is compiled, so
+  any other ending — a compile error, a usage refusal after the flag is read, a repack
+  refused by its checks — leaves **no** document, never an earlier run's (`BR07`). A
+  compile error is not in it because its message names files by absolute path; its
+  absence is what says no gate ran, and the reason is on stderr.
+- **Where.** Never inside `--out` — that directory holds the build's own files, which
+  `A18` and `emit_hashes` hold byte-identical — and refused by name when it is (`BR06`).
+- **What it never carries.** A time, an absolute path or anything of the machine: two
+  reports of one build are byte-identical, whatever `--out` they were built into
+  (`BR04`).
+- **Versioned and additive.** A field is added under `build-report/1`; a field that
+  changes meaning or goes away moves the spec. A reader checks `spec` first.
 
 ---
 

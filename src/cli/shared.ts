@@ -16,7 +16,19 @@
  */
 import { type AtlasRegion, DEFAULT_PACK_SHAPE, DEFAULT_PADDING, DEFAULT_PAGE_EDGES, DEFAULT_PAGE_SIZE, PACK_SHAPES, packAtlas, type PackInput, packFootprints, type PackShape, PAGE_EDGES, type PageEdges, pageFootprint } from '../atlas.ts';
 import { copyAtlasPages, plannedPageCopies } from '../emit.ts';
-import { CLI_DEFAULT_PROFILE, VALIDATE_PROFILES } from '../assertions/report.ts';
+import {
+  BUILD_REPORT_SPEC,
+  type BuildReportDocument,
+  type BuildReportGate,
+  type BuildReportSupplier,
+  buildReportGate,
+  buildReportText,
+  CLI_DEFAULT_PROFILE,
+  type GateHere,
+  type PackPageFigures,
+  VALIDATE_PROFILES,
+} from '../assertions/report.ts';
+import type { VerdictLists } from '../assertions/harness.ts';
 import type { AssertionProfile } from '../assertions/kinds.ts';
 import { MAX_CANDIDATES, MIN_CANDIDATES } from '../ballot.ts';
 import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from '../correspondence.ts';
@@ -48,8 +60,8 @@ import { PoseError } from '../pose.ts';
 import { RepackError } from '../repack.ts';
 import { SpineRuntimeError, SPINE_SIDE_ABSENT } from '../spine_side.ts';
 import type { CompileResult, DroppedState } from '../types.ts';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 
 /**
@@ -1113,6 +1125,12 @@ const FLAG_MEANINGS: Record<string, string> = {
     'is the setup-pose bounding box, and the rebuilt spec asks for the same box rather than transcribing it. Only a ' +
     'box `build` could write back is read: anything else in that slot is refused by name, and without the flag no ' +
     'slot is read as the stage because of its name',
+  report:
+    `also write the gate's report as a JSON document (\`${BUILD_REPORT_SPEC}\`) to this file: every gate's PASS, SKIP and FAIL rows, ` +
+    'its summary figures and stats, the supplier that judged it, and every pack line\'s figures — written when the command ' +
+    'writes --out and when a gate is red, before the exit. A file already at the path is removed first, so any other ending ' +
+    '(a compile error, a repack refused) leaves none rather than an earlier run\'s. Never inside --out, refused by name. ' +
+    'The lines printed are the same with it and without it',
   help: "show this command's flags and exit",
 };
 
@@ -1168,6 +1186,7 @@ const FLAG_VALUES: Record<string, string> = {
   stage: '<x,y,w,h>',
   'stage-box': '<slot>',
   dir: '<path>',
+  report: '<file>',
 };
 
 /**
@@ -1261,7 +1280,7 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the gate round-trips every build through it before anything is written',
       core: {
         usage: [
-          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
+          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images] [--report <file>]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
           `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
           'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
           'rigc build --cut <name> --cuts <cuts.json>',
@@ -1285,7 +1304,7 @@ export const COMMANDS: CommandDoc[] = [
     },
     spineFormat: true,
     usage: [
-      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images]',
+      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images] [--report <file>]',
       `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
       'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
       'rigc build --cut <name> --cuts <cuts.json>',
@@ -1306,6 +1325,7 @@ export const COMMANDS: CommandDoc[] = [
       'cut',
       'cuts',
       'profile',
+      'report',
     ],
   },
   {
@@ -1314,7 +1334,7 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the rebuild it writes is gated by build\'s gate, which round-trips it through spine-core',
       core: {
         usage: [
-          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]   (gated without spine-core — see repack --help)`,
+          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]   (gated without spine-core — see repack --help)`,
         ],
         notes: [
           'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
@@ -1335,9 +1355,9 @@ export const COMMANDS: CommandDoc[] = [
     },
     spineFormat: true,
     usage: [
-      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences]`,
+      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]`,
     ],
-    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences'],
+    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences', 'report'],
     overrides: {
       out: {
         value: '<dir>',
@@ -2134,16 +2154,20 @@ export interface BuildGateInput {
  * `runBuild`'s, written once, so the two entries write the same build.
  */
 export interface BuildGate {
+  /** Which supplier this gate is, as the `--report` document names it (issue #1213). */
+  supplier: BuildReportSupplier;
   /** The line before the first gate's report, naming what judges it. */
   heading: (profile: AssertionProfile) => string;
-  /** Run the gate, print its report, return the failure count. */
-  run: (input: BuildGateInput) => number;
+  /** Run the gate, print its report, and return the lists it printed — and, on the core entry, its `here:` line's values. */
+  run: (input: BuildGateInput) => { report: VerdictLists & { profile: AssertionProfile }; here: GateHere | null };
   /** The command a green build ends by naming, for its own `--out`. */
   look: (outDir: string) => string;
 }
 
 function runGate(
   gate: BuildGate,
+  record: BuildReport | null,
+  atlasKind: BuildReportGate['atlas'],
   result: CompileResult,
   modelText: string,
   opts: CompileOptions,
@@ -2158,7 +2182,7 @@ function runGate(
   // issue #1016): so the second document is spelled from the second compile's
   // atlas as it would be written, or from the second, independent pack.
   const again = compile(opts);
-  return gate.run({
+  const { report, here } = gate.run({
     result,
     atlasText: atlas ? atlas.text : result.atlasText,
     atlasDir: opts.outDir,
@@ -2166,6 +2190,89 @@ function runGate(
     reEmit: { skeletonText: again.skeletonText, atlasText: atlas ? atlas.again : again.atlasText, modelText: modelDocument(again.model, again.skeletonText, atlas ? atlas.again : written(again.atlasText)) },
     profile,
   });
+  record?.gates.push(buildReportGate(atlasKind, report, here));
+  return report.failures.length;
+}
+
+// ---------------------------------------------------------------------------
+// --report: the build's report as a document (issue #1213)
+// ---------------------------------------------------------------------------
+
+/**
+ * A `--report` in the making: where it goes, and what the run has stated so
+ * far — every gate's lists and every `pack:` line's figures, recorded where
+ * the line is printed and from the values it is printed from. `write` spells
+ * the document (`buildReportText`) and writes it; nothing else in it is read
+ * off the disk, the clock or the machine.
+ */
+export interface BuildReport {
+  path: string;
+  command: BuildReportDocument['command'];
+  supplier: BuildReportSupplier;
+  gates: BuildReportGate[];
+  pack: PackPageFigures[] | null;
+}
+
+/** The document a recorded run states, keys in the order the spec writes them. */
+export function buildReportDocument(record: BuildReport): BuildReportDocument {
+  return { spec: BUILD_REPORT_SPEC, command: record.command, supplier: record.supplier, gates: record.gates, pack: record.pack };
+}
+
+/** Write what the run stated to `--report`. Called when a gate has reached its verdict: before a red gate's exit, after a green build's last write. */
+export function writeBuildReport(record: BuildReport): void {
+  writeFileSync(record.path, buildReportText(buildReportDocument(record)));
+}
+
+/**
+ * `--report <file>` read for a command whose build goes into `outDir`: the
+ * file resolved against the working directory, refused by name when it is
+ * inside `outDir` or is `outDir` — the build's directory holds the files A18
+ * and `emit_hashes` hold byte-identical, and a report there would be a file of
+ * the build that is not the build — and refused when a directory stands at the
+ * path. A file already at the path is removed here, before anything is
+ * compiled, so the file at `--report` is always this run's: a run that reaches
+ * no gate (a usage refusal after this point, a compile error, a repack refused
+ * before or after its gate) leaves no document rather than an earlier run's.
+ * `null` when the flag is absent.
+ */
+export function readReportFlag(flags: Record<string, string>, command: BuildReport['command'], outDir: string, supplier: BuildReportSupplier): BuildReport | null {
+  const raw = flags.report;
+  if (raw === undefined) return null;
+  const path = resolve(raw);
+  const out = resolve(outDir);
+  const within = relative(out, path);
+  if (within === '' || (!within.startsWith('..') && !isAbsolute(within))) {
+    throw new UsageError(
+      `--report ${raw} is inside --out ${outDir}: the report is written beside a build, never into it — --out holds the build's own files, ` +
+        'which A18 and emit_hashes hold byte-identical. Name a path outside --out',
+    );
+  }
+  if (existsSync(path) && statSync(path).isDirectory()) throw new UsageError(`--report ${raw} is a directory; it takes the path of the file to write`);
+  rmSync(path, { force: true });
+  return { path, command, supplier, gates: [], pack: null };
+}
+
+/**
+ * One `pack:` line's figures (issue #1213): what the line prints, as values —
+ * `coveredPct` at the one decimal the line spells, so the document and the
+ * line state the same number.
+ */
+function packPageFigures(page: { name: string; width: number; height: number; occupancy: number }, regions: number, padding: number, pageEdges: PageEdges, packShape: PackShape): PackPageFigures {
+  return { page: page.name, width: page.width, height: page.height, regions, coveredPct: Number((page.occupancy * 100).toFixed(1)), padding, pageEdges, packShape };
+}
+
+/** The `pack:` line, spelled from its figures. */
+function packLine(f: PackPageFigures): string {
+  return (
+    `  ..    pack: ${f.page} ${f.width}x${f.height}, ` +
+    `${f.regions} region(s), ` +
+    `${f.coveredPct.toFixed(1)}% covered, padding ${f.padding}` +
+    (f.pageEdges === 'free' ? ', page edges free' : '') +
+    // Appended, never inserted: a reader that takes the line whole keeps
+    // every field it read before #1099, and the mode is named under the
+    // default too, so no reader infers it from an absent word.
+    `, shape ${f.packShape}`
+  );
 }
 
 /**
@@ -2239,8 +2346,13 @@ function printHeaderBox(result: CompileResult): void {
  * for its gate, which the entry hands in (`BuildGate`): both entries write
  * the Spine pair, the model document and the pages by this one body.
  */
-export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
+export function runBuild(flags: Record<string, string>, gate: BuildGate, caller: BuildReport | null = null): void {
   const { label, opts, profile, packing } = readBuildInvocation(flags);
+  // `--report` (issue #1213): `build`'s own, written by this body on either verdict — or the caller's
+  // (`repack`'s), which this body writes on a red gate, since the exit leaves the caller no turn, and which the
+  // caller writes when it has written its own output.
+  const own = caller === null ? readReportFlag(flags, 'build', opts.outDir, gate.supplier) : null;
+  const record = caller ?? own;
   printBuildHeader(label, opts);
   const result = compile(opts);
   printCompiled(opts, result);
@@ -2258,8 +2370,9 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
   const writtenAtlas = (atlasText: string): string => (copying ? plannedPageCopies(atlasText, opts.outDir).atlasText : atlasText);
   let modelText = modelDocument(result.model, result.skeletonText, writtenAtlas(result.atlasText));
   console.log(gate.heading(profile));
-  const failures = runGate(gate, result, modelText, opts, profile, writtenAtlas);
+  const failures = runGate(gate, record, 'compiled', result, modelText, opts, profile, writtenAtlas);
   if (failures > 0) {
+    if (record !== null) writeBuildReport(record);
     console.error(`rigc: ${failures} assertion(s) failed — nothing written`);
     process.exit(1);
   }
@@ -2308,18 +2421,12 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
     };
     const packed = packAtlas(packInputs(result, packOpts.shape), packOpts);
     atlasText = packed.atlasText;
+    if (record !== null) record.pack = [];
     for (const page of packed.pages) {
       page.plate.writePng(join(opts.outDir, page.name));
-      console.log(
-        `  ..    pack: ${page.name} ${page.width}x${page.height}, ` +
-          `${packed.placements.filter((p) => packed.pages[p.page].name === page.name).length} region(s), ` +
-          `${(page.occupancy * 100).toFixed(1)}% covered, padding ${packed.padding}` +
-          (packOpts.pageEdges === 'free' ? ', page edges free' : '') +
-          // Appended, never inserted: a reader that takes the line whole keeps
-          // every field it read before #1099, and the mode is named under the
-          // default too, so no reader infers it from an absent word.
-          `, shape ${packed.shape}`,
-      );
+      const figures = packPageFigures(page, packed.placements.filter((p) => packed.pages[p.page].name === page.name).length, packed.padding, packOpts.pageEdges, packed.shape);
+      record?.pack?.push(figures);
+      console.log(packLine(figures));
     }
     for (const place of packed.placements) {
       console.log(
@@ -2337,8 +2444,9 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
     // The document written is spelled from the packed atlas, and this gate's A18 compares it with a
     // second compile's spelled from the second, independent pack (issue #1016).
     modelText = modelDocument(result.model, result.skeletonText, atlasText);
-    const packFailures = runGate(gate, result, modelText, opts, profile, (text) => text, { text: atlasText, again: packAgain.atlasText });
+    const packFailures = runGate(gate, record, 'packed', result, modelText, opts, profile, (text) => text, { text: atlasText, again: packAgain.atlasText });
     if (packFailures > 0) {
+      if (record !== null) writeBuildReport(record);
       console.error(
         `rigc: ${packFailures} assertion(s) failed on the PACKED atlas — the pages were written to ` +
           `${opts.outDir}, the skeleton/atlas pair was not`,
@@ -2357,6 +2465,8 @@ export function runBuild(flags: Record<string, string>, gate: BuildGate): void {
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.json')}`);
   console.log(`rigc: wrote ${join(opts.outDir, 'skeleton.atlas')}`);
   console.log(`rigc: wrote ${join(opts.outDir, MODEL_DOCUMENT_FILE)}`);
+  // Written after the build, and printed nowhere: the lines a build prints are the same with the flag and without it.
+  if (own !== null) writeBuildReport(own);
   // The next command is part of the message (issue #837). A green build is the
   // moment somebody wants to see what came out, and the one page rigc writes
   // for that is `preview` of exactly this directory — so the line names it,
