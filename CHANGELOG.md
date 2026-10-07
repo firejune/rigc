@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.1](https://github.com/firejune/rigc/compare/v2.17.0...v2.17.1) (2026-10-07)
+
+
+### Instrument
+
+* **installs:** run the install smoke on macOS, Windows and Linux at Bun 1.2.0 in installs-matrix, repair four Windows assumptions in the smoke, and stop its without-bun control going red when two buns are on PATH ([#1219](https://github.com/firejune/rigc/issues/1219)) ([fdb2cf3](https://github.com/firejune/rigc/commit/fdb2cf3844ee7fe46f93d2eee2218f6fa48b9de9))
+
 ## [2.17.0](https://github.com/firejune/rigc/compare/v2.16.0...v2.17.0) (2026-10-07)
 
 
