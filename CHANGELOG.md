@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.15.1](https://github.com/firejune/rigc/compare/v2.15.0...v2.15.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mesh:** traceAlphaOutline scans the filled silhouette for a diagonal pinch, so a corner between two holes no longer refuses a part, and a hole is background no 8-connected path reaches, so a pinch on the outline is still refused ([#1210](https://github.com/firejune/rigc/issues/1210)) ([5a82114](https://github.com/firejune/rigc/commit/5a821146f5929dc1b015f3681c00b0b79c5c3b00)), closes [#1209](https://github.com/firejune/rigc/issues/1209)
+
 ## [2.15.0](https://github.com/firejune/rigc/compare/v2.14.1...v2.15.0) (2026-10-06)
 
 
