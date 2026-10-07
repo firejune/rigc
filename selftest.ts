@@ -380,18 +380,26 @@ import {
   measureMeshQuality,
   MeshError,
   MeshReductionError,
+  r6,
   rasteriseTriangles,
+  reduceMesh,
   writeMeshQualityReport,
   type AlphaMask,
   type ArtFitBounds,
+  type DeformTimelineInput,
   type MeasureRow,
   type MeasureTargets,
   type MeshGeometry,
   type MeshMeasureInput,
   type MeshQualityReport,
+  type MeshReductionInput,
+  type ProtectedFeatures,
+  type ReducedMesh,
   type RefinementRegion,
+  type RemappedDeformKey,
   type SourceFrame,
   type SourceMesh,
+  type Termination,
 } from './src/mesh.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
 import {
@@ -44987,16 +44995,22 @@ function rawShiftedMeshWeights(rigText: string, flag: boolean): string {
 // mesh quality — the geometry rows of mesh-quality-report/1 (issue #1224)
 // ---------------------------------------------------------------------------
 //
-// Stage B1 of #1221: `measureMeshQuality` and its report, held to the contract
-// in docs/MESH_REDUCTION.md. Every plate is generated here, in a temp directory
+// Stage B of #1221: `measureMeshQuality` and its report (B1), and `reduceMesh`
+// — refinement and reduction, two composed operations (B2) — held to the
+// contract in docs/MESH_REDUCTION.md. Every plate is generated here, in a temp directory
 // of this run, in the `fixtures/public.ts` convention — a checkerboard with
 // PLACEHOLDER burned in, whose alpha channel is the only thing measured — and
 // every expected figure is derived from the fixture that was built (its
 // rectangle, its planted displacement, its own area band), never typed in.
 //
+// The two operations each have a control that runs with the other idle (MQ46:
+// no region; MQ47: every source vertex protected), because the consumer asked
+// for them to pass independently (spine-parts#126, comment 6042150608). The
+// last control's line carries reduceMesh's wall time and candidates tried on
+// these fixtures — outside the report document, which a time would break.
+//
 // ⚠️ Not built here, and named so nobody reads the suite as Stage A complete:
-// the reduction controls (MQ14, MQ17, MQ18, MQ24, MQ32, MQ33, MQ40, MQ43) are
-// stage B2's, and every motion control is stage C's.
+// every motion control is stage C's.
 
 type MqPt = [number, number];
 
@@ -45115,6 +45129,116 @@ const mqSquare = (cx: number, cy: number, half: number): MqPt[] => [
   [cx - half, cy + half],
 ];
 
+/**
+ * A lattice of nx × ny cells over the rectangle x0..x1 × y0..y1: the perimeter
+ * first in walk order from the top-left corner, then the interior row-major —
+ * the arrangement `checkHullOrder` asks for — each cell two triangles with the
+ * diagonal alternating, turned counter-clockwise in Spine world by `mqMesh`.
+ */
+function mqGrid(x0: number, y0: number, x1: number, y1: number, nx: number, ny: number, frameWidth: number, frameHeight: number): SourceMesh {
+  const at = (i: number, j: number): MqPt => [x0 + ((x1 - x0) * i) / nx, y0 + ((y1 - y0) * j) / ny];
+  const ring: Array<[number, number]> = [];
+  for (let i = 0; i < nx; i++) ring.push([i, 0]);
+  for (let j = 0; j < ny; j++) ring.push([nx, j]);
+  for (let i = nx; i > 0; i--) ring.push([i, ny]);
+  for (let j = ny; j > 0; j--) ring.push([0, j]);
+  const index = new Map<string, number>();
+  const points: MqPt[] = [];
+  for (const [i, j] of ring) {
+    index.set(`${i},${j}`, points.length);
+    points.push(at(i, j));
+  }
+  const hullCount = points.length;
+  for (let j = 1; j < ny; j++) {
+    for (let i = 1; i < nx; i++) {
+      index.set(`${i},${j}`, points.length);
+      points.push(at(i, j));
+    }
+  }
+  const v = (i: number, j: number): number => index.get(`${i},${j}`)!;
+  const triangles: number[] = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      if ((i + j) % 2 === 0) triangles.push(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j), v(i + 1, j + 1), v(i, j + 1));
+      else triangles.push(v(i, j), v(i + 1, j), v(i, j + 1), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1));
+    }
+  }
+  return mqMesh(points, triangles, hullCount, frameHeight, frameWidth);
+}
+
+/** Inside or on a polygon, by the test's own ray cast and its own segment distance. */
+function mqInPolygon(p: MqPt, poly: readonly MqPt[]): boolean {
+  for (let i = 0; i < poly.length; i++) if (mqPointSegment(p, poly[i], poly[(i + 1) % poly.length]) <= 1e-9) return true;
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Does a segment meet a rectangle given by its four corners — an end inside, or a crossing? The test's own. */
+function mqSegmentMeetsRect(a: MqPt, b: MqPt, rect: readonly MqPt[]): boolean {
+  if (mqInPolygon(a, rect) || mqInPolygon(b, rect)) return true;
+  const cross = (o: MqPt, p: MqPt, q: MqPt): number => (p[0] - o[0]) * (q[1] - o[1]) - (p[1] - o[1]) * (q[0] - o[0]);
+  for (let i = 0; i < rect.length; i++) {
+    const c = rect[i];
+    const d = rect[(i + 1) % rect.length];
+    const d1 = cross(a, b, c);
+    const d2 = cross(a, b, d);
+    const d3 = cross(c, d, a);
+    const d4 = cross(c, d, b);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  }
+  return false;
+}
+
+/** The edges of a reduced mesh as index pairs, read off its `edges` (index × 2). */
+function mqEdgePairs(mesh: ReducedMesh): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < mesh.edges.length; i += 2) out.push([mesh.edges[i] / 2, mesh.edges[i + 1] / 2]);
+  return out;
+}
+
+/**
+ * §5's `L(R)` read again by the test over a rectangular region: every edge that
+ * meets it at most `maxEdgeLength`, and every edge within its band at most
+ * `L0 + grade·d` — the edges over, as phrases; empty when the bound holds.
+ */
+function mqOverBound(mesh: ReducedMesh, region: RefinementRegion): string[] {
+  const over: string[] = [];
+  for (const [a, b] of mqEdgePairs(mesh)) {
+    const p = mesh.points[a];
+    const q = mesh.points[b];
+    const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    let bound: number | null = null;
+    if (mqSegmentMeetsRect(p, q, region.polygon)) bound = region.maxEdgeLength;
+    else {
+      const d = mqSegmentRect(p, q, region.polygon);
+      if (d <= region.transition) bound = region.maxEdgeLength + region.grade * d;
+    }
+    if (bound !== null && length > bound + 1e-6) over.push(`edge ${a}–${b} ${length.toFixed(6)} > ${bound.toFixed(6)}`);
+  }
+  return over;
+}
+
+/** In the closed region or within its band — P16's checkable form, read by the test's own geometry. */
+function mqInRegionOrBand(p: MqPt, region: RefinementRegion): boolean {
+  if (mqInPolygon(p, region.polygon)) return true;
+  let d = Infinity;
+  for (let i = 0; i < region.polygon.length; i++) d = Math.min(d, mqPointSegment(p, region.polygon[i], region.polygon[(i + 1) % region.polygon.length]));
+  return d <= region.transition;
+}
+
+/** A termination as one phrase. */
+function mqSayEnd(t: Termination | null): string {
+  if (t === null) return 'no termination';
+  if (t.reason === 'no-further-valid-reduction') return `${t.reason} after ${t.candidatesTried} candidate(s), blocked by ${t.blockingConstraint}`;
+  if (t.reason === 'budget-exhausted') return `${t.reason} after ${t.candidatesTried} of ${t.budget}, ${t.result}`;
+  return `${t.reason} ${t.code}: ${t.detail}`;
+}
+
 function runMeshQualitySuite(): number {
   console.log('\n── mesh quality: the geometry rows, states and refusals of mesh-quality-report/1 (issue #1224) ──');
   let bad = 0;
@@ -45155,6 +45279,77 @@ function runMeshQualitySuite(): number {
       return { code: '(not a MeshReductionError)', message: (err as Error).message, isMeshError: err instanceof MeshError };
     }
   };
+
+  // --- the reduction's fixtures (stage B2) ---------------------------------
+  // A 4 × 3 lattice over the art rectangle: exactly the art, with collinear hull vertices and interior ones a
+  // reduction can take away, and coarse enough that a small region asks the refinement for density.
+  const lattice = mqGrid(X0, Y0, X1, Y1, 4, 3, W, H);
+  const noProtection: ProtectedFeatures = { hull: false, vertices: [], edges: [], regionBoundaries: [], weightJump: null, influences: [] };
+  const mqReduceInput = (source: SourceMesh, over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({
+    attachment: { skin: null, slot: 'probe-slot', attachment: 'probe' },
+    art: { mask: rectMask, threshold: 1, frame },
+    source,
+    sourceBounds: strict,
+    targets: { artFit: strict, maxBoundaryDeviation: 0, regions: [] },
+    protect: noProtection,
+    influences: null,
+    boneOrder: null,
+    preset: null,
+    budget: { maxCandidates: 1000 },
+    minArtSamples: 1,
+    regionArtSamples: [],
+    deform: [],
+    linkedMeshes: [],
+    ...over,
+  });
+  /** A region the lattice does not meet: L0 under its spacing, with a band wide enough for the refinement to reach the lattice from inside it. */
+  const dense: RefinementRegion = { name: 'dense', polygon: mqSquare(C[0], C[1], 3), maxEdgeLength: 4, transition: 8, grade: 1, approximation: null };
+  const regionTargets = (region: RefinementRegion): Partial<MeshReductionInput> => ({
+    targets: { artFit: strict, maxBoundaryDeviation: 0, regions: [region] },
+    regionArtSamples: [{ region: region.name, minArtSamples: 1 }],
+  });
+  /** Every source index, for a protection that leaves the reduction nothing to try. */
+  const everySource = (mesh: SourceMesh): ProtectedFeatures => ({ ...noProtection, hull: true, vertices: mesh.points.map((_, i) => i) });
+  /** reduceMesh, timed: wall time and candidates tried, kept outside the report document (it would break byte identity). */
+  const cpu: string[] = [];
+  const mqReduce = (label: string, input: MeshReductionInput): { mesh: ReducedMesh | null; report: MeshQualityReport; ms: number; tried: number | null } => {
+    const t0 = performance.now();
+    const out = reduceMesh(input);
+    const ms = performance.now() - t0;
+    const t = out.report.termination;
+    const tried = t !== null && 'candidatesTried' in t ? t.candidatesTried : null;
+    cpu.push(`${label}: ${tried ?? '—'} candidate(s) in ${ms.toFixed(1)} ms`);
+    return { ...out, ms, tried };
+  };
+  const reduceRefusalOf = (input: MeshReductionInput): { code: string; message: string; isMeshError: boolean } | null => {
+    try {
+      reduceMesh(input);
+      return null;
+    } catch (err) {
+      if (err instanceof MeshReductionError) return { code: err.code, message: err.message, isMeshError: err instanceof MeshError };
+      return { code: '(not a MeshReductionError)', message: (err as Error).message, isMeshError: err instanceof MeshError };
+    }
+  };
+  /** Weights over the lattice by a rule on each vertex's position — a weighted copy of a source. */
+  const weighted = (mesh: SourceMesh, rule: (p: MqPt, i: number) => Array<{ bone: string; weight: number }>): SourceMesh => ({ ...mesh, weights: mesh.points.map((p, i) => rule(p, i)) });
+  /** The lattice vertex one row down from the top, in the middle column: the one nearest the dense region from above. */
+  const nearRegion = lattice.points.findIndex(([x, y]) => x === C[0] && y === Y0 + (Y1 - Y0) / 3);
+  /** Two bones split down the middle column, so a vertex inserted in the region interpolates both. */
+  const twoBone = weighted(lattice, ([x]) => (x < C[0] ? [{ bone: 'a', weight: 1 }] : x > C[0] ? [{ bone: 'b', weight: 1 }] : [{ bone: 'a', weight: 0.5 }, { bone: 'b', weight: 0.5 }]));
+  /** One grid step of a third bone on the vertex nearest the region, so an insertion away from it interpolates a share under half a step (a midpoint lands on half a step exactly, which either rounding reads). */
+  const TINY = 0.000001;
+  const tinyShare = weighted(lattice, (_, i) => (i === nearRegion ? [{ bone: 'a', weight: r6(1 - TINY) }, { bone: 'c', weight: TINY }] : [{ bone: 'a', weight: 1 }]));
+  const weightedOver = (source: SourceMesh, limits: { maxInfluences: number; minWeight: number }, guarded: string[]): Partial<MeshReductionInput> => ({
+    ...regionTargets(dense),
+    influences: limits,
+    boneOrder: ['a', 'b', 'c'],
+    protect: { ...everySource(source), influences: guarded },
+  });
+  const wave = (offset: number, vertices: number[]): DeformTimelineInput => ({
+    animation: 'probe-wave',
+    attachment: { skin: null, slot: 'probe-slot', attachment: 'probe' },
+    keys: [{ time: 0, kind: 'setup' }, { time: 0.5, kind: 'vertices', offset, vertices }, { time: 1, kind: 'transform' }],
+  });
 
   // --- MQ00: a mesh measured against itself ---------------------------------
   {
@@ -45585,6 +45780,32 @@ function runMeshQualitySuite(): number {
       } else if (rep.candidates[0]?.accepted !== false) probes.push(`${code}: a refused region was accepted`);
       else reached.push(code);
     }
+    // The reduction's refusals (stage B2): a malformed field is thrown as the measurement's are; a request that
+    // cannot be met is the report's one termination, by code, with no mesh returned.
+    const thrownByReduce = reduceRefusalOf({ ...mqReduceInput(lattice), budget: undefined as unknown as { maxCandidates: number } });
+    if (thrownByReduce === null || thrownByReduce.code !== 'REDUCE_INPUT_MISSING' || !thrownByReduce.isMeshError || !thrownByReduce.message.includes(who) || !thrownByReduce.message.includes('budget is') || !thrownByReduce.message.includes('required')) {
+      probes.push(`reduce, budget left out: ${thrownByReduce === null ? 'not refused' : `${thrownByReduce.code}: ${thrownByReduce.message}`}`);
+    } else reached.push('REDUCE_INPUT_MISSING (reduceMesh)');
+    const ISLAND = 3;
+    const islandMask = mqMask(dir, 'island', W, H, (x, y) => (inRect(x, y) || (x >= 1 && x < 1 + ISLAND && y >= 1 && y < 1 + ISLAND) ? 1 : 0));
+    const loose: ArtFitBounds = { minCoverage: 0, maxOvershoot: W, maxUndercut: W };
+    const reported: Array<[string, Termination['reason'], MeshReductionInput, string]> = [
+      ['REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS', 'invalid-input', mqReduceInput(inward), "the source's MQ_COVERAGE is"],
+      ['REDUCE_SOURCE_NOT_ONE_LOOP', 'unsupported-topology', mqReduceInput({ ...lattice, hull: lattice.hull - 1 }), `source.hull says ${lattice.hull - 1}`],
+      ['REDUCE_ISLAND_UNREACHED', 'invalid-input', { ...mqReduceInput(lattice, { sourceBounds: loose }), art: { mask: islandMask, threshold: 1, frame } }, `island of ${ISLAND * ISLAND} pixel(s) at (1, 1)`],
+      ['REGION_BOUND_BELOW_GRID', 'invalid-input', mqReduceInput(lattice, regionTargets({ ...dense, maxEdgeLength: 0.5 })), 'maxEdgeLength is 0.5'],
+      ['REDUCE_PROTECTED_INFLUENCES_OVER_CAP', 'invalid-input', mqReduceInput(twoBone, weightedOver(twoBone, { maxInfluences: 1, minWeight: 0 }, ['a', 'b'])), 'protected influence(s) (a, b)'],
+      ['REDUCE_PROTECTED_INFLUENCE_BELOW_GRID', 'invalid-input', mqReduceInput(tinyShare, weightedOver(tinyShare, { maxInfluences: 3, minWeight: 0 }, ['c'])), 'the protected influence "c"'],
+      ['REDUCE_DEFORM_INDEXED', 'unsupported-topology', mqReduceInput(lattice, { ...regionTargets(dense), deform: [wave(2 * nearRegion, [1, 2])] }), `animation "probe-wave", slot "probe-slot", attachment "probe", key 1`],
+    ];
+    for (const [code, reason, input, found] of reported) {
+      const out = reduceMesh(input);
+      const t = out.report.termination;
+      const cand = out.report.candidates[0];
+      if (t?.reason !== reason || !('code' in t) || t.code !== code || !t.detail.includes(who) || !t.detail.includes(found) || !t.detail.includes('required')) probes.push(`${code}: ${mqSayEnd(t)}`);
+      else if (out.mesh !== null || cand?.geometry !== null || cand.counts !== null || cand.accepted !== false || out.report.candidates.length !== 1 || cand.id !== 'result') probes.push(`${code}: a refused reduction returned a mesh, geometry or acceptance`);
+      else reached.push(`${code} (${reason})`);
+    }
     const clean = refusalOf(base());
     if (clean !== null) probes.push(`the unplanted input was refused: ${clean.message}`);
     const held = probes.length === 0;
@@ -45621,6 +45842,34 @@ function runMeshQualitySuite(): number {
     const withRegion = writeMeshQualityReport(measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [region] })));
     const withRegionAgain = writeMeshQualityReport(measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [{ ...region }] })));
     const moved = writeMeshQualityReport(measureMeshQuality({ ...one, art: { ...one.art, threshold: 2 } }));
+    // The reduction's report and mesh, twice on one input whose second copy is built in another key order.
+    const reduceOnce = (): MeshReductionInput => mqReduceInput(lattice, { ...regionTargets(dense), deform: [wave(0, [1, 2, 3, 4])] });
+    const reduceAgain = (): MeshReductionInput => {
+      const one = reduceOnce();
+      return {
+        linkedMeshes: [],
+        deform: one.deform.map((d) => ({ keys: d.keys.map((k) => ({ ...k })), attachment: { attachment: d.attachment.attachment, slot: d.attachment.slot, skin: d.attachment.skin }, animation: d.animation })),
+        regionArtSamples: one.regionArtSamples.map((f) => ({ minArtSamples: f.minArtSamples, region: f.region })),
+        minArtSamples: one.minArtSamples,
+        budget: { maxCandidates: one.budget.maxCandidates },
+        preset: null,
+        boneOrder: null,
+        influences: null,
+        protect: { influences: [], weightJump: null, regionBoundaries: [], edges: [], vertices: [], hull: false },
+        targets: { regions: [{ ...dense, polygon: dense.polygon.map(([x, y]): MqPt => [x, y]) }], maxBoundaryDeviation: 0, artFit: { maxUndercut: 0, maxOvershoot: 0, minCoverage: 1 } },
+        sourceBounds: { maxUndercut: 0, maxOvershoot: 0, minCoverage: 1 },
+        source: { weights: null, hull: lattice.hull, triangles: lattice.triangles.slice(), uvs: lattice.uvs.slice(), points: lattice.points.map(([x, y]): MqPt => [x, y]) },
+        art: { frame: { conversion: 'texels = px * pageScale', pageScale: 1, height: H, width: W, space: 'part-local-drawing-px-y-down' }, threshold: 1, mask: { alpha: rectMask.alpha.slice(), height: H, width: W } },
+        attachment: { attachment: 'probe', slot: 'probe-slot', skin: null },
+      };
+    };
+    const reducedFirst = reduceMesh(reduceOnce());
+    const reducedSecond = reduceMesh(reduceAgain());
+    const reducedText = writeMeshQualityReport(reducedFirst.report);
+    if (reducedText !== writeMeshQualityReport(reducedSecond.report)) probes.push('two reductions of one input, built in two key orders, wrote different reports');
+    if (JSON.stringify(reducedFirst.mesh) !== JSON.stringify(reducedSecond.mesh)) probes.push('two reductions of one input returned different meshes');
+    if (writeMeshQualityReport(reduceMesh({ ...reduceOnce(), budget: { maxCandidates: 40 } }).report) === reducedText) probes.push('a smaller budget wrote the same reduce report, so the comparison compares nothing');
+    if (!reducedText.startsWith('{\n  "spec": "mesh-quality-report/1",\n  "operation": "reduce",')) probes.push(`the reduce text opens ${JSON.stringify(reducedText.slice(0, 60))}`);
     if (first !== second) probes.push('two runs of one input, built in two key orders, wrote different bytes');
     if (withRegion !== withRegionAgain) probes.push('two runs with a region wrote different bytes');
     if (moved === first) probes.push('a different threshold wrote the same bytes, so the comparison above compares nothing');
@@ -45629,17 +45878,17 @@ function runMeshQualitySuite(): number {
     say(
       'MQ25_TWO_RUNS_ON_ONE_INPUT_WRITE_BYTE_IDENTICAL_REPORTS',
       held,
-      probeDetail(held, probes, `${first.length} bytes twice, the second input built in reverse key order, and ${withRegion.length} bytes twice with a region; a changed threshold changes them; two-space JSON with spec and operation first and a final newline`),
+      probeDetail(held, probes, `${first.length} bytes twice, the second input built in reverse key order, and ${withRegion.length} bytes twice with a region; a changed threshold changes them; two-space JSON with spec and operation first and a final newline; a reduce report of ${reducedText.length} bytes and its mesh identical twice across key orders, a smaller budget changing them`),
       'A18\'s standard and build-report/1\'s precedent: the document has no time, path or machine in it, and its key order is the type\'s, never the order an input happened to be built in',
     );
   }
 
-  // --- MQ26: nothing under src/ but the two defining modules names the operation --
+  // --- MQ26: nothing under src/ but the three defining modules names the operations --
   // The bytes half of the contract's MQ26 is EH06's and MB07's (the gallery held to the emit-hash base on every
   // run); this holds the reason they cannot move — no module a build reaches calls the operation.
   {
     const probes: string[] = [];
-    const DEFINERS = ['src/mesh.ts', 'src/meshquality.ts'];
+    const DEFINERS = ['src/mesh.ts', 'src/meshquality.ts', 'src/meshreduce.ts'];
     /** The modules outside the two that define it naming the operation, comments aside, as `file (names)`. */
     const callers = (population: ReadonlyMap<string, string>): string[] =>
       [...population]
@@ -45657,18 +45906,21 @@ function runMeshQualitySuite(): number {
     planted.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\nconst quality = measureMeshQuality;\n`);
     const plantedFound = callers(planted);
     if (JSON.stringify(plantedFound) !== JSON.stringify(['src/compile.ts (measureMeshQuality)'])) probes.push(`a compile.ts planted to name the operation read ${JSON.stringify(plantedFound)}, not that file by name`);
+    const plantedReduce = new Map(population);
+    plantedReduce.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\nconst reduced = reduceMesh;\n`);
+    if (JSON.stringify(callers(plantedReduce)) !== JSON.stringify(['src/compile.ts (reduceMesh)'])) probes.push(`a compile.ts planted to name the reduction read ${JSON.stringify(callers(plantedReduce))}, not that file by name`);
     const commented = new Map(population);
     commented.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\n// measureMeshQuality, in a comment\n`);
     if (callers(commented).length !== 0) probes.push('a comment naming the operation was read as a caller');
     const held = probes.length === 0;
     say(
-      'MQ26_NO_MODULE_UNDER_SRC_BUT_MESH_AND_MESHQUALITY_NAMES_THE_OPERATION_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_IT',
+      'MQ26_NO_MODULE_UNDER_SRC_BUT_THE_THREE_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM',
       held,
       probeDetail(
         held,
         probes,
         `${population.size} module(s) under src/ read off the disk: none but ${DEFINERS.join(' and ')} names measureMeshQuality or reduceMesh; ` +
-          `planted into compile.ts the name reads ${plantedFound.join(', ')}, and in a comment there it reads nothing — the emitted bytes themselves are EH06's and MB07's`,
+          `planted into compile.ts the name reads ${plantedFound.join(', ')} and the reduction's reads src/compile.ts (reduceMesh), and in a comment there it reads nothing — the emitted bytes themselves are EH06's and MB07's`,
       ),
       '§0: the operation is an explicit call — no generator default changes and compile never measures or rewrites geometry on its own — so the claim that an unchanged spec emits unchanged bytes rests on nothing in a build reaching it, and that is held here rather than stated',
     );
@@ -45833,6 +46085,440 @@ function runMeshQualitySuite(): number {
       held,
       probeDetail(held, probes, `the pinch plate with its art fit declared at the measured values: ${mqSay(trace)} — ${trace?.reason?.slice(0, 96)}…; verdict ${rep.candidates[0]?.geometry?.verdict}, accepted`),
       'P13: the traced boundary is a diagnostic, never required, so a tracer refusal is reported with its own reason and takes nothing away from the rows the caller did require',
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // stage B2: reduceMesh — reduction and refinement, two operations composed
+  // ---------------------------------------------------------------------------
+
+  // --- MQ46: reduction alone (no region): fewer vertices, every bound held; a bound that blocks every step is named --
+  {
+    const probes: string[] = [];
+    const run = mqReduce('reduction alone, the lattice', mqReduceInput(lattice));
+    const { mesh, report } = run;
+    const t = report.termination;
+    const cand = report.candidates[0];
+    if (mesh === null) probes.push(`no mesh: ${mqSayEnd(t)}`);
+    else {
+      if (mesh.points.length >= lattice.points.length) probes.push(`${lattice.points.length} vertices in, ${mesh.points.length} out`);
+      if (cand?.accepted !== true || cand.geometry?.verdict !== 'pass') probes.push(`verdict ${cand?.geometry?.verdict}, accepted ${cand?.accepted}: ${mqRows(report).filter((r) => r.state === 'fail').map(mqSay).join(', ')}`);
+      if (cand?.changes?.insertedVertices !== 0 || cand.changes.removedVertices !== lattice.points.length - mesh.points.length) probes.push(`changes ${JSON.stringify(cand?.changes)}`);
+      if (t?.reason !== 'no-further-valid-reduction') probes.push(`termination ${mqSayEnd(t)}`);
+      // Survivors keep position and UV bit for bit (P19), read through the index map the result states.
+      mesh.indexMap.forEach((r, s) => {
+        if (r === null) return;
+        if (mesh.points[r][0] !== lattice.points[s][0] || mesh.points[r][1] !== lattice.points[s][1] || mesh.uvs[2 * r] !== lattice.uvs[2 * s] || mesh.uvs[2 * r + 1] !== lattice.uvs[2 * s + 1]) probes.push(`source vertex ${s} moved or changed UV as result vertex ${r}`);
+      });
+      // The result measured again by the B1 operation on its own, against the same art and the source hull.
+      const again = measureMeshQuality(mqInput(rectMask, frame, mesh, { artFit: strict, maxBoundaryDeviation: 0, regions: [] }, { referenceHull: lattice.points.slice(0, lattice.hull) }));
+      if (again.candidates[0]?.accepted !== true) probes.push(`measured again on its own, the result is not accepted: ${mqRows(again).filter((r) => r.state === 'fail').map(mqSay).join(', ')}`);
+      if (writeMeshQualityReport(report).toLowerCase().includes('minimal')) probes.push('the report says "minimal"');
+    }
+    // The plant: an octagon, every vertex on the hull and none collinear, with the boundary held at 0 — every removal moves the hull.
+    const cut = 6;
+    const octagon: MqPt[] = [[X0 + cut, Y0], [X1 - cut, Y0], [X1, Y0 + cut], [X1, Y1 - cut], [X1 - cut, Y1], [X0 + cut, Y1], [X0, Y1 - cut], [X0, Y0 + cut]];
+    const octMesh = mqMesh(octagon, earClip(octagon), octagon.length, H, W);
+    const loose: ArtFitBounds = { minCoverage: 0, maxOvershoot: W, maxUndercut: W };
+    const blocked = mqReduce('reduction alone, every step blocked', mqReduceInput(octMesh, { sourceBounds: loose, targets: { artFit: loose, maxBoundaryDeviation: 0, regions: [] } }));
+    const bt = blocked.report.termination;
+    if (bt?.reason !== 'no-further-valid-reduction' || !bt.blockingConstraint.startsWith('MQ_BOUNDARY_DEVIATION:') || bt.candidatesTried !== octagon.length) probes.push(`the octagon: ${mqSayEnd(bt)}, not blocked by MQ_BOUNDARY_DEVIATION after ${octagon.length} candidates`);
+    else if (blocked.mesh === null || blocked.mesh.points.length !== octagon.length || blocked.report.candidates[0]?.accepted !== true) probes.push(`the octagon came back with ${blocked.mesh?.points.length} vertices, accepted ${blocked.report.candidates[0]?.accepted}`);
+    const held = probes.length === 0;
+    say(
+      'MQ46_CONTROL_REDUCTION_ALONE_REMOVES_VERTICES_HOLDING_EVERY_BOUND_AND_A_BOUND_THAT_BLOCKS_EVERY_STEP_IS_NAMED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `no region: the ${lattice.points.length}-vertex lattice reduced to ${mesh?.points.length} (${mesh?.hull} on the hull) at coverage 1, overshoot 0, undercut 0 and boundary deviation 0, accepted, survivors unmoved, re-measured on their own and accepted; ` +
+          `${mqSayEnd(t)}; the octagon with its boundary held at 0: ${mqSayEnd(bt)}; cost ${run.tried} candidate(s) in ${run.ms.toFixed(1)} ms and ${blocked.tried} in ${blocked.ms.toFixed(1)} ms`,
+      ),
+      'spine-parts#126 (6042150608): the reduction is one of two composed operations and has to pass with the other idle — a step is taken only when every declared bound holds after it, and a stop says which bound stopped it, never that the result is minimal',
+    );
+  }
+
+  // --- MQ47: refinement alone (every source vertex protected): inserted only in the region and its band, L(R) holds; a bound under one texel is refused --
+  {
+    const probes: string[] = [];
+    const before = measureMeshQuality(mqInput(rectMask, frame, lattice, { artFit: strict, maxBoundaryDeviation: null, regions: [dense] }));
+    if (mqRow(before, 'MQ_MAX_EDGE', 'dense')?.state !== 'fail') probes.push(`the source already meets the region: ${mqSay(mqRow(before, 'MQ_MAX_EDGE', 'dense'))}`);
+    if (mqRow(before, 'MQ_COVERAGE')?.state !== 'pass') probes.push(`the source does not meet its art bounds: ${mqSay(mqRow(before, 'MQ_COVERAGE'))}`);
+    const run = mqReduce('refinement alone, the dense region', mqReduceInput(lattice, { ...regionTargets(dense), protect: everySource(lattice) }));
+    const { mesh, report } = run;
+    const t = report.termination;
+    const outside: string[] = [];
+    let over: string[] = [];
+    if (mesh === null) probes.push(`no mesh: ${mqSayEnd(t)}`);
+    else {
+      const cand = report.candidates[0];
+      if (mesh.inserted.length === 0 || cand?.changes?.insertedVertices !== mesh.inserted.length || cand.changes.removedVertices !== 0) probes.push(`inserted ${mesh.inserted.length}, changes ${JSON.stringify(cand?.changes)}`);
+      if (mesh.indexMap.some((r) => r === null)) probes.push('a protected source vertex was removed');
+      for (const r of mesh.inserted) if (!mqInRegionOrBand(mesh.points[r], dense)) outside.push(`${r} at (${mesh.points[r].join(', ')})`);
+      if (outside.length > 0) probes.push(`inserted outside the region and its band: ${outside.join(', ')}`);
+      over = mqOverBound(mesh, dense);
+      if (over.length > 0) probes.push(`L(R) read by the test: ${over.join(', ')}`);
+      if (mqRow(report, 'MQ_MAX_EDGE', 'dense')?.state !== 'pass' || cand?.accepted !== true) probes.push(`${mqSay(mqRow(report, 'MQ_MAX_EDGE', 'dense'))}, accepted ${cand?.accepted}`);
+      if (t?.reason !== 'no-further-valid-reduction' || !t.blockingConstraint.startsWith('protect:')) probes.push(`termination ${mqSayEnd(t)}, not the reduction finding every source vertex protected`);
+      // Inserted vertices last, ascending by (y, x) — the canonical order of §1, read off the points.
+      const tail = mesh.inserted.filter((r) => r >= mesh.hull);
+      for (let i = 1; i < tail.length; i++) {
+        const [p, q] = [mesh.points[tail[i - 1]], mesh.points[tail[i]]];
+        if (tail[i] !== tail[i - 1] + 1 || p[1] > q[1] || (p[1] === q[1] && p[0] >= q[0])) probes.push(`inserted interior vertices ${tail[i - 1]} and ${tail[i]} are not consecutive and ascending by (y, x)`);
+      }
+    }
+    // The plant: the same region with a bound under one texel.
+    const below = mqReduce('refinement alone, a bound under one texel', mqReduceInput(lattice, { ...regionTargets({ ...dense, maxEdgeLength: 1 / frame.pageScale / 2 }), protect: everySource(lattice) }));
+    const pt = below.report.termination;
+    if (pt?.reason !== 'invalid-input' || pt.code !== 'REGION_BOUND_BELOW_GRID' || below.mesh !== null) probes.push(`a bound of half a texel: ${mqSayEnd(pt)}, mesh ${below.mesh === null ? 'null' : 'returned'}`);
+    const held = probes.length === 0;
+    say(
+      'MQ47_CONTROL_REFINEMENT_ALONE_INSERTS_ONLY_INSIDE_THE_REGION_AND_ITS_BAND_UNTIL_L_OF_R_HOLDS_AND_A_BOUND_UNDER_ONE_TEXEL_IS_REFUSED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `every source vertex protected: the lattice ${mqSay(mqRow(before, 'MQ_MAX_EDGE', 'dense'))} before; ${mesh?.inserted.length} vertices inserted, every one inside the region or its ${dense.transition} px band by the test's own distance, ` +
+          `${mqSay(mqRow(report, 'MQ_MAX_EDGE', 'dense'))} and ${mqSay(mqRow(report, 'MQ_TRANSITION', 'dense'))} after, no edge over by the test's own reading, accepted; ${mqSayEnd(t)}; ` +
+          `half a texel: ${pt?.reason} ${pt && 'code' in pt ? pt.code : ''}; cost ${run.tried} candidate(s) in ${run.ms.toFixed(1)} ms`,
+      ),
+      'spine-parts#126 (6042150608): refinement is the other composed operation and has to pass with the reduction idle — P16\'s checkable form, every inserted vertex inside the region or its band, and §5\'s L(R) on the emitted edges, measured whole',
+    );
+  }
+
+  // --- MQ14: a localised region refines inside and inserts no vertex outside its region and band --
+  {
+    const probes: string[] = [];
+    const narrow: RefinementRegion = { ...dense, transition: 6, grade: 2 };
+    const readings: string[] = [];
+    for (const region of [dense, narrow]) {
+      const { mesh, report } = mqReduce(`composed, band ${region.transition}`, mqReduceInput(lattice, regionTargets(region)));
+      if (mesh === null) {
+        probes.push(`band ${region.transition}: no mesh: ${mqSayEnd(report.termination)}`);
+        continue;
+      }
+      const outside = mesh.inserted.filter((r) => !mqInRegionOrBand(mesh.points[r], region));
+      if (mesh.inserted.length === 0) probes.push(`band ${region.transition}: nothing inserted`);
+      if (outside.length > 0) probes.push(`band ${region.transition}: inserted outside the region and its band: ${outside.map((r) => `(${mesh.points[r].join(', ')})`).join(', ')}`);
+      const over = mqOverBound(mesh, region);
+      if (over.length > 0 || report.candidates[0]?.accepted !== true) probes.push(`band ${region.transition}: accepted ${report.candidates[0]?.accepted}, over ${over.join(', ')}`);
+      readings.push(`band ${region.transition}, grade ${region.grade}: ${mesh.inserted.length} inserted, ${report.candidates[0]?.changes?.removedVertices} source vertices removed after, all inside`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ14_A_LOCALISED_REGION_REFINES_INSIDE_AND_INSERTS_NO_VERTEX_OUTSIDE_ITS_REGION_AND_BAND',
+      held,
+      probeDetail(held, probes, `${readings.join('; ')} — the reduction ran after the refinement and kept L(R) on every step`),
+      'P16: outside every region and band there is no density constraint, so wholesale refinement of unrelated areas is not allowed — the checkable form is that every inserted vertex lies inside the union of the closed regions and their bands',
+    );
+  }
+
+  // --- MQ32: a coarse source that meets its art bounds but not the region density is refined, not refused --
+  {
+    const probes: string[] = [];
+    const coarse = mqReduce('a coarse source and a region', mqReduceInput(lattice, regionTargets(dense)));
+    const ct = coarse.report.termination;
+    if (ct?.reason === 'invalid-input' || coarse.mesh === null || coarse.mesh.inserted.length === 0 || coarse.report.candidates[0]?.accepted !== true) probes.push(`the coarse lattice: ${mqSayEnd(ct)}, ${coarse.mesh?.inserted.length} inserted, accepted ${coarse.report.candidates[0]?.accepted}`);
+    if (coarse.report.sourceCounts?.interiorVertices !== lattice.points.length - lattice.hull) probes.push(`sourceCounts ${JSON.stringify(coarse.report.sourceCounts)}`);
+    // The plant: a source that fails its own art bounds is refused by name; the same source held to looser
+    // source bounds is admitted, and its stricter targets stop the reduction rather than refuse it.
+    const failing = mqReduce('a source under its art bounds', mqReduceInput(inward));
+    const ft = failing.report.termination;
+    if (ft?.reason !== 'invalid-input' || ft.code !== 'REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS' || failing.mesh !== null) probes.push(`a source under its bounds: ${mqSayEnd(ft)}`);
+    const admitted = mqReduce('the same source under looser source bounds', mqReduceInput(inward, { sourceBounds: { minCoverage: 0, maxOvershoot: W, maxUndercut: W } }));
+    const at = admitted.report.termination;
+    if (at?.reason !== 'no-further-valid-reduction' || !at.blockingConstraint.startsWith('MQ_COVERAGE:') || admitted.report.candidates[0]?.accepted !== false) probes.push(`targets stricter than the source bounds: ${mqSayEnd(at)}, accepted ${admitted.report.candidates[0]?.accepted}`);
+    const held = probes.length === 0;
+    say(
+      'MQ32_CONTROL_A_COARSE_SOURCE_THAT_MEETS_ITS_ART_BOUNDS_BUT_NOT_THE_REGION_DENSITY_IS_REFINED_NOT_REFUSED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the coarse lattice: ${coarse.mesh?.inserted.length} inserted, ${mqSay(mqRow(coarse.report, 'MQ_MAX_EDGE', 'dense'))}, accepted; a source under its own bounds: ${ft && 'code' in ft ? ft.code : ''}; ` +
+          `the same source under looser bounds is admitted and its targets stop it: ${mqSayEnd(at)}`,
+      ),
+      'correction 3: REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS fires on sourceBounds only — a region density or a target the source does not meet is what the result is driven towards, never an admission condition',
+    );
+  }
+
+  // --- MQ33: a budget that expires before any candidate meets the targets returns no mesh, no geometry, not accepted --
+  {
+    const probes: string[] = [];
+    const short = mqReduce('a budget of one step and a region', mqReduceInput(lattice, { ...regionTargets(dense), budget: { maxCandidates: 1 } }));
+    const t = short.report.termination;
+    const cand = short.report.candidates[0];
+    if (t?.reason !== 'budget-exhausted' || t.result !== 'none-met-the-targets' || t.budget !== 1 || t.candidatesTried !== 1) probes.push(`termination ${mqSayEnd(t)}`);
+    if (short.mesh !== null || cand?.geometry !== null || cand.counts !== null || cand.accepted !== false || cand.changes !== undefined) probes.push(`mesh ${short.mesh === null ? 'null' : 'returned'}, geometry ${cand?.geometry === null ? 'null' : 'present'}, counts ${JSON.stringify(cand?.counts)}, accepted ${cand?.accepted}`);
+    if (short.report.sourceCounts === null) probes.push('sourceCounts is null, though the source was read');
+    if (!writeMeshQualityReport(short.report).includes('"geometry": null')) probes.push('the document does not write geometry as null');
+    const held = probes.length === 0;
+    say(
+      'MQ33_A_BUDGET_THAT_EXPIRES_BEFORE_ANY_CANDIDATE_MEETS_THE_TARGETS_RETURNS_NO_MESH_NO_GEOMETRY_AND_NOT_ACCEPTED',
+      held,
+      probeDetail(held, probes, `one step for a region that needs ${(mqReduce('the same region with room', mqReduceInput(lattice, { ...regionTargets(dense), protect: everySource(lattice) })).mesh?.inserted.length ?? '?')}: ${mqSayEnd(t)}; no mesh, geometry and counts null, not accepted; sourceCounts kept`),
+      'correction 3 and P6: a budget that ends before the targets are met has no candidate to offer, and a report that offered the half-refined mesh would be accepting what was never measured to pass',
+    );
+  }
+
+  // --- MQ24: each termination reason is reached by one input --
+  {
+    const probes: string[] = [];
+    const cases: Array<[string, MeshReductionInput, (t: Termination | null) => boolean]> = [
+      ['no-further-valid-reduction', mqReduceInput(lattice), (t) => t?.reason === 'no-further-valid-reduction'],
+      ['budget-exhausted, best-meeting-every-bound', mqReduceInput(lattice, { budget: { maxCandidates: 3 } }), (t) => t?.reason === 'budget-exhausted' && t.result === 'best-meeting-every-bound' && t.candidatesTried === 3],
+      ['budget-exhausted, none-met-the-targets', mqReduceInput(lattice, { ...regionTargets(dense), budget: { maxCandidates: 0 } }), (t) => t?.reason === 'budget-exhausted' && t.result === 'none-met-the-targets' && t.candidatesTried === 0],
+      ['invalid-input', mqReduceInput(inward), (t) => t?.reason === 'invalid-input'],
+      ['unsupported-topology', mqReduceInput({ ...lattice, hull: lattice.hull - 1 }), (t) => t?.reason === 'unsupported-topology'],
+    ];
+    const readings: string[] = [];
+    for (const [label, input, want] of cases) {
+      const out = mqReduce(label, input);
+      const r = out.report;
+      if (!want(r.termination)) probes.push(`${label}: ${mqSayEnd(r.termination)}`);
+      if (r.operation !== 'reduce' || r.candidates.length !== 1 || r.candidates[0].id !== 'result' || r.poser !== null || r.motionRequired !== false) probes.push(`${label}: operation ${r.operation}, ${r.candidates.length} candidate(s) id ${r.candidates[0]?.id}`);
+      const text = writeMeshQualityReport(r);
+      if ((text.match(/"reason": "(no-further-valid-reduction|budget-exhausted|invalid-input|unsupported-topology)"/g) ?? []).length !== 1) probes.push(`${label}: the document does not carry exactly one termination`);
+      if (text.toLowerCase().includes('minimal')) probes.push(`${label}: the report says "minimal"`);
+      const best = r.termination?.reason === 'budget-exhausted' && r.termination.result === 'best-meeting-every-bound';
+      if (best && (out.mesh === null || r.candidates[0].accepted !== true)) probes.push(`${label}: the best result was not returned accepted`);
+      readings.push(`${label} (${out.tried ?? '—'} tried, ${out.ms.toFixed(1)} ms)`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ24_EACH_TERMINATION_REASON_IS_REACHED_BY_ONE_INPUT',
+      held,
+      probeDetail(held, probes, `${readings.join('; ')} — each report one candidate "result" and exactly one termination, none says minimal`),
+      '*Termination reasons*: every reduce report carries exactly one, so a reader can tell a local stop from a spent budget from a refusal without reading the rows',
+    );
+  }
+
+  // --- MQ17: a removal remaps a vertices run, a reorder remaps too, and an insertion under one is refused by name --
+  {
+    const probes: string[] = [];
+    // The run covers the first five hull vertices: two corners that survive (the second reordered to index 1) and three collinear ones that go.
+    const COVERED = 5;
+    const values = Array.from({ length: 2 * COVERED }, (_, i) => i + 1);
+    const { mesh, report } = mqReduce('a keyed lattice', mqReduceInput(lattice, { deform: [wave(0, values)], linkedMeshes: [{ skin: null, slot: 'probe-slot', attachment: 'probe-linked' }] }));
+    let remapped: RemappedDeformKey | undefined;
+    if (mesh === null) probes.push(`no mesh: ${mqSayEnd(report.termination)}`);
+    else {
+      remapped = mesh.deform.remapped[0];
+      const want = new Map<number, number>();
+      const dropped: number[] = [];
+      for (let s = 0; s < COVERED; s++) {
+        const r = mesh.indexMap[s];
+        if (r === null) dropped.push(s);
+        else for (const c of [0, 1]) want.set(2 * r + c, values[2 * s + c]);
+      }
+      const moved = [...Array(COVERED).keys()].filter((s) => mesh.indexMap[s] !== null && mesh.indexMap[s] !== s);
+      if (remapped === undefined || mesh.deform.remapped.length !== 1) probes.push(`remapped ${JSON.stringify(mesh.deform.remapped)}`);
+      else {
+        for (const [at, v] of want) if (remapped.vertices[at - remapped.offset] !== v) probes.push(`result entry ${at} reads ${remapped.vertices[at - remapped.offset]}, the source's ${v}`);
+        remapped.vertices.forEach((v, j) => {
+          if (!want.has(remapped!.offset + j) && v !== 0) probes.push(`result entry ${remapped!.offset + j} reads ${v} and no surviving keyed vertex is there`);
+        });
+        if (JSON.stringify(remapped.droppedVertices) !== JSON.stringify(dropped)) probes.push(`dropped ${JSON.stringify(remapped.droppedVertices)}, removed ${JSON.stringify(dropped)}`);
+        if (dropped.length === 0 || moved.length === 0) probes.push(`the run lost ${dropped.length} vertex(es) and ${moved.length} survivor(s) moved index, so the remap was not exercised both ways`);
+      }
+      const changes = report.candidates[0]?.changes;
+      if (mesh.deform.reevaluated.length !== 1 || mesh.deform.reevaluated[0].key !== 2 || changes?.deformReevaluated.length !== 1) probes.push(`the transform key: ${JSON.stringify(mesh.deform.reevaluated)}`);
+      if (JSON.stringify(changes?.deformRemapped[0]?.droppedVertices) !== JSON.stringify(dropped)) probes.push(`the report's dropped vertices ${JSON.stringify(changes?.deformRemapped)}`);
+      if (mesh.linkedMeshes.length !== 1 || changes?.linkedMeshes.length !== 1) probes.push(`linked meshes ${JSON.stringify(mesh.linkedMeshes)}`);
+    }
+    // Refused by name: an insertion under the run, a weighted keyed vertex whose influence order changes, and a linked mesh's own keys.
+    const refusals: Array<[string, MeshReductionInput, string]> = [
+      ['an insertion beside a keyed vertex', mqReduceInput(lattice, { ...regionTargets(dense), deform: [wave(2 * nearRegion, [1, 2])] }), `keys source vertex ${nearRegion}`],
+      [
+        'a weighted keyed vertex listed weakest first',
+        mqReduceInput(
+          weighted(lattice, (_, i) => (i === 0 ? [{ bone: 'b', weight: 0.25 }, { bone: 'a', weight: 0.75 }] : [{ bone: 'a', weight: 1 }])),
+          { influences: { maxInfluences: 2, minWeight: 0 }, boneOrder: ['a', 'b'], deform: [wave(0, [1, 2, 3, 4])] },
+        ),
+        'weighted [b,a], which the result binds [a,b]',
+      ],
+      [
+        "a linked mesh's own keys",
+        mqReduceInput(lattice, { linkedMeshes: [{ skin: null, slot: 'probe-slot', attachment: 'probe-linked' }], deform: [{ ...wave(0, [1, 2]), attachment: { skin: null, slot: 'probe-slot', attachment: 'probe-linked' } }] }),
+        'is keyed on a linked mesh',
+      ],
+    ];
+    const refused: string[] = [];
+    for (const [label, input, found] of refusals) {
+      const out = reduceMesh(input);
+      const t = out.report.termination;
+      if (t?.reason !== 'unsupported-topology' || t.code !== 'REDUCE_DEFORM_INDEXED' || !t.detail.includes('animation "probe-wave"') || !t.detail.includes('slot "probe-slot"') || !t.detail.includes('key 1') || !t.detail.includes(found) || out.mesh !== null) {
+        probes.push(`${label}: ${mqSayEnd(t)}`);
+      } else refused.push(label);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ17_A_REMOVAL_REMAPS_A_VERTICES_RUN_A_REORDER_ONLY_CHANGE_REMAPS_TOO_AND_AN_INSERTION_UNDER_ONE_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a run over source vertices 0..${COVERED - 1}: remapped to offset ${remapped?.offset}, ${remapped?.vertices.length} number(s), the removed ${JSON.stringify(remapped?.droppedVertices)} dropped and reported, a surviving vertex that only moved index carried with it, the transform key listed as re-evaluated and the linked mesh listed; ` +
+          `refused as REDUCE_DEFORM_INDEXED naming animation, slot, attachment and key: ${refused.join('; ')}`,
+      ),
+      'P18: a reduction never keeps an old index after a topology change — the canonical order reorders even on removal — and what cannot be carried honestly is refused by name rather than carried wrong',
+    );
+  }
+
+  // --- MQ18: a weight-jump edge survives vertex removal and retriangulation --
+  {
+    const probes: string[] = [];
+    const JUMP = 1;
+    const split = weighted(lattice, ([x]) => (x <= C[0] - (X1 - X0) / 4 ? [{ bone: 'a', weight: 1 }] : [{ bone: 'b', weight: 1 }]));
+    const l1 = (p: Array<{ bone: string; weight: number }>, q: Array<{ bone: string; weight: number }>): number => {
+      let sum = 0;
+      for (const bone of ['a', 'b']) sum += Math.abs((p.find((e) => e.bone === bone)?.weight ?? 0) - (q.find((e) => e.bone === bone)?.weight ?? 0));
+      return sum;
+    };
+    const sourceEdges = new Set<string>();
+    for (let i = 0; i < split.triangles.length; i += 3) for (let k = 0; k < 3; k++) {
+      const [a, b] = [split.triangles[i + k], split.triangles[i + ((k + 1) % 3)]];
+      sourceEdges.add(a < b ? `${a},${b}` : `${b},${a}`);
+    }
+    const jumps = [...sourceEdges].map((e) => e.split(',').map(Number) as [number, number]).filter(([a, b]) => l1(split.weights![a], split.weights![b]) > JUMP);
+    /** Condition (a) and (b) read by the test off a result: protected source edges lost, and new edges over the jump. */
+    const violations = (mesh: ReducedMesh): string[] => {
+      const out: string[] = [];
+      const back = new Map<number, number>();
+      mesh.indexMap.forEach((r, s) => r !== null && back.set(r, s));
+      const edges = new Set(mqEdgePairs(mesh).map(([a, b]) => (a < b ? `${a},${b}` : `${b},${a}`)));
+      for (const [a, b] of jumps) {
+        const [ra, rb] = [mesh.indexMap[a], mesh.indexMap[b]];
+        if (ra === null || rb === null || !edges.has(ra < rb ? `${ra},${rb}` : `${rb},${ra}`)) out.push(`(a) source edge ${a}–${b} lost`);
+      }
+      for (const [ra, rb] of mqEdgePairs(mesh)) {
+        const [a, b] = [back.get(ra), back.get(rb)];
+        const isSource = a !== undefined && b !== undefined && sourceEdges.has(a < b ? `${a},${b}` : `${b},${a}`);
+        if (!isSource && l1(mesh.weights![ra], mesh.weights![rb]) > JUMP) out.push(`(b) new edge ${ra}–${rb} jumps ${l1(mesh.weights![ra], mesh.weights![rb])}`);
+      }
+      return out;
+    };
+    const base = { influences: { maxInfluences: 2, minWeight: 0 }, boneOrder: ['a', 'b'] };
+    const guarded = mqReduce('a weight seam, protected', mqReduceInput(split, { ...base, protect: { ...noProtection, weightJump: JUMP } }));
+    const open = mqReduce('a weight seam, unprotected', mqReduceInput(split, base));
+    if (jumps.length === 0) probes.push('the fixture has no edge over the jump, so nothing is protected');
+    if (guarded.mesh === null || open.mesh === null) probes.push(`no mesh: ${mqSayEnd(guarded.report.termination)} / ${mqSayEnd(open.report.termination)}`);
+    else {
+      const kept = violations(guarded.mesh);
+      if (kept.length > 0) probes.push(`weightJump ${JUMP}: ${kept.join(', ')}`);
+      if (guarded.report.candidates[0]?.changes?.removedVertices === 0) probes.push('the protected run removed nothing, so retriangulation never ran beside the seam');
+      const lost = violations(open.mesh);
+      if (lost.length === 0) probes.push('with weightJump null the reduction kept the seam anyway, so the protection above is untested');
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ18_A_WEIGHT_JUMP_EDGE_SURVIVES_VERTEX_REMOVAL_AND_RETRIANGULATION',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${jumps.length} source edge(s) over a jump of ${JUMP}: with weightJump ${JUMP}, ${guarded.report.candidates[0]?.changes?.removedVertices} vertices removed and every one of them still an edge, no new edge over the jump; ` +
+          `with weightJump null the same reduction breaks ${open.mesh === null ? '?' : violations(open.mesh).length} of the conditions — ${guarded.tried} and ${open.tried} candidate(s), ${guarded.ms.toFixed(1)} and ${open.ms.toFixed(1)} ms`,
+      ),
+      'correction 3: a Spine mesh has one UV per vertex, so the discontinuity that can exist is in weights; (a) every protected source edge stays an edge and (b) no new edge joins vertex weights further apart than weightJump',
+    );
+  }
+
+  // --- MQ40: a candidate that passes at threshold nine and fails at one is not accepted --
+  {
+    const probes: string[] = [];
+    const RING = 2;
+    const FAINT = 5;
+    const soft = mqMask(dir, 'soft-edge', W, H, (x, y) => (inRect(x, y) ? 1 : x >= X0 - RING && x < X1 + RING && y >= Y0 - RING && y < Y1 + RING ? FAINT / 255 : 0));
+    const faint = soft.alpha.find((a) => a > 0 && a < 255) ?? 0;
+    if (!(faint >= 1 && faint < 9)) probes.push(`the faint ring reads alpha ${faint} on disk, not one in 1..8`);
+    const nine = mqReduce('at threshold nine', { ...mqReduceInput(lattice), art: { mask: soft, threshold: 9, frame } });
+    const cand = nine.report.candidates[0];
+    const rasterRows = mqRows(nine.report).filter((r) => r.art !== undefined);
+    if (nine.mesh === null || cand?.accepted !== true) probes.push(`at 9: ${mqSayEnd(nine.report.termination)}, accepted ${cand?.accepted}`);
+    if (rasterRows.length === 0 || rasterRows.some((r) => r.art?.threshold !== 9) || nine.report.effective.attachments[0]?.finalThreshold !== 9) probes.push(`at 9 the rows are keyed ${JSON.stringify(rasterRows.map((r) => r.art?.threshold))}, finalThreshold ${nine.report.effective.attachments[0]?.finalThreshold}`);
+    let atOne: MeasureRow | undefined;
+    if (nine.mesh !== null) {
+      const one = measureMeshQuality({ ...mqInput(soft, frame, nine.mesh, { artFit: strict, maxBoundaryDeviation: null, regions: [] }), art: { mask: soft, threshold: 1, frame } });
+      atOne = mqRow(one, 'MQ_COVERAGE');
+      if (one.candidates[0]?.accepted !== false || atOne?.state !== 'fail') probes.push(`the result measured at 1: ${mqSay(atOne)}, accepted ${one.candidates[0]?.accepted}`);
+    }
+    const refusedAtOne = mqReduce('the same at threshold one', { ...mqReduceInput(lattice), art: { mask: soft, threshold: 1, frame } });
+    const rt = refusedAtOne.report.termination;
+    if (rt?.reason !== 'invalid-input' || rt.code !== 'REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS') probes.push(`the source at 1: ${mqSayEnd(rt)}`);
+    const held = probes.length === 0;
+    say(
+      'MQ40_A_CANDIDATE_THAT_PASSES_AT_THRESHOLD_NINE_AND_FAILS_AT_ONE_IS_NOT_ACCEPTED',
+      held,
+      probeDetail(held, probes, `a ${RING} px ring at alpha ${faint}: the reduction at 9 accepted with every raster row keyed 9 and finalThreshold 9; the same result at 1: ${mqSay(atOne)}, not accepted; the source asked at 1: ${rt && 'code' in rt ? rt.code : ''}`),
+      'P4: evidence is never exchanged between thresholds — a pass at >= 9 is not a pass at >= 1, so the report keys every raster row by the threshold it was taken at and claims nothing at another',
+    );
+  }
+
+  // --- MQ43: minWeight 0 keeps every positive share on the grid, and protected influences over the cap are refused --
+  {
+    const probes: string[] = [];
+    const limits = { maxInfluences: 3, minWeight: 0 };
+    const run = mqReduce('a share one grid step wide', mqReduceInput(tinyShare, weightedOver(tinyShare, limits, [])));
+    const { mesh, report } = run;
+    let clearZero = 0;
+    let borderline = 0;
+    if (mesh === null) probes.push(`no mesh: ${mqSayEnd(report.termination)}`);
+    else {
+      for (const r of mesh.inserted) {
+        // The test's own interpolation: the first source triangle holding the vertex, barycentric.
+        const p = mesh.points[r];
+        let shares: Map<string, number> | null = null;
+        for (let t = 0; t < tinyShare.triangles.length && shares === null; t += 3) {
+          const [a, b, c] = [tinyShare.triangles[t], tinyShare.triangles[t + 1], tinyShare.triangles[t + 2]].map((i) => tinyShare.points[i]);
+          const det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);
+          const l0 = ((b[1] - c[1]) * (p[0] - c[0]) + (c[0] - b[0]) * (p[1] - c[1])) / det;
+          const l1 = ((c[1] - a[1]) * (p[0] - c[0]) + (a[0] - c[0]) * (p[1] - c[1])) / det;
+          const lam = [l0, l1, 1 - l0 - l1];
+          if (Math.min(...lam) < -1e-6) continue;
+          shares = new Map();
+          [tinyShare.triangles[t], tinyShare.triangles[t + 1], tinyShare.triangles[t + 2]].forEach((v, k) => {
+            for (const e of tinyShare.weights![v]) shares!.set(e.bone, (shares!.get(e.bone) ?? 0) + Math.max(0, lam[k]) * e.weight);
+          });
+        }
+        if (shares === null) {
+          probes.push(`inserted vertex ${r} lies in no source triangle`);
+          continue;
+        }
+        const kept = new Map(mesh.weights![r].map((e) => [e.bone, e.weight]));
+        for (const [bone, share] of shares) {
+          if (share <= 0) continue;
+          const steps = share / 1e-6;
+          if (steps < 0.49) {
+            clearZero++;
+            if (kept.has(bone)) probes.push(`vertex ${r} keeps "${bone}" at ${kept.get(bone)} for a share of ${share}, which is 0 on the grid`);
+          } else if (steps > 0.51) {
+            if (!(kept.get(bone)! > 0)) probes.push(`vertex ${r} lost "${bone}", a positive share of ${share} on the grid`);
+          } else borderline++;
+        }
+        if (mesh.weights![r].some((e) => !(e.weight > 0))) probes.push(`vertex ${r} carries a binding that is not positive: ${JSON.stringify(mesh.weights![r])}`);
+        if (Math.abs(mesh.weights![r].reduce((s, e) => s + e.weight, 0) - 1) > 1e-9) probes.push(`vertex ${r}'s weights sum to ${mesh.weights![r].reduce((s, e) => s + e.weight, 0)}`);
+      }
+      const dropped = report.candidates[0]?.changes?.sharesDroppedOnGrid ?? -1;
+      if (clearZero === 0) probes.push('no inserted vertex interpolated a share under the grid, so the drop was not exercised');
+      if (dropped < clearZero || dropped > clearZero + borderline) probes.push(`the report counts ${dropped} share(s) dropped on the grid; the test reads ${clearZero} clearly under it and ${borderline} within a hair of half a step`);
+      if (report.candidates[0]?.changes?.sharesPruned !== 0) probes.push(`${report.candidates[0]?.changes?.sharesPruned} share(s) pruned under minWeight 0 and a cap of ${limits.maxInfluences}`);
+    }
+    const overCap = reduceMesh(mqReduceInput(twoBone, weightedOver(twoBone, { maxInfluences: 1, minWeight: 0 }, ['a', 'b'])));
+    const ot = overCap.report.termination;
+    if (ot?.reason !== 'invalid-input' || ot.code !== 'REDUCE_PROTECTED_INFLUENCES_OVER_CAP' || !ot.detail.includes('(a, b)') || !ot.detail.includes('maxInfluences = 1') || overCap.mesh !== null) probes.push(`over the cap: ${mqSayEnd(ot)}`);
+    const held = probes.length === 0;
+    say(
+      'MQ43_MIN_WEIGHT_ZERO_KEEPS_EVERY_POSITIVE_SHARE_ON_THE_GRID_AND_PROTECTED_INFLUENCES_OVER_THE_CAP_ARE_REFUSED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${mesh?.inserted.length} vertices inserted beside a ${TINY} share: ${clearZero} interpolated share(s) under half a grid step by the test's own interpolation and ${borderline} within a hair of it, ${report.candidates[0]?.changes?.sharesDroppedOnGrid} dropped and counted in the report, every share over half a step kept, none pruned; ` +
+          `two protected influences under a cap of 1: ${ot && 'code' in ot ? ot.code : ''}. The boundary is the 6-decimal grid's — representation, not motion quality. ` +
+          `reduceMesh's cost on this suite's public fixtures, wall time outside the report: ${cpu.join('; ')}`,
+      ),
+      'P19 and spine-parts#126 (6042150608) item 1: with minWeight 0 a positive share that the grid cannot hold is dropped and counted rather than written as 0, no other floor applies, and a protected influence that cannot be kept is a named refusal',
     );
   }
 
@@ -117968,7 +118654,12 @@ function main(): void {
       'the A39 band from both sides, an edge crossing a region and one in its graded band held to the smallest bound on ' +
       'them, the five states kept apart — undeclared out of every pass count, a domain under its sample floor not ' +
       'measurable, a source that is not one loop reporting no counts rather than zeros — each refusal reached by one ' +
-      'input and named, the raster increment in the row\'s own unit, and the document byte-identical across key orders)' +
+      'input and named, the raster increment in the row\'s own unit, and the document byte-identical across key orders; ' +
+      'and stage B2\'s reduceMesh — a reduction that removes vertices only while every declared bound holds and names the ' +
+      'bound that stopped it, a refinement that inserts only inside a region and its band until L(R) holds, each passing ' +
+      'with the other idle, a weight-jump edge kept through retriangulation, a deform run remapped across removal and ' +
+      'reorder and refused under an insertion, shares under the weight grid dropped and counted, evidence at one ' +
+      'threshold never read at another, and each termination reached by one input)' +
       ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +

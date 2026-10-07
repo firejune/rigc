@@ -15,10 +15,12 @@ It is the contract both repositories agree on *before* any of stages B–D is
 written. **Stage B1 ([#1224](https://github.com/firejune/rigc/issues/1224))
 implements the geometry measurement** — `measureMeshQuality` and the
 `mesh-quality-report/1` document, in `src/meshquality.ts`, re-exported through
-`spine-rigc/mesh` — and every clause the tree now does is marked
-**[implemented, #1224]** and says what the tree does, cited by path and symbol.
-Nothing else here is implemented: the reduction (stage B2) and the motion
-comparison (stage C) keep their marks. The page exists so that a reader who was
+`spine-rigc/mesh` — and **stage B2 implements the reduction**: `reduceMesh`,
+in `src/meshreduce.ts`, re-exported through the same entry. Every clause the
+tree now does is marked **[implemented, #1224]** and says what the tree does,
+cited by path and symbol; *The reduction as implemented* gathers the choices B2
+had to make. Nothing else here is implemented: the motion comparison (stage C)
+keeps its marks. The page exists so that a reader who was
 not in the conversation that produced it can tell five things apart:
 
 - **Existing** — what the tree already provides, cited by file path and
@@ -56,17 +58,17 @@ policy from a name.
 | --- | --- | --- |
 | Alpha mask and threshold | `AlphaMask`, `artOf` (internal) in `src/mesh.ts`: art is alpha `>=` threshold; the threshold is a whole number in 1..255 ("the alpha threshold must be a whole number in 1..255", in both `buildContourMesh` and `buildSegmentsLattice`) | per-attachment art inputs, thresholds never exchanged (§1) |
 | Silhouette trace, holes, islands, pinch | `traceAlphaOutline` in `src/mesh.ts`: largest 4-connected island, holes filled by an 8-connected background flood (`fillEnclosed(inside, w, h, 8)`), diagonal pinch refused on the filled silhouette ("the alpha silhouette pinches to a single point"); `fillEnclosed` is internal | none — reused |
-| Outline simplification and offset | in `src/mesh.ts`: `simplifyClosedPolygon` (Douglas-Peucker), `offsetPolygon` (miter clamp `CONTOUR_MITER_LIMIT = 4`), `prunePolygon`, `findSelfIntersection`, `earClip` | constrained reduction with interior vertices (§1, §5, §6) |
+| Outline simplification and offset | in `src/mesh.ts`: `simplifyClosedPolygon` (Douglas-Peucker), `offsetPolygon` (miter clamp `CONTOUR_MITER_LIMIT = 4`), `prunePolygon`, `findSelfIntersection`, `earClip` | constrained reduction with interior vertices (§1, §5, §6) — [implemented, #1224] `reduceMesh`, `src/meshreduce.ts` |
 | Coverage and overshoot | in `src/mesh.ts`: `measureContourFit` (bounded search), `measureAuthoredMeshFit` (exact distance transform, internal `squaredDistanceToSet`), `MeshFitReport`, `CONTOUR_MIN_COVERAGE = 0.995`, `contourOvershootBound` | undercut (inward) distance, worst-sample location, raster sensitivity in each row's unit (§4) — [implemented, #1224] `measureMeshQuality`, `src/meshquality.ts` |
 | Outline/hull/edges of a triangulation | `traceOutline`, `checkHullOrder`, `meshEdges` in `src/mesh.ts`; applied to every authored and generated mesh (`authoredHullAndEdges`, `generatedHullAndEdges`, `src/compile.ts`) | none — every reduced mesh passes through them |
 | Generators | `ring`, `ribbon`, `grid`, `contour`, `segments` (`MeshKind`, `src/mesh.ts`); `buildSegmentsLattice`, `segmentShares` | an explicit reduction operation, never a new `generator` default (§1) |
-| Weights | `bindWeightedVertices` in `src/mesh.ts` (bindings by bone name); `ModelBinding` (`src/model.ts`); A20 coherence (`src/assertions/bodies/a20.ts`) | explicit influence limits on every weighted call (§6) |
+| Weights | `bindWeightedVertices` in `src/mesh.ts` (bindings by bone name); `ModelBinding` (`src/model.ts`); A20 coherence (`src/assertions/bodies/a20.ts`) | explicit influence limits on every weighted call (§6) — [implemented, #1224] `reduceMesh`, `src/meshreduce.ts`, on every inserted vertex |
 | Triangle sign, collapse, stretch | in `src/deformsurvey.ts`: `triangleAreas`, `DEFORM_AREA_EPSILON = 1e-6`, `float32AreaNoise`, `stretchSingularValues` | reused for orientation/degeneracy (§4) — [implemented, #1224] the first three and the band they make (`areaBand`) moved unchanged to `src/areaband.ts`, which `src/deformsurvey.ts` imports and re-exports, so the geometry entry reads the band without reaching the compiler |
 | Deform measurement over time | deform survey (`surveyDeformKeys`, `src/deformmeasure.ts`; `surveyOfModel`, `src/deformsurvey.ts`), span scan (`scanDeformSpan`, `src/deformsurvey.ts`), A39 | none — a different question (it measures one mesh against itself, never two meshes against each other) |
 | Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) |
 | Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 |
 | Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) — [implemented, #1224] for `measure`: `writeMeshQualityReport`, `src/meshquality.ts` |
-| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: four values held by the smoke's `AGREED_IN_1224` row |
+| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row |
 
 ## 0. Where the operations live, and what they never change
 
@@ -102,8 +104,9 @@ policy from a name.
   reduction, and `compile` never remeasures or rewrites authored geometry on its
   own. The emit-hash gates are the proof that an unchanged spec emits unchanged
   bytes, and `EH06` and `MB07` hold the gallery's builds to that base on every
-  run; `MQ26` holds that no module under `src/` but `src/mesh.ts` and
-  `src/meshquality.ts` names the operation, so nothing a build reaches calls it.
+  run; `MQ26` holds that no module under `src/` but `src/mesh.ts`,
+  `src/meshquality.ts` and `src/meshreduce.ts` names either operation, so
+  nothing a build reaches calls them.
 - [agreed, spine-parts#126] **P1 — `spine-rigc/meshcompare` is accepted.**
   Geometry-only operations (`reduceMesh`, `measureMeshQuality`) are exported
   from `spine-rigc/mesh`, which stays geometry-only; the motion comparison
@@ -186,8 +189,13 @@ bound may be `null` and is then reported `undeclared` (`MeasureTargets`, in
 place of `sourceBounds` and `targets`), and three inputs a measurement alone is
 handed: the caller's `id` for the mesh, the `referenceHull` that
 `MQ_BOUNDARY_DEVIATION` is taken against, and the P9 floors `minArtSamples` and
-`regionArtSamples` (one per region, by name). `MeshReductionInput` is declared
-and read by nothing until stage B2.
+`regionArtSamples` (one per region, by name). [implemented, #1224]
+`MeshReductionInput` is read by `reduceMesh` (`src/meshreduce.ts`), with four
+required fields B2 had to add, each one the declared type left no place for:
+`minArtSamples` and `regionArtSamples` (P9 makes the floor an input, and every
+step is measured), `deform` (P18's keys, typed `DeformTimelineInput` and
+`DeformKeyInput` in `src/meshquality.ts`) and `linkedMeshes` (the operation
+lists every linked mesh, and the input has to name them for it to).
 
 ```ts
 /** [proposal] The art one attachment is measured against. Correction 1: one per attachment, never shared. */
@@ -282,8 +290,10 @@ export interface ReductionTargets {
   and reports a raster distance back as `texels / pageScale`, with the grid it
   was taken on in the row (`RasterSensitivity.grid`). A pixel a row names is a
   cell of the mask's grid. A fraction is a fraction; an angle is degrees.
-  [proposal] A reduction converts its distances with the arithmetic
-  `buildContourMesh` uses (`onGrid`, `src/mesh.ts`).
+  [implemented, #1224] A reduction converts no distance of its own: every bound
+  a step is held to is read by `measureMeshQuality`, which carries a point to
+  the mask's grid as above, so the reduction and the measurement cannot
+  disagree about a unit.
 - [agreed, spine-parts#126] **P5 — presets are parts's.** A preset is
   explicitly selected, versioned and expanded into numbers before the call;
   the report echoes its name, version and every expanded number. rigc
@@ -296,9 +306,15 @@ export interface ReductionTargets {
   `areaBand` in `src/areaband.ts`, read over the mesh's Spine-world
   coordinates — so a triangle the measurement calls degenerate is one the gate
   would also read no sign off. A reported px value is on the `r6` grid.
-  [proposal] Output positions and UVs of a reduction are on the `r6` grid, then
-  `f32` at emission, as every generator's are.
-- [proposal] **Canonical output order** (byte-deterministic, A18):
+  [implemented, #1224] An inserted vertex's position and UV are on the `r6`
+  grid, then `f32` at emission, as every generator's are; a surviving vertex
+  keeps the source's numbers bit for bit (P19).
+- [implemented, #1224] **Canonical output order** (byte-deterministic, A18),
+  as `reduceMesh` writes `ReducedMesh` (`src/meshreduce.ts`). Two readings the
+  implementation chose: an inserted vertex on the hull is a hull vertex and sits
+  in the walk (item 1), so item 3 orders the inserted **interior** vertices; and
+  the walk starts at an inserted vertex only when no source vertex is on the
+  hull. Item 5 reorders a survivor's bindings and never their values.
   1. Hull vertices in outline walk order, starting at the surviving hull
      vertex with the smallest **source** index, in the source's direction.
   2. Interior source vertices that survive, ascending source index.
@@ -329,8 +345,20 @@ export interface ReductionTargets {
   `sourceCounts` is null, so the report carries an `unsupported-topology`
   termination with the code and `traceOutline`'s words. A measurement never
   throws `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`; it reports the source's fit as
-  rows (`MQ19`). [proposal] A reduction throws or terminates on all six.
+  rows (`MQ19`). [implemented, #1224] `reduceMesh` throws the first four — and
+  `REDUCE_INPUT_MISSING` for every field a reduction reads and a measurement
+  does not (`sourceBounds`, a non-null `targets.artFit` and
+  `maxBoundaryDeviation`, `protect`, `influences` and `boneOrder` on a weighted
+  source, `budget`, `deform`, `linkedMeshes`) — and **terminates** on the last
+  two: `REDUCE_SOURCE_NOT_ONE_LOOP` as `unsupported-topology` with
+  `sourceCounts` null, `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS` as `invalid-input`.
+  The line between them: a malformed input is thrown, a well-formed request
+  that cannot be met is the report's termination with no mesh (`MQ23`).
 - **Correction 3 — source admissibility is not target density.**
+  [implemented, #1224] `reduceMesh` measures the source with `sourceBounds` as
+  its art fit and refuses on `MQ_COVERAGE`, the 8-connected `MQ_OVERSHOOT`,
+  `MQ_UNDERCUT`, and — the source's own build gate — `MQ_ORIENTATION` and
+  `MQ_DEGENERATE`; nothing in `targets` is read for admission (`MQ32`).
   `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS` (renamed from revision 1's
   `REDUCE_SOURCE_FAILS_ITS_OWN_CONSTRAINTS`) fires **only** on
   `sourceBounds` — the source's own art fit and its own build gate, the
@@ -376,6 +404,19 @@ MeasureTargets | null`, since a measurement's bounds may be undeclared; (4)
 `ScheduleUsed`, which the interface names and does not define, is
 `MotionSchedule` until stage C defines it. A `measure` echoes its `finalThreshold`
 as the threshold it was taken at: such a call claims nothing at any other.
+
+[implemented, #1224] for `operation: 'reduce'`: `reduceMesh` fills one
+`CandidateReport` with id `result` — the measurement of the canonical result
+against `targets`, `art.threshold` and the source hull, so its rows are
+`measureMeshQuality`'s and are keyed by the threshold they were taken at (P4) —
+and exactly one `termination`; `effective` echoes `sourceBounds`, `targets`, the
+source hull as `referenceHull`, and `budget`. One addition, additive and written
+only when present: `CandidateReport.changes` (`ReductionChanges`), the figures
+§6 says are reported and no row carries — vertices removed and inserted, shares
+dropped on the weight grid and shares pruned by `InfluenceLimits`, the deform
+keys remapped (each with the source vertices whose offsets were dropped) and
+re-evaluated, and the linked meshes. It is absent on a `measure` and whenever no
+mesh is returned.
 
 ```ts
 /** [proposal] */
@@ -804,10 +845,13 @@ defined here, with these readings of what the table leaves open:
   `art.connectivity: 4` — the reading `measureAuthoredMeshFit` gives (`MQ04`);
   `MQ_COVERAGE` and `MQ_UNDERCUT` use no fill and record `connectivity: null`,
   `MQ_ISLANDS` records the 4 of its island labelling.
-- [proposal] **Holes are spanned and reported; islands are bridged or
-  refused.** A reduction keeps the source's single loop. Art islands the
-  source does not reach stay uncovered and fail `MQ_COVERAGE`; they are never
-  deleted (`REDUCE_ISLAND_UNREACHED` if the caller asked for full coverage).
+- [implemented, #1224] **Holes are spanned and reported; islands are bridged or
+  refused.** A reduction keeps the source's single loop (every step is read
+  back through `traceOutline`). Art islands the source does not reach stay
+  uncovered and fail `MQ_COVERAGE`; they are never deleted
+  (`REDUCE_ISLAND_UNREACHED`, an `invalid-input` termination, when
+  `targets.artFit.minCoverage` is 1 and a 4-connected island has no pixel the
+  source covers — named by its first pixel and size).
 - **Correction 2 — raster sensitivity in the row's unit.** Revision 1 flagged
   a row when `|value − bound| < 1 / pageScale`, which is a distance in drawing
   pixels and means nothing for a coverage fraction or a pixel count.
@@ -909,7 +953,17 @@ export interface RefinementRegion {
   requires is allowed, and neighbouring triangles are **not** promised
   byte-identical; wholesale refinement of unrelated areas is not allowed.
   [proposal] The checkable form: every inserted vertex lies inside the union
-  of the closed regions and their bands.
+  of the closed regions and their bands. [implemented, #1224] `reduceMesh`
+  inserts only there (`MQ14`, `MQ47`, read by the test's own distance), and
+  the form has a consequence the agreement did not state, measured while
+  building it: an edge from a vertex inside a region's band to a vertex
+  further beyond the band than that edge's bound cannot be brought under its
+  bound by any insertion the form allows — every split leaves an edge from
+  inside the band to that vertex. So a source whose vertices around a region
+  are further apart than `L0 + grade·transition` reaches is not refinable
+  under P16 without retriangulating or inserting outside the band; the
+  refinement stops there by name rather than spending the budget (*The
+  reduction as implemented*).
 - [agreed, spine-parts#126] **P17 — parts resolves coordinates and names.**
   rigc receives only part-local numeric polygons and offers no bone-relative
   region API — parts already translates rig-space regions to part-local
@@ -926,6 +980,9 @@ export interface RefinementRegion {
   `REGION_GRADE_NEGATIVE`, `REGION_NOT_FINITE`. A satisfiable bound that
   exhausts the budget is not a refusal; it is the `budget-exhausted`
   termination.
+  [implemented, #1224] In a reduction the first refused region, in the order
+  given, is an `invalid-input` termination carrying the region's code and its
+  words; no mesh is returned (`MQ23`, `MQ47`).
   [implemented, #1224] In a measurement each of the six makes that region's
   rows `refused` — §2 defines `refused` with exactly these examples — with the
   reason opening on the code, and the region adds no bound to any other
@@ -982,7 +1039,16 @@ export interface RefinementRegion {
   `bindWeightedVertices` does. Influences are then pruned by the call's
   `InfluenceLimits` and closed at `1 − others`, the `segmentShares` rule. An
   insertion is refused rather than given a bone the source triangle did not
-  carry.
+  carry. [implemented, #1224] in `reduceMesh`, with one part **rejected on
+  measurement of the types**: bind coordinates are not computed, because
+  `SourceMesh.weights` is by bone name without bind coordinates and
+  `MeshReductionInput` carries no bone setup transform to compute them from —
+  an inserted vertex's weights are by name exactly as a source vertex's are,
+  and the compiler binds them as it binds every generated mesh. The containing
+  source triangle is the first, by index, whose smallest barycentric coordinate
+  is the largest (a point on a shared edge takes the lower-numbered triangle;
+  the two agree there). Interpolation can name no bone the triangle's corners
+  do not carry, so that refusal has no input that reaches it.
 - [agreed, spine-parts#126] **P19 — parts passes explicit influence limits on
   every weighted call.** A preset may supply them only after expansion; rigc's
   `segments` defaults are never inherited, and in particular the ordinary
@@ -996,7 +1062,18 @@ export interface RefinementRegion {
   is dropped and **counted** in the report rather than written as a 0 weight.
   If the protected influences of a vertex do not fit under `maxInfluences`,
   the call is refused (`REDUCE_PROTECTED_INFLUENCES_OVER_CAP`, naming the
-  vertex, the bones and the cap); they are never removed silently. Weight
+  vertex, the bones and the cap); they are never removed silently.
+  [implemented, #1224] both, in `reduceMesh` on every inserted vertex, in this
+  order: protected influences kept first, the strongest others up to
+  `maxInfluences` (ties by `boneOrder`), shares under a nonzero `minWeight`
+  dropped, shares that are 0 on the 6-decimal grid dropped, the rest closed at
+  `1 − others`; the drops are counted in `ReductionChanges.sharesDroppedOnGrid`
+  and `sharesPruned` (`MQ43`). A protected share that is 0 on the grid cannot
+  be written as a positive binding, and spine-parts#126's acknowledgement
+  (comment 6042150608, item 1) asks for a named refusal there: it is
+  `REDUCE_PROTECTED_INFLUENCE_BELOW_GRID`, a code B2 adds. Both are
+  `invalid-input` terminations. A surviving source vertex is not pruned — it
+  keeps its bindings (P19), so a source vertex over the cap stays over it. Weight
   effects still need §3's motion and `MQ_TRANSITION` to be judged.
 - **Correction 3 — `weightJump` and protected edges, defined on the result
   rather than on an algorithm.** A Spine mesh has one UV per vertex, so a UV
@@ -1010,10 +1087,15 @@ export interface RefinementRegion {
   edge crosses it; (b) no edge of the result that is **not** a source edge
   joins two vertices whose weight vectors differ by more than `weightJump`.
   A removal or retriangulation that would break either is not taken. Parts
-  tracks the weight discontinuity as its #115.
+  tracks the weight discontinuity as its #115. [implemented, #1224] in
+  `reduceMesh`: a protected edge's endpoints are never candidates, every step
+  is checked to keep every protected edge, and an edge a step adds is checked
+  against `weightJump` before the step is measured (`MQ18`). Condition (b) is
+  applied to the edges a removal adds; an edge the refinement adds joins an
+  inserted vertex whose weights are interpolated between its neighbours'.
 
 ```ts
-/** [proposal] with P19/P20 folded in. [implemented, #1224] declared in `src/meshquality.ts` and echoed in `effective`; nothing reads them until stage B2. */
+/** [proposal] with P19/P20 folded in. [implemented, #1224] declared in `src/meshquality.ts`, echoed in `effective`, read by `reduceMesh`. */
 export interface ProtectedFeatures {
   /** P20: keep every source hull vertex. Required — no default inside the operation; parts's policy default is false. */
   hull: boolean;
@@ -1063,8 +1145,123 @@ export interface InfluenceLimits {
   does not support. `transform` keys need no remap — they are re-evaluated
   over the new geometry at compile — and the report lists those
   re-evaluations separately from remaps, since their emitted runs change.
-- [proposal] The operation lists every linked mesh of a reduced source,
-  because they inherit the new topology.
+- [implemented, #1224] P18's safeguards, in `reduceMesh`. A `vertices` key
+  (`DeformKeyInput`, the emitted `offset` and run) is rewritten entry by entry
+  onto the vertex — and, weighted, the influence — it addressed in the result's
+  order (`ReducedMesh.deform.remapped`); a removed vertex's entries are dropped
+  and listed (`droppedVertices`, also in `ReductionChanges.deformRemapped`); the
+  gaps a reorder opens inside the new run are 0, which the format reads outside
+  a run anyway (`MQ17`). Refused as `REDUCE_DEFORM_INDEXED`, an
+  `unsupported-topology` termination naming animation, slot, attachment and
+  key: an insertion whose containing source triangle has a corner a `vertices`
+  run covers ("under a run"); a weighted keyed vertex whose binding list is not
+  the same bones in the same order in the result — which the canonical order
+  causes whenever the source lists them weakest first, since the remap does not
+  permute pairs within a vertex; and **any** non-setup key on a linked mesh,
+  since a linked mesh's own keys are not remapped here (one that inherits plays
+  the source's remapped keys). `transform` keys are listed as re-evaluated
+  (`ReducedMesh.deform.reevaluated`). ⚠️ The contract asked for a refusal of
+  "linked meshes that inherit its keys in a way the remap does not support";
+  B2 reads that as the linked mesh's own keys, the one way the remap carries
+  nothing.
+- [implemented, #1224] The operation lists every linked mesh of a reduced
+  source, because they inherit the new topology (`ReducedMesh.linkedMeshes`,
+  `ReductionChanges.linkedMeshes`, echoed from the input's `linkedMeshes`).
+
+## The reduction as implemented (stage B2)
+
+[implemented, #1224] `reduceMesh(input: MeshReductionInput): MeshReductionResult`
+in `src/meshreduce.ts`, re-exported through `spine-rigc/mesh`, returns
+`{ mesh: ReducedMesh | null, report }`. `ReducedMesh` is §1's `SourceMesh` in
+the canonical order plus `edges` (`meshEdges`), `indexMap` (source index →
+result index, `null` where removed), `inserted` (result indices the refinement
+added), `linkedMeshes`, `deform` (`remapped`, `reevaluated`) and `counts`. The
+contract left the following to the implementation; each is what the tree does.
+
+**Two operations, composed in one order.** Admission (the source against
+`sourceBounds`, §1) → refinement → reduction → the result measured once more as
+the report's candidate. Each is its own function inside the module, and each
+passes with the other idle: `MQ46` runs the reduction with no region, `MQ47`
+the refinement with every source vertex protected.
+
+**What a step is held to.** A removal is taken only when, after it, every row
+the caller's contract requires is `pass` in `measureMeshQuality`'s reading of
+the canonical candidate — art fit at `targets.artFit`, `MQ_BOUNDARY_DEVIATION`
+against the source hull at `targets.maxBoundaryDeviation`, `MQ_MIN_ANGLE` when
+declared, `MQ_ORIENTATION` and `MQ_DEGENERATE` at 0, and every region's
+`MQ_MAX_EDGE` and `MQ_TRANSITION` — so the reduction cannot undo the
+refinement. Before the measurement, the conditions no row reads: the hole's
+link polygon is strictly simple (`findSelfIntersection`) and ear-clips
+(`earClip`), the outline is one loop (`traceOutline`), every protected source
+edge is still an edge, and no added edge breaks `weightJump`. A refined source
+that does not meet its targets takes no step: the reduction ends at once,
+naming the first failing row, and the mesh is returned not accepted. When
+several rows fail on one step, the one named is the first of orientation,
+degeneracy, boundary deviation, coverage, overshoot, undercut, minimum angle,
+maximum edge, transition.
+
+**The candidate order** (determinism, A18). The reduction sweeps the surviving
+**source** vertices in ascending source index, one removal attempted per
+vertex per pass, skipping protected ones (`protect.hull`, `protect.vertices`,
+the endpoints of `protect.edges` and of every `weightJump` edge, and every
+source vertex on a `protect.regionBoundaries` polygon's boundary within
+`1e-9` px). A step taken stays taken and the sweep continues; a pass that
+takes no step ends the reduction as `no-further-valid-reduction`, naming the
+constraint that blocked the pass's last attempt, or `protect:` when nothing was
+left to try. Inserted vertices are never candidates: they exist to meet `L(R)`.
+
+**The insertion rule.** The refinement measures, takes the first failing
+`MQ_MAX_EDGE` or `MQ_TRANSITION` row in report order (code, then region), and
+splits that row's worst edge — at its midpoint when the midpoint lies in that
+region or its band, otherwise at the point of the edge inside them nearest the
+midpoint (among the edge's crossings of the polygon and the feet of the
+polygon's vertices, then by halving towards an end that lies inside), every
+position on the `r6` grid. A region no edge meets gets its polygon's first
+vertex inserted into the triangle that holds it. One insertion per
+measurement. A band no edge lies in leaves `MQ_TRANSITION` `not-measurable`
+(B1's definition), and no insertion is aimed at it.
+
+**Where refinement stops by name** — the consequence of P16 recorded in §5. When
+the worst edge has an end outside the region and its band that lies further
+beyond the band than the edge's own bound, no insertion inside them can meet
+it, and the refinement stops: the reduction is then `no-further-valid-reduction`
+with that edge, its end and the distance in the constraint, and the mesh is
+returned not accepted. Measured on the public fixtures before the rule
+existed: a single quad under a region of `L0` 6 px, band 4 px, grade 0.5 spent
+a budget of 1,000 insertions without converging (57 s on one darwin run); the
+same request on the 4 × 3 lattice of the suite converges.
+
+**What was rejected, on measurement of the contract or the brief.**
+
+- Bind coordinates for an inserted vertex (§6) — the input has no bone
+  transforms, and `SourceMesh` names bones without them; weights stay by name.
+- A `deform.refused` list on the result, which the stage-B2 brief named — a
+  refused key is an `unsupported-topology` termination with no mesh, so the
+  list would always be empty.
+- A refusal narrower than "linked meshes that inherit its keys in a way the
+  remap does not support" — no input distinguishes the ways, so every
+  non-setup key keyed on a linked mesh is refused, and a linked mesh is listed
+  by reference only (§6).
+- Admission on `sourceBounds` alone — the source's winding (`MQ_ORIENTATION`,
+  `MQ_DEGENERATE`) is admitted too, as "its own build gate" in correction 3
+  says, since every step is held to both at 0 and a source failing either
+  could take no step.
+
+**Cost.** Wall time is never in the report; the suite's last control prints,
+per fixture, the candidates tried and the wall time of each `reduceMesh` call.
+One darwin run at the commit that added it: the 20-vertex lattice reduced to
+its 4 corners in 24 candidates and 97 ms; the refinement alone, 37 insertions
+in 274 ms; the composed run, 76 candidates in 295–327 ms; the weighted
+refinement, 37 in 451 ms. Every step is one full `measureMeshQuality` over the
+plate, so the cost is the measurement's times the steps; bounding it is stage
+D's, and these figures are one machine's reading, not a claim about another.
+
+**Left for later stages.** The motion comparison and every motion row (§3,
+stage C); a finer-grid pass, warm-up and traced-boundary gating (*Stage B
+scope*); refinement that retriangulates outside the band or flips edges, which
+P16's checkable form as agreed does not admit; remapping a linked mesh's own
+keys and permuting a weighted keyed vertex's pairs (§6); a bounded-work claim
+(stage D).
 
 ## Stage A controls
 
@@ -1082,14 +1279,17 @@ coverage bound is reported `fail` and not accepted — the refusal as a
 reference is stage C's), `MQ21` (its geometry half: the attachment's and a
 region's floor), `MQ23`, `MQ25`, `MQ26` (its call half), `MQ27`, `MQ28` (its mask half — a
 duplicate candidate id has no input before stage C), `MQ29`, `MQ30`, `MQ34`
-and `MQ44`. `MQ26` is split: its control holds that no module under `src/`
-but the two that define the operation names it, so an unchanged spec cannot
-reach it; the bytes themselves are held by `EH06` and `MB07`, on every run
-against `tools/emit_hashes.base.json`, and are not re-checked by a second gate
-over the same base. Still to be built: stage B2's `MQ14`, `MQ17`, `MQ18`, `MQ24`,
-`MQ32`, `MQ33`, `MQ40`, `MQ43`; stage C's `MQ10`–`MQ13`, `MQ15`, `MQ20`,
-`MQ22`, `MQ31`, `MQ35`–`MQ39`, `MQ41`, `MQ42`, `MQ45`, and the halves of
-`MQ00`, `MQ19`, `MQ21` and `MQ28` named above.
+and `MQ44`; and since stage B2, `MQ14`, `MQ17`, `MQ18`, `MQ24`, `MQ32`, `MQ33`,
+`MQ40`, `MQ43`, with `MQ23` and `MQ25` extended to `reduceMesh`, plus the two
+controls the consumer asked for in its acknowledgement (spine-parts#126,
+comment 6042150608) — each composed operation passing with the other idle,
+`MQ46` and `MQ47` below. `MQ26` is split: its control holds that no module
+under `src/` but the three that define the operations names them, so an
+unchanged spec cannot reach them; the bytes themselves are held by `EH06` and
+`MB07`, on every run against `tools/emit_hashes.base.json`, and are not
+re-checked by a second gate over the same base. Still to be built: stage C's
+`MQ10`–`MQ13`, `MQ15`, `MQ20`, `MQ22`, `MQ31`, `MQ35`–`MQ39`, `MQ41`, `MQ42`,
+`MQ45`, and the halves of `MQ00`, `MQ19`, `MQ21` and `MQ28` named above.
 
 - `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`
 - `MQ01_A_HULL_VERTEX_MOVED_INWARD_FAILS_COVERAGE_AND_UNDERCUT_NAMING_THE_WORST_PIXEL`
@@ -1119,7 +1319,7 @@ over the same base. Still to be built: stage B2's `MQ14`, `MQ17`, `MQ18`, `MQ24`
 - `MQ25_TWO_RUNS_ON_ONE_INPUT_WRITE_BYTE_IDENTICAL_REPORTS`
 - `MQ26_AN_UNCHANGED_SPEC_EMITS_THE_BYTES_IT_EMITTED_BEFORE` (the emit-hash
   base, read for the reduction's absence) — [implemented, #1224] as
-  `MQ26_NO_MODULE_UNDER_SRC_BUT_MESH_AND_MESHQUALITY_NAMES_THE_OPERATION_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_IT`
+  `MQ26_NO_MODULE_UNDER_SRC_BUT_THE_THREE_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM`
   for the reduction's absence, and `EH06` and `MB07` for the bytes
 
 The five corrections, one positive control and one planted failure each:
@@ -1151,6 +1351,14 @@ The five corrections, one positive control and one planted failure each:
 - Correction 5, planted:
   `MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES`
 
+The two composed operations of stage B2, each with the other idle
+([implemented, #1224]; asked for in spine-parts#126, comment 6042150608):
+
+- Reduction, positive and planted:
+  `MQ46_CONTROL_REDUCTION_ALONE_REMOVES_VERTICES_HOLDING_EVERY_BOUND_AND_A_BOUND_THAT_BLOCKS_EVERY_STEP_IS_NAMED`
+- Refinement, positive and planted:
+  `MQ47_CONTROL_REFINEMENT_ALONE_INSERTS_ONLY_INSIDE_THE_REGION_AND_ITS_BAND_UNTIL_L_OF_R_HOLDS_AND_A_BOUND_UNDER_ONE_TEXEL_IS_REFUSED`
+
 The decisions that change behaviour rather than an interface:
 
 - `MQ40_A_CANDIDATE_THAT_PASSES_AT_THRESHOLD_NINE_AND_FAILS_AT_ONE_IS_NOT_ACCEPTED` (Thresholds, P4)
@@ -1162,10 +1370,12 @@ The decisions that change behaviour rather than an interface:
 
 ## Termination reasons
 
-[proposal] Every `reduce` report carries exactly one. [implemented, #1224] The
+[implemented, #1224] Every `reduce` report carries exactly one (`MQ24`). The
 type is declared in `src/meshquality.ts`; a `measure` report carries one only
 when it could not read the mesh — `unsupported-topology` with
-`REDUCE_SOURCE_NOT_ONE_LOOP` — and `null` otherwise:
+`REDUCE_SOURCE_NOT_ONE_LOOP` — and `null` otherwise. `candidatesTried` counts
+every step `reduceMesh` tried: each refinement insertion and each removal
+attempted, which is also what `budget.maxCandidates` bounds:
 
 ```ts
 export type Termination =
