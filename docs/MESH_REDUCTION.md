@@ -21,10 +21,11 @@ tree now does is marked **[implemented, #1224]** and says what the tree does,
 cited by path and symbol; *The reduction as implemented* gathers the choices B2
 had to make. **Stage C1 ([#1230](https://github.com/firejune/rigc/issues/1230))
 implements the motion comparison** — `compareMeshesInMotion`, in
-`src/meshcompare.ts`, writing the `motion` section of the same document; it has
-no named entry yet (`spine-rigc/meshcompare`, the install smoke and `MQ45` are
-stage C2's). Its clauses are marked **[implemented, #1230]**, and *The
-comparison as implemented* gathers the choices C1 had to make. The page exists
+`src/meshcompare.ts`, writing the `motion` section of the same document, and
+**stage C2** gives it its named entry, `spine-rigc/meshcompare`, held from an
+install with no spine-core by the install smoke (`MQ45`), and builds the rest
+of its controls. Its clauses are marked **[implemented, #1230]**, and *The
+comparison as implemented* gathers the choices C1 and C2 had to make. The page exists
 so that a reader who was
 not in the conversation that produced it can tell five things apart:
 
@@ -75,7 +76,7 @@ policy from a name.
 | Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) — [implemented, #1230] `compareMeshesInMotion` poses through `poseRawSetup` and `poseRawAnimationEach` (`src/core/raw.ts`), the walk `src/render_core.ts` steps with, not through the render seam |
 | Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 — [implemented, #1230] `src/meshcompare.ts` |
 | Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) — [implemented, #1224] for `measure`: `writeMeshQualityReport`, `src/meshquality.ts` |
-| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row |
+| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row; [implemented, #1230] the motion half: `compareMeshesInMotion` and `uvCarriers` held by its `AGREED_IN_1230` row, and the comparison called from an install with no spine-core (`MESHCOMPARE_PROBE_SOURCE`, `scripts/install_smoke.ts`) |
 
 ## 0. Where the operations live, and what they never change
 
@@ -121,11 +122,17 @@ policy from a name.
   (`compareMeshesInMotion`) is exported from the new named entry
   `spine-rigc/meshcompare`. **Both** entries are held by an installed-package
   smoke with spine-core absent, the scenario the smoke already runs for the
-  observed entries. [implemented, #1230, the module only] `compareMeshesInMotion`
+  observed entries. [implemented, #1230] `compareMeshesInMotion`
   is exported from `src/meshcompare.ts`, which links nothing of the runtime
   (`CUR07` derives the linkers from the tree, and it is not among them) and
-  nothing of the compiler; the entry, its `exports` key and the smoke row are
-  stage C2's.
+  nothing of the compiler; `exports["./meshcompare"]` in `package.json` names
+  it, crossing no directory `files` does not already ship. The smoke holds it
+  twice: the `AGREED_IN_1230` row of `OBSERVED_SYMBOLS` reads its two values
+  through the entry with the runtime installed and imports the entry without
+  it, and `MESHCOMPARE_PROBE_SOURCE` calls the comparison from the install
+  with the runtime taken away (`MQ45`, *Stage A controls*). The
+  `drop-meshcompare-entry` plant takes the key out of the packed map and has
+  to go red at those steps alone, naming the entry.
 - [agreed, spine-parts#126] **P2 — the core poser is sufficient for the
   initial production interface.** `compareMeshesInMotion` poses through rigc's
   core over the model document; no parts consumer gains a spine-core
@@ -722,7 +729,10 @@ export interface MotionSchedule {
   over nothing. [implemented, #1230] for the attachment's
   and each region's `MQ_LOCAL_DEFORMATION` row; a region's samples are those
   whose UV, carried to the frame's drawing px, lies in its closed polygon. The
-  floors' controls are stage C2's (`MQ21`'s motion half). A value of 1 is admissible for an explicitly chosen geometry
+  floors' control is `MQ21`'s motion half, printed as `MQ60`
+  (`mesh-compare`): a floor one above the art count is `not-measurable` naming
+  the count though the hull samples would meet it, for the attachment and for a
+  region. A value of 1 is admissible for an explicitly chosen geometry
   investigation of a nonempty part; it is not a production floor, and parts
   supplies the number from its declared policy or versioned preset.
 - [proposal] **Coordinate alignment is by construction, never by fitting.**
@@ -750,7 +760,9 @@ export interface MotionSchedule {
   rules, and its folded triangles are **listed** in the row's diagnostics with
   their frames; the row never reports zero for them. [implemented, #1230] such
   a slot's row holds no bound — `undeclared` — and its value is the fold count,
-  with every fold in `MotionRowDetail.folds`; `MQ38`, its control, is C2's.
+  with every fold in `MotionRowDetail.folds`; `MQ38`, its control, is printed
+  as `MQ63` (`mesh-compare`): the same fold count fails a bound of 0 on the
+  same rig without the exemption.
 - **Correction 4 — units.** [proposal] Distances are in Spine world units, the
   primary error. A single world-units-per-pixel ratio is invalid under
   nonuniform scale or shear, so it is not reported. Each row instead states
@@ -791,7 +803,10 @@ export interface MotionSchedule {
   independently gated source mesh.** It may be generated by the automatic
   pipeline; a reference game's mesh or vertex count is not an input. A
   candidate-to-candidate comparison may be reported as a diagnostic and never
-  establishes acceptance.
+  establishes acceptance. [implemented, #1230] the contract's `MQ11`, printed
+  as `MQ56`: two candidates that drop the same art read 0 against each other
+  and each fails coverage against its own mask; held to that bound, either one
+  as the reference is `COMPARE_REFERENCE_FAILS`.
 - [proposal] **Independent evidence.** Agreement between candidates is
   necessary and not sufficient — two candidates that both drop the same art
   agree perfectly. So each candidate, **and the reference**, is held
@@ -806,9 +821,24 @@ export interface MotionSchedule {
   only] each build's art fit at setup is `measureMeshQuality` over its UVs on the
   frame's drawing px — the reading the compiler's authored fit takes
   (`measureAuthoredFit`, `src/compile.ts`) — under `referenceArtFit` or
-  `candidateArtFit`, as the build's `geometry` section. (b), the gate on each
-  build, and `COMPARE_REFERENCE_FAILS` are stage C2's: the module is handed a
-  model document, and the caller's `build` is where its gate ran.
+  `candidateArtFit`, as the build's `geometry` section. [implemented, #1230]
+  `COMPARE_REFERENCE_FAILS` (`compareMeshesInMotion`, `src/meshcompare.ts`): a
+  reference whose `MQ_COVERAGE`, `MQ_OVERSHOOT` or `MQ_UNDERCUT` fails
+  `referenceArtFit` — (a) as written, and nothing else (`REFERENCE_ART_FIT`) —
+  is refused before any candidate is measured, naming each failed row with its
+  value and bound; a candidate failing the same bound is reported, not refused
+  (the contract's `MQ19`, motion half, printed as `MQ59`). Only a **failed**
+  row refuses: a reference row that is `not-measurable` — an attachment under
+  its sample floor (P9) — leaves its section `not-measured` and the reference
+  not accepted, which the report already says, and refusing it would make
+  `MQ60`'s floor unreachable at the attachment level. (b), the gate on each build, is
+  held where it runs and not a second time: `build` writes
+  `skeleton.model.json` only after every assertion passed (*emit only after
+  green*), and the module is handed that document's text — not the rig, the
+  plates or the Spine pair the gate reads — so it cannot rerun the gate, and
+  does not claim to. ⚠️ A document edited after its build is outside (b): the
+  install smoke's moved-vertex candidate is exactly such a document, used as a
+  planted displacement and never as evidence that a mesh is acceptable.
 
 ## 4. The measurements, defined
 
@@ -1528,22 +1558,76 @@ comparison's frames, samples and wall time on the suite's fixture. One darwin
 run at the commit that added it: 10 frames × 1,034 samples (a 64 × 16 strip,
 1,024 art pixels and 10 hull UVs), one candidate, 12.5–39 ms over three runs,
 including both builds' posing and setup art fits. That is one machine's reading; bounding the work is
-stage D's.
+stage D's. From an install (`MQ45`'s line in the smoke, which prints its own
+figures on every run): the flag mesh of the smoke's fixture, 26 frames × 1,336
+samples (1,310 art pixels of a 56 × 40 plate and 26 hull UVs), one
+candidate, 79–292 ms over four comparisons on one darwin machine at the commit
+that added it in single-case runs (both builds' posing and setup art fits
+included; the first comparison of a process is the slow one), and 0.36–2.9 s
+inside the full 18-case battery on the same machine, where installs run around
+it. One machine's reading, unpaired, as above.
 
-**Left for C2.** `MQ11`–`MQ13`, `MQ31`, `MQ38`, `MQ45` and the motion halves of
-`MQ19`, `MQ21` and `MQ28` (the duplicate id is refused today, by
-`COMPARE_INPUT_MISSING`, without its control); `COMPARE_REFERENCE_FAILS` and (b)
-of *Independent evidence*; the `./meshcompare` entry in `package.json`, its
-RELEASING row and the install smoke.
+**Stage C2.** [implemented, #1230] What C1 left:
+
+- The entry: `exports["./meshcompare"]` → `src/meshcompare.ts`, the
+  `AGREED_IN_1230` row of `OBSERVED_SYMBOLS` (`compareMeshesInMotion`,
+  `uvCarriers`; types `MotionComparisonInput`, `BuiltCandidate`,
+  `CompareAttachment` recorded and not held), RELEASING.md *The import
+  surface* by agreement, and the `drop-meshcompare-entry` plant.
+- The call from the install (`MQ45`): `MESHCOMPARE_PROBE_SOURCE` in
+  `scripts/install_smoke.ts`, run after the runtime is taken away, recorded
+  under `SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`. It
+  compares the flag mesh of the build the smoke just wrote with itself (0 at
+  every frame), with the same document with hull vertex 0 moved
+  `MESHCOMPARE_MOVED` units (that distance at every frame, at that vertex's
+  UV — the fixture's bones carry no scale), and two candidates under one id,
+  refused as the `MeshReductionError` `spine-rigc/mesh` exports; the report has
+  to say `operation: 'compare'` and `poser.kind: 'core'` at the installed
+  version.
+- `COMPARE_REFERENCE_FAILS` — *Independent evidence* above.
+- The controls, printed from `MQ56` up — *Stage A controls*.
+
+What C2 rejected, and the reason:
+
+- A candidate for the smoke built a second time by the installed `rigc build`
+  with a different contour — the flag rides one bone, so any two
+  triangulations of it carry every shared sample to the same point under a
+  rigid pose (`MQ57`'s statement) and the plant would read 0, which is the
+  self-comparison's reading and not a moved vertex. The moved vertex is an
+  edit of the built document, inside the allowlist.
+- Refusing a reference whose geometry is `not-measured` as well as `fail` —
+  see *Independent evidence*: it makes the attachment floor of `MQ60`
+  unreachable.
+- Refusing a reference on its whole `geometry` verdict, which was the first
+  version — measured wrong on the install smoke's own build: the
+  contour-generated flag mesh reads `MQ_ORIENTATION` 24 of its 24 triangles
+  under C1's setup art fit, so every reference built by the `contour`
+  generator would be refused. Winding is (b)'s, not (a)'s, so the refusal reads
+  (a)'s three rows only. ⚠️ **Open, and not C2's to change:** the reading
+  itself. The art fit passes a build's triangles to `measureMeshQuality` as
+  `SourceMesh.triangles`, which that type defines as counter-clockwise in Spine
+  world; the strip meshes of the `mesh-compare` suite are wound that way by the
+  test, and the generated contour mesh is wound the other way (all 24 UV
+  triangles positive in the y-down frame). So a comparison over a
+  contour-generated build reports `MQ_ORIENTATION` failing for the reference
+  and every candidate of the same generator, and none of them is `accepted`,
+  whatever its motion reads. Whether that is the generator's winding or the
+  art fit's convention is a C1 row semantic, and it is left as found.
+- An unknown page appended to `pages` for `MQ63`'s allowlisted difference —
+  `readModel` refuses a page with fields it does not know before the
+  comparison runs; the control doubles each page and moves its regions instead.
 
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
 tree's `CODE_SENTENCE` convention, every one with a positive control and every
 row of §4 with a planted failure. Fixtures are generated (`fixtures/public.ts`
-convention): checkerboard plates, no literal measured numbers. **The box stays
-open:** Stage A is not complete until every control below exists, and listing
-them is not building them.
+convention): checkerboard plates, no literal measured numbers. **Every control
+listed below exists and passes** since stage C2 (#1230): each name maps to the
+code it is printed under and the suite that prints it in the two paragraphs
+that follow and in the list, `MQ45` is held by the install smoke rather than
+`selftest.ts`, and `MQ26` is the one whose statement is held partly by other
+controls (`EH06`, `MB07`), as its entry says.
 
 [implemented, #1224] Built and passing, in the `mesh-quality` suite of
 `selftest.ts`: `MQ00` (its geometry half, renamed for what it measures),
@@ -1568,8 +1652,25 @@ the `mesh-quality` suite and continued here, `TY18`), `MQ10`, `MQ15`, `MQ20`, `M
 `MQ36`, `MQ37`, `MQ39`, `MQ41` and `MQ42` — the controls spine-parts#126
 (comment 6045645512) asked C1 to carry for UV carrier mapping, schedule
 identity and held-out separation, and report states. `MQ26` names the fourth
-defining module. Still to be built, by stage C2: `MQ11`–`MQ13`, `MQ31`, `MQ38`,
-`MQ45`, and the motion halves of `MQ19`, `MQ21` and `MQ28`.
+defining module. Since stage C2, in the same suite, the rest of the
+contract's motion controls — under new codes, because their numbers are
+`mesh-quality`'s or already printed here and a code names one control
+(`TY17`):
+
+| contract | printed as | suite |
+| --- | --- | --- |
+| `MQ11` | `MQ56_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE` | `mesh-compare` |
+| `MQ12` | `MQ57_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO` | `mesh-compare` |
+| `MQ13` | `MQ58_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME` | `mesh-compare` |
+| `MQ19`, motion half | `MQ59_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE` | `mesh-compare` |
+| `MQ21`, motion half | `MQ60_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT` | `mesh-compare` |
+| `MQ28`, motion half | `MQ61_A_DUPLICATE_CANDIDATE_ID_IS_REFUSED_NAMING_BOTH` | `mesh-compare` |
+| `MQ31` | `MQ62_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT` | `mesh-compare` |
+| `MQ38` | `MQ63_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED` | `mesh-compare` |
+| `MQ45` | `SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`, a step of every case | the install smoke (`bun run smoke`) |
+
+Every other name in the list is printed under its own code, by the suite the
+paragraphs above name.
 
 - `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME` —
   its geometry half is `MQ00` (`MQ00_CONTROL_A_MESH_MEASURED_AGAINST_ITS_OWN_HULL_DEVIATES_ZERO_AND_ITS_RASTER_ROWS_ARE_THE_LEGACY_FIT`,
@@ -1585,17 +1686,17 @@ defining module. Still to be built, by stage C2: `MQ11`–`MQ13`, `MQ31`, `MQ38`
 - `MQ08_AN_EDGE_IN_THE_TRANSITION_BAND_IS_HELD_TO_THE_SMALLEST_GRADED_BOUND_ON_ITS_INTERSECTION_AND_ONE_OUTSIDE_IS_FREE` (P16)
 - `MQ09_A_MEASUREMENT_WITH_NO_DECLARED_BOUND_IS_UNDECLARED_AND_SATISFIES_NO_REQUIRED_CLAIM` (P6)
 - `MQ10_NO_MOTION_SUPPLIED_LEAVES_MOTION_NULL_AND_MOTION_REQUIRED_IS_NOT_ACCEPTED` (P6)
-- `MQ11_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE`
-- `MQ12_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO`
-- `MQ13_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME`
+- `MQ11_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE` — printed as `MQ56` (`mesh-compare`)
+- `MQ12_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO` — printed as `MQ57` (`mesh-compare`)
+- `MQ13_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME` — printed as `MQ58` (`mesh-compare`)
 - `MQ14_A_LOCALISED_REGION_REFINES_INSIDE_AND_INSERTS_NO_VERTEX_OUTSIDE_ITS_REGION_AND_BAND` (P16)
 - `MQ15_A_VERDICT_THAT_DIFFERS_BETWEEN_PHASES_SAYS_SO_NAMING_BOTH_FRAME_IDS` (P7)
 - `MQ16_A_VALUE_WITHIN_ONE_VALUE_INCREMENT_OF_ITS_BOUND_IS_FLAGGED_AND_ITS_VERDICT_UNCHANGED` (correction 2)
 - `MQ17_A_REMOVAL_REMAPS_A_VERTICES_RUN_A_REORDER_ONLY_CHANGE_REMAPS_TOO_AND_AN_INSERTION_UNDER_ONE_IS_REFUSED_BY_NAME` (P18)
 - `MQ18_A_WEIGHT_JUMP_EDGE_SURVIVES_VERTEX_REMOVAL_AND_RETRIANGULATION` (correction 3)
-- `MQ19_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE`
+- `MQ19_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE` — geometry half `MQ19` (`mesh-quality`), motion half printed as `MQ59` (`mesh-compare`)
 - `MQ20_SKELETONS_THAT_DIFFER_IN_ONE_BONE_FIELD_ARE_REFUSED_NAMING_IT` (now one case of `COMPARE_INPUTS_DIFFER`, correction 5)
-- `MQ21_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT` (P9)
+- `MQ21_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT` (P9) — geometry half `MQ21` (`mesh-quality`), motion half printed as `MQ60` (`mesh-compare`)
 - `MQ22_PHYSICS_RESET_IS_THE_SAME_FOR_EVERY_CANDIDATE_AND_A_CHANGED_DT_MOVES_THE_ROWS` (P10)
 - `MQ23_EACH_REFUSAL_CODE_IS_REACHED_BY_ONE_INPUT_AND_NAMES_OBJECT_VALUE_AND_REQUIREMENT`
 - `MQ24_EACH_TERMINATION_REASON_IS_REACHED_BY_ONE_INPUT`
@@ -1612,12 +1713,14 @@ The five corrections, one positive control and one planted failure each:
   `MQ27_CONTROL_TWO_ATTACHMENTS_WITH_THEIR_OWN_MASKS_THRESHOLDS_AND_SAMPLE_FLOORS_ARE_EACH_MEASURED_AND_ECHOED_FIELD_FOR_FIELD`
 - Correction 1, planted:
   `MQ28_ONE_MASK_GIVEN_FOR_TWO_ATTACHMENTS_OF_DIFFERENT_SIZE_OR_A_DUPLICATE_CANDIDATE_ID_IS_REFUSED_NAMING_BOTH`
+  — mask half `MQ28` (`mesh-quality`), duplicate-id half printed as `MQ61` (`mesh-compare`)
 - Correction 2 (raster unit), positive:
   `MQ29_CONTROL_PX_FRACTION_AND_COUNT_ROWS_STATE_THEIR_SPATIAL_QUANTUM_AND_THEIR_OWN_VALUE_INCREMENT_AND_A_VALUE_AT_ITS_BOUND_PASSES_AT_BOUND`
 - Correction 2, planted:
   `MQ30_A_COVERAGE_WITHIN_ONE_SPATIAL_QUANTUM_BUT_BEYOND_ONE_SAMPLE_INCREMENT_OF_ITS_BOUND_IS_NOT_FLAGGED`
 - Correction 2, sampled rows:
   `MQ31_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT`
+  — printed as `MQ62` (`mesh-compare`)
 - Correction 3 (admissibility vs density), positive:
   `MQ32_CONTROL_A_COARSE_SOURCE_THAT_MEETS_ITS_ART_BOUNDS_BUT_NOT_THE_REGION_DENSITY_IS_REFINED_NOT_REFUSED`
 - Correction 3, planted:
@@ -1632,6 +1735,7 @@ The five corrections, one positive control and one planted failure each:
   `MQ37_A_NONUNIFORMLY_SCALED_SETUP_REPORTS_TWO_DECLARED_SINGULAR_SCALES_AND_NO_SINGLE_RATIO`
 - Correction 5 (non-mesh equality), positive:
   `MQ38_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED`
+  — printed as `MQ63` (`mesh-compare`)
 - Correction 5, planted:
   `MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES`
 
@@ -1661,7 +1765,7 @@ The decisions that change behaviour rather than an interface:
 - `MQ42_A_SELECTION_FRAME_IS_NEVER_HELD_OUT_AND_AN_EMPTY_HELD_OUT_SET_MAKES_NO_HELD_OUT_CLAIM` (P11)
 - `MQ43_MIN_WEIGHT_ZERO_KEEPS_EVERY_POSITIVE_SHARE_ON_THE_GRID_AND_PROTECTED_INFLUENCES_OVER_THE_CAP_ARE_REFUSED` (P19)
 - `MQ44_A_REFUSED_TRACE_LEAVES_TRACE_DEVIATION_NOT_MEASURABLE_AND_THE_SOURCE_ACCEPTED_ON_ITS_REQUIRED_ROWS` (P13)
-- `MQ45_THE_MOTION_ENTRY_IMPORTS_AND_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE` (P1, P2; held by the install smoke rather than `selftest.ts`)
+- `MQ45_THE_MOTION_ENTRY_IMPORTS_AND_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE` (P1, P2; held by the install smoke rather than `selftest.ts`) — [implemented, #1230] as `SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`, `MESHCOMPARE_PROBE_SOURCE` in `scripts/install_smoke.ts`
 
 ## Termination reasons
 
@@ -1750,4 +1854,5 @@ not any stage's here.
   §4 states that rather than promising more.
 - #1221 refers to *"runtime geometry facilities"* parts can use. The one
   posing entry parts is promised, `spine-rigc/render`, needs spine-core; the
-  core poser that does not has no entry. §0 records the agreed new entry (P1).
+  core poser that does not has no entry. §0 records the agreed new entry (P1),
+  [implemented, #1230] as `spine-rigc/meshcompare`.

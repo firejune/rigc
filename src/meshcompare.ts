@@ -55,6 +55,13 @@
  *   areas, a triangle with no setup area skipped, one collapsed onto zero not
  *   reversed. A slot `invariants.deformMayFold` names is exempt from the count's
  *   bound and its folds are listed.
+ * - **The reference (P8, §3 *Independent evidence*).** Each build's art fit at
+ *   the setup pose is measured under its own bounds — the reference under
+ *   `referenceArtFit`, each candidate under `candidateArtFit` — and a reference
+ *   whose coverage, overshoot or undercut fails its bound is refused (`COMPARE_REFERENCE_FAILS`), never
+ *   compared against. (b), the gate on each build, is where it runs: `build`
+ *   writes the model document only after every assertion passed, and this
+ *   module, handed the document's text, does not run it a second time.
  * - **Schedule (P10, P11).** Frames by `FrameRef.id`; physics reset at time 0
  *   on every walk and stepped at the declared `dt` to each frame (the oracle's
  *   `stepSchedule` rule: from the last frame, steps of `dt` while before the
@@ -152,6 +159,9 @@ export interface MotionComparisonInput {
 
 /** `pointInTriangle`'s epsilon in `src/mesh.ts`, applied to each barycentric coordinate. */
 const CONTAINS = 1e-9;
+
+/** §3 *Independent evidence* (a): the rows a reference is refused on — its art fit against its own mask, and only that. */
+const REFERENCE_ART_FIT: readonly string[] = ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT'];
 
 /** The predicate epsilon of `segmentsMeet` and `prunePolygon` (`src/mesh.ts`), for a region's closed boundary. */
 const ON_BOUNDARY = 1e-9;
@@ -834,8 +844,9 @@ function foldingSlots(raw: unknown, who: string): Set<string> {
  * (§3, *Independent evidence* (a)), into one `mesh-quality-report/1` with
  * `operation: 'compare'`. Throws a `MeshReductionError` for an input it
  * refuses (`COMPARE_INPUT_MISSING`, `COMPARE_INPUTS_DIFFER`,
- * `COMPARE_WARMUP_UNSUPPORTED`, `COMPARE_UV_CARRIER_NOT_UNIQUE`, and
- * `measureMeshQuality`'s own codes for the art).
+ * `COMPARE_WARMUP_UNSUPPORTED`, `COMPARE_UV_CARRIER_NOT_UNIQUE`,
+ * `COMPARE_REFERENCE_FAILS` for a reference whose coverage, overshoot or
+ * undercut at the setup pose fails `referenceArtFit`, and `measureMeshQuality`'s own codes for the art).
  */
 export function compareMeshesInMotion(input: MotionComparisonInput): MeshQualityReport {
   validateInput(input);
@@ -897,6 +908,20 @@ export function compareMeshesInMotion(input: MotionComparisonInput): MeshQuality
     return { geometry: joinSections(sections), counts: total };
   };
   const refGeometry = geometryOf(reference, input.referenceArtFit);
+  // §3 *Independent evidence* (a), P8: a reference that fails its own art fit — coverage, overshoot or undercut against
+  // its own mask under `referenceArtFit` — is refused AS A REFERENCE: a deviation from a reference that does not carry
+  // its own art is not evidence, so no candidate is measured against it. (a) is those three rows and no other: winding
+  // is (b)'s (A39, the build's own gate), and a row the reference could not measure (an attachment under its sample
+  // floor, P9) leaves its section not-measured and the reference not accepted, which the report already says.
+  const artFitFailed = (refGeometry.geometry?.rows ?? []).filter((r) => r.state === 'fail' && REFERENCE_ART_FIT.includes(r.code));
+  if (artFitFailed.length > 0) {
+    refuse(
+      'COMPARE_REFERENCE_FAILS',
+      `reference "${reference.id}" fails its own art fit at the setup pose under referenceArtFit — ${artFitFailed
+        .map((r) => `${r.code} of ${nameOf(r.object.attachment)}${r.object.region === null ? '' : ` region "${r.object.region}"`} is ${r.value}${r.bound === null ? '' : `, required ${r.bound.op} ${r.bound.value}`}`)
+        .join('; ')}; required the reference's coverage, overshoot and undercut within referenceArtFit (P8 and §3, Independent evidence (a): a deviation from a reference that does not carry its own art is not evidence)`,
+    );
+  }
   const candGeometry = candidates.map((c) => geometryOf(c, input.candidateArtFit));
 
   // --- motion ---------------------------------------------------------------------------------

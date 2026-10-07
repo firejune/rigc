@@ -416,6 +416,7 @@ adds what the map cannot say:
 | `spine-rigc/rig` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
 | `spine-rigc/mesh` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
 | `spine-rigc/errors` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
+| `spine-rigc/meshcompare` | [#1230](https://github.com/firejune/rigc/issues/1230), by agreement | nothing |
 | `spine-rigc/cli` | [#859](https://github.com/firejune/rigc/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
 | `spine-rigc/package.json` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
 
@@ -433,7 +434,7 @@ today. A rename goes red naming the entry and the symbol — its
 package still runs and only the probe can tell — and a removed entry goes
 red naming the entry (`drop-named-entry` takes `./render` away, and
 `drop-rig-entry`, `drop-mesh-entry` and `drop-errors-entry` each take one
-of the three #1212 named). The list grows by observation: a module or a symbol
+of the three #1212 named, and `drop-meshcompare-entry` the one #1230 named). The list grows by observation: a module or a symbol
 nobody was seen using is not promised, however public it looks, and one that
 somebody is seen using is added to that table with their name and the issue
 — a later observation of an entry already listed is a row of its own, so
@@ -463,6 +464,24 @@ spine-parts#126) — a contract nobody can be observed using yet, which renaming
 would still break. The row says so in place of an observation
 (`AGREED_IN_1224`), and it is the only exception: a symbol that is merely
 exported is not promised.
+
+🤝 **The same agreement names a second entry**
+([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
+motion comparison on an entry of its own, `spine-rigc/meshcompare`, and says
+it needs nothing beside the package — the core is its only poser
+(docs/MESH_REDUCTION.md, P1 and P2). Through it `compareMeshesInMotion` and
+`uvCarriers` are held, and `MotionComparisonInput`, `BuiltCandidate` and
+`CompareAttachment` recorded, under the `AGREED_IN_1230` row. Because the
+promise is "no runtime", the call is held where that is true: with the runtime
+taken away, the smoke runs one comparison from the install on the build it
+just wrote — the flag mesh against itself (0 at every frame), against the same
+document with one hull vertex moved (that distance, at every frame), and two
+candidates under one id (refused as the `MeshReductionError` that
+`spine-rigc/mesh` exports) — and holds the report to `operation: 'compare'`
+and the core poser at the installed version
+(`SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`, the
+contract's `MQ45`). Its line prints the comparison's frames, samples and wall
+time.
 
 📞 **A symbol a dependant calls is held by a call, not only by its kind**
 (#1212). Present and callable is not what a caller relies on, so the smoke
@@ -590,7 +609,9 @@ that has a `package.json` of its own, and runs it in three phases (issue
    called (*The import surface*).
 3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
    more, every listed entry is imported again and held to whether it needs
-   the runtime, and `rigc render` and `rigc check` run without it on the
+   the runtime, `spine-rigc/meshcompare` compares meshes of the round-tripped
+   build from the install (*The import surface*, `MQ45`), and `rigc render`
+   and `rigc check` run without it on the
    round-tripped build — the same bytes as the core entry's, by the comparison
    above, and read from that side so a broken core build goes red at one step
    rather than three.
@@ -615,8 +636,8 @@ broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of 
 packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
 install then has the runtime, which is not the package this tree packs),
 `cli_core.ts` out of `files` (the install's `rigc --version` dies), the skills
-plant, eight on the import surface (the map removed, the map cut to its
-named entries, each of four named entries removed in turn, one listed symbol
+plant, nine on the import surface (the map removed, the map cut to its
+named entries, each of five named entries removed in turn, one listed symbol
 renamed, the parser's error class forked from its entry's), and two on
 the core entry's build — its body made to refuse, and one byte appended to the
 atlas it wrote, which only the comparison can see; both edit one line of
