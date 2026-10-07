@@ -19,8 +19,13 @@ implements the geometry measurement** — `measureMeshQuality` and the
 in `src/meshreduce.ts`, re-exported through the same entry. Every clause the
 tree now does is marked **[implemented, #1224]** and says what the tree does,
 cited by path and symbol; *The reduction as implemented* gathers the choices B2
-had to make. Nothing else here is implemented: the motion comparison (stage C)
-keeps its marks. The page exists so that a reader who was
+had to make. **Stage C1 ([#1230](https://github.com/firejune/rigc/issues/1230))
+implements the motion comparison** — `compareMeshesInMotion`, in
+`src/meshcompare.ts`, writing the `motion` section of the same document; it has
+no named entry yet (`spine-rigc/meshcompare`, the install smoke and `MQ45` are
+stage C2's). Its clauses are marked **[implemented, #1230]**, and *The
+comparison as implemented* gathers the choices C1 had to make. The page exists
+so that a reader who was
 not in the conversation that produced it can tell five things apart:
 
 - **Existing** — what the tree already provides, cited by file path and
@@ -44,6 +49,8 @@ not in the conversation that produced it can tell five things apart:
   implementation had to decide something the contract left open, or had to add
   a field, the clause says so beside the mark rather than leaving the proposal
   text to imply it.
+- **[implemented, #1230]** — what the tree does since stage C1, held by the
+  `mesh-compare` suite's `MQ` controls in `selftest.ts`, under the same rule.
 
 Ownership, as #1221 states it and as this page keeps it: **rigc** owns generic
 geometry operations, measurable residuals and deterministic diagnostics;
@@ -65,8 +72,8 @@ policy from a name.
 | Weights | `bindWeightedVertices` in `src/mesh.ts` (bindings by bone name); `ModelBinding` (`src/model.ts`); A20 coherence (`src/assertions/bodies/a20.ts`) | explicit influence limits on every weighted call (§6) — [implemented, #1224] `reduceMesh`, `src/meshreduce.ts`, on every inserted vertex |
 | Triangle sign, collapse, stretch | in `src/deformsurvey.ts`: `triangleAreas`, `DEFORM_AREA_EPSILON = 1e-6`, `float32AreaNoise`, `stretchSingularValues` | reused for orientation/degeneracy (§4) — [implemented, #1224] the first three and the band they make (`areaBand`) moved unchanged to `src/areaband.ts`, which `src/deformsurvey.ts` imports and re-exports, so the geometry entry reads the band without reaching the compiler |
 | Deform measurement over time | deform survey (`surveyDeformKeys`, `src/deformmeasure.ts`; `surveyOfModel`, `src/deformsurvey.ts`), span scan (`scanDeformSpan`, `src/deformsurvey.ts`), A39 | none — a different question (it measures one mesh against itself, never two meshes against each other) |
-| Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) |
-| Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 |
+| Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) — [implemented, #1230] `compareMeshesInMotion` poses through `poseRawSetup` and `poseRawAnimationEach` (`src/core/raw.ts`), the walk `src/render_core.ts` steps with, not through the render seam |
+| Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 — [implemented, #1230] `src/meshcompare.ts` |
 | Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) — [implemented, #1224] for `measure`: `writeMeshQualityReport`, `src/meshquality.ts` |
 | Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row |
 
@@ -105,7 +112,8 @@ policy from a name.
   own. The emit-hash gates are the proof that an unchanged spec emits unchanged
   bytes, and `EH06` and `MB07` hold the gallery's builds to that base on every
   run; `MQ26` holds that no module under `src/` but `src/mesh.ts`,
-  `src/meshquality.ts` and `src/meshreduce.ts` names either operation, so
+  `src/meshquality.ts`, `src/meshreduce.ts` and — since stage C1 —
+  `src/meshcompare.ts` names any of the three operations, so
   nothing a build reaches calls them.
 - [agreed, spine-parts#126] **P1 — `spine-rigc/meshcompare` is accepted.**
   Geometry-only operations (`reduceMesh`, `measureMeshQuality`) are exported
@@ -113,14 +121,24 @@ policy from a name.
   (`compareMeshesInMotion`) is exported from the new named entry
   `spine-rigc/meshcompare`. **Both** entries are held by an installed-package
   smoke with spine-core absent, the scenario the smoke already runs for the
-  observed entries.
+  observed entries. [implemented, #1230, the module only] `compareMeshesInMotion`
+  is exported from `src/meshcompare.ts`, which links nothing of the runtime
+  (`CUR07` derives the linkers from the tree, and it is not among them) and
+  nothing of the compiler; the entry, its `exports` key and the smoke row are
+  stage C2's.
 - [agreed, spine-parts#126] **P2 — the core poser is sufficient for the
   initial production interface.** `compareMeshesInMotion` poses through rigc's
   core over the model document; no parts consumer gains a spine-core
   dependency, and a second poser backend is not a prerequisite. The report
   records the poser and its version (§2, `poser`); a measurement the core
   poser does not support is `refused` or `not-measurable` by name, never
-  silently approximated. The upstream core-gate parity tests (`core_gate`,
+  silently approximated. [implemented, #1230] `poser` is
+  `{ kind: 'core', rigcVersion }`, the version read by `readVersion`
+  (`src/package_meta.ts`, moved there unchanged from `src/cli/shared.ts` so a
+  library module does not load the CLI to read it), and `null` when no schedule
+  was given and nothing was posed; a build the core refuses to pose
+  (`CoreInputError`) leaves every motion row `not-measurable` with the core's
+  words. The upstream core-gate parity tests (`core_gate`,
   CLAUDE.md *The doctrine*) stay as they are; they are what makes the core's
   poses admissible.
 - [implemented, #1224] Refusals are thrown as `MeshReductionError extends
@@ -401,8 +419,11 @@ input, and `EffectiveSettings` had no place for it (§3's input carries it the
 same way); (2) `EffectiveSettings.referenceHull`, the polygon the boundary row
 was taken against; (3) `EffectiveSettings.targets` is `ReductionTargets |
 MeasureTargets | null`, since a measurement's bounds may be undeclared; (4)
-`ScheduleUsed`, which the interface names and does not define, is
-`MotionSchedule` until stage C defines it. A `measure` echoes its `finalThreshold`
+`ScheduleUsed`, which the interface names and does not define, was
+`MotionSchedule` until stage C defined it — [implemented, #1230] the schedule as
+given plus `ScheduleWalked` (`src/meshquality.ts`): every frame walked as a
+`FrameRef` with its role, the roles present, `heldOutClaim`, the reset
+(`'physics reset at time 0'`) and each walk's step count. A `measure` echoes its `finalThreshold`
 as the threshold it was taken at: such a call claims nothing at any other.
 
 [implemented, #1224] for `operation: 'reduce'`: `reduceMesh` fills one
@@ -592,6 +613,10 @@ export interface MeshCounts {
 
 ## 3. Comparing different triangulations on a common domain
 
+[implemented, #1230] as *The comparison as implemented* states, below *The
+reduction as implemented*; the clauses here keep their marks, and each one C1
+implements says so beside it.
+
 **Existing.**
 
 - Nothing compares two meshes. The deform survey compares a mesh with
@@ -657,7 +682,7 @@ export interface MotionSchedule {
 }
 ```
 
-- [proposal] **The common domain is the attachment's region UV square**, not
+- [proposal; implemented, #1230] **The common domain is the attachment's region UV square**, not
   its page UVs and not vertex indices. UVs are the one attribute a deform never
   moves and a repack never changes, so a UV point names the same texel of art
   in every candidate at every frame.
@@ -667,7 +692,11 @@ export interface MotionSchedule {
   coordinates in each candidate's UV triangulation and carried to world by that
   triangle's posed vertices. A sample that lies in no triangle of a candidate
   is **not dropped**: it counts against that candidate's coverage and is
-  listed.
+  listed. [implemented, #1230] at the final threshold (`finalThreshold`, P4);
+  an uncarried sample is listed by UV in the local-deformation row
+  (`MotionRowDetail.uncarried`, for the reference's mesh and the candidate's)
+  and left out of the distance; the coverage it costs is the setup art fit's
+  `MQ_COVERAGE`.
 - **Correction 4 — the comparison map is unambiguous or refused.** A sample
   whose UV lies in more than one triangle of a candidate — overlapping or
   degenerate UV triangles — would otherwise be carried by an arbitrary one.
@@ -676,14 +705,24 @@ export interface MotionSchedule {
   exception is a sample on an edge or vertex **shared** by the triangles that
   contain it: there the carriers agree on the carried point by construction,
   and the hit is one hit. A UV triangle inside the A39 area band carries
-  nothing and is never chosen as a carrier.
+  nothing and is never chosen as a carrier. [implemented, #1230]
+  `uvCarriers` (`src/meshcompare.ts`): containment is each barycentric
+  coordinate at least `−1e-9`, `pointInTriangle`'s epsilon (`src/mesh.ts`),
+  applied to the coordinates rather than the cross products so it does not
+  scale with the UV square; "shared" is read off vertex indices — every
+  containing triangle has the same corners at nonzero weight, one or two of
+  them — so two triangles that meet at one place through duplicated vertices are
+  refused, not excused; the band is `areaBand` over the UVs.
 - [agreed, spine-parts#126] **P9 — `minArtSamples` is an explicit positive
   integer input with no hidden rigc constant.** [proposal] It is stated **per
   attachment** (required) and **per region** (required for every region whose
   rows are required); the report states the observed count separately for each
   domain (`MeasureRow.art.samples`). Hull-vertex samples do not count towards
   it. A domain under its floor is `not-measurable` with its count, never a pass
-  over nothing. A value of 1 is admissible for an explicitly chosen geometry
+  over nothing. [implemented, #1230] for the attachment's
+  and each region's `MQ_LOCAL_DEFORMATION` row; a region's samples are those
+  whose UV, carried to the frame's drawing px, lies in its closed polygon. The
+  floors' controls are stage C2's (`MQ21`'s motion half). A value of 1 is admissible for an explicitly chosen geometry
   investigation of a nonempty part; it is not a production floor, and parts
   supplies the number from its declared policy or versioned preset.
 - [proposal] **Coordinate alignment is by construction, never by fitting.**
@@ -693,7 +732,8 @@ export interface MotionSchedule {
 - **Correction 5 — equality covers every non-mesh input.** Identical bone
   rosters and setup transforms are necessary and not sufficient: a changed
   constraint, attachment transform, skin or slot attachment schedule, motion
-  track or physics setting confounds the comparison. [proposal] Reference and
+  track or physics setting confounds the comparison. [proposal; implemented, #1230, the allowlist as
+  `allowed` in `src/meshcompare.ts` spells it] Reference and
   candidates must be equal in **every input not on the allowlist**, compared
   on their model documents, or the comparison is refused
   (`COMPARE_INPUTS_DIFFER`, naming the first differing object and field and
@@ -708,14 +748,21 @@ export interface MotionSchedule {
 - [proposal] **A permitted fold stays visible.** A slot exempted by
   `invariants.deformMayFold` remains outside `MQ_INVERSION`'s count as A39
   rules, and its folded triangles are **listed** in the row's diagnostics with
-  their frames; the row never reports zero for them.
+  their frames; the row never reports zero for them. [implemented, #1230] such
+  a slot's row holds no bound — `undeclared` — and its value is the fold count,
+  with every fold in `MotionRowDetail.folds`; `MQ38`, its control, is C2's.
 - **Correction 4 — units.** [proposal] Distances are in Spine world units, the
   primary error. A single world-units-per-pixel ratio is invalid under
   nonuniform scale or shear, so it is not reported. Each row instead states
   the **declared** setup map from part-local drawing pixels to world — the
   placement the compile used (`cropToSpineY`, `toBoneLocal`, `toWorld`,
   `src/transform.ts`), read from the build and never measured from vertices —
-  as its 2×2 linear part with its two singular scales. Where no single
+  as its 2×2 linear part with its two singular scales. [implemented, #1230] as
+  the slot bone's setup world 2×2 — `[a, b, c, d]` as the core poses the bone
+  from its declared fields — with its singular scales
+  (`MotionRowDetail.setupMap`, on every `world` row). It is the slot bone's map
+  and is named so: a weighted vertex is carried by its own bones, and no single
+  map is claimed for it. Where no single
   declared map exists for an attachment, the conversion is reported as
   `refused` with a reason and the world-space row stands alone.
 - [agreed, spine-parts#126] **P10 — no warm-up in v1.** Physics resets and
@@ -724,6 +771,9 @@ export interface MotionSchedule {
   physics constraint is active. `warmupSteps: 0` is supported; any other value
   is refused by name (`COMPARE_WARMUP_UNSUPPORTED`) until warm-up is
   implemented and controlled — never silently treated as zero.
+  [implemented, #1230] `warmupSteps` other than 0 is refused before any
+  document is read (`MQ41`); `mode: 'none'` on a reference that declares a
+  physics constraint is `COMPARE_INPUT_MISSING`.
 - [agreed, spine-parts#126] **P11 — parts supplies the schedule and the
   selection membership; rigc invents no split.** Frames are named by
   `FrameRef.id` (animation, phase and time). The report keeps
@@ -731,7 +781,12 @@ export interface MotionSchedule {
   choice is never held out. A held-out claim requires a nonempty set of
   held-out frames disjoint from `selection`, evaluated through the same
   recorded physics reset and `dt`; `setup` is a shared baseline
-  (`role: 'baseline'`) and is not held-out evidence.
+  (`role: 'baseline'`) and is not held-out evidence. [implemented, #1230] a
+  frame is `selection` exactly when its id is in `selection`, `baseline` when
+  it is `setup`, and `held-out` otherwise; a selection id the schedule does not
+  walk is refused by name rather than read as held out; each motion row carries
+  its reading per role, `heldOut` null with no held-out frame, and the
+  schedule's `heldOutClaim` is false then (`MQ42`).
 - [agreed, spine-parts#126] **P8 — the reference is the unreduced,
   independently gated source mesh.** It may be generated by the automatic
   pipeline; a reference game's mesh or vertex count is not an input. A
@@ -747,7 +802,13 @@ export interface MotionSchedule {
   (A13 budgets, A20 weight coherence, A21 rim pinning where it applies, A22 UV
   range, A39 winding); (c) every bound in `bounds`. A reference that fails
   (a) or (b) is refused as a reference (`COMPARE_REFERENCE_FAILS`), because a
-  deviation from a wrong reference is not evidence.
+  deviation from a wrong reference is not evidence. [implemented, #1230, (a)
+  only] each build's art fit at setup is `measureMeshQuality` over its UVs on the
+  frame's drawing px — the reading the compiler's authored fit takes
+  (`measureAuthoredFit`, `src/compile.ts`) — under `referenceArtFit` or
+  `candidateArtFit`, as the build's `geometry` section. (b), the gate on each
+  build, and `COMPARE_REFERENCE_FAILS` are stage C2's: the module is handed a
+  model document, and the caller's `build` is where its gate ran.
 
 ## 4. The measurements, defined
 
@@ -787,6 +848,10 @@ export interface MotionSchedule {
 
 **Proposed.** [proposal] every definition below, except where a row is marked
 agreed.
+
+[implemented, #1230] `MQ_LOCAL_DEFORMATION`, `MQ_STRETCH` / `MQ_SQUASH` and
+`MQ_INVERSION` are measured by `compareMeshesInMotion` (`src/meshcompare.ts`),
+as *The comparison as implemented* states.
 
 [implemented, #1224] Every geometry row — every row of the table except
 `MQ_LOCAL_DEFORMATION`, `MQ_STRETCH` / `MQ_SQUASH` and `MQ_INVERSION`, which
@@ -879,9 +944,11 @@ defined here, with these readings of what the table leaves open:
   pixel centres inside both the region and the hull polygon, each to its
   nearest mesh vertex, and its `art.samples` is that count, held to the
   region's floor.
-- [proposal] **Transition in time** is phase: a motion row is measured at
+- [proposal; implemented, #1230] **Transition in time** is phase: a motion row is measured at
   every phase in `schedule.phases`, its value is the worst over them, and a
-  row whose verdict differs between phases says so.
+  row whose verdict differs between phases says so — `MotionRowDetail.byPhase`
+  and `phasesDisagree`, which names the worst frame of the passing phase and of
+  the failing one (`MQ15`).
 
 ## 5. Local refinement — three quantities that are not interchangeable
 
@@ -1362,6 +1429,113 @@ P16's checkable form as agreed does not admit; remapping a linked mesh's own
 keys and permuting a weighted keyed vertex's pairs (§6); a bounded-work claim
 (stage D).
 
+## The comparison as implemented (stage C1)
+
+[implemented, #1230] `compareMeshesInMotion(input: MotionComparisonInput):
+MeshQualityReport` in `src/meshcompare.ts` returns a `mesh-quality-report/1`
+with `operation: 'compare'`, written by `writeMeshQualityReport` — no second
+format. The contract left the following to the implementation; each is what the
+tree does.
+
+**The input.** §3's `MotionComparisonInput`, with three fields the agreed text
+requires an input for and the interface had no place for: `motionRequired`
+(P6), `perFrame` (P7's opt-in) and `schedule: MotionSchedule | null` (P6: no
+motion supplied leaves `motion` null, never an empty pass — `MQ10`).
+`BuiltCandidate` is `{ id, model }`, the model document's text; see *rejected*
+below. All attachments of one call are under one skin: each skin is its own
+posed view.
+
+**The report.** `reference` is the reference's own report — its art fit, and
+its motion section, in which local deformation is 0 by definition (it is
+compared with itself); `candidates` in the caller's order; `sourceCounts` the
+reference's counts; `termination` null. `accepted` is P6's: the geometry
+verdict `pass` and, with `motionRequired`, the motion verdict `pass`.
+`EffectiveSettings` echoes every attachment with its regions' polygons (an
+optional field added for this), both art-fit bounds, the motion bounds and the
+schedule. Additive types in `src/meshquality.ts`: `MotionRowDetail` (each motion
+row's `motion` field — frames measured and not drawn, the reading per phase and
+per role, the setup map, uncarried samples, folds, triangles degenerate at
+setup), `MotionReading` and `ScheduleWalked`. `perFrame` lists the four
+attachment-level rows at every frame walked (`null` where none was taken);
+region rows carry their worst frame on the row.
+
+**The schedule.** A rate entry walks `count = round(duration × fps)` intervals,
+the render's count (`sampleAnimation`, `src/render_shared.ts`): under `grid`
+`count + 1` samples at `sampleTime('grid', …)`, `i / fps` on a whole number of
+frames; under `irr` `count` samples at `sampleTime('irr', …)`, each a frame
+interval's `IRR_OFFSET` past its grid sample (`src/core/animation.ts`). An
+explicit-times entry takes no phase — a phase is a rule for placing samples, and
+those times are placed already — so its frames carry `phase: null` and their id
+spells `explicit` where a phase would be: `<animation>@explicit@<time>`. Each
+(animation, phase) is one walk from the reset at time 0 (`poseRawAnimationEach`,
+reset `'animation'`), stepped to its frames in ascending time by
+`stepSchedule`'s rule (`src/core/constraints_physics.ts`) — steps of `dt` while
+before the next frame, then to it — under `mode: 'step'`, and one jump per frame
+under `mode: 'none'`. The steps are computed once and handed to the reference
+and every candidate (`MQ22`). A time past the animation's duration, a frame id
+given twice and an animation the reference does not have are
+`COMPARE_INPUT_MISSING`.
+
+**The rows.** Per attachment, in skeleton order: `MQ_INVERSION`,
+`MQ_LOCAL_DEFORMATION` (and one per region), `MQ_SQUASH`, `MQ_STRETCH`.
+`MQ_LOCAL_DEFORMATION` is the largest world distance over the samples carried by
+both meshes and the frames the attachment is drawn at, bound
+`maxLocalDeformation` (required), `sampling.count` every sample of the domain and
+`art.samples` the art pixels alone. `MQ_STRETCH` is the largest `σ₁` and
+`MQ_SQUASH` the smallest `σ₂` of `stretchSingularValues` (moved unchanged to
+`src/areaband.ts`, re-exported from `src/deformsurvey.ts`) from each triangle's
+setup world triangle to its posed one, bounds `maxStretch` / `minStretch` when
+declared and `undeclared` otherwise. `MQ_INVERSION` is the most triangles
+reversed at one frame by A39's rule (`surveyDeformKeys`' reading: the band
+over the setup and posed areas, no sign read off a setup triangle inside it, one
+collapsed onto zero not reversed), required at 0 except on a
+`deformMayFold` slot. A value of 0 on a distance or count row points at nothing
+(`worst: { at: {} }`).
+
+**Equality** (correction 5) is `firstDifference` over the parsed documents in
+the reference's key order, with arrays of named objects named by `name` in the
+path (`bones["b"].x`, `constraints["b_follow"].strength`), each value shown
+beside the other. The allowlist is `allowed`'s: the compared attachment's
+`uvs`, `triangles`, `vertices`, `hull` and `edges`; its deform keys' runs (every
+field but `time` and `curve`) and `deformTransforms` entries (every field but the
+key's identity and time); the slot's `meshes` entry (every field but `slot` and
+`attachments`), `meshBones`, each physics constraint's `drivesMesh`, and the
+slot's `rig.meshKinds`, `rig.meshDeclaredBones` and `rig.meshSoftBones`; `pages`;
+`spine.sha256`. `pages` needs no conversion check: the comparison reads each
+mesh's region UVs off its own attachment and never a page UV.
+
+**What was rejected, on measurement of the contract or the brief.**
+
+- `BuiltCandidate.build` as three paths (`modelPath`, `skeletonPath`,
+  `atlasPath`) — the core poses the model document and reads neither file of
+  the Spine pair, and a module under `src/` that opened paths would tie the call
+  to a disk layout; it takes the document's text.
+- A geometry-only report for the reference — the reference's motion section is
+  kept, because its stretch, squash and inversion are its own evidence and its
+  zero local deformation is `MQ55`'s statement (`MQ00`'s motion half), not a placeholder.
+- Explicit times walked once per phase — they would be the same poses under two
+  ids; they carry no phase instead.
+- A section builder imported from `src/meshquality.ts` — `sectionOf` there is
+  internal, and exporting it would put it on `spine-rigc/mesh` through that
+  entry's `export *`; `src/meshcompare.ts` applies §2's rule in its own
+  `sectionOf`.
+- The version through `src/cli/shared.ts`'s `readVersion` in place — that module
+  loads the whole CLI; the reader moved unchanged to `src/package_meta.ts`, and
+  `src/cli/shared.ts` re-exports it.
+
+**Cost.** Wall time is never in the report; `MQ55`'s detail line prints one
+comparison's frames, samples and wall time on the suite's fixture. One darwin
+run at the commit that added it: 10 frames × 1,034 samples (a 64 × 16 strip,
+1,024 art pixels and 10 hull UVs), one candidate, 12.5–39 ms over three runs,
+including both builds' posing and setup art fits. That is one machine's reading; bounding the work is
+stage D's.
+
+**Left for C2.** `MQ11`–`MQ13`, `MQ31`, `MQ38`, `MQ45` and the motion halves of
+`MQ19`, `MQ21` and `MQ28` (the duplicate id is refused today, by
+`COMPARE_INPUT_MISSING`, without its control); `COMPARE_REFERENCE_FAILS` and (b)
+of *Independent evidence*; the `./meshcompare` entry in `package.json`, its
+RELEASING row and the install smoke.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -1386,11 +1560,21 @@ comment 6042150608) — each composed operation passing with the other idle,
 under `src/` but the three that define the operations names them, so an
 unchanged spec cannot reach them; the bytes themselves are held by `EH06` and
 `MB07`, on every run against `tools/emit_hashes.base.json`, and are not
-re-checked by a second gate over the same base. Still to be built: stage C's
-`MQ10`–`MQ13`, `MQ15`, `MQ20`, `MQ22`, `MQ31`, `MQ35`–`MQ39`, `MQ41`, `MQ42`,
-`MQ45`, and the halves of `MQ00`, `MQ19`, `MQ21` and `MQ28` named above.
+re-checked by a second gate over the same base.
 
-- `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`
+[implemented, #1230] Built and passing, in the `mesh-compare` suite of
+`selftest.ts`: `MQ55` (`MQ00`'s motion half — the `MQ` prefix is opened at 00 by
+the `mesh-quality` suite and continued here, `TY18`), `MQ10`, `MQ15`, `MQ20`, `MQ22`, `MQ35`,
+`MQ36`, `MQ37`, `MQ39`, `MQ41` and `MQ42` — the controls spine-parts#126
+(comment 6045645512) asked C1 to carry for UV carrier mapping, schedule
+identity and held-out separation, and report states. `MQ26` names the fourth
+defining module. Still to be built, by stage C2: `MQ11`–`MQ13`, `MQ31`, `MQ38`,
+`MQ45`, and the motion halves of `MQ19`, `MQ21` and `MQ28`.
+
+- `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME` —
+  its geometry half is `MQ00` (`MQ00_CONTROL_A_MESH_MEASURED_AGAINST_ITS_OWN_HULL_DEVIATES_ZERO_AND_ITS_RASTER_ROWS_ARE_THE_LEGACY_FIT`,
+  `mesh-quality`) and its motion half is `MQ55`
+  (`MQ55_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`, `mesh-compare`)
 - `MQ01_A_HULL_VERTEX_MOVED_INWARD_FAILS_COVERAGE_AND_UNDERCUT_NAMING_THE_WORST_PIXEL`
 - `MQ02_A_HULL_VERTEX_PUSHED_OUT_K_PIXELS_MEASURES_OVERSHOOT_K_WITHIN_ONE_SPATIAL_QUANTUM`
 - `MQ03_A_SPANNED_HOLE_IS_NOT_OVERSHOOT_AND_IS_COUNTED_AS_HOLE_PIXELS`
@@ -1418,7 +1602,8 @@ re-checked by a second gate over the same base. Still to be built: stage C's
 - `MQ25_TWO_RUNS_ON_ONE_INPUT_WRITE_BYTE_IDENTICAL_REPORTS`
 - `MQ26_AN_UNCHANGED_SPEC_EMITS_THE_BYTES_IT_EMITTED_BEFORE` (the emit-hash
   base, read for the reduction's absence) — [implemented, #1224] as
-  `MQ26_NO_MODULE_UNDER_SRC_BUT_THE_THREE_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM`
+  `MQ26_NO_MODULE_UNDER_SRC_BUT_THE_FOUR_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM`
+  (the three of #1224, and `src/meshcompare.ts` since #1230)
   for the reduction's absence, and `EH06` and `MB07` for the bytes
 
 The five corrections, one positive control and one planted failure each:

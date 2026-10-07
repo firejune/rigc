@@ -25,72 +25,14 @@
 import { CoreInputError, underSkin, type CompiledDocument } from './core/index.ts';
 import { float32Rows, meshWorld, poseDial as corePoseDial, poseJump, recordIdentity, sliderRecordOf, slotDraw, type CoreSurveyPose } from './core/hooks.ts';
 import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyMesh, type SurveySkin, type SurveySlider, type SurveyStructure } from './deformstructure.ts';
-import { areaBand, DEFORM_AREA_EPSILON, float32AreaNoise, triangleAreas } from './areaband.ts';
+import { areaBand, DEFORM_AREA_EPSILON, float32AreaNoise, stretchSingularValues, triangleAreas } from './areaband.ts';
 
 // The area band lives in `src/areaband.ts` (moved unchanged, issue #1224) so the
-// geometry entry can read it without reaching the compiler; every name this
-// module exported before is exported from here still.
-export { DEFORM_AREA_EPSILON, float32AreaNoise, triangleAreas };
-
-/**
- * The two singular values of the linear map that takes one triangle onto the
- * other — the largest and smallest factor by which it scales a direction.
- *
- * ## Why this is the texture's stretch
- *
- * A mesh's uvs are fixed to the attachment and a deform never touches them, so
- * the texture is mapped affinely onto the *plain* triangle and the same texels
- * end up on the *deformed* one. The change in that mapping is exactly `J = D·P⁻¹`
- * with `P` and `D` the two triangles' edge pairs, and its singular values are the
- * worst stretch and the worst squash the drawing takes there. A σ of 1.4 means
- * every texel in that direction is drawn 1.4 px wide; 0.6 means the art is
- * crushed to 60%.
- *
- * `σ₁·σ₂ = |det J|` is the signed-area ratio's magnitude, which is why the two
- * quantities in the report cannot disagree — and `DR01` is the control that says
- * so on a case whose ratio the closed form predicts.
- *
- * Returns `null` for a plain triangle with no area: `P` is singular, there is no
- * map, and inventing one would be the report's own version of the false green
- * this file exists to avoid. Those triangles are counted as `degenerate`.
- */
-export function stretchSingularValues(
-  plain: ArrayLike<number>,
-  deformed: ArrayLike<number>,
-  triangles: ArrayLike<number>,
-  t: number,
-): { max: number; min: number } | null {
-  const i0 = triangles[t * 3] * 2;
-  const i1 = triangles[t * 3 + 1] * 2;
-  const i2 = triangles[t * 3 + 2] * 2;
-  const ux = plain[i1] - plain[i0];
-  const uy = plain[i1 + 1] - plain[i0 + 1];
-  const vx = plain[i2] - plain[i0];
-  const vy = plain[i2 + 1] - plain[i0 + 1];
-  const det = ux * vy - vx * uy;
-  if (det === 0) return null;
-  const px = deformed[i1] - deformed[i0];
-  const py = deformed[i1 + 1] - deformed[i0 + 1];
-  const qx = deformed[i2] - deformed[i0];
-  const qy = deformed[i2 + 1] - deformed[i0 + 1];
-  // J = D·P⁻¹, written out — P⁻¹ = (1/det)·[[vy, −vx], [−uy, ux]].
-  const a = (px * vy - qx * uy) / det;
-  const b = (-px * vx + qx * ux) / det;
-  const c = (py * vy - qy * uy) / det;
-  const d = (-py * vx + qy * ux) / det;
-  // σ₁² + σ₂² = ‖J‖²_F and σ₁·σ₂ = |det J|, which is two equations for the two
-  // values and needs no eigen decomposition. The discriminant is non-negative in
-  // exact arithmetic (it is `(σ₁² − σ₂²)²`); the clamp is for rounding on a map
-  // that is very nearly a rotation.
-  const frobenius = a * a + b * b + c * c + d * d;
-  const determinant = a * d - b * c;
-  const discriminant = Math.max(0, frobenius * frobenius - 4 * determinant * determinant);
-  const root = Math.sqrt(discriminant);
-  return {
-    max: Math.sqrt(Math.max(0, (frobenius + root) / 2)),
-    min: Math.sqrt(Math.max(0, (frobenius - root) / 2)),
-  };
-}
+// geometry entry can read it without reaching the compiler, and
+// `stretchSingularValues` joined it (moved unchanged, issue #1230) so the motion
+// comparison can too; every name this module exported before is exported from
+// here still.
+export { DEFORM_AREA_EPSILON, float32AreaNoise, stretchSingularValues, triangleAreas };
 
 /** A quantity's worst triangle on one key, and which triangle it was. */
 export interface DeformExtreme {
