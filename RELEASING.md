@@ -456,8 +456,8 @@ the smoke is the one that is checked; this one is its reading for a person.
 🤝 **One row is promised by agreement rather than observation**
 ([#1224](https://github.com/firejune/rigc/issues/1224)). Through
 `spine-rigc/mesh`, `measureMeshQuality`, `writeMeshQualityReport`,
-`MeshReductionError` and `MESH_QUALITY_REPORT_SPEC` are held, and the report's
-types recorded, because the dependant agreed in writing to import them from
+`MeshReductionError`, `MESH_QUALITY_REPORT_SPEC` and `reduceMesh` are held, and
+the report's and the reduction's types recorded, because the dependant agreed in writing to import them from
 that entry before either side had written them (docs/MESH_REDUCTION.md, P1;
 spine-parts#126) — a contract nobody can be observed using yet, which renaming
 would still break. The row says so in place of an observation

@@ -6,9 +6,9 @@
  * attachment draws, and the bounds the caller declared, measured into one
  * `mesh-quality-report/1` document (`writeMeshQualityReport` writes its text).
  * Every type the contract declares is declared here too, including the ones
- * only the reduction (`reduceMesh`, stage B2) and the motion comparison
- * (stage C) will fill, so that those stages build on one set of types rather
- * than restating them.
+ * only the reduction (`reduceMesh`, stage B2, in `src/meshreduce.ts`) and the
+ * motion comparison (stage C) fill, so that those stages build on one set of
+ * types rather than restating them.
  *
  * ## What it is for
  *
@@ -181,7 +181,28 @@ export interface InfluenceLimits {
   minWeight: number;
 }
 
-/** Everything a reduction reads (stage B2). No field has a default inside the operation. */
+/**
+ * One deform key of a timeline the reduced attachment is keyed under (§6, P18),
+ * in the form the compiler emits it: a `vertices` run is the emitted `offset`
+ * (an index into the deform array — two numbers per vertex unweighted, two per
+ * influence weighted, AUTHORING §4.11) and the numbers copied in from there; a
+ * `transform` key is a model the compile evaluates over the attachment's own
+ * geometry (§4.11.1), so it has no run to remap; a `setup` key carries no run.
+ */
+export type DeformKeyInput =
+  | { time: number; kind: 'setup' }
+  | { time: number; kind: 'vertices'; offset: number; vertices: number[] }
+  | { time: number; kind: 'transform' };
+
+/** One deform timeline: the animation, the attachment it is keyed on, and its keys in order. */
+export interface DeformTimelineInput {
+  animation: string;
+  /** The reduced attachment itself, or one of `MeshReductionInput.linkedMeshes`. */
+  attachment: AttachmentRef;
+  keys: DeformKeyInput[];
+}
+
+/** Everything a reduction reads (stage B2, `reduceMesh` in `src/meshreduce.ts`). No field has a default inside the operation. */
 export interface MeshReductionInput {
   attachment: AttachmentRef;
   art: ArtInput;
@@ -198,8 +219,16 @@ export interface MeshReductionInput {
   boneOrder: string[] | null;
   /** P5: the preset the caller expanded, if any, echoed and never read. */
   preset: { name: string; version: string } | null;
-  /** Work bound — *Termination reasons*. */
+  /** Work bound — *Termination reasons*. Every refinement insertion and every removal attempted counts one. */
   budget: { maxCandidates: number };
+  /** P9: the fewest art samples the attachment's raster rows are taken over. A whole number >= 1. */
+  minArtSamples: number;
+  /** P9: one floor per region, by region name — every region named once. */
+  regionArtSamples: Array<{ region: string; minArtSamples: number }>;
+  /** P18: every deform timeline keyed on the attachment or on one of its linked meshes; empty when none. */
+  deform: DeformTimelineInput[];
+  /** Every linked mesh of the source (they inherit the new topology); empty when none. */
+  linkedMeshes: AttachmentRef[];
 }
 
 /**
@@ -341,6 +370,29 @@ export interface CandidateReport {
   accepted: boolean;
   /** Opt-in (P7): every row's value at every frame. Absent unless asked for. */
   perFrame?: Array<{ code: string; frame: string; value: number | null }>;
+  /** A `reduce` whose result exists: what the operation changed. Absent on a `measure` and when no mesh is returned. */
+  changes?: ReductionChanges;
+}
+
+/**
+ * What a reduction changed, counted rather than described — the figures the
+ * contract says are reported (§6, P18 and P19) and that no geometry row carries.
+ */
+export interface ReductionChanges {
+  /** Source vertices the reduction removed. */
+  removedVertices: number;
+  /** Vertices the refinement inserted (§5). */
+  insertedVertices: number;
+  /** P19: positive interpolated shares that are 0 on the 6-decimal weight grid, dropped rather than written as 0. */
+  sharesDroppedOnGrid: number;
+  /** Interpolated shares pruned by `InfluenceLimits` — over `maxInfluences`, or under a nonzero `minWeight`. */
+  sharesPruned: number;
+  /** P18: `vertices` keys remapped, each with the source vertices whose offsets were dropped. */
+  deformRemapped: Array<{ animation: string; attachment: AttachmentRef; key: number; droppedVertices: number[] }>;
+  /** P18: `transform` keys, re-evaluated over the new geometry at compile rather than remapped. */
+  deformReevaluated: Array<{ animation: string; attachment: AttachmentRef; key: number }>;
+  /** Every linked mesh of the source: each inherits the new topology. */
+  linkedMeshes: AttachmentRef[];
 }
 
 export interface MeshQualityReport {
@@ -1470,6 +1522,18 @@ function candidateJson(c: CandidateReport): Json {
     accepted: c.accepted,
   };
   if (c.perFrame !== undefined) out.perFrame = c.perFrame.map((p) => ({ code: p.code, frame: p.frame, value: p.value }));
+  if (c.changes !== undefined) {
+    const k = c.changes;
+    out.changes = {
+      removedVertices: k.removedVertices,
+      insertedVertices: k.insertedVertices,
+      sharesDroppedOnGrid: k.sharesDroppedOnGrid,
+      sharesPruned: k.sharesPruned,
+      deformRemapped: k.deformRemapped.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key, droppedVertices: [...d.droppedVertices] })),
+      deformReevaluated: k.deformReevaluated.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key })),
+      linkedMeshes: k.linkedMeshes.map(attachmentJson),
+    };
+  }
   return out;
 }
 

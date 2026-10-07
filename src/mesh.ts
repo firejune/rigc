@@ -49,7 +49,10 @@ import type { ModelBinding, ModelVertices } from './model.ts';
 // `spine-rigc/mesh` names. That module imports helpers from this one, so the
 // two form an import cycle: safe only because neither reads the other's
 // bindings while it is being evaluated — every use is inside a function.
+// The reduction (`reduceMesh`, stage B2 of #1224) sits in the same cycle, by
+// the same rule.
 export * from './meshquality.ts';
+export * from './meshreduce.ts';
 
 export interface MeshSpecInput {
   /** Polygon in part-local pixels, y down, in manifest order. */
