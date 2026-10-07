@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.17.0](https://github.com/firejune/rigc/compare/v2.16.0...v2.17.0) (2026-10-07)
+
+
+### Features
+
+* **cli:** build and repack take --report &lt;file&gt; and write a build-report/1 JSON document of what their printed report states — rows, summary, stats, supplier, pack figures — byte-identical for one build, never in --out, with the lines unchanged ([#1217](https://github.com/firejune/rigc/issues/1217)) ([e518433](https://github.com/firejune/rigc/commit/e518433487fe7e8ffff9b17c964ec43494653554)), closes [#1213](https://github.com/firejune/rigc/issues/1213)
+
 ## [2.16.0](https://github.com/firejune/rigc/compare/v2.15.1...v2.16.0) (2026-10-07)
 
 
