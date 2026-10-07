@@ -118,7 +118,11 @@ export interface MeshGeometry {
   points: Array<[number, number]>;
   /** Normalised region UVs, v measured from the top edge. */
   uvs: number[];
-  /** Triangle indices, counter-clockwise in Spine world (y up). */
+  /**
+   * Triangle indices, counter-clockwise in Spine world (y up) — every builder
+   * here, measured on spine-core's posed world by `CT15` in `selftest.ts`
+   * (issue #1236: `contour` and `ring` wound the other way until then).
+   */
   triangles: number[];
   /** Per-vertex weights, parallel to `points`. */
   weights: MeshVertexWeight[][];
@@ -219,6 +223,33 @@ export function signedArea(poly: Array<[number, number]>): number {
     a += x0 * y1 - x1 * y0;
   }
   return a / 2;
+}
+
+/**
+ * Turn a triangle list built ALONG `poly` — every triple carrying the
+ * polygon's own winding, as an ear-clip of it or a ring strip around it does —
+ * counter-clockwise in Spine world, the winding `MeshGeometry.triangles`
+ * promises. `poly` is in part-local pixels, y down.
+ *
+ * Counter-clockwise in Spine world (y up) is a NEGATIVE shoelace area in y-down
+ * pixels: the flip changes the sign of the area and not the direction the loop
+ * turns as drawn. So a polygon whose y-down area is positive — clockwise on
+ * screen, and therefore clockwise in Spine world — has each triangle's last two
+ * corners swapped, the way `buildSegmentsLattice` does per triangle; one with a
+ * negative area is already right and is returned as it came. The triangle SET
+ * is unchanged either way: only the order of two indices inside a triple moves.
+ *
+ * The decision is the polygon's, not each triangle's, so a near-collinear ear
+ * whose own sign is rounding noise is turned with its neighbours rather than
+ * read on its own (issue #1236 — `contour` and `ring` emitted every triangle
+ * clockwise in Spine world before this existed, under comments that derived the
+ * opposite from the y flip).
+ */
+export function windCounterClockwiseInSpineWorld(poly: Array<[number, number]>, triangles: readonly number[]): number[] {
+  const out = triangles.slice();
+  if (signedArea(poly) <= 0) return out;
+  for (let t = 0; t + 2 < out.length; t += 3) [out[t + 1], out[t + 2]] = [out[t + 2], out[t + 1]];
+  return out;
 }
 
 /**
@@ -379,23 +410,25 @@ export function buildRingMesh(input: MeshSpecInput): MeshGeometry {
   const uvs: number[] = [];
   for (const [x, y] of points) uvs.push(r6(x / w), r6(y / h));
 
-  // Counter-clockwise in Spine world: the manifest polygon runs clockwise on
-  // screen (y down), and the y flip into world space reverses that.
-  const triangles: number[] = [];
+  // Each triple below runs along the hull's own list order, so it carries the
+  // hull's winding; `windCounterClockwiseInSpineWorld` then turns the list to
+  // the winding every generator here emits (issue #1236).
+  const along: number[] = [];
   const hub = 3 * n;
   const strip = (outerBase: number, innerBase: number) => {
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
-      triangles.push(outerBase + i, outerBase + j, innerBase + j);
-      triangles.push(outerBase + i, innerBase + j, innerBase + i);
+      along.push(outerBase + i, outerBase + j, innerBase + j);
+      along.push(outerBase + i, innerBase + j, innerBase + i);
     }
   };
   strip(0, n); // window edge -> seam
   strip(n, 2 * n); // seam -> aperture ring
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    triangles.push(2 * n + i, 2 * n + j, hub);
+    along.push(2 * n + i, 2 * n + j, hub);
   }
+  const triangles = windCounterClockwiseInSpineWorld(hull, along);
 
   return { kind: 'ring', points, uvs, triangles, weights, hullVertices: n };
 }
@@ -940,9 +973,16 @@ function pointInTriangle(
  *
  * Repeatedly find a vertex whose two edges make a convex turn in the polygon's
  * own winding and whose triangle holds no other vertex, emit it as a triangle,
- * and remove it. The emitted triples carry the polygon's own winding, so a
- * clockwise-on-screen outline yields triangles that are counter-clockwise in
- * Spine world after the y flip — the convention the rest of this file keeps.
+ * and remove it. The emitted triples carry the polygon's own winding — the
+ * order its list runs in — and nothing else decides it: clipping the same
+ * outline mirrored picks the same ears in the same order and writes the same
+ * triples. ⚠️ A y flip does NOT turn that winding over. Flipping y changes the
+ * sign of a signed area, but the y-up frame is drawn with y up, so the loop
+ * turns the same way on screen as it does in Spine world: an outline that is
+ * clockwise on screen (positive `signedArea` in y-down pixels) yields
+ * triangles that are clockwise in Spine world. A caller that emits them turns
+ * them with `windCounterClockwiseInSpineWorld` (issue #1236: this paragraph
+ * said the opposite, and `contour` emitted clockwise for that reason).
  *
  * ## What it refuses, and why by name
  *
@@ -1592,7 +1632,7 @@ export function buildContourMesh(input: ContourSpecInput): MeshGeometry {
         'has a neck too thin to mesh',
     );
   }
-  const triangles = earClip(points);
+  const triangles = windCounterClockwiseInSpineWorld(points, earClip(points));
 
   // The bound on the grid the fit is measured on: its last term is one cell of
   // that grid, which is why it is derived from the texel figures rather than
@@ -1905,7 +1945,7 @@ export function meshEdges(vertexCount: number, triangles: readonly number[], hul
 //      bottom-left), each cell two triangles with the diagonal alternating by
 //      `(i + j) % 2`, so the lattice has no preferred shear. Emitted
 //      counter-clockwise in Spine world, the winding every generator here
-//      writes (GR02 holds the grid to it).
+//      writes (GR02 holds the grid to it, CT15 every generator).
 //   4. **Outline first.** The boundary is walked from the edges used by exactly
 //      one triangle, in first-seen order, and every interior vertex follows in
 //      index order — the arrangement `checkHullOrder` requires.

@@ -869,7 +869,10 @@ const MESHCOMPARE_MOVED = 2;
  * package — and compares the flag mesh of the build this smoke just wrote:
  *
  * - the reference against ITSELF under another id, which has to read 0 at
- *   every frame (MQ00's motion half, from the install);
+ *   every frame (MQ00's motion half, from the install) and be `accepted` —
+ *   the flag mesh is `contour`-generated, and until issue #1236 no comparison
+ *   over such a build could be, because the generator wound its triangles
+ *   clockwise in Spine world;
  * - the reference against the same document with one hull vertex moved
  *   `MESHCOMPARE_MOVED` units — the same rig with its mesh changed, which is
  *   inside the comparison's allowlist — which has to read that distance at
@@ -977,7 +980,11 @@ if (mc !== null && plate !== null && typeof mc.compareMeshesInMotion === 'functi
       const row = local(c);
       if (frames === 0 || values.length !== frames || values.some((p) => p.value !== 0)) said('the reference against itself reads ' + JSON.stringify(values.map((p) => p.value)) + ' over ' + frames + ' frame(s), and 0 at every frame was required');
       if (!row || !row.sampling || row.sampling.count !== art + att.hull || !row.art || row.art.samples !== art) said('the local-deformation row samples ' + JSON.stringify(row && row.sampling) + ' with ' + JSON.stringify(row && row.art && row.art.samples) + ' art sample(s); the plate has ' + art + ' opaque pixel(s) and the mesh ' + att.hull + ' hull UV(s), and that domain was required');
-      summary = { frames, samples: art + att.hull, selfMs: self.ms };
+      // #1236: the flag mesh is contour-generated, and a comparison over such a build was never accepted — the generator
+      // emitted clockwise in Spine world and MQ_ORIENTATION read every triangle as flipped. Against itself it is accepted.
+      const orientation = c.geometry ? c.geometry.rows.find((g) => g.code === 'MQ_ORIENTATION') : undefined;
+      if (c.accepted !== true) said('the reference against itself is not accepted (geometry ' + (c.geometry ? c.geometry.verdict : 'absent') + ', motion ' + (c.motion ? c.motion.verdict : 'absent') + ', MQ_ORIENTATION ' + JSON.stringify(orientation && { state: orientation.state, value: orientation.value, at: orientation.worst && orientation.worst.at }) + '), and accepted === true was required');
+      summary = { frames, samples: art + att.hull, selfMs: self.ms, accepted: c.accepted };
     }
     if (plant !== null) {
       const c = plant.report.candidates[0];
@@ -1003,7 +1010,7 @@ if (mc !== null && plate !== null && typeof mc.compareMeshesInMotion === 'functi
 }
 for (const line of bad) console.log('MESHCOMPARE_BAD ' + line);
 if (bad.length === 0 && summary !== null && summary.moved !== undefined) {
-  console.log('MESHCOMPARE_COUNTS ' + summary.frames + ' frames x ' + summary.samples + ' samples through the core poser at ' + version + '; itself 0 at every frame, hull vertex 0 moved ' + plan.moved + ' reads ' + summary.moved.value + ' at every frame; a duplicate id refused as the MeshReductionError of spine-rigc/mesh; one comparison of one candidate took ' + summary.selfMs.toFixed(1) + ' ms (itself) and ' + summary.moved.ms.toFixed(1) + ' ms (moved) of wall time, both builds posed and both art fits measured');
+  console.log('MESHCOMPARE_COUNTS ' + summary.frames + ' frames x ' + summary.samples + ' samples through the core poser at ' + version + '; itself 0 at every frame and accepted ' + summary.accepted + ', hull vertex 0 moved ' + plan.moved + ' reads ' + summary.moved.value + ' at every frame; a duplicate id refused as the MeshReductionError of spine-rigc/mesh; one comparison of one candidate took ' + summary.selfMs.toFixed(1) + ' ms (itself) and ' + summary.moved.ms.toFixed(1) + ' ms (moved) of wall time, both builds posed and both art fits measured');
 }
 process.exit(bad.length === 0 && summary !== null ? 0 : 1);
 `;

@@ -167,7 +167,7 @@ policy from a name.
 | --- | --- |
 | Positions are **part-local pixels, y down, origin top-left** | `MeshGeometry.points`, `src/mesh.ts`; the crop contract, CLAUDE.md *Conventions* |
 | UVs are normalised over the part window, `v` from the top edge; a generator writes `x / w`, `y / h` on the 6-decimal grid | `MeshGeometry.uvs` and every builder's `uvs.push(r6(x / w), r6(y / h))`, `src/mesh.ts` |
-| Triangles are **counter-clockwise in Spine world** (y up) | `MeshGeometry.triangles`, `src/mesh.ts`; `buildSegmentsLattice` swaps each y-down triangle's last two corners to keep it ("Emitted counter-clockwise in Spine world") |
+| Triangles are **counter-clockwise in Spine world** (y up) — every generator since #1236; `contour` and `ring` emitted clockwise before (measured: *Stage C2*, the closed paragraph) | `MeshGeometry.triangles`, `src/mesh.ts`; `buildSegmentsLattice` swaps each y-down triangle's last two corners to keep it ("Emitted counter-clockwise in Spine world"), and `windCounterClockwiseInSpineWorld` does the same for the triples `buildContourMesh` (an `earClip` of the outline) and `buildRingMesh` (strips along the hull) build along a polygon that runs clockwise on screen; held on spine-core's posed world by `CT15` (`contour-mesh`) |
 | Spine world is y up, origin bottom-left of the crop; the whole conversion is `src/transform.ts` | `cropToSpineY`, `toBoneLocal`, `toWorld` |
 | A page that states `scale:` is traced on its texels; the author's distances are applied as `value × pageScale` texels, never a measured ratio | `ContourSpecInput.pageScale`, `src/mesh.ts` (issue #779); overshoot reported back in the drawing's pixels by dividing by the stated scale, `drawingOvershoot`, `src/compile.ts` |
 | Alpha threshold: art is `alpha >= threshold`, a whole number in 1..255; generator default 1 | `buildContourMesh`, `src/mesh.ts`; `CONTOUR_DEFAULTS` and `SEGMENTS_DEFAULTS`, `src/compile.ts` |
@@ -869,7 +869,8 @@ export interface MotionSchedule {
   (`buildSegmentsLattice` does, its step "**One loop.**"), and it cannot cut
   either out.
 - **Orientation and degeneracy**: generators emit counter-clockwise in Spine
-  world (`MeshGeometry.triangles`, `src/mesh.ts`); `traceOutline` refuses a
+  world (`MeshGeometry.triangles`, `src/mesh.ts` — every one since #1236, held
+  by `CT15`); `traceOutline` refuses a
   triangle that "repeats a vertex, so it has no area"; the A39 band (`DEFORM_AREA_EPSILON`,
   `float32AreaNoise`) decides when a sign is not read.
 - **Texture stretch**: the singular values of `J = D·P⁻¹` per triangle
@@ -1603,16 +1604,59 @@ What C2 rejected, and the reason:
   contour-generated flag mesh reads `MQ_ORIENTATION` 24 of its 24 triangles
   under C1's setup art fit, so every reference built by the `contour`
   generator would be refused. Winding is (b)'s, not (a)'s, so the refusal reads
-  (a)'s three rows only. ⚠️ **Open, and not C2's to change:** the reading
-  itself. The art fit passes a build's triangles to `measureMeshQuality` as
-  `SourceMesh.triangles`, which that type defines as counter-clockwise in Spine
-  world; the strip meshes of the `mesh-compare` suite are wound that way by the
-  test, and the generated contour mesh is wound the other way (all 24 UV
-  triangles positive in the y-down frame). So a comparison over a
-  contour-generated build reports `MQ_ORIENTATION` failing for the reference
-  and every candidate of the same generator, and none of them is `accepted`,
-  whatever its motion reads. Whether that is the generator's winding or the
-  art fit's convention is a C1 row semantic, and it is left as found.
+  (a)'s three rows only. C2 recorded the reading itself as open: a
+  comparison over a contour-generated build reported `MQ_ORIENTATION` failing
+  for the reference and every candidate (the smoke's flag mesh, 24 of 24), so
+  none was `accepted`. ✅ **Closed by #1236 — the generator was wrong, not the
+  reading.** `geometryOf` in `compareMeshesInMotion` (`src/meshcompare.ts`)
+  hands `measureMeshQuality` the model document's triangles over the
+  document's UVs times the art frame — part-local drawing pixels, y down, as
+  `SourceMesh.points` defines them — and `measureMeshQuality` converts every
+  point through `cropToSpineY` before it reads a sign, so it reads in Spine
+  world, the frame B1's `MQ05` fixture (`mqMesh`) winds in. Measured on one
+  public build per generator, the signed area of every triangle in spine-core's
+  setup-pose world (y up) against the same triangles as `MQ_ORIENTATION` reads
+  them — skeleton and model triangles identical in every mesh, and the two
+  signs equal on every triangle:
+
+  | build | generator | mesh | triangles | Spine world, before #1236 | `geometryOf` points (y down) | `MQ_ORIENTATION` reads (via `cropToSpineY`) |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | `gallery/flex` | `contour` | `flag_a`, `flag_b`, `flag_c`, `leaf` | 50, 46, 79, 75 | all clockwise | all positive | all clockwise |
+  | `fixtures/public.ts` `articulated_probe` | `ring` | `mass_pad`, `collar` | 40, 40 | all clockwise | all positive | all clockwise |
+  | `fixtures/public.ts` `articulated_probe` | `ribbon` | `trail` | 14 | all counter-clockwise | all negative | all counter-clockwise |
+  | `gallery/look` | `grid` | `head`, `hair_lock_l`, `hair_lock_r`, `ahoge` | 320, 48, 48, 48 | all counter-clockwise | all negative | all counter-clockwise |
+  | `fixtures/public.ts` `segments_probe` | `segments` | `cloth` | 100 | all counter-clockwise | all negative | all counter-clockwise |
+  | `gallery/squash` | authored | `ball` | 8 | all counter-clockwise | all negative | all counter-clockwise |
+
+  No triangle was degenerate and no mesh mixed signs. The cause was a
+  derivation, in two comments (the `earClip` doc and the ring builder): that a
+  y flip turns a clockwise-on-screen polygon counter-clockwise in Spine world.
+  It changes the sign of the signed area, not the direction the loop turns as
+  drawn, because the y-up frame is drawn with y up — so an outline clockwise
+  on screen (positive `signedArea` in y-down pixels) ear-clips to triangles
+  clockwise in Spine world. `windCounterClockwiseInSpineWorld` (`src/mesh.ts`)
+  now swaps each triple's last two corners when the polygon's y-down area is
+  positive: the triangle set, the hull walk (`traceOutline`, which starts at
+  the lowest vertex towards its smaller neighbour), `checkHullOrder` (either
+  direction is the same polygon) and `meshEdges` (unordered edge keys,
+  interior edges sorted) are unchanged, and only the order of two indices
+  inside each `contour` and `ring` triangle moves. Clipping the mirrored
+  outline instead was rejected: the ear tests mirror with it, so it picks the
+  same ears and writes the same triples. Reading the sign flipped in
+  `geometryOf` was rejected on the table — it would fail every `grid`,
+  `segments`, `ribbon` and authored build instead. Measured after: every row
+  above counter-clockwise; of the gallery's base only `gallery/flex`'s
+  `skeleton.json` moved (`tools/emit_hashes.base.json`), and
+  `tools/render_hashes.ts base --check` is CURRENT — no pixel moved, because
+  nothing culls. `vertices` deform keys index vertices, not triangles, so no
+  animation data changes. Held by `CT15` (`contour-mesh`: every generator's
+  triangles counter-clockwise on spine-core's posed world, the plant the
+  emitted skeleton with the swap removed, named by generator and triangle),
+  `MQ64` (`mesh-compare`: a contour-generated build compared with itself is
+  `accepted` with `MQ_ORIENTATION` 0 for both, and its triangles read with the
+  sign flipped fail `MQ_ORIENTATION` naming the triangle), and the install
+  smoke's `MQ45` step, which now requires the flag mesh's self comparison
+  `accepted`.
 - An unknown page appended to `pages` for `MQ63`'s allowlisted difference —
   `readModel` refuses a page with fields it does not know before the
   comparison runs; the control doubles each page and moves its regions instead.
@@ -1668,6 +1712,10 @@ contract's motion controls — under new codes, because their numbers are
 | `MQ31` | `MQ62_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT` | `mesh-compare` |
 | `MQ38` | `MQ63_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED` | `mesh-compare` |
 | `MQ45` | `SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`, a step of every case | the install smoke (`bun run smoke`) |
+
+Beyond the contract's list, #1236 added
+`MQ64_A_COMPARISON_OVER_A_CONTOUR_GENERATED_BUILD_IS_ACCEPTED_AND_THE_SIGN_FLIPPED_ON_READ_FAILS_ORIENTATION_NAMING_THE_TRIANGLE`
+(`mesh-compare`) — *Stage C2*, the closed paragraph.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
