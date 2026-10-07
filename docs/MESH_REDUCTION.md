@@ -11,9 +11,15 @@
 
 Stage A of [#1221](https://github.com/firejune/rigc/issues/1221), the upstream
 half of [spine-parts#126](https://github.com/firejune/spine-parts/issues/126).
-**Nothing in this page is implemented.** It is the contract both repositories
-agree on *before* any of stages B–D is written, and it exists so that a reader
-who was not in the conversation that produced it can tell four things apart:
+It is the contract both repositories agree on *before* any of stages B–D is
+written. **Stage B1 ([#1224](https://github.com/firejune/rigc/issues/1224))
+implements the geometry measurement** — `measureMeshQuality` and the
+`mesh-quality-report/1` document, in `src/meshquality.ts`, re-exported through
+`spine-rigc/mesh` — and every clause the tree now does is marked
+**[implemented, #1224]** and says what the tree does, cited by path and symbol.
+Nothing else here is implemented: the reduction (stage B2) and the motion
+comparison (stage C) keep their marks. The page exists so that a reader who was
+not in the conversation that produced it can tell five things apart:
 
 - **Existing** — what the tree already provides, cited by file path and
   symbol name (or a short quoted phrase where there is no symbol), never by
@@ -31,6 +37,11 @@ who was not in the conversation that produced it can tell four things apart:
 - **Correction N** — one of the five corrections parts listed, applied to the
   interface or definition it names, each with a positive control and a planted
   failure in *Stage A controls*.
+- **[implemented, #1224]** — what the tree does since stage B1, held by the
+  `mesh-quality` suite's `MQ` controls in `selftest.ts`. Where the
+  implementation had to decide something the contract left open, or had to add
+  a field, the clause says so beside the mark rather than leaving the proposal
+  text to imply it.
 
 Ownership, as #1221 states it and as this page keeps it: **rigc** owns generic
 geometry operations, measurable residuals and deterministic diagnostics;
@@ -46,16 +57,16 @@ policy from a name.
 | Alpha mask and threshold | `AlphaMask`, `artOf` (internal) in `src/mesh.ts`: art is alpha `>=` threshold; the threshold is a whole number in 1..255 ("the alpha threshold must be a whole number in 1..255", in both `buildContourMesh` and `buildSegmentsLattice`) | per-attachment art inputs, thresholds never exchanged (§1) |
 | Silhouette trace, holes, islands, pinch | `traceAlphaOutline` in `src/mesh.ts`: largest 4-connected island, holes filled by an 8-connected background flood (`fillEnclosed(inside, w, h, 8)`), diagonal pinch refused on the filled silhouette ("the alpha silhouette pinches to a single point"); `fillEnclosed` is internal | none — reused |
 | Outline simplification and offset | in `src/mesh.ts`: `simplifyClosedPolygon` (Douglas-Peucker), `offsetPolygon` (miter clamp `CONTOUR_MITER_LIMIT = 4`), `prunePolygon`, `findSelfIntersection`, `earClip` | constrained reduction with interior vertices (§1, §5, §6) |
-| Coverage and overshoot | in `src/mesh.ts`: `measureContourFit` (bounded search), `measureAuthoredMeshFit` (exact distance transform, internal `squaredDistanceToSet`), `MeshFitReport`, `CONTOUR_MIN_COVERAGE = 0.995`, `contourOvershootBound` | undercut (inward) distance, worst-sample location, raster sensitivity in each row's unit (§4) |
+| Coverage and overshoot | in `src/mesh.ts`: `measureContourFit` (bounded search), `measureAuthoredMeshFit` (exact distance transform, internal `squaredDistanceToSet`), `MeshFitReport`, `CONTOUR_MIN_COVERAGE = 0.995`, `contourOvershootBound` | undercut (inward) distance, worst-sample location, raster sensitivity in each row's unit (§4) — [implemented, #1224] `measureMeshQuality`, `src/meshquality.ts` |
 | Outline/hull/edges of a triangulation | `traceOutline`, `checkHullOrder`, `meshEdges` in `src/mesh.ts`; applied to every authored and generated mesh (`authoredHullAndEdges`, `generatedHullAndEdges`, `src/compile.ts`) | none — every reduced mesh passes through them |
 | Generators | `ring`, `ribbon`, `grid`, `contour`, `segments` (`MeshKind`, `src/mesh.ts`); `buildSegmentsLattice`, `segmentShares` | an explicit reduction operation, never a new `generator` default (§1) |
 | Weights | `bindWeightedVertices` in `src/mesh.ts` (bindings by bone name); `ModelBinding` (`src/model.ts`); A20 coherence (`src/assertions/bodies/a20.ts`) | explicit influence limits on every weighted call (§6) |
-| Triangle sign, collapse, stretch | in `src/deformsurvey.ts`: `triangleAreas`, `DEFORM_AREA_EPSILON = 1e-6`, `float32AreaNoise`, `stretchSingularValues` | reused for orientation/degeneracy (§4) |
+| Triangle sign, collapse, stretch | in `src/deformsurvey.ts`: `triangleAreas`, `DEFORM_AREA_EPSILON = 1e-6`, `float32AreaNoise`, `stretchSingularValues` | reused for orientation/degeneracy (§4) — [implemented, #1224] the first three and the band they make (`areaBand`) moved unchanged to `src/areaband.ts`, which `src/deformsurvey.ts` imports and re-exports, so the geometry entry reads the band without reaching the compiler |
 | Deform measurement over time | deform survey (`surveyDeformKeys`, `src/deformmeasure.ts`; `surveyOfModel`, `src/deformsurvey.ts`), span scan (`scanDeformSpan`, `src/deformsurvey.ts`), A39 | none — a different question (it measures one mesh against itself, never two meshes against each other) |
 | Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) |
 | Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 |
-| Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) |
-| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 |
+| Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) — [implemented, #1224] for `measure`: `writeMeshQualityReport`, `src/meshquality.ts` |
+| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: four values held by the smoke's `AGREED_IN_1224` row |
 
 ## 0. Where the operations live, and what they never change
 
@@ -86,10 +97,13 @@ policy from a name.
 
 **Agreed and proposed.**
 
-- [proposal] Every new operation is an **explicit call**. No `generator`
-  default changes, no existing generator gains an implicit reduction, and
-  `compile` never remeasures or rewrites authored geometry on its own. The
-  emit-hash gates are the proof that an unchanged spec emits unchanged bytes.
+- [implemented, #1224] Every new operation is an **explicit call**. No
+  `generator` default changes, no existing generator gains an implicit
+  reduction, and `compile` never remeasures or rewrites authored geometry on its
+  own. The emit-hash gates are the proof that an unchanged spec emits unchanged
+  bytes, and `EH06` and `MB07` hold the gallery's builds to that base on every
+  run; `MQ26` holds that no module under `src/` but `src/mesh.ts` and
+  `src/meshquality.ts` names the operation, so nothing a build reaches calls it.
 - [agreed, spine-parts#126] **P1 — `spine-rigc/meshcompare` is accepted.**
   Geometry-only operations (`reduceMesh`, `measureMeshQuality`) are exported
   from `spine-rigc/mesh`, which stays geometry-only; the motion comparison
@@ -106,11 +120,16 @@ policy from a name.
   silently approximated. The upstream core-gate parity tests (`core_gate`,
   CLAUDE.md *The doctrine*) stay as they are; they are what makes the core's
   poses admissible.
-- [proposal] Refusals are thrown as `MeshReductionError extends MeshError` with
-  a readonly `code` (the codes are listed in each section below), so a
-  dependant that already catches `MeshError` keeps catching them and one that
-  wants the code can read it. Inside `compile` they are rewrapped as
-  `CompileError` exactly as `MeshError` is today.
+- [implemented, #1224] Refusals are thrown as `MeshReductionError extends
+  MeshError` with a readonly `code` (the codes are listed in each section
+  below), so a dependant that already catches `MeshError` keeps catching them
+  and one that wants the code can read it; the message opens with the code.
+  The class is defined in `src/mesh.ts` beside `MeshError`, not in
+  `src/meshquality.ts`: that module imports `src/mesh.ts`, which re-exports it,
+  and a class extending `MeshError` at the top of the importing module would
+  read `MeshError` before `src/mesh.ts` had run. [proposal] Inside `compile`
+  they are rewrapped as `CompileError` exactly as `MeshError` is today —
+  nothing in `compile` calls them yet.
 
 ## 1. Inputs, coordinate spaces, scaling, threshold, units, tolerances, order
 
@@ -159,7 +178,16 @@ not disturb them).
   explicit research and measurement calls; such a call's report states that
   threshold and claims nothing at any other.
 
-**Proposed** (with the decisions folded in).
+**Proposed** (with the decisions folded in). [implemented, #1224] Every type in
+this block is declared in `src/meshquality.ts` with these fields.
+`measureMeshQuality` reads `MeshMeasureInput`: the part of `MeshReductionInput`
+a measurement needs, with three changes the implementation had to make — every
+bound may be `null` and is then reported `undeclared` (`MeasureTargets`, in
+place of `sourceBounds` and `targets`), and three inputs a measurement alone is
+handed: the caller's `id` for the mesh, the `referenceHull` that
+`MQ_BOUNDARY_DEVIATION` is taken against, and the P9 floors `minArtSamples` and
+`regionArtSamples` (one per region, by name). `MeshReductionInput` is declared
+and read by nothing until stage B2.
 
 ```ts
 /** [proposal] The art one attachment is measured against. Correction 1: one per attachment, never shared. */
@@ -249,21 +277,26 @@ export interface ReductionTargets {
   stated in drawing pixels means the same art on any page. The report echoes
   the source frame, page scale and conversion (`ArtInput.frame`); **no scale is
   ever inferred from the packed page's dimensions.**
-- [proposal] **Units.** Every caller distance is converted to texels by
-  `pageScale` with the arithmetic `buildContourMesh` uses (`onGrid`,
-  `src/mesh.ts`), and reported back in the drawing's pixels with the grid it
-  was taken on. A fraction is a fraction; an angle is degrees.
+- [implemented, #1224] **Units.** Every caller distance is in the drawing's
+  pixels; a measurement carries a point to the mask's grid as `px × pageScale`
+  and reports a raster distance back as `texels / pageScale`, with the grid it
+  was taken on in the row (`RasterSensitivity.grid`). A pixel a row names is a
+  cell of the mask's grid. A fraction is a fraction; an angle is degrees.
+  [proposal] A reduction converts its distances with the arithmetic
+  `buildContourMesh` uses (`onGrid`, `src/mesh.ts`).
 - [agreed, spine-parts#126] **P5 — presets are parts's.** A preset is
   explicitly selected, versioned and expanded into numbers before the call;
   the report echoes its name, version and every expanded number. rigc
   publishes no preset table and derives no tolerance from an image. Existing
   explicit modes remain byte-identical. A missing number is a
   `MeshReductionError` naming the field (`REDUCE_INPUT_MISSING`).
-- [proposal] **Fixed tolerances are the tree's own.** Predicates use the
-  epsilons in the table above; zero-area is the A39 band —
-  `max(DEFORM_AREA_EPSILON × largest |area| in the mesh, float32AreaNoise)` —
-  so a triangle the reduction calls degenerate is one the gate would also
-  read no sign off. Output positions and UVs are on the `r6` grid, then
+- **Fixed tolerances are the tree's own.** [implemented, #1224] Predicates
+  use the epsilons in the table above; zero-area is the A39 band —
+  `max(DEFORM_AREA_EPSILON × largest |area| in the mesh, float32AreaNoise)`,
+  `areaBand` in `src/areaband.ts`, read over the mesh's Spine-world
+  coordinates — so a triangle the measurement calls degenerate is one the gate
+  would also read no sign off. A reported px value is on the `r6` grid.
+  [proposal] Output positions and UVs of a reduction are on the `r6` grid, then
   `f32` at emission, as every generator's are.
 - [proposal] **Canonical output order** (byte-deterministic, A18):
   1. Hull vertices in outline walk order, starting at the surviving hull
@@ -283,6 +316,20 @@ export interface ReductionTargets {
   `REDUCE_UV_RANGE` (outside 0..1 by more than A22's `1e-6`,
   `src/assertions/bodies/a22.ts`), `REDUCE_SOURCE_NOT_ONE_LOOP` (whatever
   `traceOutline` refuses), `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`.
+  [implemented, #1224] `measureMeshQuality` throws the first four. Three
+  readings the implementation chose: `REDUCE_MASK_SIZE` compares the mask with
+  the frame's `width × pageScale` by `height × pageScale` on the `r6` grid, so a
+  product that is not a whole number of texels is refused rather than rounded;
+  `REDUCE_INPUT_MISSING` also names a field that is present and out of range
+  (a coverage outside 0..1, a negative distance, a floor under 1) and a region
+  name given twice, since no other code fits and the message says which; and
+  `REDUCE_SOURCE_NOT_ONE_LOOP` — which also covers a stated `hull` the outline
+  contradicts and an outline `checkHullOrder` refuses — is **reported**, not
+  thrown, by a measurement: correction 3 requires a report whose
+  `sourceCounts` is null, so the report carries an `unsupported-topology`
+  termination with the code and `traceOutline`'s words. A measurement never
+  throws `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`; it reports the source's fit as
+  rows (`MQ19`). [proposal] A reduction throws or terminates on all six.
 - **Correction 3 — source admissibility is not target density.**
   `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS` (renamed from revision 1's
   `REDUCE_SOURCE_FAILS_ITS_OWN_CONSTRAINTS`) fires **only** on
@@ -314,6 +361,21 @@ export interface ReductionTargets {
 `mesh-quality-report/1`, written by both the geometry-only and the motion
 operation. The two kinds of evidence are **two sections with two summaries**;
 no figure anywhere adds them.
+
+[implemented, #1224] for `operation: 'measure'`: every type below is declared
+in `src/meshquality.ts`, `measureMeshQuality` fills one `CandidateReport` with
+the caller's `id` in `candidates`, `reference` null, `poser` null,
+`motionRequired` false and `motion` null, and `writeMeshQualityReport` writes
+the text. Four additions the implementation needed, each additive: (1)
+`EffectiveSettings.attachments[].regions`, each region's `{ name,
+minArtSamples }` — P9 makes the floor an input and correction 1 echoes every
+input, and `EffectiveSettings` had no place for it (§3's input carries it the
+same way); (2) `EffectiveSettings.referenceHull`, the polygon the boundary row
+was taken against; (3) `EffectiveSettings.targets` is `ReductionTargets |
+MeasureTargets | null`, since a measurement's bounds may be undeclared; (4)
+`ScheduleUsed`, which the interface names and does not define, is
+`MotionSchedule` until stage C defines it. A `measure` echoes its `finalThreshold`
+as the threshold it was taken at: such a call claims nothing at any other.
 
 ```ts
 /** [proposal] */
@@ -440,7 +502,7 @@ export interface MeshCounts {
 }
 ```
 
-- [proposal] **The five states, defined.** `pass`/`fail`: measured against a
+- [implemented, #1224] **The five states, defined.** `pass`/`fail`: measured against a
   declared bound. `undeclared`: measured, and the caller declared no bound —
   the value and its worst sample are reported, and the row is **not** in the
   pass count. `refused`: the input to *this* measurement is invalid (a region
@@ -448,9 +510,18 @@ export interface MeshCounts {
   the input is valid and the measurement cannot be taken — no motion supplied,
   the slot draws nothing at every scheduled frame, fewer art samples than the
   declared minimum (P9), or the poser does not support the row (P2).
-- [proposal] **Bounds are inclusive**, and a value exactly at its bound
-  passes and carries `nearBound: 'at-bound'` (correction 2: boundary equality
-  is handled explicitly, not left to a float comparison's mood).
+  [implemented, #1224] A row is **required** when the caller declared its
+  bound; `MQ_ORIENTATION` and `MQ_DEGENERATE` are required with a bound of 0
+  taken from the input's own definition (`SourceMesh.triangles` is
+  counter-clockwise in Spine world, and a triangle inside the A39 band has no
+  sign to show it), never from a guess. A row that cannot be measured is
+  required exactly when its bound was declared, so a reader can tell from
+  `effective` which unmeasured rows block acceptance. A row whose value has
+  nothing worse than ideal to point at — coverage of every art pixel, no
+  overshoot — carries `worst: { at: {} }`.
+- [implemented, #1224] **Bounds are inclusive**, and a value exactly at its
+  bound passes and carries `nearBound: 'at-bound'` (correction 2: boundary
+  equality is handled explicitly, not left to a float comparison's mood).
 - [agreed, spine-parts#126] **P6 — `accepted` stays, defined narrowly as
   declared-contract acceptance.** A candidate is `accepted` when its geometry
   section's verdict is `pass`, every required measurement is available (no
@@ -468,10 +539,15 @@ export interface MeshCounts {
   sample names its frame by `FrameRef.id`, which carries the phase and a
   stable time — not a bare index — so a result is reproducible and can be
   located in selection or evaluation data.
-- [proposal] Rows are ordered by section, then attachment in skeleton order,
-  then code, then region; candidates in the order the caller listed them; the
-  document is two-space JSON with a final newline and byte-identical for one
-  input, as `build-report/1` is.
+- [implemented, #1224] Rows are ordered by section, then attachment in
+  skeleton order, then code, then region; candidates in the order the caller
+  listed them; the document is two-space JSON with a final newline and
+  byte-identical for one input, as `build-report/1` is. As implemented: codes
+  compare as strings, the attachment's own row (region null) before a
+  region's, and where two fills are both exposed (P12) the gated 8-connected
+  row before the labelled 4-connected one; every object is rebuilt in the key
+  order its type states, so the bytes do not depend on the order an input was
+  built in (`MQ25`).
 
 ## 3. Comparing different triangulations on a common domain
 
@@ -671,6 +747,30 @@ export interface MotionSchedule {
 **Proposed.** [proposal] every definition below, except where a row is marked
 agreed.
 
+[implemented, #1224] Every geometry row — every row of the table except
+`MQ_LOCAL_DEFORMATION`, `MQ_STRETCH` / `MQ_SQUASH` and `MQ_INVERSION`, which
+are stage C's — is measured by `measureMeshQuality` (`src/meshquality.ts`) as
+defined here, with these readings of what the table leaves open:
+
+- `MQ_UNDERCUT` is `not-measurable` when the triangles cover no pixel centre,
+  since no art pixel then has a distance to a covered one. Its worst pixel is
+  `MQ_COVERAGE`'s worst too.
+- `MQ_BOUNDARY_DEVIATION` is taken against `MeshMeasureInput.referenceHull`
+  and is `not-measurable` without one; `MQ_TRACE_DEVIATION` against the
+  outline `traceAlphaOutline` traces, which is the **largest** island's. Both
+  are exact on the polygons by a branch and bound along each edge, to `1e-9`
+  px before the `r6` grid, and name the candidate hull edge the worst value
+  belongs to.
+- `MQ_HOLES` counts the pixels the triangles cover that the filled silhouette
+  holds and the art does not — the transparent pixels a mesh spans.
+- `MQ_ISLANDS` counts the 4-connected art islands (the tracer's,
+  `labelIslands`) the triangles cover a pixel of, and names the first pixel of
+  the second; the bridge area is not a separate figure — it is the covered
+  pixels outside the silhouette, which is `MQ_OVERSHOOT`'s domain.
+- `MQ_HOLES`, `MQ_ISLANDS`, `MQ_TRACE_DEVIATION` and `MQ_FILL_DISTANCE` take no
+  bound, so they are always `undeclared` when measured; `MQ_MIN_ANGLE` is
+  gated only when `minAngle` is declared.
+
 | Code | Definition | Unit | Raster? |
 | --- | --- | --- | --- |
 | `MQ_COVERAGE` | `measureAuthoredMeshFit`'s coverage, unchanged | fraction | yes |
@@ -690,14 +790,20 @@ agreed.
 | `MQ_INVERSION` | triangles whose sign changes setup to posed frame, A39's rule; slots in `invariants.deformMayFold` (`src/rig.ts`) not counted and **listed** (§3) | count | no |
 | `MQ_TRANSITION` | §5's edge bound across a region's transition band | px | no |
 
-- [agreed, spine-parts#126] **P12 — the new measurements use the tracer's
+- [agreed, spine-parts#126; implemented, #1224] **P12 — the new measurements use the tracer's
   8-connected background flood**, filled over **all** art (several islands, as
   the authored-mesh fit does). `measureAuthoredMeshFit` keeps its 4-connected
   behaviour unchanged for every existing caller, and no old report is
   reinterpreted. Every new raster row records its connectivity and threshold
   (`MeasureRow.art`); where the 4-connected measurement would differ (a
   diagonal pinch), **both** labelled results are exposed rather than
-  harmonised, and a diagonal-pinch refusal keeps its own reason.
+  harmonised, and a diagonal-pinch refusal keeps its own reason. As
+  implemented: `MQ_OVERSHOOT` and `MQ_HOLES` are taken against the
+  8-connected fill and, only when the 4-connected fill holds a different set
+  of pixels, again against that one as an `undeclared` row with
+  `art.connectivity: 4` — the reading `measureAuthoredMeshFit` gives (`MQ04`);
+  `MQ_COVERAGE` and `MQ_UNDERCUT` use no fill and record `connectivity: null`,
+  `MQ_ISLANDS` records the 4 of its island labelling.
 - [proposal] **Holes are spanned and reported; islands are bridged or
   refused.** A reduction keeps the source's single loop. Art islands the
   source does not reach stay uncovered and fail `MQ_COVERAGE`; they are never
@@ -705,7 +811,7 @@ agreed.
 - **Correction 2 — raster sensitivity in the row's unit.** Revision 1 flagged
   a row when `|value − bound| < 1 / pageScale`, which is a distance in drawing
   pixels and means nothing for a coverage fraction or a pixel count.
-  [proposal] Each raster row now carries `RasterSensitivity` (§2): the
+  [implemented, #1224] Each raster row now carries `RasterSensitivity` (§2): the
   **spatial quantum** of the grid (`1 / pageScale` drawing pixels) and,
   separately, the **value increment** in the row's own unit — `spatialQuantum`
   for px rows, `1 / artSampleCount` for fraction rows, `1` for count rows.
@@ -719,12 +825,16 @@ agreed.
   mandatory for Stage B. The flag is not a resolution-invariance proof and
   does not close parts#123; optional finer-grid or phase diagnostics may
   follow later with their own declared sampling and mask-resampling policy.
-- **Correction 2 — sampled rows.** [proposal] `MQ_LOCAL_DEFORMATION` and
+- **Correction 2 — sampled rows.** [implemented, #1224, for `MQ_FILL_DISTANCE`;
+  proposal for `MQ_LOCAL_DEFORMATION`] `MQ_LOCAL_DEFORMATION` and
   `MQ_FILL_DISTANCE` compute each carried or measured point geometrically but
   take their maximum over a finite sample set, so each records
   `sampling: { domain, count }` (for local deformation the domain is the art
   pixel centres plus the reference hull UVs, §3), and neither implies a
-  maximum over the continuous domain.
+  maximum over the continuous domain. `MQ_FILL_DISTANCE`'s domain is the art
+  pixel centres inside both the region and the hull polygon, each to its
+  nearest mesh vertex, and its `art.samples` is that count, held to the
+  region's floor.
 - [proposal] **Transition in time** is phase: a motion row is measured at
   every phase in `schedule.phases`, its value is the worst over them, and a
   row whose verdict differs between phases says so.
@@ -816,6 +926,22 @@ export interface RefinementRegion {
   `REGION_GRADE_NEGATIVE`, `REGION_NOT_FINITE`. A satisfiable bound that
   exhausts the budget is not a refusal; it is the `budget-exhausted`
   termination.
+  [implemented, #1224] In a measurement each of the six makes that region's
+  rows `refused` — §2 defines `refused` with exactly these examples — with the
+  reason opening on the code, and the region adds no bound to any other
+  region's edges. `REGION_OUTSIDE_ART` fires when the polygon meets no mesh
+  edge and no vertex of it lies in the hull polygon: the name says art and the
+  definition says the hull, and the definition is what is implemented.
+- [implemented, #1224] **`L(R)` and its band, as rows.** `MQ_MAX_EDGE` holds
+  every edge that meets the closed polygon, `MQ_TRANSITION` every edge that
+  does not and lies within `transition` of it (a region with `transition: 0`
+  has no band and no transition row). Each edge's bound is the smallest that
+  applies to it anywhere: `L0` of every region it meets, and `L0 + grade·d` of
+  every band it lies in, `d` its distance from that region — the nearest point,
+  which is where the graded bound is smallest. A row's value is the edge whose
+  length most exceeds its own bound, with that edge and that bound, so the row
+  fails exactly when an edge it holds is over. A region no edge meets — one
+  inside a single triangle — is `not-measurable`, never a pass over no edge.
 
 ## 6. UVs, weights, protected features and vertex-indexed deform data
 
@@ -887,7 +1013,7 @@ export interface RefinementRegion {
   tracks the weight discontinuity as its #115.
 
 ```ts
-/** [proposal] with P19/P20 folded in. */
+/** [proposal] with P19/P20 folded in. [implemented, #1224] declared in `src/meshquality.ts` and echoed in `effective`; nothing reads them until stage B2. */
 export interface ProtectedFeatures {
   /** P20: keep every source hull vertex. Required — no default inside the operation; parts's policy default is false. */
   hull: boolean;
@@ -946,9 +1072,24 @@ export interface InfluenceLimits {
 tree's `CODE_SENTENCE` convention, every one with a positive control and every
 row of §4 with a planted failure. Fixtures are generated (`fixtures/public.ts`
 convention): checkerboard plates, no literal measured numbers. **The box stays
-open:** every name below is a control to be built, and none of them exists
-yet — Stage A is not complete until they do, and listing them is not building
-them.
+open:** Stage A is not complete until every control below exists, and listing
+them is not building them.
+
+[implemented, #1224] Built and passing, in the `mesh-quality` suite of
+`selftest.ts`: `MQ00` (its geometry half, renamed for what it measures),
+`MQ01`–`MQ09`, `MQ16`, `MQ19` (its geometry half: a source that fails its own
+coverage bound is reported `fail` and not accepted — the refusal as a
+reference is stage C's), `MQ21` (its geometry half: the attachment's and a
+region's floor), `MQ23`, `MQ25`, `MQ26` (its call half), `MQ27`, `MQ28` (its mask half — a
+duplicate candidate id has no input before stage C), `MQ29`, `MQ30`, `MQ34`
+and `MQ44`. `MQ26` is split: its control holds that no module under `src/`
+but the two that define the operation names it, so an unchanged spec cannot
+reach it; the bytes themselves are held by `EH06` and `MB07`, on every run
+against `tools/emit_hashes.base.json`, and are not re-checked by a second gate
+over the same base. Still to be built: stage B2's `MQ14`, `MQ17`, `MQ18`, `MQ24`,
+`MQ32`, `MQ33`, `MQ40`, `MQ43`; stage C's `MQ10`–`MQ13`, `MQ15`, `MQ20`,
+`MQ22`, `MQ31`, `MQ35`–`MQ39`, `MQ41`, `MQ42`, `MQ45`, and the halves of
+`MQ00`, `MQ19`, `MQ21` and `MQ28` named above.
 
 - `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`
 - `MQ01_A_HULL_VERTEX_MOVED_INWARD_FAILS_COVERAGE_AND_UNDERCUT_NAMING_THE_WORST_PIXEL`
@@ -977,7 +1118,9 @@ them.
 - `MQ24_EACH_TERMINATION_REASON_IS_REACHED_BY_ONE_INPUT`
 - `MQ25_TWO_RUNS_ON_ONE_INPUT_WRITE_BYTE_IDENTICAL_REPORTS`
 - `MQ26_AN_UNCHANGED_SPEC_EMITS_THE_BYTES_IT_EMITTED_BEFORE` (the emit-hash
-  base, read for the reduction's absence)
+  base, read for the reduction's absence) — [implemented, #1224] as
+  `MQ26_NO_MODULE_UNDER_SRC_BUT_MESH_AND_MESHQUALITY_NAMES_THE_OPERATION_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_IT`
+  for the reduction's absence, and `EH06` and `MB07` for the bytes
 
 The five corrections, one positive control and one planted failure each:
 
@@ -1019,7 +1162,10 @@ The decisions that change behaviour rather than an interface:
 
 ## Termination reasons
 
-[proposal] Every `reduce` report carries exactly one:
+[proposal] Every `reduce` report carries exactly one. [implemented, #1224] The
+type is declared in `src/meshquality.ts`; a `measure` report carries one only
+when it could not read the mesh — `unsupported-topology` with
+`REDUCE_SOURCE_NOT_ONE_LOOP` — and `null` otherwise:
 
 ```ts
 export type Termination =

@@ -332,7 +332,9 @@ type SymbolKind = 'function' | 'constant';
  *   beside the entry is measured in both directions, not remembered.
  *
  * ⚠️ The list grows by observation only. A symbol nobody was seen using is not
- * promised, however public it looks.
+ * promised, however public it looks. The one exception is a symbol written
+ * FOR a dependant under a contract it agreed in writing before it could import
+ * it — `AGREED_IN_1224` — whose row says so in place of an observation.
  *
  * 🔸 **One row per entry and observation**, not one row per entry: a row's
  * `observed` is when and where ITS symbols were first seen, so a later
@@ -354,6 +356,13 @@ interface ObservedEntry {
 const OBSERVED_IN_1167 = 'spine-parts 0.8.2, issue #1167';
 /** The same dependant read again — every import of the package anywhere in its tree, `src/` and its dev files alike. */
 const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
+/**
+ * Promised before it could be observed: the mesh-quality operations the
+ * dependant agreed to import through `spine-rigc/mesh` (docs/MESH_REDUCTION.md
+ * P1, spine-parts#126) and that issue #1224 added. RELEASING.md *The import
+ * surface* says why an agreed contract is the one exception to "observed".
+ */
+const AGREED_IN_1224 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1), issue #1224';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -420,6 +429,13 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
     types: ['AlphaMask'],
   },
   { entry: './errors', observed: OBSERVED_IN_1212, needsRuntime: false, values: { CompileError: 'function' }, types: [] },
+  {
+    entry: './mesh',
+    observed: AGREED_IN_1224,
+    needsRuntime: false,
+    values: { measureMeshQuality: 'function', writeMeshQualityReport: 'function', MeshReductionError: 'function', MESH_QUALITY_REPORT_SPEC: 'constant' },
+    types: ['MeshMeasureInput', 'MeshQualityReport', 'MeasureRow', 'EvidenceSection', 'CandidateReport', 'EffectiveSettings', 'MeshCounts', 'Termination'],
+  },
 ];
 
 /**
