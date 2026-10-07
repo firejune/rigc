@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.19.1](https://github.com/firejune/rigc/compare/v2.19.0...v2.19.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **mesh:** a region's density bound exempts only an edge whose contact with the region's active domain is a single point on the band's outer boundary — one predicate shared by measure and refine, the coarse quad converges, seven controls and a plant ([#1229](https://github.com/firejune/rigc/issues/1229)) ([#1231](https://github.com/firejune/rigc/issues/1231)) ([92bf679](https://github.com/firejune/rigc/commit/92bf6792eb35653e9dcd9252c9f5d579f4bb12bb))
+
 ## [2.19.0](https://github.com/firejune/rigc/compare/v2.18.0...v2.19.0) (2026-10-07)
 
 
