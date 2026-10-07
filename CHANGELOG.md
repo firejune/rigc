@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.16.0](https://github.com/firejune/rigc/compare/v2.15.1...v2.16.0) (2026-10-07)
+
+
+### Features
+
+* **package:** name spine-rigc/rig, /mesh and /errors, hold and call every symbol the dependant imports from the install, and read a candidate against that dependant before a release is approved ([#1215](https://github.com/firejune/rigc/issues/1215)) ([72f3280](https://github.com/firejune/rigc/commit/72f3280257d0ac28958c343e210805b85f144f85)), closes [#1212](https://github.com/firejune/rigc/issues/1212)
+
 ## [2.15.1](https://github.com/firejune/rigc/compare/v2.15.0...v2.15.1) (2026-10-07)
 
 
