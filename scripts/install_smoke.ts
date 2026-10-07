@@ -100,7 +100,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
@@ -821,12 +821,22 @@ function run(cmd: string, args: string[], cwd: string, env?: Env): Ran {
   return { status: typeof r.status === 'number' ? r.status : 1, out: `${stdout}${stderr}${failed}` };
 }
 
-/** Where a command lives, or null — used to say "bun is not on PATH" by name rather than as a stack trace. */
+/**
+ * Where a command lives, or null — used to say "bun is not on PATH" by name rather than as a stack trace.
+ *
+ * ⚠️ `command -v` is a POSIX shell builtin, and `shell: true` on Windows is
+ * cmd.exe, which has no `command`: every prerequisite read as absent and the
+ * run stopped at its first line (issue #1214). `where` is cmd's own lookup; it
+ * lists every match, one per line, so the first is the one taken.
+ */
 function onPath(cmd: string): string | null {
-  const r = spawnSync('command', ['-v', cmd], { encoding: 'utf8', shell: true });
-  const found = typeof r.stdout === 'string' ? r.stdout.trim() : '';
+  const r = process.platform === 'win32' ? spawnSync('where', [cmd], { encoding: 'utf8' }) : spawnSync('command', ['-v', cmd], { encoding: 'utf8', shell: true });
+  const found = typeof r.stdout === 'string' ? (r.stdout.trim().split(/\r?\n/)[0] ?? '').trim() : '';
   return found === '' ? null : found;
 }
+
+/** The file name a `bun` on PATH has on this platform. */
+const BUN_BINARY = process.platform === 'win32' ? 'bun.exe' : 'bun';
 
 /** Width, height and colour type out of a PNG's first 26 bytes, or null if those bytes are not a PNG header. */
 function pngHeader(path: string): { width: number; height: number; colourType: number } | null {
@@ -1482,7 +1492,10 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     return { name: spec.name, faults, steps, notes, output };
   }
 
-  const bin = join(home, 'node_modules', '.bin', 'rigc');
+  // On Windows `.bin/rigc` is npm's shell-script shim, which only a POSIX shell
+  // runs; the shim a Windows caller runs is `rigc.cmd` from npm and `rigc.exe`
+  // from bun (issue #1214).
+  const bin = join(home, 'node_modules', '.bin', process.platform !== 'win32' ? 'rigc' : spec.installer === 'npm' ? 'rigc.cmd' : 'rigc.exe');
   if (!existsSync(bin)) {
     fault('install', `SMOKE_INSTALL_EMPTY_DIR: the install wrote no node_modules/.bin/rigc under ${home}, so the package's own \`bin\` entry never reached a shim`);
   }
@@ -1803,7 +1816,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: \`node_modules/.bin/rigc skills install --dir <tmp>\` exited ${skills.status}, so the package's skills/ directory did not reach a host directory. ${skills.out.trim().slice(0, 2000)}`);
   } else if (!existsSync(join(entryLink, 'SKILL.md')) || !lstatSync(entryLink).isSymbolicLink()) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: skills install exited 0 and ${entryLink} is ${existsSync(entryLink) ? 'not a link' : 'not there'}, so rigc/SKILL.md cannot be read through one`);
-  } else if (readlinkSync(entryLink).startsWith('/') || realpathSync(entryLink) !== realpathSync(dirname(shippedEntry))) {
+  } else if (isAbsolute(readlinkSync(entryLink)) || realpathSync(entryLink) !== realpathSync(dirname(shippedEntry))) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: ${entryLink} links to ${readlinkSync(entryLink)}, and a relative link to ${dirname(shippedEntry)} was required`);
   } else if (!readFileSync(join(entryLink, 'SKILL.md')).equals(readFileSync(shippedEntry))) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: rigc/SKILL.md read through ${entryLink} is not the bytes of ${shippedEntry}`);
@@ -1818,12 +1831,23 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   if (bunPath === null) {
     notes.push('SKIP the without-bun control: bun is not on PATH in this run, which is the state it is about');
   } else {
-    const bunDir = dirname(bunPath);
-    const stripped = (process.env.PATH ?? '').split(delimiter).filter((part) => part !== bunDir);
-    if (onPath('node') !== null && dirname(onPath('node') ?? '') === bunDir) {
-      notes.push(`SKIP the without-bun control: node and bun share ${bunDir}, so removing it would remove the shim's own interpreter`);
+    // EVERY directory on PATH that holds a bun, not only the first: with a
+    // version under test put in front of the machine's own — which is how the
+    // declared minimum is measured by hand (issue #1214) — removing the first
+    // leaves the second, the shim finds it, and the control goes red on every
+    // case for a bun that was never absent.
+    // Windows spells the variable `Path`, and a second key spelled `PATH`
+    // beside it leaves which one the child reads to the order of the two.
+    const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const parts = (process.env[pathKey] ?? '').split(delimiter);
+    const bunDirs = [...new Set([dirname(bunPath), ...parts.filter((part) => part !== '' && existsSync(join(part, BUN_BINARY)))])];
+    const bunDir = bunDirs.join(delimiter);
+    const stripped = parts.filter((part) => !bunDirs.includes(part));
+    const nodePath = onPath('node');
+    if (nodePath !== null && bunDirs.includes(dirname(nodePath))) {
+      notes.push(`SKIP the without-bun control: node and bun share ${dirname(nodePath)}, so removing it would remove the shim's own interpreter`);
     } else {
-      const withoutBun = run(bin, ['--version'], home, { ...process.env, PATH: stripped.join(delimiter) });
+      const withoutBun = run(bin, ['--version'], home, { ...process.env, [pathKey]: stripped.join(delimiter) });
       if (withoutBun.status === 0 || !/runs on Bun/.test(withoutBun.out)) {
         fault(
           'shim',

@@ -660,6 +660,17 @@ gate run wearing a disguise.
 serves until a publish makes it one; how the rig *looks* is `rigc check`'s
 question and not this one; and a green run is one platform's answer, the runner's.
 
+🖥️ **Which platforms answer.** The `installs` gate is one Linux runner on the
+Bun the action resolves that day. Beside it, the `installs-matrix` job in
+[`ci.yml`](.github/workflows/ci.yml) runs the same `bun run smoke` on three
+operating systems and the declared minimum Bun: a macOS runner, a Windows
+runner, and Linux on the Bun `engines.bun` states — 1.2.0, on which the whole
+battery, plants included, was measured green on macOS before the job existed
+([#1214](https://github.com/firejune/rigc/issues/1214)). It is not a required
+check. A red macOS or Windows leg names a platform the package does not yet
+install and run on; a red minimum leg means something in the tree now needs a
+newer Bun than `engines` promises, and either that call or the floor moves.
+
 ⚖️ **The registry half is a confirmation, not the gate**, and it is the last step
 of [`release.yml`](.github/workflows/release.yml): after the publish it waits for
 the registry to serve the new version — its packument, and then the tarball

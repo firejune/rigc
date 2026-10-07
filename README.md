@@ -135,7 +135,13 @@ Both are opt-in and both are narrow — no trimming, no rotation, no scaling —
 
 rigc runs on [Bun](https://bun.sh). The package ships its TypeScript sources and
 Bun runs them, so there is no build step and no `dist/` that can drift from the
-repository it was cut from.
+repository it was cut from. What is measured is the install itself — pack,
+install into an empty directory, build, render — on Linux, macOS and Windows
+runners and on Linux at the declared minimum, Bun 1.2.0 (the `installs` and
+`installs-matrix` jobs in
+[`ci.yml`](https://github.com/firejune/rigc/blob/main/.github/workflows/ci.yml),
+repository material, not in the npm package); a platform
+whose leg is red there is not one the package is known to run on.
 
 **The npm package is `spine-rigc`; the command it installs is `rigc`.** npm
 refuses the name `rigc` as too similar to packages that already exist, so the
