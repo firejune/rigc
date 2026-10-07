@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.18.0](https://github.com/firejune/rigc/compare/v2.17.1...v2.18.0) (2026-10-07)
+
+
+### Features
+
+* **mesh:** measureMeshQuality and the mesh-quality-report/1 document on spine-rigc/mesh — the geometry rows of the [#1221](https://github.com/firejune/rigc/issues/1221) contract, five row states, raster sensitivity in the row's unit, and 22 MQ controls (B1 of [#1224](https://github.com/firejune/rigc/issues/1224)) ([#1225](https://github.com/firejune/rigc/issues/1225)) ([d1f7c2e](https://github.com/firejune/rigc/commit/d1f7c2e18783eb071831dbce2594f325b1925d01))
+
 ## [2.17.1](https://github.com/firejune/rigc/compare/v2.17.0...v2.17.1) (2026-10-07)
 
 
