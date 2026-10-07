@@ -102,20 +102,51 @@ the commit that introduces these files, and is not maintained afterwards.
 2. Wait for the `release` run to open or update the `release: vX.Y.Z` pull
    request.
 3. Read the diff — the version and the generated changelog are the whole review.
-4. **Approve the `ci` run.** It is already there and sitting in
+4. **Read the candidate against the dependant.** A tarball of the release
+   pull request's head, installed into a copy of a dependant's checkout, has
+   to type-check under the dependant's own `typecheck` script and build its
+   public example to the same bytes as the same build on the last release
+   ([#1212](https://github.com/firejune/rigc/issues/1212)). Manual for now;
+   from a checkout of the release pull request's head, with the dependant's
+   checkout beside it and its examples fetched (`bun run fetch-examples`
+   there):
+
+   ```sh
+   bun scripts/dependant_check.ts --dependant ../spine-parts -- bun cli.ts build --config examples/sample/config.json --source examples/sample/inputs/painting.png --full examples/sample/inputs/layers/full --head examples/sample/inputs/layers/head --out '{out}'
+   ```
+
+   It writes nothing into the dependant: it packs this tree as the smoke
+   does, copies the checkout twice into a temp directory, installs the
+   candidate into one copy and `spine-rigc@latest` — the last release as the
+   registry serves it, printed as the version installed; not this tree's
+   version, which on a release pull request is the one being cut and not yet
+   served; `--baseline` names another — into the other, runs
+   the dependant's `typecheck` on the candidate, the build command in both
+   (each `{out}` becomes an output directory of that copy's own), and
+   compares every file the two builds wrote by SHA-256. It exits 0 only when
+   the type check passes, both builds exit 0 and every file is identical; 1
+   names each one that is not; 2 is a pack, copy or install that did not
+   complete, which measured nothing. A difference in the bytes is what the
+   notes' negative form (below) then has to name for that dependant — it is
+   red because "identical" is the only reading a release is approved on
+   without reading further. `--patch <file>` applies a change of the
+   dependant's own that has not landed yet to the candidate copy only, which
+   is how #1212 verified the dependant's switch to the named entries before
+   it was theirs to land.
+5. **Approve the `ci` run.** It is already there and sitting in
    `action_required`, so the required `test` check is blocked until you do:
    `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`, or **Approve
    and run** in the Actions tab. Every cut needs this — see below for why, and
    for why the branch name is not worth memorising.
-5. **Merge it.** That is the cut.
-6. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
+6. **Merge it.** That is the cut.
+7. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
    and publishes. Its last step confirms the published package installs and
    builds, waiting up to 15 minutes for the registry to serve it — if that step
    ends saying the confirmation was NOT taken, the registry was still
    processing and nothing is wrong with the cut: re-run the confirmation
    (Actions → release → Run workflow, with the version) rather than re-cutting
    anything. *Whether the tarball runs*, below, has the window and the codes.
-7. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
+8. Confirm: `npm view spine-rigc version`, and the npm page shows the provenance
    attestation linking the tarball to the workflow run.
 
 ### What the release notes say about `build`'s bytes
@@ -359,6 +390,9 @@ adds what the map cannot say:
 | `spine-rigc/render` | [#1167](https://github.com/firejune/rigc/issues/1167) | `@esotericsoftware/spine-core` |
 | `spine-rigc/png` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
 | `spine-rigc/compile` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
+| `spine-rigc/rig` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
+| `spine-rigc/mesh` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
+| `spine-rigc/errors` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
 | `spine-rigc/cli` | [#859](https://github.com/firejune/rigc/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
 | `spine-rigc/package.json` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
 
@@ -374,21 +408,63 @@ today. A rename goes red naming the entry and the symbol — its
 `rename-symbol` plant renames `loadPosable` in the packed
 `src/render.ts`, a symbol no module inside the package imports, so the
 package still runs and only the probe can tell — and a removed entry goes
-red naming the entry (`drop-named-entry`). The list grows by observation: a module or a symbol
+red naming the entry (`drop-named-entry` takes `./render` away, and
+`drop-rig-entry`, `drop-mesh-entry` and `drop-errors-entry` each take one
+of the three #1212 named). The list grows by observation: a module or a symbol
 nobody was seen using is not promised, however public it looks, and one that
-somebody is seen using is added to that table with their name and the issue.
+somebody is seen using is added to that table with their name and the issue
+— a later observation of an entry already listed is a row of its own, so
+each row still says when its symbols were first seen.
+
+What the three #1212 named promise, as observed in spine-parts 0.14.0 — every
+import of the package anywhere in its tree, its `src/` and its dev files
+alike:
+
+| entry | values held | types observed |
+| --- | --- | --- |
+| `spine-rigc/rig` | `parseRigSpec`, `splitRigSkin`, `RIG_SPEC_VERSION`, `RIG_SKIN_CONSTRAINT_KEYS`, `RIG_KEYS` | `RigSpec`, `RigBone`, `RigConstraint`, `RigSkin`, `RigSkinConstraintKey` |
+| `spine-rigc/mesh` | `traceAlphaOutline`, `traceOutline`, `earClip`, `offsetPolygon`, `prunePolygon`, `simplifyClosedPolygon`, `signedArea`, `findSelfIntersection`, `checkHullOrder`, `measureAuthoredMeshFit`, `MeshError` | `AlphaMask` |
+| `spine-rigc/errors` | `CompileError` | — |
+
+and, through `spine-rigc/transform`, `computeExactFrameTransforms`,
+`normaliseDegrees` and `toWorld` beside the three #1167 listed. The table in
+the smoke is the one that is checked; this one is its reading for a person.
+
+📞 **A symbol a dependant calls is held by a call, not only by its kind**
+(#1212). Present and callable is not what a caller relies on, so the smoke
+also calls, from the install, the functions that dependant was seen calling,
+each on the smallest input that tells a working function from a stub and
+against a value that is a fact of the definition or of the smoke's own
+fixture: `parseRigSpec` on the fixture the build accepts and on the same rig
+plus a bone whose parent is not declared, `splitRigSkin` on the fixture's
+short-form skin and on a long-form skin listing each kind
+`RIG_SKIN_CONSTRAINT_KEYS` names, `traceAlphaOutline` on a 4x4 square with
+one clear pixel inside (16 vertices enclosing 16 px, `holePixels` 1),
+`earClip` on a rectangle and on three collinear points (a `MeshError`),
+`measureAuthoredMeshFit` on a mesh over half of an opaque mask, and
+`RIG_SPEC_VERSION` and `RIG_KEYS` against the fixture's own spec. The
+refusal is read **across the package boundary**: it has to be an instance
+of the `CompileError` that `spine-rigc/errors` exports, or a dependant that
+catches it by its class misses it. The `fork-compile-error` plant gives the
+packed `src/rig.ts` a `CompileError` of its own — same name, same message,
+every build still green — and the probe has to go red alone, naming the
+entry and the class.
 
 What is **not** promised, so nobody reads more into an entry than is there:
 
 - **Any other export of an entry's module.** An entry exposes the whole file
   behind it; only the symbols the smoke lists are held. `spine-rigc/compile`
   is the compiler's whole module and promises one function out of it.
-- **Types.** `BoneTransform` (through `spine-rigc/transform`) and
-  `BoneSnapshot`, `Frame` and `Mesh` (through `spine-rigc/render`) were
-  observed and are **not held**: a type does not exist at run time, and
-  checking one against the install needs `tsc`, which neither the package nor
-  the `installs` job has — that job installs no dev dependencies, on purpose.
-  A renamed type surfaces in the dependant's own type check, not here.
+- **Types, by the smoke.** `BoneTransform` (through `spine-rigc/transform`),
+  `BoneSnapshot`, `Frame` and `Mesh` (through `spine-rigc/render`), the five
+  `Rig*` types (through `spine-rigc/rig`) and `AlphaMask` (through
+  `spine-rigc/mesh`) were observed and are **not held by the smoke**: a type
+  does not exist at run time, and checking one against the install needs
+  `tsc`, which neither the package nor the `installs` job has — that job
+  installs no dev dependencies, on purpose. A renamed type surfaces in the
+  dependant's own type check, and since #1212 that check is run against the
+  candidate before a release is approved (*Cutting a release*, step 4) — by
+  hand, for the one dependant it names.
 - **The paths behind the patterns** — below.
 
 `spine-rigc/render` loads `@esotericsoftware/spine-core` when it is imported,
@@ -396,8 +472,8 @@ and since 2.0.0 the package declares the runtime as a devDependency only
 ([#1061](https://github.com/firejune/rigc/issues/1061)), so `npm install
 spine-rigc` does not bring it. A dependant importing that entry installs
 `@esotericsoftware/spine-core` itself, at the version the installed
-`package.json` names under `devDependencies`. The other five importable
-entries load without it. Both halves are measured, not remembered: the smoke
+`package.json` names under `devDependencies`. Every other importable entry
+loads without it. Both halves are measured, not remembered: the smoke
 imports every listed entry once more after taking the runtime away, and holds
 each to the column above — an entry that stops needing the runtime is as red
 as one that starts.
@@ -417,15 +493,20 @@ its notes.
 📦 **For a dependant: import by entry, not by path.** `spine-rigc/plate`, not
 `spine-rigc/tools/plate.ts` — the two load the same module today, but the entry
 is the contract and moves with the file, while the path spelling is the
-courtesy and stops resolving the day the file moves.
+courtesy and stops resolving the day the file moves. Since #1212 every module
+the observed dependant imports has an entry — `rig`, `mesh` and `errors` were
+the last three it reached through `./*.ts` — so it needs the courtesy for
+none of them; its switch was type-checked and built against a candidate of
+that change to the same bytes, and is that dependant's to land.
 
 ⚠️ `"./*": "./*"` alone was tried and rejected: under Bun it resolves a path
 spelled in full and **1 of the 42** shipped modules spelled without its
 extension, where the package with no map resolved all 42. Bun does not try an
 array of targets either, so the fallback is spelled per extension instead.
 `bun run smoke` resolves every shipped path both ways from the install, two
-of its plants take the named entries and the patterns away in turn, and two
-more take one named entry away and rename one listed symbol.
+of its plants take the named entries and the patterns away in turn, four
+more take one named entry away each, one renames a listed symbol, and one
+forks the parser's error class from the one its entry exports.
 
 ### Whether the tarball runs
 
@@ -467,7 +548,8 @@ that has a `package.json` of its own, and runs it in three phases (issue
    entry's promise is the same files with another gate, and this holds it on an
    install where `RC29` holds it in a clone. The import surface is probed
    here: every named entry, and every symbol `OBSERVED_SYMBOLS` lists, read
-   through its entry.
+   through its entry — and the functions the dependant was seen calling,
+   called (*The import surface*).
 3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
    more, every listed entry is imported again and held to whether it needs
    the runtime, and `rigc render` and `rigc check` run without it on the
@@ -495,8 +577,9 @@ broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of 
 packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
 install then has the runtime, which is not the package this tree packs),
 `cli_core.ts` out of `files` (the install's `rigc --version` dies), the skills
-plant, four on the import surface (the map removed, the map cut to its
-named entries, one named entry removed, one listed symbol renamed), and two on
+plant, eight on the import surface (the map removed, the map cut to its
+named entries, each of four named entries removed in turn, one listed symbol
+renamed, the parser's error class forked from its entry's), and two on
 the core entry's build — its body made to refuse, and one byte appended to the
 atlas it wrote, which only the comparison can see; both edit one line of
 `src/cli/core_commands.ts`, because every module that entry reaches is a static

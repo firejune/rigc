@@ -32,8 +32,9 @@
  * was checked, so every case but the first two rebuilds the tarball from a
  * PATCHED COPY of the extracted package — an allowlist entry removed, a module
  * removed, a dependency added back, the skills removed, the `exports` map
- * removed, its deep paths removed, one named entry removed, one observed symbol
- * renamed, the core entry's build made to refuse, one byte of that build's
+ * removed, its deep paths removed, a named entry removed (one plant per entry
+ * since #1212), one observed symbol renamed, the parser's error class forked
+ * from the one its entry exports, the core entry's build made to refuse, one byte of that build's
  * output moved — and INVERTS the verdict: such a case is green only when the smoke
  * went red at the step it was supposed to, naming what went missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
@@ -299,6 +300,9 @@ const NAMED_EXPORTS: Record<string, string> = {
   './render': 'src/render.ts',
   './png': 'src/png.ts',
   './compile': 'src/compile.ts',
+  './rig': 'src/rig.ts',
+  './mesh': 'src/mesh.ts',
+  './errors': 'src/errors.ts',
   './cli': 'cli.ts',
   './package.json': 'package.json',
 };
@@ -329,6 +333,13 @@ type SymbolKind = 'function' | 'constant';
  *
  * ⚠️ The list grows by observation only. A symbol nobody was seen using is not
  * promised, however public it looks.
+ *
+ * 🔸 **One row per entry and observation**, not one row per entry: a row's
+ * `observed` is when and where ITS symbols were first seen, so a later
+ * observation that adds symbols to an entry already listed is a second row for
+ * that entry rather than an edit of the first — the first observation stays
+ * the record of what was promised then. The probe reads every row and counts
+ * entries, not rows, and an entry's rows have to agree on `needsRuntime`.
  */
 interface ObservedEntry {
   /** The `exports` key, spelled as `NAMED_EXPORTS` spells it. */
@@ -340,33 +351,75 @@ interface ObservedEntry {
   types: string[];
 }
 
-const OBSERVED_IN = 'spine-parts 0.8.2, issue #1167';
+const OBSERVED_IN_1167 = 'spine-parts 0.8.2, issue #1167';
+/** The same dependant read again — every import of the package anywhere in its tree, `src/` and its dev files alike. */
+const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
     entry: './plate',
-    observed: OBSERVED_IN,
+    observed: OBSERVED_IN_1167,
     needsRuntime: false,
     values: { decodePng: 'function', encodePng: 'function', PNG_SIGNATURE: 'constant', pngChunk: 'function' },
     types: [],
   },
-  { entry: './font5x7', observed: OBSERVED_IN, needsRuntime: false, values: { drawText: 'function', GLYPH_H: 'constant' }, types: [] },
+  { entry: './font5x7', observed: OBSERVED_IN_1167, needsRuntime: false, values: { drawText: 'function', GLYPH_H: 'constant' }, types: [] },
   {
     entry: './transform',
-    observed: OBSERVED_IN,
+    observed: OBSERVED_IN_1167,
     needsRuntime: false,
     values: { computeWorldTransforms: 'function', cropToSpineY: 'function', toBoneLocal: 'function' },
     types: ['BoneTransform'],
   },
   {
     entry: './render',
-    observed: OBSERVED_IN,
+    observed: OBSERVED_IN_1167,
     needsRuntime: true,
     values: { loadPosable: 'function', sampleAnimation: 'function', sampleSetupPose: 'function' },
     types: ['BoneSnapshot', 'Frame', 'Mesh'],
   },
-  { entry: './png', observed: OBSERVED_IN, needsRuntime: false, values: { assertPng: 'function' }, types: [] },
-  { entry: './compile', observed: OBSERVED_IN, needsRuntime: false, values: { headerBoxNumber: 'function' }, types: [] },
+  { entry: './png', observed: OBSERVED_IN_1167, needsRuntime: false, values: { assertPng: 'function' }, types: [] },
+  { entry: './compile', observed: OBSERVED_IN_1167, needsRuntime: false, values: { headerBoxNumber: 'function' }, types: [] },
+  {
+    entry: './transform',
+    observed: OBSERVED_IN_1212,
+    needsRuntime: false,
+    values: { computeExactFrameTransforms: 'function', normaliseDegrees: 'function', toWorld: 'function' },
+    types: [],
+  },
+  {
+    entry: './rig',
+    observed: OBSERVED_IN_1212,
+    needsRuntime: false,
+    values: {
+      parseRigSpec: 'function',
+      splitRigSkin: 'function',
+      RIG_SPEC_VERSION: 'constant',
+      RIG_SKIN_CONSTRAINT_KEYS: 'constant',
+      RIG_KEYS: 'constant',
+    },
+    types: ['RigSpec', 'RigBone', 'RigConstraint', 'RigSkin', 'RigSkinConstraintKey'],
+  },
+  {
+    entry: './mesh',
+    observed: OBSERVED_IN_1212,
+    needsRuntime: false,
+    values: {
+      traceAlphaOutline: 'function',
+      traceOutline: 'function',
+      earClip: 'function',
+      offsetPolygon: 'function',
+      prunePolygon: 'function',
+      simplifyClosedPolygon: 'function',
+      signedArea: 'function',
+      findSelfIntersection: 'function',
+      checkHullOrder: 'function',
+      measureAuthoredMeshFit: 'function',
+      MeshError: 'function',
+    },
+    types: ['AlphaMask'],
+  },
+  { entry: './errors', observed: OBSERVED_IN_1212, needsRuntime: false, values: { CompileError: 'function' }, types: [] },
 ];
 
 /**
@@ -388,16 +441,53 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
  */
 const RENAME_PLANT = { entry: './render', symbol: 'loadPosable', renamed: 'loadPosableRenamed' };
 
-/** The named entry `drop-named-entry` takes out of the packed map — one of the three #1167 added. */
-const DROPPED_ENTRY = './render';
+/**
+ * The named entry each drop plant takes out of the packed map: `./render`, one
+ * of the three #1167 added, and each of the three #1212 added — a plant per
+ * entry, because each is a different dependant's import that has to go red by
+ * its own name.
+ */
+type DropPlant = 'drop-named-entry' | 'drop-rig-entry' | 'drop-mesh-entry' | 'drop-errors-entry';
+const DROPPED_ENTRIES: Record<DropPlant, string> = {
+  'drop-named-entry': './render',
+  'drop-rig-entry': './rig',
+  'drop-mesh-entry': './mesh',
+  'drop-errors-entry': './errors',
+};
+const isDropPlant = (plant: Plant): plant is DropPlant => plant in DROPPED_ENTRIES;
+
+/**
+ * What `fork-compile-error` does to the packed `src/rig.ts`: the import of
+ * `CompileError` from `./errors.ts` replaced by a class of its own, so the
+ * parser throws an error that is a `CompileError` by name and by message and
+ * is NOT the class `spine-rigc/errors` exports. Nothing in the package imports
+ * `CompileError` through `src/rig.ts` and a valid spec throws nothing, so the
+ * module loads and every build runs; only a dependant that catches the
+ * parser's refusal by its class — `instanceof` across the package boundary,
+ * issue #1212 — can tell, and the call probe has to go red alone.
+ */
+const FORK_ERROR_IMPORT = "import { CompileError, NotImplementedError } from './errors.ts';";
+const FORK_ERROR_PLANTED = "import { NotImplementedError } from './errors.ts';\nclass CompileError extends Error {}";
+const FORK_ERROR_MODULE = 'src/rig.ts';
 
 // A plant aimed at something the table does not list would prove nothing about
-// the table, so both targets are held to it where they are declared.
+// the table, so every target is held to it where it is declared — and an
+// entry's rows have to agree on what it needs, or the probe without the
+// runtime would hold one entry to two statements.
 if (OBSERVED_SYMBOLS.find((row) => row.entry === RENAME_PLANT.entry)?.values[RENAME_PLANT.symbol] === undefined) {
   throw new Error(`install_smoke: RENAME_PLANT names ${RENAME_PLANT.symbol} through ${RENAME_PLANT.entry}, which OBSERVED_SYMBOLS does not list`);
 }
-if (!OBSERVED_SYMBOLS.some((row) => row.entry === DROPPED_ENTRY) || !(DROPPED_ENTRY in NAMED_EXPORTS)) {
-  throw new Error(`install_smoke: DROPPED_ENTRY ${DROPPED_ENTRY} is not a named entry OBSERVED_SYMBOLS lists`);
+for (const [plant, entry] of Object.entries(DROPPED_ENTRIES)) {
+  if (!OBSERVED_SYMBOLS.some((row) => row.entry === entry) || !(entry in NAMED_EXPORTS)) {
+    throw new Error(`install_smoke: the plant ${plant} drops ${entry}, which is not a named entry OBSERVED_SYMBOLS lists`);
+  }
+}
+if (OBSERVED_SYMBOLS.find((row) => row.entry === './errors')?.values.CompileError === undefined || NAMED_EXPORTS['./rig'] !== FORK_ERROR_MODULE) {
+  throw new Error(`install_smoke: fork-compile-error forks the CompileError ${FORK_ERROR_MODULE} throws, and OBSERVED_SYMBOLS has to list CompileError through ./errors and NAMED_EXPORTS map ./rig to ${FORK_ERROR_MODULE}`);
+}
+for (const row of OBSERVED_SYMBOLS) {
+  const other = OBSERVED_SYMBOLS.find((r) => r.entry === row.entry && r.needsRuntime !== row.needsRuntime);
+  if (other !== undefined) throw new Error(`install_smoke: OBSERVED_SYMBOLS states ${row.entry} both needs and does not need ${RUNTIME} (${row.observed}; ${other.observed})`);
 }
 
 /**
@@ -467,10 +557,12 @@ const load = async (spec) => {
 // 0. With the runtime taken away (phase three): every entry a dependant imports
 // either loads, or — where it is stated to need the runtime — refuses naming it.
 // Both directions, so a stale statement is as red as a broken entry.
+// An entry with two rows of observations is still one entry: imported once, counted once.
+const entries = [...new Map(plan.symbols.map((row) => [row.entry, row])).values()];
 if (process.argv[2] === 'without-runtime') {
   let loaded = 0;
   let refused = 0;
-  for (const row of plan.symbols) {
+  for (const row of entries) {
     const spec = 'spine-rigc' + row.entry.slice(1);
     let threw = null;
     try {
@@ -579,6 +671,114 @@ for (const row of plan.symbols) {
   }
 }
 
+// 2c. The calls behind the symbols a dependant was observed CALLING (issue
+// #1212): present and callable is not the contract a caller relies on. Each
+// call is the smallest input that tells a working function from a stub, and
+// its expected value is a fact of the definition or of this smoke's own
+// fixture, never a reading of this package: the rig is the fixture the build
+// above accepted, a 4x4 square on the pixel-corner lattice has a boundary of
+// 16 unit cracks enclosing 16 pixels, a rectangle has two triangles, and a
+// mesh over half of a fully opaque mask covers half its art and nothing
+// outside it. The error classes are read ACROSS the package boundary: the
+// CompileError a dependant imports from spine-rigc/errors has to be the class
+// the installed parser throws, or a refusal caught by its class is missed.
+const why = (e) => (e && e.message ? e.message : String(e));
+const callable = (m, name) => m !== null && typeof m[name] === 'function';
+let calls = 0;
+const call = (spec, what, body) => {
+  calls += 1;
+  try {
+    body();
+  } catch (e) {
+    said(spec, what + ' threw ' + why(e));
+  }
+};
+const errorsM = await load('spine-rigc/errors');
+const rigM = await load('spine-rigc/rig');
+const meshM = await load('spine-rigc/mesh');
+const CompileErrorClass = callable(errorsM, 'CompileError') ? errorsM.CompileError : null;
+if (CompileErrorClass !== null) {
+  call('spine-rigc/errors', 'new CompileError("probe")', () => {
+    const made = new CompileErrorClass('probe');
+    if (!(made instanceof Error) || !(made instanceof CompileErrorClass) || made.message !== 'probe') said('spine-rigc/errors', 'new CompileError("probe") is not an Error and a CompileError carrying the message "probe"');
+  });
+}
+if (rigM !== null) {
+  if (rigM.RIG_SPEC_VERSION !== plan.rig.spec) said('spine-rigc/rig', 'RIG_SPEC_VERSION is ' + JSON.stringify(rigM.RIG_SPEC_VERSION) + ' and ' + JSON.stringify(plan.rig.spec) + ', the spec string of the fixture the build above accepted, was required');
+  const table = rigM.RIG_KEYS;
+  const missingFrom = (shape, keys) => keys.filter((k) => !(table && Array.isArray(table[shape]) && table[shape].includes(k)));
+  const unlisted = [...missingFrom('RigSpec', Object.keys(plan.rig)).map((k) => 'RigSpec.' + k), ...missingFrom('RigBone', [...new Set(plan.rig.bones.flatMap((b) => Object.keys(b)))]).map((k) => 'RigBone.' + k)];
+  if (unlisted.length > 0) said('spine-rigc/rig', 'RIG_KEYS does not list ' + unlisted.join(', ') + ', which the fixture the build above accepted writes');
+  if (callable(rigM, 'parseRigSpec')) {
+    call('spine-rigc/rig', 'parseRigSpec on the fixture rig', () => {
+      const parsed = rigM.parseRigSpec(plan.rig, 'probe');
+      const names = (parsed && Array.isArray(parsed.bones) ? parsed.bones : []).map((b) => b.name).join(',');
+      const want = plan.rig.bones.map((b) => b.name).join(',');
+      if (names !== want) said('spine-rigc/rig', 'parseRigSpec on the fixture rig read bones ' + JSON.stringify(names) + ' and ' + JSON.stringify(want) + ' was required');
+    });
+    calls += 1;
+    let refusal = null;
+    try {
+      rigM.parseRigSpec({ ...plan.rig, bones: [...plan.rig.bones, { name: 'probe_stray', parent: 'probe_nobody' }] }, 'probe');
+    } catch (e) {
+      refusal = e;
+    }
+    const stray = 'parseRigSpec on the fixture rig plus a bone whose parent "probe_nobody" is not declared';
+    if (refusal === null) said('spine-rigc/rig', stray + ' accepted it, and a refusal naming the parent was required');
+    else if (CompileErrorClass !== null && !(refusal instanceof CompileErrorClass)) said('spine-rigc/rig', stray + ' threw ' + (refusal && refusal.constructor ? refusal.constructor.name : typeof refusal) + ' "' + why(refusal) + '", which is not an instance of CompileError as spine-rigc/errors exports it, so a dependant catching the refusal by its class misses it');
+    else if (!why(refusal).includes('probe_nobody')) said('spine-rigc/rig', stray + ' refused it without naming "probe_nobody": ' + why(refusal));
+  }
+  const kinds = rigM.RIG_SKIN_CONSTRAINT_KEYS;
+  if (!Array.isArray(kinds) || kinds.length === 0 || kinds.some((k) => typeof k !== 'string')) said('spine-rigc/rig', 'RIG_SKIN_CONSTRAINT_KEYS is ' + JSON.stringify(kinds) + ' and a non-empty list of constraint kinds was required');
+  else if (callable(rigM, 'splitRigSkin')) {
+    call('spine-rigc/rig', "splitRigSkin on the fixture's short-form default skin", () => {
+      const parts = rigM.splitRigSkin(plan.rig.skins.default, 'probe');
+      if (!parts || parts.explicit !== false || parts.attachments !== plan.rig.skins.default) said('spine-rigc/rig', "splitRigSkin on the fixture's short-form default skin gave explicit " + (parts && parts.explicit) + ' and other attachments than it was given; the short form handed back as the attachments was required');
+    });
+    for (const kind of kinds) {
+      call('spine-rigc/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member', () => {
+        const parts = rigM.splitRigSkin({ bones: ['probe_bone'], [kind]: ['probe_member'] }, 'probe');
+        const got = parts && parts.constraints ? parts.constraints[kind] : undefined;
+        if (!parts || parts.explicit !== true || JSON.stringify(parts.bones) !== '["probe_bone"]' || JSON.stringify(got) !== '["probe_member"]') said('spine-rigc/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member gave ' + JSON.stringify(parts) + ', so the RIG_SKIN_CONSTRAINT_KEYS entry ' + JSON.stringify(kind) + ' is not a key a skin lists its members under');
+      });
+    }
+  }
+}
+if (meshM !== null) {
+  if (callable(meshM, 'traceAlphaOutline') && callable(meshM, 'signedArea')) {
+    call('spine-rigc/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside', () => {
+      const side = 6;
+      const alpha = new Uint8Array(side * side);
+      for (let y = 1; y < 5; y++) for (let x = 1; x < 5; x++) alpha[y * side + x] = 255;
+      alpha[2 * side + 2] = 0;
+      const t = meshM.traceAlphaOutline({ width: side, height: side, alpha }, 128);
+      const area = Math.abs(meshM.signedArea(t.outline));
+      if (t.outline.length !== 16 || area !== 16 || t.artPixels !== 15 || t.islands !== 1 || t.holePixels !== 1) {
+        said('spine-rigc/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside gave ' + t.outline.length + ' vertices enclosing ' + area + ' px, ' + t.artPixels + ' art px, ' + t.islands + ' island(s) and holePixels ' + t.holePixels + '; the 16 unit cracks of its boundary enclosing its 16 px, 15 art px, 1 island and holePixels 1 were required');
+      }
+    });
+  }
+  if (callable(meshM, 'earClip') && callable(meshM, 'measureAuthoredMeshFit')) {
+    call('spine-rigc/mesh', 'earClip then measureAuthoredMeshFit on the left half of a 4x4 opaque mask', () => {
+      const half = [[0, 0], [2, 0], [2, 4], [0, 4]];
+      const tri = meshM.earClip(half);
+      if (!Array.isArray(tri) || tri.length !== 6 || new Set(tri).size !== 4 || tri.some((i) => !Number.isInteger(i) || i < 0 || i > 3)) said('spine-rigc/mesh', 'earClip on a rectangle gave ' + JSON.stringify(tri) + ' and two triangles over its four vertices were required');
+      const fit = meshM.measureAuthoredMeshFit({ width: 4, height: 4, alpha: new Uint8Array(16).fill(255) }, 128, half, tri);
+      if (!fit || fit.artPixels !== 16 || fit.coveredArt !== 8 || fit.coverage !== 0.5 || fit.overshoot !== 0) said('spine-rigc/mesh', 'measureAuthoredMeshFit of a mesh over the left half of a 4x4 opaque mask gave ' + JSON.stringify(fit) + ' and artPixels 16, coveredArt 8, coverage 0.5, overshoot 0 were required');
+    });
+  }
+  if (callable(meshM, 'earClip') && callable(meshM, 'MeshError')) {
+    calls += 1;
+    let refusal = null;
+    try {
+      meshM.earClip([[0, 0], [1, 1], [2, 2]]);
+    } catch (e) {
+      refusal = e;
+    }
+    if (!(refusal instanceof meshM.MeshError)) said('spine-rigc/mesh', 'earClip on three collinear points ' + (refusal === null ? 'returned triangles' : 'threw ' + why(refusal)) + ', and a MeshError as spine-rigc/mesh exports it was required');
+  }
+}
+
 // 3. Every path the tarball carries, spelled in full — and, for a module, with
 // its extension left off, which is how Bun resolved it before the map existed.
 let full = 0;
@@ -593,7 +793,7 @@ for (const path of plan.paths) {
   }
 }
 for (const line of bad) console.log('EXPORT_BAD ' + line);
-console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observed symbols ' + held + '/' + listed + ' held across ' + plan.symbols.length + ' entries, observed deep paths ' + Object.keys(plan.deep).length + ', shipped paths ' + full + '/' + plan.paths.length + ' in full and ' + bare + '/' + bareTried + ' modules without their extension');
+console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observed symbols ' + held + '/' + listed + ' held across ' + entries.length + ' entries, ' + calls + ' call(s) checked from the install, observed deep paths ' + Object.keys(plan.deep).length + ', shipped paths ' + full + '/' + plan.paths.length + ' in full and ' + bare + '/' + bareTried + ' modules without their extension');
 process.exit(bad.length === 0 ? 0 : 1);
 `;
 
@@ -794,7 +994,11 @@ type Plant =
   | 'drop-exports'
   | 'drop-deep-exports'
   | 'drop-named-entry'
+  | 'drop-rig-entry'
+  | 'drop-mesh-entry'
+  | 'drop-errors-entry'
   | 'rename-symbol'
+  | 'fork-compile-error'
   | 'refuse-core-build'
   | 'move-core-byte';
 
@@ -831,6 +1035,23 @@ const FULL_OUT = 'build';
  * to name it. `alone` holds that no OTHER step went red — the plant broke one
  * thing, and a red anywhere else would be the plant being larger than it says.
  */
+/**
+ * A plant that takes one of the entries #1212 named out of the packed map. It
+ * has to go red at both steps that import the entry — the probe with the
+ * runtime beside the package, and the one after it is taken away — and at no
+ * other: nothing inside the package imports itself by a bare specifier, so the
+ * builds, render, check and the skills are untouched.
+ */
+function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>): { names: string[]; steps: string[]; what: string; alone: true } {
+  const entry = DROPPED_ENTRIES[plant];
+  return {
+    names: [`spine-rigc${entry.slice(1)}`],
+    steps: ['exports', 'exports-without-runtime'],
+    alone: true,
+    what: `the named entry \`${entry}\` removed from \`exports\` (issue #1212), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${entry.slice(1)}\` is the one who finds out: both import probes have to go red naming the entry, and nothing else`,
+  };
+}
+
 const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]; what: string; alone?: true }> = {
   'drop-plate': {
     names: ['tools/plate.ts'],
@@ -868,15 +1089,24 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     what: '`exports` cut down to its named entries (issue #859), which is the map without its pattern courtesy: `spine-rigc/tools/plate.ts`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it',
   },
   'drop-named-entry': {
-    names: [`spine-rigc${DROPPED_ENTRY.slice(1)}`],
+    names: [`spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)}`],
     steps: ['exports'],
-    what: `the named entry \`${DROPPED_ENTRY}\` removed from \`exports\` (issue #1167), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${DROPPED_ENTRY.slice(1)}\` is the one who finds out, and the line has to name the entry`,
+    what: `the named entry \`${DROPPED_ENTRIES['drop-named-entry']}\` removed from \`exports\` (issue #1167), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)}\` is the one who finds out, and the line has to name the entry`,
   },
+  'drop-rig-entry': droppedEntryPlant('drop-rig-entry'),
+  'drop-mesh-entry': droppedEntryPlant('drop-mesh-entry'),
+  'drop-errors-entry': droppedEntryPlant('drop-errors-entry'),
   'rename-symbol': {
     names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
     alone: true,
     what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issues #1167, #1184), a symbol no module inside the package imports: \`rigc --version\`, both builds, the comparison, render and check still work, and only a dependant reading the old name can tell — so the observed-symbol probe has to go red alone, naming the entry and the symbol`,
+  },
+  'fork-compile-error': {
+    names: ['spine-rigc/rig', 'CompileError'],
+    steps: ['exports'],
+    alone: true,
+    what: `the packed \`${FORK_ERROR_MODULE}\` given a \`CompileError\` class of its own in place of the one \`spine-rigc/errors\` exports (issue #1212): every module loads, a valid spec throws nothing so every build runs, and the parser's refusal still reads as a CompileError by name and by message — only a dependant catching it by its class, across the package boundary, can tell, so the call probe has to go red alone, naming the entry and the class`,
   },
   'refuse-core-build': {
     names: ['SMOKE_CORE_ENTRY_BUILDS'],
@@ -966,8 +1196,8 @@ function tarballFor(
   } else if (plant === 'drop-deep-exports') {
     pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key in NAMED_EXPORTS));
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-  } else if (plant === 'drop-named-entry') {
-    pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key !== DROPPED_ENTRY));
+  } else if (isDropPlant(plant)) {
+    pkg.exports = Object.fromEntries(Object.entries(pkg.exports ?? {}).filter(([key]) => key !== DROPPED_ENTRIES[plant]));
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   } else if (plant === 'rename-symbol') {
     // The export renamed and the function kept, so every call inside the
@@ -984,6 +1214,14 @@ function tarballFor(
       return { tgz: '', faults, paths: [], evidence: '' };
     }
     writeFileSync(victim, `${text.replace(declared, `function ${RENAME_PLANT.symbol}(`)}\nexport { ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} };\n`);
+  } else if (plant === 'fork-compile-error') {
+    const victim = join(pkgDir, FORK_ERROR_MODULE);
+    const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';
+    if (text.split(FORK_ERROR_IMPORT).length !== 2) {
+      faults.push(`SMOKE_PLANT_APPLIED: ${FORK_ERROR_MODULE} carries \`${FORK_ERROR_IMPORT}\` ${text.split(FORK_ERROR_IMPORT).length - 1} time(s) where once was required, so the plant "${plant}" plants nothing`);
+      return { tgz: '', faults, paths: [], evidence: '' };
+    }
+    writeFileSync(victim, text.replace(FORK_ERROR_IMPORT, FORK_ERROR_PLANTED));
   } else if (plant === 'refuse-core-build' || plant === 'move-core-byte') {
     const victim = join(pkgDir, CORE_BUILD_MODULE);
     const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';
@@ -1036,15 +1274,24 @@ function tarballFor(
     } else {
       evidence = `the packed package.json declares ${RUNTIME} ${deps[RUNTIME]} in dependencies, where the tree declares it only as a devDependency`;
     }
-  } else if (plant === 'drop-named-entry') {
+  } else if (isDropPlant(plant)) {
+    const dropped = DROPPED_ENTRIES[plant];
     const shipped = run('tar', ['-xzOf', second, 'package/package.json'], work);
     const map = shipped.status === 0 ? (JSON.parse(shipped.out) as { exports?: Record<string, string> }).exports : undefined;
-    if (map === undefined || DROPPED_ENTRY in map || !('./plate' in map)) {
+    const kept = Object.keys(NAMED_EXPORTS).filter((key) => key !== dropped);
+    if (map === undefined || dropped in map || kept.some((key) => !(key in map))) {
       faults.push(
-        `SMOKE_PLANT_APPLIED: the packed package.json maps ${map === undefined ? 'no exports' : `exports ${Object.keys(map).join(', ')}`}, and a map without ${DROPPED_ENTRY} and with every other named entry was required, so the plant "${plant}" planted something else`,
+        `SMOKE_PLANT_APPLIED: the packed package.json maps ${map === undefined ? 'no exports' : `exports ${Object.keys(map).join(', ')}`}, and a map without ${dropped} and with every other named entry was required, so the plant "${plant}" planted something else`,
       );
     } else {
-      evidence = `the packed package.json maps ${Object.keys(map).length} exports key(s), ${DROPPED_ENTRY} not among them`;
+      evidence = `the packed package.json maps ${Object.keys(map).length} exports key(s), ${dropped} not among them`;
+    }
+  } else if (plant === 'fork-compile-error') {
+    const shipped = run('tar', ['-xzOf', second, `package/${FORK_ERROR_MODULE}`], work);
+    if (shipped.status !== 0 || shipped.out.includes(FORK_ERROR_IMPORT) || !shipped.out.includes(FORK_ERROR_PLANTED)) {
+      faults.push(`SMOKE_PLANT_APPLIED: the packed ${FORK_ERROR_MODULE} still imports CompileError from ./errors.ts, or does not declare its own as the plant "${plant}" writes it, so nothing was planted`);
+    } else {
+      evidence = `the packed ${FORK_ERROR_MODULE} declares a CompileError of its own rather than importing the one ./errors.ts exports`;
     }
   } else if (plant === 'rename-symbol') {
     const file = NAMED_EXPORTS[RENAME_PLANT.entry];
@@ -1429,7 +1676,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // never reads `exports` — which is why it is here and not in the selftest.
   writeFileSync(
     join(home, 'exports_probe.json'),
-    `${JSON.stringify({ named: NAMED_EXPORTS, symbols: OBSERVED_SYMBOLS, runtime: RUNTIME, deep: OBSERVED_DEEP_PATHS, paths: built.paths }, null, 2)}\n`,
+    `${JSON.stringify({ named: NAMED_EXPORTS, symbols: OBSERVED_SYMBOLS, runtime: RUNTIME, rig: RIG_SPEC, deep: OBSERVED_DEEP_PATHS, paths: built.paths }, null, 2)}\n`,
   );
   writeFileSync(join(home, 'exports_probe.mjs'), EXPORTS_PROBE_SOURCE);
   const exportsRan = run('bun', [join(home, 'exports_probe.mjs')], home);
@@ -1576,7 +1823,7 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path and reads every observed symbol through its entry; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
@@ -1585,8 +1832,12 @@ cases:
   drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
   drop-exports     \`exports\` out of package.json — importing spine-rigc/plate has to go RED naming it
   drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
-  drop-named-entry   ${DROPPED_ENTRY} out of \`exports\` — importing spine-rigc${DROPPED_ENTRY.slice(1)} has to go RED naming it
+  drop-named-entry   ${DROPPED_ENTRIES['drop-named-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)} has to go RED naming it
+  drop-rig-entry     ${DROPPED_ENTRIES['drop-rig-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-rig-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-mesh-entry    ${DROPPED_ENTRIES['drop-mesh-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-mesh-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-errors-entry  ${DROPPED_ENTRIES['drop-errors-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-errors-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
   rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through spine-rigc${RENAME_PLANT.entry.slice(1)} has to go RED naming both
+  fork-compile-error ${FORK_ERROR_MODULE} given a CompileError of its own — the parser's refusal, caught by the class spine-rigc/errors exports, has to go RED alone naming both
   refuse-core-build  the core entry's build body made to refuse — the core-build step, and only it, has to go RED naming SMOKE_CORE_ENTRY_BUILDS
   move-core-byte     one byte appended to the atlas the core entry's build wrote — the comparison, and only it, has to go RED naming the file
 
@@ -1691,7 +1942,11 @@ function main(): number {
     { name: 'drop-exports', source, installer, plant: 'drop-exports', dirName: 'planted-exports' },
     { name: 'drop-deep-exports', source, installer, plant: 'drop-deep-exports', dirName: 'planted-deep-exports' },
     { name: 'drop-named-entry', source, installer, plant: 'drop-named-entry', dirName: 'planted-named-entry' },
+    { name: 'drop-rig-entry', source, installer, plant: 'drop-rig-entry', dirName: 'planted-rig-entry' },
+    { name: 'drop-mesh-entry', source, installer, plant: 'drop-mesh-entry', dirName: 'planted-mesh-entry' },
+    { name: 'drop-errors-entry', source, installer, plant: 'drop-errors-entry', dirName: 'planted-errors-entry' },
     { name: 'rename-symbol', source, installer, plant: 'rename-symbol', dirName: 'planted-rename' },
+    { name: 'fork-compile-error', source, installer, plant: 'fork-compile-error', dirName: 'planted-fork-error' },
     { name: 'refuse-core-build', source, installer, plant: 'refuse-core-build', dirName: 'planted-core-build' },
     { name: 'move-core-byte', source, installer, plant: 'move-core-byte', dirName: 'planted-core-byte' },
   ];
