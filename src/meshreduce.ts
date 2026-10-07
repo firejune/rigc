@@ -42,9 +42,13 @@
  * to meet `L(R)`, and removing one is undoing the refinement.
  *
  * The refinement measures, takes the first failing region row in report order
- * (code, then region name) and splits that row's worst edge: at its midpoint
- * when the midpoint lies in the region or its band, otherwise at the point of
- * the edge inside them nearest the midpoint. A region no edge meets — one
+ * (code, then region name) and splits that row's worst edge. When an end of
+ * the edge lies outside the region and its band, the split is where the edge
+ * leaves the band, so the piece to that end only touches the band's outer
+ * boundary and `edgeIsHeldByRegion` — the one definition the rows read —
+ * exempts it (spine-parts#126). Otherwise the split is at the midpoint when
+ * the midpoint lies in the region or its band, else at the point of the edge
+ * inside them nearest the midpoint. A region no edge meets — one
  * inside a single triangle — gets the first vertex of its polygon inserted into
  * the triangle that holds it. Every inserted position is on the `r6` grid.
  *
@@ -79,6 +83,8 @@ import {
   checkHullOrder,
 } from './mesh.ts';
 import {
+  BAND_CONTACT_TOLERANCE,
+  edgeIsHeldByRegion,
   measureMeshQuality,
   type AttachmentRef,
   type ArtFitBounds,
@@ -158,6 +164,9 @@ const ON_BOUNDARY = 1e-9;
 
 /** How many halvings toward a point known to lie in a region's band the split search tries before it says none was found. */
 const SPLIT_SEARCH_STEPS = 40;
+
+/** Iterations of the convex searches `offsetExit` runs along an edge: 2^-60 of an edge is below a double's resolution of it. */
+const EXIT_SEARCH_STEPS = 60;
 
 function nameOf(ref: AttachmentRef): string {
   return `${ref.skin ?? '(no skin)'}/${ref.slot}/${ref.attachment}`;
@@ -797,6 +806,64 @@ function splitPoint(a: Pt, b: Pt, region: RefinementRegion): Pt | null {
   return null;
 }
 
+/**
+ * The parameter, from `inner` (0) to `outer` (1), of the point of the edge
+ * nearest `outer` that lies within `level` of `region`'s polygon — where the
+ * edge last leaves that offset of the polygon on its way to `outer` — or null
+ * when no point of it comes that near. `outer` lies further than `level`, so
+ * walking back from it the offset is first met where some polygon side is
+ * exactly `level` away: the largest such parameter over the sides. Each side's
+ * distance is convex along the edge, so its minimum is found by golden section
+ * and the last parameter within `level` by bisection from there towards `outer`.
+ */
+function offsetExit(inner: Pt, outer: Pt, poly: readonly Pt[], level: number): number | null {
+  const at = (t: number): Pt => [inner[0] + (outer[0] - inner[0]) * t, inner[1] + (outer[1] - inner[1]) * t];
+  const g = (Math.sqrt(5) - 1) / 2;
+  let best: number | null = null;
+  for (let i = 0; i < poly.length; i++) {
+    const c = poly[i];
+    const e = poly[(i + 1) % poly.length];
+    const f = (t: number): number => distanceToSegment(at(t), c, e);
+    let lo = 0;
+    let hi = 1;
+    for (let k = 0; k < EXIT_SEARCH_STEPS; k++) {
+      const p = hi - g * (hi - lo);
+      const q = lo + g * (hi - lo);
+      if (f(p) <= f(q)) hi = q;
+      else lo = p;
+    }
+    let inside = (lo + hi) / 2;
+    if (f(inside) > level) continue;
+    let outside = 1;
+    for (let k = 0; k < EXIT_SEARCH_STEPS; k++) {
+      const mid = (inside + outside) / 2;
+      if (f(mid) <= level) inside = mid;
+      else outside = mid;
+    }
+    if (best === null || inside > best) best = inside;
+  }
+  return best;
+}
+
+/**
+ * [agreed, spine-parts#126] A split of `inner`–`outer` where it leaves
+ * `region`'s band, so that the piece to `outer` only touches the band's outer
+ * boundary and is exempt by `edgeIsHeldByRegion` — the one definition the
+ * measurement reads. The split is put half of `BAND_CONTACT_TOLERANCE` inside
+ * the outer boundary, then on the `r6` grid, so it lies inside the band (P16's
+ * checkable form) and within the tolerance of its edge. Null when there is no
+ * band, no point of the edge comes that near the polygon, or the point found
+ * is an end or fails either condition — each re-checked rather than assumed.
+ */
+function outerSplit(inner: Pt, outer: Pt, region: RefinementRegion): Pt | null {
+  if (!(region.transition > 0)) return null;
+  const t = offsetExit(inner, outer, region.polygon, region.transition - BAND_CONTACT_TOLERANCE / 2);
+  if (t === null) return null;
+  const q: Pt = [r6(inner[0] + (outer[0] - inner[0]) * t), r6(inner[1] + (outer[1] - inner[1]) * t)];
+  if ((q[0] === inner[0] && q[1] === inner[1]) || (q[0] === outer[0] && q[1] === outer[1])) return null;
+  return inRegionOrBand(q, region) && !edgeIsHeldByRegion(q, outer, region) ? q : null;
+}
+
 /** Add a vertex at `p` with what interpolation gives it, refusing it under a deform run (P18). */
 function addVertex(run: Run, p: Pt): number {
   const got = interpolate(p, run.input, run.boneRank, run.tally, run.who);
@@ -892,16 +959,35 @@ function refineRegions(run: Run): PhaseEnd {
     const [ra, rb] = target.worst!.at.edge!;
     const a = canon.order[ra];
     const b = canon.order[rb];
-    // An end outside the region and its band further beyond the band than the edge's own bound: every
-    // split keeps an edge from a vertex inside them to that end, so no insertion P16 allows can meet it.
+    // An end outside the region and its band: split where the edge leaves the band, so the piece to that
+    // end only touches the band's outer boundary and is exempt (spine-parts#126) — the same predicate the
+    // measurement reads decides it, so the next measurement agrees.
+    let exited = false;
+    for (const [inner, outer] of [[b, a], [a, b]] as const) {
+      if (inRegionOrBand(run.work.pos[outer], region)) continue;
+      const q = outerSplit(run.work.pos[inner], run.work.pos[outer], region);
+      if (q === null) continue;
+      splitEdge(run, a, b, q);
+      exited = true;
+      break;
+    }
+    if (exited) continue;
+    // An end outside the region and its band further beyond it than the edge's own bound, with no split on
+    // the band's outer boundary that frees the piece to it — always so with transition 0, where a contact
+    // with the authored boundary stays held: every split keeps a held edge from a vertex inside the region
+    // and its band to that end, so no insertion P16 allows can meet it.
     for (const [end, id] of [[ra, a], [rb, b]] as const) {
       const at = run.work.pos[id];
       if (inRegionOrBand(at, region)) continue;
       const beyond = distanceToBoundary(at, region.polygon) - region.transition;
       if (beyond > target.bound!.value) {
+        const why =
+          region.transition > 0
+            ? 'no point of the edge on the band\'s outer boundary leaves the piece to it exempt, so an edge from inside the region and its band to it stays over the bound'
+            : 'with no band, an edge from the region to it touches the authored boundary and stays held (spine-parts#126), so it stays over the bound';
         return {
           kind: 'stuck',
-          constraint: `${rowName(target)} (vertex ${end} of edge ${ra}–${rb} lies ${r6(beyond)} px beyond region "${region.name}"'s ${region.transition} px band, further than the edge's bound ${target.bound!.value}: an edge from inside the region and its band to it stays over the bound, and the refinement inserts only inside them — P16)`,
+          constraint: `${rowName(target)} (vertex ${end} of edge ${ra}–${rb} lies ${r6(beyond)} px beyond region "${region.name}"'s ${region.transition} px band, further than the edge's bound ${target.bound!.value}: ${why}, and the refinement inserts only inside them — P16)`,
         };
       }
     }
