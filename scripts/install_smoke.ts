@@ -100,7 +100,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
@@ -808,25 +808,57 @@ interface Ran {
 
 type Env = Record<string, string | undefined>;
 
+/** One argument of a cmd.exe command line: wrapped in double quotes, with a double quote inside it doubled. */
+const cmdQuoted = (arg: string): string => `"${arg.replace(/"/g, '""')}"`;
+
+/** A variable read the way Windows reads it, whatever case the environment spells its name in. */
+const envValue = (env: Env, name: string): string | undefined => env[Object.keys(env).find((key) => key.toUpperCase() === name.toUpperCase()) ?? name];
+
+/**
+ * Run a command and collect what it printed.
+ *
+ * 🪟 A batch file on Windows — `node_modules\.bin\rigc.cmd`, which is the shim
+ * npm writes there — is refused by `spawnSync` without a shell: `spawnSync
+ * …\rigc.cmd EINVAL` on the first Windows run (issue #1214), the hardening
+ * Node shipped for CVE-2024-27980, which Bun's `node:child_process` matches.
+ * So a command whose name ends in `.cmd` or `.bat` runs as Node's own
+ * `shell: true` does on Windows — `cmd.exe /d /s /c "<line>"`, verbatim — with
+ * the line built here, every word in double quotes, so an install path with
+ * spaces, non-ASCII or a quote in it reaches the batch file as one argument.
+ * Inside quotes cmd.exe still expands `%NAME%`; no path the smoke builds has a
+ * `%` in it. A bare `npm` is not routed this way: it carries no extension for
+ * the refusal to read, and that run measured `npm pack` and `npm install`
+ * working when spawned bare.
+ */
 function run(cmd: string, args: string[], cwd: string, env?: Env): Ran {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    env: env ?? process.env,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const environment = env ?? process.env;
+  const batch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+  const options = { cwd, env: environment, encoding: 'utf8' as const, maxBuffer: 64 * 1024 * 1024 };
+  const r = batch
+    ? spawnSync(envValue(environment, 'ComSpec') ?? 'cmd.exe', ['/d', '/s', '/c', `"${[cmd, ...args].map(cmdQuoted).join(' ')}"`], { ...options, windowsVerbatimArguments: true })
+    : spawnSync(cmd, args, options);
   const stdout = typeof r.stdout === 'string' ? r.stdout : '';
   const stderr = typeof r.stderr === 'string' ? r.stderr : '';
   const failed = r.error === undefined ? '' : `\n${r.error.message}`;
   return { status: typeof r.status === 'number' ? r.status : 1, out: `${stdout}${stderr}${failed}` };
 }
 
-/** Where a command lives, or null — used to say "bun is not on PATH" by name rather than as a stack trace. */
+/**
+ * Where a command lives, or null — used to say "bun is not on PATH" by name rather than as a stack trace.
+ *
+ * ⚠️ `command -v` is a POSIX shell builtin, and `shell: true` on Windows is
+ * cmd.exe, which has no `command`: every prerequisite read as absent and the
+ * run stopped at its first line (issue #1214). `where` is cmd's own lookup; it
+ * lists every match, one per line, so the first is the one taken.
+ */
 function onPath(cmd: string): string | null {
-  const r = spawnSync('command', ['-v', cmd], { encoding: 'utf8', shell: true });
-  const found = typeof r.stdout === 'string' ? r.stdout.trim() : '';
+  const r = process.platform === 'win32' ? spawnSync('where', [cmd], { encoding: 'utf8' }) : spawnSync('command', ['-v', cmd], { encoding: 'utf8', shell: true });
+  const found = typeof r.stdout === 'string' ? (r.stdout.trim().split(/\r?\n/)[0] ?? '').trim() : '';
   return found === '' ? null : found;
 }
+
+/** The file name a `bun` on PATH has on this platform. */
+const BUN_BINARY = process.platform === 'win32' ? 'bun.exe' : 'bun';
 
 /** Width, height and colour type out of a PNG's first 26 bytes, or null if those bytes are not a PNG header. */
 function pngHeader(path: string): { width: number; height: number; colourType: number } | null {
@@ -1463,8 +1495,12 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // does not walk up into whatever this temp directory happens to sit under.
   // `realpathSync` because a module specifier resolves through the real path:
   // on macOS this temp directory is reached as /var/… and reported as /private/var/…,
-  // and the control below compares the two.
-  const home = realpathSync(mkdirIn(work, spec.dirName));
+  // and the control below compares the two. `.native`, because on Windows the
+  // temp directory is reached through an 8.3 short name (`RUNNER~1`) that the
+  // JavaScript `realpathSync` keeps and the module resolver expands, so the two
+  // spellings of one directory read as "not under" each other (issue #1214);
+  // the native call asks the OS for the final path, which is the long name.
+  const home = realpathSync.native(mkdirIn(work, spec.dirName));
   writeFileSync(join(home, 'package.json'), `${JSON.stringify({ name: 'rigc-install-smoke', private: true, version: '0.0.0' }, null, 2)}\n`);
 
   const install =
@@ -1482,7 +1518,10 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     return { name: spec.name, faults, steps, notes, output };
   }
 
-  const bin = join(home, 'node_modules', '.bin', 'rigc');
+  // On Windows `.bin/rigc` is npm's shell-script shim, which only a POSIX shell
+  // runs; the shim a Windows caller runs is `rigc.cmd` from npm and `rigc.exe`
+  // from bun (issue #1214).
+  const bin = join(home, 'node_modules', '.bin', process.platform !== 'win32' ? 'rigc' : spec.installer === 'npm' ? 'rigc.cmd' : 'rigc.exe');
   if (!existsSync(bin)) {
     fault('install', `SMOKE_INSTALL_EMPTY_DIR: the install wrote no node_modules/.bin/rigc under ${home}, so the package's own \`bin\` entry never reached a shim`);
   }
@@ -1803,7 +1842,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: \`node_modules/.bin/rigc skills install --dir <tmp>\` exited ${skills.status}, so the package's skills/ directory did not reach a host directory. ${skills.out.trim().slice(0, 2000)}`);
   } else if (!existsSync(join(entryLink, 'SKILL.md')) || !lstatSync(entryLink).isSymbolicLink()) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: skills install exited 0 and ${entryLink} is ${existsSync(entryLink) ? 'not a link' : 'not there'}, so rigc/SKILL.md cannot be read through one`);
-  } else if (readlinkSync(entryLink).startsWith('/') || realpathSync(entryLink) !== realpathSync(dirname(shippedEntry))) {
+  } else if (isAbsolute(readlinkSync(entryLink)) || realpathSync(entryLink) !== realpathSync(dirname(shippedEntry))) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: ${entryLink} links to ${readlinkSync(entryLink)}, and a relative link to ${dirname(shippedEntry)} was required`);
   } else if (!readFileSync(join(entryLink, 'SKILL.md')).equals(readFileSync(shippedEntry))) {
     fault('skills', `SMOKE_SKILLS_INSTALL_FROM_THE_PACKAGE: rigc/SKILL.md read through ${entryLink} is not the bytes of ${shippedEntry}`);
@@ -1818,12 +1857,23 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   if (bunPath === null) {
     notes.push('SKIP the without-bun control: bun is not on PATH in this run, which is the state it is about');
   } else {
-    const bunDir = dirname(bunPath);
-    const stripped = (process.env.PATH ?? '').split(delimiter).filter((part) => part !== bunDir);
-    if (onPath('node') !== null && dirname(onPath('node') ?? '') === bunDir) {
-      notes.push(`SKIP the without-bun control: node and bun share ${bunDir}, so removing it would remove the shim's own interpreter`);
+    // EVERY directory on PATH that holds a bun, not only the first: with a
+    // version under test put in front of the machine's own — which is how the
+    // declared minimum is measured by hand (issue #1214) — removing the first
+    // leaves the second, the shim finds it, and the control goes red on every
+    // case for a bun that was never absent.
+    // Windows spells the variable `Path`, and a second key spelled `PATH`
+    // beside it leaves which one the child reads to the order of the two.
+    const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const parts = (process.env[pathKey] ?? '').split(delimiter);
+    const bunDirs = [...new Set([dirname(bunPath), ...parts.filter((part) => part !== '' && existsSync(join(part, BUN_BINARY)))])];
+    const bunDir = bunDirs.join(delimiter);
+    const stripped = parts.filter((part) => !bunDirs.includes(part));
+    const nodePath = onPath('node');
+    if (nodePath !== null && bunDirs.includes(dirname(nodePath))) {
+      notes.push(`SKIP the without-bun control: node and bun share ${dirname(nodePath)}, so removing it would remove the shim's own interpreter`);
     } else {
-      const withoutBun = run(bin, ['--version'], home, { ...process.env, PATH: stripped.join(delimiter) });
+      const withoutBun = run(bin, ['--version'], home, { ...process.env, [pathKey]: stripped.join(delimiter) });
       if (withoutBun.status === 0 || !/runs on Bun/.test(withoutBun.out)) {
         fault(
           'shim',
@@ -1938,7 +1988,7 @@ function main(): number {
   let served: RegistryWait | null = null;
   let source: Source = { kind: 'tree' };
   if (registrySpec !== null) {
-    const fetchDir = mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-'));
+    const fetchDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-')));
     LEFT_BEHIND.push(fetchDir);
     served = waitForRegistry(registrySpec, waitMinutes, ROOT, join(fetchDir, 'pack'));
     const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean`;
@@ -2001,7 +2051,9 @@ function main(): number {
   let bad = 0;
   let ran = 0;
   for (const spec of chosen) {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-smoke-'));
+    // The long name from the start (see `home` in runCase), so every path a
+    // fault prints is the one a child process would print back.
+    const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-')));
     try {
       const result = runCase(spec, work, keep);
       ran += 1;
