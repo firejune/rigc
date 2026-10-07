@@ -233,6 +233,29 @@ drafts the notes is outside this tree: it runs the comparison above before the
 notes are written, and refuses the positive form unless `compare` reads
 `IDENTICAL` and the tracked base is unmoved.
 
+### The build report's `spec` is a contract too
+
+`build --report` and `repack --report` write a JSON document whose `spec` is
+`build-report/1` ([#1213](https://github.com/firejune/rigc/issues/1213),
+`docs/AUTHORING.md` §5.3). A dependant reads its build verdict and its packing
+figures from that document instead of from the printed sentences, so the
+`spec` is a promise of the same kind as the byte-identity sentence above: a
+string a program outside this tree decides on.
+
+- **Additive under the same spec.** A field may be added to `build-report/1`
+  in any release. A field that is renamed, removed, retyped or made to mean
+  something else moves the spec (`build-report/2`), and a release that moves
+  it is a breaking change whose notes carry a `**Migration:**` paragraph
+  saying which field moved and where its old meaning is read.
+- **The printed sentences are not promised by it, and do not move with it.**
+  The lines `build` prints stay what `docs/AUTHORING.md` documents them as;
+  the flag changes none of them (`BR03`).
+- **Held, not stated.** `BR09` holds the document's keys to the census of what
+  a dependant reads, and names a key outside it, so a field added without a
+  row there is red before it is released; `BR01`, `BR02`, `BR05` and `BR08`
+  hold every value to the lines the same run printed, and `BR04` holds two
+  documents of one build byte-identical.
+
 ## Publishing
 
 **Automated, on the release push.** The second `release` run — the one that tags
@@ -534,7 +557,11 @@ that has a `package.json` of its own, and runs it in three phases (issue
    a fault of the case with the first lines the build printed
    ([#1178](https://github.com/firejune/rigc/issues/1178): until then a non-zero
    exit here was a `HOLE`, and a `HOLE` does not move the exit code, so a package
-   whose installed `build` was broken printed green).
+   whose installed `build` was broken printed green). It runs with `--report` beside
+   `--out`, and the document it writes must parse, say `build-report/1`, `build`
+   and the `model` supplier, and carry one gate per summary line printed with
+   that line's figures — anything else is `SMOKE_CORE_BUILD_WRITES_ITS_REPORT`
+   ([#1213](https://github.com/firejune/rigc/issues/1213)).
 2. **The runtime installed beside it**, at the version the installed
    `package.json` declares as its devDependency. The same `rigc --version` must
    now name `cli.ts`, and the build runs through the round trip: compile, the

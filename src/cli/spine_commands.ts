@@ -41,6 +41,7 @@ function repositoryUrl(): string {
  * with the arguments it has always been handed, and the same lines.
  */
 const ROUND_TRIP_GATE: BuildGate = {
+  supplier: 'round-trip',
   heading: (profile) => `  ..    validate (spine-core round trip + machine assertions, profile ${profile})`,
   run: ({ result, atlasText, atlasDir, modelText, reEmit, profile }) => {
     const report = validate({
@@ -59,7 +60,7 @@ const ROUND_TRIP_GATE: BuildGate = {
         .map(([k, v]) => `${k}=${v}`)
         .join(' ')}`,
     );
-    return report.failures.length;
+    return { report, here: null };
   },
   look: (outDir) => `rigc: look at it: rigc preview --candidate ${outDir}`,
 };

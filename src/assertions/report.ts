@@ -53,12 +53,137 @@ export function reportLines(report: VerdictLists & { profile: AssertionProfile }
   // 42. The four buckets partition `ASSERTION_NAMES`, so the total is derived
   // by adding them rather than stated — a `42` written here would be the one
   // number in the report that no run could contradict.
-  const failed = new Set(report.failures.map((f) => f.assertion));
-  const measured = report.passed.length + failed.size;
-  const total = measured + report.skipped.length + report.profileSkipped.length;
+  //
+  // The figures are `gateSummary`'s, the one computation the line and the
+  // `--report` document (`buildReportGate`) both spell (issue #1213).
+  const s = gateSummary(report);
   lines.push(
-    `  ..    ${total} assertions: ${measured} measured (${report.passed.length} passed, ${failed.size} failed), ` +
-      `${report.skipped.length} skipped, ${report.profileSkipped.length} not in profile "${report.profile}"`,
+    `  ..    ${s.assertions} assertions: ${s.measured} measured (${s.passed} passed, ${s.failed} failed), ` +
+      `${s.skipped} skipped, ${s.notInProfile} not in profile "${s.profile}"`,
   );
   return lines;
+}
+
+/**
+ * The figures the summary line states, as values: what `reportLines` prints
+ * as its last line and what the `--report` document carries as a gate's
+ * `summary` — one computation, so the two cannot disagree. Every figure counts
+ * assertions, not rows (the comment in `reportLines` says why `failed` is a
+ * set), and `assertions` is the sum of the four buckets, never a constant.
+ */
+export interface GateSummary {
+  assertions: number;
+  measured: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  notInProfile: number;
+  profile: AssertionProfile;
+}
+
+export function gateSummary(report: VerdictLists & { profile: AssertionProfile }): GateSummary {
+  const failed = new Set(report.failures.map((f) => f.assertion)).size;
+  const measured = report.passed.length + failed;
+  return {
+    assertions: measured + report.skipped.length + report.profileSkipped.length,
+    measured,
+    passed: report.passed.length,
+    failed,
+    skipped: report.skipped.length,
+    notInProfile: report.profileSkipped.length,
+    profile: report.profile,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// the build report document (`--report <file>`, issue #1213)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `spec` of the document `build --report` and `repack --report` write.
+ * Versioned and additive: a field is added under the same spec, and one that
+ * changes meaning or goes away moves the spec — a dependant that read `/1`
+ * keeps reading what `/1` promised.
+ */
+export const BUILD_REPORT_SPEC = 'build-report/1';
+
+/** Which supplier judged the gates: the round trip through spine-core (`cli.ts`) or the model side and the rules restated over the emitted text (`cli_core.ts`). */
+export type BuildReportSupplier = 'round-trip' | 'model';
+
+/**
+ * The core entry's `here:` line as values: how many rules ran on the model
+ * side over the document, how many of the round trip's own were restated over
+ * the emitted text, and the codes that did not run. `null` on the round trip,
+ * which prints no such line.
+ */
+export interface GateHere {
+  modelSide: number;
+  restated: number;
+  notRun: string[];
+}
+
+/**
+ * What one gate's report states, as values: the rows a reader takes off the
+ * `PASS`, `SKIP` and `FAIL` lines (the rule names, the SKIP reasons, the FAIL
+ * details, each in the order printed), the summary line's figures, the stats
+ * line's keys and values, and the core entry's `here:` line. A `PROF` row is
+ * counted in `summary.notInProfile` and not listed: nothing reads its row.
+ */
+export interface BuildReportGate {
+  /** `compiled` for the gate over the compile, `packed` for `--pack`'s second gate over the pages on disk. */
+  atlas: 'compiled' | 'packed';
+  passed: string[];
+  skipped: Array<{ code: string; reason: string }>;
+  failures: Array<{ code: string; detail: string }>;
+  summary: GateSummary;
+  stats: Record<string, number | string>;
+  here: GateHere | null;
+}
+
+/**
+ * One `pack:` line as values. `coveredPct` is the figure the line prints, at
+ * its one decimal; `pageEdges` is the `--page-edges` the build packed under,
+ * which the line states as `, page edges free` or by its absence.
+ */
+export interface PackPageFigures {
+  page: string;
+  width: number;
+  height: number;
+  regions: number;
+  coveredPct: number;
+  padding: number;
+  pageEdges: 'pot' | 'free';
+  packShape: 'rect' | 'polygon';
+}
+
+/** The document, keys in the order written. Nothing in it is a time, a path or a machine's: two reports of one build are byte-identical. */
+export interface BuildReportDocument {
+  spec: typeof BUILD_REPORT_SPEC;
+  command: 'build' | 'repack';
+  supplier: BuildReportSupplier;
+  gates: BuildReportGate[];
+  /** Every `pack:` line, in the order printed; `null` for a build that did not pack. */
+  pack: PackPageFigures[] | null;
+}
+
+/** One gate's report as the document carries it — read off the lists `reportLines` prints, so a row is in the document exactly when its line is printed. */
+export function buildReportGate(
+  atlas: BuildReportGate['atlas'],
+  report: VerdictLists & { profile: AssertionProfile },
+  here: GateHere | null,
+): BuildReportGate {
+  return {
+    atlas,
+    passed: [...report.passed],
+    skipped: report.skipped.map((s) => ({ code: s.assertion, reason: s.reason })),
+    failures: report.failures.map((f) => ({ code: f.assertion, detail: f.detail })),
+    summary: gateSummary(report),
+    stats: { ...report.stats },
+    here,
+  };
+}
+
+/** The document's text: two-space JSON and a final newline, keys in the order `BuildReportDocument` states them. */
+export function buildReportText(doc: BuildReportDocument): string {
+  return `${JSON.stringify(doc, null, 2)}\n`;
 }

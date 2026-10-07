@@ -1560,6 +1560,7 @@ export function cmdSkills(flags: Record<string, string>, positional: string[]): 
  * through this entry's dispatch with a hook between the lift and the build.
  */
 export const MODEL_AND_TEXT_GATE: BuildGate = {
+  supplier: 'model',
   heading: (profile) =>
     `  ..    validate (the model side over the document + the round trip's rules restated over the emitted text, profile ${profile}; this entry links no spine-core, so the round trip does not run)`,
   run: ({ result, atlasText, atlasDir, modelText, reEmit, profile }) => {
@@ -1584,12 +1585,14 @@ export const MODEL_AND_TEXT_GATE: BuildGate = {
     const ran = (r: { passed: string[]; failures: Array<{ assertion: string }>; skipped: Array<{ assertion: string }>; profileSkipped: Array<{ assertion: string }> }): number =>
       new Set([...r.passed, ...r.failures.map((f) => f.assertion), ...r.skipped.map((x) => x.assertion), ...r.profileSkipped.map((x) => x.assertion)]).size;
     const notRun = text.skipped.filter((x) => x.assertion === 'A00_ROUNDTRIP_PARSE').map((x) => x.assertion);
+    // The line is spelled from the values the `--report` document carries as the gate's `here` (issue #1213).
+    const here = { modelSide: ran(model), restated: ran(text) - notRun.length, notRun };
     console.log(
-      `  ..    here: ${ran(model)} rule(s) on the model side over the document, ${ran(text) - notRun.length} of the round trip's own restated over the emitted text; ` +
-        `not run: ${notRun.join(', ') || 'none'} — spine-core's parse, which only the entry that links spine-core runs, on build and validate: ` +
+      `  ..    here: ${here.modelSide} rule(s) on the model side over the document, ${here.restated} of the round trip's own restated over the emitted text; ` +
+        `not run: ${here.notRun.join(', ') || 'none'} — spine-core's parse, which only the entry that links spine-core runs, on build and validate: ` +
         `installed, the same \`rigc\` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, \`bun cli.ts\``,
     );
-    return report.failures.length;
+    return { report, here };
   },
   look: (outDir) => `rigc: look at it: rigc render --candidate ${outDir}`,
 };

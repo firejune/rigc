@@ -1028,6 +1028,42 @@ const CORE_BUILD_PLANTS: Record<'refuse-core-build' | 'move-core-byte', string> 
 
 /** What the comparison holds equal: every file each entry's build of the fixture writes, by name. */
 const CORE_OUT = 'core-build';
+
+/** Where the core entry's build writes its `--report` (issue #1213): beside `--out`, never in it. */
+const CORE_REPORT = 'core-build.report.json';
+
+/** The `spec` the installed build's report has to carry — spelled here rather than imported, since the smoke reads the install, not the tree. */
+const BUILD_REPORT_SPEC_SEEN = 'build-report/1';
+
+/**
+ * What is wrong with the installed core build's `--report` document, read
+ * against the lines the same build printed: it has to be there and parse, say
+ * `build-report/1`, `build` and the `model` supplier, and carry one gate per
+ * summary line printed, each with that line's figures. Empty when it holds.
+ */
+function coreReportProblems(path: string, printed: string): string[] {
+  if (!existsSync(path)) return ['no document was written'];
+  let doc: { spec?: unknown; command?: unknown; supplier?: unknown; gates?: Array<{ summary?: Record<string, unknown> }> };
+  try {
+    doc = JSON.parse(readFileSync(path, 'utf8')) as typeof doc;
+  } catch (err) {
+    return [`the document does not parse: ${(err as Error).message}`];
+  }
+  const problems: string[] = [];
+  if (doc.spec !== BUILD_REPORT_SPEC_SEEN) problems.push(`spec is ${JSON.stringify(doc.spec)}, not "${BUILD_REPORT_SPEC_SEEN}"`);
+  if (doc.command !== 'build') problems.push(`command is ${JSON.stringify(doc.command)}, not "build"`);
+  if (doc.supplier !== 'model') problems.push(`supplier is ${JSON.stringify(doc.supplier)}, not "model" — this entry links no spine-core`);
+  const summaries = [...printed.matchAll(/(\d+) assertions: (\d+) measured \((\d+) passed, (\d+) failed\), (\d+) skipped/g)].map((m) => m.slice(1, 6).map(Number));
+  const gates = doc.gates ?? [];
+  if (gates.length !== summaries.length || summaries.length === 0) problems.push(`${gates.length} gate(s) in the document and ${summaries.length} summary line(s) printed`);
+  gates.forEach((g, i) => {
+    const said = summaries[i];
+    const s = g.summary ?? {};
+    const held = [s.assertions, s.measured, s.passed, s.failed, s.skipped];
+    if (said !== undefined && held.join(',') !== said.join(',')) problems.push(`gate ${i + 1}'s summary is ${held.join(',')} and its line says ${said.join(',')}`);
+  });
+  return problems;
+}
 const FULL_OUT = 'build';
 
 /**
@@ -1523,7 +1559,8 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // anything else is a fault of the case (issue #1178: this branch used to
   // record a non-zero exit as a HOLE, and a HOLE does not move the exit code,
   // so a package whose installed `build` was broken printed green).
-  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', CORE_OUT, '--profile', 'spine-html', '--pack'], home);
+  // `--report` beside `--out` (issue #1213): the installed build writes the document a dependant reads in place of the sentences.
+  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', CORE_OUT, '--profile', 'spine-html', '--pack', '--report', CORE_REPORT], home);
   output += coreBuild.out;
   const coreDir = join(home, CORE_OUT);
   const coreWants = ['skeleton.json', 'skeleton.atlas', 'skeleton.model.json', 'skeleton.png'];
@@ -1552,6 +1589,11 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     }
   }
   for (const line of coreBuild.out.split('\n').filter((l) => /^\s*FAIL\s/.test(l))) fault('core-build', `SMOKE_CORE_ENTRY_BUILDS: the core entry's build printed ${line.trim()}`);
+  if (coreBuilt) {
+    const problems = coreReportProblems(join(home, CORE_REPORT), coreBuild.out);
+    if (problems.length > 0) fault('core-build', `SMOKE_CORE_BUILD_WRITES_ITS_REPORT: \`rigc build --report ${CORE_REPORT}\` on the core entry: ${problems.join('; ')}`);
+    else notes.push(`the core entry's build wrote ${CORE_REPORT}: ${BUILD_REPORT_SPEC_SEEN}, supplier "model", its gates' summaries the printed ones`);
+  }
 
   // 🔒 Phase two: the runtime installed beside the package, by the version the
   // package declares — and the SAME `rigc` now runs cli.ts and the round trip.
