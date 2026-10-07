@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.19.0](https://github.com/firejune/rigc/compare/v2.18.0...v2.19.0) (2026-10-07)
+
+
+### Features
+
+* **mesh:** reduceMesh on spine-rigc/mesh — vertex removal with retriangulation and region refinement as two composed operations, every step held to measureMeshQuality, deform runs remapped on removal and refused by name on insertion, ten more MQ controls (B2 of [#1224](https://github.com/firejune/rigc/issues/1224)) ([#1227](https://github.com/firejune/rigc/issues/1227)) ([b6a186d](https://github.com/firejune/rigc/commit/b6a186d1fdb7a7257837ce046988fc9f09f1e9e8))
+
 ## [2.18.0](https://github.com/firejune/rigc/compare/v2.17.1...v2.18.0) (2026-10-07)
 
 
