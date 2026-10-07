@@ -366,6 +366,7 @@ import {
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, foldPrecedes, turnCeiling, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
   bindWeightedVertices,
+  buildContourMesh,
   buildGridMesh,
   checkHullOrder,
   contourOvershootBound,
@@ -374,6 +375,7 @@ import {
   signedArea,
   traceAlphaOutline,
   traceOutline,
+  type AlphaMask,
   type MeshGeometry,
 } from './src/mesh.ts';
 import {
@@ -36090,6 +36092,105 @@ function runContourMeshSuite(): number {
           .join(' | '),
     'the parser drops an attachment it cannot read and says nothing, so a generator that cannot deliver has to say so itself',
   );
+
+  // --- CT14: the pinch scan reads the filled silhouette (issue #1209) ------
+  //
+  // Three masks at threshold 9, `#` = alpha 255. A is a 4x4 block with (1,1) and
+  // (2,2) clear: both are holes, they meet at corner (2,2), and the outer outline
+  // never visits that corner — so A traces as the square with 2 hole pixels. B is
+  // a 3x3 ring with the centre and (2,2) clear: the centre touches the outside at
+  // corner (2,2), so it is not a hole, and the outline would have to pass through
+  // that corner twice — refused by name. C is the plain ring, the positive
+  // control that did not move. Two plants on a copy of src/mesh.ts, each run in a
+  // child: the scan and the walk reading the island before the fill (the code
+  // before #1209, which refuses A), and the fill flooding background through
+  // edges only (which reads B's centre as a hole, fills the pinch and traces B).
+  {
+    const masks: Record<'A' | 'B' | 'C', string[]> = {
+      A: ['####', '#.##', '##.#', '####'],
+      B: ['###', '#.#', '##.'],
+      C: ['###', '#.#', '###'],
+    };
+    const maskOf = (rows: readonly string[]): AlphaMask => {
+      const width = rows[0].length;
+      const alpha = new Uint8Array(width * rows.length);
+      rows.forEach((row, y) => [...row].forEach((c, x) => (alpha[y * width + x] = c === '#' ? 255 : 0)));
+      return { width, height: rows.length, alpha };
+    };
+    /** One mask's reading: traced, with its outline length and holes, or the refusal's text. */
+    const reading = (rows: readonly string[]): string => {
+      try {
+        const t = traceAlphaOutline(maskOf(rows), 9);
+        return `traced ${t.outline.length} vertices, ${t.holePixels} hole px`;
+      } catch (err) {
+        return `refused: ${(err as Error).message}`;
+      }
+    };
+    const want = {
+      A: (r: string): boolean => r === 'traced 16 vertices, 2 hole px',
+      B: (r: string): boolean => r.startsWith('refused: the alpha silhouette pinches to a single point at pixel corner (2,2),'),
+      C: (r: string): boolean => r === 'traced 12 vertices, 1 hole px',
+    };
+    const probes: string[] = [];
+    const live = { A: reading(masks.A), B: reading(masks.B), C: reading(masks.C) };
+    for (const k of ['A', 'B', 'C'] as const) if (!want[k](live[k])) probes.push(`mask ${k} read "${live[k]}"`);
+    let built = '';
+    try {
+      const g = buildContourMesh({ mask: maskOf(masks.A), threshold: 9, tolerance: 1, margin: 0, maxVertices: 48 });
+      built = `buildContourMesh on A builds ${g.points.length} vertices over ${g.contour?.holePixels} hole px`;
+      if (g.contour?.holePixels !== 2) probes.push(`${built}, not 2`);
+    } catch (err) {
+      probes.push(`buildContourMesh on A refused: ${(err as Error).message}`);
+    }
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-ct14-'));
+    /** The three readings through a copy of src/mesh.ts with `from` replaced by `to`, in a child; a string says why there are none. */
+    const planted = (label: string, from: string, to: string): Record<'A' | 'B' | 'C', string> | string => {
+      const text = readFileSync(join(import.meta.dir, 'src', 'mesh.ts'), 'utf8');
+      if (text.split(from).length !== 2) return `the ${label} plant's text is not in src/mesh.ts exactly once`;
+      const dir = join(work, label);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'mesh.ts'), text.replace(from, to));
+      const script =
+        `const { traceAlphaOutline } = await import(${JSON.stringify(join(dir, 'mesh.ts'))});` +
+        `const masks = ${JSON.stringify(masks)};` +
+        'const out = {};' +
+        'for (const [k, rows] of Object.entries(masks)) {' +
+        '  const w = rows[0].length; const alpha = new Uint8Array(w * rows.length);' +
+        "  rows.forEach((row, y) => [...row].forEach((c, x) => (alpha[y * w + x] = c === '#' ? 255 : 0)));" +
+        '  try { const t = traceAlphaOutline({ width: w, height: rows.length, alpha }, 9);' +
+        '    out[k] = `traced ${t.outline.length} vertices, ${t.holePixels} hole px`; }' +
+        '  catch (err) { out[k] = `refused: ${err.message}`; }' +
+        '}' +
+        'process.stdout.write(JSON.stringify(out));';
+      const ran = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
+      if (ran.status !== 0) return `the ${label} child exited ${ran.status}: ${ran.stderr.slice(0, 300)}`;
+      return JSON.parse(ran.stdout) as Record<'A' | 'B' | 'C', string>;
+    };
+    const AT_FILLED = 'const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= w || y >= h ? 0 : filled[y * w + x]);';
+    const beforeFill = planted('island-scan', AT_FILLED, AT_FILLED.replace('filled[y * w + x]', 'inside[y * w + x]'));
+    const edgeFlood = planted('edge-flood', 'fillEnclosed(inside, w, h, 8)', 'fillEnclosed(inside, w, h, 4)');
+    rmSync(work, { recursive: true, force: true });
+    if (typeof beforeFill === 'string') probes.push(beforeFill);
+    else if (want.A(beforeFill.A)) probes.push(`the scan planted back before the fill still traces A: "${beforeFill.A}"`);
+    if (typeof edgeFlood === 'string') probes.push(edgeFlood);
+    else if (want.B(edgeFlood.B)) probes.push(`the fill planted to flood through edges only still refuses B: "${edgeFlood.B}"`);
+    const short = (r: string): string => (r.length > 96 ? `${r.slice(0, 96)}…` : r);
+    const held = probes.length === 0;
+    say(
+      'CT14_A_CORNER_BETWEEN_HOLES_IS_NOT_A_PINCH_AND_A_CORNER_ON_THE_OUTLINE_STILL_IS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `A ${live.A}; B ${short(live.B)}; C ${live.C}; ${built}. Planted, the scan reading the island before the fill: A ` +
+          `${typeof beforeFill === 'string' ? beforeFill : short(beforeFill.A)}; the fill flooding through edges only: B ` +
+          `${typeof edgeFlood === 'string' ? edgeFlood : edgeFlood.B}`,
+      ),
+      'issue #1209: the scan ran on the island before its holes were filled, so a corner between two holes — inside the ' +
+        'silhouette the walk traces, never on its outline — refused the part; and a fill that floods background through ' +
+        'edges only reads a pixel that meets the outside at a corner as a hole, which fills a pinch rather than a hole',
+    );
+  }
 
   // --- a depth map instead of a cylinder (issue #382) ----------------------
   //
@@ -90046,9 +90147,12 @@ function runEmitHashesSuite(): number | null {
       let said = '';
       try {
         // "split": two 10x30 bars at the ends of a 40x30 rectangle, two islands of equal size (refused `islands`).
-        // "pinch": a 20x20 block in a 40x30 rectangle with two texels cleared diagonally inside it (refused `pinch`).
+        // "pinch": a 20x20 block in a 40x30 rectangle with its bottom-right texel cleared and the texel diagonally
+        // inside that one, so the inner texel meets the outside at a corner and the outline would pass that corner
+        // twice (refused `pinch`). Two texels cleared diagonally INSIDE the block are two holes, and since #1209 a
+        // corner between holes traces: that was this fixture until then, and it traced the block.
         const dir = pagesBuild('hul08', [
-          { file: 'page.png', paint: [[0, 0, 10, 30], [30, 0, 10, 30], [50, 0, 20, 20]], clear: [[55, 5], [56, 6]], regions: [['split', 0, 0, 40, 30], ['pinch', 50, 0, 40, 30]] },
+          { file: 'page.png', paint: [[0, 0, 10, 30], [30, 0, 10, 30], [50, 0, 20, 20]], clear: [[68, 18], [69, 19]], regions: [['split', 0, 0, 40, 30], ['pinch', 50, 0, 40, 30]] },
         ]);
         const measured = measureBuild(dir);
         const split = measured.measures.find((m) => m.name === 'split');

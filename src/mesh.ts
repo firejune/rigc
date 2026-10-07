@@ -1075,7 +1075,24 @@ export function traceAlphaOutline(
   const inside = new Uint8Array(w * h);
   for (let i = 0; i < inside.length; i++) inside[i] = label[i] === biggest ? 1 : 0;
 
-  const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= w || y >= h ? 0 : inside[y * w + x]);
+  // The silhouette the walk traces is the island WITH ITS HOLES FILLED, and it is
+  // built before the pinch scan because the scan has to read the same pixels the
+  // walk does. A corner where two holes meet diagonally is inside the filled
+  // silhouette, and the outer outline never visits it; scanning the island
+  // before the fill refused such a part for a pinch no outline passes through
+  // (issue #1209).
+  //
+  // ⚠️ A hole is background that no 8-connected path of background reaches from
+  // the border, not merely no 4-connected one. The island is 4-connected, so two
+  // background pixels that touch only at a corner are connected through it — the
+  // same duality the walk's clockwise rule keeps. With a 4-connected flood a
+  // transparent pixel that touches the outside only diagonally would read as a
+  // hole, the fill would close the pinch at that corner, and the part would trace
+  // a region the art does not enclose: that is filling a pinch, not a hole. On
+  // every part this function accepts the two floods fill the same pixels — they
+  // can only differ across a corner the scan below refuses.
+  const { filled, holePixels } = fillEnclosed(inside, w, h, 8);
+  const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= w || y >= h ? 0 : filled[y * w + x]);
   /** Outgoing cracks at one lattice corner, as direction indices. */
   const outgoing = (cx: number, cy: number): number[] => {
     const dirs: number[] = [];
@@ -1087,12 +1104,17 @@ export function traceAlphaOutline(
   };
 
   // A DIAGONAL PINCH is refused before the walk, not during it. At a corner where
-  // two art pixels meet diagonally with background on the other diagonal, two
-  // cracks leave the same point — so the boundary is not a set of simple loops
-  // any more, and whichever pairing the walk chooses it either passes through one
-  // point twice or leaves part of the outline untraced. Both are silent: the
-  // second one produces a perfectly valid mesh of the wrong region. Scanning for
-  // it costs one pass and names the pixel corner.
+  // two pixels of the filled silhouette meet diagonally with background on the
+  // other diagonal, two cracks leave the same point — so the boundary is not a
+  // set of simple loops any more, and whichever pairing the walk chooses it
+  // either passes through one point twice or leaves part of the outline
+  // untraced. Both are silent: the second one produces a perfectly valid mesh of
+  // the wrong region. Scanning for it costs one pass and names the pixel corner.
+  // Background here is what the fill left, so both pixels on that diagonal are
+  // reached from outside the part: the corner is on the outer outline itself.
+  // The remedy names a direction for each outcome because a threshold moves art
+  // one way only: raising it removes pixels, which can open a pinch and never
+  // close one, and lowering it adds them.
   for (let cy = 0; cy <= h; cy++) {
     for (let cx = 0; cx <= w; cx++) {
       const tl = at(cx - 1, cy - 1);
@@ -1102,16 +1124,19 @@ export function traceAlphaOutline(
       if ((tl && br && !tr && !bl) || (tr && bl && !tl && !br)) {
         throw new MeshError(
           `the alpha silhouette pinches to a single point at pixel corner (${cx},${cy}), where two parts of the art ` +
-            'meet diagonally — one outline cannot pass through one point twice. Raise the alpha threshold so the ' +
-            'pinch closes or opens, or author the geometry as weights',
+            'meet diagonally — one outline cannot pass through one point twice. Move the alpha threshold so the ' +
+            'pinch opens (raise it) or closes (lower it), or author the geometry as weights',
         );
       }
     }
   }
 
+  // The first filled pixel in row order is an island pixel: a hole's upper
+  // neighbour is never background the border reaches, so no hole sits on the
+  // silhouette's top row.
   let startAt = -1;
-  for (let i = 0; i < inside.length; i++) {
-    if (inside[i]) {
+  for (let i = 0; i < filled.length; i++) {
+    if (filled[i]) {
       startAt = i;
       break;
     }
@@ -1119,10 +1144,9 @@ export function traceAlphaOutline(
   const sx = startAt % w;
   const sy = (startAt - sx) / w;
   // With no pinch anywhere, every corner has at most one outgoing crack, so the
-  // boundary is a disjoint union of simple loops and this walk traces exactly
-  // one of them. Starting on the top edge of the first art pixel in row order
-  // puts it on the OUTER loop; a hole's loop is never entered, which is what
-  // makes "holes are filled" a property of the trace rather than a later repair.
+  // boundary is a simple loop and this walk traces it. The holes have no loop
+  // of their own to enter, because the walk reads the filled silhouette: their
+  // pixels are inside the outline and draw nothing, and `holePixels` counts them.
   const outline: Array<[number, number]> = [];
   let cx = sx;
   let cy = sy;
@@ -1144,7 +1168,6 @@ export function traceAlphaOutline(
     dir = next;
   }
 
-  const { filled, holePixels } = fillEnclosed(inside, w, h);
   return { outline, artPixels, islandPixels: sizes[biggest - 1], islands: sizes.length, holePixels, filled };
 }
 
@@ -1155,8 +1178,19 @@ export function traceAlphaOutline(
  * than by a winding rule — which is what makes it answer the same question for a
  * mask of one island and a mask of several, and is why the authored-mesh
  * measurement can pass it all the art where the trace passes it one island.
+ *
+ * `background` is how the flood steps: 4 through edges, 8 through corners too.
+ * The trace floods 8 — the dual of its 4-connected island, so background that
+ * meets the outside at a corner is outside — and says why where it calls this.
+ * The authored-mesh measurement floods 4, as it always has; the two agree on
+ * every mask the trace accepts.
  */
-function fillEnclosed(inside: Uint8Array, w: number, h: number): { filled: Uint8Array; holePixels: number } {
+function fillEnclosed(
+  inside: Uint8Array,
+  w: number,
+  h: number,
+  background: 4 | 8,
+): { filled: Uint8Array; holePixels: number } {
   const outsideReach = new Uint8Array(w * h);
   const queue: number[] = [];
   const seed = (x: number, y: number): void => {
@@ -1182,6 +1216,12 @@ function fillEnclosed(inside: Uint8Array, w: number, h: number): { filled: Uint8
     seed(x + 1, y);
     seed(x, y - 1);
     seed(x, y + 1);
+    if (background === 8) {
+      seed(x - 1, y - 1);
+      seed(x + 1, y - 1);
+      seed(x - 1, y + 1);
+      seed(x + 1, y + 1);
+    }
   }
   const filled = new Uint8Array(w * h);
   let holePixels = 0;
@@ -1340,7 +1380,7 @@ export function measureAuthoredMeshFit(
 ): MeshFitReport {
   const { width: w, height: h } = mask;
   const art = artOf(mask, threshold);
-  const { filled } = fillEnclosed(art, w, h);
+  const { filled } = fillEnclosed(art, w, h, 4);
   const covered = rasteriseTriangles(points, triangles, w, h);
   let artPixels = 0;
   let coveredArt = 0;
