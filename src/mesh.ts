@@ -44,6 +44,13 @@
  */
 import type { ModelBinding, ModelVertices } from './model.ts';
 
+// The mesh-quality measurement and its report (issue #1224) live in their own
+// module and reach a dependant through this file, which is what
+// `spine-rigc/mesh` names. That module imports helpers from this one, so the
+// two form an import cycle: safe only because neither reads the other's
+// bindings while it is being evaluated — every use is inside a function.
+export * from './meshquality.ts';
+
 export interface MeshSpecInput {
   /** Polygon in part-local pixels, y down, in manifest order. */
   hull: Array<[number, number]>;
@@ -140,12 +147,33 @@ export interface RibbonSpecInput {
 export class MeshError extends Error {}
 
 /**
+ * A refusal of the mesh-quality operations (`src/meshquality.ts`, issue #1224),
+ * by code: a `MeshError`, so a dependant that already catches `MeshError` keeps
+ * catching it, and `code` for one that wants to know which refusal it was. The
+ * codes are listed in docs/MESH_REDUCTION.md beside the section that defines
+ * each.
+ *
+ * ⚠️ Defined here and not in `src/meshquality.ts`, because that module imports
+ * this one and this one re-exports it: a class that extends `MeshError` at the
+ * top of the importing module would read `MeshError` before this module had
+ * run, and every import of `spine-rigc/mesh` would throw.
+ */
+export class MeshReductionError extends MeshError {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(`${code}: ${message}`);
+    this.code = code;
+    this.name = 'MeshReductionError';
+  }
+}
+
+/**
  * The generator's own grid: 6 decimals, never "-0". Its rows, weights and
  * shares are built on it, and what it produces reaches the file through the
  * compiler's `f32` at emission (issue #716), so the emitted text is still each
  * number's float32 name — this is the generator's resolution, not the file's.
  */
-function r6(n: number): number {
+export function r6(n: number): number {
   const v = Math.round(n * 1e6) / 1e6;
   return v === 0 ? 0 : v;
 }
@@ -681,7 +709,7 @@ const CRACK_DIRS: ReadonlyArray<readonly [number, number]> = [
 ];
 
 /** Perpendicular distance from `p` to the segment `a`-`b`, clamped to its ends. */
-function distanceToSegment(
+export function distanceToSegment(
   p: readonly [number, number],
   a: readonly [number, number],
   b: readonly [number, number],
@@ -843,7 +871,7 @@ export function prunePolygon(poly: Array<[number, number]>): Array<[number, numb
 }
 
 /** Do two segments share a point? Touching counts — an ear needs strict simplicity. */
-function segmentsMeet(
+export function segmentsMeet(
   a: readonly [number, number],
   b: readonly [number, number],
   c: readonly [number, number],
@@ -979,14 +1007,14 @@ export function earClip(poly: Array<[number, number]>): number[] {
 }
 
 /** Which pixels of a mask are art, as 1/0 bytes. */
-function artOf(mask: AlphaMask, threshold: number): Uint8Array {
+export function artOf(mask: AlphaMask, threshold: number): Uint8Array {
   const out = new Uint8Array(mask.width * mask.height);
   for (let i = 0; i < out.length; i++) out[i] = mask.alpha[i] >= threshold ? 1 : 0;
   return out;
 }
 
 /** 4-connected island labels, 1-based; 0 is background. */
-function labelIslands(art: Uint8Array, w: number, h: number): { label: Int32Array; sizes: number[] } {
+export function labelIslands(art: Uint8Array, w: number, h: number): { label: Int32Array; sizes: number[] } {
   const label = new Int32Array(w * h);
   const sizes: number[] = [];
   const stack: number[] = [];
@@ -1185,7 +1213,7 @@ export function traceAlphaOutline(
  * The authored-mesh measurement floods 4, as it always has; the two agree on
  * every mask the trace accepts.
  */
-function fillEnclosed(
+export function fillEnclosed(
   inside: Uint8Array,
   w: number,
   h: number,
@@ -1242,7 +1270,7 @@ function fillEnclosed(
  * same convention `src/render.ts` rasterises by. A degenerate triangle — zero
  * doubled area — is skipped rather than given an orientation it does not have.
  */
-function rasteriseTriangles(points: Array<[number, number]>, triangles: number[], w: number, h: number): Uint8Array {
+export function rasteriseTriangles(points: Array<[number, number]>, triangles: number[], w: number, h: number): Uint8Array {
   const covered = new Uint8Array(w * h);
   for (let t = 0; t + 2 < triangles.length; t += 3) {
     const a = points[triangles[t]];
@@ -1420,7 +1448,7 @@ export function measureAuthoredMeshFit(
  * a distance. A grid with no set pixel at all comes back all `INF`; the one caller
  * never asks (a mask with no art has no covered-outside pixel to ask about).
  */
-function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): Float64Array {
+export function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): Float64Array {
   const INF = w * w + h * h + 1;
   const dist = new Float64Array(w * h);
   for (let i = 0; i < dist.length; i++) dist[i] = inside[i] ? 0 : INF;

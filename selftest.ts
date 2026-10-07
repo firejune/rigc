@@ -162,7 +162,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { deflateSync } from 'node:zlib';
 // Imported for the gates that read this file as CODE rather than as text, and
 // the reason each is worth a parser: one has to find the condition GOVERNING a
@@ -345,7 +345,7 @@ import {
   type ModelPage,
   pagesOfAtlas,
 } from './src/model.ts';
-import { computeWorldTransforms, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
+import { computeWorldTransforms, cropToSpineY, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
 import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
@@ -375,9 +375,25 @@ import {
   signedArea,
   traceAlphaOutline,
   traceOutline,
+  earClip,
+  measureAuthoredMeshFit,
+  measureMeshQuality,
+  MeshError,
+  MeshReductionError,
+  rasteriseTriangles,
+  writeMeshQualityReport,
   type AlphaMask,
+  type ArtFitBounds,
+  type MeasureRow,
+  type MeasureTargets,
   type MeshGeometry,
+  type MeshMeasureInput,
+  type MeshQualityReport,
+  type RefinementRegion,
+  type SourceFrame,
+  type SourceMesh,
 } from './src/mesh.ts';
+import { areaBand, triangleAreas } from './src/areaband.ts';
 import {
   boneDistance,
   BONE_QUANTITIES,
@@ -15347,6 +15363,31 @@ function runRigSuite(): number {
 // nothing to compare (SKIP), something to compare (PASS), a disagreement (FAIL).
 // The fourth is a second assertion's skip, and it is here for the same reason —
 // this is the only rig in the file that declares no invariants at all.
+
+/**
+ * Copy every module `entry` reaches by a value import, transitively, from the
+ * tree at `root` into `dest` at the same relative paths — `entry` itself
+ * excepted, because the caller writes a planted copy of it there. A type-only
+ * import compiles to nothing and is not followed. Used where a control loads a
+ * planted copy of one module in a child (`CT14`): the copy has to resolve its
+ * relative imports the way the original does.
+ */
+function copyValueImportClosure(root: string, entry: string, dest: string): void {
+  const seen = new Set<string>([entry]);
+  const queue = [entry];
+  while (queue.length > 0) {
+    const rel = queue.pop()!;
+    const text = readFileSync(join(root, rel), 'utf8');
+    for (const match of text.matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?from\s+'(\.{1,2}\/[^']+\.ts)'/gm)) {
+      const target = join(dirname(rel), match[1]).split(sep).join('/');
+      if (seen.has(target)) continue;
+      seen.add(target);
+      queue.push(target);
+      mkdirSync(join(dest, dirname(target)), { recursive: true });
+      copyFileSync(join(root, target), join(dest, target));
+    }
+  }
+}
 
 /** One line per case, in the same shape the fixture suites print. Returns 1 when it failed. */
 function reportCase(name: string, ok: boolean, detail: string, why: string): number {
@@ -36149,10 +36190,13 @@ function runContourMeshSuite(): number {
       const text = readFileSync(join(import.meta.dir, 'src', 'mesh.ts'), 'utf8');
       if (text.split(from).length !== 2) return `the ${label} plant's text is not in src/mesh.ts exactly once`;
       const dir = join(work, label);
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'mesh.ts'), text.replace(from, to));
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'mesh.ts'), text.replace(from, to));
+      // src/mesh.ts reaches other modules by value since issue #1224 (it re-exports src/meshquality.ts), so
+      // the copy carries them beside it at their own relative paths, or the planted module would not load.
+      copyValueImportClosure(import.meta.dir, 'src/mesh.ts', dir);
       const script =
-        `const { traceAlphaOutline } = await import(${JSON.stringify(join(dir, 'mesh.ts'))});` +
+        `const { traceAlphaOutline } = await import(${JSON.stringify(join(dir, 'src', 'mesh.ts'))});` +
         `const masks = ${JSON.stringify(masks)};` +
         'const out = {};' +
         'for (const [k, rows] of Object.entries(masks)) {' +
@@ -44937,6 +44981,863 @@ function rawShiftedMeshWeights(rigText: string, flag: boolean): string {
     }
   }
   return `${JSON.stringify(rig, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// mesh quality — the geometry rows of mesh-quality-report/1 (issue #1224)
+// ---------------------------------------------------------------------------
+//
+// Stage B1 of #1221: `measureMeshQuality` and its report, held to the contract
+// in docs/MESH_REDUCTION.md. Every plate is generated here, in a temp directory
+// of this run, in the `fixtures/public.ts` convention — a checkerboard with
+// PLACEHOLDER burned in, whose alpha channel is the only thing measured — and
+// every expected figure is derived from the fixture that was built (its
+// rectangle, its planted displacement, its own area band), never typed in.
+//
+// ⚠️ Not built here, and named so nobody reads the suite as Stage A complete:
+// the reduction controls (MQ14, MQ17, MQ18, MQ24, MQ32, MQ33, MQ40, MQ43) are
+// stage B2's, and every motion control is stage C's.
+
+type MqPt = [number, number];
+
+const MQ_PAPER: RGBA = [206, 212, 226, 255];
+const MQ_INK: RGBA = [24, 28, 36, 255];
+const MQ_ACCENT: RGBA = [198, 96, 72, 255];
+
+/**
+ * A checkerboard plate with PLACEHOLDER burned in and the given alpha, written
+ * to `dir` and read back: the mask a measurement takes is the one on disk.
+ */
+function mqMask(dir: string, name: string, width: number, height: number, alphaAt: (x: number, y: number) => number): AlphaMask {
+  const plate = new Plate(width, height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) plate.set(x, y, (Math.floor(x / 8) + Math.floor(y / 8)) % 2 === 0 ? MQ_PAPER : MQ_INK);
+  }
+  plate.frame(0, 0, width, height, 1, MQ_ACCENT);
+  if (height >= 34) plate.textCentred('PLACEHOLDER', width / 2, Math.max(12, height / 2 + 2), 1, MQ_ACCENT);
+  plate.maskAlpha(alphaAt);
+  const path = join(dir, `${name}.png`);
+  plate.writePng(path);
+  const read = readPlate(path);
+  const alpha = new Uint8Array(width * height);
+  for (let i = 0; i < alpha.length; i++) alpha[i] = read.data[i * 4 + 3];
+  return { width, height, alpha };
+}
+
+const mqFrame = (width: number, height: number, pageScale = 1): SourceFrame => ({
+  space: 'part-local-drawing-px-y-down',
+  width,
+  height,
+  pageScale,
+  conversion: 'texels = px * pageScale',
+});
+
+/**
+ * A mesh over `points` (hull first, in order) whose triangles are each turned
+ * counter-clockwise in Spine world — read through `cropToSpineY`, the one place
+ * the conversion lives — with UVs over the frame.
+ */
+function mqMesh(points: MqPt[], triangles: number[], hull: number, frameHeight: number, frameWidth: number): SourceMesh {
+  const tris = triangles.slice();
+  for (let t = 0; t < tris.length; t += 3) {
+    const [a, b, c] = [points[tris[t]], points[tris[t + 1]], points[tris[t + 2]]];
+    const ay = cropToSpineY(a[1], frameHeight);
+    const twice = (b[0] - a[0]) * (cropToSpineY(c[1], frameHeight) - ay) - (c[0] - a[0]) * (cropToSpineY(b[1], frameHeight) - ay);
+    if (twice < 0) [tris[t + 1], tris[t + 2]] = [tris[t + 2], tris[t + 1]];
+  }
+  return { points, uvs: points.flatMap(([x, y]) => [x / frameWidth, y / frameHeight]), triangles: tris, hull, weights: null };
+}
+
+/** A fan from the last point over a hull of the others. */
+function mqFan(hull: MqPt[], centre: MqPt, frameWidth: number, frameHeight: number): SourceMesh {
+  const n = hull.length;
+  const triangles: number[] = [];
+  for (let i = 0; i < n; i++) triangles.push(i, n, (i + 1) % n);
+  return mqMesh([...hull, centre], triangles, n, frameHeight, frameWidth);
+}
+
+function mqInput(mask: AlphaMask, frame: SourceFrame, source: SourceMesh, targets: MeasureTargets, extra: Partial<MeshMeasureInput> = {}): MeshMeasureInput {
+  return {
+    id: 'probe',
+    attachment: { skin: null, slot: 'probe-slot', attachment: 'probe' },
+    art: { mask, threshold: 1, frame },
+    source,
+    targets,
+    referenceHull: null,
+    minArtSamples: 1,
+    regionArtSamples: targets.regions.map((r) => ({ region: r.name, minArtSamples: 1 })),
+    protect: null,
+    influences: null,
+    boneOrder: null,
+    preset: null,
+    ...extra,
+  };
+}
+
+function mqRows(report: MeshQualityReport): MeasureRow[] {
+  return report.candidates[0]?.geometry?.rows ?? [];
+}
+
+function mqRow(report: MeshQualityReport, code: string, region: string | null = null, connectivity?: 4 | 8): MeasureRow | undefined {
+  return mqRows(report).find((r) => r.code === code && r.object.region === region && (connectivity === undefined || r.art?.connectivity === connectivity));
+}
+
+/** A row as one phrase: code, state, value, bound and worst. */
+function mqSay(row: MeasureRow | undefined): string {
+  if (row === undefined) return '(no row)';
+  const bound = row.bound === null ? 'no bound' : `${row.bound.op} ${row.bound.value}`;
+  return `${row.code}${row.object.region === null ? '' : `[${row.object.region}]`}${row.art?.connectivity ? `/${row.art.connectivity}` : ''} ${row.state} ${row.value ?? '—'} (${bound}) worst ${JSON.stringify(row.worst?.at ?? null)}`;
+}
+
+/** Distance from a point to a segment — the test's own, so a distance it checks is not the module's reading of itself. */
+function mqPointSegment(p: MqPt, a: MqPt, b: MqPt): number {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t);
+}
+
+/** Distance from a segment to a convex rectangle it does not meet: the nearest of the endpoint and corner distances. */
+function mqSegmentRect(a: MqPt, b: MqPt, rect: MqPt[]): number {
+  let d = Infinity;
+  for (let i = 0; i < rect.length; i++) {
+    const c = rect[i];
+    const e = rect[(i + 1) % rect.length];
+    d = Math.min(d, mqPointSegment(a, c, e), mqPointSegment(b, c, e), mqPointSegment(c, a, b));
+  }
+  return d;
+}
+
+const mqSquare = (cx: number, cy: number, half: number): MqPt[] => [
+  [cx - half, cy - half],
+  [cx + half, cy - half],
+  [cx + half, cy + half],
+  [cx - half, cy + half],
+];
+
+function runMeshQualitySuite(): number {
+  console.log('\n── mesh quality: the geometry rows, states and refusals of mesh-quality-report/1 (issue #1224) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-mesh-quality-'));
+
+  // The base fixture: a plate whose art is one rectangle, and the mesh that is exactly that rectangle.
+  const W = 48;
+  const H = 40;
+  const [X0, Y0, X1, Y1] = [8, 8, 40, 32];
+  const C: MqPt = [(X0 + X1) / 2, (Y0 + Y1) / 2];
+  const inRect = (x: number, y: number): boolean => x >= X0 && x < X1 && y >= Y0 && y < Y1;
+  const rectMask = mqMask(dir, 'rect', W, H, (x, y) => (inRect(x, y) ? 1 : 0));
+  const frame = mqFrame(W, H);
+  const hull: MqPt[] = [
+    [X0, Y0],
+    [X1, Y0],
+    [X1, Y1],
+    [X0, Y1],
+  ];
+  const exact = mqFan(hull, C, W, H);
+  const strict: ArtFitBounds = { minCoverage: 1, maxOvershoot: 0, maxUndercut: 0 };
+  const noTargets: MeasureTargets = { artFit: null, maxBoundaryDeviation: null, regions: [] };
+  const artCount = (mask: AlphaMask, threshold: number): number => mask.alpha.reduce((n, a) => n + (a >= threshold ? 1 : 0), 0);
+  const K_IN = 4;
+  const K_OUT = 3;
+  const inward = mqFan([hull[0], [X1 - K_IN, Y0 + K_IN], hull[2], hull[3]], C, W, H);
+  const pushed = mqFan([hull[0], hull[1], [X1 + K_OUT, Y1], hull[3]], C, W, H);
+  /** A refusal's code and text, or null when the call returned. */
+  const refusalOf = (input: MeshMeasureInput): { code: string; message: string; isMeshError: boolean } | null => {
+    try {
+      measureMeshQuality(input);
+      return null;
+    } catch (err) {
+      if (err instanceof MeshReductionError) return { code: err.code, message: err.message, isMeshError: err instanceof MeshError };
+      return { code: '(not a MeshReductionError)', message: (err as Error).message, isMeshError: err instanceof MeshError };
+    }
+  };
+
+  // --- MQ00: a mesh measured against itself ---------------------------------
+  {
+    const probes: string[] = [];
+    const readings: string[] = [];
+    for (const [label, mesh] of [
+      ['exact', exact],
+      ['pushed-out', pushed],
+    ] as const) {
+      const ownHull = mesh.points.slice(0, mesh.hull);
+      const rep = measureMeshQuality(mqInput(rectMask, frame, mesh, { artFit: null, maxBoundaryDeviation: 0, regions: [] }, { referenceHull: ownHull }));
+      const legacy = measureAuthoredMeshFit(rectMask, 1, mesh.points, mesh.triangles);
+      const boundary = mqRow(rep, 'MQ_BOUNDARY_DEVIATION');
+      const coverage = mqRow(rep, 'MQ_COVERAGE');
+      const overshoot = mqRow(rep, 'MQ_OVERSHOOT', null, 8);
+      if (boundary?.value !== 0 || boundary.state !== 'pass') probes.push(`${label}: ${mqSay(boundary)}, not 0 and pass against its own hull`);
+      if (coverage?.value !== legacy.coverage) probes.push(`${label}: coverage ${coverage?.value}, measureAuthoredMeshFit ${legacy.coverage}`);
+      if (mqRows(rep).filter((r) => r.code === 'MQ_OVERSHOOT').length !== 1) probes.push(`${label}: the fills disagree on a plain rectangle`);
+      if (overshoot?.value !== legacy.overshoot) probes.push(`${label}: overshoot ${overshoot?.value}, measureAuthoredMeshFit ${legacy.overshoot}`);
+      for (const r of mqRows(rep)) if (r.state === 'refused' || r.state === 'not-measurable') probes.push(`${label}: ${mqSay(r)} — ${r.reason}`);
+      readings.push(`${label}: deviation ${boundary?.value}, coverage ${coverage?.value} = ${legacy.coverage}, overshoot ${overshoot?.value} = ${legacy.overshoot}`);
+    }
+    if (!readings.some((r) => !r.includes('overshoot 0 '))) probes.push('every mesh measured overshoot 0, so the legacy comparison of overshoot compared nothing');
+    const held = probes.length === 0;
+    say(
+      'MQ00_CONTROL_A_MESH_MEASURED_AGAINST_ITS_OWN_HULL_DEVIATES_ZERO_AND_ITS_RASTER_ROWS_ARE_THE_LEGACY_FIT',
+      held,
+      probeDetail(held, probes, `${readings.join('; ')} — every row measured, none refused or unmeasurable`),
+      'the geometry half of the contract\'s MQ00: a mesh against itself is the identity every other row is read against, and coverage and overshoot are measureAuthoredMeshFit\'s wherever the 8- and 4-connected fills agree (P12)',
+    );
+  }
+
+  // --- MQ01: a hull vertex moved inward fails coverage and undercut, naming the worst pixel --
+  {
+    const probes: string[] = [];
+    const rep = measureMeshQuality(mqInput(rectMask, frame, inward, { artFit: strict, maxBoundaryDeviation: null, regions: [] }));
+    const coverage = mqRow(rep, 'MQ_COVERAGE');
+    const undercut = mqRow(rep, 'MQ_UNDERCUT');
+    // The undercut derived here by brute force over the same pixel-centre coverage rasteriseTriangles draws.
+    const covered = rasteriseTriangles(inward.points, inward.triangles, W, H);
+    let worst = 0;
+    for (let i = 0; i < covered.length; i++) {
+      if (!rectMask.alpha[i] || covered[i]) continue;
+      let nearest = Infinity;
+      for (let j = 0; j < covered.length; j++) if (covered[j]) nearest = Math.min(nearest, Math.hypot((i % W) - (j % W), Math.floor(i / W) - Math.floor(j / W)));
+      worst = Math.max(worst, nearest);
+    }
+    const legacy = measureAuthoredMeshFit(rectMask, 1, inward.points, inward.triangles);
+    if (coverage?.state !== 'fail' || coverage.value !== legacy.coverage) probes.push(`${mqSay(coverage)}; legacy coverage ${legacy.coverage}`);
+    if (undercut?.state !== 'fail' || undercut.value !== Math.round(worst * 1e6) / 1e6) probes.push(`${mqSay(undercut)}; brute-force undercut ${worst}`);
+    const pixel = undercut?.worst?.at.pixel;
+    if (pixel === undefined) probes.push('the undercut row names no pixel');
+    else {
+      const at = pixel[1] * W + pixel[0];
+      if (!rectMask.alpha[at] || covered[at]) probes.push(`the named pixel (${pixel.join(', ')}) is not an uncovered art pixel`);
+      if (JSON.stringify(coverage?.worst?.at.pixel) !== JSON.stringify(pixel)) probes.push(`coverage names ${JSON.stringify(coverage?.worst?.at)} and undercut (${pixel.join(', ')})`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ01_A_HULL_VERTEX_MOVED_INWARD_FAILS_COVERAGE_AND_UNDERCUT_NAMING_THE_WORST_PIXEL',
+      held,
+      probeDetail(held, probes, `vertex 1 moved ${K_IN} px in on each axis: ${mqSay(coverage)}; ${mqSay(undercut)}, the brute-force furthest uncovered art pixel from the covered set measuring ${worst.toFixed(6)} px`),
+      '§4: coverage alone says how much art is lost and not where; the undercut row says how far the furthest lost pixel is from the mesh and names it',
+    );
+  }
+
+  // --- MQ02: a hull vertex pushed out K pixels measures overshoot K within one spatial quantum --
+  {
+    const probes: string[] = [];
+    const rep = measureMeshQuality(mqInput(rectMask, frame, pushed, { artFit: { minCoverage: 1, maxOvershoot: K_OUT, maxUndercut: 0 }, maxBoundaryDeviation: null, regions: [] }));
+    const overshoot = mqRow(rep, 'MQ_OVERSHOOT', null, 8);
+    const quantum = overshoot?.raster?.spatialQuantum ?? NaN;
+    if (overshoot?.value === null || overshoot === undefined || !(Math.abs(overshoot.value - K_OUT) <= quantum)) probes.push(`${mqSay(overshoot)}, not ${K_OUT} within ${quantum}`);
+    if (overshoot?.worst?.at.pixel === undefined) probes.push('the overshoot row names no pixel');
+    const held = probes.length === 0;
+    say(
+      'MQ02_A_HULL_VERTEX_PUSHED_OUT_K_PIXELS_MEASURES_OVERSHOOT_K_WITHIN_ONE_SPATIAL_QUANTUM',
+      held,
+      probeDetail(held, probes, `vertex 2 pushed ${K_OUT} px out: ${mqSay(overshoot)}, spatial quantum ${quantum}`),
+      '§4: overshoot is an exact distance on the grid, so a planted displacement of K px reads K to within one cell — the grid, not the arithmetic, is the only error',
+    );
+  }
+
+  // --- MQ03: a spanned hole is not overshoot, and is counted as hole pixels --
+  {
+    const probes: string[] = [];
+    const [HX0, HY0, HX1, HY1] = [X0 + 6, Y0 + 4, X0 + 10, Y0 + 7];
+    const holed = mqMask(dir, 'holed', W, H, (x, y) => (inRect(x, y) && !(x >= HX0 && x < HX1 && y >= HY0 && y < HY1) ? 1 : 0));
+    const holePixels = (HX1 - HX0) * (HY1 - HY0);
+    const rep = measureMeshQuality(mqInput(holed, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] }));
+    const plain = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] }));
+    const overshoot = mqRow(rep, 'MQ_OVERSHOOT', null, 8);
+    const holes = mqRow(rep, 'MQ_HOLES', null, 8);
+    if (overshoot?.state !== 'pass' || overshoot.value !== 0) probes.push(`${mqSay(overshoot)} over a spanned hole`);
+    if (holes?.value !== holePixels || holes.state !== 'undeclared') probes.push(`${mqSay(holes)}, not ${holePixels} hole pixels reported undeclared`);
+    if (JSON.stringify(holes?.worst?.at.pixel) !== JSON.stringify([HX0, HY0])) probes.push(`the hole row names ${JSON.stringify(holes?.worst?.at)}, not the first hole pixel (${HX0}, ${HY0})`);
+    if (mqRow(plain, 'MQ_HOLES', null, 8)?.value !== 0) probes.push(`the same mesh over the rectangle with no hole counts ${mqRow(plain, 'MQ_HOLES', null, 8)?.value} hole pixels`);
+    const held = probes.length === 0;
+    say(
+      'MQ03_A_SPANNED_HOLE_IS_NOT_OVERSHOOT_AND_IS_COUNTED_AS_HOLE_PIXELS',
+      held,
+      probeDetail(held, probes, `a ${HX1 - HX0}x${HY1 - HY0} hole the mesh spans: ${mqSay(overshoot)}; ${mqSay(holes)}; the same mesh over the plain rectangle counts 0`),
+      '§4: a Spine mesh cannot cut a hole out, so a spanned hole is reported as what it is — transparent pixels drawing nothing — and never as the mesh reaching past the art',
+    );
+  }
+
+  // The pinch fixture: three-by-three blocks, the centre clear and touching the clear corner block only diagonally.
+  const S = 6;
+  const OFF = 3;
+  const PW = OFF * 2 + S * 3;
+  const pinchRows = ['###', '#.#', '##.'];
+  const pinchMask = mqMask(dir, 'pinch', PW, PW + 16, (x, y) => {
+    const bx = Math.floor((x - OFF) / S);
+    const by = Math.floor((y - OFF) / S);
+    return x >= OFF && y >= OFF && bx < 3 && by < 3 && pinchRows[by][bx] === '#' ? 1 : 0;
+  });
+  const pinchFrame = mqFrame(PW, PW + 16);
+  // The mesh is the art's outer hexagon: every block but the clear corner, ear-clipped.
+  const hexagon: MqPt[] = [
+    [OFF, OFF],
+    [OFF + 3 * S, OFF],
+    [OFF + 3 * S, OFF + 2 * S],
+    [OFF + 2 * S, OFF + 2 * S],
+    [OFF + 2 * S, OFF + 3 * S],
+    [OFF, OFF + 3 * S],
+  ];
+  const hexMesh = mqMesh(hexagon, earClip(hexagon), hexagon.length, PW + 16, PW);
+
+  // --- MQ04: a diagonal pinch exposes both labelled fills; the legacy fit is unchanged --
+  {
+    const probes: string[] = [];
+    const rep = measureMeshQuality(mqInput(pinchMask, pinchFrame, hexMesh, { artFit: null, maxBoundaryDeviation: null, regions: [] }));
+    const legacy = measureAuthoredMeshFit(pinchMask, 1, hexMesh.points, hexMesh.triangles);
+    const over8 = mqRow(rep, 'MQ_OVERSHOOT', null, 8);
+    const over4 = mqRow(rep, 'MQ_OVERSHOOT', null, 4);
+    const holes8 = mqRow(rep, 'MQ_HOLES', null, 8);
+    const holes4 = mqRow(rep, 'MQ_HOLES', null, 4);
+    const trace = mqRow(rep, 'MQ_TRACE_DEVIATION');
+    if (over4 === undefined || over8 === undefined) probes.push('the two fills are not both rows');
+    else {
+      if (over4.value !== legacy.overshoot) probes.push(`the 4-connected overshoot ${over4.value} is not measureAuthoredMeshFit's ${legacy.overshoot}`);
+      if (!((over8.value ?? 0) > (over4.value ?? 0))) probes.push(`the 8-connected overshoot ${over8.value} is not above the 4-connected ${over4.value}: the clear centre is not read as outside`);
+      if (over4.state !== 'undeclared') probes.push(`the legacy-fill row is ${over4.state}, gated rather than labelled`);
+    }
+    if (holes8?.value !== 0 || holes4?.value !== S * S) probes.push(`holes read ${holes8?.value} (8) and ${holes4?.value} (4), not 0 and the ${S * S}-pixel centre block`);
+    if (trace?.state !== 'not-measurable' || !(trace.reason ?? '').includes('pinches to a single point')) probes.push(`the trace row is ${mqSay(trace)}: ${trace?.reason}`);
+    const held = probes.length === 0;
+    say(
+      'MQ04_A_DIAGONAL_PINCH_EXPOSES_BOTH_LABELLED_FILLS_AND_THE_LEGACY_FIT_IS_UNCHANGED',
+      held,
+      probeDetail(held, probes, `${mqSay(over8)}; ${mqSay(over4)} = measureAuthoredMeshFit ${legacy.overshoot}; ${mqSay(holes8)}; ${mqSay(holes4)}; the trace keeps its own refusal`),
+      'P12: the new rows fill background 8-connected over all art and the legacy fit fills 4-connected; they differ only across a diagonal pinch, and there both readings are rows with their connectivity rather than one harmonised number',
+    );
+  }
+
+  // --- MQ05: one triangle flipped fails orientation, naming it ---------------
+  {
+    const probes: string[] = [];
+    const flipped: SourceMesh = { ...exact, triangles: exact.triangles.slice() };
+    [flipped.triangles[1], flipped.triangles[2]] = [flipped.triangles[2], flipped.triangles[1]];
+    const rep = measureMeshQuality(mqInput(rectMask, frame, flipped, noTargets));
+    const good = measureMeshQuality(mqInput(rectMask, frame, exact, noTargets));
+    const row = mqRow(rep, 'MQ_ORIENTATION');
+    if (row?.state !== 'fail' || row.value !== 1 || row.worst?.at.triangle !== 0) probes.push(`${mqSay(row)}, not 1 and fail naming triangle 0`);
+    if (mqRow(good, 'MQ_ORIENTATION')?.value !== 0) probes.push(`the unflipped mesh reads ${mqSay(mqRow(good, 'MQ_ORIENTATION'))}`);
+    if (rep.candidates[0]?.accepted !== false) probes.push('the flipped mesh is accepted');
+    const held = probes.length === 0;
+    say(
+      'MQ05_ONE_TRIANGLE_FLIPPED_FAILS_ORIENTATION_NAMING_THE_TRIANGLE',
+      held,
+      probeDetail(held, probes, `triangle 0 wound the other way: ${mqSay(row)}, not accepted; the mesh as built reads 0`),
+      '§1: a source\'s triangles are counter-clockwise in Spine world, so that is the bound, read in Spine world through cropToSpineY',
+    );
+  }
+
+  // --- MQ06: the A39 band decides degenerate ---------------------------------
+  {
+    const probes: string[] = [];
+    // A hull of four and two interior vertices: the centre, and M on the right edge's midpoint pushed in by ε,
+    // so triangle (B, C, M) is a sliver of area ½·(Y1 − Y0)·ε.
+    const sliver = (eps: number): SourceMesh => {
+      const M: MqPt = [X1 - eps, (Y0 + Y1) / 2];
+      return mqMesh([...hull, C, M], [1, 2, 5, 0, 1, 4, 1, 5, 4, 5, 2, 4, 2, 3, 4, 3, 0, 4], 4, H, W);
+    };
+    // The band of this fixture, read off its own areas — the sliver's area does not enter it (the largest
+    // area and the largest coordinate belong to other triangles), so ε = 0 gives the same band.
+    const world0 = sliver(0).points.flatMap(([x, y]) => [x, cropToSpineY(y, H)]);
+    const band = areaBand(triangleAreas(world0, sliver(0).triangles), world0);
+    const span = Y1 - Y0;
+    const inside = measureMeshQuality(mqInput(rectMask, frame, sliver(band / span), noTargets));
+    const outside = measureMeshQuality(mqInput(rectMask, frame, sliver((4 * band) / span), noTargets));
+    const di = mqRow(inside, 'MQ_DEGENERATE');
+    const doo = mqRow(outside, 'MQ_DEGENERATE');
+    if (di?.value !== 1 || di.worst?.at.triangle !== 0) probes.push(`a sliver of half the band reads ${mqSay(di)}, not 1 naming triangle 0`);
+    if (doo?.value !== 0) probes.push(`a sliver of twice the band reads ${mqSay(doo)}, not 0`);
+    for (const [label, rep] of [
+      ['inside', inside],
+      ['outside', outside],
+    ] as const) {
+      if (mqRow(rep, 'MQ_ORIENTATION')?.value !== 0) probes.push(`${label}: ${mqSay(mqRow(rep, 'MQ_ORIENTATION'))} — a sign inside the band was read`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ06_A_NEAR_COLLINEAR_TRIANGLE_INSIDE_THE_WINDING_BAND_IS_DEGENERATE_AND_ONE_JUST_OUTSIDE_IS_NOT',
+      held,
+      probeDetail(held, probes, `this fixture's band is ${band.toExponential(3)} px² (areaBand over its own areas and world); a sliver of half of it: ${mqSay(di)}; of twice it: ${mqSay(doo)}; orientation 0 on both`),
+      '§1 and §4: zero area is A39\'s band — the triangle a reduction calls degenerate is the one the gate reads no sign off — so the classification is held at the band from both sides',
+    );
+  }
+
+  // --- MQ07: an edge crossing a region with both endpoints outside is held to the region's bound --
+  {
+    const probes: string[] = [];
+    const mid: MqPt = [(X0 + C[0]) / 2, (Y0 + C[1]) / 2];
+    const edgeLength = Math.hypot(C[0] - X0, C[1] - Y0);
+    const region = (maxEdgeLength: number): RefinementRegion => ({ name: 'mid', polygon: mqSquare(mid[0], mid[1], 0.5), maxEdgeLength, transition: 0, grade: 0, approximation: null });
+    const tight = edgeLength / 2;
+    const failing = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions: [region(tight)] }));
+    const passing = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions: [region(edgeLength + 1)] }));
+    const row = mqRow(failing, 'MQ_MAX_EDGE', 'mid');
+    const centreIndex = exact.points.length - 1;
+    if (row?.state !== 'fail' || row.value !== Math.round(edgeLength * 1e6) / 1e6 || row.bound?.value !== tight) probes.push(`${mqSay(row)}, not the edge's ${edgeLength} against ${tight}`);
+    if (JSON.stringify(row?.worst?.at.edge) !== JSON.stringify([0, centreIndex])) probes.push(`the row names ${JSON.stringify(row?.worst?.at)}, not edge [0, ${centreIndex}]`);
+    if (mqRow(passing, 'MQ_MAX_EDGE', 'mid')?.state !== 'pass') probes.push(`with a bound above the edge: ${mqSay(mqRow(passing, 'MQ_MAX_EDGE', 'mid'))}`);
+    if (mqRow(failing, 'MQ_TRANSITION', 'mid') !== undefined) probes.push('a hard-edged region (transition 0) has a transition row');
+    const held = probes.length === 0;
+    say(
+      'MQ07_AN_EDGE_CROSSING_A_REGION_WITH_BOTH_ENDPOINTS_OUTSIDE_IS_HELD_TO_THE_REGION_BOUND_NAMING_EDGE_VALUE_AND_BOUND',
+      held,
+      probeDetail(held, probes, `a 1 px square on the midpoint of edge [0, ${centreIndex}], both its ends outside: ${mqSay(row)}; with the bound above the edge's length: pass`),
+      'P15: L(R) is every edge that meets the closed region, measured whole — an edge whose two ends lie outside it is exactly the one a vertex-based reading misses',
+    );
+  }
+
+  // --- MQ08: an edge in the band is held to the smallest graded bound on it; one outside is free --
+  {
+    const probes: string[] = [];
+    const DAB = 3;
+    const near = mqSquare(C[0], Y0 + DAB + 0.5, 0.5).map(([x, y], i): MqPt => [x + (i === 1 || i === 2 ? 0.5 : -0.5), y]);
+    const L0 = 2;
+    const GRADE = 1;
+    const dTop = mqSegmentRect(hull[0], hull[1], near);
+    const dSide = Math.min(mqSegmentRect(hull[0], C, near), mqSegmentRect(hull[1], C, near));
+    const band = (transition: number): RefinementRegion => ({ name: 'near', polygon: near, maxEdgeLength: L0, transition, grade: GRADE, approximation: null });
+    const T = (dTop + dSide) / 2;
+    const inBand = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions: [band(T)] }));
+    const narrow = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions: [band(dTop / 2)] }));
+    const graded = Math.round((L0 + GRADE * dTop) * 1e6) / 1e6;
+    const overlap: RefinementRegion = { name: 'over', polygon: mqSquare(X0 + 4, Y0, 1), maxEdgeLength: graded - 1, transition: 0, grade: 0, approximation: null };
+    const both = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions: [band(T), overlap] }));
+    const row = mqRow(inBand, 'MQ_TRANSITION', 'near');
+    if (!(dSide > dTop)) probes.push(`the fixture's side edges are ${dSide} px from the region and the top edge ${dTop}: the band cannot separate them`);
+    if (row?.bound?.value !== graded || JSON.stringify(row.worst?.at.edge) !== JSON.stringify([0, 1]) || row.state !== 'fail') probes.push(`${mqSay(row)}, not edge [0, 1] held to L0 + grade × ${dTop} = ${graded}`);
+    const narrowRow = mqRow(narrow, 'MQ_TRANSITION', 'near');
+    if (narrowRow?.state !== 'not-measurable') probes.push(`with the band narrower than the top edge's distance: ${mqSay(narrowRow)}`);
+    const bothRow = mqRow(both, 'MQ_TRANSITION', 'near');
+    if (bothRow?.bound?.value !== overlap.maxEdgeLength) probes.push(`with a region of bound ${overlap.maxEdgeLength} over the same edge: ${mqSay(bothRow)}, not the smaller bound`);
+    const held = probes.length === 0;
+    say(
+      'MQ08_AN_EDGE_IN_THE_TRANSITION_BAND_IS_HELD_TO_THE_SMALLEST_GRADED_BOUND_ON_ITS_INTERSECTION_AND_ONE_OUTSIDE_IS_FREE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `band ${T.toFixed(3)} px between the top edge (${dTop} px off) and the side edges (${dSide.toFixed(3)} px off): ${mqSay(row)}; ` +
+          `a band of ${dTop / 2} px holds no edge (${narrowRow?.state}); an overlapping region of bound ${overlap.maxEdgeLength} on the top edge: ${mqSay(bothRow)}`,
+      ),
+      'P16: in the band L(d) = L0 + grade·d at the edge\'s nearest point, the smallest bound anywhere on it, the minimum over overlapping regions — and outside every region and band there is no constraint at all',
+    );
+  }
+
+  // --- MQ09: an undeclared measurement satisfies no required claim ----------
+  {
+    const probes: string[] = [];
+    const open = measureMeshQuality(mqInput(rectMask, frame, inward, noTargets));
+    const declared = measureMeshQuality(mqInput(rectMask, frame, inward, { artFit: strict, maxBoundaryDeviation: null, regions: [] }));
+    const row = mqRow(open, 'MQ_COVERAGE');
+    const summary = open.candidates[0]?.geometry?.summary;
+    const passRows = mqRows(open).filter((r) => r.state === 'pass').length;
+    if (row?.state !== 'undeclared' || row.bound !== null || row.value === null || !(row.value < 1)) probes.push(`with no bound: ${mqSay(row)}`);
+    if (summary === undefined || summary.pass !== passRows || summary.measured !== summary.pass + summary.fail || summary.undeclared !== mqRows(open).filter((r) => r.state === 'undeclared').length) {
+      probes.push(`the summary ${JSON.stringify(summary)} does not count states off the rows`);
+    }
+    const declaredRow = mqRow(declared, 'MQ_COVERAGE');
+    if (declaredRow?.state !== 'fail' || declared.candidates[0]?.accepted !== false) probes.push(`the same coverage under a bound: ${mqSay(declaredRow)}, accepted ${declared.candidates[0]?.accepted}`);
+    const floored = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] }, { minArtSamples: artCount(rectMask, 1) + 1 }));
+    const flooredSection = floored.candidates[0]?.geometry;
+    if (flooredSection?.verdict !== 'not-measured' || floored.candidates[0]?.accepted !== false || !mqRows(floored).some((r) => r.state === 'undeclared')) {
+      probes.push(`required rows unmeasurable beside undeclared ones read verdict ${flooredSection?.verdict}, accepted ${floored.candidates[0]?.accepted}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ09_A_MEASUREMENT_WITH_NO_DECLARED_BOUND_IS_UNDECLARED_AND_SATISFIES_NO_REQUIRED_CLAIM',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `no bound: ${mqSay(row)}, summary ${JSON.stringify(summary)}; declared: ${mqSay(declaredRow)}, not accepted; required rows under their sample floor beside ${mqRows(floored).filter((r) => r.state === 'undeclared').length} undeclared row(s): verdict ${flooredSection?.verdict}, not accepted`,
+      ),
+      'P6: an undeclared row is measured and reported and is in no pass count, so it can never stand in for a requirement — the report says unmeasured, never passed',
+    );
+  }
+
+  // --- MQ16: a value within one value increment of its bound is flagged, its verdict unchanged --
+  {
+    const probes: string[] = [];
+    const probe = measureMeshQuality(mqInput(rectMask, frame, inward, noTargets));
+    const value = mqRow(probe, 'MQ_COVERAGE')?.value ?? NaN;
+    const samples = mqRow(probe, 'MQ_COVERAGE')?.art?.samples ?? NaN;
+    const readings: string[] = [];
+    for (const [label, bound, want] of [
+      ['half an increment under', value - 1 / (2 * samples), 'pass'],
+      ['half an increment over', value + 1 / (2 * samples), 'fail'],
+    ] as const) {
+      const rep = measureMeshQuality(mqInput(rectMask, frame, inward, { artFit: { minCoverage: bound, maxOvershoot: 0, maxUndercut: 1e6 }, maxBoundaryDeviation: null, regions: [] }));
+      const row = mqRow(rep, 'MQ_COVERAGE');
+      if (row?.state !== want || row.raster?.nearBound !== 'within-increment') probes.push(`a bound ${label}: ${mqSay(row)} ${row?.raster?.nearBound}, not ${want} and within-increment`);
+      readings.push(`${label}: ${row?.state}, ${row?.raster?.nearBound}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ16_A_VALUE_WITHIN_ONE_VALUE_INCREMENT_OF_ITS_BOUND_IS_FLAGGED_AND_ITS_VERDICT_UNCHANGED',
+      held,
+      probeDetail(held, probes, `coverage ${value} over ${samples} samples; a bound ${readings.join('; ')}`),
+      'correction 2: the flag is a diagnostic in the row\'s own unit — one sample of coverage — and the inclusive comparison decides the verdict either way',
+    );
+  }
+
+  // --- MQ19: a source that fails its own coverage bound is reported fail and not accepted --
+  {
+    const probes: string[] = [];
+    const rep = measureMeshQuality(mqInput(rectMask, frame, inward, { artFit: strict, maxBoundaryDeviation: null, regions: [] }, { id: 'source' }));
+    const cand = rep.candidates[0];
+    if (cand?.id !== 'source' || cand.accepted !== false || cand.geometry?.verdict !== 'fail' || mqRow(rep, 'MQ_COVERAGE')?.state !== 'fail') {
+      probes.push(`id ${cand?.id}, accepted ${cand?.accepted}, verdict ${cand?.geometry?.verdict}, ${mqSay(mqRow(rep, 'MQ_COVERAGE'))}`);
+    }
+    if (rep.motionRequired !== false || cand?.motion !== null || rep.poser !== null) probes.push(`motionRequired ${rep.motionRequired}, motion ${JSON.stringify(cand?.motion)}, poser ${JSON.stringify(rep.poser)}`);
+    const held = probes.length === 0;
+    say(
+      'MQ19_A_SOURCE_THAT_FAILS_ITS_OWN_COVERAGE_BOUND_IS_REPORTED_FAIL_AND_NOT_ACCEPTED',
+      held,
+      probeDetail(held, probes, `${mqSay(mqRow(rep, 'MQ_COVERAGE'))}; verdict ${cand?.geometry?.verdict}, accepted ${cand?.accepted}; motion null, motionRequired false, poser null`),
+      'P8 and P6, the geometry half of the contract\'s MQ19 (the refusal as a reference is stage C\'s): a deviation from a wrong source is not evidence, so the source\'s own art fit is measured and a failure is never accepted',
+    );
+  }
+
+  // --- MQ21: a domain under its sample floor is not measurable with its count; hull samples do not raise it --
+  {
+    const probes: string[] = [];
+    const count = artCount(rectMask, 1);
+    const denser: MqPt[] = [];
+    hull.forEach((p, i) => {
+      const q = hull[(i + 1) % hull.length];
+      denser.push(p, [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]);
+    });
+    const regionBox = mqSquare(C[0], C[1], 2);
+    const region: RefinementRegion = { name: 'box', polygon: regionBox, maxEdgeLength: 1e6, transition: 0, grade: 0, approximation: null };
+    let regionSamples = 0;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (rectMask.alpha[y * W + x] && x + 0.5 >= regionBox[0][0] && x + 0.5 <= regionBox[2][0] && y + 0.5 >= regionBox[0][1] && y + 0.5 <= regionBox[2][1]) regionSamples++;
+    const run = (mesh: SourceMesh, floor: number, regionFloor: number): MeshQualityReport =>
+      measureMeshQuality(mqInput(rectMask, frame, mesh, { artFit: strict, maxBoundaryDeviation: null, regions: [region] }, { minArtSamples: floor, regionArtSamples: [{ region: 'box', minArtSamples: regionFloor }] }));
+    const under = run(exact, count + 1, regionSamples + 1);
+    const at = run(exact, count, regionSamples);
+    const denserUnder = run(mqFan(denser, C, W, H), count + 1, regionSamples + 1);
+    const cov = mqRow(under, 'MQ_COVERAGE');
+    if (cov?.state !== 'not-measurable' || cov.art?.samples !== count || !(cov.reason ?? '').includes(`has ${count} art sample(s)`) || !(cov.reason ?? '').includes(`at least ${count + 1}`)) probes.push(`a floor one over: ${mqSay(cov)} — ${cov?.reason}`);
+    if (mqRow(at, 'MQ_COVERAGE')?.state !== 'pass') probes.push(`a floor equal to the count: ${mqSay(mqRow(at, 'MQ_COVERAGE'))}`);
+    const dcov = mqRow(denserUnder, 'MQ_COVERAGE');
+    if (dcov?.state !== 'not-measurable' || dcov.art?.samples !== count) probes.push(`twice the hull vertices: ${mqSay(dcov)} over ${dcov?.art?.samples} samples`);
+    const fill = mqRow(under, 'MQ_FILL_DISTANCE', 'box');
+    if (fill?.state !== 'not-measurable' || fill.art?.samples !== regionSamples || fill.sampling?.count !== regionSamples) probes.push(`the region under its floor: ${mqSay(fill)}, ${JSON.stringify(fill?.art)}`);
+    if (mqRow(at, 'MQ_FILL_DISTANCE', 'box')?.state !== 'undeclared') probes.push(`the region at its floor: ${mqSay(mqRow(at, 'MQ_FILL_DISTANCE', 'box'))}`);
+    if (under.candidates[0]?.accepted !== false) probes.push('required rows under their floor were accepted');
+    const held = probes.length === 0;
+    say(
+      'MQ21_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${count} art samples: a floor of ${count + 1} leaves coverage not-measurable naming both, ${count} measures; a hull of ${denser.length} vertices still counts ${dcov?.art?.samples}; ` +
+          `the region's ${regionSamples} samples against ${regionSamples + 1}: fill distance not-measurable, against ${regionSamples}: measured`,
+      ),
+      'P9: the floor is the caller\'s, stated per attachment and per region, and a domain under it is never a pass over nothing — and a hull vertex is not an art sample, so adding them cannot lift a domain over its floor',
+    );
+  }
+
+  // --- MQ23: each refusal code is reached by one input, naming object, value and requirement --
+  {
+    const probes: string[] = [];
+    const base = (): MeshMeasureInput => mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] });
+    const who = 'probe-slot/probe';
+    const thrown: Array<[string, MeshMeasureInput, string]> = [
+      ['REDUCE_INPUT_MISSING', { ...base(), minArtSamples: undefined as unknown as number }, 'minArtSamples is missing'],
+      ['REDUCE_THRESHOLD_RANGE', { ...base(), art: { ...base().art, threshold: 0 } }, 'threshold is 0'],
+      ['REDUCE_MASK_SIZE', { ...base(), art: { ...base().art, mask: { ...rectMask, alpha: rectMask.alpha.slice(1) } } }, `holds ${W * H - 1} bytes`],
+      ['REDUCE_MASK_SIZE', { ...base(), art: { ...base().art, frame: mqFrame(W + 2, H) } }, `the mask is ${W}x${H}`],
+      ['REDUCE_UV_RANGE', { ...base(), source: { ...exact, uvs: [1.5, ...exact.uvs.slice(1)] } }, 'is 1.5'],
+    ];
+    const reached: string[] = [];
+    for (const [code, input, found] of thrown) {
+      const r = refusalOf(input);
+      if (r === null || r.code !== code || !r.isMeshError || !r.message.includes(who) || !r.message.includes(found) || !r.message.includes('required')) {
+        probes.push(`${code}: ${r === null ? 'not refused' : `${r.code}${r.isMeshError ? '' : ' (not a MeshError)'}: ${r.message}`}`);
+      } else reached.push(code);
+    }
+    // A stated hull the triangles contradict: the source is not read as a mesh, and the report says so by code.
+    const wrongHull = measureMeshQuality({ ...base(), source: { ...exact, hull: exact.hull - 1 } });
+    const t = wrongHull.termination;
+    if (t?.reason !== 'unsupported-topology' || t.code !== 'REDUCE_SOURCE_NOT_ONE_LOOP' || !t.detail.includes(who) || !t.detail.includes(`source.hull says ${exact.hull - 1}`) || !t.detail.includes('required')) {
+      probes.push(`a contradicted hull: ${JSON.stringify(t)}`);
+    } else reached.push(t.code);
+    const regionCase = (name: string, over: Partial<RefinementRegion>): RefinementRegion => ({ name, polygon: mqSquare(C[0], C[1], 2), maxEdgeLength: 4, transition: 1, grade: 1, approximation: null, ...over });
+    const regionCases: Array<[string, RefinementRegion, string]> = [
+      ['REGION_OUTSIDE_ART', regionCase('outside', { polygon: mqSquare(2, 2, 1) }), 'does not meet the mesh'],
+      ['REGION_BOUND_BELOW_GRID', regionCase('fine', { maxEdgeLength: 0.5 }), 'maxEdgeLength is 0.5'],
+      ['REGION_SELF_INTERSECTS', regionCase('bowtie', { polygon: [[C[0] - 2, C[1] - 2], [C[0] + 2, C[1] + 2], [C[0] + 2, C[1] - 2], [C[0] - 2, C[1] + 2]] }), 'meet'],
+      ['REGION_TRANSITION_NEGATIVE', regionCase('back', { transition: -1 }), 'transition is -1'],
+      ['REGION_GRADE_NEGATIVE', regionCase('down', { grade: -1 }), 'grade is -1'],
+      ['REGION_NOT_FINITE', regionCase('nan', { maxEdgeLength: NaN }), 'maxEdgeLength is NaN'],
+    ];
+    for (const [code, region, found] of regionCases) {
+      const rep = measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [region] }));
+      const rows = mqRows(rep).filter((r) => r.object.region === region.name);
+      const reason = rows[0]?.reason ?? '';
+      if (rows.length === 0 || rows.some((r) => r.state !== 'refused') || !reason.startsWith(`${code}:`) || !reason.includes(who) || !reason.includes(`"${region.name}"`) || !reason.includes(found) || !reason.includes('required')) {
+        probes.push(`${code}: ${rows.map((r) => mqSay(r)).join(', ')} — ${reason}`);
+      } else if (rep.candidates[0]?.accepted !== false) probes.push(`${code}: a refused region was accepted`);
+      else reached.push(code);
+    }
+    const clean = refusalOf(base());
+    if (clean !== null) probes.push(`the unplanted input was refused: ${clean.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ23_EACH_REFUSAL_CODE_IS_REACHED_BY_ONE_INPUT_AND_NAMES_OBJECT_VALUE_AND_REQUIREMENT',
+      held,
+      probeDetail(held, probes, `${reached.length} refusal(s) reached, each naming ${who}, the value found and the requirement: ${reached.join(', ')} — thrown as MeshReductionError (a MeshError) for the input, a refused row for a region, an unsupported-topology termination for a mesh that is not one loop; the unplanted input is not refused`),
+      '§1 and §5: the messages are the interface an agent that cannot see the mesh has, so each refusal names the object, the value it found and the value required',
+    );
+  }
+
+  // --- MQ25: two runs on one input write byte-identical reports -------------
+  {
+    const probes: string[] = [];
+    const region: RefinementRegion = { name: 'box', polygon: mqSquare(C[0], C[1], 3), maxEdgeLength: 8, transition: 2, grade: 0.5, approximation: { from: 'circle', policy: 'inscribed', maxError: 0.25 } };
+    const one = mqInput(pinchMask, pinchFrame, hexMesh, { artFit: strict, maxBoundaryDeviation: 1, minAngle: 10, regions: [] }, { referenceHull: hexagon, preset: { name: 'probe', version: '1' } });
+    const first = writeMeshQualityReport(measureMeshQuality(one));
+    // The same values with every object built in another key order, and the mask a fresh copy.
+    const again: MeshMeasureInput = {
+      preset: { version: '1', name: 'probe' },
+      boneOrder: null,
+      influences: null,
+      protect: null,
+      regionArtSamples: [],
+      minArtSamples: 1,
+      referenceHull: hexagon.map(([x, y]): MqPt => [x, y]),
+      targets: { regions: [], minAngle: 10, maxBoundaryDeviation: 1, artFit: { maxUndercut: 0, maxOvershoot: 0, minCoverage: 1 } },
+      source: { weights: null, hull: hexMesh.hull, triangles: hexMesh.triangles.slice(), uvs: hexMesh.uvs.slice(), points: hexMesh.points.map(([x, y]): MqPt => [x, y]) },
+      art: { frame: { conversion: 'texels = px * pageScale', pageScale: 1, height: PW + 16, width: PW, space: 'part-local-drawing-px-y-down' }, threshold: 1, mask: { alpha: pinchMask.alpha.slice(), height: pinchMask.height, width: pinchMask.width } },
+      attachment: { attachment: 'probe', slot: 'probe-slot', skin: null },
+      id: 'probe',
+    };
+    const second = writeMeshQualityReport(measureMeshQuality(again));
+    const withRegion = writeMeshQualityReport(measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [region] })));
+    const withRegionAgain = writeMeshQualityReport(measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [{ ...region }] })));
+    const moved = writeMeshQualityReport(measureMeshQuality({ ...one, art: { ...one.art, threshold: 2 } }));
+    if (first !== second) probes.push('two runs of one input, built in two key orders, wrote different bytes');
+    if (withRegion !== withRegionAgain) probes.push('two runs with a region wrote different bytes');
+    if (moved === first) probes.push('a different threshold wrote the same bytes, so the comparison above compares nothing');
+    if (!first.startsWith('{\n  "spec": "mesh-quality-report/1",\n  "operation": "measure",') || !first.endsWith('}\n')) probes.push(`the text opens ${JSON.stringify(first.slice(0, 60))} and ends ${JSON.stringify(first.slice(-3))}`);
+    const held = probes.length === 0;
+    say(
+      'MQ25_TWO_RUNS_ON_ONE_INPUT_WRITE_BYTE_IDENTICAL_REPORTS',
+      held,
+      probeDetail(held, probes, `${first.length} bytes twice, the second input built in reverse key order, and ${withRegion.length} bytes twice with a region; a changed threshold changes them; two-space JSON with spec and operation first and a final newline`),
+      'A18\'s standard and build-report/1\'s precedent: the document has no time, path or machine in it, and its key order is the type\'s, never the order an input happened to be built in',
+    );
+  }
+
+  // --- MQ26: nothing under src/ but the two defining modules names the operation --
+  // The bytes half of the contract's MQ26 is EH06's and MB07's (the gallery held to the emit-hash base on every
+  // run); this holds the reason they cannot move — no module a build reaches calls the operation.
+  {
+    const probes: string[] = [];
+    const DEFINERS = ['src/mesh.ts', 'src/meshquality.ts'];
+    /** The modules outside the two that define it naming the operation, comments aside, as `file (names)`. */
+    const callers = (population: ReadonlyMap<string, string>): string[] =>
+      [...population]
+        .filter(([rel]) => !DEFINERS.includes(rel))
+        .map(([rel, text]) => [rel, [...new Set(codeOnly(text).match(/\b(measureMeshQuality|reduceMesh)\b/g) ?? [])]] as const)
+        .filter(([, names]) => names.length > 0)
+        .map(([rel, names]) => `${rel} (${names.join(', ')})`)
+        .sort();
+    const population = srcPopulation(import.meta.dir);
+    for (const rel of [...DEFINERS, 'src/compile.ts']) if (!population.has(rel)) probes.push(`${rel} is not in the population read off the disk`);
+    const found = callers(population);
+    if (found.length > 0) probes.push(`modules under src/ name the operation: ${found.join(', ')}`);
+    // The plants: the name in a copy of the compiler, and the same name only in a comment there.
+    const planted = new Map(population);
+    planted.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\nconst quality = measureMeshQuality;\n`);
+    const plantedFound = callers(planted);
+    if (JSON.stringify(plantedFound) !== JSON.stringify(['src/compile.ts (measureMeshQuality)'])) probes.push(`a compile.ts planted to name the operation read ${JSON.stringify(plantedFound)}, not that file by name`);
+    const commented = new Map(population);
+    commented.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\n// measureMeshQuality, in a comment\n`);
+    if (callers(commented).length !== 0) probes.push('a comment naming the operation was read as a caller');
+    const held = probes.length === 0;
+    say(
+      'MQ26_NO_MODULE_UNDER_SRC_BUT_MESH_AND_MESHQUALITY_NAMES_THE_OPERATION_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${population.size} module(s) under src/ read off the disk: none but ${DEFINERS.join(' and ')} names measureMeshQuality or reduceMesh; ` +
+          `planted into compile.ts the name reads ${plantedFound.join(', ')}, and in a comment there it reads nothing — the emitted bytes themselves are EH06's and MB07's`,
+      ),
+      '§0: the operation is an explicit call — no generator default changes and compile never measures or rewrites geometry on its own — so the claim that an unchanged spec emits unchanged bytes rests on nothing in a build reaching it, and that is held here rather than stated',
+    );
+  }
+
+  // --- MQ27: two attachments, their own masks, thresholds and floors, echoed field for field --
+  {
+    const probes: string[] = [];
+    const W2 = 30;
+    const H2 = 36;
+    const soft = mqMask(dir, 'soft', W2, H2, (x, y) => (x >= 4 && x < 26 && y >= 4 && y < 32 ? (x < 10 ? 0.4 : 1) : 0));
+    const cases: Array<{ input: MeshMeasureInput; label: string }> = [
+      { label: 'a', input: { ...mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] }, { minArtSamples: 3 }), attachment: { skin: 'default', slot: 'left', attachment: 'a' } } },
+      {
+        label: 'b',
+        input: {
+          ...mqInput(soft, mqFrame(W2, H2), mqFan([[4, 4], [26, 4], [26, 32], [4, 32]], [15, 18], W2, H2), { artFit: null, maxBoundaryDeviation: null, regions: [] }, { minArtSamples: 7 }),
+          art: { mask: soft, threshold: 128, frame: mqFrame(W2, H2) },
+          attachment: { skin: 'default', slot: 'right', attachment: 'b' },
+        },
+      },
+    ];
+    const readings: string[] = [];
+    for (const { input, label } of cases) {
+      const echoed = measureMeshQuality(input).effective.attachments;
+      const want = [{ attachment: input.attachment, threshold: input.art.threshold, finalThreshold: input.art.threshold, frame: input.art.frame, maskSize: [input.art.mask.width, input.art.mask.height], minArtSamples: input.minArtSamples, regions: [] }];
+      if (JSON.stringify(echoed) !== JSON.stringify(want)) probes.push(`${label}: echoed ${JSON.stringify(echoed)}, given ${JSON.stringify(want)}`);
+      const rows = mqRows(measureMeshQuality(input)).filter((r) => r.art !== undefined && r.raster !== undefined);
+      const samples = artCount(input.art.mask, input.art.threshold);
+      if (rows.length === 0 || rows.some((r) => r.art?.threshold !== input.art.threshold || r.art.samples !== samples)) probes.push(`${label}: raster rows read ${JSON.stringify(rows.map((r) => r.art))}, not threshold ${input.art.threshold} over ${samples}`);
+      readings.push(`${label} ${input.art.mask.width}x${input.art.mask.height} at alpha >= ${input.art.threshold}: ${samples} samples, floor ${input.minArtSamples}`);
+    }
+    if (artCount(soft, 128) === artCount(soft, 1)) probes.push('the soft plate reads the same art at both thresholds, so the threshold is not exercised');
+    const held = probes.length === 0;
+    say(
+      'MQ27_CONTROL_TWO_ATTACHMENTS_WITH_THEIR_OWN_MASKS_THRESHOLDS_AND_SAMPLE_FLOORS_ARE_EACH_MEASURED_AND_ECHOED_FIELD_FOR_FIELD',
+      held,
+      probeDetail(held, probes, `${readings.join('; ')} — each report echoes its own attachment, threshold, frame, mask size and floor, and every raster row is keyed by its own threshold`),
+      'correction 1: art, threshold, frame and sample floor are per attachment and never shared; the echo is the inputs with their structure, so a report alone says what it was measured against',
+    );
+  }
+
+  // --- MQ28: one mask given for two attachments of different size is refused naming both --
+  {
+    const probes: string[] = [];
+    const otherFrame = mqFrame(W + 8, H - 8);
+    const r = refusalOf({ ...mqInput(rectMask, otherFrame, exact, noTargets), attachment: { skin: null, slot: 'right', attachment: 'b' } });
+    if (r === null || r.code !== 'REDUCE_MASK_SIZE' || !r.message.includes('right/b') || !r.message.includes(`the mask is ${W}x${H}`) || !r.message.includes(`required a ${W + 8}x${H - 8} mask`)) {
+      probes.push(r === null ? 'the shared mask was measured' : `${r.code}: ${r.message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ28_ONE_MASK_GIVEN_FOR_TWO_ATTACHMENTS_OF_DIFFERENT_SIZE_IS_REFUSED_NAMING_BOTH',
+      held,
+      probeDetail(held, probes, `attachment a's ${W}x${H} mask handed to attachment b's ${W + 8}x${H - 8} frame: ${r?.message}`),
+      'correction 1, the mask half (a duplicate candidate id is stage C\'s): a mask is one attachment\'s, so one of the wrong size is refused naming the attachment, the size found and the size required',
+    );
+  }
+
+  // --- MQ29: px, fraction and count rows state their quantum and increment; a value at its bound passes at-bound --
+  {
+    const probes: string[] = [];
+    const SCALE = 2;
+    const texels = mqMask(dir, 'texels', W * SCALE, H * SCALE, (x, y) => (inRect(Math.floor(x / SCALE), Math.floor(y / SCALE)) ? 1 : 0));
+    const both = mqFan([hull[0], [X1 - K_IN, Y0 + K_IN], [X1 + K_OUT, Y1], hull[3]], C, W, H);
+    const first = measureMeshQuality(mqInput(texels, mqFrame(W, H, SCALE), both, noTargets));
+    const v = (code: string): number => mqRow(first, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined)?.value ?? NaN;
+    const atBounds: ArtFitBounds = { minCoverage: v('MQ_COVERAGE'), maxOvershoot: v('MQ_OVERSHOOT'), maxUndercut: v('MQ_UNDERCUT') };
+    const rep = measureMeshQuality(mqInput(texels, mqFrame(W, H, SCALE), both, { artFit: atBounds, maxBoundaryDeviation: null, regions: [] }));
+    const samples = artCount(texels, 1);
+    const expect: Array<[string, number]> = [
+      ['MQ_COVERAGE', 1 / samples],
+      ['MQ_OVERSHOOT', 1 / SCALE],
+      ['MQ_UNDERCUT', 1 / SCALE],
+      ['MQ_HOLES', 1],
+      ['MQ_ISLANDS', 1],
+    ];
+    for (const [code, increment] of expect) {
+      const row = mqRow(rep, code, null, code === 'MQ_OVERSHOOT' || code === 'MQ_HOLES' ? 8 : undefined);
+      if (row?.raster?.spatialQuantum !== 1 / SCALE || row.raster.valueIncrement !== increment) probes.push(`${code}: quantum ${row?.raster?.spatialQuantum}, increment ${row?.raster?.valueIncrement}, not ${1 / SCALE} and ${increment}`);
+    }
+    for (const code of ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT']) {
+      const row = mqRow(rep, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined);
+      if (row?.state !== 'pass' || row.raster?.nearBound !== 'at-bound') probes.push(`${mqSay(row)} ${row?.raster?.nearBound}, not pass at-bound`);
+    }
+    if (!(atBounds.maxOvershoot > 0) || !(atBounds.minCoverage < 1)) probes.push(`the fixture measured overshoot ${atBounds.maxOvershoot} and coverage ${atBounds.minCoverage}, so a bound at the value is not a boundary case`);
+    const held = probes.length === 0;
+    say(
+      'MQ29_CONTROL_PX_FRACTION_AND_COUNT_ROWS_STATE_THEIR_SPATIAL_QUANTUM_AND_THEIR_OWN_VALUE_INCREMENT_AND_A_VALUE_AT_ITS_BOUND_PASSES_AT_BOUND',
+      held,
+      probeDetail(held, probes, `a scale: ${SCALE} page (${texels.width}x${texels.height} texels for a ${W}x${H} px frame): spatial quantum ${1 / SCALE} px everywhere; increments ${expect.map(([c, i]) => `${c} ${i}`).join(', ')}; bounds set to the measured coverage ${atBounds.minCoverage}, overshoot ${atBounds.maxOvershoot} and undercut ${atBounds.maxUndercut} all pass at-bound`),
+      'correction 2: the grid and the value\'s own step are two fields, and equality with an inclusive bound is a state of its own rather than a float comparison\'s mood',
+    );
+  }
+
+  // --- MQ30: a coverage within one spatial quantum but beyond one sample increment is not flagged --
+  {
+    const probes: string[] = [];
+    const probe = measureMeshQuality(mqInput(rectMask, frame, inward, noTargets));
+    const value = mqRow(probe, 'MQ_COVERAGE')?.value ?? NaN;
+    const samples = mqRow(probe, 'MQ_COVERAGE')?.art?.samples ?? NaN;
+    const bound = value - 3 / samples;
+    const rep = measureMeshQuality(mqInput(rectMask, frame, inward, { artFit: { minCoverage: bound, maxOvershoot: 0, maxUndercut: 1e6 }, maxBoundaryDeviation: null, regions: [] }));
+    const row = mqRow(rep, 'MQ_COVERAGE');
+    const quantum = row?.raster?.spatialQuantum ?? NaN;
+    if (!(Math.abs(value - bound) < quantum)) probes.push(`the gap ${Math.abs(value - bound)} is not under one spatial quantum ${quantum}, so revision 1's rule would not have flagged it either`);
+    if (row?.raster?.nearBound !== 'clear' || row.state !== 'pass') probes.push(`${mqSay(row)} ${row?.raster?.nearBound}, not pass and clear`);
+    const held = probes.length === 0;
+    say(
+      'MQ30_A_COVERAGE_WITHIN_ONE_SPATIAL_QUANTUM_BUT_BEYOND_ONE_SAMPLE_INCREMENT_OF_ITS_BOUND_IS_NOT_FLAGGED',
+      held,
+      probeDetail(held, probes, `coverage ${value} against ${bound}: a gap of ${Math.abs(value - bound).toFixed(6)}, under the ${quantum} px quantum and three ${(1 / samples).toFixed(6)} increments wide — ${row?.raster?.nearBound}`),
+      'correction 2\'s planted failure: revision 1 compared a coverage fraction with a distance in pixels, which flags almost every coverage; the increment in the row\'s own unit does not',
+    );
+  }
+
+  // --- MQ34: a source that is not one loop reports source counts null with a reason, not zeros --
+  {
+    const probes: string[] = [];
+    const islands = mqMesh(
+      [
+        [X0, Y0],
+        [X0 + 6, Y0],
+        [X0, Y0 + 6],
+        [X1, Y1],
+        [X1 - 6, Y1],
+        [X1, Y1 - 6],
+      ],
+      [0, 1, 2, 3, 4, 5],
+      6,
+      H,
+      W,
+    );
+    const rep = measureMeshQuality(mqInput(rectMask, frame, islands, { artFit: strict, maxBoundaryDeviation: null, regions: [] }));
+    const cand = rep.candidates[0];
+    const t = rep.termination;
+    if (rep.sourceCounts !== null) probes.push(`sourceCounts is ${JSON.stringify(rep.sourceCounts)}`);
+    if (cand?.counts !== null || cand.geometry !== null || cand.accepted !== false) probes.push(`the candidate reads counts ${JSON.stringify(cand?.counts)}, geometry ${cand?.geometry === null ? 'null' : 'present'}, accepted ${cand?.accepted}`);
+    if (t?.reason !== 'unsupported-topology' || t.code !== 'REDUCE_SOURCE_NOT_ONE_LOOP' || !t.detail.includes('not one closed loop')) probes.push(`the termination is ${JSON.stringify(t)}`);
+    if (!writeMeshQualityReport(rep).includes('"sourceCounts": null')) probes.push('the document does not write sourceCounts as null');
+    const held = probes.length === 0;
+    say(
+      'MQ34_A_SOURCE_THAT_IS_NOT_ONE_LOOP_REPORTS_SOURCE_COUNTS_NULL_WITH_A_REASON_NOT_ZEROS',
+      held,
+      probeDetail(held, probes, `two separate triangles: sourceCounts null, the candidate's counts and geometry null and not accepted, termination ${t?.reason} ${t && 'code' in t ? t.code : ''}: ${t && 'detail' in t ? t.detail : ''}`),
+      'correction 3: a count is never invented, so a source that cannot be read as a mesh has no counts, and the report says why rather than writing zeros a reader would take for a measurement',
+    );
+  }
+
+  // --- MQ44: a refused trace leaves trace deviation not measurable and the source accepted on its required rows --
+  {
+    const probes: string[] = [];
+    const first = measureMeshQuality(mqInput(pinchMask, pinchFrame, hexMesh, noTargets));
+    const v = (code: string): number => mqRow(first, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined)?.value ?? NaN;
+    const rep = measureMeshQuality(mqInput(pinchMask, pinchFrame, hexMesh, { artFit: { minCoverage: v('MQ_COVERAGE'), maxOvershoot: v('MQ_OVERSHOOT'), maxUndercut: v('MQ_UNDERCUT') }, maxBoundaryDeviation: null, regions: [] }));
+    const trace = mqRow(rep, 'MQ_TRACE_DEVIATION');
+    if (trace?.state !== 'not-measurable' || !(trace.reason ?? '').includes('the tracer refused')) probes.push(`${mqSay(trace)}: ${trace?.reason}`);
+    if (rep.candidates[0]?.accepted !== true || rep.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`verdict ${rep.candidates[0]?.geometry?.verdict}, accepted ${rep.candidates[0]?.accepted}: ${mqRows(rep).filter((r) => r.state === 'fail').map(mqSay).join(', ')}`);
+    const held = probes.length === 0;
+    say(
+      'MQ44_A_REFUSED_TRACE_LEAVES_TRACE_DEVIATION_NOT_MEASURABLE_AND_THE_SOURCE_ACCEPTED_ON_ITS_REQUIRED_ROWS',
+      held,
+      probeDetail(held, probes, `the pinch plate with its art fit declared at the measured values: ${mqSay(trace)} — ${trace?.reason?.slice(0, 96)}…; verdict ${rep.candidates[0]?.geometry?.verdict}, accepted`),
+      'P13: the traced boundary is a diagnostic, never required, so a tracer refusal is reported with its own reason and takes nothing away from the rows the caller did require',
+    );
+  }
+
+  rmSync(dir, { recursive: true, force: true });
+  return bad;
 }
 
 /**
@@ -116261,6 +117162,7 @@ function main(): void {
   tally.of('group-member', runGroupMemberSuite);
   tally.of('mesh-rasteriser', runMeshSuite);
   tally.of('mesh-outline', runMeshOutlineSuite);
+  tally.of('mesh-quality', runMeshQualitySuite);
   // The corpus-dependent suites hand back `null` when their fixtures are absent,
   // which is how they tell the tally they did not run: the floor then requires
   // that they said so out loud instead of requiring cases they could not take.
@@ -117058,6 +117960,15 @@ function main(): void {
       'meshes against the hull each fixture states; a mesh with no size takes its PNG’s, a stated size wins, no ' +
       'size at all is refused, and an edge list somebody authored passes through verbatim rather than being ' +
       "rewritten, because a transcription of an export carries only the edges its author drew)" +
+      ', + ' + n('mesh-quality') + ' mesh-quality controls (issue #1224 — the geometry rows of `mesh-quality-report/1` on ' +
+      'generated PLACEHOLDER plates, every expected figure derived from the plate built: a mesh against its own hull ' +
+      'deviating zero with its raster rows equal to the legacy fit, a vertex moved in failing coverage and undercut at a ' +
+      'named pixel, one pushed out reading its displacement within one cell, a spanned hole counted and not overshoot, a ' +
+      'diagonal pinch exposing both labelled fills with the legacy fit unchanged, a flipped triangle and a sliver held at ' +
+      'the A39 band from both sides, an edge crossing a region and one in its graded band held to the smallest bound on ' +
+      'them, the five states kept apart — undeclared out of every pass count, a domain under its sample floor not ' +
+      'measurable, a source that is not one loop reporting no counts rather than zeros — each refusal reached by one ' +
+      'input and named, the raster increment in the row\'s own unit, and the document byte-identical across key orders)' +
       ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
