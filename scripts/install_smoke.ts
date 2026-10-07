@@ -303,6 +303,7 @@ const NAMED_EXPORTS: Record<string, string> = {
   './rig': 'src/rig.ts',
   './mesh': 'src/mesh.ts',
   './errors': 'src/errors.ts',
+  './meshcompare': 'src/meshcompare.ts',
   './cli': 'cli.ts',
   './package.json': 'package.json',
 };
@@ -363,6 +364,15 @@ const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
  * surface* says why an agreed contract is the one exception to "observed".
  */
 const AGREED_IN_1224 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1), issue #1224';
+/**
+ * The second agreed row: the motion comparison, which the same contract puts
+ * on an entry of its own, `spine-rigc/meshcompare` (docs/MESH_REDUCTION.md P1
+ * and P2 — the core is the only poser, so the entry needs nothing installed
+ * beside the package), added by issue #1230. Its one function is also CALLED
+ * from the install with the runtime taken away — `MESHCOMPARE_PROBE_SOURCE`,
+ * the contract's `MQ45`.
+ */
+const AGREED_IN_1230 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1 and P2), issue #1230';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -451,6 +461,13 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
       'DeformKeyInput',
     ],
   },
+  {
+    entry: './meshcompare',
+    observed: AGREED_IN_1230,
+    needsRuntime: false,
+    values: { compareMeshesInMotion: 'function', uvCarriers: 'function' },
+    types: ['MotionComparisonInput', 'BuiltCandidate', 'CompareAttachment'],
+  },
 ];
 
 /**
@@ -478,12 +495,13 @@ const RENAME_PLANT = { entry: './render', symbol: 'loadPosable', renamed: 'loadP
  * entry, because each is a different dependant's import that has to go red by
  * its own name.
  */
-type DropPlant = 'drop-named-entry' | 'drop-rig-entry' | 'drop-mesh-entry' | 'drop-errors-entry';
+type DropPlant = 'drop-named-entry' | 'drop-rig-entry' | 'drop-mesh-entry' | 'drop-errors-entry' | 'drop-meshcompare-entry';
 const DROPPED_ENTRIES: Record<DropPlant, string> = {
   'drop-named-entry': './render',
   'drop-rig-entry': './rig',
   'drop-mesh-entry': './mesh',
   'drop-errors-entry': './errors',
+  'drop-meshcompare-entry': './meshcompare',
 };
 const isDropPlant = (plant: Plant): plant is DropPlant => plant in DROPPED_ENTRIES;
 
@@ -828,6 +846,168 @@ console.log('EXPORT_COUNTS named ' + Object.keys(plan.named).length + ', observe
 process.exit(bad.length === 0 ? 0 : 1);
 `;
 
+/**
+ * The step the comparison from the install is recorded under, and the name its
+ * fault carries — the contract's `MQ45` (docs/MESH_REDUCTION.md, *Stage A
+ * controls*): `spine-rigc/meshcompare` imports and compares from an install
+ * with no spine-core in it.
+ */
+const MESHCOMPARE_STEP = 'meshcompare';
+const MESHCOMPARE_CASE = 'SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE';
+
+/**
+ * How far the planted candidate moves one vertex, in the attachment's own
+ * units. A planted value, not a measurement: the fixture's bone chain carries
+ * no scale, so a rigid pose keeps every length, and the vertex's own UV — a
+ * hull sample — reads exactly this at every frame.
+ */
+const MESHCOMPARE_MOVED = 2;
+
+/**
+ * `MQ45` (issue #1230), run from the install with the runtime taken away. It
+ * imports `spine-rigc/meshcompare` — the entry P2 says needs nothing beside the
+ * package — and compares the flag mesh of the build this smoke just wrote:
+ *
+ * - the reference against ITSELF under another id, which has to read 0 at
+ *   every frame (MQ00's motion half, from the install);
+ * - the reference against the same document with one hull vertex moved
+ *   `MESHCOMPARE_MOVED` units — the same rig with its mesh changed, which is
+ *   inside the comparison's allowlist — which has to read that distance at
+ *   that vertex's UV at every frame;
+ * - two candidates under one id, which has to be refused as an instance of the
+ *   `MeshReductionError` that `spine-rigc/mesh` exports, so a dependant catching
+ *   the refusal by its class across the package boundary catches it.
+ *
+ * The report has to say `operation: 'compare'` and `poser: { kind: 'core' }`
+ * at the installed version. Every expected figure is the fixture's or the
+ * plant's — the art samples are the plate's opaque pixels counted here, the
+ * hull is the document's — never a reading of this package. The two
+ * comparisons are timed here, outside the report (which never carries a time).
+ */
+const MESHCOMPARE_PROBE_SOURCE = `import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const plan = JSON.parse(readFileSync(join(HERE, 'meshcompare_probe.json'), 'utf8'));
+const bad = [];
+const said = (what) => bad.push(what);
+const why = (e) => (e && e.message ? e.message : String(e));
+const load = async (spec) => {
+  try {
+    return await import(spec);
+  } catch (e) {
+    said(spec + ': import threw ' + why(e));
+    return null;
+  }
+};
+if (existsSync(join(HERE, 'node_modules', ...plan.runtime.split('/')))) said(plan.runtime + ' is installed in this directory, and this comparison is the one an install without it runs');
+const mc = await load('spine-rigc/meshcompare');
+const mesh = await load('spine-rigc/mesh');
+const plate = await load('spine-rigc/plate');
+const pkg = await load('spine-rigc/package.json');
+const version = pkg && pkg.default ? pkg.default.version : undefined;
+let summary = null;
+if (mc !== null && plate !== null && typeof mc.compareMeshesInMotion === 'function') {
+  const model = readFileSync(join(HERE, plan.model), 'utf8');
+  const doc = JSON.parse(model);
+  const skin = (doc.skins || []).find((k) => k.name === 'default');
+  const att = skin && skin.attachments && skin.attachments[plan.slot] ? skin.attachments[plan.slot][plan.attachment] : undefined;
+  const png = plate.decodePng(readFileSync(join(HERE, plan.plate)));
+  const alpha = new Uint8Array(png.width * png.height);
+  let art = 0;
+  for (let i = 0; i < alpha.length; i++) {
+    alpha[i] = png.data[i * 4 + 3];
+    if (alpha[i] >= 1) art += 1;
+  }
+  // Vertex 0 is moved in the frame that carries it: its own x in the attachment's space when the mesh is unweighted,
+  // its one binding's x when it is bound to a single bone — either way one rigid frame, so the distance it moves is
+  // the distance it reads. A vertex shared between bones would move by a weighted sum of rotations, and is refused.
+  const v = att && att.vertices;
+  const single = v && v.weighted === true && Array.isArray(v.bindings) && v.bindings[0] && v.bindings[0].length === 1 && v.bindings[0][0].weight === 1;
+  if (att === undefined || !v || (v.weighted !== false && !single) || typeof att.hull !== 'number' || att.hull < 1) {
+    said('the build has no mesh at ' + plan.slot + '/' + plan.attachment + ' whose hull vertex 0 is carried by one rigid frame, and the planted candidate moves that vertex');
+  } else {
+    const moved = JSON.parse(model);
+    const mv = moved.skins.find((k) => k.name === 'default').attachments[plan.slot][plan.attachment].vertices;
+    if (mv.weighted) mv.bindings[0][0].x += plan.moved;
+    else mv.xy[0] += plan.moved;
+    const movedText = JSON.stringify(moved, null, 2) + '\\n';
+    const fit = { minCoverage: 0, maxOvershoot: png.width, maxUndercut: png.width };
+    const input = (candidates, bound) => ({
+      reference: { id: 'reference', model },
+      candidates,
+      attachments: [
+        {
+          attachment: { skin: null, slot: plan.slot, attachment: plan.attachment },
+          art: { mask: { width: png.width, height: png.height, alpha }, threshold: 1, frame: { space: 'part-local-drawing-px-y-down', width: png.width, height: png.height, pageScale: 1, conversion: 'texels = px * pageScale' } },
+          finalThreshold: 1,
+          minArtSamples: 1,
+          regions: [],
+        },
+      ],
+      referenceArtFit: fit,
+      candidateArtFit: fit,
+      schedule: { frames: ['setup', { animation: plan.animation, fps: plan.fps }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection: [] },
+      bounds: { maxLocalDeformation: bound },
+      motionRequired: true,
+      perFrame: true,
+    });
+    const timed = (candidates, bound) => {
+      const t0 = performance.now();
+      try {
+        const report = mc.compareMeshesInMotion(input(candidates, bound));
+        return { report, ms: performance.now() - t0 };
+      } catch (e) {
+        said('compareMeshesInMotion with candidate(s) ' + candidates.map((c) => c.id).join(', ') + ' threw ' + why(e));
+        return null;
+      }
+    };
+    const local = (c) => (c && c.motion ? c.motion.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null) : undefined);
+    const perFrame = (c) => (c && c.perFrame ? c.perFrame.filter((p) => p.code === 'MQ_LOCAL_DEFORMATION') : []);
+    const self = timed([{ id: 'itself', model }], 0);
+    const plant = timed([{ id: 'moved', model: movedText }], plan.moved);
+    if (self !== null) {
+      const r = self.report;
+      if (r.operation !== 'compare') said('the report has operation ' + JSON.stringify(r.operation) + ', and "compare" was required');
+      if (!r.poser || r.poser.kind !== 'core' || r.poser.rigcVersion !== version) said('the report names the poser ' + JSON.stringify(r.poser) + ', and kind "core" at the installed version ' + JSON.stringify(version) + ' was required');
+      const c = r.candidates[0];
+      const frames = c.motion ? c.motion.schedule.walked.length : 0;
+      const values = perFrame(c);
+      const row = local(c);
+      if (frames === 0 || values.length !== frames || values.some((p) => p.value !== 0)) said('the reference against itself reads ' + JSON.stringify(values.map((p) => p.value)) + ' over ' + frames + ' frame(s), and 0 at every frame was required');
+      if (!row || !row.sampling || row.sampling.count !== art + att.hull || !row.art || row.art.samples !== art) said('the local-deformation row samples ' + JSON.stringify(row && row.sampling) + ' with ' + JSON.stringify(row && row.art && row.art.samples) + ' art sample(s); the plate has ' + art + ' opaque pixel(s) and the mesh ' + att.hull + ' hull UV(s), and that domain was required');
+      summary = { frames, samples: art + att.hull, selfMs: self.ms };
+    }
+    if (plant !== null) {
+      const c = plant.report.candidates[0];
+      const values = perFrame(c);
+      const row = local(c);
+      const off = values.filter((p) => p.value === null || Math.abs(p.value - plan.moved) > 1e-6);
+      if (values.length === 0 || off.length > 0) said('hull vertex 0 moved ' + plan.moved + ' unit(s) reads ' + off.map((p) => p.value + ' at ' + p.frame).join(', ') + ', and ' + plan.moved + ' at every frame was required (no bone of the fixture is scaled)');
+      if (!row || row.worst === null || row.worst.at.vertex !== 0 || row.state !== 'pass') said('the moved candidate has the row ' + JSON.stringify(row && { state: row.state, value: row.value, at: row.worst && row.worst.at }) + ', and its worst at vertex 0, at its bound, was required');
+      if (summary !== null) summary.moved = { value: row ? row.value : null, ms: plant.ms };
+    }
+    let refusal = null;
+    try {
+      mc.compareMeshesInMotion(input([{ id: 'twin', model }, { id: 'twin', model }], 0));
+    } catch (e) {
+      refusal = e;
+    }
+    if (refusal === null) said('two candidates with the id "twin" were compared, and a refusal naming both was required');
+    else if (mesh === null || typeof mesh.MeshReductionError !== 'function' || !(refusal instanceof mesh.MeshReductionError)) said('the duplicate-id refusal (' + why(refusal) + ') is not an instance of the MeshReductionError spine-rigc/mesh exports, so a dependant catching it by its class misses it');
+    else if (refusal.code !== 'COMPARE_INPUT_MISSING' || !why(refusal).includes('candidates[0]') || !why(refusal).includes('candidates[1]')) said('the duplicate-id refusal is ' + refusal.code + ' (' + why(refusal) + '), and COMPARE_INPUT_MISSING naming candidates[0] and candidates[1] was required');
+  }
+} else if (mc !== null) {
+  said('spine-rigc/meshcompare exports no compareMeshesInMotion function');
+}
+for (const line of bad) console.log('MESHCOMPARE_BAD ' + line);
+if (bad.length === 0 && summary !== null && summary.moved !== undefined) {
+  console.log('MESHCOMPARE_COUNTS ' + summary.frames + ' frames x ' + summary.samples + ' samples through the core poser at ' + version + '; itself 0 at every frame, hull vertex 0 moved ' + plan.moved + ' reads ' + summary.moved.value + ' at every frame; a duplicate id refused as the MeshReductionError of spine-rigc/mesh; one comparison of one candidate took ' + summary.selfMs.toFixed(1) + ' ms (itself) and ' + summary.moved.ms.toFixed(1) + ' ms (moved) of wall time, both builds posed and both art fits measured');
+}
+process.exit(bad.length === 0 && summary !== null ? 0 : 1);
+`;
+
 // ---------------------------------------------------------------------------
 // Running things
 // ---------------------------------------------------------------------------
@@ -1060,6 +1240,7 @@ type Plant =
   | 'drop-rig-entry'
   | 'drop-mesh-entry'
   | 'drop-errors-entry'
+  | 'drop-meshcompare-entry'
   | 'rename-symbol'
   | 'fork-compile-error'
   | 'refuse-core-build'
@@ -1141,13 +1322,16 @@ const FULL_OUT = 'build';
  * other: nothing inside the package imports itself by a bare specifier, so the
  * builds, render, check and the skills are untouched.
  */
-function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>): { names: string[]; steps: string[]; what: string; alone: true } {
+function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>, issue = '#1212'): { names: string[]; steps: string[]; what: string; alone: true } {
   const entry = DROPPED_ENTRIES[plant];
+  // The comparison probe imports `spine-rigc/meshcompare`, and `spine-rigc/mesh` for the class its refusal is caught
+  // by, so taking either entry away reddens that step too — by the entry's name, which is what the plant requires.
+  const compares = entry === './meshcompare' || entry === './mesh';
   return {
     names: [`spine-rigc${entry.slice(1)}`],
-    steps: ['exports', 'exports-without-runtime'],
+    steps: ['exports', 'exports-without-runtime', ...(compares ? [MESHCOMPARE_STEP] : [])],
     alone: true,
-    what: `the named entry \`${entry}\` removed from \`exports\` (issue #1212), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${entry.slice(1)}\` is the one who finds out: both import probes have to go red naming the entry, and nothing else`,
+    what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''} have to go red naming the entry, and nothing else`,
   };
 }
 
@@ -1195,6 +1379,7 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   'drop-rig-entry': droppedEntryPlant('drop-rig-entry'),
   'drop-mesh-entry': droppedEntryPlant('drop-mesh-entry'),
   'drop-errors-entry': droppedEntryPlant('drop-errors-entry'),
+  'drop-meshcompare-entry': droppedEntryPlant('drop-meshcompare-entry', '#1230'),
   'rename-symbol': {
     names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
@@ -1837,6 +2022,28 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     } else if (bareBad.length === 0) {
       notes.push(`exports: ${bareCounts}`);
     }
+    // MQ45 (issue #1230): the motion comparison from this install, the runtime gone. It reads `build/` for the reason
+    // render and check below do — the comparison above holds it to the core entry's bytes, and a broken core build
+    // then reddens one step rather than three.
+    if (existsSync(join(outDir, 'skeleton.model.json'))) {
+      writeFileSync(
+        join(home, 'meshcompare_probe.json'),
+        `${JSON.stringify({ runtime: RUNTIME, model: `${FULL_OUT}/skeleton.model.json`, plate: 'parts/flag.png', slot: 'flag', attachment: 'flag', animation: 'wave', fps: 12, moved: MESHCOMPARE_MOVED }, null, 2)}\n`,
+      );
+      writeFileSync(join(home, 'meshcompare_probe.mjs'), MESHCOMPARE_PROBE_SOURCE);
+      const compared = run('bun', [join(home, 'meshcompare_probe.mjs')], home);
+      output += compared.out;
+      const compareBad = compared.out.split('\n').filter((line) => line.startsWith('MESHCOMPARE_BAD '));
+      const compareCounts = /^MESHCOMPARE_COUNTS (.+)$/m.exec(compared.out)?.[1];
+      for (const line of compareBad) fault(MESHCOMPARE_STEP, `${MESHCOMPARE_CASE}: ${line.slice('MESHCOMPARE_BAD '.length)}`);
+      if (compareCounts === undefined || compared.status !== 0) {
+        if (compareBad.length === 0) fault(MESHCOMPARE_STEP, `${MESHCOMPARE_CASE}: the comparison probe exited ${compared.status} without a verdict. ${compared.out.trim().slice(0, 2000)}`);
+      } else {
+        notes.push(`without ${RUNTIME}: ${MESHCOMPARE_CASE} — ${compareCounts}`);
+      }
+    } else {
+      fault(MESHCOMPARE_STEP, `${MESHCOMPARE_CASE}: the full entry wrote no build/skeleton.model.json, so there is no build to compare`);
+    }
     if (existsSync(join(outDir, 'skeleton.model.json'))) {
       const rendered = run(bin, ['render', '--candidate', 'build', '--out', 'frames'], home);
       output += rendered.out;
@@ -1946,7 +2153,7 @@ exit codes:
      --wait, so the confirmation was NOT taken; nothing here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, compares meshes of that build through spine-rigc/meshcompare, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
@@ -1959,6 +2166,7 @@ cases:
   drop-rig-entry     ${DROPPED_ENTRIES['drop-rig-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-rig-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
   drop-mesh-entry    ${DROPPED_ENTRIES['drop-mesh-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-mesh-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
   drop-errors-entry  ${DROPPED_ENTRIES['drop-errors-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-errors-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-meshcompare-entry  ${DROPPED_ENTRIES['drop-meshcompare-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-meshcompare-entry'].slice(1)} and the comparison from the install have to go RED naming it, and nothing else
   rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through spine-rigc${RENAME_PLANT.entry.slice(1)} has to go RED naming both
   fork-compile-error ${FORK_ERROR_MODULE} given a CompileError of its own — the parser's refusal, caught by the class spine-rigc/errors exports, has to go RED alone naming both
   refuse-core-build  the core entry's build body made to refuse — the core-build step, and only it, has to go RED naming SMOKE_CORE_ENTRY_BUILDS
@@ -2068,6 +2276,7 @@ function main(): number {
     { name: 'drop-rig-entry', source, installer, plant: 'drop-rig-entry', dirName: 'planted-rig-entry' },
     { name: 'drop-mesh-entry', source, installer, plant: 'drop-mesh-entry', dirName: 'planted-mesh-entry' },
     { name: 'drop-errors-entry', source, installer, plant: 'drop-errors-entry', dirName: 'planted-errors-entry' },
+    { name: 'drop-meshcompare-entry', source, installer, plant: 'drop-meshcompare-entry', dirName: 'planted-meshcompare-entry' },
     { name: 'rename-symbol', source, installer, plant: 'rename-symbol', dirName: 'planted-rename' },
     { name: 'fork-compile-error', source, installer, plant: 'fork-compile-error', dirName: 'planted-fork-error' },
     { name: 'refuse-core-build', source, installer, plant: 'refuse-core-build', dirName: 'planted-core-build' },

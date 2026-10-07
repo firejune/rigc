@@ -46889,9 +46889,13 @@ function runMeshQualitySuite(): number {
 // The authorisation (spine-parts#126, comment 6045645512) asks C1 to carry its
 // own executable controls for UV carrier mapping, schedule identity and
 // held-out separation, and report states; those are MQ35–MQ37, MQ22 and MQ42,
-// and MQ10 and MQ15. ⚠️ Not built here, and named so nobody reads the suite as
-// Stage C complete: MQ11–MQ13, MQ31, MQ38, MQ45 and the motion halves of MQ19,
-// MQ21 and MQ28 are C2's.
+// and MQ10 and MQ15. Stage C2 adds the rest of the contract's motion controls —
+// its MQ11–MQ13, MQ31 and MQ38 and the motion halves of its MQ19, MQ21 and MQ28 —
+// printed as MQ56–MQ63, because those numbers are mesh-quality's or printed here
+// already and a code names one control (TY17); docs/MESH_REDUCTION.md's control
+// list maps each. MQ45 is not here: it is the install smoke's
+// (`SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`), because only
+// an install without spine-core can show the entry needs none.
 
 import { compareMeshesInMotion, uvCarriers, type CompareAttachment, type MotionComparisonInput } from './src/meshcompare.ts';
 
@@ -46904,6 +46908,8 @@ interface McMeshSpec {
   columns: number[];
   /** A vertex moved in setup: its index and its displacement in part px, y down. */
   moved?: { vertex: number; dx: number; dy: number };
+  /** Every vertex bound wholly to one bone (stage C2's rigid fixtures); left out, the split described on `mcMesh`. */
+  bone?: 'a' | 'b';
 }
 
 /**
@@ -46928,7 +46934,7 @@ function mcMesh(spec: McMeshSpec): Record<string, unknown> {
   const at = points.map(([x, y], v): [number, number] => (spec.moved?.vertex === v ? [x + spec.moved.dx, y + spec.moved.dy] : [x, y]));
   const weights = points.map(([x], v) => {
     const [px, py] = at[v];
-    const wa = x < MC_W / 2 ? 1 : x === MC_W / 2 ? 0.5 : 0;
+    const wa = spec.bone === 'a' ? 1 : spec.bone === 'b' ? 0 : x < MC_W / 2 ? 1 : x === MC_W / 2 ? 0.5 : 0;
     const out: Array<{ bone: string; x: number; y: number; weight: number }> = [];
     if (wa > 0) out.push({ bone: 'a', x: px, y: MC_H / 2 - py, weight: wa });
     if (wa < 1) out.push({ bone: 'b', x: px - MC_W / 2, y: MC_H / 2 - py, weight: 1 - wa });
@@ -46942,6 +46948,10 @@ interface McRig {
   physics?: boolean;
   /** Bone `a`'s declared setup scale and rotation (MQ37). */
   a?: { scaleX?: number; scaleY?: number; rotation?: number };
+  /** How far the bend turns `b`, degrees; left out, 60. */
+  bend?: number;
+  /** The strip slot exempted from A39 (`invariants.deformMayFold`) — MQ63. */
+  mayFold?: boolean;
 }
 
 /** Compile a strip rig with the tree's own compiler and return its model document — the text `build` writes beside the pair. */
@@ -46958,6 +46968,7 @@ function mcBuild(dir: string, name: string, rig: McRig): string {
       bones: [{ name: 'root' }, { name: 'a', parent: 'root', x: 50, y: 50, ...(rig.a ?? {}) }, { name: 'b', parent: 'a', x: MC_W / 2, y: 0 }],
       slots: [{ name: 'strip', bone: 'a', attachment: 'strip' }],
       skins: { default: { strip: { strip: rig.mesh } } },
+      ...(rig.mayFold === true ? { invariants: { deformMayFold: [{ slot: 'strip', why: 'the probe for a permitted fold, which the comparison lists rather than zeroes' }] } } : {}),
     }),
   );
   writeFileSync(
@@ -46969,7 +46980,7 @@ function mcBuild(dir: string, name: string, rig: McRig): string {
       easings: {},
       ...(rig.physics === true ? { physics: { b_follow: { bone: 'b', rotate: 0.5, inertia: 0.5, strength: 100, damping: 0.8, mass: 1, mix: 1 } } } : {}),
       // One bend: `b` turns 0 → 60° linearly over a second, so the bend — and with it a coarse mesh's error — grows with time.
-      animations: { bend: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [60] }] }] } },
+      animations: { bend: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [rig.bend ?? 60] }] }] } },
     }),
   );
   const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
@@ -47389,6 +47400,262 @@ function runMeshCompareSuite(): number {
       held,
       probeDetail(held, probes, `${chosen} selected: it is the selection reading and never the held-out one, setup is the baseline, the other ${walked.length - 2} frames held out; all ${all.length} frames selected: roles ${JSON.stringify(s?.roles)}, heldOutClaim ${s?.heldOutClaim}, no held-out reading; a selection id the schedule does not walk is ${stray?.code}`),
       'P11: parts supplies the split and rigc invents none — a frame that chose a candidate is not evidence about it, and no held-out claim is made from no held-out frame',
+    );
+  });
+
+  // ===== Stage C2 (issue #1230): the rest of the contract's motion controls, printed from MQ56 up ===============
+  // The contract numbers them MQ11, MQ12, MQ13, MQ31, MQ38 and the motion halves of MQ19, MQ21 and MQ28; those
+  // numbers are mesh-quality's or already printed here, and a code names one control (TY17), so each is printed under
+  // the next free number with the contract's statement — the mapping is docs/MESH_REDUCTION.md's control list.
+  const still = (over: Partial<MotionComparisonInput> = {}): Partial<MotionComparisonInput> => ({ schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, ...over });
+  /** The art samples of a mask at the final threshold, counted by the test: every pixel with alpha >= 1. */
+  const artCount = (m: { alpha: Uint8Array }): number => m.alpha.reduce((n, a) => n + (a >= 1 ? 1 : 0), 0);
+  /** A build's hull, read off its own document. */
+  const hullOf = (model: string): number => {
+    const g = readModel(model).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+    return g !== undefined && g.kind === 'mesh' && g.hull !== undefined ? g.hull : -1;
+  };
+  const geometryRow = (c: { geometry: { rows: MeasureRow[] } | null } | null | undefined, code: string): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === code && r.object.region === null);
+  const localPerFrame = (c: { perFrame?: Array<{ code: string; frame: string; value: number | null }> } | null | undefined): Array<{ frame: string; value: number | null }> => (c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
+  // Rigs whose strip is bound wholly to bone `b`, the one the bend turns: every vertex moves rigidly with it.
+  const rigidRef = mcBuild(dir, 'rigid-reference', { mesh: mcMesh({ columns: fine, bone: 'b' }) });
+  const rigidQuad = mcBuild(dir, 'rigid-quad', { mesh: mcMesh({ columns: [0, MC_W], bone: 'b' }) });
+
+  // --- MQ56 (the contract's MQ11): two candidates that drop the same art agree and both fail coverage ------------
+  mcGuard('MQ56', () => {
+    const probes: string[] = [];
+    // Both stop at x = 24 — a different triangulation of the same left part of the strip, the right part dropped — and
+    // both ride bone `b` rigidly, so where they carry art at all they carry it to the same world point at every frame.
+    const keep = 24;
+    const three = mcBuild(dir, 'drop-three', { mesh: mcMesh({ columns: [0, keep / 3, keep], bone: 'b' }) });
+    const two = mcBuild(dir, 'drop-two', { mesh: mcMesh({ columns: [0, keep], bone: 'b' }) });
+    const coverage = r6(keep / MC_W);
+    const strict: ArtFitBounds = { minCoverage: 1, maxOvershoot: MC_W, maxUndercut: MC_W };
+    // Pairwise, as a diagnostic: one of them standing in as the reference under a loose bound, the other compared to it.
+    const pair = compareMeshesInMotion(mcInput(three, [{ id: 'two', model: two }], still()));
+    const pairValues = localPerFrame(pair.candidates[0]);
+    if (pairValues.length === 0 || pairValues.some((p) => p.value !== 0)) probes.push(`the two read ${JSON.stringify(pairValues.map((p) => p.value))} against each other; they agree, so 0 at every frame`);
+    if (pair.candidates[0].motion?.verdict !== 'pass') probes.push(`their pairwise motion verdict is ${pair.candidates[0].motion?.verdict} under a bound of 0`);
+    // Against the source that carries all the art, held to coverage: each fails it, by the art it dropped, and neither is accepted.
+    const real = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'three', model: three }, { id: 'two', model: two }], still({ candidateArtFit: strict })));
+    for (const c of real.candidates) {
+      const row = geometryRow(c, 'MQ_COVERAGE');
+      if (row?.state !== 'fail' || row.value !== coverage) probes.push(`${c.id}: coverage ${row?.value} (${row?.state}); it keeps ${keep} of ${MC_W} columns, so ${coverage}, failing a bound of 1`);
+      if (c.accepted) probes.push(`${c.id} was accepted`);
+      const values = localPerFrame(c);
+      if (values.some((p) => p.value !== 0)) probes.push(`${c.id} against the reference reads ${JSON.stringify(values.map((p) => p.value))}; on the art it carries it moves with the reference`);
+    }
+    // And neither can stand in as the reference under the bound the candidates are held to.
+    const asReference = refusalOf(mcInput(three, [{ id: 'two', model: two }], still({ referenceArtFit: strict })));
+    if (asReference?.code !== 'COMPARE_REFERENCE_FAILS') probes.push(`one of them as the reference under coverage 1: ${asReference?.code ?? 'compared'}`);
+    const held = probes.length === 0;
+    say(
+      'MQ56_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE',
+      held,
+      probeDetail(held, probes, `two triangulations that keep ${keep} of ${MC_W} columns read 0 against each other at every frame and against the reference on what they carry, yet each has coverage ${coverage} and fails a bound of 1, so neither is accepted; one of them as the reference under that bound is ${asReference?.code}`),
+      '§3 *Independent evidence* (the contract\'s MQ11): two candidates that drop the same art agree perfectly, so pairwise agreement is necessary and never acceptance — each is held to its own art',
+    );
+  });
+
+  // --- MQ57 (the contract's MQ12): a single-bone rigid motion needs no interior vertex to measure zero ------------
+  mcGuard('MQ57', () => {
+    const probes: string[] = [];
+    const report = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'quad', model: rigidQuad }], still()));
+    const c = report.candidates[0];
+    const values = localPerFrame(c);
+    if (values.length === 0 || values.some((p) => p.value !== 0)) probes.push(`a four-vertex quad on the one bone the bend turns reads ${JSON.stringify(values.map((p) => p.value))}`);
+    if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
+    if (c.motion?.verdict !== 'pass' || !c.accepted) probes.push(`motion ${c.motion?.verdict}, accepted ${c.accepted} under a bound of 0`);
+    // The same quad split across the two bones is the contrast: the bend is no longer rigid, and it reads.
+    const split = rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
+    if (!(typeof split?.value === 'number' && split.value > 0)) probes.push(`the same quad weighted across both bones reads ${split?.value}; a bend it has no vertex for has to show`);
+    const held = probes.length === 0;
+    say(
+      'MQ57_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO',
+      held,
+      probeDetail(held, probes, `the 4-vertex quad, 0 interior vertices, bound wholly to the bone the bend turns, reads 0 against the ${hullOf(rigidRef)}-vertex reference at all ${values.length} frames; weighted across both bones it reads ${split?.value}`),
+      'the contract\'s MQ12: a rigid motion carries every sample by one transform, so a reduction to the hull alone loses nothing in motion — the row must not penalise vertex count',
+    );
+  });
+
+  // --- MQ58 (the contract's MQ13): a multi-bone bend without interior vertices fails local deformation at the bend frame ---
+  mcGuard('MQ58', () => {
+    const probes: string[] = [];
+    const report = compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still()));
+    const c = report.candidates[0];
+    const row = rowOf(c, 'MQ_LOCAL_DEFORMATION');
+    const walked = c.motion?.schedule.walked ?? [];
+    // The bend is 0 → 60° linearly over the animation, so the furthest bend is the walked frame at the latest time.
+    const bendFrame = walked.filter((f) => f.time !== null).reduce<(typeof walked)[number] | null>((best, f) => (best === null || (f.time ?? 0) > (best.time ?? 0) ? f : best), null);
+    if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
+    if (row?.state !== 'fail' || !(typeof row.value === 'number' && row.value > 0)) probes.push(`local deformation ${row?.value} (${row?.state}) under a bound of 0`);
+    if (row?.worst?.frame?.id !== bendFrame?.id) probes.push(`the worst frame is ${row?.worst?.frame?.id}; the furthest bend is ${bendFrame?.id}`);
+    const atSetup = localPerFrame(c).find((p) => p.frame === 'setup')?.value;
+    if (atSetup !== 0) probes.push(`at setup, before any bend, it reads ${atSetup}`);
+    if (c.accepted) probes.push('a candidate failing local deformation with motion required was accepted');
+    const held = probes.length === 0;
+    say(
+      'MQ58_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME',
+      held,
+      probeDetail(held, probes, `the 4-vertex quad weighted across two bones reads 0 at setup and ${row?.value} world units at ${row?.worst?.frame?.id}, the furthest bend, against a reference with a column at the joint; failed, not accepted`),
+      'the contract\'s MQ13: a bend needs vertices where it bends, and a mesh without them passes every setup bound — only the motion row can see it, and it has to name the frame',
+    );
+  });
+
+  // --- MQ59 (the contract's MQ19, motion half): a reference that fails its own coverage is refused as a reference --
+  mcGuard('MQ59', () => {
+    const probes: string[] = [];
+    const halfAt = MC_W / 2;
+    const half = mcBuild(dir, 'half', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
+    const coverage = r6(halfAt / MC_W);
+    const at = (minCoverage: number): ArtFitBounds => ({ minCoverage, maxOvershoot: MC_W, maxUndercut: MC_W });
+    const r = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(1) })));
+    const want = ['reference "reference"', 'MQ_COVERAGE', `${coverage}`, '>= 1'];
+    if (r?.code !== 'COMPARE_REFERENCE_FAILS' || !want.every((w) => r.message.includes(w))) probes.push(`the half reference under coverage 1: ${r?.code ?? 'compared'} — ${r?.message}`);
+    // At its own coverage it is admitted: the refusal is the bound's, not the mesh's.
+    const atOwn = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(coverage) })));
+    if (atOwn !== null) probes.push(`at its own coverage ${coverage} it was refused: ${atOwn.message}`);
+    // The same mesh as a CANDIDATE under the same bound is measured and reported failing, never refused.
+    const asCandidate = refusalOf(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) })));
+    const reported = asCandidate === null ? compareMeshesInMotion(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) }))).candidates[0] : null;
+    if (asCandidate !== null) probes.push(`as a candidate it was refused: ${asCandidate.message}`);
+    else if (reported?.geometry?.verdict !== 'fail' || reported.accepted) probes.push(`as a candidate: geometry ${reported?.geometry?.verdict}, accepted ${reported?.accepted}`);
+    const held = probes.length === 0;
+    say(
+      'MQ59_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE',
+      held,
+      probeDetail(held, probes, `${r?.message.slice(0, 260)}… — at its own coverage ${coverage} it is admitted, and as a candidate under the same bound it is reported failing, not refused`),
+      'P8 and §3 *Independent evidence* (a), the contract\'s MQ19: a deviation from a reference that does not carry its own art is not evidence, so the reference is gated before anything is compared to it',
+    );
+  });
+
+  // --- MQ60 (the contract's MQ21, motion half): a domain under its floor is not measurable with its count ---------
+  mcGuard('MQ60', () => {
+    const probes: string[] = [];
+    const art = artCount(mask);
+    const hull = hullOf(stillRef);
+    if (hull < 1) probes.push(`the reference states a hull of ${hull}, so there is no hull sample to test the floor against`);
+    const local = (floor: number, regions: CompareAttachment['regions'] = []): MeasureRow[] =>
+      (compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, minArtSamples: floor, regions }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0].motion?.rows ?? []).filter((r) => r.code === 'MQ_LOCAL_DEFORMATION');
+    // The attachment: a floor one above its art. Its hull samples would meet it, and do not count.
+    const under = local(art + 1).find((r) => r.object.region === null);
+    if (under?.state !== 'not-measurable' || under.art?.samples !== art || under.sampling?.count !== art + hull || !under.reason?.includes(`${art} art sample(s)`) || !under.reason.includes(`${art + 1}`)) {
+      probes.push(`a floor of ${art + 1}: ${under?.state}, art ${under?.art?.samples}, sampled ${under?.sampling?.count}, "${under?.reason}"; required not-measurable naming ${art} of ${art + 1}, over ${art + hull} samples`);
+    }
+    const at = local(art).find((r) => r.object.region === null);
+    if (at?.state !== 'pass') probes.push(`at a floor of exactly ${art} the row is ${at?.state}`);
+    // A region: the strip's left end, closed, so the hull's two left vertices lie on it. Counted by the test.
+    const edge = MC_W / 8;
+    const polygon: Array<[number, number]> = [[0, 0], [edge, 0], [edge, MC_H], [0, MC_H]];
+    const inside = (x: number, y: number): boolean => x >= 0 && x <= edge && y >= 0 && y <= MC_H;
+    let regionArt = 0;
+    for (let y = 0; y < MC_H; y++) for (let x = 0; x < MC_W; x++) if (mask.alpha[y * MC_W + x] >= 1 && inside(x + 0.5, y + 0.5)) regionArt++;
+    const g = readModel(stillRef).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+    let regionHull = 0;
+    if (g !== undefined && g.kind === 'mesh') for (let v = 0; v < hull; v++) if (inside(g.uvs[v * 2] * MC_W, g.uvs[v * 2 + 1] * MC_H)) regionHull++;
+    if (regionHull < 1) probes.push('no hull vertex lies in the region, so the region floor cannot show hull samples not counting');
+    const rows = local(art, [
+      { name: 'under', polygon, minArtSamples: regionArt + 1 },
+      { name: 'at', polygon, minArtSamples: regionArt },
+    ]);
+    const rUnder = rows.find((r) => r.object.region === 'under');
+    const rAt = rows.find((r) => r.object.region === 'at');
+    if (rUnder?.state !== 'not-measurable' || rUnder.art?.samples !== regionArt || rUnder.sampling?.count !== regionArt + regionHull) probes.push(`region floor ${regionArt + 1}: ${rUnder?.state}, art ${rUnder?.art?.samples}, sampled ${rUnder?.sampling?.count}; required not-measurable with ${regionArt} art over ${regionArt + regionHull} samples`);
+    if (rAt?.state !== 'pass' || rAt.art?.samples !== regionArt) probes.push(`region floor ${regionArt}: ${rAt?.state} with ${rAt?.art?.samples} art`);
+    const held = probes.length === 0;
+    say(
+      'MQ60_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT',
+      held,
+      probeDetail(held, probes, `the attachment: ${art} art samples and ${hull} hull samples, a floor of ${art + 1} is not measurable naming ${art} and one of ${art} passes; a region with ${regionArt} art and ${regionHull} hull samples: floor ${regionArt + 1} not measurable, ${regionArt} measured`),
+      'P9, the contract\'s MQ21: a domain under its floor is never a pass over nothing, and the hull UVs are samples of the comparison but not evidence of art, so they never lift a domain over its floor',
+    );
+  });
+
+  // --- MQ61 (the contract's MQ28, motion half): a duplicate candidate id is refused naming both ------------------
+  mcGuard('MQ61', () => {
+    const probes: string[] = [];
+    const twin = refusalOf(mcInput(reference, [{ id: 'twin', model: quad }, { id: 'twin', model: quad }]));
+    if (twin?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[1]', 'candidates[0]', '"twin"'].every((w) => twin.message.includes(w))) probes.push(`two candidates "twin": ${twin?.code ?? 'compared'} — ${twin?.message}`);
+    const asRef = refusalOf(mcInput(reference, [{ id: 'reference', model: quad }]));
+    if (asRef?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[0]', 'that reference has', '"reference"'].every((w) => asRef.message.includes(w))) probes.push(`a candidate with the reference's id: ${asRef?.code ?? 'compared'} — ${asRef?.message}`);
+    const distinct = refusalOf(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }]));
+    if (distinct !== null) probes.push(`two distinct ids were refused: ${distinct.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ61_A_DUPLICATE_CANDIDATE_ID_IS_REFUSED_NAMING_BOTH',
+      held,
+      probeDetail(held, probes, `${twin?.message.slice(0, 200)}…; a candidate under the reference's id is refused the same way, and the same model under two distinct ids is compared`),
+      'correction 1, the contract\'s MQ28: a report echoes each build by its id, so two builds under one id would be one row nobody can attribute',
+    );
+  });
+
+  // --- MQ62 (the contract's MQ31): local deformation states its sample domain and count; a sample removed lowers it ---
+  mcGuard('MQ62', () => {
+    const probes: string[] = [];
+    const hull = hullOf(stillRef);
+    const rowWith = (m: typeof mask): MeasureRow | undefined => rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, art: { ...compared.art, mask: m } }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
+    const whole = rowWith(mask);
+    const art = artCount(mask);
+    if (whole?.sampling === undefined || whole.sampling.count !== art + hull || !whole.sampling.domain.includes('alpha >= 1') || !whole.sampling.domain.includes('hull')) probes.push(`the row samples ${JSON.stringify(whole?.sampling)}; required the finite domain named (art at alpha >= 1 and the hull's UVs) over ${art} + ${hull}`);
+    if (whole?.art?.samples !== art) probes.push(`art samples ${whole?.art?.samples}; the mask has ${art}`);
+    // One art pixel cleared, inside the strip: one sample fewer, and nothing else about the domain changes.
+    const cleared = new Uint8Array(mask.alpha);
+    cleared[(MC_H / 2) * MC_W + MC_W / 4] = 0;
+    const less = rowWith({ ...mask, alpha: cleared });
+    if (less?.sampling?.count !== (whole?.sampling?.count ?? 0) - 1 || less?.art?.samples !== art - 1 || less.sampling.domain !== whole?.sampling?.domain) probes.push(`one pixel cleared: sampled ${less?.sampling?.count}, art ${less?.art?.samples}; required one fewer of each over the same domain`);
+    const held = probes.length === 0;
+    say(
+      'MQ62_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT',
+      held,
+      probeDetail(held, probes, `"${whole?.sampling?.domain}", ${whole?.sampling?.count} samples (${art} art + ${hull} hull); one art pixel cleared: ${less?.sampling?.count}`),
+      'correction 2, the contract\'s MQ31: a sampled row is a maximum over a finite set it names, never a continuous maximum, and the count is the set\'s — so removing a sample has to show',
+    );
+  });
+
+  // --- MQ63 (the contract's MQ38): candidates differing only in allowlisted inputs are compared; a permitted fold is listed --
+  mcGuard('MQ63', () => {
+    const probes: string[] = [];
+    // The bend taken far enough to turn the quad's first triangle over (b at 170°, the joint 32 px from the far edge),
+    // under a rig that exempts the slot from A39 — and the same rig without the exemption, as the contrast.
+    const far = 170;
+    const foldRef = mcBuild(dir, 'fold-reference', { mesh: mcMesh({ columns: fine }), bend: far, mayFold: true });
+    const foldQuad = mcBuild(dir, 'fold-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far, mayFold: true });
+    const heldRef = mcBuild(dir, 'held-reference', { mesh: mcMesh({ columns: fine }), bend: far });
+    const heldQuad = mcBuild(dir, 'held-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far });
+    // Allowlisted inputs beyond the mesh: atlas layout (the pages) and the Spine file's digest, both moved.
+    const relaid = mcEdit(foldQuad, (doc) => {
+      // The page doubled in each direction and every region moved into its right half: a different packing of the same art.
+      for (const page of doc.pages as Array<{ width: number; height: number; regions: Array<{ x: number }> }>) {
+        for (const region of page.regions) region.x += page.width;
+        page.width *= 2;
+        page.height *= 2;
+      }
+      const spine = doc.spine as Record<string, unknown>;
+      spine.sha256 = '0'.repeat(64);
+    });
+    const loose = { bounds: { maxLocalDeformation: 1e9 } };
+    const refused = refusalOf(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose)));
+    if (refused !== null) probes.push(`the relaid quad was refused: ${refused.message}`);
+    const run = refused === null ? compareMeshesInMotion(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose))) : null;
+    const row = rowOf(run?.candidates[0], 'MQ_INVERSION');
+    const folds = row?.motion?.folds ?? [];
+    const walkedIds = new Set((run?.candidates[0].motion?.schedule.walked ?? []).map((f) => f.id));
+    // The test's own reading of the list: the most folds at one frame is the row's value.
+    const perFrameFolds = new Map<string, number>();
+    for (const f of folds) perFrameFolds.set(f.frame, (perFrameFolds.get(f.frame) ?? 0) + 1);
+    const most = Math.max(0, ...perFrameFolds.values());
+    if (folds.length === 0) probes.push('no fold was listed; the bend was meant to turn a triangle over');
+    if (row?.state !== 'undeclared' || row.bound !== null || row.value !== most || most === 0) probes.push(`the exempt row is ${row?.state}, bound ${JSON.stringify(row?.bound)}, value ${row?.value}; required undeclared, no bound, and the fold count ${most} — never zeroed`);
+    if (folds.some((f) => !walkedIds.has(f.frame))) probes.push(`a fold names a frame the schedule did not walk: ${JSON.stringify(folds)}`);
+    // Without the exemption the same count is held to 0 and fails: the exemption moved the bound and nothing else.
+    const strict = rowOf(compareMeshesInMotion(mcInput(heldRef, [{ id: 'quad', model: heldQuad }], still(loose))).candidates[0], 'MQ_INVERSION');
+    if (strict?.state !== 'fail' || strict.value !== row?.value || strict.motion?.folds !== undefined) probes.push(`without the exemption: ${strict?.state} at ${strict?.value}, folds ${JSON.stringify(strict?.motion?.folds)}; required the same count failing a bound of 0`);
+    const held = probes.length === 0;
+    say(
+      'MQ63_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED',
+      held,
+      probeDetail(held, probes, `a quad with its pages and Spine digest also changed is compared; bent to ${far}° under deformMayFold its inversion row is ${row?.state} at ${row?.value} with ${folds.length} fold(s) listed at ${[...perFrameFolds.keys()].join(', ')}; without the exemption the same ${strict?.value} fails`),
+      'correction 5, the contract\'s MQ38: the allowlist is exactly the mesh, what follows from it and atlas layout, so those may differ and be compared; and an exemption from A39 removes a bound, never the evidence',
     );
   });
 
@@ -119531,13 +119798,17 @@ function main(): void {
       'with the other idle, a weight-jump edge kept through retriangulation, a deform run remapped across removal and ' +
       'reorder and refused under an insertion, shares under the weight grid dropped and counted, evidence at one ' +
       'threshold never read at another, and each termination reached by one input)' +
-      ', + ' + n('mesh-compare') + ' mesh-compare controls (issue #1230 — stage C1, `compareMeshesInMotion` through rigc\'s ' +
+      ', + ' + n('mesh-compare') + ' mesh-compare controls (issue #1230 — stages C1 and C2, `compareMeshesInMotion` through rigc\'s ' +
       'core poser on strip rigs compiled here: a mesh against itself reading 0 at every frame and a hull vertex moved k px ' +
       'reading k, no motion leaving motion null and a required motion unaccepted, a verdict that differs between phases ' +
       'naming both frames, a changed bone field and a changed physics setting refused naming the path and both values, ' +
       'one reset for every candidate with a changed dt moving the rows only where physics drives them, a sample on a shared ' +
       'UV edge carried to one point and one under overlapping UV triangles refused, a scaled setup reported as two ' +
-      'singular scales, a nonzero warm-up refused, and a selection frame never held out)' +
+      'singular scales, a nonzero warm-up refused, a selection frame never held out; and since C2 two candidates dropping the same art ' +
+      'agreeing yet failing coverage, a rigid single-bone motion reading 0 with no interior vertex and a multi-bone bend without one ' +
+      'failing at the bend frame, a reference failing its own coverage refused as a reference, a domain under its sample floor ' +
+      'not measurable with hull samples not raising it, a duplicate candidate id refused naming both, the sample domain and ' +
+      'count stated and lowered by a removed sample, and an allowlisted difference compared with a permitted fold listed, not zeroed)' +
       ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
