@@ -299,6 +299,8 @@ export interface MeasureRow {
   raster?: RasterSensitivity;
   /** Sampled rows — correction 2. */
   sampling?: { domain: string; count: number };
+  /** Motion rows only (stage C, `src/meshcompare.ts`): how the row's value was taken over the schedule. */
+  motion?: MotionRowDetail;
 }
 
 /** Correction 2: the spatial grid and the value's own granularity are two fields. */
@@ -353,9 +355,10 @@ export interface MotionSchedule {
 
 /**
  * The schedule a motion section was measured under. The contract names this
- * type without defining it; until stage C does, it is the schedule as given.
+ * type without defining it; stage C (issue #1230) defines it as the schedule as
+ * given plus what was walked from it (`ScheduleWalked`, at the end of this file).
  */
-export type ScheduleUsed = MotionSchedule;
+export type ScheduleUsed = MotionSchedule & ScheduleWalked;
 
 /** One candidate's evidence — correction 1. `reduce` and `measure` carry exactly one. */
 export interface CandidateReport {
@@ -421,8 +424,8 @@ export interface EffectiveSettings {
     frame: SourceFrame;
     maskSize: [number, number];
     minArtSamples: number;
-    /** P9: each region's own floor, in the order the regions were given. */
-    regions: Array<{ name: string; minArtSamples: number }>;
+    /** P9: each region's own floor, in the order the regions were given — and, on a `compare`, its polygon. */
+    regions: Array<{ name: string; minArtSamples: number; polygon?: Array<[number, number]> }>;
   }>;
   sourceBounds: ArtFitBounds | null;
   referenceArtFit: ArtFitBounds | null;
@@ -1576,7 +1579,7 @@ function effectiveJson(e: EffectiveSettings): Json {
       frame: frameJson(a.frame),
       maskSize: pair(a.maskSize),
       minArtSamples: a.minArtSamples,
-      regions: a.regions.map((r) => ({ name: r.name, minArtSamples: r.minArtSamples })),
+      regions: a.regions.map((r): Json => (r.polygon === undefined ? { name: r.name, minArtSamples: r.minArtSamples } : { name: r.name, minArtSamples: r.minArtSamples, polygon: r.polygon.map(pair) })),
     })),
     sourceBounds: fitJson(e.sourceBounds),
     referenceArtFit: fitJson(e.referenceArtFit),
@@ -1631,6 +1634,7 @@ function rowJson(r: MeasureRow): Json {
     };
   }
   if (r.sampling !== undefined) out.sampling = { domain: r.sampling.domain, count: r.sampling.count };
+  if (r.motion !== undefined) out.motion = motionDetailJson(r.motion);
   return out;
 }
 
@@ -1651,7 +1655,7 @@ function candidateJson(c: CandidateReport): Json {
     id: c.id,
     counts: countsJson(c.counts),
     geometry: c.geometry === null ? null : sectionJson(c.geometry),
-    motion: c.motion === null ? null : { ...sectionJson(c.motion), schedule: scheduleJson(c.motion.schedule) },
+    motion: c.motion === null ? null : { ...sectionJson(c.motion), schedule: scheduleUsedJson(c.motion.schedule) },
     accepted: c.accepted,
   };
   if (c.perFrame !== undefined) out.perFrame = c.perFrame.map((p) => ({ code: p.code, frame: p.frame, value: p.value }));
@@ -1701,4 +1705,98 @@ export function writeMeshQualityReport(report: MeshQualityReport): string {
     termination: terminationJson(report.termination),
   };
   return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+// ---------------------------------------------------------------------------
+// stage C — the motion section's own fields (issue #1230, `src/meshcompare.ts`)
+// ---------------------------------------------------------------------------
+//
+// Additive: nothing above reads these, a `measure` and a `reduce` never write
+// them, and every one is written only when present.
+
+/** One group of frames a motion row was also taken over — a phase, or a role (P11). */
+export interface MotionReading {
+  /** The group's worst value; null when no frame of the group drew the attachment. */
+  value: number | null;
+  /** The value against the row's bound, by the row's own rule; `undeclared` with no bound, `not-measurable` with no value. */
+  state: MeasureState;
+  /** The frame the group's worst value was taken at, by `FrameRef.id`. */
+  frame: string | null;
+}
+
+/**
+ * How a motion row's value was taken over the schedule (stage C). The row's own
+ * `value` is the worst over every frame measured; these keep apart what the
+ * contract says must not be folded together.
+ */
+export interface MotionRowDetail {
+  /** Frames at which the attachment was drawn and measured, and the ids of those at which its slot drew something else or nothing. */
+  frames: { measured: number; notDrawn: string[] };
+  /**
+   * §4 *Transition in time*: the row taken per sample phase — `grid` and `irr`
+   * for the frames a rate generated, `null` for the setup frame and for frames
+   * the caller gave as explicit times (no phase applies to those).
+   */
+  byPhase: Array<{ phase: 'grid' | 'irr' | null } & MotionReading>;
+  /** When one phase passes and another fails: the worst frame of each, by id, and a sentence naming both. Null otherwise. */
+  phasesDisagree: { pass: string; fail: string; sentence: string } | null;
+  /** P11: the row per role. `heldOut` is null when no held-out frame was measured — no held-out claim is made. */
+  byRole: { baseline: MotionReading | null; selection: MotionReading | null; heldOut: MotionReading | null };
+  /**
+   * Correction 4, world rows: the declared setup map of the attachment's slot
+   * bone — its world 2×2 at the setup pose, `[a, b, c, d]` as the core poses it
+   * from the bones' declared fields — and its two singular scales. Never a
+   * single world-per-pixel ratio, and never fitted to output vertices.
+   */
+  setupMap?: { bone: string; linear: [number, number, number, number]; singularScales: [number, number] };
+  /** §3: samples no non-degenerate UV triangle carries, listed by UV — in the reference's mesh and in this candidate's. */
+  uncarried?: { reference: Array<[number, number]>; candidate: Array<[number, number]> };
+  /** §3, `MQ_INVERSION` on a slot `invariants.deformMayFold` names: every reversed triangle with its frame — listed, never zeroed. */
+  folds?: Array<{ triangle: number; frame: string }>;
+  /** Triangles that have no area at the setup pose (the A39 band), so no sign and no stretch is read off them. */
+  degenerateAtSetup?: number;
+}
+
+/** What a motion section walked from the schedule it was given (`ScheduleUsed`). */
+export interface ScheduleWalked {
+  /** Every frame the schedule names, in walk order, each with its role (P11). */
+  walked: FrameRef[];
+  /** The roles among those frames — what the section has evidence for. */
+  roles: Array<FrameRef['role']>;
+  /** P11: true only when at least one held-out frame, disjoint from `selection`, was walked. */
+  heldOutClaim: boolean;
+  /** P10: every walk resets physics at time 0 and steps from there, the same steps for the reference and every candidate. */
+  reset: 'physics reset at time 0';
+  /** Each walk: the animation, the phase (null for explicit times), and how many steps reached its last frame. */
+  walks: Array<{ animation: string; phase: 'grid' | 'irr' | null; steps: number }>;
+}
+
+function readingJson(r: MotionReading | null): Json {
+  return r === null ? null : { value: r.value, state: r.state, frame: r.frame };
+}
+
+function motionDetailJson(m: MotionRowDetail): Json {
+  const out: { [key: string]: Json } = {
+    frames: { measured: m.frames.measured, notDrawn: [...m.frames.notDrawn] },
+    byPhase: m.byPhase.map((p) => ({ phase: p.phase, value: p.value, state: p.state, frame: p.frame })),
+    phasesDisagree: m.phasesDisagree === null ? null : { pass: m.phasesDisagree.pass, fail: m.phasesDisagree.fail, sentence: m.phasesDisagree.sentence },
+    byRole: { baseline: readingJson(m.byRole.baseline), selection: readingJson(m.byRole.selection), heldOut: readingJson(m.byRole.heldOut) },
+  };
+  if (m.setupMap !== undefined) out.setupMap = { bone: m.setupMap.bone, linear: [...m.setupMap.linear], singularScales: pair(m.setupMap.singularScales) };
+  if (m.uncarried !== undefined) out.uncarried = { reference: m.uncarried.reference.map(pair), candidate: m.uncarried.candidate.map(pair) };
+  if (m.folds !== undefined) out.folds = m.folds.map((f) => ({ triangle: f.triangle, frame: f.frame }));
+  if (m.degenerateAtSetup !== undefined) out.degenerateAtSetup = m.degenerateAtSetup;
+  return out;
+}
+
+function scheduleUsedJson(s: ScheduleUsed): Json {
+  const given = scheduleJson(s) as { [key: string]: Json };
+  return {
+    ...given,
+    walked: s.walked.map(frameRefJson),
+    roles: [...s.roles],
+    heldOutClaim: s.heldOutClaim,
+    reset: s.reset,
+    walks: s.walks.map((w) => ({ animation: w.animation, phase: w.phase, steps: w.steps })),
+  };
 }

@@ -39,6 +39,7 @@ import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
+import { PACKAGE_ROOT, readPackageMeta, readVersion } from '../package_meta.ts';
 import { DEFAULT_MAX_RESIDUAL, DEFAULT_SCALE_MAX, DEFAULT_SCALE_MIN } from '../pose.ts';
 import {
   CandidateAtlasError,
@@ -98,37 +99,9 @@ export class ExplainError extends Error {}
 // and for naming a remedy `bench` can only give from a repo checkout.
 // ---------------------------------------------------------------------------
 
-interface PackageMeta {
-  version?: string;
-  repository?: string | { url?: string };
-}
-
-let packageMeta: PackageMeta | null | undefined;
-
-/**
- * The directory `cli.ts` sits in: `package.json`, `skills/` and, in a
- * checkout, `examples/` and `scripts/` are beside it, in the repository and
- * once installed. Two levels above this file (`src/cli/`), which is where the
- * commands that read those live since issue #1052 — every path they built off
- * `cli.ts`'s own directory is built off this one, and comes out the same.
- */
-export const PACKAGE_ROOT = join(import.meta.dir, '..', '..');
-
-/** `package.json` sits next to `cli.ts` both in the repo and once installed (`PACKAGE_ROOT`). */
-export function readPackageMeta(): PackageMeta | null {
-  if (packageMeta === undefined) {
-    try {
-      packageMeta = JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf8')) as PackageMeta;
-    } catch {
-      packageMeta = null;
-    }
-  }
-  return packageMeta;
-}
-
-export function readVersion(): string {
-  return readPackageMeta()?.version ?? 'unknown';
-}
+// The reader moved to `../package_meta.ts` (issue #1230), so a library module can read
+// the version without loading the CLI; every name it had here is re-exported unchanged.
+export { PACKAGE_ROOT, readPackageMeta, readVersion };
 
 // ---------------------------------------------------------------------------
 // argument parsing

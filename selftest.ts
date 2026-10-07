@@ -45913,17 +45913,19 @@ function runMeshQualitySuite(): number {
     );
   }
 
-  // --- MQ26: nothing under src/ but the three defining modules names the operations --
+  // --- MQ26: nothing under src/ but the four defining modules names the operations --
   // The bytes half of the contract's MQ26 is EH06's and MB07's (the gallery held to the emit-hash base on every
-  // run); this holds the reason they cannot move — no module a build reaches calls the operation.
+  // run); this holds the reason they cannot move — no module a build reaches calls the operation. The motion
+  // comparison (`src/meshcompare.ts`, issue #1230) is the fourth: it defines `compareMeshesInMotion` and calls
+  // `measureMeshQuality` for the setup art fit, and it is itself an explicit call that nothing a build reaches names.
   {
     const probes: string[] = [];
-    const DEFINERS = ['src/mesh.ts', 'src/meshquality.ts', 'src/meshreduce.ts'];
-    /** The modules outside the two that define it naming the operation, comments aside, as `file (names)`. */
+    const DEFINERS = ['src/mesh.ts', 'src/meshquality.ts', 'src/meshreduce.ts', 'src/meshcompare.ts'];
+    /** The modules outside the four that define them naming an operation, comments aside, as `file (names)`. */
     const callers = (population: ReadonlyMap<string, string>): string[] =>
       [...population]
         .filter(([rel]) => !DEFINERS.includes(rel))
-        .map(([rel, text]) => [rel, [...new Set(codeOnly(text).match(/\b(measureMeshQuality|reduceMesh)\b/g) ?? [])]] as const)
+        .map(([rel, text]) => [rel, [...new Set(codeOnly(text).match(/\b(measureMeshQuality|reduceMesh|compareMeshesInMotion)\b/g) ?? [])]] as const)
         .filter(([, names]) => names.length > 0)
         .map(([rel, names]) => `${rel} (${names.join(', ')})`)
         .sort();
@@ -45939,18 +45941,21 @@ function runMeshQualitySuite(): number {
     const plantedReduce = new Map(population);
     plantedReduce.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\nconst reduced = reduceMesh;\n`);
     if (JSON.stringify(callers(plantedReduce)) !== JSON.stringify(['src/compile.ts (reduceMesh)'])) probes.push(`a compile.ts planted to name the reduction read ${JSON.stringify(callers(plantedReduce))}, not that file by name`);
+    const plantedCompare = new Map(population);
+    plantedCompare.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\nconst compared = compareMeshesInMotion;\n`);
+    if (JSON.stringify(callers(plantedCompare)) !== JSON.stringify(['src/compile.ts (compareMeshesInMotion)'])) probes.push(`a compile.ts planted to name the comparison read ${JSON.stringify(callers(plantedCompare))}, not that file by name`);
     const commented = new Map(population);
     commented.set('src/compile.ts', `${population.get('src/compile.ts') ?? ''}\n// measureMeshQuality, in a comment\n`);
     if (callers(commented).length !== 0) probes.push('a comment naming the operation was read as a caller');
     const held = probes.length === 0;
     say(
-      'MQ26_NO_MODULE_UNDER_SRC_BUT_THE_THREE_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM',
+      'MQ26_NO_MODULE_UNDER_SRC_BUT_THE_FOUR_THAT_DEFINE_THE_OPERATIONS_NAMES_THEM_SO_AN_UNCHANGED_SPEC_CANNOT_REACH_THEM',
       held,
       probeDetail(
         held,
         probes,
-        `${population.size} module(s) under src/ read off the disk: none but ${DEFINERS.join(' and ')} names measureMeshQuality or reduceMesh; ` +
-          `planted into compile.ts the name reads ${plantedFound.join(', ')} and the reduction's reads src/compile.ts (reduceMesh), and in a comment there it reads nothing — the emitted bytes themselves are EH06's and MB07's`,
+        `${population.size} module(s) under src/ read off the disk: none but ${DEFINERS.join(', ')} names measureMeshQuality, reduceMesh or compareMeshesInMotion; ` +
+          `planted into compile.ts the name reads ${plantedFound.join(', ')}, the reduction's src/compile.ts (reduceMesh) and the comparison's src/compile.ts (compareMeshesInMotion), and in a comment there it reads nothing — the emitted bytes themselves are EH06's and MB07's`,
       ),
       '§0: the operation is an explicit call — no generator default changes and compile never measures or rewrites geometry on its own — so the claim that an unchanged spec emits unchanged bytes rests on nothing in a build reaching it, and that is held here rather than stated',
     );
@@ -46863,6 +46868,528 @@ function runMeshQualitySuite(): number {
       'P19 and spine-parts#126 (6042150608) item 1: with minWeight 0 a positive share that the grid cannot hold is dropped and counted rather than written as 0, no other floor applies, and a protected influence that cannot be kept is a named refusal',
     );
   }
+
+  rmSync(dir, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// mesh compare — the motion section of mesh-quality-report/1 (issue #1230)
+// ---------------------------------------------------------------------------
+//
+// Stage C1 of #1221: `compareMeshesInMotion` held to §3 of docs/MESH_REDUCTION.md
+// — the comparison on the region UV square through rigc's core poser, the
+// equality of every non-mesh input, the schedule and its roles, and the
+// report's states. Every rig is compiled here by the tree's own compiler from a
+// generated PLACEHOLDER plate (the `fixtures/public.ts` convention), in a temp
+// directory of this run; every expected figure is derived from what the fixture
+// planted — a vertex moved k px, a bone scaled by two declared factors, a bend
+// that grows with time — never typed in.
+//
+// The authorisation (spine-parts#126, comment 6045645512) asks C1 to carry its
+// own executable controls for UV carrier mapping, schedule identity and
+// held-out separation, and report states; those are MQ35–MQ37, MQ22 and MQ42,
+// and MQ10 and MQ15. ⚠️ Not built here, and named so nobody reads the suite as
+// Stage C complete: MQ11–MQ13, MQ31, MQ38, MQ45 and the motion halves of MQ19,
+// MQ21 and MQ28 are C2's.
+
+import { compareMeshesInMotion, uvCarriers, type CompareAttachment, type MotionComparisonInput } from './src/meshcompare.ts';
+
+/** The plate every compare fixture draws: a strip, opaque everywhere, so every pixel centre is a sample. */
+const MC_W = 64;
+const MC_H = 16;
+
+interface McMeshSpec {
+  /** Column positions along the strip, px; the mesh is two rows of vertices (top, bottom) joined by quads. */
+  columns: number[];
+  /** A vertex moved in setup: its index and its displacement in part px, y down. */
+  moved?: { vertex: number; dx: number; dy: number };
+}
+
+/**
+ * The strip mesh as a rig spec's authored attachment: hull vertices first in
+ * walk order (the top row left to right, the bottom row back), every quad two
+ * triangles counter-clockwise in Spine world, weights by name — a vertex left
+ * of the middle on bone `a`, right of it on `b`, on it half each — each binding
+ * in its bone's local frame (the bone at the strip's middle line, `b` 32 px
+ * along `a`).
+ */
+function mcMesh(spec: McMeshSpec): Record<string, unknown> {
+  const cols = spec.columns;
+  const n = cols.length;
+  const points: Array<[number, number]> = [];
+  for (const x of cols) points.push([x, 0]);
+  for (const x of [...cols].reverse()) points.push([x, MC_H]);
+  const top = (i: number): number => i;
+  const bottom = (i: number): number => 2 * n - 1 - i;
+  const triangles: number[] = [];
+  for (let i = 0; i < n - 1; i++) triangles.push(top(i), bottom(i), top(i + 1), top(i + 1), bottom(i), bottom(i + 1));
+  const uvs = points.flatMap(([x, y]) => [x / MC_W, y / MC_H]);
+  const at = points.map(([x, y], v): [number, number] => (spec.moved?.vertex === v ? [x + spec.moved.dx, y + spec.moved.dy] : [x, y]));
+  const weights = points.map(([x], v) => {
+    const [px, py] = at[v];
+    const wa = x < MC_W / 2 ? 1 : x === MC_W / 2 ? 0.5 : 0;
+    const out: Array<{ bone: string; x: number; y: number; weight: number }> = [];
+    if (wa > 0) out.push({ bone: 'a', x: px, y: MC_H / 2 - py, weight: wa });
+    if (wa < 1) out.push({ bone: 'b', x: px - MC_W / 2, y: MC_H / 2 - py, weight: 1 - wa });
+    return out;
+  });
+  return { type: 'mesh', image: 'strip.png', uvs, triangles, weights };
+}
+
+interface McRig {
+  mesh: Record<string, unknown>;
+  physics?: boolean;
+  /** Bone `a`'s declared setup scale and rotation (MQ37). */
+  a?: { scaleX?: number; scaleY?: number; rotation?: number };
+}
+
+/** Compile a strip rig with the tree's own compiler and return its model document — the text `build` writes beside the pair. */
+function mcBuild(dir: string, name: string, rig: McRig): string {
+  const at = join(dir, name);
+  mkdirSync(at, { recursive: true });
+  writeFileSync(
+    join(at, 'rig.json'),
+    JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'strip',
+      images: '../plates',
+      skeleton: { x: 0, y: 0, width: 200, height: 100 },
+      bones: [{ name: 'root' }, { name: 'a', parent: 'root', x: 50, y: 50, ...(rig.a ?? {}) }, { name: 'b', parent: 'a', x: MC_W / 2, y: 0 }],
+      slots: [{ name: 'strip', bone: 'a', attachment: 'strip' }],
+      skins: { default: { strip: { strip: rig.mesh } } },
+    }),
+  );
+  writeFileSync(
+    join(at, 'motion.json'),
+    JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'strip',
+      cut: 'strip',
+      easings: {},
+      ...(rig.physics === true ? { physics: { b_follow: { bone: 'b', rotate: 0.5, inertia: 0.5, strength: 100, damping: 0.8, mass: 1, mix: 1 } } } : {}),
+      // One bend: `b` turns 0 → 60° linearly over a second, so the bend — and with it a coarse mesh's error — grows with time.
+      animations: { bend: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [60] }] }] } },
+    }),
+  );
+  const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
+  return modelDocument(built.model, built.skeletonText, built.atlasText);
+}
+
+/** A model document with one leaf changed — the planted input for a refusal that names it. */
+function mcEdit(model: string, edit: (doc: Record<string, unknown>) => void): string {
+  const doc = JSON.parse(model) as Record<string, unknown>;
+  edit(doc);
+  return `${JSON.stringify(doc, null, 2)}\n`;
+}
+
+function runMeshCompareSuite(): number {
+  console.log('\n── mesh compare: the motion section of mesh-quality-report/1 — compareMeshesInMotion through the core poser (issue #1230) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-mesh-compare-'));
+  const plates = join(dir, 'plates');
+  mkdirSync(plates, { recursive: true });
+  const mask = mqMask(plates, 'strip', MC_W, MC_H, () => 1);
+  const frame = mqFrame(MC_W, MC_H);
+  const attachment = { skin: null, slot: 'strip', attachment: 'strip' };
+  const compared: CompareAttachment = { attachment, art: { mask, threshold: 1, frame }, finalThreshold: 1, minArtSamples: 1, regions: [] };
+  const loose: ArtFitBounds = { minCoverage: 0, maxOvershoot: MC_W, maxUndercut: MC_W };
+  const fine = [0, 16, 32, 48, 64];
+  const reference = mcBuild(dir, 'reference', { mesh: mcMesh({ columns: fine }), physics: true });
+  const quad = mcBuild(dir, 'quad', { mesh: mcMesh({ columns: [0, 64] }), physics: true });
+  const stillRef = mcBuild(dir, 'still-reference', { mesh: mcMesh({ columns: fine }) });
+  const stillQuad = mcBuild(dir, 'still-quad', { mesh: mcMesh({ columns: [0, 64] }) });
+  const stepped = (dt: number): MotionComparisonInput['schedule'] => ({ frames: ['setup', { animation: 'bend', fps: 4 }], phases: ['grid', 'irr'], physics: { mode: 'step', dt, warmupSteps: 0 }, selection: [] });
+  const mcInput = (ref: string, candidates: Array<{ id: string; model: string }>, over: Partial<MotionComparisonInput> = {}): MotionComparisonInput => ({
+    reference: { id: 'reference', model: ref },
+    candidates,
+    attachments: [compared],
+    referenceArtFit: loose,
+    candidateArtFit: loose,
+    schedule: stepped(1 / 60),
+    bounds: { maxLocalDeformation: 0 },
+    motionRequired: true,
+    perFrame: true,
+    ...over,
+  });
+  const refusalOf = (input: MotionComparisonInput): { code: string; message: string } | null => {
+    try {
+      compareMeshesInMotion(input);
+      return null;
+    } catch (err) {
+      if (err instanceof MeshReductionError) return { code: err.code, message: err.message };
+      return { code: `(not a MeshReductionError: ${(err as Error).name})`, message: (err as Error).message };
+    }
+  };
+  const rowOf = (c: { motion: { rows: MeasureRow[] } | null } | null | undefined, code: string, region: string | null = null): MeasureRow | undefined => c?.motion?.rows.find((r) => r.code === code && r.object.region === region);
+  const stepsOf = (s: unknown): string => JSON.stringify(s);
+  // A control whose body throws — a refusal where none is due, a crash in the module — fails by its code rather than
+  // taking the run down with it: a thrown positive control is a red one, and it has to be read as one.
+  const mcGuard = (label: string, run: () => void): void => {
+    try {
+      run();
+    } catch (err) {
+      say(`${label.replace(/ \/ /g, '_')}_THREW_BEFORE_ITS_VERDICT`, false, `${(err as Error).name}: ${(err as Error).message}`, 'a control that throws has no verdict, so it is a failure');
+    }
+  };
+
+  // --- MQ00 (motion half): a mesh compared with itself is 0 on every row and frame; one vertex moved k px reads k ---
+  mcGuard('MQ00', () => {
+    const probes: string[] = [];
+    const t0 = performance.now();
+    const report = compareMeshesInMotion(mcInput(reference, [{ id: 'itself', model: reference }]));
+    const wall = performance.now() - t0;
+    const self = report.candidates[0];
+    const frames = self.motion?.schedule.walked.length ?? 0;
+    const samples = rowOf(self, 'MQ_LOCAL_DEFORMATION')?.sampling?.count ?? 0;
+    const local = (self.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
+    if (frames === 0 || local.length !== frames) probes.push(`${local.length} per-frame local-deformation value(s) over ${frames} frame(s)`);
+    const nonzero = local.filter((p) => p.value !== 0);
+    if (nonzero.length > 0) probes.push(`a mesh against itself reads ${nonzero.map((p) => `${p.value} at ${p.frame}`).join(', ')}`);
+    // The stretch, squash and inversion of a candidate that IS the reference are the reference's own, frame by frame.
+    for (const code of ['MQ_STRETCH', 'MQ_SQUASH', 'MQ_INVERSION']) {
+      const mine = JSON.stringify((self.perFrame ?? []).filter((p) => p.code === code));
+      const its = JSON.stringify((report.reference?.perFrame ?? []).filter((p) => p.code === code));
+      if (mine !== its) probes.push(`${code} per frame differs from the reference's own: ${mine} vs ${its}`);
+    }
+    if (self.motion?.verdict !== 'pass' || !self.accepted) probes.push(`itself: motion ${self.motion?.verdict}, accepted ${self.accepted} under a bound of 0`);
+    if (report.poser?.kind !== 'core' || report.poser.rigcVersion !== JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')).version) probes.push(`poser ${JSON.stringify(report.poser)}`);
+    // The planted half: hull vertex 1 (top row, x = 16, bound wholly to `a`) moved up K px in setup, its UV kept. Every
+    // sample's displacement is its barycentric share of the moved vertex's, so the worst is the vertex's own UV — a hull
+    // sample — and reads K: bone `a` carries it rigidly (no scale), at every frame.
+    const K = 3;
+    const moved = mcBuild(dir, 'moved', { mesh: mcMesh({ columns: fine, moved: { vertex: 1, dx: 0, dy: -K } }), physics: true });
+    const plant = compareMeshesInMotion(mcInput(reference, [{ id: 'moved', model: moved }], { bounds: { maxLocalDeformation: K } }));
+    const row = rowOf(plant.candidates[0], 'MQ_LOCAL_DEFORMATION');
+    const uv1: [number, number] = [fine[1] / MC_W, 0];
+    if (row?.value !== K || row.state !== 'pass' || row.worst?.at.vertex !== 1 || JSON.stringify(row.worst.at.uv) !== JSON.stringify(uv1)) probes.push(`a vertex moved ${K} px reads ${row?.value} (${row?.state}) worst ${JSON.stringify(row?.worst?.at)}; required ${K} at the vertex's own uv ${JSON.stringify(uv1)}, at its bound`);
+    const perFrameK = (plant.candidates[0].perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION' && p.value !== K);
+    if (perFrameK.length > 0) probes.push(`frames that do not read ${K}: ${perFrameK.map((p) => `${p.frame} ${p.value}`).join(', ')}`);
+    const held = probes.length === 0;
+    say(
+      'MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the reference against itself reads 0 at all ${frames} frames (setup, grid and irr at 4 fps, physics stepped at 1/60) and its stretch, squash and inversion are the reference's own frame for frame; ` +
+          `hull vertex 1 moved ${K} px reads ${row?.value} world units at uv ${JSON.stringify(row?.worst?.at.uv)} on every frame — the vertex is bound wholly to an unscaled bone. ` +
+          `Cost, outside the report: one comparison of 1 candidate over ${frames} frames × ${samples} samples (posing the reference and the candidate, and the setup art fit of both) took ${wall.toFixed(1)} ms of wall time on this machine`,
+      ),
+      '§3 and MQ00: a comparison that reads anything but zero for a mesh against itself is measuring the instrument, and a planted displacement must read back as the displacement — the derivation, not the module, says what K is',
+    );
+  });
+
+  // --- MQ10: no motion supplied leaves motion null, and motionRequired is then not accepted --------------------
+  mcGuard('MQ10', () => {
+    const probes: string[] = [];
+    const required = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: true }));
+    const optional = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: false }));
+    for (const [label, r] of [['required', required], ['not required', optional]] as const) {
+      for (const c of [r.reference, ...r.candidates]) {
+        if (c?.motion !== null) probes.push(`${label}: ${c?.id} carries a motion section with no schedule`);
+        if (c?.perFrame !== undefined) probes.push(`${label}: ${c?.id} carries a per-frame table with no schedule`);
+        if (c?.geometry?.verdict !== 'pass') probes.push(`${label}: ${c?.id}'s geometry is ${c?.geometry?.verdict}, so the control could not tell acceptance by motion apart`);
+      }
+      if (r.poser !== null) probes.push(`${label}: poser ${JSON.stringify(r.poser)} with nothing posed`);
+    }
+    if (required.candidates[0].accepted || required.reference?.accepted) probes.push('motionRequired with no motion was accepted');
+    if (!optional.candidates[0].accepted) probes.push('with motion not required, a passing geometry was not accepted');
+    if (!writeMeshQualityReport(required).includes('"motion": null')) probes.push('the document does not write "motion": null');
+    const held = probes.length === 0;
+    say(
+      'MQ10_NO_MOTION_SUPPLIED_LEAVES_MOTION_NULL_AND_MOTION_REQUIRED_IS_NOT_ACCEPTED',
+      held,
+      probeDetail(held, probes, `schedule null: every build's motion is null and no poser is named; geometry passes on both runs, so the motion requirement is the only difference — required: accepted ${required.candidates[0].accepted}; not required: accepted ${optional.candidates[0].accepted}`),
+      'P6: no motion supplied is never an empty PASS, and a caller that required motion evidence does not get acceptance without it',
+    );
+  });
+
+  // --- MQ15: a verdict that differs between phases says so, naming both frame ids ---------------------------
+  mcGuard('MQ15', () => {
+    const probes: string[] = [];
+    const still = (bound: number): MotionComparisonInput => mcInput(stillRef, [{ id: 'quad', model: stillQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: bound } });
+    // With no physics the coarse quad's error grows with the bend, and the bend with time (0 → 60° linearly): each
+    // phase's worst is its LAST frame — grid's at the duration, irr's one interval's IRR_OFFSET short of it.
+    const wide = compareMeshesInMotion(still(1e9));
+    const byPhase = rowOf(wide.candidates[0], 'MQ_LOCAL_DEFORMATION')?.motion?.byPhase ?? [];
+    const grid = byPhase.find((p) => p.phase === 'grid');
+    const irr = byPhase.find((p) => p.phase === 'irr');
+    const walked = wide.candidates[0].motion?.schedule.walked ?? [];
+    const lastOf = (phase: string): string | undefined => walked.filter((f) => f.phase === phase).at(-1)?.id;
+    if (grid?.frame !== lastOf('grid') || irr?.frame !== lastOf('irr')) probes.push(`per-phase worst frames ${grid?.frame} and ${irr?.frame}; the bend grows with time, so required each phase's last frame, ${lastOf('grid')} and ${lastOf('irr')}`);
+    if (grid?.value === null || irr?.value === null || grid === undefined || irr === undefined || !(grid.value! > irr.value!)) probes.push(`grid reads ${grid?.value} and irr ${irr?.value}; grid's last frame is the furthest bend, so required grid > irr`);
+    if (wide.candidates[0].motion?.rows.some((r) => r.motion?.phasesDisagree !== null)) probes.push('with the bound above both phases a disagreement was reported');
+    let between = 0;
+    if (grid?.value != null && irr?.value != null) {
+      between = (grid.value + irr.value) / 2;
+      const split = compareMeshesInMotion(still(between));
+      const row = rowOf(split.candidates[0], 'MQ_LOCAL_DEFORMATION');
+      const d = row?.motion?.phasesDisagree;
+      if (row?.state !== 'fail') probes.push(`the row is ${row?.state} with grid over its bound; the row is the worst over both phases`);
+      if (d?.pass !== irr.frame || d?.fail !== grid.frame || !d.sentence.includes(irr.frame!) || !d.sentence.includes(grid.frame!)) probes.push(`the disagreement reads ${JSON.stringify(d)}; required pass ${irr.frame}, fail ${grid.frame}, both named in the sentence`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ15_A_VERDICT_THAT_DIFFERS_BETWEEN_PHASES_SAYS_SO_NAMING_BOTH_FRAME_IDS',
+      held,
+      probeDetail(held, probes, `grid worst ${grid?.value} at ${grid?.frame}, irr worst ${irr?.value} at ${irr?.frame}; a bound of ${r6(between)} between them fails the row and names both frames; a bound above both reports no disagreement`),
+      'P7 and §4 *Transition in time*: a row is the worst over the phases, and a verdict that holds at one phase and not another is said, with the frames, rather than folded into the worse one',
+    );
+  });
+
+  // --- MQ20 / MQ39: correction 5 — one bone field, one physics setting, refused naming the input and both values --
+  mcGuard('MQ20 / MQ39', () => {
+    const probes: string[] = [];
+    const boneX = mcEdit(quad, (doc) => {
+      const bones = doc.bones as Array<Record<string, unknown>>;
+      const b = bones.find((x) => x.name === 'b')!;
+      b.x = (b.x as number) + 1;
+    });
+    const r20 = refusalOf(mcInput(reference, [{ id: 'moved-bone', model: boneX }]));
+    const want20 = [`bones["b"].x`, `${MC_W / 2}`, `${MC_W / 2 + 1}`, 'candidate "moved-bone"'];
+    if (r20?.code !== 'COMPARE_INPUTS_DIFFER' || !want20.every((w) => r20.message.includes(w))) probes.push(`a bone field changed: ${r20?.code ?? 'not refused'} — ${r20?.message}`);
+    const strength = mcEdit(quad, (doc) => {
+      const c = (doc.constraints as Array<Record<string, unknown>>).find((x) => x.name === 'b_follow')!;
+      c.strength = (c.strength as number) - 10;
+    });
+    const r39 = refusalOf(mcInput(reference, [{ id: 'softer', model: strength }]));
+    const want39 = [`constraints["b_follow"].strength`, '100', '90'];
+    if (r39?.code !== 'COMPARE_INPUTS_DIFFER' || !want39.every((w) => r39.message.includes(w))) probes.push(`a physics strength changed: ${r39?.code ?? 'not refused'} — ${r39?.message}`);
+    // The bones of the two documents are identical: the refusal is the physics setting's alone.
+    if (JSON.stringify(JSON.parse(strength).bones) !== JSON.stringify(JSON.parse(reference).bones)) probes.push('the physics plant also changed a bone');
+    // The positive half: the coarse quad differs from the reference only on the allowlist, and is compared.
+    if (refusalOf(mcInput(reference, [{ id: 'quad', model: quad }])) !== null) probes.push(`the unplanted quad was refused: ${refusalOf(mcInput(reference, [{ id: 'quad', model: quad }]))?.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ20_SKELETONS_THAT_DIFFER_IN_ONE_BONE_FIELD_ARE_REFUSED_NAMING_IT',
+      held && r20 !== null,
+      probeDetail(held, probes, `${r20?.message.slice(0, 220)}…`),
+      'correction 5: identical bone rosters are necessary and not sufficient, and a candidate whose skeleton differs is not a comparison of meshes',
+    );
+    say(
+      'MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES',
+      held && r39 !== null,
+      probeDetail(held, probes, `${r39?.message.slice(0, 220)}… — the bones identical, the unplanted quad (mesh, bindings, the meshes entry and the Spine digest all different) compared`),
+      'correction 5: a changed physics setting confounds the comparison while every bone still matches, so equality covers every non-mesh input',
+    );
+  });
+
+  // --- MQ22: the same reset for every candidate, and a changed dt moves the rows -------------------------------
+  mcGuard('MQ22', () => {
+    const probes: string[] = [];
+    const twin = compareMeshesInMotion(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
+    const swapped = compareMeshesInMotion(mcInput(reference, [{ id: 'second', model: quad }, { id: 'first', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
+    const section = (r: MeshQualityReport, id: string): string => JSON.stringify(r.candidates.find((c) => c.id === id)?.motion);
+    if (section(twin, 'first') !== section(twin, 'second')) probes.push('two copies of one candidate in one call measured differently');
+    if (section(twin, 'first') !== section(swapped, 'first')) probes.push("a candidate's motion section moved when the candidates were listed in the other order");
+    const sched = (c: MeshQualityReport['candidates'][number] | null | undefined): string => stepsOf(c?.motion?.schedule);
+    if (sched(twin.reference) !== sched(twin.candidates[0]) || sched(twin.candidates[0]) !== sched(twin.candidates[1])) probes.push('the reference and the candidates were walked on different schedules');
+    if (twin.candidates[0].motion?.schedule.reset !== 'physics reset at time 0') probes.push(`reset reads ${twin.candidates[0].motion?.schedule.reset}`);
+    const walks = twin.candidates[0].motion?.schedule.walks ?? [];
+    // 1 s at dt 1/60 is at least 60 steps on the grid walk to its last frame at the duration, and at most one more per
+    // frame (the step that lands on a frame between two of dt's); the oracle's rule, read here as a range rather than restated.
+    const gridSteps = walks.find((w) => w.phase === 'grid')?.steps ?? 0;
+    const gridFrames = (twin.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').length;
+    if (gridSteps < 60 || gridSteps > 60 + gridFrames) probes.push(`the grid walk took ${gridSteps} step(s); at dt 1/60 to t = 1 over ${gridFrames} frames, required 60 to ${60 + gridFrames}`);
+    const at = (model: string, ref: string, dt: number): number | null | undefined => rowOf(compareMeshesInMotion(mcInput(ref, [{ id: 'quad', model }], { schedule: stepped(dt), bounds: { maxLocalDeformation: 1e9 } })).candidates[0], 'MQ_LOCAL_DEFORMATION')?.value;
+    const sixty = at(quad, reference, 1 / 60);
+    const thirty = at(quad, reference, 1 / 30);
+    if (sixty === thirty) probes.push(`dt 1/60 and 1/30 both read ${sixty} on the rig with a physics constraint on the bending bone`);
+    // The control: without physics the step size moves nothing — what moved above was the physics.
+    const stillSixty = at(stillQuad, stillRef, 1 / 60);
+    const stillThirty = at(stillQuad, stillRef, 1 / 30);
+    if (stillSixty !== stillThirty) probes.push(`with no physics constraint dt 1/60 reads ${stillSixty} and 1/30 ${stillThirty}`);
+    const held = probes.length === 0;
+    say(
+      'MQ22_PHYSICS_RESET_IS_THE_SAME_FOR_EVERY_CANDIDATE_AND_A_CHANGED_DT_MOVES_THE_ROWS',
+      held,
+      probeDetail(held, probes, `two copies of one candidate, in either order, measure byte-identically on one schedule the reference shares (grid walk ${gridSteps} steps); local deformation ${sixty} at dt 1/60 and ${thirty} at 1/30 with physics on the bending bone, ${stillSixty} at both without it`),
+      'P10: physics resets at time 0 and steps at the declared dt identically for the reference and every candidate, and the dt is an input that changes what is measured',
+    );
+  });
+
+  // --- MQ35: a sample on a shared UV edge is one hit, carried to one world point ------------------------------
+  mcGuard('MQ35', () => {
+    const probes: string[] = [];
+    // A column at x = 16.5 puts a vertical edge through every pixel centre of column 16: (16.5/64, (y + 0.5)/16).
+    const edgeCols = [0, 16.5, 32, 48, 64];
+    const edged = mcBuild(dir, 'edged', { mesh: mcMesh({ columns: edgeCols }), physics: true });
+    const doc = readModel(edged);
+    const g = doc.skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+    const pose = poseRawSetup(underNoSkin(doc));
+    const world = pose.drawn.find((d) => d.slot === 'strip')?.vertices ?? [];
+    let onEdge = 0;
+    if (g === undefined || g.kind !== 'mesh') probes.push('the edged build has no strip mesh');
+    else {
+      const samples: Array<{ uv: [number, number] }> = [];
+      for (let y = 0; y < MC_H; y++) samples.push({ uv: [(edgeCols[1]) / MC_W, (y + 0.5) / MC_H] });
+      const carriers = uvCarriers(g.uvs, g.triangles, samples, 'edged');
+      carriers.forEach((c, j) => {
+        if (c === null) {
+          probes.push(`sample ${j} on the edge has no carrier`);
+          return;
+        }
+        // The test's own reading: every triangle containing the sample, and the point each carries it to.
+        const points: Array<[number, number]> = [];
+        for (let t = 0; t * 3 < g.triangles.length; t++) {
+          const ids = [g.triangles[t * 3], g.triangles[t * 3 + 1], g.triangles[t * 3 + 2]];
+          const [a, b, cc] = ids.map((i) => [g.uvs[i * 2], g.uvs[i * 2 + 1]]);
+          const p = samples[j].uv;
+          const det = (b[1] - cc[1]) * (a[0] - cc[0]) + (cc[0] - b[0]) * (a[1] - cc[1]);
+          const l0 = ((b[1] - cc[1]) * (p[0] - cc[0]) + (cc[0] - b[0]) * (p[1] - cc[1])) / det;
+          const l1 = ((cc[1] - a[1]) * (p[0] - cc[0]) + (a[0] - cc[0]) * (p[1] - cc[1])) / det;
+          const lam = [l0, l1, 1 - l0 - l1];
+          if (Math.min(...lam) < -1e-9) continue;
+          points.push([lam.reduce((s, l, k) => s + l * world[ids[k] * 2], 0), lam.reduce((s, l, k) => s + l * world[ids[k] * 2 + 1], 0)]);
+        }
+        if (points.length >= 2) onEdge++;
+        const spread = Math.max(...points.map((q) => Math.hypot(q[0] - points[0][0], q[1] - points[0][1])));
+        if (spread > 1e-9) probes.push(`sample ${j}: its ${points.length} containing triangles carry it to points ${spread} apart`);
+      });
+      if (onEdge === 0) probes.push('no sample lay in two triangles, so the shared edge was never exercised');
+    }
+    const r = refusalOf(mcInput(edged, [{ id: 'itself', model: edged }]));
+    const run = r === null ? compareMeshesInMotion(mcInput(edged, [{ id: 'itself', model: edged }])) : null;
+    if (r !== null) probes.push(`the edged mesh against itself was refused: ${r.message}`);
+    else if (rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value !== 0) probes.push(`the edged mesh against itself reads ${rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value}`);
+    const held = probes.length === 0;
+    say(
+      'MQ35_CONTROL_A_SAMPLE_ON_A_SHARED_UV_EDGE_IS_ONE_HIT_CARRIED_TO_ONE_WORLD_POINT',
+      held,
+      probeDetail(held, probes, `${onEdge} pixel centres on the edge x = ${edgeCols[1]} each lie in two triangles by the test's own barycentric reading, which carry them to one setup world point; each is one carrier, and the mesh compares with itself at 0 without a refusal`),
+      'correction 4: across a shared edge or vertex the carriers agree on the carried point by construction, so the hit is one hit — the refusal is for overlap, not adjacency',
+    );
+  });
+
+  // --- MQ36: overlapping UV triangles give a sample two carriers, refused naming the sample and both triangles ---
+  mcGuard('MQ36', () => {
+    const probes: string[] = [];
+    // Top vertex 1's UV slid past vertex 2's: triangles 0–3 now fold over their neighbours in UV, positions untouched.
+    const folded = mcEdit(reference, (doc) => {
+      const skin = (doc.skins as Array<Record<string, unknown>>).find((k) => k.name === 'default')!;
+      const att = ((skin.attachments as Record<string, Record<string, Record<string, unknown>>>).strip.strip);
+      const uvs = att.uvs as number[];
+      uvs[2] = 40 / MC_W;
+    });
+    const r = refusalOf(mcInput(reference, [{ id: 'folded', model: folded }]));
+    const m = r?.message.match(/sample at uv \(([^,]+), ([^)]+)\) lies in (\d+) UV triangles — (.*?) — that do not/);
+    const named = m === null || m === undefined ? [] : [...m[4].matchAll(/triangle (\d+) \(vertices (\d+), (\d+), (\d+)\)/g)].map((x) => ({ t: Number(x[1]), v: [Number(x[2]), Number(x[3]), Number(x[4])] }));
+    if (r?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE' || !r.message.includes('candidate "folded"')) probes.push(`refusal ${r?.code ?? 'none'}: ${r?.message}`);
+    else if (named.length < 2) probes.push(`the refusal names ${named.length} triangle(s): ${r.message}`);
+    else {
+      // The test's own check: the named sample lies in every named triangle of the folded UVs, and no two of them share
+      // the edge or vertex it sits on.
+      const doc = JSON.parse(folded) as { skins: Array<{ name: string; attachments: { strip: { strip: { uvs: number[] } } } }> };
+      const uvs = doc.skins.find((k) => k.name === 'default')!.attachments.strip.strip.uvs;
+      const p = [Number(m![1]), Number(m![2])];
+      const inside = named.every(({ v }) => {
+        const [a, b, c] = v.map((i) => [uvs[i * 2], uvs[i * 2 + 1]]);
+        const cross = (o: number[], q: number[], s: number[]): number => (q[0] - o[0]) * (s[1] - o[1]) - (q[1] - o[1]) * (s[0] - o[0]);
+        const s1 = cross(a, b, p);
+        const s2 = cross(b, c, p);
+        const s3 = cross(c, a, p);
+        return (s1 >= -1e-12 && s2 >= -1e-12 && s3 >= -1e-12) || (s1 <= 1e-12 && s2 <= 1e-12 && s3 <= 1e-12);
+      });
+      if (!inside) probes.push(`the named sample (${p.join(', ')}) is not inside every named triangle by the test's own reading`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ36_OVERLAPPING_UV_TRIANGLES_GIVING_A_SAMPLE_TWO_CARRIERS_ARE_REFUSED_NAMING_THE_SAMPLE_AND_BOTH_TRIANGLES',
+      held,
+      probeDetail(held, probes, `${r?.message.slice(0, 300)}…`),
+      'correction 4: a sample two overlapping triangles carry would be carried by an arbitrary one, so the comparison map is unambiguous or refused',
+    );
+  });
+
+  // --- MQ37: a nonuniformly scaled setup reports its two declared singular scales and no single ratio ---------
+  mcGuard('MQ37', () => {
+    const probes: string[] = [];
+    const SX = 2;
+    const SY = 0.5;
+    const ROT = 30;
+    const scaledRef = mcBuild(dir, 'scaled-reference', { mesh: mcMesh({ columns: fine }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
+    const scaledQuad = mcBuild(dir, 'scaled-quad', { mesh: mcMesh({ columns: [0, 64] }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
+    const report = compareMeshesInMotion(mcInput(scaledRef, [{ id: 'quad', model: scaledQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: 1e9 } }));
+    const row = rowOf(report.candidates[0], 'MQ_LOCAL_DEFORMATION');
+    const map = row?.motion?.setupMap;
+    // A rotation times a scale: its singular values are the two scales; its matrix [cos·sx, −sin·sy; sin·sx, cos·sy].
+    const rad = (ROT * Math.PI) / 180;
+    const expected = [Math.cos(rad) * SX, -Math.sin(rad) * SY, Math.sin(rad) * SX, Math.cos(rad) * SY];
+    if (map === undefined) probes.push('no setup map on the world row');
+    else {
+      if (map.bone !== 'a') probes.push(`the map is bone ${map.bone}'s; the slot's bone is a`);
+      if (JSON.stringify(map.singularScales) !== JSON.stringify([Math.max(SX, SY), Math.min(SX, SY)])) probes.push(`singular scales ${JSON.stringify(map.singularScales)}; declared ${SX} and ${SY}`);
+      if (map.linear.some((v, i) => Math.abs(v - expected[i]) > 1e-5)) probes.push(`linear ${JSON.stringify(map.linear)}; the declared rotation and scale give ${JSON.stringify(expected.map(r6))}`);
+      if (JSON.stringify(Object.keys(map)) !== JSON.stringify(['bone', 'linear', 'singularScales'])) probes.push(`the map carries ${Object.keys(map).join(', ')}`);
+    }
+    if (row?.unit !== 'world') probes.push(`the row's unit is ${row?.unit}`);
+    const text = writeMeshQualityReport(report);
+    if (/ratio"?\s*:\s*\d|worldPerPixel|pxPerWorld|"scale"\s*:/i.test(text.replace(/"unit": "ratio"/g, ''))) probes.push('the document carries a single world/px ratio');
+    const held = probes.length === 0;
+    say(
+      'MQ37_A_NONUNIFORMLY_SCALED_SETUP_REPORTS_TWO_DECLARED_SINGULAR_SCALES_AND_NO_SINGLE_RATIO',
+      held,
+      probeDetail(held, probes, `bone a declared at scale ${SX} × ${SY}, turned ${ROT}°: the world row states its slot bone's setup 2×2 ${JSON.stringify(map?.linear)} and singular scales ${JSON.stringify(map?.singularScales)}, and no single ratio anywhere in the document`),
+      'correction 4: a single world-per-pixel ratio is wrong under nonuniform scale or shear, so the declared map is stated with its two singular scales, read from the build and never fitted to vertices',
+    );
+  });
+
+  // --- MQ41: a nonzero warm-up is refused by name and not run as zero -----------------------------------------
+  mcGuard('MQ41', () => {
+    const probes: string[] = [];
+    const warm = (w: number, ref = reference): MotionComparisonInput => mcInput(ref, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'step', dt: 1 / 60, warmupSteps: w as 0 } } });
+    const r = refusalOf(warm(1));
+    if (r?.code !== 'COMPARE_WARMUP_UNSUPPORTED' || !r.message.includes('warmupSteps is 1') || !r.message.includes('required 0')) probes.push(`warmupSteps 1: ${r?.code ?? 'not refused'} — ${r?.message}`);
+    // Refused before anything is read or posed: the same input with an unreadable reference still names the warm-up.
+    const early = refusalOf(warm(1, 'not a model document'));
+    if (early?.code !== 'COMPARE_WARMUP_UNSUPPORTED') probes.push(`with an unreadable reference the refusal is ${early?.code}: the warm-up is refused before any build is read`);
+    // The same call at 0 runs — so the refusal is the warm-up's, not the schedule's.
+    const zero = refusalOf(warm(0));
+    if (zero !== null) probes.push(`warmupSteps 0 was refused too: ${zero.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ41_A_NONZERO_WARMUP_IS_REFUSED_BY_NAME_AND_NOT_RUN_AS_ZERO',
+      held,
+      probeDetail(held, probes, `${r?.message} — refused before any document is read, and the same schedule at 0 runs`),
+      'P10: no warm-up exists in the tree; a caller asking for one gets a refusal by name rather than a report it would read as warmed up',
+    );
+  });
+
+  // --- MQ42: a selection frame is never held out, and an empty held-out set makes no held-out claim -----------
+  mcGuard('MQ42', () => {
+    const probes: string[] = [];
+    const chosen = 'bend@grid@0.5';
+    const one = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: [chosen] }, bounds: { maxLocalDeformation: 1e9 } }));
+    const walked = one.candidates[0].motion?.schedule.walked ?? [];
+    const roleOf = (id: string): string | undefined => walked.find((f) => f.id === id)?.role;
+    if (roleOf(chosen) !== 'selection') probes.push(`${chosen} is ${roleOf(chosen)}`);
+    if (roleOf('setup') !== 'baseline') probes.push(`setup is ${roleOf('setup')}`);
+    if (walked.some((f) => f.id !== chosen && f.id !== 'setup' && f.role !== 'held-out')) probes.push('a frame outside the selection is not held out');
+    const row = rowOf(one.candidates[0], 'MQ_LOCAL_DEFORMATION');
+    if (row?.motion?.byRole.heldOut?.frame === chosen) probes.push('the held-out worst is the selection frame');
+    if (row?.motion?.byRole.selection?.frame !== chosen) probes.push(`the selection reading is at ${row?.motion?.byRole.selection?.frame}`);
+    if (one.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('a schedule with held-out frames made no held-out claim');
+    // Every walked frame chosen: no held-out frame, no held-out claim, and no held-out reading on any row.
+    const all = walked.filter((f) => f.id !== 'setup').map((f) => f.id);
+    const none = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: all }, bounds: { maxLocalDeformation: 1e9 } }));
+    const s = none.candidates[0].motion?.schedule;
+    if (s?.heldOutClaim !== false || JSON.stringify(s.roles) !== JSON.stringify(['baseline', 'selection'])) probes.push(`every frame selected: heldOutClaim ${s?.heldOutClaim}, roles ${JSON.stringify(s?.roles)}`);
+    if (none.candidates[0].motion?.rows.some((r) => r.motion?.byRole.heldOut !== null)) probes.push('a row carries a held-out reading with no held-out frame');
+    // Planted: a selection id the schedule does not walk would be read as held out if it were not refused.
+    const stray = refusalOf(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: ['bend@grid@0.3'] } }));
+    if (stray?.code !== 'COMPARE_INPUT_MISSING' || !stray.message.includes('"bend@grid@0.3"')) probes.push(`an unscheduled selection id: ${stray?.code ?? 'not refused'} — ${stray?.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ42_A_SELECTION_FRAME_IS_NEVER_HELD_OUT_AND_AN_EMPTY_HELD_OUT_SET_MAKES_NO_HELD_OUT_CLAIM',
+      held,
+      probeDetail(held, probes, `${chosen} selected: it is the selection reading and never the held-out one, setup is the baseline, the other ${walked.length - 2} frames held out; all ${all.length} frames selected: roles ${JSON.stringify(s?.roles)}, heldOutClaim ${s?.heldOutClaim}, no held-out reading; a selection id the schedule does not walk is ${stray?.code}`),
+      'P11: parts supplies the split and rigc invents none — a frame that chose a candidate is not evidence about it, and no held-out claim is made from no held-out frame',
+    );
+  });
 
   rmSync(dir, { recursive: true, force: true });
   return bad;
@@ -118191,6 +118718,7 @@ function main(): void {
   tally.of('mesh-rasteriser', runMeshSuite);
   tally.of('mesh-outline', runMeshOutlineSuite);
   tally.of('mesh-quality', runMeshQualitySuite);
+  tally.of('mesh-compare', runMeshCompareSuite);
   // The corpus-dependent suites hand back `null` when their fixtures are absent,
   // which is how they tell the tally they did not run: the floor then requires
   // that they said so out loud instead of requiring cases they could not take.
@@ -119002,6 +119530,13 @@ function main(): void {
       'with the other idle, a weight-jump edge kept through retriangulation, a deform run remapped across removal and ' +
       'reorder and refused under an insertion, shares under the weight grid dropped and counted, evidence at one ' +
       'threshold never read at another, and each termination reached by one input)' +
+      ', + ' + n('mesh-compare') + ' mesh-compare controls (issue #1230 — stage C1, `compareMeshesInMotion` through rigc\'s ' +
+      'core poser on strip rigs compiled here: a mesh against itself reading 0 at every frame and a hull vertex moved k px ' +
+      'reading k, no motion leaving motion null and a required motion unaccepted, a verdict that differs between phases ' +
+      'naming both frames, a changed bone field and a changed physics setting refused naming the path and both values, ' +
+      'one reset for every candidate with a changed dt moving the rows only where physics drives them, a sample on a shared ' +
+      'UV edge carried to one point and one under overlapping UV triangles refused, a scaled setup reported as two ' +
+      'singular scales, a nonzero warm-up refused, and a selection frame never held out)' +
       ', + ' + n('error-attribution') + ' error-attribution controls (a motion-spec fault names the motion file, a JSON parse failure ' +
       'reports a line number, and a `setup` entry that is not an object refused by name in both its spellings — ' +
       'the `null` that used to crash and the bare attachment name that used to compile green and hide the slot — ' +
