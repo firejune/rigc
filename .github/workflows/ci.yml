@@ -318,13 +318,12 @@ jobs:
   # `bun-version` and `engines.bun` are two spellings of one fact, so a change
   # to either changes the other in the same pull request.
   #
-  # 🪟 Windows needed four repairs in `scripts/install_smoke.ts` to reach its
-  # first case, found by reading and not yet by running: `command -v` through
-  # cmd.exe, the `.bin/rigc` shell-script shim, an absolute-link test that
-  # only knew `/`, and a `PATH` key Windows spells `Path`. This leg is where
-  # they are measured, and where the one thing reading could not settle is
-  # read: whether Bun's `spawnSync` launches npm's `npm.cmd` and `rigc.cmd`
-  # without a shell. A red at the pack step or at `rigc --version` is that.
+  # 🪟 Windows needed repairs in `scripts/install_smoke.ts`, each named where
+  # it is made: `command -v` through cmd.exe, the `.bin/rigc` shell-script
+  # shim, an absolute-link test that only knew `/`, a `PATH` key Windows spells
+  # `Path` — found by reading — and, from this leg's first run, `rigc.cmd`
+  # refused without a shell (`EINVAL`) and the temp directory's 8.3 short name
+  # read as "not under" its long one. Bare `npm` was measured to spawn there.
   #
   # ⛔ Not a required check — like `removals` below, that is a setting of the
   # repository and not something a file in the tree can assert. `installs`

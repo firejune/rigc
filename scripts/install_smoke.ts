@@ -808,13 +808,35 @@ interface Ran {
 
 type Env = Record<string, string | undefined>;
 
+/** One argument of a cmd.exe command line: wrapped in double quotes, with a double quote inside it doubled. */
+const cmdQuoted = (arg: string): string => `"${arg.replace(/"/g, '""')}"`;
+
+/** A variable read the way Windows reads it, whatever case the environment spells its name in. */
+const envValue = (env: Env, name: string): string | undefined => env[Object.keys(env).find((key) => key.toUpperCase() === name.toUpperCase()) ?? name];
+
+/**
+ * Run a command and collect what it printed.
+ *
+ * 🪟 A batch file on Windows — `node_modules\.bin\rigc.cmd`, which is the shim
+ * npm writes there — is refused by `spawnSync` without a shell: `spawnSync
+ * …\rigc.cmd EINVAL` on the first Windows run (issue #1214), the hardening
+ * Node shipped for CVE-2024-27980, which Bun's `node:child_process` matches.
+ * So a command whose name ends in `.cmd` or `.bat` runs as Node's own
+ * `shell: true` does on Windows — `cmd.exe /d /s /c "<line>"`, verbatim — with
+ * the line built here, every word in double quotes, so an install path with
+ * spaces, non-ASCII or a quote in it reaches the batch file as one argument.
+ * Inside quotes cmd.exe still expands `%NAME%`; no path the smoke builds has a
+ * `%` in it. A bare `npm` is not routed this way: it carries no extension for
+ * the refusal to read, and that run measured `npm pack` and `npm install`
+ * working when spawned bare.
+ */
 function run(cmd: string, args: string[], cwd: string, env?: Env): Ran {
-  const r = spawnSync(cmd, args, {
-    cwd,
-    env: env ?? process.env,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  const environment = env ?? process.env;
+  const batch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd);
+  const options = { cwd, env: environment, encoding: 'utf8' as const, maxBuffer: 64 * 1024 * 1024 };
+  const r = batch
+    ? spawnSync(envValue(environment, 'ComSpec') ?? 'cmd.exe', ['/d', '/s', '/c', `"${[cmd, ...args].map(cmdQuoted).join(' ')}"`], { ...options, windowsVerbatimArguments: true })
+    : spawnSync(cmd, args, options);
   const stdout = typeof r.stdout === 'string' ? r.stdout : '';
   const stderr = typeof r.stderr === 'string' ? r.stderr : '';
   const failed = r.error === undefined ? '' : `\n${r.error.message}`;
@@ -1473,8 +1495,12 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // does not walk up into whatever this temp directory happens to sit under.
   // `realpathSync` because a module specifier resolves through the real path:
   // on macOS this temp directory is reached as /var/… and reported as /private/var/…,
-  // and the control below compares the two.
-  const home = realpathSync(mkdirIn(work, spec.dirName));
+  // and the control below compares the two. `.native`, because on Windows the
+  // temp directory is reached through an 8.3 short name (`RUNNER~1`) that the
+  // JavaScript `realpathSync` keeps and the module resolver expands, so the two
+  // spellings of one directory read as "not under" each other (issue #1214);
+  // the native call asks the OS for the final path, which is the long name.
+  const home = realpathSync.native(mkdirIn(work, spec.dirName));
   writeFileSync(join(home, 'package.json'), `${JSON.stringify({ name: 'rigc-install-smoke', private: true, version: '0.0.0' }, null, 2)}\n`);
 
   const install =
@@ -1962,7 +1988,7 @@ function main(): number {
   let served: RegistryWait | null = null;
   let source: Source = { kind: 'tree' };
   if (registrySpec !== null) {
-    const fetchDir = mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-'));
+    const fetchDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-')));
     LEFT_BEHIND.push(fetchDir);
     served = waitForRegistry(registrySpec, waitMinutes, ROOT, join(fetchDir, 'pack'));
     const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean`;
@@ -2025,7 +2051,9 @@ function main(): number {
   let bad = 0;
   let ran = 0;
   for (const spec of chosen) {
-    const work = mkdtempSync(join(tmpdir(), 'rigc-smoke-'));
+    // The long name from the start (see `home` in runCase), so every path a
+    // fault prints is the one a child process would print back.
+    const work = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-')));
     try {
       const result = runCase(spec, work, keep);
       ran += 1;
