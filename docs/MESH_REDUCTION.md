@@ -964,6 +964,12 @@ export interface RefinementRegion {
   under P16 without retriangulating or inserting outside the band; the
   refinement stops there by name rather than spending the budget (*The
   reduction as implemented*).
+  [corrected, spine-parts#126 / #1229] That consequence held only because the
+  piece from the band to the far vertex stayed held however it was split. With
+  the exemption below, a split where the edge leaves the band leaves that
+  piece touching the band at one point, so it is no longer held, and the
+  stated source is refinable inside the band; the stop now covers only what
+  stays infeasible (*Changed since v2.19.0*).
 - [agreed, spine-parts#126] **P17 — parts resolves coordinates and names.**
   rigc receives only part-local numeric polygons and offers no bone-relative
   region API — parts already translates rig-space regions to part-local
@@ -990,15 +996,50 @@ export interface RefinementRegion {
   edge and no vertex of it lies in the hull polygon: the name says art and the
   definition says the hull, and the definition is what is implemented.
 - [implemented, #1224] **`L(R)` and its band, as rows.** `MQ_MAX_EDGE` holds
-  every edge that meets the closed polygon, `MQ_TRANSITION` every edge that
-  does not and lies within `transition` of it (a region with `transition: 0`
-  has no band and no transition row). Each edge's bound is the smallest that
-  applies to it anywhere: `L0` of every region it meets, and `L0 + grade·d` of
-  every band it lies in, `d` its distance from that region — the nearest point,
-  which is where the graded bound is smallest. A row's value is the edge whose
+  every edge that meets the closed polygon, `MQ_TRANSITION` every other edge
+  the region holds by `edgeIsHeldByRegion` (below; in 2.19.0, every edge that
+  did not meet the polygon and lay within `transition` of it). A region with
+  `transition: 0` has no band and no transition row. Each edge's bound is the
+  smallest that applies to it anywhere: `L0` of every region it meets, and
+  `L0 + grade·d` of every other region that holds it, `d` its distance from
+  that region — the nearest point, which is where the graded bound is
+  smallest. A row's value is the edge whose
   length most exceeds its own bound, with that edge and that bound, so the row
   fails exactly when an edge it holds is over. A region no edge meets — one
   inside a single triangle — is `not-measurable`, never a pass over no edge.
+- [agreed, spine-parts#126] **Which edges a region holds — the exemption.**
+  A region's active domain is its closed polygon and, when `transition > 0`,
+  the band of that width outside it. An edge is held by the region when it
+  meets the domain, **except** when its intersection with the domain is a
+  **single point on the band's outer boundary** and the rest of the edge lies
+  outside: such an edge is exempt from that region's bound. One definition,
+  `edgeIsHeldByRegion(a, b, region)` in `src/meshquality.ts`, is what
+  `measureMeshQuality` reads for `MQ_MAX_EDGE` and `MQ_TRANSITION` and what the
+  refinement in `src/meshreduce.ts` reads to place a split, so the two cannot
+  disagree about an edge.
+  - A positive-length intersection is held, including a segment lying along
+    the band's outer boundary (`MQ50`), an edge crossing the band or the
+    polygon with both ends outside, and an edge with one end on the outer
+    boundary that crosses the band (`MQ51`). Two separate touches are two
+    points, not one, and are held. Whole-edge measurement and the minimum
+    applicable bound are unchanged.
+  - Regions are evaluated independently: an exemption from one region never
+    removes another region's bound, and the minimum is taken over the regions
+    that hold the edge (`MQ52`).
+  - `transition: 0`: there is no outer band, and a contact with the authored
+    boundary is held under the closed-region rule — never exempt (`MQ53`).
+    A later change to that rule needs its own decision.
+  - "On the outer boundary" is within `BAND_CONTACT_TOLERANCE`, ten units of
+    the `r6` grid, exported beside the predicate: an edge whose nearest
+    approach is that close to `transition` and that does not run along the
+    boundary is read as touching it. The refinement places its split at half
+    that depth inside the band, so the piece it frees is exempt from either
+    side of the grid's rounding.
+  - [measured, #1229] A consequence of B1's states that the agreement did not name:
+    a band whose only nearby edge is exempt holds no edge, so its
+    `MQ_TRANSITION` is `not-measurable`, which is not `pass`, and a result
+    under it is not accepted. Measured while building `MQ49`, whose fixture
+    therefore keeps an edge inside the band.
 
 ## 6. UVs, weights, protected features and vertex-indexed deform data
 
@@ -1216,8 +1257,14 @@ splits that row's worst edge — at its midpoint when the midpoint lies in that
 region or its band, otherwise at the point of the edge inside them nearest the
 midpoint (among the edge's crossings of the polygon and the feet of the
 polygon's vertices, then by halving towards an end that lies inside), every
-position on the `r6` grid. A region no edge meets gets its polygon's first
-vertex inserted into the triangle that holds it. One insertion per
+position on the `r6` grid. [#1229] Before that, when an end of the worst edge
+lies outside the region and its band, the edge is split where it leaves the
+band — the point of the edge within `transition − BAND_CONTACT_TOLERANCE / 2`
+of the polygon nearest that end, on the grid — provided the point is inside
+the band, strictly between the ends, and leaves the piece to that end exempt
+by `edgeIsHeldByRegion`; each of the three is checked, not assumed. A region
+no edge meets gets its polygon's first vertex inserted into the triangle that
+holds it. One insertion per
 measurement. A band no edge lies in leaves `MQ_TRANSITION` `not-measurable`
 (B1's definition), and no insertion is aimed at it.
 
@@ -1230,8 +1277,60 @@ returned not accepted. Measured on the public fixtures before the rule
 existed: a single quad under a region of `L0` 6 px, band 4 px, grade 0.5 spent
 a budget of 1,000 insertions without converging (57 s on one darwin run); the
 same request on the 4 × 3 lattice of the suite converges.
+[corrected, #1229] Since the exemption, the stop applies only when the split
+where the edge leaves the band is not available — always so with
+`transition: 0`, whose constraint now says the piece to the far end touches
+the authored boundary and stays held (`MQ53`) — and that quad converges
+(`MQ48`). No convergence is promised beyond that: protection, a minimum angle,
+art bounds, the coordinate grid or the budget can each leave a target unmet,
+and the result is then `accepted: false` with the blocking constraint or a
+budget termination (`MQ54`).
+
+**Changed since v2.19.0** ([#1229](https://github.com/firejune/rigc/issues/1229),
+spine-parts#126 comment 6045645512, option 1). Which edges `MQ_MAX_EDGE` and
+`MQ_TRANSITION` hold is the only row semantics that moved; no emitted byte
+moves, and no edge that 2.19.0 left free is held now. An edge held in 2.19.0
+and exempt now is one that does not meet a region's polygon, whose nearest
+approach to it is exactly `transition` (within `BAND_CONTACT_TOLERANCE`), at
+one point and not along a side: in 2.19.0 it sat in `MQ_TRANSITION` at
+`L0 + grade·transition`, and now it is in no row of that region. `MQ49`'s top
+edge is one — `MQ_TRANSITION` holds it at 26 px with a band one and a half
+times as wide, and passes it by without one at the band that touches it.
+Measured on one darwin run, before (the 2.19.0 tree) and after, each the
+second call in one process:
+
+| fixture | 2.19.0 | now |
+| --- | --- | --- |
+| the coarse quad above, refinement alone | stopped by name after 1 candidate, not accepted | 23 inserted, accepted, 33.6 ms |
+| the coarse quad, composed | the same stop | 27 candidates, 23 inserted, accepted, 43.5 ms |
+| the 4 × 3 lattice, `dense`, refinement alone (`MQ47`) | 37 inserted, 78.7 ms | 43 inserted, 114.9 ms |
+| the 4 × 3 lattice, `dense`, composed (`MQ14`) | 76 candidates, 172.9 ms | 80 candidates, 219.0 ms |
+| the 4 × 3 lattice, band 6, grade 2, composed (`MQ14`) | 57 candidates, 93.3 ms | 58 candidates, 107.7 ms |
+
+The lattice spends more insertions because a split where an edge leaves the
+band adds a vertex the midpoint rule would not have, and each measurement
+now runs the predicate per edge and region.
+
+[measured, #1229] One shape the exemption does not resolve: a region inside a
+triangle whose band touches that triangle's own kept edge at one point, with
+no edge meeting the region. Each split where an edge leaves the band leaves a
+chord from the new vertex to the far corner that crosses the band again, so
+the vertices march towards the touching point — which lies on the kept edge,
+where no split is aimed because the edge is exempt. On the exact fan with a
+diamond under the top edge, each of seven settings tried — `L0` 1 to 4 px,
+half-diagonal 1 or 2 px, band 2 or 4 px, grade 0.5 or 1 — spent a budget of
+400 candidates; the termination is `budget-exhausted`, by name, as the
+agreement allows. `MQ49` keeps its region over a spoke for that reason.
 
 **What was rejected, on measurement of the contract or the brief.**
+
+- [#1229] Exempting any contact with the outer boundary — it would free an
+  edge lying along it, a positive-length intersection the agreement keeps
+  held; `MQ50` plants exactly that widening and names the edge it frees.
+- [#1229] A second copy of the hold rule in `src/meshreduce.ts` — the
+  refinement and the rows would then be two definitions that only agree by
+  hope; the refinement asks `edgeIsHeldByRegion` whether a split frees the
+  piece beyond.
 
 - Bind coordinates for an inserted vertex (§6) — the input has no bone
   transforms, and `SourceMesh` names bones without them; weights stay by name.
@@ -1358,6 +1457,17 @@ The two composed operations of stage B2, each with the other idle
   `MQ46_CONTROL_REDUCTION_ALONE_REMOVES_VERTICES_HOLDING_EVERY_BOUND_AND_A_BOUND_THAT_BLOCKS_EVERY_STEP_IS_NAMED`
 - Refinement, positive and planted:
   `MQ47_CONTROL_REFINEMENT_ALONE_INSERTS_ONLY_INSIDE_THE_REGION_AND_ITS_BAND_UNTIL_L_OF_R_HOLDS_AND_A_BOUND_UNDER_ONE_TEXEL_IS_REFUSED`
+
+The exemption agreed on spine-parts#126 (comment 6045645512) and built in
+[#1229](https://github.com/firejune/rigc/issues/1229), [implemented]:
+
+- `MQ48_THE_COARSE_QUAD_THAT_2_19_0_STOPPED_ON_CONVERGES_AND_IS_ACCEPTED`
+- `MQ49_AN_EDGE_TOUCHING_THE_BAND_OUTER_BOUNDARY_AT_ONE_POINT_FROM_OUTSIDE_IS_EXEMPT_IN_THE_MEASUREMENT_AND_LEFT_ALONE_BY_THE_REFINEMENT`
+- `MQ50_AN_EDGE_ALONG_THE_BAND_OUTER_BOUNDARY_IS_HELD_AND_AN_EXEMPTION_WIDENED_TO_ANY_BOUNDARY_CONTACT_IS_CAUGHT` (the plant)
+- `MQ51_AN_EDGE_CROSSING_A_BAND_OR_A_REGION_WITH_BOTH_ENDPOINTS_OUTSIDE_IS_HELD_AND_AN_END_ON_THE_OUTER_BOUNDARY_EXEMPTS_NO_CROSSING`
+- `MQ52_OVERLAPPING_BANDS_ARE_READ_INDEPENDENTLY_AN_EDGE_EXEMPT_FROM_ONE_REGION_IS_STILL_HELD_BY_THE_OTHER`
+- `MQ53_WITH_TRANSITION_ZERO_A_BOUNDARY_CONTACT_IS_HELD_AND_AN_INFEASIBLE_REFINEMENT_IS_NAMED_NOT_LOOPED`
+- `MQ54_A_REFINEMENT_LIMITED_BY_ITS_BUDGET_OR_A_MINIMUM_ANGLE_IS_NOT_ACCEPTED_AND_NAMES_WHICH`
 
 The decisions that change behaviour rather than an interface:
 

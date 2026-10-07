@@ -473,6 +473,20 @@ const HAUSDORFF_TOLERANCE = 1e-9;
 /** The predicate epsilon `segmentsMeet` and `prunePolygon` use (`src/mesh.ts`), for "on the boundary". */
 const ON_BOUNDARY = 1e-9;
 
+/**
+ * How near a region's band's outer boundary, in drawing px, an edge's nearest
+ * point has to come to count as touching it rather than entering the band —
+ * the precision of "a single point on the outer boundary" in
+ * `edgeIsHeldByRegion`, ten units of the `r6` grid. The refinement puts the
+ * vertex it splits an edge at half of this inside the outer boundary and then
+ * on the grid, which moves it by at most √2 × 5e-7 px, so the piece beyond it
+ * lands inside this tolerance from either side.
+ */
+export const BAND_CONTACT_TOLERANCE = 1e-5;
+
+/** Halvings of the parameter interval in the convex searches along an edge (`edgeIsHeldByRegion`): 2^-60 of an edge is below a double's resolution of it. */
+const EDGE_SEARCH_STEPS = 60;
+
 // ---------------------------------------------------------------------------
 // refusals
 // ---------------------------------------------------------------------------
@@ -706,6 +720,110 @@ function segmentToPolygon(a: Pt, b: Pt, poly: readonly Pt[]): number {
   const n = poly.length;
   for (let i = 0; i < n; i++) best = Math.min(best, segmentDistance(a, b, poly[i], poly[(i + 1) % n]));
   return best;
+}
+
+/**
+ * The parameter in `[0, 1]` along `a`–`b` nearest which `c`–`d` lies — the
+ * minimum of the distance from `a + t(b − a)` to the segment `c`–`d`, which is
+ * convex in `t`, found by golden-section search. A flat minimum (parallel
+ * segments) returns some point of it; the callers never read one there.
+ */
+function nearestParameter(a: Pt, b: Pt, c: Pt, d: Pt): number {
+  const at = (t: number): number => distanceToSegment([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], c, d);
+  const g = (Math.sqrt(5) - 1) / 2;
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < EDGE_SEARCH_STEPS; i++) {
+    const p = hi - g * (hi - lo);
+    const q = lo + g * (hi - lo);
+    if (at(p) <= at(q)) hi = q;
+    else lo = p;
+  }
+  return (lo + hi) / 2;
+}
+
+/**
+ * Does `a`–`b` run along the outer boundary of a band of width `transition`
+ * for a positive length — some polygon edge it overlaps in projection by more
+ * than `BAND_CONTACT_TOLERANCE`, at that edge's perpendicular distance
+ * `transition` (within the tolerance) at both ends of the overlap, so at every
+ * point between them? The caller has already found the edge's nearest approach
+ * to the polygon within the tolerance of `transition`.
+ */
+function runsAlongOuterBoundary(a: Pt, b: Pt, poly: readonly Pt[], transition: number): boolean {
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const c = poly[i];
+    const e = poly[(i + 1) % n];
+    const side = Math.hypot(e[0] - c[0], e[1] - c[1]);
+    if (side === 0) continue;
+    const ux = (e[0] - c[0]) / side;
+    const uy = (e[1] - c[1]) / side;
+    const sa = (a[0] - c[0]) * ux + (a[1] - c[1]) * uy;
+    const sb = (b[0] - c[0]) * ux + (b[1] - c[1]) * uy;
+    let t0 = 0;
+    let t1 = 1;
+    if (sa === sb) {
+      if (sa < 0 || sa > side) continue;
+    } else {
+      const p = (0 - sa) / (sb - sa);
+      const q = (side - sa) / (sb - sa);
+      t0 = Math.max(0, Math.min(p, q));
+      t1 = Math.min(1, Math.max(p, q));
+    }
+    if ((t1 - t0) * length <= BAND_CONTACT_TOLERANCE) continue;
+    const off = (t: number): number => Math.abs(ux * (a[1] + (b[1] - a[1]) * t - c[1]) - uy * (a[0] + (b[0] - a[0]) * t - c[0]));
+    if (Math.abs(off(t0) - transition) <= BAND_CONTACT_TOLERANCE && Math.abs(off(t1) - transition) <= BAND_CONTACT_TOLERANCE) return true;
+  }
+  return false;
+}
+
+/**
+ * [agreed, spine-parts#126] Is the edge `a`–`b` held by `region` — does the
+ * region's density bound (`MQ_MAX_EDGE` or `MQ_TRANSITION`) apply to it? The
+ * one definition both `measureMeshQuality` and `reduceMesh`'s refinement read.
+ *
+ * The region's active domain is its closed polygon and, when `transition > 0`,
+ * the band of that width outside it. An edge is held when it meets that domain,
+ * except for one case: its intersection with the domain is a **single point on
+ * the band's outer boundary** and the rest of the edge lies outside — an edge
+ * that only touches the band from outside is exempt.
+ *
+ * - An edge that meets the closed polygon is held, whatever the band.
+ * - With `transition: 0` there is no outer band, and a contact with the
+ *   authored boundary is held under the closed-region rule — never exempt.
+ * - A positive-length intersection is held, including a segment lying along
+ *   the band's outer boundary.
+ * - Two separate touches of the outer boundary are two points, not one, and
+ *   the edge is held.
+ *
+ * "On the outer boundary" is within `BAND_CONTACT_TOLERANCE`. Each region is
+ * read on its own: an exemption from one never removes another's bound.
+ */
+export function edgeIsHeldByRegion(a: readonly [number, number], b: readonly [number, number], region: RefinementRegion): boolean {
+  const poly: readonly Pt[] = region.polygon;
+  if (segmentMeetsPolygon(a, b, poly)) return true;
+  const transition = region.transition;
+  if (!(transition > 0)) return false;
+  const d = segmentToPolygon(a, b, poly);
+  if (d > transition) return false;
+  if (d < transition - BAND_CONTACT_TOLERANCE) return true;
+  if (runsAlongOuterBoundary(a, b, poly, transition)) return true;
+  // Where on the edge each polygon side is touched: one point, or several apart.
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let first = Infinity;
+  let last = -Infinity;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const c = poly[i];
+    const e = poly[(i + 1) % n];
+    if (segmentDistance(a, b, c, e) > transition) continue;
+    const t = nearestParameter(a, b, c, e);
+    first = Math.min(first, t);
+    last = Math.max(last, t);
+  }
+  return (last - first) * length > BAND_CONTACT_TOLERANCE;
 }
 
 /** Distance from a point to a closed polyline (the polygon's boundary), and the edge that realises it. */
@@ -1201,9 +1319,12 @@ interface Edge {
  * graded band, only where the band has width) and `MQ_FILL_DISTANCE` (`h(R)`,
  * sampled, informational).
  *
- * One bound per edge, the smallest applicable anywhere on it (P16): `L0` of
- * every region whose closed polygon it meets, and `L0 + grade·d` of every band
- * it lies in, `d` its distance from that region. A row's value is the edge whose
+ * Which edges a region holds is `edgeIsHeldByRegion`'s answer and nothing
+ * else's: an edge that only touches the band's outer boundary at one point,
+ * from outside, is not held (spine-parts#126). One bound per edge, the smallest
+ * applicable anywhere on it (P16): `L0` of every region whose closed polygon it
+ * meets, and `L0 + grade·d` of every other region that holds it, `d` its
+ * distance from that region. A row's value is the edge whose
  * length most exceeds its own bound — so the row fails exactly when some edge
  * it covers is over — and the row names that edge and that bound.
  */
@@ -1242,15 +1363,29 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
     else refusals.set(region.name, `${refusal.code}: ${refusal.message}`);
   }
 
-  /** Every bound that applies to an edge, from every measurable region, and the smallest. */
+  /**
+   * Per measurable region, per edge (in `edges` order): the edge's distance
+   * from the closed polygon when the region holds it (`edgeIsHeldByRegion`,
+   * the one definition the refinement reads too), null when it does not.
+   */
+  const holds = new Map<RefinementRegion, Array<number | null>>();
+  for (const region of live) {
+    holds.set(
+      region,
+      edges.map((e) => (edgeIsHeldByRegion(points[e.a], points[e.b], region) ? segmentToPolygon(points[e.a], points[e.b], region.polygon) : null)),
+    );
+  }
+  const edgeIndex = new Map(edges.map((e, i) => [e, i]));
+
+  /** Every bound that applies to an edge, from every measurable region that holds it, and the smallest. */
   const boundOf = (e: Edge): number | null => {
     let bound: number | null = null;
+    const i = edgeIndex.get(e)!;
     for (const region of live) {
-      const d = segmentToPolygon(points[e.a], points[e.b], region.polygon);
-      let here: number | null = null;
-      if (d === 0) here = region.maxEdgeLength;
-      else if (region.transition > 0 && d <= region.transition) here = r6(region.maxEdgeLength + region.grade * d);
-      if (here !== null && (bound === null || here < bound)) bound = here;
+      const d = holds.get(region)![i];
+      if (d === null) continue;
+      const here = d === 0 ? region.maxEdgeLength : r6(region.maxEdgeLength + region.grade * d);
+      if (bound === null || here < bound) bound = here;
     }
     return bound;
   };
@@ -1280,7 +1415,8 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
       continue;
     }
     const poly: Pt[] = region.polygon;
-    const inside = edges.filter((e) => segmentMeetsPolygon(points[e.a], points[e.b], poly));
+    const held = holds.get(region)!;
+    const inside = edges.filter((_, i) => held[i] === 0);
     const maxSpec = spec('MQ_MAX_EDGE', 'px', region.name);
     const inWorst = worstOf(inside);
     if (inWorst === null) {
@@ -1289,10 +1425,7 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
       out.push(measuredRow(maxSpec, r6(inWorst.edge.length), { op: '<=', value: inWorst.bound }, { at: { edge: [inWorst.edge.a, inWorst.edge.b] } }, true));
     }
     if (region.transition > 0) {
-      const banded = edges.filter((e) => {
-        const d = segmentToPolygon(points[e.a], points[e.b], poly);
-        return d > 0 && d <= region.transition;
-      });
+      const banded = edges.filter((_, i) => held[i] !== null && held[i]! > 0);
       const bandWorst = worstOf(banded);
       const transitionSpec = spec('MQ_TRANSITION', 'px', region.name);
       if (bandWorst === null) {

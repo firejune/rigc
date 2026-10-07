@@ -376,6 +376,8 @@ import {
   traceAlphaOutline,
   traceOutline,
   earClip,
+  BAND_CONTACT_TOLERANCE,
+  edgeIsHeldByRegion,
   measureAuthoredMeshFit,
   measureMeshQuality,
   MeshError,
@@ -45202,8 +45204,39 @@ function mqEdgePairs(mesh: ReducedMesh): Array<[number, number]> {
 }
 
 /**
+ * The test's own reading of spine-parts#126's exemption over a rectangular
+ * region, independent of `edgeIsHeldByRegion`: an edge that meets the
+ * rectangle is held; with no band nothing else is; otherwise the edge is
+ * sampled at `MQ_EDGE_SAMPLES` points and held when it comes within
+ * `transition` (less `MQ_CONTACT`) anywhere, or when its samples within
+ * `MQ_CONTACT` of the band's outer boundary span more than one sample step — a
+ * run along the boundary or two touches, rather than one point. `MQ_CONTACT`
+ * is the precision the module states for "on the outer boundary".
+ */
+const MQ_EDGE_SAMPLES = 4001;
+const MQ_CONTACT = BAND_CONTACT_TOLERANCE;
+function mqHeldByRect(p: MqPt, q: MqPt, region: RefinementRegion): boolean {
+  const rect = region.polygon;
+  if (mqSegmentMeetsRect(p, q, rect)) return true;
+  if (!(region.transition > 0)) return false;
+  const d = mqSegmentRect(p, q, rect);
+  if (d > region.transition) return false;
+  if (d < region.transition - MQ_CONTACT) return true;
+  const near: number[] = [];
+  for (let k = 0; k < MQ_EDGE_SAMPLES; k++) {
+    const t = k / (MQ_EDGE_SAMPLES - 1);
+    const s: MqPt = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+    let e = Infinity;
+    for (let i = 0; i < rect.length; i++) e = Math.min(e, mqPointSegment(s, rect[i], rect[(i + 1) % rect.length]));
+    if (e <= region.transition + MQ_CONTACT) near.push(k);
+  }
+  return near.length > 0 && near[near.length - 1] - near[0] > 1;
+}
+
+/**
  * §5's `L(R)` read again by the test over a rectangular region: every edge that
- * meets it at most `maxEdgeLength`, and every edge within its band at most
+ * meets it at most `maxEdgeLength`, and every other edge the region holds
+ * (`mqHeldByRect`, the test's own reading of the exemption) at most
  * `L0 + grade·d` — the edges over, as phrases; empty when the bound holds.
  */
 function mqOverBound(mesh: ReducedMesh, region: RefinementRegion): string[] {
@@ -45214,10 +45247,7 @@ function mqOverBound(mesh: ReducedMesh, region: RefinementRegion): string[] {
     const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
     let bound: number | null = null;
     if (mqSegmentMeetsRect(p, q, region.polygon)) bound = region.maxEdgeLength;
-    else {
-      const d = mqSegmentRect(p, q, region.polygon);
-      if (d <= region.transition) bound = region.maxEdgeLength + region.grade * d;
-    }
+    else if (mqHeldByRect(p, q, region)) bound = region.maxEdgeLength + region.grade * mqSegmentRect(p, q, region.polygon);
     if (bound !== null && length > bound + 1e-6) over.push(`edge ${a}–${b} ${length.toFixed(6)} > ${bound.toFixed(6)}`);
   }
   return over;
@@ -46452,6 +46482,318 @@ function runMeshQualitySuite(): number {
       held,
       probeDetail(held, probes, `a ${RING} px ring at alpha ${faint}: the reduction at 9 accepted with every raster row keyed 9 and finalThreshold 9; the same result at 1: ${mqSay(atOne)}, not accepted; the source asked at 1: ${rt && 'code' in rt ? rt.code : ''}`),
       'P4: evidence is never exchanged between thresholds — a pass at >= 9 is not a pass at >= 1, so the report keys every raster row by the threshold it was taken at and claims nothing at another',
+    );
+  }
+
+  // --- spine-parts#126 (issue #1229): which edges a region holds — one predicate, read by both operations --
+  // The exact fan's top edge [0, 1] runs along y = Y0; every region below sits under its middle, inside
+  // triangle 0–1–centre and clear of the two spokes, so the top edge is the only edge any band can reach.
+  const topA = hull[0];
+  const topB = hull[1];
+  const topLength = Math.hypot(topB[0] - topA[0], topB[1] - topA[1]);
+  /** A diamond under the top edge's midpoint, its top vertex `gap` px below the edge, half-diagonal `half`, listed from its left vertex. */
+  const diamond = (gap: number, half: number): MqPt[] => [
+    [C[0] - half, Y0 + gap + half],
+    [C[0], Y0 + gap],
+    [C[0] + half, Y0 + gap + half],
+    [C[0], Y0 + gap + 2 * half],
+  ];
+  /** A bar under the top edge's midpoint, its top side `gap` px below the edge, `halfWidth` either side, `height` tall. */
+  const bar = (gap: number, halfWidth: number, height: number): MqPt[] => [
+    [C[0] - halfWidth, Y0 + gap],
+    [C[0] + halfWidth, Y0 + gap],
+    [C[0] + halfWidth, Y0 + gap + height],
+    [C[0] - halfWidth, Y0 + gap + height],
+  ];
+  /** Distance from a point to a polygon's boundary, the test's own. */
+  const pointToPolygon = (p: MqPt, poly: readonly MqPt[]): number => Math.min(...poly.map((c, i) => mqPointSegment(p, c, poly[(i + 1) % poly.length])));
+  const measureOver = (regions: RefinementRegion[]): MeshQualityReport => measureMeshQuality(mqInput(rectMask, frame, exact, { artFit: null, maxBoundaryDeviation: null, regions }));
+  const topNamed = (row: MeasureRow | undefined): boolean => JSON.stringify(row?.worst?.at.edge) === JSON.stringify([0, 1]);
+  /** Does a reduced mesh still carry the source edge s–t, unsplit? */
+  const keepsEdge = (mesh: ReducedMesh, s: number, t: number): boolean => {
+    const [p, q] = [mesh.indexMap[s], mesh.indexMap[t]];
+    return p !== null && q !== null && mqEdgePairs(mesh).some(([a, b]) => (a === p && b === q) || (a === q && b === p));
+  };
+  const BAND = 2;
+  // The coarse quad of the B2 record: one cell over the art, a region at its centre, L0 6 px, band 4 px, grade 0.5.
+  const quad = mqGrid(X0, Y0, X1, Y1, 1, 1, W, H);
+  const coarse: RefinementRegion = { name: 'coarse', polygon: mqSquare(C[0], C[1], 3), maxEdgeLength: 6, transition: 4, grade: 0.5, approximation: null };
+  /** The 2.19.0 reading, by the test's own distance: every edge within the band held, no exemption — the edges it would call over. */
+  const overWithoutExemption = (mesh: ReducedMesh, region: RefinementRegion): string[] =>
+    mqEdgePairs(mesh).flatMap(([a, b]) => {
+      const [p, q] = [mesh.points[a], mesh.points[b]];
+      const d = mqSegmentMeetsRect(p, q, region.polygon) ? 0 : mqSegmentRect(p, q, region.polygon);
+      const length = Math.hypot(q[0] - p[0], q[1] - p[1]);
+      if (d > region.transition) return [];
+      return length > region.maxEdgeLength + region.grade * d + 1e-6 ? [`${a}–${b}`] : [];
+    });
+
+  // --- MQ48: the coarse quad that 2.19.0 stopped on converges and is accepted --
+  let quadInserted = -1;
+  {
+    const probes: string[] = [];
+    const run = mqReduce('the coarse quad, band 4', mqReduceInput(quad, regionTargets(coarse)));
+    const alone = mqReduce('the coarse quad, refinement alone', mqReduceInput(quad, { ...regionTargets(coarse), protect: everySource(quad) }));
+    const freed: string[] = [];
+    for (const [label, out] of [['composed', run], ['refinement alone', alone]] as const) {
+      const { mesh, report } = out;
+      const t = report.termination;
+      if (mesh === null || report.candidates[0]?.accepted !== true) {
+        probes.push(`${label}: ${mqSayEnd(t)}, accepted ${report.candidates[0]?.accepted}`);
+        continue;
+      }
+      if (t?.reason !== 'no-further-valid-reduction' || t.blockingConstraint.includes('beyond region')) probes.push(`${label}: ${mqSayEnd(t)}`);
+      const outside = mesh.inserted.filter((r) => !mqInRegionOrBand(mesh.points[r], coarse));
+      if (outside.length > 0) probes.push(`${label}: inserted outside the region and its band: ${outside.map((r) => `(${mesh.points[r].join(', ')})`).join(', ')}`);
+      const over = mqOverBound(mesh, coarse);
+      if (over.length > 0) probes.push(`${label}: L(R) read by the test: ${over.join(', ')}`);
+      for (const code of ['MQ_MAX_EDGE', 'MQ_TRANSITION']) if (mqRow(report, code, 'coarse')?.state !== 'pass') probes.push(`${label}: ${mqSay(mqRow(report, code, 'coarse'))}`);
+      if (label === 'refinement alone') {
+        quadInserted = mesh.inserted.length;
+        freed.push(...overWithoutExemption(mesh, coarse));
+      }
+    }
+    // What made it converge: edges the result keeps that only touch the band from outside, which 2.19.0 held.
+    if (freed.length === 0) probes.push('no edge of the refined quad is over a bound the 2.19.0 reading would hold it to, so the exemption did not decide this fixture');
+    const held = probes.length === 0;
+    say(
+      'MQ48_THE_COARSE_QUAD_THAT_2_19_0_STOPPED_ON_CONVERGES_AND_IS_ACCEPTED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `one quad cell, region L0 ${coarse.maxEdgeLength} px, band ${coarse.transition} px, grade ${coarse.grade}: refinement alone ${alone.mesh?.inserted.length} inserted in ${alone.tried} candidate(s), ${alone.ms.toFixed(1)} ms, accepted; ` +
+          `composed ${run.mesh?.inserted.length} inserted, ${run.tried} candidate(s), ${run.ms.toFixed(1)} ms, accepted (${mqSayEnd(run.report.termination)}); every insertion inside the region or its band and no edge over by the test's own reading; ` +
+          `${freed.length} kept edge(s) touch the band only from outside and are over the bound the 2.19.0 reading held them to (${freed.join(', ')})`,
+      ),
+      'spine-parts#126 (6045645512, option 1): an edge whose intersection with a region\'s domain is one point on the band\'s outer boundary is exempt, so splitting where an edge leaves the band frees the piece beyond — the B2 record\'s stop on this quad came from holding that piece',
+    );
+  }
+
+  // --- MQ49: an edge touching the band's outer boundary at one point from outside is exempt in the measurement and left alone by the refinement --
+  {
+    const probes: string[] = [];
+    // A diamond over the spoke from corner 0 to the centre, its top vertex BAND px under the top edge: the
+    // spoke meets it, the top edge touches its band at one point, and the left hull edge lies inside the band
+    // (so the region's transition row has an edge to measure). L0 is the left edge's length, so every edge
+    // the region holds is within its bound and the region asks the refinement for nothing.
+    const spoke = exact.points.length - 1;
+    const along = 1 / 4;
+    const at: MqPt = [hull[0][0] + (C[0] - hull[0][0]) * along, hull[0][1] + (C[1] - hull[0][1]) * along];
+    const HALF = BAND * 1.25;
+    const poly: MqPt[] = [
+      [at[0] - HALF, Y0 + BAND + HALF],
+      [at[0], Y0 + BAND],
+      [at[0] + HALF, Y0 + BAND + HALF],
+      [at[0], Y0 + BAND + 2 * HALF],
+    ];
+    const leftLength = Y1 - Y0;
+    const touch: RefinementRegion = { name: 'touch', polygon: poly, maxEdgeLength: leftLength, transition: BAND, grade: 1, approximation: null };
+    const dLeft = mqSegmentRect(hull[0], hull[3], poly);
+    if (!(dLeft > 0 && dLeft < BAND)) probes.push(`the fixture: the left hull edge is ${dLeft} px from the diamond, not inside its ${BAND} px band`);
+    const graded = r6(touch.maxEdgeLength + touch.grade * BAND);
+    const d = mqSegmentRect(topA, topB, poly);
+    if (d !== BAND || mqSegmentMeetsRect(topA, topB, poly)) probes.push(`the fixture's top edge is ${d} px from the diamond, not ${BAND} at its top vertex`);
+    if (!mqSegmentMeetsRect(hull[0], C, poly)) probes.push('the fixture: the spoke from corner 0 does not meet the diamond');
+    if (!(topLength > graded)) probes.push(`the fixture: the top edge (${topLength} px) is not over the ${graded} px bound holding it would set, so its exemption would not show`);
+    if (edgeIsHeldByRegion(topA, topB, touch)) probes.push('edgeIsHeldByRegion holds the top edge');
+    if (mqHeldByRect(topA, topB, touch)) probes.push('the test\'s own reading holds the top edge');
+    const rep = measureOver([touch]);
+    const row = mqRow(rep, 'MQ_TRANSITION', 'touch');
+    const maxRow = mqRow(rep, 'MQ_MAX_EDGE', 'touch');
+    const leftIndex = 3;
+    if (row?.state !== 'pass' || JSON.stringify(row.worst?.at.edge) !== JSON.stringify([0, leftIndex]) || row.bound?.value !== r6(touch.maxEdgeLength + touch.grade * dLeft)) probes.push(`the band: ${mqSay(row)}, not the left edge [0, ${leftIndex}] within L0 + grade × ${dLeft}`);
+    if (maxRow?.state !== 'pass' || JSON.stringify(maxRow.worst?.at.edge) !== JSON.stringify([0, spoke])) probes.push(`the spoke: ${mqSay(maxRow)}, not edge [0, ${spoke}] within ${touch.maxEdgeLength}`);
+    // The positive half: widen the band and the same edge is in it, held to L0 + grade·d at its nearest point.
+    const wider = { ...touch, transition: BAND * 1.5 };
+    const widerRow = mqRow(measureOver([wider]), 'MQ_TRANSITION', 'touch');
+    if (widerRow?.state !== 'fail' || !topNamed(widerRow) || widerRow.bound?.value !== graded) probes.push(`a band of ${wider.transition}: ${mqSay(widerRow)}, not edge [0, 1] held to ${graded}`);
+    // The refinement reads the same predicate: with a second region driving insertions elsewhere, the
+    // touching region asks for nothing and the top edge — over the bound 2.19.0 held it to — stays whole.
+    const push: RefinementRegion = { name: 'push', polygon: mqSquare(C[0], Y1 - 4, 1), maxEdgeLength: 4, transition: BAND, grade: 1, approximation: null };
+    const both = [touch, push];
+    const refined = mqReduce('a band touching the top edge', mqReduceInput(exact, { targets: { artFit: strict, maxBoundaryDeviation: 0, regions: both }, regionArtSamples: both.map((r) => ({ region: r.name, minArtSamples: 1 })), protect: everySource(exact) }));
+    const m = refined.mesh;
+    let oldOver: string[] = [];
+    if (m === null || refined.report.candidates[0]?.accepted !== true) probes.push(`refined: ${mqSayEnd(refined.report.termination)}, accepted ${refined.report.candidates[0]?.accepted}`);
+    else {
+      if (m.inserted.length === 0) probes.push('refined: nothing inserted, so the refinement did not run');
+      if (!keepsEdge(m, 0, 1)) probes.push('refined: the top edge was split');
+      const onTop = m.inserted.filter((r) => mqPointSegment(m.points[r], topA, topB) <= MQ_CONTACT);
+      if (onTop.length > 0) probes.push(`refined: inserted on the top edge: ${onTop.join(', ')}`);
+      for (const region of both) {
+        const over = mqOverBound(m, region);
+        if (over.length > 0) probes.push(`refined: L(R) of "${region.name}" read by the test: ${over.join(', ')}`);
+      }
+      oldOver = overWithoutExemption(m, touch);
+      const [p0, p1] = [m.indexMap[0]!, m.indexMap[1]!];
+      if (!oldOver.includes(`${Math.min(p0, p1)}–${Math.max(p0, p1)}`)) probes.push(`refined: the 2.19.0 reading does not hold the top edge over its bound (${oldOver.join(', ')}), so the control does not tell the two apart`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ49_AN_EDGE_TOUCHING_THE_BAND_OUTER_BOUNDARY_AT_ONE_POINT_FROM_OUTSIDE_IS_EXEMPT_IN_THE_MEASUREMENT_AND_LEFT_ALONE_BY_THE_REFINEMENT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a diamond over the spoke, its ${BAND} px band touching the top edge at one point and holding the left edge: edgeIsHeldByRegion false on the top edge, ${mqSay(row)}, ${mqSay(maxRow)}; a band of ${wider.transition}: ${mqSay(widerRow)}; ` +
+          `refined beside a second region, every source vertex protected: ${m?.inserted.length} inserted in ${refined.tried} candidate(s), the top edge kept whole though the 2.19.0 reading holds it over ${graded}, accepted`,
+      ),
+      'spine-parts#126 (6045645512): exempt only when the intersection with the region\'s domain is a single point on the band\'s outer boundary and the rest of the edge is outside — and measurement and reduction use the same boundary semantics',
+    );
+  }
+
+  // --- MQ50: an edge lying along the band's outer boundary is held; widening the exemption to any boundary contact is caught --
+  {
+    const probes: string[] = [];
+    const HALF_WIDTH = 4;
+    const along: RefinementRegion = { name: 'along', polygon: bar(BAND, HALF_WIDTH, BAND), maxEdgeLength: 1, transition: BAND, grade: 1, approximation: null };
+    const run = Math.min(topB[0], C[0] + HALF_WIDTH) - Math.max(topA[0], C[0] - HALF_WIDTH);
+    /** The control's own check, applied to whichever predicate it is handed. */
+    const alignedProbes = (held: (a: MqPt, b: MqPt, region: RefinementRegion) => boolean): string[] =>
+      held(topA, topB, along) ? [] : [`edge [0, 1] runs ${run} px along region "along"'s ${BAND} px band's outer boundary and is not held`];
+    probes.push(...alignedProbes(edgeIsHeldByRegion));
+    if (!mqHeldByRect(topA, topB, along)) probes.push('the test\'s own reading does not hold the top edge');
+    const row = mqRow(measureOver([along]), 'MQ_TRANSITION', 'along');
+    const graded = r6(along.maxEdgeLength + along.grade * BAND);
+    if (row?.state !== 'fail' || !topNamed(row) || row.bound?.value !== graded || row.value !== r6(topLength)) probes.push(`${mqSay(row)}, not edge [0, 1] at ${topLength} against ${graded}`);
+    // The plant: the exemption widened to any contact with the outer boundary, by a forged predicate.
+    const widened = (a: MqPt, b: MqPt, region: RefinementRegion): boolean => {
+      if (mqSegmentMeetsRect(a, b, region.polygon)) return true;
+      if (region.transition > 0 && Math.abs(mqSegmentRect(a, b, region.polygon) - region.transition) <= MQ_CONTACT) return false;
+      return edgeIsHeldByRegion(a, b, region);
+    };
+    const planted = alignedProbes(widened);
+    if (planted.length === 0 || !planted[0].includes('edge [0, 1]')) probes.push('the exemption widened to any boundary contact still holds the top edge, so this control cannot see the widening');
+    const held = probes.length === 0;
+    say(
+      'MQ50_AN_EDGE_ALONG_THE_BAND_OUTER_BOUNDARY_IS_HELD_AND_AN_EXEMPTION_WIDENED_TO_ANY_BOUNDARY_CONTACT_IS_CAUGHT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the top edge runs ${run} px along the outer boundary of a bar's ${BAND} px band: edgeIsHeldByRegion true, ${mqSay(row)}; ` +
+          `planted, the exemption widened to any contact with the outer boundary: ${planted.join('; ')}`,
+      ),
+      'spine-parts#126 (6045645512): positive-length intersections, including boundary-aligned segments, remain constrained — a contact is exempt only when it is one point',
+    );
+  }
+
+  // --- MQ51: an edge crossing a band or a region with both endpoints outside is held, and an endpoint on the outer boundary does not exempt a crossing --
+  {
+    const probes: string[] = [];
+    const HALF_WIDTH = 4;
+    const through: RefinementRegion = { name: 'through', polygon: bar(BAND / 2, HALF_WIDTH, BAND), maxEdgeLength: 1, transition: BAND, grade: 1, approximation: null };
+    const astride: RefinementRegion = { name: 'astride', polygon: bar(-BAND / 2, HALF_WIDTH, BAND), maxEdgeLength: 1, transition: BAND, grade: 1, approximation: null };
+    for (const region of [through, astride]) {
+      if (mqInRegionOrBand(topA, region) || mqInRegionOrBand(topB, region)) probes.push(`region "${region.name}": an end of the top edge is inside the region or its band`);
+      if (!edgeIsHeldByRegion(topA, topB, region)) probes.push(`region "${region.name}": edgeIsHeldByRegion does not hold the top edge`);
+    }
+    const dThrough = mqSegmentRect(topA, topB, through.polygon);
+    const throughRow = mqRow(measureOver([through]), 'MQ_TRANSITION', 'through');
+    const graded = r6(through.maxEdgeLength + through.grade * dThrough);
+    if (throughRow?.state !== 'fail' || !topNamed(throughRow) || throughRow.bound?.value !== graded) probes.push(`through the band: ${mqSay(throughRow)}, not edge [0, 1] against ${graded}`);
+    const astrideRow = mqRow(measureOver([astride]), 'MQ_MAX_EDGE', 'astride');
+    if (astrideRow?.state !== 'fail' || !topNamed(astrideRow) || astrideRow.bound?.value !== astride.maxEdgeLength) probes.push(`through the polygon: ${mqSay(astrideRow)}, not edge [0, 1] against ${astride.maxEdgeLength}`);
+    // One end on the band's outer boundary, level with the bar's top-left corner, the other beyond it on the right: the edge passes over the bar inside the band.
+    const [left, top] = through.polygon[0];
+    const right = through.polygon[1][0];
+    const onBoundary: MqPt = [left - BAND, top];
+    const beyond: MqPt = [right + 2 * BAND, top - BAND / 2];
+    const dEnd = pointToPolygon(onBoundary, through.polygon);
+    if (dEnd !== BAND || mqInRegionOrBand(beyond, through)) probes.push(`the fixture: one end ${dEnd} px from the bar, the other ${mqInRegionOrBand(beyond, through) ? 'inside' : 'outside'} the band`);
+    if (!edgeIsHeldByRegion(onBoundary, beyond, through)) probes.push('an edge from a point on the outer boundary across the band is exempt');
+    if (!mqHeldByRect(onBoundary, beyond, through)) probes.push('the test\'s own reading does not hold the edge from the outer boundary across the band');
+    const held = probes.length === 0;
+    say(
+      'MQ51_AN_EDGE_CROSSING_A_BAND_OR_A_REGION_WITH_BOTH_ENDPOINTS_OUTSIDE_IS_HELD_AND_AN_END_ON_THE_OUTER_BOUNDARY_EXEMPTS_NO_CROSSING',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the top edge through a ${BAND} px band, ${dThrough} px from the bar: ${mqSay(throughRow)}; through the polygon: ${mqSay(astrideRow)}; ` +
+          `an edge from (${onBoundary.join(', ')}) on the outer boundary to (${beyond.join(', ')}) over the bar: held`,
+      ),
+      'spine-parts#126 (6045645512) and P15: a crossing is a positive-length intersection, measured whole, and a shared endpoint does not make a crossing edge exempt',
+    );
+  }
+
+  // --- MQ52: overlapping bands are read independently — exempt from one region, the edge is still held by the other --
+  {
+    const probes: string[] = [];
+    const touch: RefinementRegion = { name: 'a-touch', polygon: diamond(BAND, 1), maxEdgeLength: 1, transition: BAND, grade: 1, approximation: null };
+    const GAP = BAND / 2;
+    const near: RefinementRegion = { name: 'b-near', polygon: bar(GAP, BAND, BAND), maxEdgeLength: 4, transition: BAND, grade: 1, approximation: null };
+    const touchBound = r6(touch.maxEdgeLength + touch.grade * BAND);
+    const nearBound = r6(near.maxEdgeLength + near.grade * mqSegmentRect(topA, topB, near.polygon));
+    if (!(touchBound < nearBound)) probes.push(`the fixture: the exempt region's bound ${touchBound} is not the smaller, so taking it would not show`);
+    if (edgeIsHeldByRegion(topA, topB, touch) || !edgeIsHeldByRegion(topA, topB, near)) probes.push(`edgeIsHeldByRegion: "a-touch" ${edgeIsHeldByRegion(topA, topB, touch)}, "b-near" ${edgeIsHeldByRegion(topA, topB, near)}`);
+    const rep = measureOver([touch, near]);
+    const nearRow = mqRow(rep, 'MQ_TRANSITION', 'b-near');
+    const touchRow = mqRow(rep, 'MQ_TRANSITION', 'a-touch');
+    if (nearRow?.state !== 'fail' || !topNamed(nearRow) || nearRow.bound?.value !== nearBound) probes.push(`"b-near": ${mqSay(nearRow)}, not edge [0, 1] against ${nearBound}`);
+    if (topNamed(touchRow) || touchRow?.state === 'fail') probes.push(`"a-touch": ${mqSay(touchRow)}, holding the edge it is exempt from`);
+    const held = probes.length === 0;
+    say(
+      'MQ52_OVERLAPPING_BANDS_ARE_READ_INDEPENDENTLY_AN_EDGE_EXEMPT_FROM_ONE_REGION_IS_STILL_HELD_BY_THE_OTHER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the top edge touches "a-touch"'s band at one point and lies ${mqSegmentRect(topA, topB, near.polygon)} px inside "b-near"'s: ${mqSay(nearRow)} — "b-near"'s bound, not "a-touch"'s ${touchBound}; ${mqSay(touchRow)}`,
+      ),
+      'spine-parts#126 (6045645512): overlapping regions are evaluated independently — an exemption for one region cannot erase another region\'s constraint, and the minimum applies only over the regions that hold the edge',
+    );
+  }
+
+  // --- MQ53: with transition 0 a boundary contact is held, and a refinement it makes infeasible is named, not looped --
+  {
+    const probes: string[] = [];
+    const point: RefinementRegion = { name: 'zero', polygon: diamond(0, 1), maxEdgeLength: 1, transition: 0, grade: 1, approximation: null };
+    if (!edgeIsHeldByRegion(topA, topB, point)) probes.push('a diamond whose top vertex is on the top edge, transition 0: edgeIsHeldByRegion does not hold the edge');
+    const pointRow = mqRow(measureOver([point]), 'MQ_MAX_EDGE', 'zero');
+    if (pointRow?.state !== 'fail' || !topNamed(pointRow) || pointRow.bound?.value !== point.maxEdgeLength) probes.push(`${mqSay(pointRow)}, not edge [0, 1] against ${point.maxEdgeLength}`);
+    if (mqRow(measureOver([point]), 'MQ_TRANSITION', 'zero') !== undefined) probes.push('a region with transition 0 has a transition row');
+    // The coarse quad with no band: a piece from the region's boundary to a far corner stays held.
+    const hard = { ...coarse, name: 'hard', transition: 0 };
+    const budget = 1000;
+    const out = mqReduce('the coarse quad, transition 0', mqReduceInput(quad, { ...regionTargets(hard), budget: { maxCandidates: budget } }));
+    const t = out.report.termination;
+    const farthest = Math.max(...quad.points.map((p) => pointToPolygon(p, hard.polygon)));
+    if (t?.reason !== 'no-further-valid-reduction' || !t.blockingConstraint.includes(`region "hard"'s 0 px band`) || !(t.candidatesTried < budget)) probes.push(`no band: ${mqSayEnd(t)}`);
+    if (out.report.candidates[0]?.accepted !== false) probes.push(`no band: accepted ${out.report.candidates[0]?.accepted}`);
+    if (!(farthest > hard.maxEdgeLength)) probes.push(`the fixture: no corner lies further than ${hard.maxEdgeLength} px from the region, so nothing is infeasible`);
+    const held = probes.length === 0;
+    say(
+      'MQ53_WITH_TRANSITION_ZERO_A_BOUNDARY_CONTACT_IS_HELD_AND_AN_INFEASIBLE_REFINEMENT_IS_NAMED_NOT_LOOPED',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a diamond touching the top edge at one point, transition 0: ${mqSay(pointRow)}; the coarse quad with transition 0 (corners up to ${farthest.toFixed(3)} px from the region): ${mqSayEnd(t)}, accepted false`,
+      ),
+      'spine-parts#126 (6045645512): with transition 0 the authored boundary stays constrained under the closed-region rule, and a case that leaves infeasible reports the named limitation',
+    );
+  }
+
+  // --- MQ54: a refinement limited by its budget or by a minimum angle is not accepted, and says which --
+  {
+    const probes: string[] = [];
+    const budget = quadInserted - 1;
+    const short = mqReduce('the coarse quad, one step short', mqReduceInput(quad, { ...regionTargets(coarse), protect: everySource(quad), budget: { maxCandidates: budget } }));
+    const st = short.report.termination;
+    if (!(quadInserted > 1)) probes.push(`MQ48 measured ${quadInserted} insertion(s), so there is no budget one short of it`);
+    if (st?.reason !== 'budget-exhausted' || st.result !== 'none-met-the-targets' || st.budget !== budget || short.mesh !== null || short.report.candidates[0]?.accepted !== false) probes.push(`a budget of ${budget}: ${mqSayEnd(st)}, mesh ${short.mesh === null ? 'null' : 'returned'}, accepted ${short.report.candidates[0]?.accepted}`);
+    // An equilateral triangle's smallest angle is the largest any triangle's can be, so a bound above it is unmeetable.
+    const sharp = mqReduce('the coarse quad, an unmeetable minimum angle', mqReduceInput(quad, { ...regionTargets(coarse), targets: { artFit: strict, maxBoundaryDeviation: 0, minAngle: 61, regions: [coarse] } }));
+    const at = sharp.report.termination;
+    if (at?.reason !== 'no-further-valid-reduction' || !at.blockingConstraint.startsWith('MQ_MIN_ANGLE:') || sharp.report.candidates[0]?.accepted !== false) probes.push(`a minimum angle of 61°: ${mqSayEnd(at)}, accepted ${sharp.report.candidates[0]?.accepted}`);
+    const held = probes.length === 0;
+    say(
+      'MQ54_A_REFINEMENT_LIMITED_BY_ITS_BUDGET_OR_A_MINIMUM_ANGLE_IS_NOT_ACCEPTED_AND_NAMES_WHICH',
+      held,
+      probeDetail(held, probes, `the coarse quad with a budget one under the ${quadInserted} insertions it needs: ${mqSayEnd(st)}, no mesh; with a 61° minimum angle: ${mqSayEnd(at)}, not accepted`),
+      'spine-parts#126 (6045645512): no convergence is promised under arbitrary protection, minimum-angle or art bounds, coordinate precision or budget — a target left unmet is accepted false with a concrete blocking constraint or a budget termination',
     );
   }
 
