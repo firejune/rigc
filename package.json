@@ -1,6 +1,6 @@
 {
   "name": "spine-rigc",
-  "version": "2.17.0",
+  "version": "2.17.1",
   "description": "AI-authored Spine 2D rigging and animation, verified before it is written. rigc compiles a rig spec into Spine 4.3 skeleton data, gates it with named assertions held to a spine-core round trip's verdicts, and emits nothing that fails. Output imports into the Spine editor. Ships as an agent skill.",
   "type": "module",
   "bin": {
