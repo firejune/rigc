@@ -47036,8 +47036,9 @@ function runMeshCompareSuite(): number {
     }
   };
 
-  // --- MQ00 (motion half): a mesh compared with itself is 0 on every row and frame; one vertex moved k px reads k ---
-  mcGuard('MQ00', () => {
+  // --- MQ55 (MQ00's motion half): a mesh compared with itself is 0 on every row and frame; one vertex moved k px reads k ---
+  // Numbered MQ55, not MQ00: mesh-quality opens the MQ prefix at 00 and this suite continues it (TY18).
+  mcGuard('MQ55', () => {
     const probes: string[] = [];
     const t0 = performance.now();
     const report = compareMeshesInMotion(mcInput(reference, [{ id: 'itself', model: reference }]));
@@ -47070,7 +47071,7 @@ function runMeshCompareSuite(): number {
     if (perFrameK.length > 0) probes.push(`frames that do not read ${K}: ${perFrameK.map((p) => `${p.frame} ${p.value}`).join(', ')}`);
     const held = probes.length === 0;
     say(
-      'MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME',
+      'MQ55_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME',
       held,
       probeDetail(
         held,
@@ -47079,7 +47080,7 @@ function runMeshCompareSuite(): number {
           `hull vertex 1 moved ${K} px reads ${row?.value} world units at uv ${JSON.stringify(row?.worst?.at.uv)} on every frame — the vertex is bound wholly to an unscaled bone. ` +
           `Cost, outside the report: one comparison of 1 candidate over ${frames} frames × ${samples} samples (posing the reference and the candidate, and the setup art fit of both) took ${wall.toFixed(1)} ms of wall time on this machine`,
       ),
-      '§3 and MQ00: a comparison that reads anything but zero for a mesh against itself is measuring the instrument, and a planted displacement must read back as the displacement — the derivation, not the module, says what K is',
+      '§3 and MQ00\'s motion half: a comparison that reads anything but zero for a mesh against itself is measuring the instrument, and a planted displacement must read back as the displacement — the derivation, not the module, says what K is',
     );
   });
 

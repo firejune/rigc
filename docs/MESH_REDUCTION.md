@@ -1512,7 +1512,7 @@ mesh's region UVs off its own attachment and never a page UV.
   to a disk layout; it takes the document's text.
 - A geometry-only report for the reference — the reference's motion section is
   kept, because its stretch, squash and inversion are its own evidence and its
-  zero local deformation is `MQ00`'s statement, not a placeholder.
+  zero local deformation is `MQ55`'s statement (`MQ00`'s motion half), not a placeholder.
 - Explicit times walked once per phase — they would be the same poses under two
   ids; they carry no phase instead.
 - A section builder imported from `src/meshquality.ts` — `sectionOf` there is
@@ -1523,7 +1523,7 @@ mesh's region UVs off its own attachment and never a page UV.
   loads the whole CLI; the reader moved unchanged to `src/package_meta.ts`, and
   `src/cli/shared.ts` re-exports it.
 
-**Cost.** Wall time is never in the report; `MQ00`'s detail line prints one
+**Cost.** Wall time is never in the report; `MQ55`'s detail line prints one
 comparison's frames, samples and wall time on the suite's fixture. One darwin
 run at the commit that added it: 10 frames × 1,034 samples (a 64 × 16 strip,
 1,024 art pixels and 10 hull UVs), one candidate, 12.5–39 ms over three runs,
@@ -1563,14 +1563,18 @@ unchanged spec cannot reach them; the bytes themselves are held by `EH06` and
 re-checked by a second gate over the same base.
 
 [implemented, #1230] Built and passing, in the `mesh-compare` suite of
-`selftest.ts`: `MQ00` (its motion half), `MQ10`, `MQ15`, `MQ20`, `MQ22`, `MQ35`,
+`selftest.ts`: `MQ55` (`MQ00`'s motion half — the `MQ` prefix is opened at 00 by
+the `mesh-quality` suite and continued here, `TY18`), `MQ10`, `MQ15`, `MQ20`, `MQ22`, `MQ35`,
 `MQ36`, `MQ37`, `MQ39`, `MQ41` and `MQ42` — the controls spine-parts#126
 (comment 6045645512) asked C1 to carry for UV carrier mapping, schedule
 identity and held-out separation, and report states. `MQ26` names the fourth
 defining module. Still to be built, by stage C2: `MQ11`–`MQ13`, `MQ31`, `MQ38`,
 `MQ45`, and the motion halves of `MQ19`, `MQ21` and `MQ28`.
 
-- `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`
+- `MQ00_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME` —
+  its geometry half is `MQ00` (`MQ00_CONTROL_A_MESH_MEASURED_AGAINST_ITS_OWN_HULL_DEVIATES_ZERO_AND_ITS_RASTER_ROWS_ARE_THE_LEGACY_FIT`,
+  `mesh-quality`) and its motion half is `MQ55`
+  (`MQ55_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME`, `mesh-compare`)
 - `MQ01_A_HULL_VERTEX_MOVED_INWARD_FAILS_COVERAGE_AND_UNDERCUT_NAMING_THE_WORST_PIXEL`
 - `MQ02_A_HULL_VERTEX_PUSHED_OUT_K_PIXELS_MEASURES_OVERSHOOT_K_WITHIN_ONE_SPATIAL_QUANTUM`
 - `MQ03_A_SPANNED_HOLE_IS_NOT_OVERSHOOT_AND_IS_COUNTED_AS_HOLE_PIXELS`
