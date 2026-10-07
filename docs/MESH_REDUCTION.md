@@ -6,8 +6,9 @@ half of [spine-parts#126](https://github.com/firejune/spine-parts/issues/126).
 agree on *before* any of stages B–D is written, and it exists so that a reader
 who was not in the conversation that produced it can tell three things apart:
 
-- **Existing** — what the tree already provides, cited `file:line` with the
-  symbol beside it (line numbers drift; the symbol is the anchor). Every
+- **Existing** — what the tree already provides, cited by file path and
+  symbol name (or a short quoted phrase where there is no symbol), never by
+  line number, because line numbers move with nothing going red. Every
   existing number below was read off the source at v2.17.1, not restated from
   memory or from the issue.
 - **[proposal]** — rigc's proposed answer. **Unsettled until spine-parts
@@ -28,19 +29,19 @@ policy from a name.
 
 | Concern | Existing (verified) | New (stage B–D, all [proposal]) |
 | --- | --- | --- |
-| Alpha mask and threshold | `AlphaMask` (`src/mesh.ts:584`); art = alpha `>=` threshold (`artOf`, `src/mesh.ts:982`); threshold a whole number in 1..255 (`src/mesh.ts:1500`, `:1998`) | none — reused |
-| Silhouette trace, holes, islands, pinch | `traceAlphaOutline` (`src/mesh.ts:1049`): largest 4-connected island, holes filled by an 8-connected background flood (`:1094`), diagonal pinch refused on the filled silhouette (`:1118`–`:1131`); `fillEnclosed` (`:1188`, internal) | none — reused |
-| Outline simplification and offset | `simplifyClosedPolygon` (`:740`, Douglas-Peucker), `offsetPolygon` (`:774`, miter clamp `CONTOUR_MITER_LIMIT = 4`, `:652`), `prunePolygon` (`:812`), `findSelfIntersection` (`:879`), `earClip` (`:936`) | constrained reduction with interior vertices (§1, §5, §6) |
-| Coverage and overshoot | `measureContourFit` (`:1285`, bounded search), `measureAuthoredMeshFit` (`:1375`, exact distance transform `squaredDistanceToSet`, `:1423`), `MeshFitReport` (`:1333`), `CONTOUR_MIN_COVERAGE = 0.995` (`:642`), `contourOvershootBound` (`:671`) | undercut (inward) distance, worst-sample location, resolution flag (§4) |
-| Outline/hull/edges of a triangulation | `traceOutline` (`:1708`), `checkHullOrder` (`:1782`), `meshEdges` (`:1824`); applied to every authored and generated mesh (`authoredHullAndEdges`, `generatedHullAndEdges`, `src/compile.ts:5328`–`:5371`) | none — every reduced mesh passes through them |
-| Generators | `ring`, `ribbon`, `grid`, `contour`, `segments` (`MeshKind`, `src/mesh.ts:103`); `buildSegmentsLattice` (`:1991`), `segmentShares` (`:2221`) | an explicit reduction operation, never a new `generator` default (§1) |
-| Weights | `bindWeightedVertices` (`:1638`, bindings by bone name); `ModelBinding` (`src/model.ts:151`); A20 coherence (`src/assertions/bodies/a20.ts`) | pruning/normalisation on reduction (§6) |
-| Triangle sign, collapse, stretch | `triangleAreas` (`src/deformsurvey.ts:82`), `DEFORM_AREA_EPSILON = 1e-6` (`:44`), `float32AreaNoise` (`:67`), `stretchSingularValues` (`:117`) | reused for orientation/degeneracy (§4) |
-| Deform measurement over time | deform survey (`surveyDeformKeys`, `src/deformmeasure.ts:200`; `surveyOfModel`, `src/deformsurvey.ts:2292`), span scan (`scanDeformSpan`, `:1911`), A39 | none — a different question (it measures one mesh against itself, never two meshes against each other) |
-| Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation` (`src/render_shared.ts:1082`), `sampleSetupPose` (`:1106`); `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`:464`–`:503`) | a comparison over a common UV domain (§3) |
-| Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`:12`–`:15`), not a mesh one | the whole of §3 |
-| Report document | `build-report/1` (`src/assertions/report.ts:108`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) |
-| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts:403`–`:420`); `spine-rigc/render` needs spine-core installed beside it | where the new operations are exported (§0) |
+| Alpha mask and threshold | `AlphaMask`, `artOf` (internal) in `src/mesh.ts`: art is alpha `>=` threshold; the threshold is a whole number in 1..255 ("the alpha threshold must be a whole number in 1..255", in both `buildContourMesh` and `buildSegmentsLattice`) | none — reused |
+| Silhouette trace, holes, islands, pinch | `traceAlphaOutline` in `src/mesh.ts`: largest 4-connected island, holes filled by an 8-connected background flood (`fillEnclosed(inside, w, h, 8)`), diagonal pinch refused on the filled silhouette ("the alpha silhouette pinches to a single point"); `fillEnclosed` is internal | none — reused |
+| Outline simplification and offset | in `src/mesh.ts`: `simplifyClosedPolygon` (Douglas-Peucker), `offsetPolygon` (miter clamp `CONTOUR_MITER_LIMIT = 4`), `prunePolygon`, `findSelfIntersection`, `earClip` | constrained reduction with interior vertices (§1, §5, §6) |
+| Coverage and overshoot | in `src/mesh.ts`: `measureContourFit` (bounded search), `measureAuthoredMeshFit` (exact distance transform, internal `squaredDistanceToSet`), `MeshFitReport`, `CONTOUR_MIN_COVERAGE = 0.995`, `contourOvershootBound` | undercut (inward) distance, worst-sample location, resolution flag (§4) |
+| Outline/hull/edges of a triangulation | `traceOutline`, `checkHullOrder`, `meshEdges` in `src/mesh.ts`; applied to every authored and generated mesh (`authoredHullAndEdges`, `generatedHullAndEdges`, `src/compile.ts`) | none — every reduced mesh passes through them |
+| Generators | `ring`, `ribbon`, `grid`, `contour`, `segments` (`MeshKind`, `src/mesh.ts`); `buildSegmentsLattice`, `segmentShares` | an explicit reduction operation, never a new `generator` default (§1) |
+| Weights | `bindWeightedVertices` in `src/mesh.ts` (bindings by bone name); `ModelBinding` (`src/model.ts`); A20 coherence (`src/assertions/bodies/a20.ts`) | pruning/normalisation on reduction (§6) |
+| Triangle sign, collapse, stretch | in `src/deformsurvey.ts`: `triangleAreas`, `DEFORM_AREA_EPSILON = 1e-6`, `float32AreaNoise`, `stretchSingularValues` | reused for orientation/degeneracy (§4) |
+| Deform measurement over time | deform survey (`surveyDeformKeys`, `src/deformmeasure.ts`; `surveyOfModel`, `src/deformsurvey.ts`), span scan (`scanDeformSpan`, `src/deformsurvey.ts`), A39 | none — a different question (it measures one mesh against itself, never two meshes against each other) |
+| Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain (§3) |
+| Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 |
+| Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) |
+| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | where the new operations are exported (§0) |
 
 ## 0. Where the operations live, and what they never change
 
@@ -59,9 +60,9 @@ policy from a name.
   paragraph after the *not promised* list). rigc's own core poser
   (`src/core/`, `src/render_core.ts`) links nothing of the runtime, and **has
   no named entry**.
-- `MeshError` (`src/mesh.ts:140`) extends `Error`, not `CompileError`; the
+- `MeshError` (`src/mesh.ts`) extends `Error`, not `CompileError`; the
   compiler rewraps it as `CompileError` with the attachment's location
-  (`src/compile.ts:5344`–`:5346`, `:5365`–`:5368`).
+  (`authoredHullAndEdges`, `generatedHullAndEdges`, `src/compile.ts`).
 - The emitted bytes of every existing generator are held by the step-1 hash
   gates against `tools/emit_hashes.base.json` (CLAUDE.md, *The selftest and its
   fixtures*).
@@ -101,18 +102,18 @@ policy from a name.
 
 | Fact | Where |
 | --- | --- |
-| Positions are **part-local pixels, y down, origin top-left** | `MeshGeometry.points`, `src/mesh.ts:107`; the crop contract, CLAUDE.md *Conventions* |
-| UVs are normalised over the part window, `v` from the top edge; a generator writes `x / w`, `y / h` on the 6-decimal grid | `src/mesh.ts:109`, `:576`, `:1589` |
-| Triangles are **counter-clockwise in Spine world** (y up) | `src/mesh.ts:111`; segments flips its y-down corners to keep it, `:2163`–`:2166` |
-| Spine world is y up, origin bottom-left of the crop; the whole conversion is `src/transform.ts` | `cropToSpineY` (`:117`), `toBoneLocal` (`:243`), `toWorld` (`:286`) |
-| A page that states `scale:` is traced on its texels; the author's distances are applied as `value × pageScale` texels, never a measured ratio | `ContourSpecInput.pageScale`, `src/mesh.ts:601`–`:614` (issue #779); overshoot reported back in the drawing's pixels by dividing by the stated scale, `drawingOvershoot`, `src/compile.ts:5310` |
-| Alpha threshold: art is `alpha >= threshold`, a whole number in 1..255; generator default 1 | `src/mesh.ts:594`, `:1500`; `CONTOUR_DEFAULTS` (`src/compile.ts:6679`); `SEGMENTS_DEFAULTS` (`src/compile.ts:6351`) |
-| The authored-mesh fit is measured at threshold **1**, whatever the attachment's art | `measureAuthoredFit`, `src/compile.ts:5289` |
-| The generator grid: 6 decimals, never `-0`; emission then takes each number's float32 name | `r6`, `src/mesh.ts:148`; `f32`, `src/compile.ts:943`; `onModelGrid`, `src/compile.ts:992` |
-| Geometric predicate epsilons | duplicate/collinear `1e-9` (`prunePolygon`, `src/mesh.ts:812`); segment meeting `1e-9` (`:846`–`:877`); point-in-triangle `-1e-9` (`:893`); degenerate raster triangle `|2A| < 1e-12` (`:1252`); ear turn `<= 1e-12` (`:955`) |
-| A pixel is covered when its **centre** is in or on a triangle — the renderer's convention | `rasteriseTriangles`, `src/mesh.ts:1238`–`:1245` |
-| Canonical order already fixed: hull first in walk order; walk starts at the lowest-numbered boundary vertex towards its smaller neighbour; `edges` = outline loop then interior edges sorted | `MeshOutline.walk`, `src/mesh.ts:1686`–`:1691`; `meshEdges`, `:1824` |
-| A segments vertex's weights: strongest first, ties in first-named order, the last closing at `1 − others` on the grid | `segmentShares`, `src/mesh.ts:2221`–`:2250` |
+| Positions are **part-local pixels, y down, origin top-left** | `MeshGeometry.points`, `src/mesh.ts`; the crop contract, CLAUDE.md *Conventions* |
+| UVs are normalised over the part window, `v` from the top edge; a generator writes `x / w`, `y / h` on the 6-decimal grid | `MeshGeometry.uvs` and every builder's `uvs.push(r6(x / w), r6(y / h))`, `src/mesh.ts` |
+| Triangles are **counter-clockwise in Spine world** (y up) | `MeshGeometry.triangles`, `src/mesh.ts`; `buildSegmentsLattice` swaps each y-down triangle's last two corners to keep it ("Emitted counter-clockwise in Spine world") |
+| Spine world is y up, origin bottom-left of the crop; the whole conversion is `src/transform.ts` | `cropToSpineY`, `toBoneLocal`, `toWorld` |
+| A page that states `scale:` is traced on its texels; the author's distances are applied as `value × pageScale` texels, never a measured ratio | `ContourSpecInput.pageScale`, `src/mesh.ts` (issue #779); overshoot reported back in the drawing's pixels by dividing by the stated scale, `drawingOvershoot`, `src/compile.ts` |
+| Alpha threshold: art is `alpha >= threshold`, a whole number in 1..255; generator default 1 | `buildContourMesh`, `src/mesh.ts`; `CONTOUR_DEFAULTS` and `SEGMENTS_DEFAULTS`, `src/compile.ts` |
+| The authored-mesh fit is measured at threshold **1**, whatever the attachment's art | `measureAuthoredFit`, `src/compile.ts` |
+| The generator grid: 6 decimals, never `-0`; emission then takes each number's float32 name | `r6`, `src/mesh.ts`; `f32`, `src/compile.ts`; `onModelGrid`, `src/compile.ts` |
+| Geometric predicate epsilons | in `src/mesh.ts`: duplicate/collinear `1e-9` (`prunePolygon`); segment meeting `1e-9` (`segmentsMeet`); point-in-triangle `-1e-9` (`pointInTriangle`); degenerate raster triangle `|2A| < 1e-12` (`rasteriseTriangles`); ear turn `<= 1e-12` (`earClip`) |
+| A pixel is covered when its **centre** is in or on a triangle — the renderer's convention | `rasteriseTriangles`, `src/mesh.ts` |
+| Canonical order already fixed: hull first in walk order; walk starts at the lowest-numbered boundary vertex towards its smaller neighbour; `edges` = outline loop then interior edges sorted | `MeshOutline.walk` and `meshEdges`, `src/mesh.ts` |
+| A segments vertex's weights: strongest first, ties in first-named order, the last closing at `1 − others` on the grid | `segmentShares`, `src/mesh.ts` |
 
 **Proposed.**
 
@@ -165,7 +166,7 @@ export interface ReductionConstraints {
 
 - [proposal] **Units.** Every caller distance is in the drawing's pixels,
   converted to texels by `pageScale` with the arithmetic `buildContourMesh`
-  uses (`onGrid`, `src/mesh.ts:1484`–`:1487`), and reported back in the
+  uses (`onGrid`, `src/mesh.ts`), and reported back in the
   drawing's pixels with the grid it was taken on. A fraction is a fraction; an
   angle is degrees.
 - [proposal] **No defaults inside the operation.** A missing constraint is a
@@ -191,7 +192,7 @@ export interface ReductionConstraints {
 - [proposal] **Refusals** (each names the object, the value found and the
   value required): `REDUCE_INPUT_MISSING`, `REDUCE_THRESHOLD_RANGE`,
   `REDUCE_MASK_SIZE` (mask bytes ≠ width × height), `REDUCE_UV_RANGE` (outside
-  0..1 by more than A22's `1e-6`, `src/assertions/bodies/a22.ts:33`),
+  0..1 by more than A22's `1e-6`, `src/assertions/bodies/a22.ts`),
   `REDUCE_SOURCE_NOT_ONE_LOOP` (whatever `traceOutline` refuses),
   `REDUCE_SOURCE_FAILS_ITS_OWN_CONSTRAINTS` (the source itself does not meet
   the declared constraints — there is nothing to preserve).
@@ -203,7 +204,7 @@ export interface ReductionConstraints {
   says "units, scaling" without fixing which.
 - **P4.** Does parts want the reduction to accept a mask at a threshold other
   than the one it was generated with? The compiler measures authored fit at
-  threshold 1 regardless (`src/compile.ts:5289`), so a reduction gated at 16
+  threshold 1 regardless (`src/compile.ts`), so a reduction gated at 16
   would be checked by the build at 1.
 - **P5.** Presets: does parts keep them (this proposal), or does it need rigc
   to publish a versioned preset table?
@@ -214,17 +215,17 @@ export interface ReductionConstraints {
 
 - A gate row is `PASS`, `FAIL`, `SKIP` with a reason, or `PROF` (not in the
   profile), and the summary counts each separately; `measured` is passed plus
-  failed and never includes a skip (`GateSummary`, `src/assertions/report.ts:74`–`:96`).
+  failed and never includes a skip (`GateSummary`, `src/assertions/report.ts`).
   An assertion with nothing to measure SKIPs and is never a pass (CLAUDE.md
   *Going public*).
 - `build-report/1` is versioned and additive, keys in a fixed order, and two
   reports of one build are byte-identical — no time, path or machine
-  (`src/assertions/report.ts:101`–`:189`).
+  (`src/assertions/report.ts`).
 - The deform survey keeps "ran and found nothing" distinct from "did not run"
-  (`DeformSpan`, `src/deformsurvey.ts:502`–`:542`), passes over a key whose
-  slot draws nothing by name rather than counting it (`DeformKeyDraw`,
-  `:175`), and records a predicted-but-unreproduced fold as `unconfirmed`, not
-  as a pass or a failure (`:531`–`:541`).
+  (`DeformSpan`, `src/deformsurvey.ts`), passes over a key whose
+  slot draws nothing by name rather than counting it (`DeformKeyDraw`), and
+  records a predicted-but-unreproduced fold as `unconfirmed`, not as a pass or
+  a failure (`DeformSpan.unconfirmed`).
 
 **Proposed.** One document, `mesh-quality-report/1`, written by both the
 geometry-only and the motion operation. The two kinds of evidence are **two
@@ -328,19 +329,19 @@ export interface MeshCounts {
   identical at every key — stated, and controlled by `DR04`
   (`src/deformmeasure.ts`, header *What is deliberately NOT here*).
 - A posed frame's mesh piece carries world vertices, **page** UVs and triangles
-  (`Mesh`, `src/render_shared.ts:464`–`:479`); page UVs depend on where the
-  region was packed, region UVs do not (A22's note, `src/assertions/bodies/a22.ts:17`–`:24`).
+  (`Mesh`, `src/render_shared.ts`); page UVs depend on where the
+  region was packed, region UVs do not (A22's note, `src/assertions/bodies/a22.ts`).
 - Sample times: the render walks `count = round(duration × fps)` poses at
-  `i / fps` (`sampleAnimation`, `src/render_shared.ts:1082`–`:1096`); the
-  protocol rate is `PROTOCOL_FPS = 12` (`src/render_shared.ts:116`). The pose
+  `i / fps` (`sampleAnimation`, `src/render_shared.ts`); the
+  protocol rate is `PROTOCOL_FPS = 12` (`src/render_shared.ts`). The pose
   oracle's phases are `grid`, `off`, `irr`, `dense` (`SamplePhase`,
-  `src/core/animation.ts:879`), with `IRR_OFFSET = 0.381966011` (`:882`) and
-  `sampleTime` at `:890`.
+  `src/core/animation.ts`), with `IRR_OFFSET = 0.381966011` and the times
+  `sampleTime` returns, both in the same file.
 - Physics: the render resets at pose 0 and steps by `1/fps` after
-  (`src/render_core.ts:24`–`:28`); the oracle's stepped schedule starts at 0
+  (`src/render_core.ts`); the oracle's stepped schedule starts at 0
   with the reset and steps by `dt` (`stepSchedule`,
-  `src/core/constraints_physics.ts:845`–`:869`), default `dt` 1/60
-  (`ORACLE_DEFAULT_DT`, `tools/pose_oracle.ts:493`). **No warm-up exists
+  `src/core/constraints_physics.ts`), default `dt` 1/60
+  (`ORACLE_DEFAULT_DT`, `tools/pose_oracle.ts`). **No warm-up exists
   anywhere in the tree.**
 
 **Proposed.**
@@ -428,31 +429,35 @@ export interface MotionSchedule {
 **Existing.**
 
 - **Coverage**: share of art pixels (alpha `>=` threshold, every island) whose
-  centre a triangle covers (`measureAuthoredMeshFit`, `src/mesh.ts:1375`–`:1404`).
+  centre a triangle covers (`measureAuthoredMeshFit`, `src/mesh.ts`).
 - **Overshoot**: the furthest covered pixel outside the **filled** silhouette,
   exact Euclidean distance in pixels, on the `r6` grid
-  (`squaredDistanceToSet`, `:1423`; result `:1402`). The contour builder's
-  ceiling is `margin × 4 + tolerance + 1`, the last term being the one-pixel
-  centre-sampling term (`contourOvershootBound`, `:655`–`:673`).
-- **The hole-filled silhouette** exists in two flavours. The tracer fills
-  background that **no 8-connected** path of background reaches from the
-  border (`src/mesh.ts:1078`–`:1094`, issue #1209, landed by PR #1210 —
-  CHANGELOG line 29); the authored-mesh fit fills with a **4-connected** flood
-  over all art (`:1383`). The file states the two agree on every mask the
-  tracer accepts (`:1183`–`:1186`) — they can differ only across a diagonal
-  pinch, which the tracer refuses.
+  (the internal `squaredDistanceToSet` in `src/mesh.ts`, read by
+  `measureAuthoredMeshFit`). The contour builder's ceiling is
+  `margin × 4 + tolerance + 1`, the last term being the one-pixel
+  centre-sampling term (`contourOvershootBound`).
+- **The hole-filled silhouette** exists in two flavours, both in
+  `src/mesh.ts`. The tracer fills background that **no 8-connected** path of
+  background reaches from the border (`traceAlphaOutline`'s
+  `fillEnclosed(inside, w, h, 8)`; issue #1209, landed by PR #1210 — the
+  CHANGELOG's 2.15.1 entry); the authored-mesh fit fills with a
+  **4-connected** flood over all art (`measureAuthoredMeshFit`'s
+  `fillEnclosed(art, w, h, 4)`). `fillEnclosed`'s own comment states the two
+  "agree on every mask the trace accepts" — they can differ only across a
+  diagonal pinch, which the tracer refuses.
 - **Holes and islands in the format.** A Spine mesh's outline is one closed
   loop and its triangle count is Euler's for a hole-free triangulation;
   `traceOutline` refuses a pinched vertex, a hole and two islands by name
-  (`src/mesh.ts:1700`–`:1781`, header `:1659`–`:1681`). So a mesh can **span**
-  a hole and can **bridge** islands (segments does, `src/mesh.ts:1865`–`:1870`),
-  and it cannot cut either out.
+  (`src/mesh.ts`, the section headed "the outline a triangulation already
+  states"). So a mesh can **span** a hole and can **bridge** islands
+  (`buildSegmentsLattice` does, its step "**One loop.**"), and it cannot cut
+  either out.
 - **Orientation and degeneracy**: generators emit counter-clockwise in Spine
-  world (`src/mesh.ts:111`); `traceOutline` refuses a triangle that repeats a
-  vertex (`:1720`–`:1722`); the A39 band (`DEFORM_AREA_EPSILON`,
+  world (`MeshGeometry.triangles`, `src/mesh.ts`); `traceOutline` refuses a
+  triangle that "repeats a vertex, so it has no area"; the A39 band (`DEFORM_AREA_EPSILON`,
   `float32AreaNoise`) decides when a sign is not read.
 - **Texture stretch**: the singular values of `J = D·P⁻¹` per triangle
-  (`stretchSingularValues`, `src/deformsurvey.ts:117`); a plain triangle with no
+  (`stretchSingularValues`, `src/deformsurvey.ts`); a plain triangle with no
   area has no map and is counted `degenerate`, never given the identity.
 
 **Proposed.** [proposal] every definition below.
@@ -470,7 +475,7 @@ export interface MotionSchedule {
 | `MQ_MIN_ANGLE` | smallest interior angle, gated only when `minAngle` is declared | degrees | no |
 | `MQ_LOCAL_DEFORMATION` | per UV sample per scheduled frame, world distance between the candidate's and the reference's carried sample (§3); the worst sample is the row's | world | no |
 | `MQ_STRETCH` / `MQ_SQUASH` | `stretchSingularValues` of each candidate triangle, setup to posed frame; worst max and worst min | ratio | no |
-| `MQ_INVERSION` | triangles whose sign changes setup to posed frame, A39's rule, slots in `invariants.deformMayFold` (`src/rig.ts:1708`) reported and not counted | count | no |
+| `MQ_INVERSION` | triangles whose sign changes setup to posed frame, A39's rule, slots in `invariants.deformMayFold` (`src/rig.ts`) reported and not counted | count | no |
 | `MQ_TRANSITION` | §5's edge bound across a region's transition band | px | no |
 
 - [proposal] **The outside distance uses the hole-filled silhouette**, filled
@@ -510,14 +515,14 @@ export interface MotionSchedule {
 **Existing.**
 
 - `segments` takes `cell`, a whole number of pixels, and keeps a cell when any
-  of its pixels is art (`buildSegmentsLattice`, `src/mesh.ts:1991`–`:2020`).
+  of its pixels is art (`buildSegmentsLattice`, `src/mesh.ts`).
   Its edges are cell sides (`<= cell`, shorter in the clipped last column and
-  row, `:2002`–`:2003`) and one diagonal per cell (`<= cell × √2`). That
+  row, where `xs` and `ys` are clamped with `Math.min(i * cell, w)`) and one diagonal per cell (`<= cell × √2`). That
   relation holds **only because the lattice is unreduced.**
 - `contour` takes a Douglas-Peucker `tolerance` — a deviation, not a spacing —
   and has **no interior vertices** at all (AUTHORING §3.4, `contour`, the
   closing paragraph).
-- `grid` takes column and row **positions** (`GridSpecInput`, `src/mesh.ts:85`).
+- `grid` takes column and row **positions** (`GridSpecInput`, `src/mesh.ts`).
 - Nothing in the tree measures edge length or fill distance.
 
 **Proposed.** [proposal] the three, defined numerically over a region `R`
@@ -588,25 +593,25 @@ export interface RefinementRegion {
 **Existing.**
 
 - A generator's UV is its position over the window on the `r6` grid
-  (`src/mesh.ts:1589`); an authored mesh's UVs are the author's.
+  (`src/mesh.ts`); an authored mesh's UVs are the author's.
 - Weights: every vertex bound, finite and non-negative, summing to 1 within
-  `1e-3` (`src/assertions/bodies/a20.ts:86`); a weight of 0 is refused on a
+  `1e-3` (`src/assertions/bodies/a20.ts`); a weight of 0 is refused on a
   generated mesh under `spine-html`. `segmentShares` keeps the strongest
   `maxBones`, drops shares under `minWeight`, renormalises and closes the last
-  at `1 − others` (`src/mesh.ts:2221`–`:2250`); defaults `maxBones` 4,
+  at `1 − others` (`src/mesh.ts`); defaults `maxBones` 4,
   `minWeight` 0.03, floor one grid step `0.000001`
-  (`src/compile.ts:6351`–`:6354`). Bind coordinates are each bone's local
-  setup space (`bindWeightedVertices`, `src/mesh.ts:1638`).
+  (`src/compile.ts`). Bind coordinates are each bone's local
+  setup space (`bindWeightedVertices`, `src/mesh.ts`).
 - `hull` and `edges` are derived from the triangles, never defaulted
-  (`src/compile.ts:5315`–`:5371`).
+  (`src/compile.ts`).
 - A `deform` key's `vertices` run is **vertex-indexed** — `fromVertex` counts
   vertices, `offset` indexes the deform array, one pair per vertex unweighted
   and one per influence weighted (AUTHORING §4.11; A35 measures the run). A
   `transform` key is a model evaluated over the attachment's own geometry and
   always covers the whole attachment (`evaluateDeformTransform`,
-  `src/deformgen.ts:243`–`:273`).
+  `src/deformgen.ts`).
 - A linked mesh states no geometry of its own (A44) and by default plays the
-  source's deform keys (`timelines`, `src/rig.ts:977`–`:984`).
+  source's deform keys (`timelines`, `src/rig.ts`).
 
 **Proposed.**
 
