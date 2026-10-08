@@ -61,7 +61,7 @@ full run. A near miss names the flag when exactly one is one edit away.
   --only <suite>[,<suite>…]        a PARTIAL run of the named suites: exits 2 when green, never a verdict
   --cuts <cuts.json>               adds a suite that compiles and gates every cut in that table (or RIGC_CUTS=<cuts.json>)
   --shard <i>/<n>                  runs the suites dealt to shard i of n: exits 2 when green, never a verdict (or RIGC_SHARD=<i>/<n>)
-  --tally-out <file>               with --shard: where the shard writes the tally document --merge reads (or RIGC_TALLY_OUT=<file>)
+  --tally-out <file>               with --shard: the shard's tally document, which --merge reads; with --merge: the merged run's, which a publish reads (or RIGC_TALLY_OUT=<file>)
   --merge <file>…                  every shard's tally document merged: the verdict
   --shards-base [<file>]           with --merge: a green merge writes the durations base, to <file> or over the tracked one
   --memory-base                    a green one-process full run writes its platform's memory base
@@ -87,10 +87,16 @@ the full run's summary and verdict; add `--shards-base [<file>]` and a green
 merge writes the base again from its own seconds (to `<file>`, or over the
 tracked base when none is named). CI's merge writes it and uploads it as the
 `selftest-shards-base` artifact, which is where the tracked base comes from.
-Never edit the base by hand.
+Never edit the base by hand. `--tally-out <file>` beside `--merge` writes the
+merged run's document — the commit every shard and the merge ran at, each
+shard's exit, the merge's exit and the census of every registered suite — which
+is what a release's `prepublishOnly` reads through `RIGC_PREPUBLISH_TALLY`
+(RELEASING.md, *Publishing*).
 `RIGC_SHARD` and `RIGC_TALLY_OUT` name the same two values through the
-environment. CI's `shard` jobs are the six shards side by side and its `test`
-job is the merge. On a machine you share, run the shards one after another, not
+environment. The six shards side by side and their merge are
+`.github/workflows/selftest-shards.yml`, which `ci.yml` calls on every change
+and `release.yml` calls on the tag it publishes; `ci.yml`'s `test` job — the
+check a pull request has to pass — reads that merge's verdict. On a machine you share, run the shards one after another, not
 together: each is a whole process with its own memory high-water.
 
 Inside a suite, independent units run concurrently: `render-hashes`' eight

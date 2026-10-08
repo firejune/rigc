@@ -119,7 +119,11 @@
  * replayed numbers; each shard's high-water is held to the memory ceiling as
  * its own process. `TY27`–`TY31` hold the shard, the merge's equality with one
  * process at n = 1 and n = 3, its refusals, a red shard and an unrun suite;
- * `TY34`–`TY35` the deal and shards dealt two ways. `--memory-base-children
+ * `TY34`–`TY35` the deal and shards dealt two ways. `--tally-out <file>` beside
+ * `--merge` writes the merged run's document — the commit, every shard's exit,
+ * the merge's exit and the census — on every way a merge that read its
+ * documents ends (issue #1249); `scripts/prepublish_gate.ts` reads it, and
+ * `TY46` holds that reader to the writer's own document. `--memory-base-children
  * [<file>]` has a green merge write the children's half of its platform's
  * memory-base entry off the shards' documents, leaving the parent's (issue
  * #1144); `TY41` holds that write to the documents and a red merge to none.
@@ -633,6 +637,7 @@ import { modelBoneTimelines } from './src/assertions/model/bone_timelines.ts';
 import { modelEventKeys } from './src/assertions/model/event_keys.ts';
 import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIES, POSED_FACT_FAMILIES, type Cut4c5Family, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
 import { compareSteppedPoses, coreRefusalOf, documentedCoreRefusal, STEPPED_FACT_FAMILIES, type SteppedFactFamily } from './tools/verdict_gate.ts';
+import { MERGED_TALLY_SPEC, PREPUBLISH_TALLY_VARIABLE, tallyDecision, treeHead, type MergedTally, type TallyTree } from './scripts/prepublish_gate.ts';
 import { rigFactsDerivationsOf, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -768,7 +773,7 @@ const HARNESS_FLAGS: readonly HarnessFlag[] = [
   { spelling: '--only', values: '<suite>[,<suite>…]', arity: 'one', environment: '', passedBy: 'caller', meaning: 'a PARTIAL run of the named suites: exits 2 when green, never a verdict' },
   { spelling: '--cuts', values: '<cuts.json>', arity: 'one', environment: 'RIGC_CUTS', passedBy: 'caller', meaning: 'adds a suite that compiles and gates every cut in that table' },
   { spelling: '--shard', values: '<i>/<n>', arity: 'one', environment: 'RIGC_SHARD', passedBy: 'caller', meaning: 'runs the suites dealt to shard i of n: exits 2 when green, never a verdict' },
-  { spelling: '--tally-out', values: '<file>', arity: 'one', environment: 'RIGC_TALLY_OUT', passedBy: 'caller', meaning: "with --shard: where the shard writes the tally document --merge reads" },
+  { spelling: '--tally-out', values: '<file>', arity: 'one', environment: 'RIGC_TALLY_OUT', passedBy: 'caller', meaning: "with --shard: the shard's tally document, which --merge reads; with --merge: the merged run's, which a publish reads" },
   { spelling: '--merge', values: '<file>…', arity: 'one or more', environment: '', passedBy: 'caller', meaning: "every shard's tally document merged: the verdict" },
   { spelling: '--shards-base', values: '[<file>]', arity: 'optional', environment: '', passedBy: 'caller', meaning: 'with --merge: a green merge writes the durations base, to <file> or over the tracked one' },
   { spelling: '--memory-base', values: '', arity: 'none', environment: '', passedBy: 'caller', meaning: "a green one-process full run writes its platform's memory base" },
@@ -1052,15 +1057,18 @@ const SHARD = ((): ShardSpec | null => {
 })();
 
 /**
- * `--tally-out <file>` (or `RIGC_TALLY_OUT`): where a shard writes its tally
- * document, the one thing `--merge` reads. Refused without `--shard`: the
- * document is a shard's, and a full run's tally is its summary.
+ * `--tally-out <file>` (or `RIGC_TALLY_OUT`): where this process writes its
+ * tally document. Under `--shard`, the shard's — the one thing `--merge` reads.
+ * Under `--merge` (issue #1249), the merged run's: the commit, the shards'
+ * exits and the census `scripts/prepublish_gate.ts` holds before it accepts a
+ * sharded run in place of the one-process selftest a publish would otherwise
+ * run. Refused with neither: a one-process run's tally is its summary.
  */
 const TALLY_OUT = ((): string | null => {
   const value = flagOrEnvironment(process.argv.slice(2), readerOf('--tally-out'));
   if (value === null) return null;
-  if (SHARD === null) {
-    console.error('selftest: --tally-out writes a shard\'s tally document; it needs --shard <i>/<n> (or RIGC_SHARD)');
+  if (SHARD === null && !process.argv.slice(2).includes('--merge')) {
+    console.error("selftest: --tally-out writes a shard's or a merge's tally document; it needs --shard <i>/<n> (or RIGC_SHARD) or --merge <file>…");
     process.exit(2);
   }
   return resolve(value);
@@ -67589,7 +67597,7 @@ function runCurrencySuite(): number {
       { what: 'the re-run path waits three times as long as the cut did', yml: ['--version "$VERSION" --wait 15', '--version "$VERSION" --wait 45'], doc: null },
       { what: 'the cut stops passing a wait at all', yml: ['--version "$version" --wait 15 --case clean', '--version "$version" --case clean'], doc: null },
       { what: 'the re-run stops naming the case', yml: ['--version "$VERSION" --wait 15 --case clean', '--version "$VERSION" --wait 15'], doc: null },
-      { what: 'the publishing job is given a timeout under its own wait', yml: ['    timeout-minutes: 50\n', '    timeout-minutes: 10\n'], doc: null },
+      { what: 'the publishing job is given a timeout under its own wait', yml: ['    timeout-minutes: 40\n', '    timeout-minutes: 10\n'], doc: null },
       { what: 'the document states a wait the workflow does not pass', yml: null, doc: ['--wait 15', '--wait 5'] },
       { what: 'the document drops the row for the not-served exit code', yml: null, doc: ['| `3` |', '| `9` |'] },
       { what: 'the confirmation job is renamed', yml: ['\n  confirm:\n', '\n  reconfirm:\n'], doc: null, quiet: true },
@@ -67674,7 +67682,8 @@ function runCurrencySuite(): number {
         }
       };
       const release = parse('release.yml', releaseYml);
-      const ci = parse('ci.yml', ciYml);
+      // Since issue #1249 the selftest job is selftest-shards.yml's, which ci.yml and release.yml both call.
+      const ci = parse('selftest-shards.yml', ciYml);
       if (release === null || ci === null) return faults;
 
       /** The one job whose steps run `gated`, the index of that step, and the index of the fetch in it. */
@@ -67709,7 +67718,7 @@ function runCurrencySuite(): number {
         return { job, steps, gate, fetch };
       };
       const publish = pairIn('release.yml', release, 'npm publish', (step) => /\bnpm publish\b/.test(step.run ?? ''));
-      const test = pairIn('ci.yml', ci, 'bun run selftest', (step) => runsExactly(step, 'bun run selftest'));
+      const test = pairIn('selftest-shards.yml', ci, 'bun run selftest', (step) => runsExactly(step, 'bun run selftest'));
       // The pairing is read only when both halves were found; the document
       // below is read either way, so a tree carrying both faults names both.
       if (publish !== null && test !== null) {
@@ -67725,7 +67734,7 @@ function runCurrencySuite(): number {
         const envOf = (step: CorpusStep): string => JSON.stringify(Object.entries(step.env ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
         if (envOf(releaseFetch) !== envOf(ciFetch)) {
           faults.push(
-            `release.yml: the fetch in job "${publish.job}" runs with env ${envOf(releaseFetch)} and ci.yml's in job "${test.job}" with ` +
+            `release.yml: the fetch in job "${publish.job}" runs with env ${envOf(releaseFetch)} and selftest-shards.yml's in job "${test.job}" with ` +
               `${envOf(ciFetch)}, so the two gates fetch under different rate limits and can read different corpora`,
           );
         }
@@ -67752,13 +67761,13 @@ function runCurrencySuite(): number {
     };
 
     const releaseText = readFileSync(join(root, '.github', 'workflows', 'release.yml'), 'utf8');
-    const ciText = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    const ciText = readFileSync(join(root, '.github', 'workflows', 'selftest-shards.yml'), 'utf8');
     const releasingText = readFileSync(join(root, 'RELEASING.md'), 'utf8');
     const standing = corpusFaults(releaseText, ciText, releasingText);
     const edit = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.split(from).join(to) : null);
+    // Since issue #1249 the publishing job is held to the release by its own `if:`, so neither step carries one.
     const fetchStep =
       '      - name: Fetch the Spine example corpus\n' +
-      "        if: ${{ steps.release.outputs.release_created == 'true' }}\n" +
       '        run: bun run fetch-examples\n' +
       '        env:\n' +
       '          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n\n';
@@ -67771,8 +67780,12 @@ function runCurrencySuite(): number {
       { what: 'the fetch step is dropped from release.yml', release: edit(releaseText, fetchStep, '') },
       { what: 'the fetch step is moved after the publish', release: moved },
       {
-        what: 'the fetch step loses its `if:`',
-        release: edit(releaseText, "        if: ${{ steps.release.outputs.release_created == 'true' }}\n        run: bun run fetch-examples\n", '        run: bun run fetch-examples\n'),
+        what: 'the fetch step gains an `if:` the publish does not carry',
+        release: edit(
+          releaseText,
+          '      - name: Fetch the Spine example corpus\n        run: bun run fetch-examples\n',
+          "      - name: Fetch the Spine example corpus\n        if: ${{ github.event_name == 'workflow_dispatch' }}\n        run: bun run fetch-examples\n",
+        ),
       },
       {
         what: 'the release fetch loses the token ci.yml passes',
@@ -67788,7 +67801,7 @@ function runCurrencySuite(): number {
         ),
       },
       {
-        what: "ci.yml's own fetch is moved after its selftest",
+        what: "selftest-shards.yml's own fetch is moved after its selftest",
         release: releaseText,
         ci: ((): string | null => {
           const at = ciText.indexOf('      - name: Fetch the Spine example corpus\n');
@@ -67799,7 +67812,7 @@ function runCurrencySuite(): number {
           return edit(ciText.replace(step, ''), selftest, `${selftest}\n${step.slice(0, -1)}`);
         })(),
       },
-      { what: 'the release fetch step is renamed', release: edit(releaseText, 'name: Fetch the Spine example corpus\n        if:', 'name: Examples\n        if:'), quiet: true },
+      { what: 'the release fetch step is renamed', release: edit(releaseText, 'name: Fetch the Spine example corpus\n        run:', 'name: Examples\n        run:'), quiet: true },
     ];
     const plantProbes: string[] = [];
     const plantCases: string[] = [];
@@ -67827,7 +67840,7 @@ function runCurrencySuite(): number {
         corpusHeld,
         [...standing, ...plantProbes],
         `release.yml's publishing job runs \`${FETCH}\` before \`npm publish\`, under the publish's own \`if:\` and with ` +
-          "the environment ci.yml's selftest job fetches with, as that job does before `bun run selftest`, and " +
+          "the environment selftest-shards.yml's shard job — ci.yml's gate and release.yml's — fetches with, as that job does before `bun run selftest`, and " +
           `RELEASING.md's \`prepublishOnly\` paragraph names the fetch and not the retired premise — over ${plants.length} ` +
           `plant(s): ${plantCases.join('; ')}`,
       ),
@@ -67835,6 +67848,311 @@ function runCurrencySuite(): number {
         'tag and the GitHub release existed, because the workflow and RELEASING.md both said the selftest needs no ' +
         'corpus. Red on the tree before #1003 — no fetch step in the publishing job',
     );
+  }
+
+  // --- CUR119/CUR120: the release run's graph, and the one gate both workflows call (issue #1249)
+  //
+  // ⏱️ The publish ran the whole selftest in one process on one runner —
+  // `Publish to npm` 18m37s of a ~21-minute run (v2.20.0) — where CI runs it as
+  // six shards and a merge. So release.yml now calls the same shards and merge
+  // over the tag (`gate`) and `prepublishOnly` reads the merged tally they wrote
+  // instead of running them again. That trade is only sound in one order, and
+  // CUR119 holds it: release-please first, the gate on its tag under the
+  // release condition, the publish after the gate with the corpus fetched and
+  // the tally downloaded first, `RIGC_PREPUBLISH_TALLY` set on the publish step
+  // and nowhere else, the OIDC token on the publish job alone, and a dispatch
+  // reaching only the confirmation. CUR120 holds the other half of the premise:
+  // the gate release.yml reads is the gate ci.yml reads — one reusable workflow,
+  // called by both, and no second definition of the shards anywhere in the tree.
+  {
+    interface GraphStep {
+      name?: string;
+      run?: string;
+      uses?: string;
+      if?: string;
+      env?: Record<string, string>;
+      with?: Record<string, string>;
+    }
+    interface GraphJob {
+      needs?: string | string[];
+      if?: string;
+      uses?: string;
+      with?: Record<string, string>;
+      env?: Record<string, string>;
+      permissions?: Record<string, string> | string;
+      outputs?: Record<string, string>;
+      steps?: GraphStep[];
+    }
+    interface GraphWorkflow {
+      on?: Record<string, unknown>;
+      env?: Record<string, string>;
+      permissions?: Record<string, string> | string;
+      jobs?: Record<string, GraphJob>;
+    }
+    const SHARDS_FILE = 'selftest-shards.yml';
+    const SHARDS_USES = `./.github/workflows/${SHARDS_FILE}`;
+    const TALLY_ARTIFACT = 'selftest-merged-tally';
+    const FETCH = 'bun run fetch-examples';
+    const parseAll = (texts: Record<string, string>, faults: string[]): Record<string, GraphWorkflow> | null => {
+      const parsed: Record<string, GraphWorkflow> = {};
+      for (const [file, text] of Object.entries(texts)) {
+        try {
+          parsed[file] = Bun.YAML.parse(text) as GraphWorkflow;
+        } catch (error) {
+          faults.push(`${file} does not parse as YAML: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      return faults.length > 0 ? null : parsed;
+    };
+    const needsOf = (job: GraphJob): string[] => (job.needs === undefined ? [] : Array.isArray(job.needs) ? job.needs : [job.needs]);
+    const runLines = (step: GraphStep): string[] => (step.run ?? '').split('\n').map((line) => line.trim());
+    const heldToPush = (job: GraphJob): boolean => /github\.event_name\s*==\s*'push'/.test(job.if ?? '');
+
+    // --- CUR119 ----------------------------------------------------------------
+    const graphFaults = (releaseYml: string, otherYml: Record<string, string>): string[] => {
+      const faults: string[] = [];
+      const all = parseAll({ 'release.yml': releaseYml, ...otherYml }, faults);
+      if (all === null) return faults;
+      const wf = all['release.yml'];
+      const jobs = Object.entries(wf.jobs ?? {});
+      const one = (what: string, match: (job: GraphJob) => boolean): [string, GraphJob] | null => {
+        const found = jobs.filter(([, job]) => match(job));
+        if (found.length !== 1) {
+          faults.push(`release.yml: ${found.length} job(s) ${what} where exactly one does`);
+          return null;
+        }
+        return found[0];
+      };
+      const plan = one('run release-please', (job) => (job.steps ?? []).some((step) => /release-please/.test(step.uses ?? '')));
+      const gate = one(`call ${SHARDS_FILE}`, (job) => job.uses === SHARDS_USES);
+      const publish = one('run `npm publish`', (job) => (job.steps ?? []).some((step) => /\bnpm publish\b/.test(step.run ?? '')));
+      if (plan === null || gate === null || publish === null) return faults;
+      const [planName, planJob] = plan;
+      const [gateName, gateJob] = gate;
+      const [publishName, publishJob] = publish;
+      const created = new RegExp(`needs\\.${planName}\\.outputs\\.release_created\\s*==\\s*'true'`);
+
+      // The order: plan → gate → publish, each held to the push and to the release.
+      if (!needsOf(gateJob).includes(planName)) faults.push(`release.yml: job "${gateName}" does not need "${planName}", so the gate can start before a tag exists`);
+      if (!needsOf(publishJob).includes(gateName)) faults.push(`release.yml: job "${publishName}" does not need "${gateName}", so it can publish over a gate that has not run or went red`);
+      if (!needsOf(publishJob).includes(planName)) faults.push(`release.yml: job "${publishName}" does not need "${planName}", so it cannot read the tag it publishes`);
+      for (const [name, job] of [gate, publish]) {
+        if (!heldToPush(job) || !created.test(job.if ?? '')) {
+          faults.push(`release.yml: job "${name}" runs under \`if: ${job.if ?? '(none)'}\`, which does not hold it to a push that created a release (${planName}'s release_created)`);
+        }
+      }
+      if (!heldToPush(planJob)) faults.push(`release.yml: job "${planName}" runs release-please under \`if: ${planJob.if ?? '(none)'}\`, which does not hold it to a push`);
+      if (!new RegExp(`needs\\.${planName}\\.outputs\\.tag_name`).test(gateJob.with?.ref ?? '')) {
+        faults.push(`release.yml: job "${gateName}" calls ${SHARDS_FILE} with ref ${JSON.stringify(gateJob.with?.ref ?? null)}, not the tag "${planName}" made, so the gate reads another tree than the publish`);
+      }
+
+      // The publish job's steps: the fetch and the tally before the publish, the variable on the publish alone.
+      const steps = publishJob.steps ?? [];
+      const at = steps.findIndex((step) => /\bnpm publish\b/.test(step.run ?? ''));
+      const fetch = steps.findIndex((step) => runLines(step).includes(FETCH));
+      const download = steps.findIndex((step) => /actions\/download-artifact/.test(step.uses ?? '') && step.with?.name === TALLY_ARTIFACT);
+      if (fetch === -1 || fetch > at) faults.push(`release.yml: job "${publishName}" runs \`${FETCH}\` at step ${fetch + 1}, not before the publish at step ${at + 1}, so a refused tally falls back to a selftest with no corpus`);
+      if (download === -1 || download > at) faults.push(`release.yml: job "${publishName}" downloads "${TALLY_ARTIFACT}" at step ${download + 1}, not before the publish at step ${at + 1}`);
+      const named = steps[at].env?.RIGC_PREPUBLISH_TALLY;
+      const into = download === -1 ? null : steps[download].with?.path ?? null;
+      if (named === undefined) faults.push(`release.yml: the publish step sets no RIGC_PREPUBLISH_TALLY, so the tally "${gateName}" wrote is never read and the publish runs the whole selftest again`);
+      else if (into === null || !named.startsWith(`${into}/`)) faults.push(`release.yml: RIGC_PREPUBLISH_TALLY names ${JSON.stringify(named)}, which is not under the path the tally is downloaded into (${JSON.stringify(into)})`);
+      const setters: string[] = [];
+      for (const [file, flow] of Object.entries(all)) {
+        if (flow.env?.RIGC_PREPUBLISH_TALLY !== undefined) setters.push(`${file}'s workflow env`);
+        for (const [name, job] of Object.entries(flow.jobs ?? {})) {
+          if (job.env?.RIGC_PREPUBLISH_TALLY !== undefined) setters.push(`${file} job "${name}"'s env`);
+          if (Object.values(job.with ?? {}).some((value) => String(value).includes('RIGC_PREPUBLISH_TALLY'))) setters.push(`${file} job "${name}"'s with`);
+          (job.steps ?? []).forEach((step, k) => {
+            const self = file === 'release.yml' && name === publishName && k === at;
+            if (!self && step.env?.RIGC_PREPUBLISH_TALLY !== undefined) setters.push(`${file} job "${name}" step ${k + 1}'s env`);
+            if ((step.run ?? '').includes('RIGC_PREPUBLISH_TALLY')) setters.push(`${file} job "${name}" step ${k + 1}'s run`);
+          });
+        }
+      }
+      if (setters.length > 0) faults.push(`RIGC_PREPUBLISH_TALLY is set beyond the publish step, in ${setters.join(', ')}`);
+
+      // Permissions: the OIDC token on the publish job and nowhere else.
+      const writesToken = (perms: GraphJob['permissions']): boolean =>
+        perms === 'write-all' || (typeof perms === 'object' && perms !== null && perms['id-token'] === 'write');
+      if (writesToken(wf.permissions)) faults.push('release.yml: the workflow grants `id-token: write` to every job');
+      for (const [name, job] of jobs) {
+        if (name !== publishName && writesToken(job.permissions)) faults.push(`release.yml: job "${name}" holds \`id-token: write\`, which only the publish needs`);
+      }
+      if (!writesToken(publishJob.permissions)) faults.push(`release.yml: job "${publishName}" holds no \`id-token: write\`, so trusted publishing has no token to exchange`);
+
+      // A dispatch reaches the confirmation and nothing else.
+      if (wf.on?.workflow_dispatch === undefined) faults.push('release.yml takes no `workflow_dispatch`, so this clause reads nothing');
+      const dispatched = jobs.filter(([, job]) => !heldToPush(job)).map(([name]) => name);
+      for (const name of dispatched) {
+        const job = wf.jobs?.[name] ?? {};
+        const confirms = /github\.event_name\s*==\s*'workflow_dispatch'/.test(job.if ?? '') && job.uses === undefined && (job.steps ?? []).every((step) => !/\bnpm publish\b/.test(step.run ?? '') && !/release-please/.test(step.uses ?? '')) && (job.steps ?? []).some((step) => runLines(step).some((line) => line.startsWith('bun run smoke')));
+        if (!confirms) faults.push(`release.yml: job "${name}" is not held to a push and is not the confirmation, so a workflow_dispatch reaches it`);
+      }
+      if (dispatched.length !== 1) faults.push(`release.yml: ${dispatched.length} job(s) run on a dispatch, where the confirmation alone does`);
+      return faults;
+    };
+
+    // --- CUR120 ----------------------------------------------------------------
+    const oneGateFaults = (texts: Record<string, string>): string[] => {
+      const faults: string[] = [];
+      const all = parseAll(texts, faults);
+      if (all === null) return faults;
+      const shards = all[SHARDS_FILE];
+      if (shards === undefined) return [`there is no .github/workflows/${SHARDS_FILE}`];
+      if (shards.on?.workflow_call === undefined) faults.push(`${SHARDS_FILE} is not a reusable workflow (no \`on.workflow_call\`), so nothing can call it`);
+      // Where the shards are defined: a step running the selftest under RIGC_SHARD, or a merge.
+      for (const [file, flow] of Object.entries(all)) {
+        for (const [name, job] of Object.entries(flow.jobs ?? {})) {
+          for (const step of job.steps ?? []) {
+            const shardRun = runLines(step).includes('bun run selftest') && step.env?.RIGC_SHARD !== undefined;
+            const merge = runLines(step).some((line) => /selftest\.ts\s+--merge\b/.test(line));
+            if ((shardRun || merge) && file !== SHARDS_FILE) faults.push(`${file} job "${name}" ${shardRun ? 'runs a shard' : 'merges shards'} of its own, a second definition of the gate beside ${SHARDS_FILE}`);
+          }
+        }
+      }
+      const shardJobs = Object.entries(shards.jobs ?? {}).filter(([, job]) => (job.steps ?? []).some((step) => runLines(step).includes('bun run selftest') && step.env?.RIGC_SHARD !== undefined));
+      const mergeSteps = Object.values(shards.jobs ?? {}).flatMap((job) => (job.steps ?? []).filter((step) => runLines(step).some((line) => /selftest\.ts\s+--merge\b/.test(line))));
+      if (shardJobs.length !== 1) faults.push(`${SHARDS_FILE}: ${shardJobs.length} job(s) run the shards, where one matrix does`);
+      if (mergeSteps.length !== 1) faults.push(`${SHARDS_FILE}: ${mergeSteps.length} step(s) run \`--merge\`, where one does`);
+      else {
+        const tallyOut = /--tally-out\s+"?([^"\s]+)"?/.exec(mergeSteps[0].run ?? '')?.[1] ?? null;
+        const upload = Object.values(shards.jobs ?? {}).flatMap((job) => job.steps ?? []).find((step) => /actions\/upload-artifact/.test(step.uses ?? '') && step.with?.name === TALLY_ARTIFACT);
+        if (tallyOut === null) faults.push(`${SHARDS_FILE}: the merge writes no \`--tally-out\`, so there is no merged tally for a publish to read`);
+        else if (upload === undefined) faults.push(`${SHARDS_FILE}: no step uploads "${TALLY_ARTIFACT}"`);
+        else if (upload.with?.path?.replace('${{ runner.temp }}', '$RUNNER_TEMP') !== tallyOut) faults.push(`${SHARDS_FILE}: "${TALLY_ARTIFACT}" uploads ${JSON.stringify(upload.with?.path ?? null)} and the merge writes ${JSON.stringify(tallyOut)}`);
+      }
+      // Both callers call it.
+      for (const caller of ['ci.yml', 'release.yml']) {
+        const flow = all[caller];
+        const calls = Object.entries(flow?.jobs ?? {}).filter(([, job]) => job.uses === SHARDS_USES);
+        if (calls.length !== 1) faults.push(`${caller}: ${calls.length} job(s) call ${SHARDS_FILE}, where one does`);
+      }
+      // ci.yml's `test` is the required check, and it reads the merge's verdict.
+      const ci = all['ci.yml'];
+      const caller = Object.entries(ci?.jobs ?? {}).find(([, job]) => job.uses === SHARDS_USES)?.[0];
+      const test = ci?.jobs?.test;
+      if (test === undefined) faults.push('ci.yml has no job named `test`, which is the check pull requests are required to pass');
+      else if (caller !== undefined) {
+        const reads = (test.steps ?? []).some((step) => Object.values(step.env ?? {}).some((value) => value.includes(`needs.${caller}.outputs.verdict`)));
+        if (!needsOf(test).includes(caller) || !reads) faults.push(`ci.yml's \`test\` does not need "${caller}" and read its \`verdict\` output, so the required check is not the merge's verdict`);
+      }
+      return faults;
+    };
+
+    const workflowsDir = join(root, '.github', 'workflows');
+    const texts: Record<string, string> = Object.fromEntries(
+      readdirSync(workflowsDir)
+        .filter((file) => /\.ya?ml$/.test(file))
+        .sort()
+        .map((file) => [file, readFileSync(join(workflowsDir, file), 'utf8')] as const),
+    );
+    const releaseText = texts['release.yml'] ?? '';
+    const others = Object.fromEntries(Object.entries(texts).filter(([file]) => file !== 'release.yml'));
+    const once = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.replace(from, to) : null);
+    const runPlants = (
+      standing: string[],
+      plants: Array<{ what: string; edit: string | null | Record<string, string | null>; quiet?: boolean }>,
+      check: (edited: Record<string, string>) => string[],
+    ): { probes: string[]; cases: string[] } => {
+      const probes: string[] = [];
+      const cases: string[] = [];
+      for (const plant of plants) {
+        const edits = typeof plant.edit === 'string' || plant.edit === null ? { 'release.yml': plant.edit } : plant.edit;
+        if (Object.values(edits).some((text) => text === null)) {
+          probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+          continue;
+        }
+        const raised = raisedBy(check({ ...texts, ...(edits as Record<string, string>) }), { was: standing });
+        if (plant.quiet === true) {
+          if (raised.length > 0) probes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+          cases.push(`${plant.what} -> quiet`);
+          continue;
+        }
+        if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+        cases.push(`${plant.what} -> ${raised.length}`);
+      }
+      return { probes, cases };
+    };
+
+    {
+      const check = (edited: Record<string, string>): string[] =>
+        graphFaults(edited['release.yml'] ?? '', Object.fromEntries(Object.entries(edited).filter(([file]) => file !== 'release.yml')));
+      const standing = check(texts);
+      const gateIf = "    if: ${{ github.event_name == 'push' && needs.plan.outputs.release_created == 'true' }}\n    permissions:\n      contents: read # check out the tag\n    uses:";
+      const downloadStep = releaseText.slice(releaseText.indexOf('      - name: Download the merged tally the gate wrote\n'), releaseText.indexOf('      # `RIGC_PREPUBLISH_TALLY` is set on this step'));
+      const moved = ((): string | null => {
+        if (!downloadStep.startsWith('      - name: Download')) return null;
+        const without = releaseText.replace(downloadStep, '');
+        const confirm = '      # ROADMAP.md\'s fourth condition';
+        return without.includes(confirm) ? without.replace(confirm, `${downloadStep}${confirm}`) : null;
+      })();
+      const { probes, cases } = runPlants(
+        standing,
+        [
+          { what: 'the gate stops needing the plan', edit: once(releaseText, '    needs: plan\n', '') },
+          { what: 'the publish stops needing the gate', edit: once(releaseText, '    needs: [plan, gate]\n', '    needs: [plan]\n') },
+          { what: 'the gate loses the release condition', edit: once(releaseText, gateIf, gateIf.replace(" && needs.plan.outputs.release_created == 'true'", '')) },
+          { what: 'a dispatch reaches the gate', edit: once(releaseText, gateIf, gateIf.replace("github.event_name == 'push' &&", "github.event_name == 'workflow_dispatch' ||")) },
+          { what: 'the gate is called on the default branch rather than the tag', edit: once(releaseText, '      ref: ${{ needs.plan.outputs.tag_name }}\n\n', "      ref: ''\n\n") },
+          { what: 'the tally is downloaded after the publish', edit: moved },
+          { what: 'the publish step stops naming the tally', edit: once(releaseText, '        env:\n          RIGC_PREPUBLISH_TALLY:', '        env:\n          RIGC_UNREAD_TALLY:') },
+          { what: 'the variable is set on the whole publish job', edit: once(releaseText, '    timeout-minutes: 40\n', '    timeout-minutes: 40\n    env:\n      RIGC_PREPUBLISH_TALLY: /dev/null\n') },
+          { what: 'the plan job is handed the OIDC token', edit: once(releaseText, '      issues: write # release-please labels\n', '      issues: write # release-please labels\n      id-token: write\n') },
+          { what: 'the download step is renamed', edit: once(releaseText, 'name: Download the merged tally the gate wrote', 'name: Tally'), quiet: true },
+        ],
+        check,
+      );
+      const held = standing.length === 0 && probes.length === 0;
+      say(
+        'CUR119_RELEASE_YML_RUNS_PLAN_THEN_THE_SHARDED_GATE_ON_THE_TAG_THEN_A_PUBLISH_THAT_READS_ITS_TALLY_AND_A_DISPATCH_REACHES_ONLY_THE_CONFIRMATION',
+        held,
+        probeDetail(
+          held,
+          [...standing, ...probes],
+          `release.yml's ${Object.keys((Bun.YAML.parse(releaseText) as GraphWorkflow).jobs ?? {}).length} job(s) read as release-please, then ${SHARDS_FILE} on its tag under ` +
+            'the release condition, then a publish that needs the gate, fetches the corpus and downloads the merged tally before ' +
+            '`npm publish`, with RIGC_PREPUBLISH_TALLY on that step alone and `id-token: write` on that job alone, and a dispatch ' +
+            `that reaches the confirmation only — over ${cases.length} plant(s): ${cases.join('; ')}`,
+        ),
+        'issue #1249: the publish reads a tally instead of running the selftest, which is sound only if the tally is the gate over ' +
+          'this tag, run before the publish and handed to it alone',
+      );
+    }
+
+    {
+      const standing = oneGateFaults(texts);
+      const ciText = texts['ci.yml'] ?? '';
+      const shardsText = texts[SHARDS_FILE] ?? '';
+      const secondMatrix =
+        '\n  shard-again:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        shard: [1, 2]\n    steps:\n' +
+        '      - run: bun run selftest\n        env:\n          RIGC_SHARD: ${{ matrix.shard }}/2\n';
+      const { probes, cases } = runPlants(
+        standing,
+        [
+          { what: 'ci.yml grows a shard matrix of its own', edit: { 'ci.yml': `${ciText.trimEnd()}\n${secondMatrix}` } },
+          { what: 'release.yml merges shards itself', edit: { 'release.yml': once(releaseText, '      - name: Publish to npm\n', '      - run: bun selftest.ts --merge shard-1.json\n      - name: Publish to npm\n') } },
+          { what: 'release.yml calls another workflow', edit: { 'release.yml': once(releaseText, `uses: ${SHARDS_USES}`, 'uses: ./.github/workflows/selftest-release.yml') } },
+          { what: "ci.yml's test stops reading the merge's verdict", edit: { 'ci.yml': once(ciText, 'needs.selftest.outputs.verdict', 'needs.selftest.result') } },
+          { what: 'the merge stops writing the tally', edit: { [SHARDS_FILE]: once(shardsText, ' --tally-out "$RUNNER_TEMP/selftest_merged.json"', '') } },
+          { what: 'the shard job is renamed', edit: { [SHARDS_FILE]: once(shardsText, '    name: shard ${{ matrix.shard }}\n', '    name: part ${{ matrix.shard }}\n') }, quiet: true },
+        ],
+        oneGateFaults,
+      );
+      const held = standing.length === 0 && probes.length === 0;
+      say(
+        'CUR120_CI_AND_RELEASE_CALL_ONE_REUSABLE_SHARDED_GATE_AND_NO_OTHER_WORKFLOW_DEFINES_THE_SHARDS',
+        held,
+        probeDetail(
+          held,
+          [...standing, ...probes],
+          `${SHARDS_FILE} is a reusable workflow holding the one shard matrix and the one \`--merge\`, which writes the tally it ` +
+            `uploads as "${TALLY_ARTIFACT}"; ci.yml and release.yml each call it once and no workflow among ${Object.keys(texts).length} ` +
+            `runs a shard or a merge of its own, and ci.yml's \`test\` reads the merge's verdict — over ${cases.length} plant(s): ${cases.join('; ')}`,
+        ),
+        'issue #1249: release.yml reading a gate that is not the one CI reads would be #1003 again — two environments, one name',
+      );
+    }
   }
 
   // --- CUR113–CUR115: the package as an install receives it — spine-core a devDependency (issue #1061) --
@@ -112565,9 +112883,11 @@ interface ShardOutside {
  * `--memory-base-children` writes beside it. Nothing older reads a newer
  * document anyway (the merge refuses any document whose `source` is another
  * `selftest.ts`), so the word moved because a field was added, not to keep an
- * old reader out.
+ * old reader out. `/5` since issue #1249: the document states the commit its
+ * checkout was at, which the merge holds equal across the shards and writes
+ * into the merged document a publish reads.
  */
-const SHARD_DOCUMENT_SPEC = 'selftest-shard/4';
+const SHARD_DOCUMENT_SPEC = 'selftest-shard/5';
 
 /** A shard's tally document (`--tally-out`), the one thing `--merge` reads. */
 interface ShardDocument {
@@ -112575,6 +112895,8 @@ interface ShardDocument {
   shard: ShardSpec;
   /** sha256 of the `selftest.ts` that wrote it: a merge of two trees' shards is two runs, not one. */
   source: string;
+  /** The commit its checkout was at, `git rev-parse HEAD`, or `null` where that could not be read (issue #1249). */
+  commit: string | null;
   /** The registration list it saw, in order — the shard key. */
   registered: string[];
   /**
@@ -112602,6 +112924,13 @@ interface ShardDocument {
   jobs: number;
 }
 
+/** This checkout's commit, asked of git once and only by a process that writes a tally document (issue #1249). */
+let treeCommitRead: { sha: string | null } | null = null;
+function treeCommit(): string | null {
+  treeCommitRead ??= { sha: treeHead(import.meta.dir) };
+  return treeCommitRead.sha;
+}
+
 /** sha256 of this file as it is on disk — what every shard document and the merge compare. */
 function selftestSource(): string {
   return createHash('sha256').update(readFileSync(join(import.meta.dir, 'selftest.ts'))).digest('hex');
@@ -112622,6 +112951,7 @@ function shardDocument(
     spec: SHARD_DOCUMENT_SPEC,
     shard,
     source,
+    commit: treeCommit(),
     registered: [...tally.registered],
     owners: tally.registered.map((key, index) => (merge.has(key) ? 0 : tally.ownerOf(index, key))),
     run: tally.records.map((record) => ({
@@ -112640,6 +112970,44 @@ function shardDocument(
     platform: process.platform,
     bun: Bun.version,
     jobs: JOBS,
+  };
+}
+
+/**
+ * The merged run's document (`--merge … --tally-out`, issue #1249): what
+ * `scripts/prepublish_gate.ts` holds before a publish accepts this run in place
+ * of a one-process selftest. Every figure is read off the replay the merge just
+ * made — each suite's block from the shard that ran it, each shard's exit from
+ * its own document — and `exit` is the code this process is about to end with,
+ * so a red merge writes a red document rather than none.
+ */
+function mergedTallyDocument(tally: RunTally, replay: MergeReplay, source: string, exit: number): MergedTally {
+  const suites = tally.blocks.map((block) => {
+    const from = tally.origin.get(block.key) ?? -1;
+    return { suite: block.key, shard: from === -1 ? 0 : replay.docs[from].shard.i, cases: block.controls, fails: block.fails };
+  });
+  return {
+    spec: MERGED_TALLY_SPEC,
+    commit: treeCommit(),
+    source,
+    n: replay.docs[0]?.shard.n ?? 0,
+    registered: [...tally.registered],
+    shards: replay.docs.map((doc) => ({
+      i: doc.shard.i,
+      n: doc.shard.n,
+      commit: doc.commit ?? null,
+      source: doc.source,
+      exit: doc.exit,
+      suites: doc.run.length,
+      cases: doc.run.reduce((sum, record) => sum + record.block.controls, 0),
+      fails: doc.run.reduce((sum, record) => sum + record.block.fails, 0),
+    })),
+    suites,
+    cases: suites.reduce((sum, suite) => sum + suite.cases, 0),
+    fails: suites.reduce((sum, suite) => sum + suite.fails, 0),
+    exit,
+    platform: process.platform,
+    bun: Bun.version,
   };
 }
 
@@ -112720,6 +113088,13 @@ function mergeRefusals(given: readonly GivenDocument[], source: string): string[
   }
   for (let i = 1; i <= n; i++) {
     if (!byShard.has(i)) refusals.push(`shard ${i}/${n} is missing: no document was given for it, so the suites it runs were measured by nothing`);
+  }
+  // Issue #1249: one commit as well as one selftest.ts — a tree is more than its selftest, and the merged document states the commit.
+  const commits = [...new Set(given.map((g) => g.doc.commit ?? null))];
+  if (commits.length > 1) {
+    refusals.push(
+      `the documents were written at ${commits.length} commits: ${given.map((g) => `${label(g)} at ${String(g.doc.commit ?? null).slice(0, 12)}`).join(', ')} — shards of two commits are two runs`,
+    );
   }
   for (const g of given) {
     if (g.doc.source !== source) {
@@ -116284,6 +116659,103 @@ function runRunTallySuite(live: RunTally): number {
       );
     }
 
+    // --- TY46: the publish's tally reader accepts the merge's own document and refuses each plant by name (issue #1249) --
+    //
+    // `prepublishOnly` accepts a merged tally in place of the one-process
+    // selftest only when `tallyDecision` holds it to the tree being published.
+    // The genuine document is the WRITER's — `mergedTallyDocument` over a
+    // miniature merge of three shards — so the reader and the writer are held to
+    // one shape here rather than each to a description of it. Every plant is one
+    // edit of that document and has to come back refused under its own name;
+    // what the script does with a refusal (run the full selftest) is its
+    // `main`, which a decision cannot reach and this control does not run.
+    {
+      const probes: string[] = [];
+      const read: string[] = [];
+      const merged = miniature({ given: shardsOf(3) });
+      const replay = merged.tally.replay;
+      if (merged.refusal !== null || replay === null) {
+        probes.push(`the miniature merge of 3 shards did not replay: ${merged.refusal ?? 'no replay'}`);
+      } else {
+        const written = mergedTallyDocument(merged.tally, replay, SOURCE, 0);
+        // The writer states this checkout's commit; where there is none (no git), a stated one stands in, and the detail says so.
+        const STATED = '0123456789abcdef0123456789abcdef01234567';
+        const head = written.commit ?? STATED;
+        if (written.commit === null) read.push(`no commit could be read here, so ${STATED.slice(0, 12)}… stands in for it on the document and its shards`);
+        const genuine: MergedTally = JSON.parse(JSON.stringify({ ...written, commit: head, shards: written.shards.map((shard) => ({ ...shard, commit: shard.commit ?? STATED })) })) as MergedTally;
+        const tree: TallyTree = { head, dirty: [], source: SOURCE };
+        const path = 'ty46/selftest_merged.json';
+        const accepted = tallyDecision(genuine, path, tree);
+        if (!accepted.accepted) probes.push(`the merge's own document was refused: ${accepted.reasons.join('; ')}`);
+        else if (accepted.line !== `accepted tally ${path} for ${head}: ${genuine.registered.length} suites, ${genuine.cases} case lines, 0 FAIL`) probes.push(`the accepted line reads ${JSON.stringify(accepted.line)}`);
+        else read.push(`the merge's own document of ${genuine.shards.length} shards is accepted: "${accepted.line}"`);
+        const copy = (): MergedTally => JSON.parse(JSON.stringify(genuine)) as MergedTally;
+        const lastShard = genuine.shards.length;
+        const firstShardSuite = genuine.suites.findIndex((suite) => suite.shard === 1);
+        const plants: Array<[string, string, () => { doc: unknown; tree?: TallyTree }]> = [
+          ['another commit', 'TALLY_COMMIT', () => ({ doc: genuine, tree: { ...tree, head: 'f'.repeat(40) } })],
+          ['no HEAD to hold it to', 'TALLY_COMMIT', () => ({ doc: genuine, tree: { ...tree, head: null } })],
+          ['a shard at another commit', 'TALLY_COMMIT', () => {
+            const doc = copy();
+            doc.shards[0].commit = 'e'.repeat(40);
+            return { doc };
+          }],
+          ['a tree changed against its commit', 'TALLY_DIRTY', () => ({ doc: genuine, tree: { ...tree, dirty: [' M src/compile.ts'] } })],
+          ['another selftest.ts', 'TALLY_SOURCE', () => ({ doc: genuine, tree: { ...tree, source: 'another-source' } })],
+          ['a red shard', 'TALLY_SHARD_RED', () => {
+            const doc = copy();
+            doc.shards[0].exit = 1;
+            return { doc };
+          }],
+          ['a shard missing', 'TALLY_SHARD_MISSING', () => {
+            const doc = copy();
+            doc.shards = doc.shards.filter((shard) => shard.i !== lastShard);
+            return { doc };
+          }],
+          ['the merge exit forged to 1', 'TALLY_MERGE_EXIT', () => {
+            const doc = copy();
+            doc.exit = 1;
+            return { doc };
+          }],
+          ['a FAIL under a shard exit forged to 2', 'TALLY_FORGED', () => {
+            const doc = copy();
+            if (firstShardSuite !== -1) doc.suites[firstShardSuite].fails = 1;
+            return { doc };
+          }],
+          ['a suite missing', 'TALLY_SUITE_MISSING', () => {
+            const doc = copy();
+            doc.suites = doc.suites.slice(1);
+            return { doc };
+          }],
+          ['another format word', 'TALLY_SPEC', () => ({ doc: { ...copy(), spec: 'selftest-shard/5' } })],
+        ];
+        for (const [what, code, plant] of plants) {
+          const made = plant();
+          const decision = tallyDecision(made.doc, path, made.tree ?? tree);
+          if (decision.accepted) probes.push(`"${what}" was accepted: ${decision.line}`);
+          else if (!decision.reasons.some((reason) => reason.startsWith(`${code}: `))) probes.push(`"${what}" was refused as [${decision.reasons.join('; ')}], not ${code}`);
+          else read.push(`${what} -> ${code}`);
+        }
+        // The merge's own refusal (issue #1249): two shards' documents at two commits are two runs.
+        const pair = shardsOf(2);
+        const split = [pair[0], { ...pair[1], doc: { ...pair[1].doc, commit: pair[1].doc.commit === 'd'.repeat(40) ? 'c'.repeat(40) : 'd'.repeat(40) } }];
+        const splitRefusals = mergeRefusals(split, SOURCE);
+        if (mergeRefusals(pair, SOURCE).length > 0) probes.push(`a fair pair of shards was refused: ${mergeRefusals(pair, SOURCE).join('; ')}`);
+        else if (!splitRefusals.some((r) => r.includes('were written at 2 commits'))) probes.push(`two shards at two commits were refused as [${splitRefusals.join('; ') || 'nothing'}]`);
+        else read.push('two shards at two commits are refused by the merge');
+        // The variable is the script's only reading of the environment, named here so a rename is read.
+        if (PREPUBLISH_TALLY_VARIABLE !== 'RIGC_PREPUBLISH_TALLY') probes.push(`the reader reads ${PREPUBLISH_TALLY_VARIABLE}, which no workflow sets`);
+      }
+      const held = probes.length === 0;
+      say(
+        'TY46_THE_PUBLISH_ACCEPTS_THE_MERGES_OWN_TALLY_AT_ITS_COMMIT_AND_REFUSES_EVERY_OTHER_BY_NAME',
+        held,
+        probeDetail(held, probes, read.join('; ')),
+        'issue #1249: the publish runs the whole selftest in one process unless a merged tally proves the same gate already ran over ' +
+          'exactly this commit; a reader that accepted a red, partial or foreign tally would be a switch that skips the gate',
+      );
+    }
+
     // --- TY37: the build-root helper refuses a prefix that could leave the art's directory, by name (issue #1127) --
     {
       const probes: string[] = [];
@@ -119519,6 +119991,16 @@ function main(): void {
     writeFileSync(TALLY_OUT, `${JSON.stringify(doc)}\n`);
     console.log(`selftest: wrote ${TALLY_OUT}: shard ${tally.shard.i}/${tally.shard.n}, ${doc.run.length} suite(s) run, exit ${exit}`);
   };
+  // The merged run's document (issue #1249), written on every way a merge that
+  // read its documents ends, with the exit it ends on: the publish reads the
+  // exit, so a red merge says so in the file rather than leaving no file.
+  const writeMerged = (exit: number): void => {
+    if (tally.replay === null || TALLY_OUT === null) return;
+    const doc = mergedTallyDocument(tally, tally.replay, source, exit);
+    mkdirSync(dirname(TALLY_OUT), { recursive: true });
+    writeFileSync(TALLY_OUT, `${JSON.stringify(doc, null, 1)}\n`);
+    console.log(`selftest: wrote ${TALLY_OUT}: the merge of ${doc.shards.length} shard(s) at ${String(doc.commit)}, ${doc.suites.length} suite(s) over ${doc.cases} case line(s), exit ${exit}`);
+  };
 
   // A name `--only` gave that no `tally.of` above registers (issue #937). Read
   // off the calls that just ran rather than off a list kept beside them.
@@ -119544,6 +120026,7 @@ function main(): void {
     console.error('rigc selftest: this run cannot account for itself — that is not a pass, it is an empty gate');
     for (const fault of floorFaults) console.error(`  ${fault}`);
     writeShard(2, floorFaults, wallSeconds);
+    writeMerged(2);
     process.exit(2);
   }
   // ⏱️ Where the time went (issue #1116), before the verdict line so a red or
@@ -119596,6 +120079,7 @@ function main(): void {
       }
     }
     console.error(`rigc selftest: ${bad} control(s) failed`);
+    writeMerged(1);
     process.exit(1);
   }
   // 🧮 The memory ceiling (issue #1121), on the full run only — a partial run
@@ -119632,6 +120116,7 @@ function main(): void {
     const merged = mergedCeilingFaults(tally, tally.replay, memoryBase);
     if (merged.faults.length > 0) {
       for (const fault of merged.faults) console.error(`rigc selftest: ${fault}`);
+      writeMerged(1);
       process.exit(1);
     }
     console.log(`the memory ceiling, per process: ${merged.held.join('; ')}`);
@@ -119639,6 +120124,7 @@ function main(): void {
     const childrenWrite = WRITE_CHILDREN_BASE === null ? null : mergedChildrenBase(tally, tally.replay, memoryBase, process.platform, JOBS, RESET_CHILDREN_BASE);
     if (typeof childrenWrite === 'string') {
       console.error(`rigc selftest: --memory-base-children refused: ${childrenWrite}`);
+      writeMerged(2);
       process.exit(2);
     }
     // Issue #1128: the next deal's durations, off this merged run's own seconds — written, never typed.
@@ -120571,6 +121057,8 @@ function main(): void {
       (cuts.cuts > 0 ? `\n  + the extra suite gated ${cuts.cuts} registered cut(s) green` : '') +
       "\n  Each suite's own positive control is printed by name in its section above.",
   );
+  // After the summary, so nothing the summary reads can throw past a document that says 0.
+  writeMerged(0);
 }
 
 main();
