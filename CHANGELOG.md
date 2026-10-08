@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.2](https://github.com/firejune/rigc/compare/v2.20.1...v2.20.2) (2026-10-08)
+
+
+### Performance Improvements
+
+* **mesh:** each reduction step is measured by carrying the last step's rasters, distance transform and edge distances through the few triangles a removal changes — byte-identical on 18 recorded parts inputs, demo/bottomwear 32–34 s → 3.0–3.2 s on Nova WSL, 1101 candidates both ([#1246](https://github.com/firejune/rigc/issues/1246)) ([#1247](https://github.com/firejune/rigc/issues/1247)) ([b74a01d](https://github.com/firejune/rigc/commit/b74a01d6a641e0aa1ed997a85f7f52ea572a773e))
+
 ## [2.20.1](https://github.com/firejune/rigc/compare/v2.20.0...v2.20.1) (2026-10-08)
 
 
