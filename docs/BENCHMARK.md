@@ -1396,7 +1396,8 @@ docs/           AUTHORING.md (how to author a rig), BENCHMARK.md (this document)
                 GATE.md (the clause statements a candidate is graded against),
                 LADDER.md (live rung status), SPEC_COVERAGE.md (format reference),
                 SURVEY_2026-08-22.md (the dated survey), feature_matrix.{csv,json}
-.github/        workflows/ — ci.yml (the gates) and release.yml (release-please)
+.github/        workflows/ — ci.yml (the gates), selftest-shards.yml (the sharded selftest
+                both call) and release.yml (release-please and the publish)
 CONTRIBUTING.md how to propose a change; RELEASING.md — how a version is cut
 ```
 

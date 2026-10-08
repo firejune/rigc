@@ -140,7 +140,9 @@ the commit that introduces these files, and is not maintained afterwards.
    for why the branch name is not worth memorising.
 6. **Merge it.** That is the cut.
 7. Watch the second `release` run: it tags `vX.Y.Z`, creates the GitHub release,
-   and publishes. Its last step confirms the published package installs and
+   runs the selftest's six shards and their merge on the tag (`gate`), and
+   publishes (`publish`, whose log says which tally it accepted — see
+   *Publishing* below). Its last step confirms the published package installs and
    builds, waiting up to 15 minutes for the registry to serve it — if that step
    ends saying the confirmation was NOT taken, the registry was still
    processing and nothing is wrong with the cut: re-run the confirmation
@@ -262,7 +264,7 @@ string a program outside this tree decides on.
 `vX.Y.Z` — checks out that tag and publishes it. It authenticates over OIDC (npm
 trusted publishing): the runner exchanges a short-lived GitHub token for a
 publish grant, so there is no `NPM_TOKEN` in this repository and no OTP to type.
-That is what `id-token: write` in the job's permissions is for, and it is also
+That is what `id-token: write` in the `publish` job's permissions is for, and it is also
 what lets the publish carry `--provenance`. The registry side of it is
 configured — the fields are recorded below, and nothing there is outstanding.
 
@@ -274,19 +276,67 @@ the command as `rigc`, so only the registry entry changed. `spine-rigc@0.2.1`
 went up by hand, before the automation existed; every version after it is the
 workflow's.
 
-`prepublishOnly` runs `bun run typecheck && bun run lint && bun run selftest`
-before npm packs anything, so a tree that fails its own gates cannot be
-published — by the workflow or by hand. It is the same three commands CI runs on
+`prepublishOnly` runs `scripts/prepublish_gate.ts` before npm packs anything,
+so a tree that fails its own gates cannot be published — by the workflow or by
+hand. It runs `bun run typecheck` and `bun run lint` and then the selftest, the
+same gate CI runs on
 every push, and they run over the same corpus: the publish job runs
-`bun run fetch-examples` before `npm publish`, exactly as each of `ci.yml`'s
-`shard` jobs runs it before its share of the selftest. (CI runs the selftest as
-six shards whose merge, the `test` job, is the verdict — issue #1116; the
-publish gate runs it in one process, and `TY28` holds that a merge ends as the
-one-process run does.) Without `examples/` the core suite's corpus
-controls are red rather than HOLEs — a construct no row reaches is never a pass
-— so a publish gate with no corpus measures a different environment from the
-one CI admitted every commit in, and v1.6.0 was tagged and then refused by it on exactly those
-controls (issue #1003). `CUR112` holds the two workflows to that order.
+`bun run fetch-examples` before `npm publish`, as each of the shard jobs runs it
+before its share of the selftest. The selftest comes by one of two paths:
+
+- **`RIGC_PREPUBLISH_TALLY` unset** — by hand, or anywhere else — the full
+  selftest in this process, `bun run selftest`, which is what `prepublishOnly`
+  ran before issue #1249.
+- **`RIGC_PREPUBLISH_TALLY=<path>`** — the release run — the merged tally
+  document the run's `gate` job wrote, read and held to the tree being
+  published. It is accepted only when its commit is that tree's
+  `git rev-parse HEAD`, the tree has no change against that commit, the
+  `selftest.ts` that wrote it is the one on disk, every shard of its declared
+  count is in it once and exited 2 over no FAIL line, the merge exited 0 over
+  no FAIL line, and every registered suite is in it exactly once. Anything else
+  — no file, a file that is not one, another commit, a red, partial or
+  inconsistent tally — prints each reason under its name (`TALLY_COMMIT`,
+  `TALLY_DIRTY`, `TALLY_SOURCE`, `TALLY_SHARD_MISSING`, `TALLY_SHARD_RED`,
+  `TALLY_MERGE_EXIT`, `TALLY_FORGED`, `TALLY_SUITE_MISSING`, `TALLY_SPEC`,
+  `TALLY_ABSENT`) and runs the full selftest instead. There is no other
+  variable, flag or shortcut: the variable names evidence that is checked, and
+  evidence that does not check out is a reason to run the gate, never to skip
+  it. `TY46` drives the reader over the merge's own document and one plant per
+  refusal.
+
+**Reading the publish step's log.** On the accepted path the step prints, after
+typecheck and lint,
+
+```text
+prepublish: accepted tally <path> for <sha>: <n> suites, <m> case lines, 0 FAIL
+```
+
+— `<sha>` is the commit the gate ran at and this tree is at, `<n>` the
+registered suites and `<m>` the case lines the merged run printed. A step that
+prints `prepublish: the tally RIGC_PREPUBLISH_TALLY names was NOT accepted, so
+the full selftest runs:` followed by its reasons is the fallback: the publish
+is still gated, by a one-process selftest in this job, and takes the ~19 minutes
+that costs. That is a cut to read, not one that went wrong — the reasons say
+which clause the tally failed.
+
+**What runs where.** `release.yml`'s release push is `plan` (release-please:
+the release commit, the tag, the GitHub release) → `gate` (the selftest as six
+shards and their merge, `selftest-shards.yml`, on the tag — the same reusable
+workflow `ci.yml` calls on every change, so the two cannot drift; `CUR120`) →
+`publish` (check out the tag, fetch the corpus, download the
+`selftest-merged-tally` artifact, `npm publish` with `RIGC_PREPUBLISH_TALLY` set
+on that step alone) → the confirmation. `CUR119` holds that order, the release
+condition on `gate` and `publish`, the OIDC token on `publish` alone, and a
+`workflow_dispatch` reaching only `confirm`. The publish job fetches the corpus
+even when the tally is accepted, because the fallback has to read the tree the
+gate read. Without `examples/` the core suite's corpus controls are red rather
+than HOLEs — a construct no row reaches is never a pass — so a publish gate with
+no corpus measures a different environment from the one CI admitted every
+commit in, and v1.6.0 was tagged and then refused by it on exactly those
+controls (issue #1003). `CUR112` holds the two workflows to that order. ⚠️ The
+tag and the GitHub release exist before `gate` runs, as they did before the
+publish's own selftest: a red gate leaves a tagged, released, unpublished
+version — the shape v1.6.0 was left in.
 There is no build step to guard: the package ships its TypeScript sources and
 bun runs them.
 
@@ -786,9 +836,10 @@ exit 3 now, and the line says it was the tarball that never came.
 
 **Re-running a confirmation costs nothing and publishes nothing.** Actions →
 **release** → **Run workflow**, with the version (no leading `v`). That dispatch
-runs the `confirm` job only: the `release` job carrying release-please, the tag,
-the GitHub release and `npm publish` is held to `if: github.event_name ==
-'push'`, so a dispatch skips it whole. By hand, from a checkout of the tag:
+runs the `confirm` job only: the `plan`, `gate` and `publish` jobs carrying
+release-please, the tag, the GitHub release, the sharded gate and `npm publish`
+are each held to `github.event_name == 'push'` in their `if:`, so a dispatch
+skips all three (`CUR119`). By hand, from a checkout of the tag:
 
 ```sh
 bun run smoke -- --source registry --version <version> --case clean
