@@ -364,6 +364,8 @@ const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
  * surface* says why an agreed contract is the one exception to "observed".
  */
 const AGREED_IN_1224 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1), issue #1224';
+/** The dependant's automatic mesh mode read (spine-parts c03dd8a, its PR #131): two types of the agreed row it uses that no row had recorded — found by rigc#1238 D1, recorded by #1241. */
+const OBSERVED_IN_131 = 'spine-parts c03dd8a (its PR #131), issue #1241';
 /**
  * The second agreed row: the motion comparison, which the same contract puts
  * on an entry of its own, `spine-rigc/meshcompare` (docs/MESH_REDUCTION.md P1
@@ -460,6 +462,13 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
       'DeformTimelineInput',
       'DeformKeyInput',
     ],
+  },
+  {
+    entry: './mesh',
+    observed: OBSERVED_IN_131,
+    needsRuntime: false,
+    values: { reduceMesh: 'function' },
+    types: ['SourceMesh', 'RefinementRegion'],
   },
   {
     entry: './meshcompare',
