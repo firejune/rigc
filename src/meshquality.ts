@@ -69,7 +69,7 @@ import {
   type MeshOutline,
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
-import { artRastersOf, type ArtRasters } from './meshrasters.ts';
+import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
 // ---------------------------------------------------------------------------
@@ -852,13 +852,15 @@ function pointToBoundary(p: Pt, poly: readonly Pt[]): { d: number; edge: number 
  * value already found is dropped; the rest are halved. No sampling density is
  * chosen, so nothing here can miss a maximum between two samples.
  */
-function directedHausdorff(a: readonly Pt[], b: readonly Pt[]): { d: number; edge: number; at: Pt } {
+function directedHausdorff(a: readonly Pt[], b: readonly Pt[], carried: ((p: Pt) => Float64Array) | null = null): { d: number; edge: number; at: Pt } {
   const m = b.length;
-  const toEach = (p: Pt): Float64Array => {
-    const out = new Float64Array(m);
-    for (let j = 0; j < m; j++) out[j] = distanceToSegment(p, b[j], b[(j + 1) % m]);
-    return out;
-  };
+  const toEach =
+    carried ??
+    ((p: Pt): Float64Array => {
+      const out = new Float64Array(m);
+      for (let j = 0; j < m; j++) out[j] = distanceToSegment(p, b[j], b[(j + 1) % m]);
+      return out;
+    });
   const minOf = (g: Float64Array): number => {
     let v = Infinity;
     for (let j = 0; j < m; j++) v = Math.min(v, g[j]);
@@ -905,11 +907,134 @@ function directedHausdorff(a: readonly Pt[], b: readonly Pt[]): { d: number; edg
  * taken on when the worst point is the candidate's, else the candidate edge
  * nearest the reference's worst point.
  */
-function hausdorff(candidate: readonly Pt[], reference: readonly Pt[]): { d: number; candidateEdge: number } {
-  const forward = directedHausdorff(candidate, reference);
-  const backward = directedHausdorff(reference, candidate);
+function hausdorff(candidate: readonly Pt[], reference: readonly Pt[], carried: { forward: (p: Pt) => Float64Array; backward: (p: Pt) => Float64Array } | null = null): { d: number; candidateEdge: number } {
+  const forward = directedHausdorff(candidate, reference, carried?.forward ?? null);
+  const backward = directedHausdorff(reference, candidate, carried?.backward ?? null);
   if (forward.d >= backward.d) return { d: forward.d, candidateEdge: forward.edge };
   return { d: backward.d, candidateEdge: pointToBoundary(backward.at, candidate).edge };
+}
+
+/** A point as a key: both coordinates' shortest round-trip decimals, a negative zero told from a positive one. */
+function pointKey(p: Pt): string {
+  const k = (v: number): string => (v === 0 && 1 / v < 0 ? '-0' : String(v));
+  return `${k(p[0])},${k(p[1])}`;
+}
+
+/**
+ * `hausdorff`'s point-to-edge distance lists for one outline slot of a
+ * reduction, carried from the slot's last reading (`OutlineMemo`, issue #1246).
+ * Every list is the one `directedHausdorff` computes — `distanceToSegment(p,
+ * b[j], b[(j + 1) % m])` for every edge `j` — had in one of three ways, each
+ * the same function of the same input:
+ *
+ * - **toward the polygon read against** (fixed in a reduction): the list
+ *   kept for the same point, handed back whole while that polygon is equal;
+ * - **toward the outline**, which a step changes: the last reading's list for
+ *   the same point, each distance copied when its edge — both ends, exactly —
+ *   is an edge of the last outline, and computed when it is not;
+ * - anything else: computed.
+ */
+function carriedDistances(
+  memo: OutlineMemo,
+  outline: readonly Pt[],
+  against: readonly Pt[],
+  steps: StepRasters,
+): { forward: (p: Pt) => Float64Array; backward: (p: Pt) => Float64Array; commit: () => void } {
+  const { tally, plant } = steps;
+  memo.readings++;
+  const reading = memo.readings;
+  // The polygon read against: keep the lists while it is equal, coordinate by coordinate.
+  const againstFlat = new Float64Array(against.length * 2);
+  against.forEach((p, i) => {
+    againstFlat[i * 2] = p[0];
+    againstFlat[i * 2 + 1] = p[1];
+  });
+  const sameAgainst = memo.against !== null && memo.against.length === againstFlat.length && memo.against.every((v, i) => Object.is(v, againstFlat[i]));
+  if (!sameAgainst) {
+    memo.toAgainst.clear();
+    memo.against = againstFlat;
+  }
+  const ma = against.length;
+  const forward = (p: Pt): Float64Array => {
+    tally.distanceLists++;
+    const key = pointKey(p);
+    const kept = memo.toAgainst.get(key);
+    if (kept !== undefined) {
+      kept.used = reading;
+      tally.distanceListsReused++;
+      return kept.list;
+    }
+    const list = new Float64Array(ma);
+    for (let j = 0; j < ma; j++) list[j] = distanceToSegment(p, against[j], against[(j + 1) % ma]);
+    tally.edgesComputed += ma;
+    memo.toAgainst.set(key, { list, used: reading });
+    return list;
+  };
+  // The outline's edges, and where each sat in the last outline.
+  const mo = outline.length;
+  const edges = new Map<string, number>();
+  const from = new Int32Array(mo);
+  const lastEdges = memo.outlineEdges;
+  let plantPending = plant === 'skip-an-edge';
+  for (let j = 0; j < mo; j++) {
+    const key = `${pointKey(outline[j])};${pointKey(outline[(j + 1) % mo])}`;
+    edges.set(key, j);
+    const was = lastEdges?.get(key);
+    from[j] = was ?? -1;
+    if (was === undefined && plantPending && lastEdges !== null && j < lastEdges.size) {
+      // The plant: one new edge read as if it were the last outline's edge at the same index.
+      plantPending = false;
+      from[j] = j;
+    }
+  }
+  const last = memo.toOutline;
+  const next = new Map<string, Float64Array>();
+  const backward = (p: Pt): Float64Array => {
+    tally.distanceLists++;
+    const key = pointKey(p);
+    const done = next.get(key);
+    if (done !== undefined) {
+      tally.distanceListsReused++;
+      return done;
+    }
+    const before = last.get(key);
+    const list = new Float64Array(mo);
+    if (before === undefined) {
+      for (let j = 0; j < mo; j++) list[j] = distanceToSegment(p, outline[j], outline[(j + 1) % mo]);
+      tally.edgesComputed += mo;
+    } else {
+      tally.distanceListsCarried++;
+      for (let j = 0; j < mo; j++) {
+        if (from[j] >= 0) {
+          list[j] = before[from[j]];
+          tally.edgesCarried++;
+        } else {
+          list[j] = distanceToSegment(p, outline[j], outline[(j + 1) % mo]);
+          tally.edgesComputed++;
+        }
+      }
+    }
+    next.set(key, list);
+    return list;
+  };
+  return {
+    forward,
+    backward,
+    commit: () => {
+      // Keep this reading's outline lists for the next one; drop the lists toward the fixed polygon the last two readings did not ask for.
+      memo.toOutline = next;
+      memo.outlineEdges = edges;
+      for (const [key, entry] of memo.toAgainst) if (entry.used < reading - 1) memo.toAgainst.delete(key);
+    },
+  };
+}
+
+/** `hausdorff` through a reduction's carried distances (`carriedDistances`), dropping what the last two readings of the slot did not ask for. */
+function hausdorffCarried(memo: OutlineMemo, candidate: readonly Pt[], reference: readonly Pt[], steps: StepRasters): { d: number; candidateEdge: number } {
+  const carried = carriedDistances(memo, candidate, reference, steps);
+  const value = hausdorff(candidate, reference, carried);
+  carried.commit();
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -1008,7 +1133,7 @@ function compareRows(a: MeasureRow, b: MeasureRow): number {
  */
 export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
   validateInput(input);
-  return measureValidated(input, artRastersOf(input.art));
+  return measureValidated(input, artRastersOf(input.art), null);
 }
 
 /**
@@ -1027,7 +1152,74 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
 export function measureMeshQualityWith(input: MeshMeasureInput, rasters: ArtRasters): MeshQualityReport {
   validateInput(input);
   checkArtRasters(input, rasters);
-  return measureValidated(input, rasters);
+  return measureValidated(input, rasters, null);
+}
+
+/**
+ * `measureMeshQualityWith` carried from the last measurement the same
+ * `StepRasters` made (`src/meshrasters.ts`, issue #1246) — what `reduceMesh`
+ * calls for each step, so a step redraws only the triangles its removal
+ * changed, redoes the distance transform only where the coverage flipped, and
+ * reads the outline rows again only when the outline moved. The report is the
+ * one `measureMeshQuality` returns for the same input, byte for byte; rasters
+ * taken from another art are refused as `measureMeshQualityWith` refuses them.
+ *
+ * Internal, as `measureMeshQualityWith` is.
+ */
+export function measureMeshQualityStep(input: MeshMeasureInput, steps: StepRasters): MeshQualityReport {
+  validateInput(input);
+  checkArtRasters(input, steps.rasters);
+  return measureValidated(input, steps.rasters, steps);
+}
+
+/**
+ * The coverage reading of a triangle set measured on its own — the full path:
+ * every triangle drawn (`rasteriseTriangles`), the whole distance transform,
+ * and the covered art and islands counted over every pixel.
+ */
+function coverageOf(onGrid: Array<[number, number]>, triangles: number[], w: number, h: number, rasters: ArtRasters): CoverageReading {
+  const artBits = rasters.artBits();
+  const covered = rasteriseTriangles(onGrid, triangles, w, h);
+  let coveredArt = 0;
+  for (let i = 0; i < artBits.length; i++) if (artBits[i] && covered[i]) coveredArt++;
+  const toCovered = squaredDistanceToSet(covered, w, h);
+  const anyCovered = covered.some((c) => c === 1);
+  let undercutAt = -1;
+  let undercutSq = 0;
+  for (let i = 0; i < artBits.length; i++) {
+    if (!artBits[i] || covered[i]) continue;
+    if (undercutAt === -1 || toCovered[i] > undercutSq) {
+      undercutAt = i;
+      undercutSq = toCovered[i];
+    }
+  }
+  const { label } = rasters.islands();
+  const touched = new Set<number>();
+  for (let i = 0; i < label.length; i++) if (label[i] && covered[i]) touched.add(label[i]);
+  const secondIsland = touched.size >= 2 ? [...touched].sort((p, q) => p - q)[1] : 0;
+  const silhouette = (connectivity: 4 | 8): SilhouetteReading => {
+    const fills = rasters.fills();
+    const filled = connectivity === 8 ? fills.fill8 : fills.fill4;
+    const toFilled = rasters.toFilled(connectivity);
+    let overAt = -1;
+    let overSq = 0;
+    let holes = 0;
+    let holeAt = -1;
+    for (let i = 0; i < covered.length; i++) {
+      if (!covered[i]) continue;
+      if (!filled[i]) {
+        if (overAt === -1 || toFilled[i] > overSq) {
+          overAt = i;
+          overSq = toFilled[i];
+        }
+      } else if (!artBits[i]) {
+        holes++;
+        if (holeAt === -1) holeAt = i;
+      }
+    }
+    return { overAt, overSq, holes, holeAt };
+  };
+  return { covered, toCovered, coveredArt, anyCovered, undercut: { at: undercutAt, sq: undercutSq }, silhouette, islandsTouched: touched.size, secondIsland };
 }
 
 /**
@@ -1053,7 +1245,7 @@ function checkArtRasters(input: MeshMeasureInput, rasters: ArtRasters): void {
 }
 
 /** The measurement proper, over an input `validateInput` accepted and rasters taken from its art. */
-function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQualityReport {
+function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: StepRasters | null): MeshQualityReport {
   rasters.tally.uses++;
   const { attachment, art, source, targets } = input;
   const { mask, threshold, frame } = art;
@@ -1099,7 +1291,6 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQua
   const artBits = rasters.artBits();
   const artCount = rasters.artCount();
   const onGrid: Array<[number, number]> = source.points.map(([x, y]) => [x * scale, y * scale]);
-  const covered = rasteriseTriangles(onGrid, source.triangles, w, h);
   const fit = targets.artFit;
   const pxIncrement = 1 / scale;
   const rasterArt = (connectivity: 4 | 8 | null): NonNullable<MeasureRow['art']> => ({ threshold, connectivity, samples: artCount });
@@ -1112,21 +1303,12 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQua
     rows.push(withRaster(unmeasuredRow(spec('MQ_HOLES', 'count'), 'not-measurable', why, false), rasterArt(8), grid, 1));
     rows.push(withRaster(unmeasuredRow(spec('MQ_ISLANDS', 'count'), 'not-measurable', why, false), rasterArt(4), grid, 1));
   } else {
-    // Coverage — `measureAuthoredMeshFit`'s, unchanged: art pixel centres a triangle covers.
-    let coveredArt = 0;
-    for (let i = 0; i < artBits.length; i++) if (artBits[i] && covered[i]) coveredArt++;
-    const toCovered = squaredDistanceToSet(covered, w, h);
-    const anyCovered = covered.some((c) => c === 1);
+    // Coverage — `measureAuthoredMeshFit`'s, unchanged: art pixel centres a triangle covers. A reduction step
+    // carries it from its last measurement (`StepRasters`), which reads the same values.
+    const reading = steps === null ? coverageOf(onGrid, source.triangles, w, h, rasters) : steps.coverage(onGrid, source.triangles);
+    const { coveredArt, anyCovered } = reading;
     // Undercut: the furthest uncovered art pixel from the covered set. Its pixel is coverage's worst too.
-    let undercutAt = -1;
-    let undercutSq = 0;
-    for (let i = 0; i < artBits.length; i++) {
-      if (!artBits[i] || covered[i]) continue;
-      if (undercutAt === -1 || toCovered[i] > undercutSq) {
-        undercutAt = i;
-        undercutSq = toCovered[i];
-      }
-    }
+    const { at: undercutAt, sq: undercutSq } = reading.undercut;
     const missingWorst: WorstSample = undercutAt === -1 ? NOTHING_WORSE : { at: { pixel: pixelOf(undercutAt) } };
     rows.push(
       withRaster(
@@ -1150,25 +1332,9 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQua
 
     // Overshoot and holes against the filled silhouette: 8-connected background over ALL art (P12) — and,
     // where the legacy 4-connected fill differs (a diagonal pinch), the labelled 4-connected reading beside it.
-    const { fill8, fill4, differ: fillsDiffer } = rasters.fills();
-    const silhouetteRows = (filled: Uint8Array, connectivity: 4 | 8, gated: boolean): void => {
-      const toFilled = rasters.toFilled(connectivity);
-      let overAt = -1;
-      let overSq = 0;
-      let holes = 0;
-      let holeAt = -1;
-      for (let i = 0; i < covered.length; i++) {
-        if (!covered[i]) continue;
-        if (!filled[i]) {
-          if (overAt === -1 || toFilled[i] > overSq) {
-            overAt = i;
-            overSq = toFilled[i];
-          }
-        } else if (!artBits[i]) {
-          holes++;
-          if (holeAt === -1) holeAt = i;
-        }
-      }
+    const fillsDiffer = rasters.fills().differ;
+    const silhouetteRows = (connectivity: 4 | 8, gated: boolean): void => {
+      const { overAt, overSq, holes, holeAt } = reading.silhouette(connectivity);
       const bound = gated && fit !== null ? { op: '<=' as const, value: fit.maxOvershoot } : null;
       rows.push(
         withRaster(
@@ -1180,21 +1346,15 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQua
       );
       rows.push(withRaster(measuredRow(spec('MQ_HOLES', 'count'), holes, null, holeAt === -1 ? NOTHING_WORSE : { at: { pixel: pixelOf(holeAt) } }, false), rasterArt(connectivity), grid, 1));
     };
-    silhouetteRows(fill8, 8, true);
-    if (fillsDiffer) silhouetteRows(fill4, 4, false);
+    silhouetteRows(8, true);
+    if (fillsDiffer) silhouetteRows(4, false);
 
     // Islands: the 4-connected art islands (the tracer's, `labelIslands`) the triangles cover a pixel of.
     const { label } = rasters.islands();
-    const touched = new Set<number>();
-    for (let i = 0; i < label.length; i++) if (label[i] && covered[i]) touched.add(label[i]);
-    let joinedAt = -1;
-    if (touched.size >= 2) {
-      const second = [...touched].sort((p, q) => p - q)[1];
-      joinedAt = label.indexOf(second);
-    }
+    const joinedAt = reading.islandsTouched >= 2 ? label.indexOf(reading.secondIsland) : -1;
     rows.push(
       withRaster(
-        measuredRow(spec('MQ_ISLANDS', 'count'), touched.size, null, joinedAt === -1 ? NOTHING_WORSE : { at: { pixel: pixelOf(joinedAt) } }, false),
+        measuredRow(spec('MQ_ISLANDS', 'count'), reading.islandsTouched, null, joinedAt === -1 ? NOTHING_WORSE : { at: { pixel: pixelOf(joinedAt) } }, false),
         { threshold, connectivity: 4, samples: artCount },
         grid,
         1,
@@ -1208,14 +1368,16 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQua
   if (input.referenceHull === null) {
     rows.push(unmeasuredRow(boundarySpec, 'not-measurable', `attachment ${nameOf(attachment)}: no referenceHull was given, so there is no polygon to measure the hull's deviation from`, targets.maxBoundaryDeviation !== null));
   } else {
-    const hd = hausdorff(hullPolygon, input.referenceHull);
+    const reference = input.referenceHull;
+    const hd = steps === null ? hausdorff(hullPolygon, reference) : steps.outline('reference', hullPolygon, reference, (memo) => hausdorffCarried(memo, hullPolygon, reference, steps));
     const bound = targets.maxBoundaryDeviation === null ? null : { op: '<=' as const, value: targets.maxBoundaryDeviation };
     rows.push(measuredRow(boundarySpec, r6(hd.d), bound, hd.d === 0 ? NOTHING_WORSE : { at: { edge: edgeOfHull(hd.candidateEdge) } }, true));
   }
   const traceSpec = spec('MQ_TRACE_DEVIATION', 'px');
   const traced = rasters.traced();
   if ('outline' in traced) {
-    const hd = hausdorff(hullPolygon, traced.outline);
+    const tracedOutline = traced.outline;
+    const hd = steps === null ? hausdorff(hullPolygon, tracedOutline) : steps.outline('traced', hullPolygon, tracedOutline, (memo) => hausdorffCarried(memo, hullPolygon, tracedOutline, steps));
     rows.push(measuredRow(traceSpec, r6(hd.d), null, hd.d === 0 ? NOTHING_WORSE : { at: { edge: edgeOfHull(hd.candidateEdge) } }, false));
   } else {
     rows.push(unmeasuredRow(traceSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the tracer refused the art at alpha >= ${threshold}: ${traced.refused}`, false));

@@ -380,6 +380,7 @@ import {
   edgeIsHeldByRegion,
   measureAuthoredMeshFit,
   measureMeshQuality,
+  measureMeshQualityStep,
   measureMeshQualityWith,
   MeshError,
   MeshReductionError,
@@ -387,6 +388,7 @@ import {
   rasteriseTriangles,
   reduceMesh,
   reduceMeshWith,
+  squaredDistanceToSet,
   writeMeshQualityReport,
   type AlphaMask,
   type ArtFitBounds,
@@ -406,7 +408,7 @@ import {
   type Termination,
 } from './src/mesh.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
-import { artRastersOf, type ArtRasters } from './src/meshrasters.ts';
+import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasterPlant, type StepRasterTally } from './src/meshrasters.ts';
 import {
   boneDistance,
   BONE_QUANTITIES,
@@ -47107,6 +47109,164 @@ function runMeshQualitySuite(): number {
         `the lattice with a region: ${tried} candidate(s) tried, ${uses} measurement(s) read one rasters object, computed ${JSON.stringify(computed)}; src/meshreduce.ts calls measureMeshQuality ${publicCalls} times and artRastersOf ${made}; the per-step plant computed the art bits ${perStep} times over ${uses} measurements`,
       ),
       'issue #1240: 98.98 % of a 1101-step reduction was the per-step measurement and at least 40 % of it functions of the art alone, recomputed every step; the count is what says they now are not',
+    );
+  }
+
+  // --- MQ68 / MQ69 (#1246): a reduction step is measured carried from the last one, and reads what the full one reads --
+  // A sequence of meshes measured in order through one StepRasters, each against a fresh measureMeshQuality: the
+  // lattice, then one vertex moved at a time — an interior vertex (no centre flips, the outline unchanged), a hull
+  // vertex out and in (centres flip, the outline moves), a corner cut (the outline's distances to the reference
+  // carried edge by edge), a fold (centres covered twice), then a fan of another topology (built from nothing) and
+  // back. The pinch carries the 4-connected silhouette and the tracer's refusal. Beside each report, the step's
+  // coverage and distance transform are held to rasteriseTriangles and squaredDistanceToSet pixel by pixel, so a
+  // fault the rows happen not to show is still named by its pixel.
+  type CarriedStep = { label: string; input: MeshMeasureInput };
+  /** The mesh with vertex `v` moved, its triangles as they were (a move past a neighbour folds rather than being re-turned). */
+  const movedVertex = (mesh: SourceMesh, v: number, dx: number, dy: number, width: number, height: number): SourceMesh => {
+    const points = mesh.points.map((p, i): MqPt => (i === v ? [p[0] + dx, p[1] + dy] : [p[0], p[1]]));
+    return { ...mesh, points, uvs: points.flatMap(([x, y]) => [x / width, y / height]) };
+  };
+  const rectTargets: MeasureTargets = { artFit: strict, maxBoundaryDeviation: 0, regions: [] };
+  const rectSteps: CarriedStep[] = (
+    [
+      ['the lattice', lattice],
+      ['an interior vertex moved', movedVertex(lattice, 15, 1.5, 1.25, W, H)],
+      ['a hull vertex pushed out', movedVertex(lattice, 1, 0, -3, W, H)],
+      ['the same vertex pulled in', movedVertex(lattice, 1, 0.5, 2.5, W, H)],
+      ['a corner pulled in', movedVertex(lattice, 7, -2.5, -1.5, W, H)],
+      ['the lattice again', lattice],
+      ['a corner cut', movedVertex(lattice, 0, 6, 6, W, H)],
+      ['a fold', movedVertex(lattice, 15, 9, 0, W, H)],
+      ['a fan', exact],
+      ['the lattice once more', lattice],
+      ['a side vertex pushed out', movedVertex(lattice, 5, 4, 0.5, W, H)],
+    ] as Array<[string, SourceMesh]>
+  ).map(([label, mesh]) => ({ label, input: mqInput(rectMask, frame, mesh, rectTargets, { referenceHull: hull }) }));
+  const pinchTargets: MeasureTargets = { artFit: strict, maxBoundaryDeviation: null, regions: [] };
+  const pinchSteps: CarriedStep[] = (
+    [
+      ['the pinch', hexMesh],
+      ['the pinch again', hexMesh],
+      ['the pinch, one vertex moved', movedVertex(hexMesh, 0, 1.5, 1, pinchFrame.width, pinchFrame.height)],
+    ] as Array<[string, SourceMesh]>
+  ).map(([label, mesh]) => ({ label, input: mqInput(pinchMask, pinchFrame, mesh, pinchTargets) }));
+  /** The sequence through one StepRasters (planted or not) against the full measurement: every difference, named. */
+  const runCarried = (steps: CarriedStep[], plant: StepRasterPlant | null): { found: string[]; tally: StepRasterTally; rows: number } => {
+    const stepRasters = stepRastersOf(artRastersOf(steps[0].input.art), plant);
+    const found: string[] = [];
+    let rows = 0;
+    steps.forEach(({ label, input }, k) => {
+      const freshReport = measureMeshQuality(input);
+      const carriedReport = measureMeshQualityStep(input, stepRasters);
+      rows += mqRows(freshReport).length;
+      if (writeMeshQualityReport(freshReport) !== writeMeshQualityReport(carriedReport)) {
+        const fresh = mqRows(freshReport);
+        const carried = mqRows(carriedReport);
+        const at = fresh.findIndex((r, i) => JSON.stringify(r) !== JSON.stringify(carried[i]));
+        found.push(at === -1 ? `step ${k} (${label}): the reports differ outside the rows` : `step ${k} (${label}): row ${mqSay(carried[at])} carried; required ${mqSay(fresh[at])}`);
+      }
+      // The coverage under the rows, pixel by pixel — read again with the same triangles, which draws nothing.
+      const { width: w, height: h } = input.art.mask;
+      const scale = input.art.frame.pageScale;
+      const onGrid = input.source.points.map(([x, y]): [number, number] => [x * scale, y * scale]);
+      const reading = stepRasters.coverage(onGrid, input.source.triangles);
+      const covered = rasteriseTriangles(onGrid, input.source.triangles, w, h);
+      const dist = squaredDistanceToSet(covered, w, h);
+      for (let i = 0; i < covered.length; i++) {
+        if (reading.covered[i] !== covered[i] || !Object.is(reading.toCovered[i], dist[i])) {
+          found.push(
+            `step ${k} (${label}): pixel (${i % w}, ${Math.floor(i / w)}) carried as covered ${reading.covered[i]} at squared distance ${reading.toCovered[i]}; required covered ${covered[i]} at ${dist[i]}`,
+          );
+          break;
+        }
+      }
+    });
+    return { found, tally: stepRasters.tally, rows };
+  };
+  {
+    const probes: string[] = [];
+    const rect = runCarried(rectSteps, null);
+    const pinch = runCarried(pinchSteps, null);
+    probes.push(...rect.found, ...pinch.found);
+    // Not vacuous: each carried rule ran on something.
+    const t = rect.tally;
+    const exercised: Array<[string, number]> = [
+      ['readings built from nothing', t.rebuilt],
+      ['triangles drawn by carried readings', t.trianglesDrawn],
+      ['centres flipped', t.pixelsFlipped],
+      ['distance-transform columns redone', t.columnsRedone],
+      ['distance-transform rows redone', t.rowsRedone],
+      ['outline readings handed back whole', t.outlinesReused],
+      ['distance lists handed back whole', t.distanceListsReused],
+      ['distance lists carried edge by edge', t.distanceListsCarried],
+      ['edge distances carried', t.edgesCarried],
+    ];
+    for (const [what, n] of exercised) if (!(n > 0)) probes.push(`the rectangle's sequence exercised no ${what} (${n})`);
+    if (!(t.rebuilt >= 2)) probes.push(`the sequence built ${t.rebuilt} reading(s) from nothing; the fan and the lattice after it were meant to make two`);
+    if (!(t.trianglesKept > t.trianglesDrawn)) probes.push(`carried readings kept ${t.trianglesKept} triangle(s) and drew ${t.trianglesDrawn}, so nothing was carried`);
+    const pinchRead = measureMeshQuality(pinchSteps[0].input);
+    if (mqRows(pinchRead).filter((r) => r.code === 'MQ_OVERSHOOT').length !== 2) probes.push('the pinch reads one overshoot row, so the carried 4-connected silhouette compared nothing');
+    if (mqRow(pinchRead, 'MQ_TRACE_DEVIATION')?.state !== 'not-measurable') probes.push("the pinch's trace row is measured, so the tracer's refusal was not carried");
+    // The reduction: reduceMesh (carried), reduceMeshWith over step rasters made here, and reduceMeshWith with none (every step full).
+    const reductions: string[] = [];
+    for (const [label, input] of [
+      ['the lattice', mqReduceInput(lattice)],
+      ['the lattice with a region', mqReduceInput(lattice, regionTargets(dense))],
+    ] as Array<[string, MeshReductionInput]>) {
+      const bytes = (r: { report: MeshQualityReport; mesh: ReducedMesh | null }): string => writeMeshQualityReport(r.report) + JSON.stringify(r.mesh);
+      const plain = bytes(reduceMesh(input));
+      const rasters = artRastersOf(input.art);
+      const stepRasters = stepRastersOf(rasters);
+      const carriedRun = reduceMeshWith(input, rasters, stepRasters);
+      const carried = bytes(carriedRun);
+      const full = bytes(reduceMeshWith(input, artRastersOf(input.art), null));
+      if (carried !== full || plain !== full) {
+        let at = 0;
+        const other = carried !== full ? carried : plain;
+        while (at < full.length && full[at] === other[at]) at++;
+        probes.push(`${label}: the carried reduction differs from the full one at byte ${at} (${JSON.stringify(other.slice(at, at + 40))} against ${JSON.stringify(full.slice(at, at + 40))})`);
+      }
+      if (carriedRun.mesh === null) probes.push(`${label}: the reduction returned no mesh (${mqSayEnd(carriedRun.report.termination)}), so its bytes compared the empty case only`);
+      const st = stepRasters.tally;
+      if (!(st.carried > 0 && st.trianglesKept > st.trianglesDrawn)) probes.push(`${label}: the reduction carried ${st.carried} reading(s), keeping ${st.trianglesKept} triangle(s) against ${st.trianglesDrawn} drawn — its steps were not carried`);
+      reductions.push(`${label}: ${full.length} bytes identical three ways, ${st.readings} readings (${st.rebuilt} from nothing, ${st.carried} carried: ${st.trianglesDrawn} triangles drawn, ${st.trianglesKept} kept), outlines ${st.outlinesMeasured} measured and ${st.outlinesReused} handed back`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ68_CONTROL_A_STEP_MEASURED_CARRIED_FROM_THE_LAST_READS_EVERY_ROW_AND_PIXEL_THE_FULL_MEASUREMENT_READS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${rectSteps.length + pinchSteps.length} measurements in order through two step-rasters objects, ${rect.rows + pinch.rows} rows byte-identical to a fresh measureMeshQuality each, and every pixel's coverage and squared distance identical to rasteriseTriangles and squaredDistanceToSet (rectangle tally ${JSON.stringify(t)}); ` +
+          reductions.join('; '),
+      ),
+      'issue #1246: a reduction step redraws only the triangles its removal changed, redoes the distance transform only where coverage flipped, and reads an outline again only where it moved; that is a cost change only if no row and no pixel reads differently',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const caught: string[] = [];
+    const plants: Array<[StepRasterPlant, string]> = [
+      ['skip-a-triangle', 'pixel ('],
+      ['skip-a-column', 'pixel ('],
+      ['skip-a-row', 'pixel ('],
+      ['stale-outline', 'row MQ_BOUNDARY_DEVIATION'],
+      ['skip-an-edge', 'row MQ_BOUNDARY_DEVIATION'],
+    ];
+    for (const [plant, names] of plants) {
+      const { found } = runCarried(rectSteps, plant);
+      const named = found.find((f) => f.includes(names));
+      if (found.length === 0) probes.push(`${plant}: no step read differently`);
+      else if (named === undefined) probes.push(`${plant}: caught, but nothing named ${names.trim()}: ${found[0]}`);
+      else caught.push(`${plant}: ${named}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ69_A_CARRIED_STEP_THAT_SKIPS_A_TOUCHED_TRIANGLE_COLUMN_ROW_OUTLINE_OR_EDGE_IS_CAUGHT_NAMING_IT',
+      held,
+      probeDetail(held, probes, caught.join('; ')),
+      'issue #1246: the carried path is one skipped update away from a stale reading, so each thing it carries — a triangle drawn, a column or row of the distance transform redone, an outline reading, an edge distance — is planted skipped once and must surface as the pixel or the row it changed',
     );
   }
 

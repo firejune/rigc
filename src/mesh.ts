@@ -1319,21 +1319,58 @@ export function rasteriseTriangles(points: Array<[number, number]>, triangles: n
     const a = points[triangles[t]];
     const b = points[triangles[t + 1]];
     const c = points[triangles[t + 2]];
-    const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
-    if (Math.abs(twice) < 1e-12) continue;
-    const orient = twice > 0 ? 1 : -1;
-    const minX = Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]) - 1));
-    const maxX = Math.min(w - 1, Math.ceil(Math.max(a[0], b[0], c[0]) + 1));
-    const minY = Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]) - 1));
-    const maxY = Math.min(h - 1, Math.ceil(Math.max(a[1], b[1], c[1]) + 1));
-    for (let y = minY; y <= maxY; y++) {
-      for (let x = minX; x <= maxX; x++) {
+    const box = triangleRasterBox(a, b, c, w, h);
+    if (box === null) continue;
+    for (let y = box.minY; y <= box.maxY; y++) {
+      for (let x = box.minX; x <= box.maxX; x++) {
         if (covered[y * w + x]) continue;
-        if (pointInTriangle([x + 0.5, y + 0.5], a, b, c, orient)) covered[y * w + x] = 1;
+        if (pixelCentreInTriangle(x, y, a, b, c, box.orient)) covered[y * w + x] = 1;
       }
     }
   }
   return covered;
+}
+
+/**
+ * The pixels of a `w`x`h` grid one triangle can cover under `rasteriseTriangles`'s
+ * rule — the box of its corners widened by a pixel and clamped to the grid —
+ * and the orientation its centre test reads; null for a degenerate triangle
+ * (zero doubled area), which covers nothing. `rasteriseTriangles` and the
+ * per-step coverage of `src/meshrasters.ts` both read the rule from here and
+ * from `pixelCentreInTriangle`, so the two cannot drift apart.
+ */
+export function triangleRasterBox(
+  a: readonly [number, number],
+  b: readonly [number, number],
+  c: readonly [number, number],
+  w: number,
+  h: number,
+): { orient: number; minX: number; maxX: number; minY: number; maxY: number } | null {
+  const twice = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  if (Math.abs(twice) < 1e-12) return null;
+  return {
+    orient: twice > 0 ? 1 : -1,
+    minX: Math.max(0, Math.floor(Math.min(a[0], b[0], c[0]) - 1)),
+    maxX: Math.min(w - 1, Math.ceil(Math.max(a[0], b[0], c[0]) + 1)),
+    minY: Math.max(0, Math.floor(Math.min(a[1], b[1], c[1]) - 1)),
+    maxY: Math.min(h - 1, Math.ceil(Math.max(a[1], b[1], c[1]) + 1)),
+  };
+}
+
+/**
+ * Is the centre of pixel (`x`, `y`) in or on the triangle — `rasteriseTriangles`'s
+ * test, with the orientation `triangleRasterBox` gave. `pointInTriangle` at
+ * `[x + 0.5, y + 0.5]`, written out without the point array: the same three
+ * products, in the same order, against the same tolerance.
+ */
+export function pixelCentreInTriangle(x: number, y: number, a: readonly [number, number], b: readonly [number, number], c: readonly [number, number], orient: number): boolean {
+  const px = x + 0.5;
+  const py = y + 0.5;
+  return (
+    ((b[0] - a[0]) * (py - a[1]) - (b[1] - a[1]) * (px - a[0])) * orient >= -1e-9 &&
+    ((c[0] - b[0]) * (py - b[1]) - (c[1] - b[1]) * (px - b[0])) * orient >= -1e-9 &&
+    ((a[0] - c[0]) * (py - c[1]) - (a[1] - c[1]) * (px - c[0])) * orient >= -1e-9
+  );
 }
 
 /**
@@ -1492,10 +1529,33 @@ export function measureAuthoredMeshFit(
  * never asks (a mask with no art has no covered-outside pixel to ask about).
  */
 export function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): Float64Array {
-  const INF = w * w + h * h + 1;
+  const passes = distancePassesOf(w, h);
   const dist = new Float64Array(w * h);
-  for (let i = 0; i < dist.length; i++) dist[i] = inside[i] ? 0 : INF;
+  for (let x = 0; x < w; x++) {
+    const out = passes.column(inside, x);
+    for (let y = 0; y < h; y++) dist[y * w + x] = out[y];
+  }
+  for (let y = 0; y < h; y++) {
+    const out = passes.row(dist, y);
+    for (let x = 0; x < w; x++) dist[y * w + x] = out[x];
+  }
+  return dist;
+}
 
+/**
+ * `squaredDistanceToSet`'s two passes over one `w`x`h` grid, one column or one
+ * row per call, so a caller holding the previous grid's passes can redo only
+ * the columns whose set changed and the rows whose column values changed.
+ * `column(inside, x)` is column `x`'s pass over the set (`INF` where the
+ * column has no set pixel); `row(columns, y)` is row `y`'s pass over the
+ * column results. Each returns a scratch array whose first `h` (column) or
+ * `w` (row) entries are the result, valid until the next call. A column's
+ * result depends on that column of `inside` alone and a row's on that row of
+ * `columns` alone, which is what makes redoing a subset exact: every output
+ * is this one function of the same input.
+ */
+export function distancePassesOf(w: number, h: number): { column(inside: Uint8Array, x: number): Float64Array; row(columns: Float64Array, y: number): Float64Array } {
+  const INF = w * w + h * h + 1;
   const span = Math.max(w, h);
   const f = new Float64Array(span);
   const out = new Float64Array(span);
@@ -1526,17 +1586,18 @@ export function squaredDistanceToSet(inside: Uint8Array, w: number, h: number): 
     }
   };
 
-  for (let x = 0; x < w; x++) {
-    for (let y = 0; y < h; y++) f[y] = dist[y * w + x];
-    envelope(h);
-    for (let y = 0; y < h; y++) dist[y * w + x] = out[y];
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) f[x] = dist[y * w + x];
-    envelope(w);
-    for (let x = 0; x < w; x++) dist[y * w + x] = out[x];
-  }
-  return dist;
+  return {
+    column: (inside, x) => {
+      for (let y = 0; y < h; y++) f[y] = inside[y * w + x] ? 0 : INF;
+      envelope(h);
+      return out;
+    },
+    row: (columns, y) => {
+      for (let x = 0; x < w; x++) f[x] = columns[y * w + x];
+      envelope(w);
+      return out;
+    },
+  };
 }
 
 /**

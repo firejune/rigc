@@ -1449,9 +1449,10 @@ per fixture, the candidates tried and the wall time of each `reduceMesh` call.
 One darwin run at the commit that added it: the 20-vertex lattice reduced to
 its 4 corners in 24 candidates and 97 ms; the refinement alone, 37 insertions
 in 274 ms; the composed run, 76 candidates in 295–327 ms; the weighted
-refinement, 37 in 451 ms. Every step is one full measurement over the plate,
-so the cost is the measurement's times the steps; bounding it is stage D's,
-and these figures are one machine's reading, not a claim about another.
+refinement, 37 in 451 ms. Every step was then one full measurement over the
+plate, so the cost was the measurement's times the steps (since #1246 a step
+redoes only what its mesh changed — below); bounding it is stage D's, and these
+figures are one machine's reading, not a claim about another.
 
 **The art's rasters, taken once per call**
 ([#1240](https://github.com/firejune/rigc/issues/1240)). What a measurement
@@ -1523,6 +1524,80 @@ change and to the installed 2.20.0's) and over every `measureMeshQuality` and
 `reduceMesh` call the `mesh-quality` and `mesh-compare` suites make (152
 outputs, the same in order). These figures are one loaded machine's reading,
 not a claim about another; no wall-time threshold is set here.
+
+**Each step carried from the last one**
+([#1246](https://github.com/firejune/rigc/issues/1246)). After the cache, a
+step's cost was the candidate's own coverage raster, its distance transform and
+the two Hausdorff readings, and almost all of it was redone for nothing: on
+`demo/bottomwear` a measurement's triangles differ from the previous
+measurement's by 5.1 removed and 4.7 added of ~465 (5.4 % of the rasteriser's
+box work), 21 pixel centres flip on average and none in 243 of 1103, the
+distance transform's columns and rows that a flip can reach are 7.3 % of its
+passes, and the outline is unchanged in 243 of 1103 (interior removals). So
+`reduceMesh` measures every refinement and removal step through a
+`StepRasters` value (`stepRastersOf`, `src/meshrasters.ts`) with
+`measureMeshQualityStep` in `src/meshquality.ts`, made once per call beside
+the `ArtRasters` and dropped with it. The rule, one quantity at a time, is that
+each carried value is the same function of the same input as the full one:
+
+- **Coverage** is a count per pixel centre of the triangles whose centre test
+  holds there — `triangleRasterBox` and `pixelCentreInTriangle` in
+  `src/mesh.ts`, the rule `rasteriseTriangles` itself reads. The triangles are
+  diffed against the last measurement's as a multiset keyed by their corners'
+  exact coordinates in the order given; one taken away is drawn with −1 and one
+  added with +1, so a centre is covered exactly when its count is positive —
+  `rasteriseTriangles`'s union. Covered art, covered centres, covered pixels
+  per island, the uncovered art pixels and the covered centres outside each
+  filled silhouette or in its holes are kept with it, updated at each centre
+  that flips; a worst pixel is read from those sets by the full scan's rule
+  (the largest value, the first pixel in order among equals).
+- **The distance transform** is `squaredDistanceToSet`'s two passes, now
+  `distancePassesOf` in `src/mesh.ts`, which `squaredDistanceToSet` itself
+  calls. A column's pass reads that column of the coverage alone, so only
+  columns holding a flipped centre are redone; a row's pass reads that row of
+  the column results alone, so only rows where a redone column changed are.
+- **The outline rows** (`MQ_BOUNDARY_DEVIATION`, `MQ_TRACE_DEVIATION`) are
+  handed back whole when the outline and the polygon it is read against equal
+  the last ones coordinate by coordinate. Otherwise `hausdorff` runs as it
+  always does, and only its point-to-edge distance lists are carried
+  (`carriedDistances`): a list toward the fixed polygon is kept per point, and a
+  list toward the outline copies each distance whose edge — both ends,
+  exactly — the last outline also had, computing the rest. The branch and
+  bound itself is not made incremental: its pruning depends on the best value
+  found so far, so a per-edge reuse would change which points are sampled.
+- A measurement whose triangles differ from the last in more than they share
+  is built from nothing, as the first one is. Which way a reading is built
+  changes its cost, never its values.
+
+`measureMeshQuality` and `measureMeshQualityWith` are the full path and are
+unchanged; `reduceMeshWith(input, rasters, null)` measures every step in full,
+and step rasters made over another rasters object are refused
+(`REDUCE_ART_RASTERS_MISMATCH`). `MQ68` measures a sequence — an interior vertex
+moved, a hull vertex out and in, a corner cut, a fold, a fan of another
+topology and back, and the pinch's 4-connected silhouette — through one
+`StepRasters` against a fresh `measureMeshQuality` each, every row's bytes and
+every pixel's coverage and squared distance identical, and two reductions
+carried, over the step rasters made by the caller and in full, byte-identical;
+`MQ69` plants a skipped added triangle, a skipped distance-transform column and
+row, an outline reused on its vertex count alone and an edge distance copied
+from the wrong edge, each caught by the pixel or the row it changed.
+
+**Cost of carrying, measured.** The 18 `reduceMesh` inputs spine-parts made at
+2.20.0, replayed one process per call through the tree before the change and
+after it: report, mesh and `accepted` identical, 54 of 54; every
+`measureMeshQuality`, `measureMeshQualityWith`, `reduceMesh` and
+`reduceMeshWith` output the `mesh-quality` and `mesh-compare` suites make, run
+by the selftest from before the change over both trees: 303 outputs, the same in
+order. `demo/bottomwear`, before and after in the order before, after, after,
+before, twice, on one Intel Core Ultra 7 265K (20 threads, WSL2 Linux 6.6, Bun
+1.4.2), 1-minute load 0.80–0.99 at every start and nothing else running: 1101
+candidates every run; before 32.1–34.3 s, after 2.98–3.24 s; per step
+((full − budget-0 call) / 1101) 29.0–31.0 ms before and 2.5–2.8 ms after. A
+CPU profile of a third after-run (4.0 s) puts 32.4 % of samples in the carried
+coverage (`StepRasters.coverage`), 32.0 % in the outline readings and 9.8 % in
+`canonicalise`; before, 46.1 % was `rasteriseTriangles`, 23.9 %
+`squaredDistanceToSet` and 19.5 % `hausdorff`. These figures are one machine's
+reading, not a claim about another; no wall-time threshold is set here.
 
 **Left for later stages.** The motion comparison and every motion row (§3,
 stage C); a finer-grid pass, warm-up and traced-boundary gating (*Stage B

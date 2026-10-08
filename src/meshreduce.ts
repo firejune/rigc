@@ -26,7 +26,9 @@
  * Each candidate step is measured by `measureMeshQuality` (`src/meshquality.ts`)
  * — no row is re-implemented here; the call reads it as `measureMeshQualityWith`
  * over the art's rasters taken once at admission (`src/meshrasters.ts`, issue
- * #1240), which returns the same report — and taken only when every row the caller's
+ * #1240), and as `measureMeshQualityStep` carried from the last step's
+ * measurement (`StepRasters`, issue #1246), each of which returns the same
+ * report — and taken only when every row the caller's
  * contract requires is `pass`: the art fit at `targets.artFit`, the boundary
  * deviation from the source hull at `targets.maxBoundaryDeviation`, the minimum
  * angle when declared, orientation and degeneracy at 0, and every region's
@@ -87,6 +89,7 @@ import {
 import {
   BAND_CONTACT_TOLERANCE,
   edgeIsHeldByRegion,
+  measureMeshQualityStep,
   measureMeshQualityWith,
   type AttachmentRef,
   type ArtFitBounds,
@@ -103,7 +106,7 @@ import {
   type SourceMesh,
   type Termination,
 } from './meshquality.ts';
-import { artRastersOf, type ArtRasters } from './meshrasters.ts';
+import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasters } from './meshrasters.ts';
 
 // ---------------------------------------------------------------------------
 // the result
@@ -716,6 +719,8 @@ interface Run {
   sourceEdges: Set<string>;
   /** The art's rasters, taken once for the call and read by every measurement in it (issue #1240). */
   rasters: ArtRasters;
+  /** The step state each removal and insertion is measured through, carried from the last measurement (issue #1246); null measures every step in full. */
+  stepRasters: StepRasters | null;
 }
 
 /** A measurement of a canonical mesh against the result's full contract. */
@@ -736,7 +741,7 @@ function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string): MeshQual
     boneOrder: input.boneOrder,
     preset: input.preset,
   };
-  return measureMeshQualityWith(measureInput, run.rasters);
+  return run.stepRasters === null ? measureMeshQualityWith(measureInput, run.rasters) : measureMeshQualityStep(measureInput, run.stepRasters);
 }
 
 /** The order constraints are named in when several fail on one step: structure, then shape, then art, then density. */
@@ -1172,7 +1177,8 @@ function tryRemoval(run: Run, v: number): string | null {
  */
 export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
   validateReduction(input);
-  return reduceValidated(input, artRastersOf(input.art));
+  const rasters = artRastersOf(input.art);
+  return reduceValidated(input, rasters, stepRastersOf(rasters));
 }
 
 /**
@@ -1180,19 +1186,29 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
  * `src/meshrasters.ts`) — the result is `reduceMesh`'s for the same input, byte
  * for byte, and every measurement of the call reads the one object, so its
  * `tally` is the count of what the call computed. Rasters taken from another
- * art are refused at admission (`REDUCE_ART_RASTERS_MISMATCH`).
+ * art are refused at admission (`REDUCE_ART_RASTERS_MISMATCH`). Each step is
+ * measured through `steps` (`stepRastersOf(rasters)` unless given), carried
+ * from the last measurement (issue #1246); `null` measures every step in full,
+ * which is the path the carried one is held equal to. Step rasters made over
+ * another rasters object are refused by the same code.
  *
  * Internal: it is on `spine-rigc/mesh` only because that entry re-exports this
  * module with `export *`, and a symbol that is merely exported is not promised
  * (RELEASING.md, *The import surface*).
  */
-export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters): MeshReductionResult {
+export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null = stepRastersOf(rasters)): MeshReductionResult {
   validateReduction(input);
-  return reduceValidated(input, rasters);
+  if (steps !== null && steps.rasters !== rasters) {
+    refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
+  }
+  return reduceValidated(input, rasters, steps);
 }
 
-/** The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in `rasters`. */
-function reduceValidated(input: MeshReductionInput, rasters: ArtRasters): MeshReductionResult {
+/**
+ * The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in
+ * `rasters`, and every refinement and removal step is measured through `steps` when it is given (issue #1246).
+ */
+function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
@@ -1273,6 +1289,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters): MeshRe
       ...protectionOf(input, work, sourceEdges),
       sourceEdges,
       rasters,
+      stepRasters: steps,
     };
 
     const refined = refineRegions(run);
