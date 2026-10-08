@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.22.0](https://github.com/firejune/rigc/compare/v2.21.0...v2.22.0) (2026-10-08)
+
+
+### Features
+
+* **package:** publish as rig-c, with spine-rigc kept as an alias carrying the same files at every version ([#1258](https://github.com/firejune/rigc/issues/1258)) ([#1260](https://github.com/firejune/rigc/issues/1260)) ([c5f9972](https://github.com/firejune/rigc/commit/c5f9972dbf1a2e23d4d58a4f2292857f036cd930))
+
 ## [2.21.0](https://github.com/firejune/rigc/compare/v2.20.4...v2.21.0) (2026-10-08)
 
 
