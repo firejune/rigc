@@ -2,7 +2,9 @@
  * Mesh reduction and local refinement — stage B2 of the contract in
  * docs/MESH_REDUCTION.md (issue #1221, stage B: issue #1224).
  *
- * One operation is exported, `reduceMesh`, and it is two operations composed:
+ * One operation is exported, `reduceMesh` — `reduceMeshWith` is the same
+ * operation over art rasters the caller made — and it is two operations
+ * composed:
  *
  * 1. **Refinement** (`refineRegions`) inserts vertices inside the union of the
  *    declared regions and their bands until §5's `L(R)` holds on every edge
@@ -22,7 +24,9 @@
  * ## What every step is held to
  *
  * Each candidate step is measured by `measureMeshQuality` (`src/meshquality.ts`)
- * — no row is re-implemented here — and taken only when every row the caller's
+ * — no row is re-implemented here; the call reads it as `measureMeshQualityWith`
+ * over the art's rasters taken once at admission (`src/meshrasters.ts`, issue
+ * #1240), which returns the same report — and taken only when every row the caller's
  * contract requires is `pass`: the art fit at `targets.artFit`, the boundary
  * deviation from the source hull at `targets.maxBoundaryDeviation`, the minimum
  * angle when declared, orientation and degeneracy at 0, and every region's
@@ -71,8 +75,6 @@ import {
   distanceToSegment,
   earClip,
   findSelfIntersection,
-  labelIslands,
-  artOf,
   MeshError,
   MeshReductionError,
   meshEdges,
@@ -85,7 +87,7 @@ import {
 import {
   BAND_CONTACT_TOLERANCE,
   edgeIsHeldByRegion,
-  measureMeshQuality,
+  measureMeshQualityWith,
   type AttachmentRef,
   type ArtFitBounds,
   type CandidateReport,
@@ -101,6 +103,7 @@ import {
   type SourceMesh,
   type Termination,
 } from './meshquality.ts';
+import { artRastersOf, type ArtRasters } from './meshrasters.ts';
 
 // ---------------------------------------------------------------------------
 // the result
@@ -711,6 +714,8 @@ interface Run {
   protectedVertices: Set<number>;
   protectedEdges: Array<[number, number]>;
   sourceEdges: Set<string>;
+  /** The art's rasters, taken once for the call and read by every measurement in it (issue #1240). */
+  rasters: ArtRasters;
 }
 
 /** A measurement of a canonical mesh against the result's full contract. */
@@ -731,7 +736,7 @@ function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string): MeshQual
     boneOrder: input.boneOrder,
     preset: input.preset,
   };
-  return measureMeshQuality(measureInput);
+  return measureMeshQualityWith(measureInput, run.rasters);
 }
 
 /** The order constraints are named in when several fail on one step: structure, then shape, then art, then density. */
@@ -1167,26 +1172,50 @@ function tryRemoval(run: Run, v: number): string | null {
  */
 export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
   validateReduction(input);
+  return reduceValidated(input, artRastersOf(input.art));
+}
+
+/**
+ * `reduceMesh` over art rasters the caller made (`artRastersOf`,
+ * `src/meshrasters.ts`) — the result is `reduceMesh`'s for the same input, byte
+ * for byte, and every measurement of the call reads the one object, so its
+ * `tally` is the count of what the call computed. Rasters taken from another
+ * art are refused at admission (`REDUCE_ART_RASTERS_MISMATCH`).
+ *
+ * Internal: it is on `spine-rigc/mesh` only because that entry re-exports this
+ * module with `export *`, and a symbol that is merely exported is not promised
+ * (RELEASING.md, *The import surface*).
+ */
+export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters): MeshReductionResult {
+  validateReduction(input);
+  return reduceValidated(input, rasters);
+}
+
+/** The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in `rasters`. */
+function reduceValidated(input: MeshReductionInput, rasters: ArtRasters): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
 
   // The source, measured against its own admissibility bounds (correction 3) — this is also what refuses a
   // malformed art, mesh, region list or sample floor, by measureMeshQuality's own codes.
-  const admit = measureMeshQuality({
-    id: 'source',
-    attachment: input.attachment,
-    art: input.art,
-    source: src,
-    targets: { artFit: input.sourceBounds, maxBoundaryDeviation: null, regions: input.targets.regions },
-    referenceHull: null,
-    minArtSamples: input.minArtSamples,
-    regionArtSamples: input.regionArtSamples,
-    protect: input.protect,
-    influences: input.influences,
-    boneOrder: input.boneOrder,
-    preset: input.preset,
-  });
+  const admit = measureMeshQualityWith(
+    {
+      id: 'source',
+      attachment: input.attachment,
+      art: input.art,
+      source: src,
+      targets: { artFit: input.sourceBounds, maxBoundaryDeviation: null, regions: input.targets.regions },
+      referenceHull: null,
+      minArtSamples: input.minArtSamples,
+      regionArtSamples: input.regionArtSamples,
+      protect: input.protect,
+      influences: input.influences,
+      boneOrder: input.boneOrder,
+      preset: input.preset,
+    },
+    rasters,
+  );
   const effective = effectiveOf(input, admit.effective, sourceHull);
   const sourceCounts = admit.sourceCounts;
   const noMesh = (termination: Termination): MeshReductionResult => ({
@@ -1215,7 +1244,7 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
         );
       }
     }
-    checkIslands(input, who);
+    checkIslands(input, who, rasters);
     checkDeformBeforeWork(input);
 
     const boneRank = new Map((input.boneOrder ?? []).map((b, i) => [b, i]));
@@ -1243,6 +1272,7 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
       keyed: keyedSourceVertices(input),
       ...protectionOf(input, work, sourceEdges),
       sourceEdges,
+      rasters,
     };
 
     const refined = refineRegions(run);
@@ -1268,11 +1298,10 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
 }
 
 /** §4: full coverage asked of a source that touches no pixel of some art island is refused, never met by deleting art. */
-function checkIslands(input: MeshReductionInput, who: string): void {
+function checkIslands(input: MeshReductionInput, who: string, rasters: ArtRasters): void {
   if (input.targets.artFit.minCoverage !== 1) return;
-  const { mask, threshold, frame } = input.art;
-  const bits = artOf(mask, threshold);
-  const { label, sizes } = labelIslands(bits, mask.width, mask.height);
+  const { mask, frame } = input.art;
+  const { label, sizes } = rasters.islands();
   const onGrid = input.source.points.map(([x, y]): [number, number] => [x * frame.pageScale, y * frame.pageScale]);
   const covered = rasteriseTriangles(onGrid, input.source.triangles, mask.width, mask.height);
   const touched = new Set<number>();
