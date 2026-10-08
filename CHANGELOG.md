@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.0](https://github.com/firejune/rigc/compare/v2.22.0...v2.23.0) (2026-10-08)
+
+
+### Features
+
+* **mesh:** measureAuthoredMeshFit takes connectivity 4 | 8 (default 4, unchanged) so a consumer's gate reads with the rows' fill, and a region's pixel set is found by a scanline bit-identical to inClosedPolygon — hair_back's 3 px vs 5.1 px explained, the once-per-call 1.4 s term gone ([#1262](https://github.com/firejune/rigc/issues/1262), [#1263](https://github.com/firejune/rigc/issues/1263)) ([#1264](https://github.com/firejune/rigc/issues/1264)) ([daaf732](https://github.com/firejune/rigc/commit/daaf7325cfb2921b39ecb80a8797f112979f05b0))
+
 ## [2.22.0](https://github.com/firejune/rigc/compare/v2.21.0...v2.22.0) (2026-10-08)
 
 
