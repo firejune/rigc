@@ -380,8 +380,11 @@ import {
   traceAlphaOutline,
   traceOutline,
   earClip,
+  authoredMeshFitOf,
   BAND_CONTACT_TOLERANCE,
+  closedPolygonCentres,
   edgeIsHeldByRegion,
+  inClosedPolygon,
   measureAuthoredMeshFit,
   measureMeshQuality,
   measureMeshQualityStep,
@@ -47522,6 +47525,151 @@ function runMeshQualitySuite(): number {
       held,
       probeDetail(held, probes, caught.join('; ')),
       'issue #1254: null is a declared absence, and the two ways to misread it — as 0, which refuses, and as a bound nothing reaches, which passes — must each be visible; an omitted field is not a declaration and stays refused',
+    );
+  }
+
+  // --- MQ75 / MQ76 (#1262): measureAuthoredMeshFit's connectivity — 8 reads the rows' fill, 4 (the default) reads what it always read --
+  // The pinch fixture (MQ04) is the diagonal-only background pocket: its clear centre block meets the clear corner
+  // block at one corner only, so the 8-connected flood reaches it and the 4-connected one does not. The pushed fan
+  // (MQ02) over the rectangle is the mask with no such pocket. What a call reads is held to the row it is meant to
+  // equal by value and by the pixel the overshoot is read at, so a fit reading the other fill is named by pixel.
+  /** Where a fit read at one connectivity parts from that connectivity's MQ_OVERSHOOT row: empty when it agrees. */
+  const fitAgainstRow = (label: string, fit: { report: { overshoot: number }; overshootAt: number }, row: MeasureRow | undefined, w: number): string[] => {
+    if (row === undefined) return [`${label}: no MQ_OVERSHOOT row to read it against`];
+    const at = fit.overshootAt === -1 ? null : [fit.overshootAt % w, Math.floor(fit.overshootAt / w)];
+    const rowAt = row.worst?.at.pixel ?? null;
+    const found: string[] = [];
+    if (fit.report.overshoot !== row.value) found.push(`${label}: overshoot ${fit.report.overshoot} at pixel ${JSON.stringify(at)}, the ${row.art?.connectivity}-connected MQ_OVERSHOOT ${row.value} at pixel ${JSON.stringify(rowAt)}`);
+    else if (JSON.stringify(at) !== JSON.stringify(rowAt)) found.push(`${label}: overshoot ${fit.report.overshoot} read at pixel ${JSON.stringify(at)}, MQ_OVERSHOOT at pixel ${JSON.stringify(rowAt)}`);
+    return found;
+  };
+  const pinchRep = measureMeshQuality(mqInput(pinchMask, pinchFrame, hexMesh, noTargets));
+  const pinch8Row = mqRow(pinchRep, 'MQ_OVERSHOOT', null, 8);
+  {
+    const probes: string[] = [];
+    const sayFit = (f: { artPixels: number; coveredArt: number; coverage: number; overshoot: number }): string => `${f.overshoot} (coverage ${f.coverage}, ${f.coveredArt}/${f.artPixels})`;
+    // The pocket: the default, an explicit 4, and 8.
+    const byDefault = measureAuthoredMeshFit(pinchMask, 1, hexMesh.points, hexMesh.triangles);
+    const four = measureAuthoredMeshFit(pinchMask, 1, hexMesh.points, hexMesh.triangles, 4);
+    const eight = measureAuthoredMeshFit(pinchMask, 1, hexMesh.points, hexMesh.triangles, 8);
+    const over4 = mqRow(pinchRep, 'MQ_OVERSHOOT', null, 4);
+    if (JSON.stringify(byDefault) !== JSON.stringify(four)) probes.push(`the default reads ${JSON.stringify(byDefault)} and an explicit 4 ${JSON.stringify(four)}`);
+    if (over4 === undefined || four.overshoot !== over4.value) probes.push(`(…, 4) reads ${four.overshoot}; the labelled 4-connected row, the legacy reading MQ04 holds, is ${mqSay(over4)}`);
+    if (pinch8Row === undefined || eight.overshoot !== pinch8Row.value) probes.push(`(…, 8) reads ${eight.overshoot}; MQ_OVERSHOOT (8) is ${mqSay(pinch8Row)}`);
+    if (!(eight.overshoot > four.overshoot)) probes.push(`(…, 8) reads ${eight.overshoot}, not above (…, 4)'s ${four.overshoot}: the pocket did not part the two fills`);
+    if (eight.artPixels !== four.artPixels || eight.coveredArt !== four.coveredArt || eight.coverage !== four.coverage) probes.push(`coverage moved with the fill: ${sayFit(four)} against ${sayFit(eight)}`);
+    probes.push(...fitAgainstRow('the pocket, 8', authoredMeshFitOf(pinchMask, 1, hexMesh.points, hexMesh.triangles, 8, null), pinch8Row, pinchMask.width));
+    probes.push(...fitAgainstRow('the pocket, 4', authoredMeshFitOf(pinchMask, 1, hexMesh.points, hexMesh.triangles, 4, null), over4, pinchMask.width));
+    // No pocket: the three agree, and the report exposes one fill.
+    const rectRep = measureMeshQuality(mqInput(rectMask, frame, pushed, noTargets));
+    const rect8 = mqRow(rectRep, 'MQ_OVERSHOOT', null, 8);
+    const rectFits = [measureAuthoredMeshFit(rectMask, 1, pushed.points, pushed.triangles), measureAuthoredMeshFit(rectMask, 1, pushed.points, pushed.triangles, 4), measureAuthoredMeshFit(rectMask, 1, pushed.points, pushed.triangles, 8)];
+    if (new Set(rectFits.map((f) => JSON.stringify(f))).size !== 1) probes.push(`with no pocket the default, 4 and 8 read ${rectFits.map(sayFit).join(', ')}`);
+    if (rect8 === undefined || rectFits[2].overshoot !== rect8.value || !(rect8.value > 0)) probes.push(`with no pocket the fits read ${rectFits[2].overshoot} and MQ_OVERSHOOT ${mqSay(rect8)}, not one figure above 0`);
+    if (mqRow(rectRep, 'MQ_OVERSHOOT', null, 4) !== undefined) probes.push('with no pocket the report still carries a 4-connected row');
+    probes.push(...fitAgainstRow('no pocket, 8', authoredMeshFitOf(rectMask, 1, pushed.points, pushed.triangles, 8, null), rect8, rectMask.width));
+    // Any other connectivity is refused by name.
+    let refused = '';
+    try {
+      measureAuthoredMeshFit(rectMask, 1, pushed.points, pushed.triangles, 6 as unknown as 4);
+    } catch (err) {
+      refused = err instanceof MeshError ? err.message : `(not a MeshError) ${(err as Error).message}`;
+    }
+    if (!refused.includes('connectivity is 6')) probes.push(`connectivity 6 was ${refused === '' ? 'read' : `refused as "${refused}"`}, not refused naming the value`);
+    const held = probes.length === 0;
+    say(
+      'MQ75_CONTROL_MEASURE_AUTHORED_MESH_FIT_AT_8_READS_MQ_OVERSHOOT_AND_AT_4_OR_BY_DEFAULT_READS_THE_LEGACY_FILL',
+      held,
+      probeDetail(held, probes, `the diagonal pocket: default = (…, 4) = ${sayFit(four)} = the 4-connected row, (…, 8) = ${sayFit(eight)} = ${mqSay(pinch8Row)} at pixel ${JSON.stringify(pinch8Row?.worst?.at.pixel)}; no pocket: default, 4, 8 and ${mqSay(rect8)} all ${rectFits[0].overshoot}; connectivity 6 refused: ${refused}`),
+      "issue #1262: the promised symbol keeps its 4-connected default for every existing call, and its 8 is the very fill the rows read (P12), so a consumer's gate can read the rows' number; they differ only across a background pocket joined diagonally",
+    );
+  }
+  {
+    const probes: string[] = [];
+    const planted = authoredMeshFitOf(pinchMask, 1, hexMesh.points, hexMesh.triangles, 8, 'fill-4-under-8');
+    const found = fitAgainstRow('passed 8, filled 4', planted, pinch8Row, pinchMask.width);
+    if (found.length === 0) probes.push(`a fit passed 8 that filled 4 read ${planted.report.overshoot}, the same as MQ_OVERSHOOT (8)`);
+    else if (!/at pixel \[\d+,\d+\]/.test(found[0])) probes.push(`caught, but naming no pixel: ${found[0]}`);
+    // The plant is invisible where the fills agree, which is why the pocket is the fixture.
+    const rect8 = mqRow(measureMeshQuality(mqInput(rectMask, frame, pushed, noTargets)), 'MQ_OVERSHOOT', null, 8);
+    const quiet = fitAgainstRow('no pocket, passed 8, filled 4', authoredMeshFitOf(rectMask, 1, pushed.points, pushed.triangles, 8, 'fill-4-under-8'), rect8, rectMask.width);
+    if (quiet.length !== 0) probes.push(`the plant read differently with no pocket: ${quiet[0]}`);
+    const held = probes.length === 0;
+    say(
+      'MQ76_A_FIT_PASSED_8_THAT_FILLS_4_IS_CAUGHT_ON_THE_DIAGONAL_POCKET_NAMING_THE_PIXEL',
+      held,
+      probeDetail(held, probes, `${found[0]}; with no pocket the same plant reads MQ_OVERSHOOT's figure, so only the pocket can see it`),
+      'issue #1262: the option is worth something only if 8 is the fill the rows read, so a fit that takes 8 and floods 4 must surface where the two fills part, by the pixel',
+    );
+  }
+
+  // --- MQ77 / MQ78 (#1263): a region's pixel centres by scanline are inClosedPolygon's, pixel for pixel ----------
+  // Polygons whose vertices sit on pixel centres and whose sides run through them — straight, horizontal, at a slope
+  // of one half — a concave notch, a loop that touches itself at one vertex, vertices at a row's centre height off
+  // the centres, sides past the grid, and an irregular one; each at scale 1 and, moved a quarter pixel so its
+  // vertices land on the finer grid's centres, at scale 2. Every centre of every grid is decided both ways.
+  const scanFixtures: Array<{ name: string; poly: MqPt[] }> = [
+    { name: 'concave notch', poly: [[2.5, 2.5], [18.5, 2.5], [18.5, 14.5], [12.5, 14.5], [12.5, 8.5], [8.5, 8.5], [8.5, 14.5], [2.5, 14.5]] },
+    { name: 'self-touching vertex', poly: [[2.5, 2.5], [10.5, 10.5], [18.5, 2.5], [18.5, 17.5], [10.5, 10.5], [2.5, 17.5]] },
+    { name: 'half slope', poly: [[1.5, 1.5], [21.5, 11.5], [1.5, 17.5]] },
+    { name: 'vertices at centre heights', poly: [[0.7, 5.5], [10.25, 0.3], [22.9, 5.5], [10.25, 19.6]] },
+    { name: 'past the grid', poly: [[-5, -3], [30, 4], [12, 26]] },
+    { name: 'irregular', poly: [[3.2, 4.7], [19.9, 1.1], [15.3, 18.6], [9, 9], [4.4, 16.1]] },
+  ];
+  const scanGrids = scanFixtures.flatMap(({ name, poly }) => [
+    { name: `${name}, scale 1`, poly, w: 24, h: 20, scale: 1 },
+    { name: `${name}, scale 2`, poly: poly.map(([x, y]): MqPt => [x - 0.25, y - 0.25]), w: 48, h: 40, scale: 2 },
+  ]);
+  /** The first centre where the scanline and the predicate part, per grid, or none. */
+  const scanAgainstPredicate = (plant: 'crossing-half-pixel' | null): { parted: string[]; centres: number; inside: number; onSide: number; atVertex: number } => {
+    const parted: string[] = [];
+    let centres = 0;
+    let inside = 0;
+    let onSide = 0;
+    let atVertex = 0;
+    for (const g of scanGrids) {
+      const marks = closedPolygonCentres(g.poly, g.w, g.h, g.scale, plant);
+      let first: string | null = null;
+      for (let y = 0; y < g.h; y++) {
+        for (let x = 0; x < g.w; x++) {
+          const p: MqPt = [(x + 0.5) / g.scale, (y + 0.5) / g.scale];
+          const want = inClosedPolygon(p, g.poly);
+          centres++;
+          if (want) inside++;
+          if (g.poly.some((v, i) => mqPointSegment(p, v, g.poly[(i + 1) % g.poly.length]) === 0)) onSide++;
+          if (g.poly.some((v) => v[0] === p[0] && v[1] === p[1])) atVertex++;
+          if (first === null && (marks[y * g.w + x] === 1) !== want) first = `${g.name}: pixel [${x},${y}] (centre ${p[0]}, ${p[1]}) scanline ${marks[y * g.w + x] === 1 ? 'in' : 'out'}, inClosedPolygon ${want ? 'in' : 'out'}`;
+        }
+      }
+      if (first !== null) parted.push(first);
+    }
+    return { parted, centres, inside, onSide, atVertex };
+  };
+  {
+    const probes: string[] = [];
+    const r = scanAgainstPredicate(null);
+    probes.push(...r.parted);
+    if (!(r.onSide > 0 && r.atVertex > 0)) probes.push(`the fixtures put ${r.onSide} centre(s) on a side and ${r.atVertex} on a vertex; both were meant to be exercised`);
+    if (!(r.inside > 0 && r.inside < r.centres)) probes.push(`${r.inside} of ${r.centres} centres inside: the fixtures decide nothing`);
+    const held = probes.length === 0;
+    say(
+      'MQ77_CONTROL_A_REGIONS_PIXEL_CENTRES_BY_SCANLINE_ARE_IN_CLOSED_POLYGONS_ON_EDGES_VERTICES_HORIZONTAL_SIDES_A_NOTCH_AND_A_SELF_TOUCHING_VERTEX',
+      held,
+      probeDetail(held, probes, `${scanGrids.length} grids, ${r.centres} centres decided the same both ways: ${r.inside} in, ${r.onSide} on a side (${r.atVertex} at a vertex)`),
+      "issue #1263: the region's art pixels are computed by scanline rather than by testing every centre against every side, and that is a cost change only if every centre — on a side, at a vertex, on a horizontal side's row — lands where inClosedPolygon puts it",
+    );
+  }
+  {
+    const probes: string[] = [];
+    const r = scanAgainstPredicate('crossing-half-pixel');
+    if (r.parted.length === 0) probes.push('crossings moved half a pixel decided every centre as inClosedPolygon does');
+    else if (!/pixel \[\d+,\d+\]/.test(r.parted[0])) probes.push(`caught, but naming no pixel: ${r.parted[0]}`);
+    const held = probes.length === 0;
+    say(
+      'MQ78_A_SCANLINE_WHOSE_CROSSINGS_ARE_SHIFTED_HALF_A_PIXEL_IS_CAUGHT_NAMING_THE_PIXEL',
+      held,
+      probeDetail(held, probes, `${r.parted.length} of ${scanGrids.length} grids part from the predicate; first ${r.parted[0]}`),
+      "issue #1263: the scanline's crossing rule is the predicate's to the bit, so a crossing moved by half a pixel must surface as a named centre",
     );
   }
 

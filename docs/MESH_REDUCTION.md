@@ -887,7 +887,8 @@ export interface MotionSchedule {
   `fillEnclosed(inside, w, h, 8)`; issue #1209, landed by PR #1210 — the
   CHANGELOG's 2.15.1 entry); the authored-mesh fit fills with a
   **4-connected** flood over all art (`measureAuthoredMeshFit`'s
-  `fillEnclosed(art, w, h, 4)`). `fillEnclosed`'s own comment states the two
+  `fillEnclosed(art, w, h, 4)`, its default; `connectivity: 8` makes it the
+  tracer's flood, #1262 — P12 below). `fillEnclosed`'s own comment states the two
   "agree on every mask the trace accepts" — they can differ only across a
   diagonal pinch, which the tracer refuses.
 - **Holes and islands in the format.** A Spine mesh's outline is one closed
@@ -970,6 +971,22 @@ defined here, with these readings of what the table leaves open:
   `art.connectivity: 4` — the reading `measureAuthoredMeshFit` gives (`MQ04`);
   `MQ_COVERAGE` and `MQ_UNDERCUT` use no fill and record `connectivity: null`,
   `MQ_ISLANDS` records the 4 of its island labelling.
+  [implemented, #1262] `measureAuthoredMeshFit` takes an optional fifth
+  argument, `connectivity: 4 | 8`, **default 4**, so every call that passes
+  four arguments reads what it read before; `8` floods the background through
+  the very `fillEnclosed` call the rows read, and anything else is refused by
+  name (a `MeshError`). **A consumer's gate that is to agree with these rows
+  should read the fit with `8`, or call `measureMeshQuality` directly** —
+  with the default it is on the legacy ruler, and the two part exactly where a
+  background pocket meets the outside only at a corner. On the recorded
+  sources that is spine-parts's `sample/hair_back`: 2 px with the default and
+  5.09902 px with `8`, which is `MQ_OVERSHOOT`'s figure for the same source; on
+  the other 18 the three readings are one number. `MQ75` holds the default
+  equal to an explicit 4 and to the labelled 4-connected row, `8` equal to
+  `MQ_OVERSHOOT` by value and by the pixel the overshoot is read at, and all
+  three equal on a mask with no such pocket; `MQ76` plants a fit that is
+  passed 8 and floods 4, caught on the pocket naming the pixel, and silent
+  where the fills agree.
 - [implemented, #1224] **Holes are spanned and reported; islands are bridged or
   refused.** A reduction keeps the source's single loop (every step is read
   back through `traceOutline`). Art islands the source does not reach stay
@@ -1725,14 +1742,57 @@ once, 12.3 % in the carried coverage and 11.5 % in the outline readings; before,
 88.3 % was `inClosedPolygon` and 99.8 % `regionRows`. These figures are one
 machine's reading, not a claim about another; no wall-time threshold is set here.
 
-**What a region's polygon costs the caller.** The pixel set is now computed
-once per call: one test of every art pixel against every side of the polygon.
-For `hem` that is 350,983 × 287 ≈ 100.7 million side tests, about 1.4 s of the
-10.9 s profiled call above (`inRegion`'s share of its profile), and it grows with the
-number of sides; per step, the sides are read again only by the edges a step
-changes (`regionEdges`) and by a polygon not seen before. A polygon of fewer
-sides costs proportionally less in both, and is the caller's choice of
-approximation, not something the reduction rounds away.
+**The region's pixel set, by scanline**
+([#1263](https://github.com/firejune/rigc/issues/1263)). After #1253 the one
+thing a region still cost once per call was its pixel set: every art pixel
+centre tested against every side of the polygon — for `hem`, 350,983 × 287 ≈
+100.7 million side tests. That is the algorithm, not the polygon, so it is
+replaced rather than the polygon (a native circle stays out, P17):
+`closedPolygonCentres` (`src/meshquality.ts`) collects each row's crossings
+and marks each centre once, O(rows × sides + pixels).
+
+The rule it reproduces is `inClosedPolygon`'s, to the bit, and is written
+beside that predicate: a centre is in when its `distanceToSegment` to some side
+is at most `ON_BOUNDARY` (1e-9 px); otherwise by **even-odd** parity of a ray
+towards +x, where a side crosses when exactly one of its ends has a y strictly
+greater than the centre's (half-open: a vertex at the centre's height counts
+once, a horizontal side never) at
+`xc = ((xj − xi)·(py − yi)) / (yj − yi) + xi`, counted when `px < xc`. So
+**a centre exactly on an edge or at a vertex is in** — not because the ray
+says so, which on a boundary depends on which side is left or right of it,
+but because the distance test runs first and decides it; the scanline adds the
+same test side by side over the centres near each side. Each row's crossings
+are computed by the predicate's own expression in its order, so they are the
+same doubles, and a centre's count of crossings strictly to its right is the
+predicate's count. The single-point predicate is unchanged and still answers
+every single-point question (the hull membership, an edge's endpoints).
+
+`MQ77` holds the scanline equal to the predicate at every centre of twelve
+grids — a concave notch, a loop touching itself at one vertex, sides at a
+slope of one half through centres, vertices at a row's centre height off the
+centres, sides past the grid and an irregular polygon, each at scale 1 and 2:
+14,400 centres, 442 on a side and 33 at a vertex. `MQ78` moves every crossing
+half a pixel and is caught, naming the first centre that parts. Measured
+identity: the 19 recorded inputs replayed through the tree before and after —
+report, mesh and `accepted` identical, 57 of 57 — and every region pixel set
+the `mesh-quality` and `mesh-compare` suites compute (379), computed both ways
+in one instrumented run and identical.
+
+**What a region's polygon costs the caller.** The pixel set is computed once
+per call, by scanline. On the machine above (each run alone on it, the
+1-minute load 0.6–1.0 at every start), `hem`'s set — 13,273 of the 350,983
+art pixels — took 1,372–1,635 ms by the predicate over every pixel and
+0.7–3.5 ms by scanline, the same set; the with-region call went from 11.2,
+12.0 and 12.2 s to 8.7, 9.5 and 9.1 s, 1443 candidates and the same report,
+mesh and `accepted` bytes each run. A CPU profile of a fourth after-run (9.5 s)
+no longer shows the pixel set; its largest terms are `regionFill` (21.4 % of
+samples), the carried coverage (14.4 %) and the outline readings (13.5 %). So
+the sides of a polygon now cost per step only where a step reads them — the
+edges it changes (`regionEdges`) and a polygon not seen before — and the
+287-gon's once-per-call cost is a few milliseconds; a polygon of fewer sides is
+still the caller's choice of approximation, not something the reduction rounds
+away. These figures are one machine's reading, not a claim about another; no
+wall-time threshold is set here.
 
 **Left for later stages.** The motion comparison and every motion row (§3,
 stage C); a finer-grid pass, warm-up and traced-boundary gating (*Stage B

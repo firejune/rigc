@@ -1253,8 +1253,9 @@ export function traceAlphaOutline(
  * `background` is how the flood steps: 4 through edges, 8 through corners too.
  * The trace floods 8 — the dual of its 4-connected island, so background that
  * meets the outside at a corner is outside — and says why where it calls this.
- * The authored-mesh measurement floods 4, as it always has; the two agree on
- * every mask the trace accepts.
+ * The authored-mesh measurement floods 4 by default, as it always has, and 8
+ * when its caller asks (issue #1262); the two agree on every mask the trace
+ * accepts.
  */
 export function fillEnclosed(
   inside: Uint8Array,
@@ -1479,16 +1480,57 @@ export interface MeshFitReport {
  * is never refused, so every figure needs a number — hence the exact distance
  * transform below rather than a neighbourhood search that would have to stop
  * somewhere.
+ *
+ * ## Which background is enclosed — `connectivity` (issue #1262)
+ *
+ * The background is flooded 4-connected by default, as it always has been, so
+ * every call that passes four arguments reads exactly what it read before.
+ * `8` floods through corners too — the fill `measureMeshQuality`'s
+ * `MQ_OVERSHOOT` and `MQ_HOLES` rows are taken against (P12), by the same
+ * `fillEnclosed` call — so a background pocket joined to the outside only
+ * diagonally is read as outside, and a caller gating with this figure reads
+ * the number the rows read. The two fills agree on every mask without such a
+ * pocket. Any other value is refused by name: a silent fallback to one of the
+ * two would answer a question the caller did not ask.
  */
 export function measureAuthoredMeshFit(
   mask: AlphaMask,
   threshold: number,
   points: Array<[number, number]>,
   triangles: number[],
+  connectivity: 4 | 8 = 4,
 ): MeshFitReport {
+  return authoredMeshFitOf(mask, threshold, points, triangles, connectivity, null).report;
+}
+
+/**
+ * A fault planted on purpose in `authoredMeshFitOf`, for the mesh-quality
+ * suite's negative control: `'fill-4-under-8'` takes the connectivity it is
+ * passed and floods 4 whatever it was. `measureAuthoredMeshFit` plants none.
+ */
+export type AuthoredFitPlant = 'fill-4-under-8';
+
+/**
+ * `measureAuthoredMeshFit`'s measurement, with the pixel its overshoot is
+ * read at — the first covered pixel outside the filled silhouette at the
+ * largest distance, by the tie rule `MQ_OVERSHOOT` names its pixel with, or
+ * -1 when no covered pixel lies outside — so a control can name where two
+ * readings part.
+ */
+export function authoredMeshFitOf(
+  mask: AlphaMask,
+  threshold: number,
+  points: Array<[number, number]>,
+  triangles: number[],
+  connectivity: 4 | 8,
+  plant: AuthoredFitPlant | null,
+): { report: MeshFitReport; overshootAt: number } {
+  if (connectivity !== 4 && connectivity !== 8) {
+    throw new MeshError(`measureAuthoredMeshFit: connectivity is ${JSON.stringify(connectivity)}; required 4 (the default, the legacy fill) or 8 (the fill MQ_OVERSHOOT reads, P12)`);
+  }
   const { width: w, height: h } = mask;
   const art = artOf(mask, threshold);
-  const { filled } = fillEnclosed(art, w, h, 4);
+  const { filled } = fillEnclosed(art, w, h, plant === 'fill-4-under-8' ? 4 : connectivity);
   const covered = rasteriseTriangles(points, triangles, w, h);
   let artPixels = 0;
   let coveredArt = 0;
@@ -1499,15 +1541,22 @@ export function measureAuthoredMeshFit(
   }
   const squared = squaredDistanceToSet(filled, w, h);
   let worst = 0;
+  let overshootAt = -1;
   for (let i = 0; i < covered.length; i++) {
     if (!covered[i] || filled[i]) continue;
-    if (squared[i] > worst) worst = squared[i];
+    if (overshootAt === -1 || squared[i] > worst) {
+      overshootAt = i;
+      worst = squared[i];
+    }
   }
   return {
-    artPixels,
-    coveredArt,
-    coverage: artPixels === 0 ? 0 : coveredArt / artPixels,
-    overshoot: r6(Math.sqrt(worst)),
+    report: {
+      artPixels,
+      coveredArt,
+      coverage: artPixels === 0 ? 0 : coveredArt / artPixels,
+      overshoot: r6(Math.sqrt(worst)),
+    },
+    overshootAt,
   };
 }
 
