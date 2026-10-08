@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.3](https://github.com/firejune/rigc/compare/v2.20.2...v2.20.3) (2026-10-08)
+
+
+### Instrument
+
+* **release:** the publish gate is the same sharded selftest CI runs — one reusable workflow called by both, and prepublishOnly accepts only that run's merged tally for the exact commit, else runs the full selftest as before ([#1249](https://github.com/firejune/rigc/issues/1249)) ([#1250](https://github.com/firejune/rigc/issues/1250)) ([40c2355](https://github.com/firejune/rigc/commit/40c23555e76180dd2e1f9f4937570015ae5ff880))
+
 ## [2.20.2](https://github.com/firejune/rigc/compare/v2.20.1...v2.20.2) (2026-10-08)
 
 
