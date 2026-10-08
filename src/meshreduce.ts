@@ -1214,24 +1214,23 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
 
   // The source, measured against its own admissibility bounds (correction 3) — this is also what refuses a
-  // malformed art, mesh, region list or sample floor, by measureMeshQuality's own codes.
-  const admit = measureMeshQualityWith(
-    {
-      id: 'source',
-      attachment: input.attachment,
-      art: input.art,
-      source: src,
-      targets: { artFit: input.sourceBounds, maxBoundaryDeviation: null, regions: input.targets.regions },
-      referenceHull: null,
-      minArtSamples: input.minArtSamples,
-      regionArtSamples: input.regionArtSamples,
-      protect: input.protect,
-      influences: input.influences,
-      boneOrder: input.boneOrder,
-      preset: input.preset,
-    },
-    rasters,
-  );
+  // malformed art, mesh, region list or sample floor, by measureMeshQuality's own codes. Through the step
+  // rasters when the call carries them, so what a region reads of the art alone is computed once (issue #1253).
+  const admitInput: MeshMeasureInput = {
+    id: 'source',
+    attachment: input.attachment,
+    art: input.art,
+    source: src,
+    targets: { artFit: input.sourceBounds, maxBoundaryDeviation: null, regions: input.targets.regions },
+    referenceHull: null,
+    minArtSamples: input.minArtSamples,
+    regionArtSamples: input.regionArtSamples,
+    protect: input.protect,
+    influences: input.influences,
+    boneOrder: input.boneOrder,
+    preset: input.preset,
+  };
+  const admit = steps === null ? measureMeshQualityWith(admitInput, rasters) : measureMeshQualityStep(admitInput, steps);
   const effective = effectiveOf(input, admit.effective, sourceHull);
   const sourceCounts = admit.sourceCounts;
   const noMesh = (termination: Termination): MeshReductionResult => ({

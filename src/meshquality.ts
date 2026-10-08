@@ -69,7 +69,7 @@ import {
   type MeshOutline,
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
-import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
+import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
 // ---------------------------------------------------------------------------
@@ -1427,7 +1427,7 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
   );
 
   // --- regions (§5) ------------------------------------------------------------------------
-  rows.push(...regionRows(input, outline, hullPolygon, rasters));
+  rows.push(...regionRows(input, outline, hullPolygon, rasters, steps));
 
   const ordered = rows.slice().sort((a, b) => compareRows(a.row, b.row));
   const geometry = sectionOf(ordered);
@@ -1477,7 +1477,7 @@ function sectionOf(built: readonly Built[]): EvidenceSection {
 // ---------------------------------------------------------------------------
 
 /** A region's own refusal (§2's `refused`: this measurement's input is invalid), or null when it is measurable. */
-function regionRefusal(region: RefinementRegion, pageScale: number, who: string): { code: string; message: string } | null {
+function regionRefusal(region: RefinementRegion, pageScale: number, who: string, steps: StepRasters | null): { code: string; message: string } | null {
   const numbers: Array<[string, unknown]> = [
     ['maxEdgeLength', region.maxEdgeLength],
     ['transition', region.transition],
@@ -1495,7 +1495,8 @@ function regionRefusal(region: RefinementRegion, pageScale: number, who: string)
       message: `${who}, region "${region.name}": maxEdgeLength is ${region.maxEdgeLength} px; required at least one texel, ${r6(1 / pageScale)} px at pageScale ${pageScale}`,
     };
   }
-  const crossing = findSelfIntersection(region.polygon);
+  // A function of the polygon alone: a reduction step has it handed back by its `StepRasters` (issue #1253).
+  const crossing = steps === null ? findSelfIntersection(region.polygon) : steps.polygonCrossing(region.polygon, () => findSelfIntersection(region.polygon));
   if (crossing !== null) {
     return {
       code: 'REGION_SELF_INTERSECTS',
@@ -1524,8 +1525,13 @@ interface Edge {
  * distance from that region. A row's value is the edge whose
  * length most exceeds its own bound — so the row fails exactly when some edge
  * it covers is over — and the row names that edge and that bound.
+ *
+ * `MQ_FILL_DISTANCE` reads the art pixels whose centre lies in the region's
+ * closed polygon, a function of the art and the polygon alone: a reduction
+ * step has it handed back by its `StepRasters` (`regionPixels`, issue #1253)
+ * rather than testing every art pixel against the polygon again.
  */
-function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: readonly Pt[], rasters: ArtRasters): Built[] {
+function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: readonly Pt[], rasters: ArtRasters, steps: StepRasters | null): Built[] {
   const { attachment, source, art } = input;
   const who = `attachment ${nameOf(attachment)}`;
   const scale = art.frame.pageScale;
@@ -1541,14 +1547,35 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
   }
   edges.sort((p, q) => p.a - q.a || p.b - q.b);
 
+  // Each edge's answers for a region: computed here, or — on a reduction step — carried by its `StepRasters` from
+  // the last reading of the region for an edge with the same two ends (`regionEdges`, issue #1253).
+  const readings = new Map<RefinementRegion, RegionEdgeReading | null>();
+  const readingOf = (region: RefinementRegion): RegionEdgeReading | null => {
+    if (!readings.has(region)) readings.set(region, steps === null ? null : steps.regionEdges(region.polygon, region.transition));
+    return readings.get(region)!;
+  };
+  const meetsOf = (region: RefinementRegion, e: Edge): boolean => {
+    const record = readingOf(region)?.entry(points[e.a], points[e.b]);
+    if (record === undefined) return segmentMeetsPolygon(points[e.a], points[e.b], region.polygon);
+    if (record.meets === undefined) record.meets = segmentMeetsPolygon(points[e.a], points[e.b], region.polygon);
+    return record.meets;
+  };
+  const heldOf = (region: RefinementRegion, e: Edge): number | null => {
+    const held = (): number | null => (edgeIsHeldByRegion(points[e.a], points[e.b], region) ? segmentToPolygon(points[e.a], points[e.b], region.polygon) : null);
+    const record = readingOf(region)?.entry(points[e.a], points[e.b]);
+    if (record === undefined) return held();
+    if (record.held === undefined) record.held = held();
+    return record.held;
+  };
+
   // Which regions are measurable, and the one refusal of each that is not.
   const live: RefinementRegion[] = [];
   const refusals = new Map<string, string>();
   for (const region of input.targets.regions) {
-    let refusal = regionRefusal(region, scale, who);
+    let refusal = regionRefusal(region, scale, who, steps);
     if (refusal === null) {
       const poly: Pt[] = region.polygon;
-      const meets = edges.some((e) => segmentMeetsPolygon(points[e.a], points[e.b], poly)) || poly.some((p) => inClosedPolygon(p, hullPolygon));
+      const meets = edges.some((e) => meetsOf(region, e)) || poly.some((p) => inClosedPolygon(p, hullPolygon));
       if (!meets) {
         refusal = {
           code: 'REGION_OUTSIDE_ART',
@@ -1569,7 +1596,7 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
   for (const region of live) {
     holds.set(
       region,
-      edges.map((e) => (edgeIsHeldByRegion(points[e.a], points[e.b], region) ? segmentToPolygon(points[e.a], points[e.b], region.polygon) : null)),
+      edges.map((e) => heldOf(region, e)),
     );
   }
   const edgeIndex = new Map(edges.map((e, i) => [e, i]));
@@ -1632,23 +1659,42 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
       }
     }
 
-    // h(R): art pixel centres inside the region clipped to the hull, each to its nearest mesh vertex.
+    // h(R): art pixel centres inside the region clipped to the hull, each to its nearest mesh vertex. The art
+    // pixels inside the region come in ascending order, so the scan below visits what a scan of every art pixel
+    // would keep, in the same order.
+    const centreOf = (i: number): Pt => [((i % mask.width) + 0.5) / scale, (Math.floor(i / mask.width) + 0.5) / scale];
+    const inRegion = (): Int32Array => {
+      const kept: number[] = [];
+      for (let i = 0; i < artBits.length; i++) if (artBits[i] && inClosedPolygon(centreOf(i), poly)) kept.push(i);
+      return Int32Array.from(kept);
+    };
+    const regionPixels = steps === null ? inRegion() : steps.regionPixels(poly, inRegion);
     let count = 0;
     let worst = -1;
     let worstAt = -1;
-    for (let i = 0; i < artBits.length; i++) {
-      if (!artBits[i]) continue;
-      const x = i % mask.width;
-      const y = Math.floor(i / mask.width);
-      const centre: Pt = [(x + 0.5) / scale, (y + 0.5) / scale];
-      if (!inClosedPolygon(centre, poly) || !inClosedPolygon(centre, hullPolygon)) continue;
+    const visit = (i: number, nearest: number): void => {
       count++;
-      let nearest = Infinity;
-      for (const p of points) nearest = Math.min(nearest, Math.hypot(p[0] - centre[0], p[1] - centre[1]));
       if (nearest > worst) {
         worst = nearest;
         worstAt = i;
       }
+    };
+    const distance = (i: number, p: Pt): number => {
+      const centre = centreOf(i);
+      return Math.hypot(p[0] - centre[0], p[1] - centre[1]);
+    };
+    if (steps === null) {
+      for (const i of regionPixels) {
+        const centre = centreOf(i);
+        if (!inClosedPolygon(centre, hullPolygon)) continue;
+        let nearest = Infinity;
+        for (const p of points) nearest = Math.min(nearest, Math.hypot(p[0] - centre[0], p[1] - centre[1]));
+        visit(i, nearest);
+      }
+    } else {
+      // A reduction step: the pixels in the hull and their nearest distances carried from the last reading (issue #1253).
+      const carried = steps.regionFill(poly, { pixels: regionPixels, centre: centreOf, hull: hullPolygon, points, inHull: (i) => inClosedPolygon(centreOf(i), hullPolygon), distance });
+      for (let j = 0; j < carried.inside.length; j++) visit(carried.inside[j], carried.nearest[j]);
     }
     const fillSpec = spec('MQ_FILL_DISTANCE', 'px', region.name);
     const floor = floorOf(region.name);
