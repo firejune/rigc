@@ -1661,6 +1661,111 @@ What C2 rejected, and the reason:
   `readModel` refuses a page with fields it does not know before the
   comparison runs; the control doubles each page and moves its regions instead.
 
+## Stage D1 — the installed package over spine-parts's inputs
+
+[measured, #1238] What spine-parts's public inputs show when its automatic
+mode runs against the **registry artifacts** `spine-rigc@2.20.0` and `@2.19.0`,
+each installed into an empty directory with no spine-core beside it. The
+caller is spine-parts at the commit that added the mode (spine-parts PR #131),
+unmodified: its `buildRig` with each mesh part of the three public examples
+(`demo`, `sample`, `scarf`) switched alone to `auto` under `examplePolicy`
+(`fixtures/automesh.ts`, the procedure of `tools/auto_survey.ts`), and its ten
+`AUTO_CASES`; every `reduceMesh` call it makes is recorded as made and
+replayed one process per call. One darwin machine (Apple M4, 10 cores), Bun
+1.4.2, load average 4.3–7.2 throughout — never idle, so no unloaded figure
+appears below. Population: 30 parts, of which 18 reach `reduceMesh` (9
+example parts, 9 synthetic) and 12 are refused by spine-parts before the call
+(`CONTOUR_ONE_ISLAND`). The 18 recorded inputs are byte-identical between the
+two versions.
+
+**1. The call shape is on the surface, and 2.20.0 refuses none.** One shape:
+all fourteen `MeshReductionInput` fields, no region on any example input,
+weights by bone name, `deform` and `linkedMeshes` empty, `preset` null. 18 of
+18 calls return at both versions. Every value the automatic mode imports is
+held by a row of `OBSERVED_SYMBOLS` (`scripts/install_smoke.ts`) on
+`spine-rigc/mesh`; two types it uses, `SourceMesh` and `RefinementRegion`, are
+in no row (types are recorded, not held). spine-parts's other imports go
+through `./*.ts` courtesy keys rather than the named entries holding the same
+symbols. `compareMeshesInMotion` from the install over spine-parts's own demo
+builds (`neck` and `bottomwear`, `idle` at 12 fps, 50 frames): the tracked
+build against the automatic one is `accepted`; the tracked build against
+itself is **not** — `MQ_ORIENTATION` fails on every triangle (210 of 210, 620
+of 620), because spine-parts's lattice and contour emitters write clockwise in
+Spine world (all 20 tracked meshes measured on the compiled skeletons through
+spine-core's setup pose).
+
+**2. Reproducible from the install.** Every recorded input replayed twice, in
+separate processes and directories: report, mesh and a `measureMeshQuality`
+of the source byte-identical, 54 of 54 file pairs; the three comparison
+reports, 3 of 3. Between 2.19.0 and 2.20.0, 16 of 18 report-and-mesh pairs are
+identical; the two that differ are the synthetic cases with a region, as
+#1229's changed semantics predicts.
+
+**3. Budget and termination.** Over 54 reduce reports: every termination one
+of the four; `candidatesTried <= budget.maxCandidates` in all 54;
+`none-met-the-targets` with no mesh, no geometry and nothing accepted, 3 of 3;
+no report says minimal. `unsupported-topology` is not reached on these inputs —
+spine-parts refuses every multi-island source first. Each accepted
+`no-further-valid-reduction` was re-checked from outside the call: every
+surviving source vertex removed by the rule in *The reduction as implemented*
+(its fan, the link polygon tested with `findSelfIntersection` and clipped with
+`earClip`) and measured with the installed `measureMeshQuality` — 841 removals
+over 13 stops, none valid, 4 not re-checked because the link held an interior
+vertex; the named vertex reads back the named row at the named value in 13 of
+13. The same re-check finds 6 valid steps on the result of a budget-1 stop,
+its positive control.
+
+**4. Cost — two verdicts.** The case spine-parts observed at 81–141 s (PR #131's
+evidence table, `demo / bottomwear`) is a 661 × 693 plate (350,983 art pixels
+at alpha ≥ 1), a source of 536 vertices and 777 triangles, budget 5000.
+
+- (a) **The candidate count is bounded by the budget.** 1101 of 5000 in every
+  run of either version, ending `no-further-valid-reduction`.
+- (b) **The wall time is not short.** 87–184 s over seven runs of the same
+  input, same 1101 candidates and byte-identical results, at load 4.8–7.2 —
+  where the same processes ran spine-parts's whole tracked rig stage for the
+  example in 53–106 ms. One machine's reading at the loads stated; no bound is
+  claimed from it.
+
+Where the time goes, derived because the call has no phase hooks: admission is
+one measurement (111 ms), refinement nothing (no region), the final
+measurement one (144 ms), and each removal step one `measureMeshQuality` of the
+whole plate — (full call − a budget-0 call) / 1101 = 129 ms. A CPU profile of
+the call puts 98.98 % of its samples in `measureMeshQuality` under
+`tryRemoval`, 0.55 % in the step's own geometry, and at least 40.1 % in
+functions whose only input is the art (`artOf`, `fillEnclosed`,
+`labelIslands`, `traceAlphaOutline`), which do not change between the steps of
+one call. Per-step cost follows the plate's pixel count, not the mesh: 13–129 ms
+for plates of 40,388–458,073 pixels. Reusing the art-derived rasters across the
+steps of a call is its own card, with this section's byte-identity pairs as its
+acceptance.
+
+**5. Winding at every hand-off.** Signed area in Spine world, on the 9 example
+inputs (the synthetic cases agree):
+
+| hand-off | every triangle |
+| --- | --- |
+| spine-parts's contour source as `src/contour.ts` builds it | clockwise |
+| the same source as handed to `reduceMesh`, after `spineWinding()` swaps two corners | counter-clockwise |
+| the mesh `reduceMesh` returns (8 accepted, 1 refused by admission) | counter-clockwise |
+| the compiled skeleton of a real `spine-parts build`, posed by spine-core | counter-clockwise |
+
+Identical at 2.19.0 and 2.20.0 in every row: #1236 moved the `contour` and
+`ring` generators, and spine-parts hands rigc authored meshes, so the three
+builds' `skeleton.json` are byte-identical across versions. With
+`spineWinding()` undone, 18 of 18 recorded inputs are refused at admission
+(`REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`, `MQ_ORIENTATION` on every triangle). The
+source's winding is fixed by spine-parts's own tiling check (a triangle wound
+against the outline is refused), not by `earClip`, so the recommendation
+recorded on spine-parts#126 is to keep the swap unconditionally; a conditional
+would add a branch that check makes unreachable.
+
+**What was rejected.** Rebuilding spine-parts's call by hand from
+`autoReductionInput` — the example calls carry weights over spine-parts's
+internal segments and bone transforms, so the input was recorded as made
+instead. Reading phases off the report — wall time is never in it. Quoting one
+wall time — the seven readings and their loads are the claim.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
