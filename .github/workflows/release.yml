@@ -108,10 +108,12 @@ jobs:
     # path, because that is the one a ceiling can cut short: a refused tally
     # runs the one-process selftest here, which made `Publish to npm` 18m37s on
     # its own (v2.20.0, run 37724479086) — ~21 min to the publish, + 15 of
-    # wait + the confirmation's ~2 = 38, so 40. ⚠️ The accepted path's ~4 min
-    # is reasoned from ci.yml's merge job rather than measured on a release
-    # run; the first cut after #1249 measures this job and `gate`, and this
-    # comment is rewritten with what it measured.
+    # wait + the confirmation's ~2 = 38, so 40. Measured on the first cut
+    # after #1249 (v2.20.3, run on 2026-10-08): `plan` 14 s, `gate` 5m59s
+    # (shards 2m06s–3m59s, the merge 1m19s), this job 4m27s of which the
+    # tally was accepted 62 s in and the registry served the package on
+    # attempt 9 (3m09s) — 10m43s end to end against the ~21 min before, and
+    # the accepted path's publish is under 1.5 min before the wait.
     timeout-minutes: 40
     permissions:
       contents: read # check out the tag
