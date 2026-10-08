@@ -51,12 +51,12 @@ If this fails, stop and report that Bun is not installed. rigc runs on Bun.
 **Step 2.** Install rigc. Run:
 
 ```bash
-bun add -g spine-rigc
+bun add -g rig-c
 ```
 
-The npm package is called `spine-rigc`; the command it installs is called `rigc`.
-If the install fails, you can instead run `bunx spine-rigc` everywhere this prompt
-says `rigc` — for example `bunx spine-rigc build …` instead of `rigc build …`.
+The npm package is called `rig-c`; the command it installs is called `rigc`.
+If the install fails, you can instead run `bunx rig-c` everywhere this prompt
+says `rigc` — for example `bunx rig-c build …` instead of `rigc build …`.
 
 **Step 3.** Make a scratch directory somewhere outside `<REPO>` and change into
 it. For example:

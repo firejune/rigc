@@ -15,14 +15,14 @@ It is the contract both repositories agree on *before* any of stages B–D is
 written. **Stage B1 ([#1224](https://github.com/firejune/rigc/issues/1224))
 implements the geometry measurement** — `measureMeshQuality` and the
 `mesh-quality-report/1` document, in `src/meshquality.ts`, re-exported through
-`spine-rigc/mesh` — and **stage B2 implements the reduction**: `reduceMesh`,
+`rig-c/mesh` — and **stage B2 implements the reduction**: `reduceMesh`,
 in `src/meshreduce.ts`, re-exported through the same entry. Every clause the
 tree now does is marked **[implemented, #1224]** and says what the tree does,
 cited by path and symbol; *The reduction as implemented* gathers the choices B2
 had to make. **Stage C1 ([#1230](https://github.com/firejune/rigc/issues/1230))
 implements the motion comparison** — `compareMeshesInMotion`, in
 `src/meshcompare.ts`, writing the `motion` section of the same document, and
-**stage C2** gives it its named entry, `spine-rigc/meshcompare`, held from an
+**stage C2** gives it its named entry, `rig-c/meshcompare`, held from an
 install with no spine-core by the install smoke (`MQ45`), and builds the rest
 of its controls. Its clauses are marked **[implemented, #1230]**, and *The
 comparison as implemented* gathers the choices C1 and C2 had to make. The page exists
@@ -76,7 +76,7 @@ policy from a name.
 | Posing | spine-core poser and rigc's core poser behind one seam (`src/render_shared.ts`, `src/render_core.ts`); `sampleAnimation`, `sampleSetupPose` and the `Frame`/`Mesh` pieces with world vertices, page UVs, triangles (`src/render_shared.ts`) | a comparison over a common UV domain through the core poser (§3) — [implemented, #1230] `compareMeshesInMotion` poses through `poseRawSetup` and `poseRawAnimationEach` (`src/core/raw.ts`), the walk `src/render_core.ts` steps with, not through the render seam |
 | Two triangulations compared | **nothing.** `src/correspondence.ts` is a *bone* correspondence for `bonedist`/`bench` (`BONEDIST_SPEC`, `IDENTITY_CORRESPONDENCE`), not a mesh one | the whole of §3 — [implemented, #1230] `src/meshcompare.ts` |
 | Report document | `build-report/1` (`src/assertions/report.ts`): versioned, additive, byte-identical for one build, no time or path | `mesh-quality-report/1` (§2) — [implemented, #1224] for `measure`: `writeMeshQualityReport`, `src/meshquality.ts` |
-| Import surface for parts | `spine-rigc/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `spine-rigc/render` needs spine-core installed beside it | `spine-rigc/mesh` (geometry) and `spine-rigc/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row; [implemented, #1230] the motion half: `compareMeshesInMotion` and `uvCarriers` held by its `AGREED_IN_1230` row, and the comparison called from an install with no spine-core (`MESHCOMPARE_PROBE_SOURCE`, `scripts/install_smoke.ts`) |
+| Import surface for parts | `rig-c/mesh` holds 11 values and `AlphaMask` (RELEASING.md *The import surface*; `OBSERVED_SYMBOLS`, `scripts/install_smoke.ts`); `rig-c/render` needs spine-core installed beside it | `rig-c/mesh` (geometry) and `rig-c/meshcompare` (motion), §0 — [implemented, #1224] the geometry half: five values held by the smoke's `AGREED_IN_1224` row; [implemented, #1230] the motion half: `compareMeshesInMotion` and `uvCarriers` held by its `AGREED_IN_1230` row, and the comparison called from an install with no spine-core (`MESHCOMPARE_PROBE_SOURCE`, `scripts/install_smoke.ts`) |
 
 ## 0. Where the operations live, and what they never change
 
@@ -84,13 +84,13 @@ policy from a name.
 
 - The named entries are the API and a symbol is promised only once a
   dependant is observed using it (RELEASING.md *The import surface*). Through
-  `spine-rigc/mesh` parts is promised `traceAlphaOutline`, `traceOutline`,
+  `rig-c/mesh` parts is promised `traceAlphaOutline`, `traceOutline`,
   `earClip`, `offsetPolygon`, `prunePolygon`, `simplifyClosedPolygon`,
   `signedArea`, `findSelfIntersection`, `checkHullOrder`,
   `measureAuthoredMeshFit`, `MeshError`, and the type `AlphaMask`.
   `measureContourFit`, `meshEdges`, `buildSegmentsLattice` and `segmentShares`
   are exported by the module and **not** promised.
-- `spine-rigc/render` loads `@esotericsoftware/spine-core` on import, which the
+- `rig-c/render` loads `@esotericsoftware/spine-core` on import, which the
   package declares as a devDependency only since 2.0.0 (RELEASING.md, the
   paragraph after the *not promised* list). rigc's own core poser
   (`src/core/`, `src/render_core.ts`) links nothing of the runtime, and **has
@@ -116,11 +116,11 @@ policy from a name.
   `src/meshquality.ts`, `src/meshreduce.ts` and — since stage C1 —
   `src/meshcompare.ts` names any of the three operations, so
   nothing a build reaches calls them.
-- [agreed, spine-parts#126] **P1 — `spine-rigc/meshcompare` is accepted.**
+- [agreed, spine-parts#126] **P1 — `rig-c/meshcompare` is accepted.**
   Geometry-only operations (`reduceMesh`, `measureMeshQuality`) are exported
-  from `spine-rigc/mesh`, which stays geometry-only; the motion comparison
+  from `rig-c/mesh`, which stays geometry-only; the motion comparison
   (`compareMeshesInMotion`) is exported from the new named entry
-  `spine-rigc/meshcompare`. **Both** entries are held by an installed-package
+  `rig-c/meshcompare`. **Both** entries are held by an installed-package
   smoke with spine-core absent, the scenario the smoke already runs for the
   observed entries. [implemented, #1230] `compareMeshesInMotion`
   is exported from `src/meshcompare.ts`, which links nothing of the runtime
@@ -1339,7 +1339,7 @@ export interface InfluenceLimits {
 ## The reduction as implemented (stage B2)
 
 [implemented, #1224] `reduceMesh(input: MeshReductionInput): MeshReductionResult`
-in `src/meshreduce.ts`, re-exported through `spine-rigc/mesh`, returns
+in `src/meshreduce.ts`, re-exported through `rig-c/mesh`, returns
 `{ mesh: ReducedMesh | null, report }`. `ReducedMesh` is §1's `SourceMesh` in
 the canonical order plus `edges` (`meshEdges`), `indexMap` (source index →
 result index, `null` where removed), `inserted` (result indices the refinement
@@ -1522,7 +1522,7 @@ The rule:
   `src/meshreduce.ts` to no call of `measureMeshQuality` and one of
   `artRastersOf`.
 
-`measureMeshQualityWith` and `reduceMeshWith` are on `spine-rigc/mesh` only
+`measureMeshQualityWith` and `reduceMeshWith` are on `rig-c/mesh` only
 because that entry re-exports both modules with `export *`; a symbol that is
 merely exported is not promised (RELEASING.md, *The import surface*), and the
 install smoke's observed list is unchanged. `src/meshrasters.ts` is on no named
@@ -1862,7 +1862,7 @@ mesh's region UVs off its own attachment and never a page UV.
 - Explicit times walked once per phase — they would be the same poses under two
   ids; they carry no phase instead.
 - A section builder imported from `src/meshquality.ts` — `sectionOf` there is
-  internal, and exporting it would put it on `spine-rigc/mesh` through that
+  internal, and exporting it would put it on `rig-c/mesh` through that
   entry's `export *`; `src/meshcompare.ts` applies §2's rule in its own
   `sectionOf`.
 - The version through `src/cli/shared.ts`'s `readVersion` in place — that module
@@ -1897,7 +1897,7 @@ it. One machine's reading, unpaired, as above.
   every frame), with the same document with hull vertex 0 moved
   `MESHCOMPARE_MOVED` units (that distance at every frame, at that vertex's
   UV — the fixture's bones carry no scale), and two candidates under one id,
-  refused as the `MeshReductionError` `spine-rigc/mesh` exports; the report has
+  refused as the `MeshReductionError` `rig-c/mesh` exports; the report has
   to say `operation: 'compare'` and `poser.kind: 'core'` at the installed
   version.
 - `COMPARE_REFERENCE_FAILS` — *Independent evidence* above.
@@ -1998,7 +1998,7 @@ all fourteen `MeshReductionInput` fields, no region on any example input,
 weights by bone name, `deform` and `linkedMeshes` empty, `preset` null. 18 of
 18 calls return at both versions. Every value the automatic mode imports is
 held by a row of `OBSERVED_SYMBOLS` (`scripts/install_smoke.ts`) on
-`spine-rigc/mesh`; two types it uses, `SourceMesh` and `RefinementRegion`, are
+`rig-c/mesh`; two types it uses, `SourceMesh` and `RefinementRegion`, are
 in no row (types are recorded, not held). spine-parts's other imports go
 through `./*.ts` courtesy keys rather than the named entries holding the same
 symbols. `compareMeshesInMotion` from the install over spine-parts's own demo
@@ -2321,6 +2321,6 @@ not any stage's here.
   "support" can only mean spanning a hole and bridging or refusing an island;
   §4 states that rather than promising more.
 - #1221 refers to *"runtime geometry facilities"* parts can use. The one
-  posing entry parts is promised, `spine-rigc/render`, needs spine-core; the
+  posing entry parts is promised, `rig-c/render`, needs spine-core; the
   core poser that does not has no entry. §0 records the agreed new entry (P1),
-  [implemented, #1230] as `spine-rigc/meshcompare`.
+  [implemented, #1230] as `rig-c/meshcompare`.

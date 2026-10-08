@@ -31,7 +31,7 @@
  * the value the rasters were taken at and the value the input requires
  * (`checkArtRasters`, `src/meshquality.ts`).
  *
- * Not re-exported by `src/mesh.ts`: nothing here is on `spine-rigc/mesh`.
+ * Not re-exported by `src/mesh.ts`: nothing here is on `rig-c/mesh`.
  */
 import { artOf, distancePassesOf, fillEnclosed, labelIslands, MeshError, pixelCentreInTriangle, prunePolygon, squaredDistanceToSet, traceAlphaOutline, triangleRasterBox } from './mesh.ts';
 import type { ArtInput } from './meshquality.ts';

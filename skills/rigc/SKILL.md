@@ -2,7 +2,7 @@
 name: rigc
 description: Author, build and validate Spine 4.3 skeleton data (skeleton.json plus its .atlas) from loose part PNGs with rigc, the rig compiler that verifies its own output with named assertions before writing it. Use for any request to make a Spine rig or Spine animation from PNG parts, or where the source is a Live2D, Unity or video model whose pictures you can render, to run or read rigc build, validate, render, preview, check or vote, or to write or fix a *.rig.json or *.motion.json spec; it says which shipped guide to open for the need at hand. Not for Live2D conversion, cutting an illustration into parts, or real-time face tracking.
 license: MIT
-compatibility: Requires Bun 1.2 or later. The tool is the npm package spine-rigc (bunx spine-rigc, or bun add -d spine-rigc); the command it installs is rigc.
+compatibility: Requires Bun 1.2 or later. The tool is the npm package rig-c (bunx rig-c, or bun add -d rig-c); the command it installs is rigc.
 ---
 
 # rigc — a rig compiler for agents
@@ -35,8 +35,8 @@ whole interface, and this skill only says which of them to open.
 ## Install
 
 ```shell
-bunx spine-rigc --help       # run it without installing
-bun add -d spine-rigc        # or pin it in the project; the command is `rigc`
+bunx rig-c --help       # run it without installing
+bun add -d rig-c        # or pin it in the project; the command is `rigc`
 bun rigc skills install      # then link these skills into .agents/skills
 ```
 
@@ -126,8 +126,8 @@ spec files field by field, the emission rules, the loop, and the failure map. Th
 | a **skeleton.json somebody else authored** — read it, repair it, extend it | [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) | `rigc-ingest` |
 | you are the **person operating** the agent rather than the agent | [PROMPTING.md](https://github.com/firejune/rigc/blob/main/docs/PROMPTING.md) | — |
 
-Every guide linked here is in the installed package at `node_modules/spine-rigc/docs/`,
+Every guide linked here is in the installed package at `node_modules/rig-c/docs/`,
 which is the copy that matches the rigc you run; the links go to the repository's
 `main`. Inside the Claude Code plugin the same files are at `${CLAUDE_PLUGIN_ROOT}/docs/`.
 Formats, the CLI reference and the licence chain:
-[README.md](https://github.com/firejune/rigc/blob/main/README.md), installed at `node_modules/spine-rigc/README.md`.
+[README.md](https://github.com/firejune/rigc/blob/main/README.md), installed at `node_modules/rig-c/README.md`.

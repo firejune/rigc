@@ -1154,7 +1154,7 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
  * taken from another art are refused (`REDUCE_ART_RASTERS_MISMATCH`), never
  * read.
  *
- * Internal: it is on `spine-rigc/mesh` only because that entry re-exports this
+ * Internal: it is on `rig-c/mesh` only because that entry re-exports this
  * module with `export *`, and a symbol that is merely exported is not promised
  * (RELEASING.md, *The import surface*).
  */

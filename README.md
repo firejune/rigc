@@ -3,8 +3,8 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/spine-rigc"><img src="https://img.shields.io/npm/v/spine-rigc.svg?style=flat-square&color=FF6B4A" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/spine-rigc"><img src="https://img.shields.io/npm/dm/spine-rigc.svg?style=flat-square&color=A855F7" alt="npm downloads" /></a>
+  <a href="https://www.npmjs.com/package/rig-c"><img src="https://img.shields.io/npm/v/rig-c.svg?style=flat-square&color=FF6B4A" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/rig-c"><img src="https://img.shields.io/npm/dm/rig-c.svg?style=flat-square&color=A855F7" alt="npm downloads" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-38BDF8.svg?style=flat-square" alt="license" /></a>
 </p>
 
@@ -13,7 +13,8 @@ a rig compiler for Spine: a rig spec and a motion spec in, Spine 4.3 skeleton da
 gated by a list of named assertions before a byte is written — rigc's own validator in
 the published package, held to a `spine-core` round trip's verdicts in this
 repository's CI. Built so AI agents can author rigs and check their own work; it ships
-as an agent skill.
+as an agent skill. On npm it is `rig-c` — the same package as `spine-rigc`, the name it
+first shipped under, which is published beside it with the same files at every version.
 
 ## What you get
 
@@ -143,18 +144,22 @@ runners and on Linux at the declared minimum, Bun 1.2.0 (the `installs` and
 repository material, not in the npm package); a platform
 whose leg is red there is not one the package is known to run on.
 
-**The npm package is `spine-rigc`; the command it installs is `rigc`.** npm
+**The npm package is `rig-c`; the command it installs is `rigc`.** npm
 refuses the name `rigc` as too similar to packages that already exist, so the
-project, this repository and the executable keep their name and only the
-registry entry is spelled out.
+project, this repository and the executable keep their name and the registry
+entry carries one hyphen. **`spine-rigc` is the same package**: it is the name
+every version up to 2.20.4 shipped under, and it stays published as an alias —
+every version from 2.20.4 on is on both names, with the same files — so a
+project that depends on `spine-rigc` keeps receiving every release. A new
+project installs `rig-c`.
 
 ```bash
-bunx spine-rigc --help    # run it without installing
-bun add -g spine-rigc     # or install the command
-bun add -d spine-rigc     # or pin it in a project
+bunx rig-c --help    # run it without installing
+bun add -g rig-c     # or install the command
+bun add -d rig-c     # or pin it in a project
 ```
 
-`npx spine-rigc` works too, as long as Bun is on `PATH` — the executable is a
+`npx rig-c` works too, as long as Bun is on `PATH` — the executable is a
 Bun script, and npm only writes the shim that calls it.
 
 Installed, the command is `rigc`. The examples below spell it `bun cli.ts`
@@ -194,7 +199,7 @@ plugin marketplace:
 /plugin install rigc@rigc
 ```
 
-With the package already installed, `claude --plugin-dir node_modules/spine-rigc`
+With the package already installed, `claude --plugin-dir node_modules/rig-c`
 loads the same skills without a marketplace. The plugin carries no version of its
 own — `/plugin update` follows `main` commit by commit, and the only version on
 disk stays the one in `package.json`.
@@ -206,12 +211,12 @@ Codex, Gemini CLI and Antigravity read skills from one directory in the workspac
 `node_modules`. With the package installed, one command puts every skill there:
 
 ```shell
-bun add -d spine-rigc
-bun rigc skills install          # relative links: .agents/skills/rigc -> ../../node_modules/spine-rigc/skills/rigc
+bun add -d rig-c
+bun rigc skills install          # relative links: .agents/skills/rigc -> ../../node_modules/rig-c/skills/rigc
 bun rigc skills install --copy   # the folders themselves, for a host that does not follow a link
 ```
 
-Run it through the project's own install, as above: `bunx spine-rigc skills install`
+Run it through the project's own install, as above: `bunx rig-c skills install`
 in a project that has the package was measured running the registry's copy instead
 of the project's. A link reaches every upgrade of the package with no second run,
 and a second run has nothing to do; an entry already there that this command did not
@@ -242,11 +247,11 @@ reference export, so nothing you read in a quickstart is an answer to anything
 **1. Install the command.**
 
 ```bash
-bun add -g spine-rigc     # installs `rigc`
+bun add -g rig-c     # installs `rigc`
 ```
 
 Or skip the install and prefix every command below with `bunx `, e.g.
-`bunx spine-rigc build …`.
+`bunx rig-c build …`.
 
 **2. Make a directory and three plates.** rigc measures PNGs rather than trusting
 a number you typed (R5), so the art has to exist. These three are solid colours a
@@ -450,7 +455,7 @@ that does not belong to it. See
   field by field, the emission rules, every named failure mapped to the file that
   has to change, and §8–§9 for reproducing a shot you were given as pictures. It
   ships inside the npm package too, at
-  `node_modules/spine-rigc/docs/AUTHORING.md`.
+  `node_modules/rig-c/docs/AUTHORING.md`.
 - `rigc explain --rig buoy.rig.json --motion buoy.motion.json --out spine` prints
   the compiled rig as a table — every bone with its resolved parent, the slots in
   draw order, every timeline key by key — and writes nothing. It is what to reach
@@ -744,7 +749,7 @@ letting `A17` blame the editor for the harness's own doing.
 
 | Document | For |
 | --- | --- |
-| 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** | **the format guide, and the one to read before writing a spec.** Both input files field by field with a complete minimal example each, every field with its Spine meaning, the rules that decide what is emitted, the build → read the report → fix → repeat loop, the map from every named failure to the file that has to change, and the features rigc refuses by name so you do not spend a loop discovering them. It travels **inside the npm package**, at `node_modules/spine-rigc/docs/AUTHORING.md` |
+| 📘 **[docs/AUTHORING.md](docs/AUTHORING.md)** | **the format guide, and the one to read before writing a spec.** Both input files field by field with a complete minimal example each, every field with its Spine meaning, the rules that decide what is emitted, the build → read the report → fix → repeat loop, the map from every named failure to the file that has to change, and the features rigc refuses by name so you do not spend a loop discovering them. It travels **inside the npm package**, at `node_modules/rig-c/docs/AUTHORING.md` |
 | 🦴 **[docs/RIGGING.md](docs/RIGGING.md)** | **authoring the hierarchy.** Where a bone goes and why the art is pushed out on an offset, why a pivot in the wrong place looks like a search failure and what identifies one, moving a pivot and the child row that gets forgotten, gauges, siblings-not-a-chain, what a chain can reach and how many links it needs, why a local key is not a world key, duplicate art at mirrored pivots, and constraints as structure. Every section is a stumble the run records hold more than once, ranked by how often. Ships in the package too |
 | 🎞️ **[docs/MOTION.md](docs/MOTION.md)** | **the key-pose recipe.** How to get two poses, what a pair of poses does and does not fix, the in-betweening rules and where each comes from, and how to spread candidates so a ballot informs. Ships in the package too |
 | 🙂 **[docs/FACE.md](docs/FACE.md)** | **authoring a face.** A blink, a gaze and a 2.5D head turn on plain Spine data: the one line of yaw arithmetic every number in a turn comes from, depth as the parameter you are actually authoring, where to put a grid's columns and the angle at which any grid folds, what foreshortens and what does not, channel allocation before the first key, and the three cliffs with their angles. Also the deform audit gap, demonstrated — a folded mesh gates green — and the differential check that works today |

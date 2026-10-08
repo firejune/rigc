@@ -8,7 +8,7 @@
  * — and `stretchSingularValues` after them (issue #1230), for the motion
  * comparison (`src/meshcompare.ts`), which reads a triangle's stretch the way
  * the deform survey does and must not reach the compiler either.
- * They moved because a module the `spine-rigc/mesh` entry reaches has to read
+ * They moved because a module the `rig-c/mesh` entry reaches has to read
  * the same band, and `src/deformsurvey.ts` reaches the compiler and the core
  * (`src/deformstructure.ts`, `src/core/`) — a geometry entry that loaded the
  * compiler to read three numbers would also close an import cycle through

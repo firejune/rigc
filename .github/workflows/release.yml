@@ -6,7 +6,9 @@
 # Merging that pull request is the release: the resulting push runs this
 # workflow again, release-please tags vX.Y.Z and cuts the GitHub release, and
 # the same run publishes to npm over OIDC (trusted publishing) — no npm token,
-# no OTP.
+# no OTP. It publishes the package twice, under two names (issue #1258):
+# `rig-c`, the name in package.json, and `spine-rigc`, the name it first
+# shipped under, kept as an alias carrying the same files at every version.
 #
 # Since issue #1249 that run is three jobs and a call: `plan` (release-please)
 # → `gate` (the selftest as n shards and their merge, selftest-shards.yml, the
@@ -16,8 +18,9 @@
 # selftest.ts holds that order.
 #
 # Two constraints are load-bearing, do not "simplify" them away:
-#   - The publish must stay in THIS file. npm's trusted publisher for
-#     spine-rigc is pinned to the workflow filename `release.yml`.
+#   - Both publishes must stay in THIS file. npm's trusted publisher for each
+#     name — rig-c and spine-rigc, one form per package on npmjs.com — is
+#     pinned to the workflow filename `release.yml`.
 #   - It must stay on a GitHub-hosted runner. npm does not support OIDC from
 #     self-hosted runners.
 name: release
@@ -108,7 +111,9 @@ jobs:
     # path, because that is the one a ceiling can cut short: a refused tally
     # runs the one-process selftest here, which made `Publish to npm` 18m37s on
     # its own (v2.20.0, run 37724479086) — ~21 min to the publish, + 15 of
-    # wait + the confirmation's ~2 = 38, so 40. Measured on the first cut
+    # wait + the confirmation's ~2 = 38, so 40. The alias (issue #1258) adds
+    # its pack and publish — about a second to pack, measured on this tree —
+    # and no second wait: its confirmation asks within what is left of the 15. Measured on the first cut
     # after #1249 (v2.20.3, run on 2026-10-08): `plan` 14 s, `gate` 5m59s
     # (shards 2m06s–3m59s, the merge 1m19s), this job 4m27s of which the
     # tally was accepted 62 s in and the registry served the package on
@@ -180,6 +185,29 @@ jobs:
           RIGC_PREPUBLISH_TALLY: ${{ runner.temp }}/merged-tally/selftest_merged.json
         run: npm publish --provenance --access public
 
+      # 🪞 The alias (issue #1258): the same files under the name the package
+      # first shipped as, so a dependant that still names `spine-rigc` keeps
+      # receiving every version. `scripts/alias_tarball.ts` packs this checkout
+      # — the tagged commit the step above published from — into the runner's
+      # temp directory, rewrites the one `"name"` line of the extracted
+      # package.json, packs that again, and prints the path only after holding
+      # the result to the package tarball file by file. The checkout is never
+      # modified, so the confirmation below reads the tree the gate read.
+      #
+      # 🔒 No lifecycle script runs here, and that is the design rather than a
+      # gap: `npm publish <tarball>` runs none, so `prepublishOnly` gates the
+      # step above and only that one. Running it again could not mean anything —
+      # renaming the package in this tree leaves it modified, which the tally
+      # reader refuses (TALLY_DIRTY), and the fallback would run the whole
+      # selftest over a tree that is no longer the commit the gate ran at. The
+      # gate's verdict is about this commit, and the alias is this commit's
+      # files.
+      - name: Publish the alias spine-rigc
+        run: |
+          set -euo pipefail
+          alias_tgz="$(bun scripts/alias_tarball.ts pack --name spine-rigc --out "$RUNNER_TEMP/alias")"
+          npm publish "$alias_tgz" --provenance --access public
+
       # ROADMAP.md's fourth condition for 1.0 says "installing FROM THE REGISTRY
       # and running a build is checked mechanically, every release" — this is
       # that sentence, and it is deliberately the smaller half of issue #556.
@@ -211,6 +239,14 @@ jobs:
       # the package (exit 3, "confirmation NOT taken"), and a case going red on
       # an artifact the registry did serve says the published artifact does not
       # build (exit 1). The old body ended both in `npm view`'s raw `E404`.
+      #
+      # 🪞 `--alias spine-rigc` adds the second name: after the case, the same
+      # version under the alias is fetched, within what is left of the same
+      # wait, and its unpacked files are held to the ones the case installed —
+      # every path, every byte, the manifest's name line excepted (issue #1258).
+      # Compared rather than installed a second time: identical files are the
+      # stronger claim, and the comparison takes seconds. A difference is exit
+      # 1; an alias still arriving is exit 3, re-run by the dispatch below.
       - name: Confirm the published package installs and builds
         # Through the environment rather than interpolated into the script, the
         # same rule ci.yml's jobs state: `${{ }}` inside `run:` is text becoming
@@ -221,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           version="${TAG_NAME#v}"
-          bun run smoke -- --source registry --version "$version" --wait 15 --case clean
+          bun run smoke -- --source registry --version "$version" --wait 15 --case clean --alias spine-rigc
 
   # The same confirmation, on demand, for a cut whose wait ran out. It publishes
   # nothing and can publish nothing: `npm publish` exists only in the job above,
@@ -254,4 +290,4 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean
+          bun run smoke -- --source registry --version "$VERSION" --wait 15 --case clean --alias spine-rigc

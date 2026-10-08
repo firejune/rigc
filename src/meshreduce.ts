@@ -1211,7 +1211,7 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
  * which is the path the carried one is held equal to. Step rasters made over
  * another rasters object are refused by the same code.
  *
- * Internal: it is on `spine-rigc/mesh` only because that entry re-exports this
+ * Internal: it is on `rig-c/mesh` only because that entry re-exports this
  * module with `export *`, and a symbol that is merely exported is not promised
  * (RELEASING.md, *The import surface*).
  */

@@ -22,7 +22,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "spine-rigc",
+      "package-name": "rig-c",
       "changelog-path": "CHANGELOG.md",
       "include-component-in-tag": false
     }
