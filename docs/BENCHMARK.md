@@ -1170,7 +1170,7 @@ build → read the report → fix → repeat loop, the map from every named fail
 the file that has to change, and the list of format features rigc refuses by name
 so you do not spend a loop discovering them. It travels **inside the npm package**
 too, so an agent working from an install has it on disk at
-`node_modules/spine-rigc/docs/AUTHORING.md`.
+`node_modules/rig-c/docs/AUTHORING.md`.
 
 Compile by spelling out the paths. `--manifest` is optional; `--images <dir>` says
 where a rig spec's `image` references live (it overrides the rig's own `images`

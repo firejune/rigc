@@ -24,8 +24,11 @@
  *    `patch -p1` — the dependant's own change not yet landed (a switch of its
  *    imports, say), verified here before it is theirs to land.
  * 4. Installs each copy's dependencies with `bun install`, then this package
- *    into it: the candidate tarball into one, and `spine-rigc@<baseline>` from
- *    the registry into the other. The baseline is `--baseline <version>`, or
+ *    into it, under the name the dependant declares — the package's own,
+ *    `rig-c`, or the alias it is also published as, `spine-rigc` (issue
+ *    #1258): the candidate tarball into one (repacked under the alias by
+ *    `scripts/alias_tarball.ts` when that is the name declared, the files
+ *    unchanged), and `<name>@<baseline>` from the registry into the other. The baseline is `--baseline <version>`, or
  *    `latest` — the registry's own answer to "the last release", read at the
  *    moment of the run and printed as the version it installed. Not this
  *    tree's `package.json` version: on a release pull request that is the
@@ -57,8 +60,11 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 
+import { ALIAS, packAlias } from './alias_tarball.ts';
+
 const ROOT = resolve(import.meta.dir, '..');
-const NAME = 'spine-rigc';
+/** The package's own name, read from the tree this packs rather than written here. */
+const PACKAGE = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name?: string }).name ?? '';
 
 const EXIT_GREEN = 0;
 const EXIT_RED = 1;
@@ -191,7 +197,13 @@ function main(): number {
     version?: string;
     scripts?: Record<string, string>;
     dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
   };
+  // The name the dependant imports the package by is the one it declares; a
+  // dependant declaring neither is measured under the package's own name, and
+  // its type check is what then says so.
+  const declares = (name: string): string | undefined => manifest.dependencies?.[name] ?? manifest.devDependencies?.[name];
+  const NAME = [PACKAGE, ALIAS].find((name) => declares(name) !== undefined) ?? PACKAGE;
 
   const work = realpathSync(mkdtempSync(join(tmpdir(), 'rigc-dependant-')));
   if (`${work}${sep}`.startsWith(`${dependant}${sep}`)) {
@@ -200,7 +212,7 @@ function main(): number {
     return EXIT_USAGE;
   }
   console.log(
-    `rigc dependant check — ${manifest.name ?? '(unnamed)'} ${manifest.version ?? ''} (declares ${NAME} ${manifest.dependencies?.[NAME] ?? 'not at all'}) ` +
+    `rigc dependant check — ${manifest.name ?? '(unnamed)'} ${manifest.version ?? ''} (declares ${NAME} ${declares(NAME) ?? 'not at all'}) ` +
       `on ${tarballFlag === undefined ? `a tarball packed from ${ROOT}` : tarballFlag}, against ${NAME}@${baseline}`,
   );
 
@@ -219,6 +231,10 @@ function main(): number {
         return report(faults, holes, keep, work);
       }
       tgz = join(packDir, made[0]);
+    }
+    if (NAME !== PACKAGE) {
+      tgz = packAlias(NAME, join(work, 'alias'), tgz).tgz;
+      console.log(`  the dependant declares ${NAME}, the alias: the candidate repacked under that name, its files unchanged`);
     }
     console.log(`  candidate ${tgz} (sha256 ${createHash('sha256').update(readFileSync(tgz)).digest('hex')})`);
 

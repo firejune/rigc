@@ -905,7 +905,7 @@ export const DEFAULT_LEDGER = 'votes.jsonl';
 // skills install — put the shipped skills where an agent host looks (issue #831)
 // ---------------------------------------------------------------------------
 //
-// After `bun add -d spine-rigc` the skills sit at `node_modules/spine-rigc/skills/`,
+// After `bun add -d rig-c` the skills sit at `node_modules/rig-c/skills/`,
 // which no host reads. Codex, Gemini CLI and Antigravity all read
 // `<workspace>/.agents/skills/<name>/`, so this links every `skills/<name>/` the
 // package ships into one directory — `.agents/skills` under the working

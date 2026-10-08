@@ -46,7 +46,7 @@ import type { ModelBinding, ModelVertices } from './model.ts';
 
 // The mesh-quality measurement and its report (issue #1224) live in their own
 // module and reach a dependant through this file, which is what
-// `spine-rigc/mesh` names. That module imports helpers from this one, so the
+// `rig-c/mesh` names. That module imports helpers from this one, so the
 // two form an import cycle: safe only because neither reads the other's
 // bindings while it is being evaluated — every use is inside a function.
 // The reduction (`reduceMesh`, stage B2 of #1224) sits in the same cycle, by
@@ -163,7 +163,7 @@ export class MeshError extends Error {}
  * ⚠️ Defined here and not in `src/meshquality.ts`, because that module imports
  * this one and this one re-exports it: a class that extends `MeshError` at the
  * top of the importing module would read `MeshError` before this module had
- * run, and every import of `spine-rigc/mesh` would throw.
+ * run, and every import of `rig-c/mesh` would throw.
  */
 export class MeshReductionError extends MeshError {
   readonly code: string;

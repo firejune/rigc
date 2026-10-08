@@ -21,7 +21,7 @@
  *
  * 🔒 **Nothing under this repository is on the fixture's path at run time.** The
  * rig spec, the motion spec and the plate generator below are authored as text
- * into the install directory, and the generator imports `spine-rigc/tools/plate.ts`
+ * into the install directory, and the generator imports `rig-c/tools/plate.ts`
  * as a BARE specifier, so it resolves inside the install or not at all —
  * `SMOKE_FIXTURE_CAME_FROM_THE_PACKAGE` prints the path it resolved to and
  * refuses one that is not under the install. The only thing that crosses from the
@@ -103,8 +103,21 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { AliasTarballError, compareTarballs } from './alias_tarball.ts';
+
 /** The repository this script packs — it is the subject, and nothing else reaches the fixture. */
 const ROOT = resolve(import.meta.dir, '..');
+
+/**
+ * The name the package is published and installed under, read from the
+ * `package.json` this tree packs and never written here: every bare specifier
+ * the fixture and the probes import, the directory an install lands in and the
+ * spec `--source registry` asks for are spelled from it. The package was
+ * renamed once (issue #1258), and a literal here would have kept installing
+ * one name while the tree packed the other.
+ */
+const NAME = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { name?: string }).name ?? '';
+if (NAME === '') throw new Error(`install_smoke: ${join(ROOT, 'package.json')} declares no name, so there is no package to install`);
 
 /**
  * The runtime, which the package declares as a devDependency only (issue
@@ -137,7 +150,7 @@ const PLATE_SOURCE = `import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Plate, type RGBA } from 'spine-rigc/tools/plate.ts';
+import { Plate, type RGBA } from '${NAME}/tools/plate.ts';
 
 // \`fileURLToPath\` and not \`new URL(...).pathname\`: a URL's path is
 // percent-encoded, so the gallery's own idiom writes into a directory literally
@@ -181,7 +194,7 @@ flag.disc(38, 20, 15, WARM);
 flag.rect(18, 5, 20, 30, WARM);
 flag.writePng(join(OUT, 'flag.png'));
 
-console.log('RESOLVED ' + import.meta.resolve('spine-rigc/tools/plate.ts'));
+console.log('RESOLVED ' + import.meta.resolve('${NAME}/tools/plate.ts'));
 console.log('PLATES ' + OUT);
 `;
 
@@ -359,7 +372,7 @@ const OBSERVED_IN_1167 = 'spine-parts 0.8.2, issue #1167';
 const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
 /**
  * Promised before it could be observed: the mesh-quality operations the
- * dependant agreed to import through `spine-rigc/mesh` (docs/MESH_REDUCTION.md
+ * dependant agreed to import through `rig-c/mesh` (docs/MESH_REDUCTION.md
  * P1, spine-parts#126) and that issue #1224 added. RELEASING.md *The import
  * surface* says why an agreed contract is the one exception to "observed".
  */
@@ -368,7 +381,7 @@ const AGREED_IN_1224 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1), iss
 const OBSERVED_IN_131 = 'spine-parts c03dd8a (its PR #131), issue #1241';
 /**
  * The second agreed row: the motion comparison, which the same contract puts
- * on an entry of its own, `spine-rigc/meshcompare` (docs/MESH_REDUCTION.md P1
+ * on an entry of its own, `rig-c/meshcompare` (docs/MESH_REDUCTION.md P1
  * and P2 — the core is the only poser, so the entry needs nothing installed
  * beside the package), added by issue #1230. Its one function is also CALLED
  * from the install with the runtime taken away — `MESHCOMPARE_PROBE_SOURCE`,
@@ -518,7 +531,7 @@ const isDropPlant = (plant: Plant): plant is DropPlant => plant in DROPPED_ENTRI
  * What `fork-compile-error` does to the packed `src/rig.ts`: the import of
  * `CompileError` from `./errors.ts` replaced by a class of its own, so the
  * parser throws an error that is a `CompileError` by name and by message and
- * is NOT the class `spine-rigc/errors` exports. Nothing in the package imports
+ * is NOT the class `rig-c/errors` exports. Nothing in the package imports
  * `CompileError` through `src/rig.ts` and a valid spec throws nothing, so the
  * module loads and every build runs; only a dependant that catches the
  * parser's refusal by its class — `instanceof` across the package boundary,
@@ -555,10 +568,10 @@ for (const row of OBSERVED_SYMBOLS) {
  * so that the failure a dependant would hit is the one this prints.
  */
 const OBSERVED_DEEP_PATHS: Record<string, string> = {
-  'spine-rigc/tools/plate.ts': 'tools/plate.ts',
-  'spine-rigc/tools/font5x7.ts': 'tools/font5x7.ts',
-  'spine-rigc/src/transform.ts': 'src/transform.ts',
-  'spine-rigc/cli.ts': 'cli.ts',
+  [`${NAME}/tools/plate.ts`]: 'tools/plate.ts',
+  [`${NAME}/tools/font5x7.ts`]: 'tools/font5x7.ts',
+  [`${NAME}/src/transform.ts`]: 'src/transform.ts',
+  [`${NAME}/cli.ts`]: 'cli.ts',
 };
 
 /**
@@ -573,7 +586,7 @@ const OBSERVED_DEEP_PATHS: Record<string, string> = {
  *
  * ⚠️ The every-path sweep asks Bun and not Node, deliberately: Bun is the
  * runtime rigc runs on, and it is the one whose extension probing made
- * `spine-rigc/tools/plate` (no `.ts`) resolve before the map existed. Node's
+ * `rig-c/tools/plate` (no `.ts`) resolve before the map existed. Node's
  * `import.meta.resolve` does not look at the disk for a path with no pattern
  * match, so a Node answer here would pass a specifier nothing can load.
  */
@@ -583,7 +596,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
-const ROOT = realpathSync(join(HERE, 'node_modules', 'spine-rigc'));
+const ROOT = realpathSync(join(HERE, 'node_modules', '${NAME}'));
 const plan = JSON.parse(readFileSync(join(HERE, 'exports_probe.json'), 'utf8'));
 const bad = [];
 const said = (spec, what) => bad.push(spec + ': ' + what);
@@ -621,7 +634,7 @@ if (process.argv[2] === 'without-runtime') {
   let loaded = 0;
   let refused = 0;
   for (const row of entries) {
-    const spec = 'spine-rigc' + row.entry.slice(1);
+    const spec = '${NAME}' + row.entry.slice(1);
     let threw = null;
     try {
       await import(spec);
@@ -645,7 +658,7 @@ if (process.argv[2] === 'without-runtime') {
 }
 
 // 1. Every named entry, and every deep path a dependant was seen using.
-for (const [key, file] of Object.entries(plan.named)) lands('spine-rigc' + key.slice(1), file);
+for (const [key, file] of Object.entries(plan.named)) lands('${NAME}' + key.slice(1), file);
 for (const [spec, file] of Object.entries(plan.deep)) lands(spec, file);
 
 // 2. One symbol through each route. The expected values are facts of the
@@ -654,7 +667,7 @@ for (const [spec, file] of Object.entries(plan.deep)) lands(spec, file);
 // height minus y by definition.
 const IEND = [0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
 const plates = [];
-for (const spec of ['spine-rigc/plate', 'spine-rigc/tools/plate.ts']) {
+for (const spec of ['${NAME}/plate', '${NAME}/tools/plate.ts']) {
   const m = await load(spec);
   if (m === null) continue;
   plates.push(m);
@@ -666,10 +679,10 @@ for (const spec of ['spine-rigc/plate', 'spine-rigc/tools/plate.ts']) {
   if (back.join(',') !== '1,2,3,4') said(spec, 'encodePng then decodePng of one RGBA pixel 1,2,3,4 came back ' + back.join(','));
 }
 if (plates.length === 2 && plates[0].pngChunk !== plates[1].pngChunk) {
-  said('spine-rigc/plate', 'is a different module instance from spine-rigc/tools/plate.ts, so one file is loaded twice');
+  said('${NAME}/plate', 'is a different module instance from ${NAME}/tools/plate.ts, so one file is loaded twice');
 }
 const Plate = plates[0] ? plates[0].Plate : null;
-for (const spec of ['spine-rigc/font5x7', 'spine-rigc/tools/font5x7.ts']) {
+for (const spec of ['${NAME}/font5x7', '${NAME}/tools/font5x7.ts']) {
   const m = await load(spec);
   if (m === null || Plate === null) continue;
   const w = m.textWidth('RIGC', 1);
@@ -687,7 +700,7 @@ for (const spec of ['spine-rigc/font5x7', 'spine-rigc/tools/font5x7.ts']) {
     said(spec, 'drawText("RIGC") onto a ' + w + 'x' + m.GLYPH_H + ' plate plotted ' + lit + ' pixel(s), ' + outside + ' outside it, ' + opaque + ' opaque; a lit, in-bounds, one-to-one drawing was required');
   }
 }
-for (const spec of ['spine-rigc/transform', 'spine-rigc/src/transform.ts']) {
+for (const spec of ['${NAME}/transform', '${NAME}/src/transform.ts']) {
   const m = await load(spec);
   if (m === null) continue;
   const y = m.cropToSpineY(10, 64);
@@ -695,12 +708,12 @@ for (const spec of ['spine-rigc/transform', 'spine-rigc/src/transform.ts']) {
   const local = m.toBoneLocal({ a: 1, b: 0, c: 0, d: 1, worldX: 3, worldY: 4, worldRotation: 0 }, 5, 7);
   if (local[0] !== 5 - 3 || local[1] !== 7 - 4) said(spec, 'toBoneLocal on an unrotated bone at (3, 4) gave ' + JSON.stringify(local) + ' for (5, 7) and [2, 3] was required');
 }
-const pkg = await load('spine-rigc/package.json');
+const pkg = await load('${NAME}/package.json');
 const version = pkg && pkg.default ? pkg.default.version : undefined;
-if (pkg !== null && (pkg.default === undefined || pkg.default.name !== 'spine-rigc')) said('spine-rigc/package.json', 'does not import as a JSON module named spine-rigc');
+if (pkg !== null && (pkg.default === undefined || pkg.default.name !== '${NAME}')) said('${NAME}/package.json', 'does not import as a JSON module named ${NAME}');
 // The CLI is RESOLVED and spawned rather than imported: importing it runs it,
 // and spawning the resolved file is what a dependant that gates through rigc does.
-for (const spec of ['spine-rigc/cli', 'spine-rigc/cli.ts']) {
+for (const spec of ['${NAME}/cli', '${NAME}/cli.ts']) {
   const file = where(spec);
   if (!file.startsWith(ROOT)) continue;
   const ran = spawnSync(process.execPath, [file, '--version'], { encoding: 'utf8' });
@@ -714,7 +727,7 @@ for (const spec of ['spine-rigc/cli', 'spine-rigc/cli.ts']) {
 let held = 0;
 let listed = 0;
 for (const row of plan.symbols) {
-  const spec = 'spine-rigc' + row.entry.slice(1);
+  const spec = '${NAME}' + row.entry.slice(1);
   const m = await load(spec);
   for (const [name, kind] of Object.entries(row.values)) {
     listed += 1;
@@ -738,7 +751,7 @@ for (const row of plan.symbols) {
 // 16 unit cracks enclosing 16 pixels, a rectangle has two triangles, and a
 // mesh over half of a fully opaque mask covers half its art and nothing
 // outside it. The error classes are read ACROSS the package boundary: the
-// CompileError a dependant imports from spine-rigc/errors has to be the class
+// CompileError a dependant imports from ${NAME}/errors has to be the class
 // the installed parser throws, or a refusal caught by its class is missed.
 const why = (e) => (e && e.message ? e.message : String(e));
 const callable = (m, name) => m !== null && typeof m[name] === 'function';
@@ -751,28 +764,28 @@ const call = (spec, what, body) => {
     said(spec, what + ' threw ' + why(e));
   }
 };
-const errorsM = await load('spine-rigc/errors');
-const rigM = await load('spine-rigc/rig');
-const meshM = await load('spine-rigc/mesh');
+const errorsM = await load('${NAME}/errors');
+const rigM = await load('${NAME}/rig');
+const meshM = await load('${NAME}/mesh');
 const CompileErrorClass = callable(errorsM, 'CompileError') ? errorsM.CompileError : null;
 if (CompileErrorClass !== null) {
-  call('spine-rigc/errors', 'new CompileError("probe")', () => {
+  call('${NAME}/errors', 'new CompileError("probe")', () => {
     const made = new CompileErrorClass('probe');
-    if (!(made instanceof Error) || !(made instanceof CompileErrorClass) || made.message !== 'probe') said('spine-rigc/errors', 'new CompileError("probe") is not an Error and a CompileError carrying the message "probe"');
+    if (!(made instanceof Error) || !(made instanceof CompileErrorClass) || made.message !== 'probe') said('${NAME}/errors', 'new CompileError("probe") is not an Error and a CompileError carrying the message "probe"');
   });
 }
 if (rigM !== null) {
-  if (rigM.RIG_SPEC_VERSION !== plan.rig.spec) said('spine-rigc/rig', 'RIG_SPEC_VERSION is ' + JSON.stringify(rigM.RIG_SPEC_VERSION) + ' and ' + JSON.stringify(plan.rig.spec) + ', the spec string of the fixture the build above accepted, was required');
+  if (rigM.RIG_SPEC_VERSION !== plan.rig.spec) said('${NAME}/rig', 'RIG_SPEC_VERSION is ' + JSON.stringify(rigM.RIG_SPEC_VERSION) + ' and ' + JSON.stringify(plan.rig.spec) + ', the spec string of the fixture the build above accepted, was required');
   const table = rigM.RIG_KEYS;
   const missingFrom = (shape, keys) => keys.filter((k) => !(table && Array.isArray(table[shape]) && table[shape].includes(k)));
   const unlisted = [...missingFrom('RigSpec', Object.keys(plan.rig)).map((k) => 'RigSpec.' + k), ...missingFrom('RigBone', [...new Set(plan.rig.bones.flatMap((b) => Object.keys(b)))]).map((k) => 'RigBone.' + k)];
-  if (unlisted.length > 0) said('spine-rigc/rig', 'RIG_KEYS does not list ' + unlisted.join(', ') + ', which the fixture the build above accepted writes');
+  if (unlisted.length > 0) said('${NAME}/rig', 'RIG_KEYS does not list ' + unlisted.join(', ') + ', which the fixture the build above accepted writes');
   if (callable(rigM, 'parseRigSpec')) {
-    call('spine-rigc/rig', 'parseRigSpec on the fixture rig', () => {
+    call('${NAME}/rig', 'parseRigSpec on the fixture rig', () => {
       const parsed = rigM.parseRigSpec(plan.rig, 'probe');
       const names = (parsed && Array.isArray(parsed.bones) ? parsed.bones : []).map((b) => b.name).join(',');
       const want = plan.rig.bones.map((b) => b.name).join(',');
-      if (names !== want) said('spine-rigc/rig', 'parseRigSpec on the fixture rig read bones ' + JSON.stringify(names) + ' and ' + JSON.stringify(want) + ' was required');
+      if (names !== want) said('${NAME}/rig', 'parseRigSpec on the fixture rig read bones ' + JSON.stringify(names) + ' and ' + JSON.stringify(want) + ' was required');
     });
     calls += 1;
     let refusal = null;
@@ -782,29 +795,29 @@ if (rigM !== null) {
       refusal = e;
     }
     const stray = 'parseRigSpec on the fixture rig plus a bone whose parent "probe_nobody" is not declared';
-    if (refusal === null) said('spine-rigc/rig', stray + ' accepted it, and a refusal naming the parent was required');
-    else if (CompileErrorClass !== null && !(refusal instanceof CompileErrorClass)) said('spine-rigc/rig', stray + ' threw ' + (refusal && refusal.constructor ? refusal.constructor.name : typeof refusal) + ' "' + why(refusal) + '", which is not an instance of CompileError as spine-rigc/errors exports it, so a dependant catching the refusal by its class misses it');
-    else if (!why(refusal).includes('probe_nobody')) said('spine-rigc/rig', stray + ' refused it without naming "probe_nobody": ' + why(refusal));
+    if (refusal === null) said('${NAME}/rig', stray + ' accepted it, and a refusal naming the parent was required');
+    else if (CompileErrorClass !== null && !(refusal instanceof CompileErrorClass)) said('${NAME}/rig', stray + ' threw ' + (refusal && refusal.constructor ? refusal.constructor.name : typeof refusal) + ' "' + why(refusal) + '", which is not an instance of CompileError as ${NAME}/errors exports it, so a dependant catching the refusal by its class misses it');
+    else if (!why(refusal).includes('probe_nobody')) said('${NAME}/rig', stray + ' refused it without naming "probe_nobody": ' + why(refusal));
   }
   const kinds = rigM.RIG_SKIN_CONSTRAINT_KEYS;
-  if (!Array.isArray(kinds) || kinds.length === 0 || kinds.some((k) => typeof k !== 'string')) said('spine-rigc/rig', 'RIG_SKIN_CONSTRAINT_KEYS is ' + JSON.stringify(kinds) + ' and a non-empty list of constraint kinds was required');
+  if (!Array.isArray(kinds) || kinds.length === 0 || kinds.some((k) => typeof k !== 'string')) said('${NAME}/rig', 'RIG_SKIN_CONSTRAINT_KEYS is ' + JSON.stringify(kinds) + ' and a non-empty list of constraint kinds was required');
   else if (callable(rigM, 'splitRigSkin')) {
-    call('spine-rigc/rig', "splitRigSkin on the fixture's short-form default skin", () => {
+    call('${NAME}/rig', "splitRigSkin on the fixture's short-form default skin", () => {
       const parts = rigM.splitRigSkin(plan.rig.skins.default, 'probe');
-      if (!parts || parts.explicit !== false || parts.attachments !== plan.rig.skins.default) said('spine-rigc/rig', "splitRigSkin on the fixture's short-form default skin gave explicit " + (parts && parts.explicit) + ' and other attachments than it was given; the short form handed back as the attachments was required');
+      if (!parts || parts.explicit !== false || parts.attachments !== plan.rig.skins.default) said('${NAME}/rig', "splitRigSkin on the fixture's short-form default skin gave explicit " + (parts && parts.explicit) + ' and other attachments than it was given; the short form handed back as the attachments was required');
     });
     for (const kind of kinds) {
-      call('spine-rigc/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member', () => {
+      call('${NAME}/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member', () => {
         const parts = rigM.splitRigSkin({ bones: ['probe_bone'], [kind]: ['probe_member'] }, 'probe');
         const got = parts && parts.constraints ? parts.constraints[kind] : undefined;
-        if (!parts || parts.explicit !== true || JSON.stringify(parts.bones) !== '["probe_bone"]' || JSON.stringify(got) !== '["probe_member"]') said('spine-rigc/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member gave ' + JSON.stringify(parts) + ', so the RIG_SKIN_CONSTRAINT_KEYS entry ' + JSON.stringify(kind) + ' is not a key a skin lists its members under');
+        if (!parts || parts.explicit !== true || JSON.stringify(parts.bones) !== '["probe_bone"]' || JSON.stringify(got) !== '["probe_member"]') said('${NAME}/rig', 'splitRigSkin on a long-form skin listing bone probe_bone and ' + kind + ' probe_member gave ' + JSON.stringify(parts) + ', so the RIG_SKIN_CONSTRAINT_KEYS entry ' + JSON.stringify(kind) + ' is not a key a skin lists its members under');
       });
     }
   }
 }
 if (meshM !== null) {
   if (callable(meshM, 'traceAlphaOutline') && callable(meshM, 'signedArea')) {
-    call('spine-rigc/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside', () => {
+    call('${NAME}/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside', () => {
       const side = 6;
       const alpha = new Uint8Array(side * side);
       for (let y = 1; y < 5; y++) for (let x = 1; x < 5; x++) alpha[y * side + x] = 255;
@@ -812,17 +825,17 @@ if (meshM !== null) {
       const t = meshM.traceAlphaOutline({ width: side, height: side, alpha }, 128);
       const area = Math.abs(meshM.signedArea(t.outline));
       if (t.outline.length !== 16 || area !== 16 || t.artPixels !== 15 || t.islands !== 1 || t.holePixels !== 1) {
-        said('spine-rigc/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside gave ' + t.outline.length + ' vertices enclosing ' + area + ' px, ' + t.artPixels + ' art px, ' + t.islands + ' island(s) and holePixels ' + t.holePixels + '; the 16 unit cracks of its boundary enclosing its 16 px, 15 art px, 1 island and holePixels 1 were required');
+        said('${NAME}/mesh', 'traceAlphaOutline on a 4x4 square with one clear pixel inside gave ' + t.outline.length + ' vertices enclosing ' + area + ' px, ' + t.artPixels + ' art px, ' + t.islands + ' island(s) and holePixels ' + t.holePixels + '; the 16 unit cracks of its boundary enclosing its 16 px, 15 art px, 1 island and holePixels 1 were required');
       }
     });
   }
   if (callable(meshM, 'earClip') && callable(meshM, 'measureAuthoredMeshFit')) {
-    call('spine-rigc/mesh', 'earClip then measureAuthoredMeshFit on the left half of a 4x4 opaque mask', () => {
+    call('${NAME}/mesh', 'earClip then measureAuthoredMeshFit on the left half of a 4x4 opaque mask', () => {
       const half = [[0, 0], [2, 0], [2, 4], [0, 4]];
       const tri = meshM.earClip(half);
-      if (!Array.isArray(tri) || tri.length !== 6 || new Set(tri).size !== 4 || tri.some((i) => !Number.isInteger(i) || i < 0 || i > 3)) said('spine-rigc/mesh', 'earClip on a rectangle gave ' + JSON.stringify(tri) + ' and two triangles over its four vertices were required');
+      if (!Array.isArray(tri) || tri.length !== 6 || new Set(tri).size !== 4 || tri.some((i) => !Number.isInteger(i) || i < 0 || i > 3)) said('${NAME}/mesh', 'earClip on a rectangle gave ' + JSON.stringify(tri) + ' and two triangles over its four vertices were required');
       const fit = meshM.measureAuthoredMeshFit({ width: 4, height: 4, alpha: new Uint8Array(16).fill(255) }, 128, half, tri);
-      if (!fit || fit.artPixels !== 16 || fit.coveredArt !== 8 || fit.coverage !== 0.5 || fit.overshoot !== 0) said('spine-rigc/mesh', 'measureAuthoredMeshFit of a mesh over the left half of a 4x4 opaque mask gave ' + JSON.stringify(fit) + ' and artPixels 16, coveredArt 8, coverage 0.5, overshoot 0 were required');
+      if (!fit || fit.artPixels !== 16 || fit.coveredArt !== 8 || fit.coverage !== 0.5 || fit.overshoot !== 0) said('${NAME}/mesh', 'measureAuthoredMeshFit of a mesh over the left half of a 4x4 opaque mask gave ' + JSON.stringify(fit) + ' and artPixels 16, coveredArt 8, coverage 0.5, overshoot 0 were required');
     });
   }
   if (callable(meshM, 'earClip') && callable(meshM, 'MeshError')) {
@@ -833,7 +846,7 @@ if (meshM !== null) {
     } catch (e) {
       refusal = e;
     }
-    if (!(refusal instanceof meshM.MeshError)) said('spine-rigc/mesh', 'earClip on three collinear points ' + (refusal === null ? 'returned triangles' : 'threw ' + why(refusal)) + ', and a MeshError as spine-rigc/mesh exports it was required');
+    if (!(refusal instanceof meshM.MeshError)) said('${NAME}/mesh', 'earClip on three collinear points ' + (refusal === null ? 'returned triangles' : 'threw ' + why(refusal)) + ', and a MeshError as ${NAME}/mesh exports it was required');
   }
 }
 
@@ -843,11 +856,11 @@ let full = 0;
 let bare = 0;
 let bareTried = 0;
 for (const path of plan.paths) {
-  if (lands('spine-rigc/' + path, path)) full += 1;
+  if (lands('${NAME}/' + path, path)) full += 1;
   const m = /^(.*)\\.(ts|mjs|cjs)$/.exec(path);
   if (m !== null) {
     bareTried += 1;
-    if (lands('spine-rigc/' + m[1], path)) bare += 1;
+    if (lands('${NAME}/' + m[1], path)) bare += 1;
   }
 }
 for (const line of bad) console.log('EXPORT_BAD ' + line);
@@ -858,7 +871,7 @@ process.exit(bad.length === 0 ? 0 : 1);
 /**
  * The step the comparison from the install is recorded under, and the name its
  * fault carries — the contract's `MQ45` (docs/MESH_REDUCTION.md, *Stage A
- * controls*): `spine-rigc/meshcompare` imports and compares from an install
+ * controls*): `rig-c/meshcompare` imports and compares from an install
  * with no spine-core in it.
  */
 const MESHCOMPARE_STEP = 'meshcompare';
@@ -874,7 +887,7 @@ const MESHCOMPARE_MOVED = 2;
 
 /**
  * `MQ45` (issue #1230), run from the install with the runtime taken away. It
- * imports `spine-rigc/meshcompare` — the entry P2 says needs nothing beside the
+ * imports `rig-c/meshcompare` — the entry P2 says needs nothing beside the
  * package — and compares the flag mesh of the build this smoke just wrote:
  *
  * - the reference against ITSELF under another id, which has to read 0 at
@@ -887,7 +900,7 @@ const MESHCOMPARE_MOVED = 2;
  *   inside the comparison's allowlist — which has to read that distance at
  *   that vertex's UV at every frame;
  * - two candidates under one id, which has to be refused as an instance of the
- *   `MeshReductionError` that `spine-rigc/mesh` exports, so a dependant catching
+ *   `MeshReductionError` that `rig-c/mesh` exports, so a dependant catching
  *   the refusal by its class across the package boundary catches it.
  *
  * The report has to say `operation: 'compare'` and `poser: { kind: 'core' }`
@@ -914,10 +927,10 @@ const load = async (spec) => {
   }
 };
 if (existsSync(join(HERE, 'node_modules', ...plan.runtime.split('/')))) said(plan.runtime + ' is installed in this directory, and this comparison is the one an install without it runs');
-const mc = await load('spine-rigc/meshcompare');
-const mesh = await load('spine-rigc/mesh');
-const plate = await load('spine-rigc/plate');
-const pkg = await load('spine-rigc/package.json');
+const mc = await load('${NAME}/meshcompare');
+const mesh = await load('${NAME}/mesh');
+const plate = await load('${NAME}/plate');
+const pkg = await load('${NAME}/package.json');
 const version = pkg && pkg.default ? pkg.default.version : undefined;
 let summary = null;
 if (mc !== null && plate !== null && typeof mc.compareMeshesInMotion === 'function') {
@@ -1011,15 +1024,15 @@ if (mc !== null && plate !== null && typeof mc.compareMeshesInMotion === 'functi
       refusal = e;
     }
     if (refusal === null) said('two candidates with the id "twin" were compared, and a refusal naming both was required');
-    else if (mesh === null || typeof mesh.MeshReductionError !== 'function' || !(refusal instanceof mesh.MeshReductionError)) said('the duplicate-id refusal (' + why(refusal) + ') is not an instance of the MeshReductionError spine-rigc/mesh exports, so a dependant catching it by its class misses it');
+    else if (mesh === null || typeof mesh.MeshReductionError !== 'function' || !(refusal instanceof mesh.MeshReductionError)) said('the duplicate-id refusal (' + why(refusal) + ') is not an instance of the MeshReductionError ${NAME}/mesh exports, so a dependant catching it by its class misses it');
     else if (refusal.code !== 'COMPARE_INPUT_MISSING' || !why(refusal).includes('candidates[0]') || !why(refusal).includes('candidates[1]')) said('the duplicate-id refusal is ' + refusal.code + ' (' + why(refusal) + '), and COMPARE_INPUT_MISSING naming candidates[0] and candidates[1] was required');
   }
 } else if (mc !== null) {
-  said('spine-rigc/meshcompare exports no compareMeshesInMotion function');
+  said('${NAME}/meshcompare exports no compareMeshesInMotion function');
 }
 for (const line of bad) console.log('MESHCOMPARE_BAD ' + line);
 if (bad.length === 0 && summary !== null && summary.moved !== undefined) {
-  console.log('MESHCOMPARE_COUNTS ' + summary.frames + ' frames x ' + summary.samples + ' samples through the core poser at ' + version + '; itself 0 at every frame and accepted ' + summary.accepted + ', hull vertex 0 moved ' + plan.moved + ' reads ' + summary.moved.value + ' at every frame; a duplicate id refused as the MeshReductionError of spine-rigc/mesh; one comparison of one candidate took ' + summary.selfMs.toFixed(1) + ' ms (itself) and ' + summary.moved.ms.toFixed(1) + ' ms (moved) of wall time, both builds posed and both art fits measured');
+  console.log('MESHCOMPARE_COUNTS ' + summary.frames + ' frames x ' + summary.samples + ' samples through the core poser at ' + version + '; itself 0 at every frame and accepted ' + summary.accepted + ', hull vertex 0 moved ' + plan.moved + ' reads ' + summary.moved.value + ' at every frame; a duplicate id refused as the MeshReductionError of ${NAME}/mesh; one comparison of one candidate took ' + summary.selfMs.toFixed(1) + ' ms (itself) and ' + summary.moved.ms.toFixed(1) + ' ms (moved) of wall time, both builds posed and both art fits measured');
 }
 process.exit(bad.length === 0 && summary !== null ? 0 : 1);
 `;
@@ -1340,14 +1353,14 @@ const FULL_OUT = 'build';
  */
 function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>, issue = '#1212'): { names: string[]; steps: string[]; what: string; alone: true } {
   const entry = DROPPED_ENTRIES[plant];
-  // The comparison probe imports `spine-rigc/meshcompare`, and `spine-rigc/mesh` for the class its refusal is caught
+  // The comparison probe imports `rig-c/meshcompare`, and `rig-c/mesh` for the class its refusal is caught
   // by, so taking either entry away reddens that step too — by the entry's name, which is what the plant requires.
   const compares = entry === './meshcompare' || entry === './mesh';
   return {
-    names: [`spine-rigc${entry.slice(1)}`],
+    names: [`${NAME}${entry.slice(1)}`],
     steps: ['exports', 'exports-without-runtime', ...(compares ? [MESHCOMPARE_STEP] : [])],
     alone: true,
-    what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''} have to go red naming the entry, and nothing else`,
+    what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`${NAME}${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''} have to go red naming the entry, and nothing else`,
   };
 }
 
@@ -1378,35 +1391,35 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
     what: '`skills` removed from `files` (issue #831). `rigc skills install` finds the skills from its own location in the install, so a package that ships none is the one place this can be seen — a checkout always has them',
   },
   'drop-exports': {
-    names: ['spine-rigc/plate'],
+    names: [`${NAME}/plate`],
     steps: ['exports'],
-    what: '`exports` removed from `package.json` (issue #859), which is the package v1.2.3 shipped: every deep path still resolves, so what goes missing is the named surface, and a dependant importing `spine-rigc/plate` is the one who finds out',
+    what: `\`exports\` removed from \`package.json\` (issue #859), which is the package v1.2.3 shipped: every deep path still resolves, so what goes missing is the named surface, and a dependant importing \`${NAME}/plate\` is the one who finds out`,
   },
   'drop-deep-exports': {
-    names: ['spine-rigc/tools/plate.ts'],
+    names: [`${NAME}/tools/plate.ts`],
     steps: ['exports'],
-    what: '`exports` cut down to its named entries (issue #859), which is the map without its pattern courtesy: `spine-rigc/tools/plate.ts`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it',
+    what: `\`exports\` cut down to its named entries (issue #859), which is the map without its pattern courtesy: \`${NAME}/tools/plate.ts\`, a deep path a dependant was observed importing, stops resolving, and so does the fixture that imports it`,
   },
   'drop-named-entry': {
-    names: [`spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)}`],
+    names: [`${NAME}${DROPPED_ENTRIES['drop-named-entry'].slice(1)}`],
     steps: ['exports'],
-    what: `the named entry \`${DROPPED_ENTRIES['drop-named-entry']}\` removed from \`exports\` (issue #1167), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)}\` is the one who finds out, and the line has to name the entry`,
+    what: `the named entry \`${DROPPED_ENTRIES['drop-named-entry']}\` removed from \`exports\` (issue #1167), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`${NAME}${DROPPED_ENTRIES['drop-named-entry'].slice(1)}\` is the one who finds out, and the line has to name the entry`,
   },
   'drop-rig-entry': droppedEntryPlant('drop-rig-entry'),
   'drop-mesh-entry': droppedEntryPlant('drop-mesh-entry'),
   'drop-errors-entry': droppedEntryPlant('drop-errors-entry'),
   'drop-meshcompare-entry': droppedEntryPlant('drop-meshcompare-entry', '#1230'),
   'rename-symbol': {
-    names: [`spine-rigc${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
+    names: [`${NAME}${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
     alone: true,
     what: `\`${RENAME_PLANT.symbol}\` exported as \`${RENAME_PLANT.renamed}\` from \`${NAMED_EXPORTS[RENAME_PLANT.entry]}\` (issues #1167, #1184), a symbol no module inside the package imports: \`rigc --version\`, both builds, the comparison, render and check still work, and only a dependant reading the old name can tell — so the observed-symbol probe has to go red alone, naming the entry and the symbol`,
   },
   'fork-compile-error': {
-    names: ['spine-rigc/rig', 'CompileError'],
+    names: [`${NAME}/rig`, 'CompileError'],
     steps: ['exports'],
     alone: true,
-    what: `the packed \`${FORK_ERROR_MODULE}\` given a \`CompileError\` class of its own in place of the one \`spine-rigc/errors\` exports (issue #1212): every module loads, a valid spec throws nothing so every build runs, and the parser's refusal still reads as a CompileError by name and by message — only a dependant catching it by its class, across the package boundary, can tell, so the call probe has to go red alone, naming the entry and the class`,
+    what: `the packed \`${FORK_ERROR_MODULE}\` given a \`CompileError\` class of its own in place of the one \`${NAME}/errors\` exports (issue #1212): every module loads, a valid spec throws nothing so every build runs, and the parser's refusal still reads as a CompileError by name and by message — only a dependant catching it by its class, across the package boundary, can tell, so the call probe has to go red alone, naming the entry and the class`,
   },
   'refuse-core-build': {
     names: ['SMOKE_CORE_ENTRY_BUILDS'],
@@ -1740,11 +1753,11 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
       ? run('npm', ['install', built.tgz, '--no-audit', '--no-fund'], home)
       : run('bun', ['add', built.tgz], home);
   output += install.out;
-  const pkgRoot = join(home, 'node_modules', 'spine-rigc');
+  const pkgRoot = join(home, 'node_modules', NAME);
   if (!existsSync(join(pkgRoot, 'package.json'))) {
     fault(
       'install',
-      `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left no node_modules/spine-rigc/package.json under ${home}. ${install.out.trim().slice(0, 4000)}`,
+      `SMOKE_INSTALL_EMPTY_DIR: ${spec.installer} install of ${built.tgz} exited ${install.status} and left no node_modules/${NAME}/package.json under ${home}. ${install.out.trim().slice(0, 4000)}`,
     );
     if (!keep) rmSync(home, { recursive: true, force: true });
     return { name: spec.name, faults, steps, notes, output };
@@ -1800,7 +1813,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     if (!asPath.startsWith(join(home, 'node_modules'))) {
       fault(
         'fixture',
-        `SMOKE_FIXTURE_CAME_FROM_THE_PACKAGE: the generator resolved 'spine-rigc/tools/plate.ts' to ${asPath || '(nothing)'}, which is not under ${join(home, 'node_modules')} — so the plates were not made by the installed package`,
+        `SMOKE_FIXTURE_CAME_FROM_THE_PACKAGE: the generator resolved '${NAME}/tools/plate.ts' to ${asPath || '(nothing)'}, which is not under ${join(home, 'node_modules')} — so the plates were not made by the installed package`,
       );
     } else {
       notes.push(`the plate codec resolved to ${asPath.slice(home.length + 1)}`);
@@ -2154,6 +2167,7 @@ usage:
   bun run smoke -- --case clean          one case by name
   bun run smoke -- --source registry --version 0.21.0
   bun run smoke -- --source registry --version 0.21.0 --wait 15
+  bun run smoke -- --source registry --version 2.20.4 --alias spine-rigc
   bun run smoke -- --installer bun       install the tarball with \`bun add\` instead of \`npm install\`
   bun run smoke -- --keep                leave the install directories where they are
 
@@ -2161,30 +2175,39 @@ usage:
 before the registry serves what it published, so this is how long to keep asking
 before giving up. Default ${DEFAULT_WAIT_MINUTES}; \`--wait 0\` asks once and does not sleep.
 
+--alias <name> is for \`--source registry\` too: after the cases, the same version
+under the second name the package is published as is fetched — within what is
+left of --wait, asked at least once — and its unpacked files are held to the
+ones the cases installed, byte for byte but for the name line of package.json.
+The alias is compared, not installed: identical files are the stronger claim,
+and they take seconds.
+
 exit codes:
   0  every case passed
-  1  a case went red — against \`--source registry\`, the published artifact does not build
+  1  a case went red — against \`--source registry\`, the published artifact does not build —
+     or the --alias tarball carries other files or other bytes than the package's
   2  no case ran, so this run measured nothing
-  3  the registry did not serve the version — its packument, or the tarball behind it — within
-     --wait, so the confirmation was NOT taken; nothing here says the package is broken
+  3  the registry did not serve the version — its packument, or the tarball behind it, under
+     the name or under --alias — within --wait, so the confirmation was NOT taken; nothing
+     here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, compares meshes of that build through spine-rigc/meshcompare, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, compares meshes of that build through ${NAME}/meshcompare, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
   add-dependency   @esotericsoftware/spine-core put back in \`dependencies\` — the install has to go RED naming it
   drop-core-entry  cli_core.ts out of \`files\` — the install's \`rigc --version\` has to go RED naming it
   drop-skills      \`skills\` out of \`files\` — \`rigc skills install\` has to go RED naming it
-  drop-exports     \`exports\` out of package.json — importing spine-rigc/plate has to go RED naming it
-  drop-deep-exports  \`exports\` cut to its named entries — the deep path spine-rigc/tools/plate.ts has to go RED naming it
-  drop-named-entry   ${DROPPED_ENTRIES['drop-named-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-named-entry'].slice(1)} has to go RED naming it
-  drop-rig-entry     ${DROPPED_ENTRIES['drop-rig-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-rig-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
-  drop-mesh-entry    ${DROPPED_ENTRIES['drop-mesh-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-mesh-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
-  drop-errors-entry  ${DROPPED_ENTRIES['drop-errors-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-errors-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
-  drop-meshcompare-entry  ${DROPPED_ENTRIES['drop-meshcompare-entry']} out of \`exports\` — importing spine-rigc${DROPPED_ENTRIES['drop-meshcompare-entry'].slice(1)} and the comparison from the install have to go RED naming it, and nothing else
-  rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through spine-rigc${RENAME_PLANT.entry.slice(1)} has to go RED naming both
-  fork-compile-error ${FORK_ERROR_MODULE} given a CompileError of its own — the parser's refusal, caught by the class spine-rigc/errors exports, has to go RED alone naming both
+  drop-exports     \`exports\` out of package.json — importing ${NAME}/plate has to go RED naming it
+  drop-deep-exports  \`exports\` cut to its named entries — the deep path ${NAME}/tools/plate.ts has to go RED naming it
+  drop-named-entry   ${DROPPED_ENTRIES['drop-named-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-named-entry'].slice(1)} has to go RED naming it
+  drop-rig-entry     ${DROPPED_ENTRIES['drop-rig-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-rig-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-mesh-entry    ${DROPPED_ENTRIES['drop-mesh-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-mesh-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-errors-entry  ${DROPPED_ENTRIES['drop-errors-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-errors-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
+  drop-meshcompare-entry  ${DROPPED_ENTRIES['drop-meshcompare-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-meshcompare-entry'].slice(1)} and the comparison from the install have to go RED naming it, and nothing else
+  rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through ${NAME}${RENAME_PLANT.entry.slice(1)} has to go RED naming both
+  fork-compile-error ${FORK_ERROR_MODULE} given a CompileError of its own — the parser's refusal, caught by the class ${NAME}/errors exports, has to go RED alone naming both
   refuse-core-build  the core entry's build body made to refuse — the core-build step, and only it, has to go RED naming SMOKE_CORE_ENTRY_BUILDS
   move-core-byte     one byte appended to the atlas the core entry's build wrote — the comparison, and only it, has to go RED naming the file
 
@@ -2209,7 +2232,7 @@ function main(): number {
   const version = flag('version');
   const pkgVersion = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version?: string }).version ?? '';
   const wanted = version ?? pkgVersion;
-  const registrySpec = sourceKind === 'registry' ? `spine-rigc@${wanted}` : null;
+  const registrySpec = sourceKind === 'registry' ? `${NAME}@${wanted}` : null;
 
   // A flag that quietly does nothing is worse than one that is refused: a
   // `--wait` on a tarball this tree packs would read as a wait that was taken.
@@ -2224,6 +2247,25 @@ function main(): number {
   }
   if (!Number.isFinite(waitMinutes) || waitMinutes < 0) {
     console.log(`  FAIL  SMOKE_WAIT_IS_MINUTES_ON_THE_REGISTRY_PATH: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
+    return EXIT_RED;
+  }
+  // The same rule for the alias: there is no second name to compare against
+  // in a tarball this tree packs, so a run that was given one and read none
+  // would print a confirmation nobody took.
+  const alias = flag('alias');
+  if (argv.includes('--alias') && (alias === null || alias.startsWith('--'))) {
+    console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs the second name the package is published as');
+    return EXIT_RED;
+  }
+  if (alias !== null && sourceKind !== 'registry') {
+    console.log(
+      '  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias is for `--source registry`. A tarball this tree packs ' +
+        `carries one name, ${NAME}, so there is no second tarball here to hold to it`,
+    );
+    return EXIT_RED;
+  }
+  if (alias === NAME) {
+    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is the name this tree publishes, not a second one`);
     return EXIT_RED;
   }
 
@@ -2242,11 +2284,13 @@ function main(): number {
   // code, names what was not taken, and says how to take it later.
   let served: RegistryWait | null = null;
   let source: Source = { kind: 'tree' };
+  const waitStarted = Date.now();
+  let fetchDir = '';
+  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${alias === null ? '' : ` --alias ${alias}`}`;
   if (registrySpec !== null) {
-    const fetchDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-')));
+    fetchDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-')));
     LEFT_BEHIND.push(fetchDir);
     served = waitForRegistry(registrySpec, waitMinutes, ROOT, join(fetchDir, 'pack'));
-    const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean`;
     if (!served.served) {
       // Which piece never came, in the sentence that carries the exit code:
       // metadata with no bytes behind it is a version still arriving, and the
@@ -2360,8 +2404,55 @@ function main(): number {
     console.log('  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  console.log(bad === 0 ? `rigc install smoke: green — ${ran} case(s)` : `rigc install smoke: ${bad} of ${ran} case(s) failed`);
-  if (bad === 0) return EXIT_GREEN;
+  // 🪞 The alias (issue #1258): the same version under the package's second
+  // name, fetched after the cases so it has had their minutes to arrive, and
+  // held to the tarball the cases installed. A difference is a fault of what
+  // was published, exit 1 like a red case; an alias the registry has not
+  // served yet is a confirmation not taken, exit 3 — but only when nothing
+  // above went red, because a red case is a fact and a late alias is not.
+  let aliasRed = false;
+  let aliasLate = false;
+  if (alias !== null && served !== null) {
+    const aliasSpec = `${alias}@${wanted}`;
+    const left = Math.max(0, waitMinutes - (Date.now() - waitStarted) / 60_000);
+    const got = waitForRegistry(aliasSpec, left, ROOT, join(fetchDir, 'alias'));
+    if (!got.served) {
+      aliasLate = true;
+      console.log(
+        `  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry did not serve ${aliasSpec} within what was left of the ` +
+          `${waitMinutes} min wait (${got.attempts} attempt(s), ${elapsedText(got.ms)}; ` +
+          `${got.packument === null ? 'its packument never answered' : 'its packument answered and its tarball never did'}) — ` +
+          `the alias's confirmation was NOT taken, and nothing here says it differs. Take it by hand once the registry answers: ${byHand}` +
+          (got.last === '' ? '' : `. The last thing npm said was: ${got.last}`),
+      );
+    } else {
+      try {
+        const reading = compareTarballs(served.tgz, got.tgz);
+        if (reading.faults.length === 0) {
+          console.log(
+            `  PASS  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and its ${reading.files} file(s) are ` +
+              `${registrySpec}'s, byte for byte but for the name line of package.json`,
+          );
+        } else {
+          aliasRed = true;
+          console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it is not ${registrySpec} under another name:`);
+          for (const fault of reading.faults) console.log(`          ${fault}`);
+        }
+      } catch (error) {
+        if (!(error instanceof AliasTarballError)) throw error;
+        aliasRed = true;
+        console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it could not be read as a package: ${error.message}`);
+      }
+    }
+  }
+
+  const aliasNote = alias === null ? '' : aliasRed ? `; the alias ${alias} differs` : aliasLate ? `; the alias ${alias} was NOT confirmed` : `; the alias ${alias} carries the same files`;
+  console.log(
+    bad === 0 && !aliasRed && !aliasLate ? `rigc install smoke: green — ${ran} case(s)${aliasNote}` : `rigc install smoke: ${bad} of ${ran} case(s) failed${aliasNote}`,
+  );
+  if (bad === 0 && !aliasRed && !aliasLate) return EXIT_GREEN;
+  if (bad === 0 && !aliasRed) return EXIT_NOT_SERVED;
+  if (bad === 0) return EXIT_RED;
   // 🚨 The second of the two outcomes, said out loud. Reaching here on a
   // registry source means the wait above ENDED — the registry handed over this
   // version's bytes — so what went red went red on the artifact people receive, and

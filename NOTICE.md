@@ -8,8 +8,10 @@ Copyright (c) 2013-2025 Esoteric Software LLC, licensed under the
 [Spine Runtimes License Agreement](https://esotericsoftware.com/spine-runtimes-license),
 as a **development dependency**: a clone and CI install it, and every Spine file
 `rigc build` writes there is read back through it before it is written. **The
-published package does not carry it** — an install of `spine-rigc` has no Spine
-runtime in it unless one is installed beside it, and then the same `rigc` uses it.
+published package does not carry it** — an install of `rig-c` (or of
+`spine-rigc`, the same files under the name the package first shipped as) has no
+Spine runtime in it unless one is installed beside it, and then the same `rigc`
+uses it.
 
 Its terms, as the licence states them: integration of the Spine Runtimes into
 software is permitted **under the terms and conditions of Section 2 of the

@@ -37,7 +37,9 @@ examples
 # convenient to keep here, so it stays ignored.
 /cuts.json
 .DS_Store
-# `npm pack` output, from checking what a publish would ship.
+# `npm pack` output, from checking what a publish would ship — under the
+# package's name, and under the one a checkout of a tag cut before the rename packs.
+/rig-c-*.tgz
 /spine-rigc-*.tgz
 # Where `rigc render` and `rigc preview` land by default. Running either from a
 # checkout is the normal way to look at something, and neither output belongs to

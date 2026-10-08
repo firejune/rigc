@@ -275,14 +275,14 @@ for `vote` (default `ballot.html`).
 `skills install` is the one command that is not about a rig: it puts the agent
 skills the package ships where an agent host looks for them. Run it through the
 project's own install — `bun rigc skills install` — so the links point into that
-project's `node_modules/spine-rigc/skills/`. A second run has nothing to do and
+project's `node_modules/rig-c/skills/`. A second run has nothing to do and
 exits 0. An entry already at `<dir>/<name>` that is not a link to the same folder
 (or, under `--copy`, not the same bytes) is refused, exit 1, and **nothing is
 written** — every such entry is named with what is there and what was required:
 
 ```text
 rigc skills install: <n> of the <m> skill(s) cannot be installed into <dir>, and nothing was written:
-  <dir>/rigc-motion is a plain file; a symlink to ../../node_modules/spine-rigc/skills/rigc-motion was required
+  <dir>/rigc-motion is a plain file; a symlink to ../../node_modules/rig-c/skills/rigc-motion was required
 Remove the entries named above, or pass --dir to install somewhere else.
 ```
 
