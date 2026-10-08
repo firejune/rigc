@@ -38161,6 +38161,96 @@ function runContourMeshSuite(): number {
       'inventing a denominator would report a percentage of nothing',
   );
 
+  // --- CT15: every generator emits counter-clockwise in Spine world (#1236) --
+  //
+  // ⭐ Read where the format reads it: spine-core's posed world vertices at the
+  // setup pose, y up — the frame A39 and the renderer draw in. Not uv space and
+  // not the module's own points, because the defect this exists for was a
+  // comment that derived the winding from the y flip and was never measured:
+  // `contour` and `ring` emitted every triangle clockwise in Spine world while
+  // `MeshGeometry.triangles` promised the opposite, and every winding check in
+  // this suite compared triangles with EACH OTHER (`triangleFaults`), which a
+  // uniformly inverted mesh passes. GR02 held the grid alone to the absolute
+  // sign. An authored mesh is in the row because rigc emits the author's
+  // triples as written: the fan is authored counter-clockwise, and what is
+  // measured is that compile keeps it so.
+  {
+    const segProbe = segmentsFixture();
+    const segOpts: Options = { rigPath: segProbe.rigPath, motionPath: segProbe.motionPath, outDir: join(segProbe.dir, 'ct15'), imagesDir: segProbe.imagesDir };
+    const segBuild: ContourBuild = { dir: segProbe.dir, opts: segOpts, artPath: '', result: compile(segOpts) };
+    const windingBuilds: Array<{ kind: string; build: ContourBuild; slot: string }> = [
+      { kind: 'contour', build, slot: 'blob' },
+      { kind: 'segments', build: segBuild, slot: 'cloth' },
+      { kind: 'grid', build: gridBuild, slot: 'blob' },
+      { kind: 'ring', build: ring, slot: 'blob' },
+      { kind: 'ribbon', build: ribbon, slot: 'blob' },
+      { kind: 'authored', build: coversItsArt, slot: 'blob' },
+    ];
+    /** Clockwise triangles of one slot's mesh in spine-core's setup-pose world, y up — first index and count. */
+    const clockwiseInWorld = (skeletonText: string, b: ContourBuild, slot: string): { triangles: number; clockwise: number; first: number } | string => {
+      const frame = sampleSetupPose(posableFromText(skeletonText, b.result.atlasText, b.opts.outDir).data)[0];
+      const piece = frame.pieces.find((p) => p.slot === slot);
+      if (piece === undefined || piece.kind !== 'mesh') return `slot "${slot}" draws ${piece === undefined ? 'nothing' : `a ${piece.kind}`} at the setup pose`;
+      const w = piece.world;
+      const t = piece.triangles;
+      let clockwise = 0;
+      let first = -1;
+      for (let i = 0; i + 2 < t.length; i += 3) {
+        const [a, b2, c] = [t[i] * 2, t[i + 1] * 2, t[i + 2] * 2];
+        const twice = (w[b2] - w[a]) * (w[c + 1] - w[a + 1]) - (w[c] - w[a]) * (w[b2 + 1] - w[a + 1]);
+        if (twice < 0) {
+          clockwise++;
+          if (first === -1) first = i / 3;
+        }
+      }
+      return { triangles: t.length / 3, clockwise, first };
+    };
+    const verdict = (kind: string, skeletonText: string, b: ContourBuild, slot: string): string | null => {
+      const m = clockwiseInWorld(skeletonText, b, slot);
+      if (typeof m === 'string') return `${kind}: ${m}`;
+      return m.clockwise === 0 ? null : `${kind}: ${m.clockwise} of ${m.triangles} triangle(s) clockwise in Spine world, the first triangle ${m.first}`;
+    };
+    const probes: string[] = [];
+    const counts: string[] = [];
+    for (const { kind, build: b, slot } of windingBuilds) {
+      const v = verdict(kind, b.result.skeletonText, b, slot);
+      if (v !== null) probes.push(v);
+      const m = clockwiseInWorld(b.result.skeletonText, b, slot);
+      if (typeof m !== 'string') counts.push(`${kind} ${m.triangles}`);
+    }
+    // The plant: the generator with its swap removed — forged on the emitted
+    // skeleton, each triangle's last two corners swapped back, which is the
+    // bytes `contour` and `ring` emitted before #1236. The module is not edited.
+    const unswapped = (b: ContourBuild, slot: string): string => {
+      const doc = JSON.parse(b.result.skeletonText) as { skins: Array<{ attachments: Record<string, Record<string, { triangles?: number[] }>> }> };
+      for (const skin of doc.skins) {
+        for (const att of Object.values(skin.attachments[slot] ?? {})) {
+          const t = att.triangles;
+          if (t === undefined) continue;
+          for (let i = 0; i + 2 < t.length; i += 3) [t[i + 1], t[i + 2]] = [t[i + 2], t[i + 1]];
+        }
+      }
+      return JSON.stringify(doc);
+    };
+    const plants: string[] = [];
+    for (const { kind, build: b, slot } of windingBuilds.filter((x) => x.kind === 'contour' || x.kind === 'ring')) {
+      const named = verdict(kind, unswapped(b, slot), b, slot);
+      if (named === null || !named.startsWith(`${kind}: `) || !named.endsWith('the first triangle 0')) probes.push(`the ${kind} plant with its swap removed reads ${named ?? 'counter-clockwise'}, not clockwise naming ${kind} and triangle 0`);
+      else plants.push(named);
+    }
+    const held = probes.length === 0;
+    say(
+      'CT15_EVERY_GENERATOR_EMITS_EVERY_TRIANGLE_COUNTER_CLOCKWISE_IN_SPINE_WORLD',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `every triangle counter-clockwise in spine-core's setup-pose world (${counts.join(', ')} triangles); with the swap removed the plant reads ${plants.join('; ')}`,
+      ),
+      'MeshGeometry.triangles promises counter-clockwise in Spine world and measureMeshQuality holds MQ_ORIENTATION at 0 against it; a generator that winds the other way is self-consistent, so only an absolute sign read where the format reads it can see it (#1236)',
+    );
+  }
+
   // --- issue #274: the refusal names the field that fixes it ----------------
   //
   // The refusal itself is deliberate and stays: geometry rigc BUILT is geometry
@@ -46952,6 +47042,8 @@ interface McRig {
   bend?: number;
   /** The strip slot exempted from A39 (`invariants.deformMayFold`) — MQ63. */
   mayFold?: boolean;
+  /** The mesh budget a generated attachment needs (`invariants.meshSlots` / `meshTriangles`) — MQ64's contour. */
+  budget?: { meshSlots: number; meshTriangles: number };
 }
 
 /** Compile a strip rig with the tree's own compiler and return its model document — the text `build` writes beside the pair. */
@@ -46968,7 +47060,14 @@ function mcBuild(dir: string, name: string, rig: McRig): string {
       bones: [{ name: 'root' }, { name: 'a', parent: 'root', x: 50, y: 50, ...(rig.a ?? {}) }, { name: 'b', parent: 'a', x: MC_W / 2, y: 0 }],
       slots: [{ name: 'strip', bone: 'a', attachment: 'strip' }],
       skins: { default: { strip: { strip: rig.mesh } } },
-      ...(rig.mayFold === true ? { invariants: { deformMayFold: [{ slot: 'strip', why: 'the probe for a permitted fold, which the comparison lists rather than zeroes' }] } } : {}),
+      ...(rig.mayFold === true || rig.budget !== undefined
+        ? {
+            invariants: {
+              ...(rig.mayFold === true ? { deformMayFold: [{ slot: 'strip', why: 'the probe for a permitted fold, which the comparison lists rather than zeroes' }] } : {}),
+              ...(rig.budget ?? {}),
+            },
+          }
+        : {}),
     }),
   );
   writeFileSync(
@@ -47656,6 +47755,57 @@ function runMeshCompareSuite(): number {
       held,
       probeDetail(held, probes, `a quad with its pages and Spine digest also changed is compared; bent to ${far}° under deformMayFold its inversion row is ${row?.state} at ${row?.value} with ${folds.length} fold(s) listed at ${[...perFrameFolds.keys()].join(', ')}; without the exemption the same ${strict?.value} fails`),
       'correction 5, the contract\'s MQ38: the allowlist is exactly the mesh, what follows from it and atlas layout, so those may differ and be compared; and an exemption from A39 removes a bound, never the evidence',
+    );
+  });
+
+  // --- MQ64 (#1236): a comparison over a contour-GENERATED build is accepted; the sign flipped on read fails orientation --
+  // ⭐ Every other control here compares authored strips, which the test winds counter-clockwise itself — so the one
+  // input a consumer most often brings, a mesh the `contour` generator built, was never compared. It was refused on
+  // every build: the generator emitted clockwise in Spine world and MQ_ORIENTATION read all of it as flipped (#1236,
+  // found by the install smoke's flag rig). Built here by the tree's compiler from a lozenge of art inside the window.
+  mcGuard('MQ64', () => {
+    const probes: string[] = [];
+    const lozengeMask = mqMask(plates, 'lozenge', MC_W, MC_H, (x, y) => (x >= 6 && x < MC_W - 6 && y >= 3 && y < MC_H - 3 && Math.abs(x - MC_W / 2) / (MC_W / 2 - 6) + Math.abs(y - MC_H / 2) / (MC_H / 2) < 1.4 ? 255 : 0));
+    const lozenge: CompareAttachment = { ...compared, art: { ...compared.art, mask: lozengeMask } };
+    const contour = mcBuild(dir, 'contour', {
+      mesh: { type: 'mesh', image: 'lozenge.png', generator: { kind: 'contour', tolerance: 0.9, margin: 1.2, maxVertices: 32 } },
+      budget: { meshSlots: 1, meshTriangles: 64 },
+    });
+    const input = (candidate: string, id: string): MotionComparisonInput => mcInput(contour, [{ id, model: candidate }], { attachments: [lozenge] });
+    const self = compareMeshesInMotion(input(contour, 'itself'));
+    const orientationOf = (c: MeshQualityReport['candidates'][number] | null | undefined): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION');
+    const refRow = orientationOf(self.reference);
+    const selfRow = orientationOf(self.candidates[0]);
+    const triangles = self.candidates[0].counts?.triangles ?? 0;
+    if (triangles === 0) probes.push('the contour build carries no triangles to read');
+    if (refRow?.value !== 0 || refRow.state !== 'pass') probes.push(`the reference's MQ_ORIENTATION is ${refRow?.state} at ${refRow?.value}; required 0`);
+    if (selfRow?.value !== 0 || selfRow.state !== 'pass') probes.push(`the candidate's MQ_ORIENTATION is ${selfRow?.state} at ${selfRow?.value}; required 0`);
+    if (self.candidates[0].accepted !== true) probes.push(`the contour build against itself is not accepted: geometry ${self.candidates[0].geometry?.verdict}, motion ${self.candidates[0].motion?.verdict}`);
+    // The plant: the sign flipped on read — every triangle's last two corners swapped in the candidate's model document,
+    // which is how the generator's triangles read before #1236. Triangles are allowlisted, so the pair is still compared.
+    const flipped = mcEdit(contour, (doc) => {
+      for (const skin of doc.skins as Array<{ attachments: Record<string, Record<string, { triangles?: number[] }>> }>) {
+        const t = skin.attachments.strip?.strip?.triangles;
+        if (t === undefined) continue;
+        for (let i = 0; i + 2 < t.length; i += 3) [t[i + 1], t[i + 2]] = [t[i + 2], t[i + 1]];
+      }
+    });
+    const plant = compareMeshesInMotion(input(flipped, 'flipped'));
+    const plantRow = orientationOf(plant.candidates[0]);
+    const named = plantRow?.worst?.at.triangle;
+    if (plantRow?.state !== 'fail' || plantRow.value !== triangles || typeof named !== 'number' || named < 0 || named >= triangles) probes.push(`the sign flipped on read: MQ_ORIENTATION ${plantRow?.state} at ${plantRow?.value} naming ${JSON.stringify(plantRow?.worst?.at)}; required fail at ${triangles} naming one of them`);
+    if (plant.candidates[0].accepted !== false) probes.push('the flipped candidate is accepted');
+    const held = probes.length === 0;
+    say(
+      'MQ64_A_COMPARISON_OVER_A_CONTOUR_GENERATED_BUILD_IS_ACCEPTED_AND_THE_SIGN_FLIPPED_ON_READ_FAILS_ORIENTATION_NAMING_THE_TRIANGLE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `a contour-generated build of ${triangles} triangles against itself: MQ_ORIENTATION ${refRow?.value} for the reference and ${selfRow?.value} for the candidate, accepted ${self.candidates[0].accepted}; ` +
+          `its triangles read with the sign flipped: MQ_ORIENTATION ${plantRow?.value} of ${triangles}, fail, naming triangle ${named}, accepted ${plant.candidates[0].accepted}`,
+      ),
+      '#1236: MQ_ORIENTATION holds a source counter-clockwise in Spine world, so a generated build has to arrive that way or no comparison over it can ever be accepted, and a sign read the other way has to be named',
     );
   });
 
