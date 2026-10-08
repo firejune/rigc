@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.20.0](https://github.com/firejune/rigc/compare/v2.19.1...v2.20.0) (2026-10-08)
+
+
+### Features
+
+* **mesh:** compareMeshesInMotion through the core poser — UV-carried samples, input equality, the motion section of mesh-quality-report/1 — C1 of [#1230](https://github.com/firejune/rigc/issues/1230) ([#1233](https://github.com/firejune/rigc/issues/1233)) ([3604330](https://github.com/firejune/rigc/commit/36043309ac2e81f5d0dd813461866fbd321a6a47))
+* **mesh:** the spine-rigc/meshcompare entry, held by the install smoke running a comparison with no spine-core installed, and the last eight motion controls — every control the [#1221](https://github.com/firejune/rigc/issues/1221) contract lists now exists and prints (C2 of [#1230](https://github.com/firejune/rigc/issues/1230)) ([#1235](https://github.com/firejune/rigc/issues/1235)) ([2fa7d4a](https://github.com/firejune/rigc/commit/2fa7d4a439b7c7318f1ac313c48782245d092234))
+
+
+### Bug Fixes
+
+* **mesh:** contour and ring generators emit every triangle counter-clockwise in Spine world, as grid, segments and ribbon already did — CT15 holds every generator to it, a comparison over a contour build is now accepted, and gallery/flex's skeleton bytes move ([#1236](https://github.com/firejune/rigc/issues/1236)) ([#1237](https://github.com/firejune/rigc/issues/1237)) ([6264fd8](https://github.com/firejune/rigc/commit/6264fd8d4a2b7050c6f0d97e9952c8dd678846c0))
+
 ## [2.19.1](https://github.com/firejune/rigc/compare/v2.19.0...v2.19.1) (2026-10-07)
 
 
