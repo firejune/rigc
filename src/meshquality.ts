@@ -32,7 +32,8 @@
  *   taken at (`MeasureRow.art.threshold`); a measurement claims nothing at any
  *   other.
  * - **Change the legacy fit.** `measureAuthoredMeshFit` (`src/mesh.ts`) keeps
- *   its 4-connected fill for every existing caller. The rows here fill with the
+ *   its 4-connected fill for every existing caller (its `connectivity: 8`,
+ *   issue #1262, is the fill the rows read). The rows here fill with the
  *   tracer's 8-connected background flood over all art (P12), and where the two
  *   fills differ — a diagonal pinch — both labelled results are rows.
  * - **Pose, or link the runtime.** Pure: no clock, no randomness, no network,
@@ -694,8 +695,21 @@ function validateInput(input: MeshMeasureInput): void {
 
 type Pt = readonly [number, number];
 
-/** Is `p` inside or on the closed polygon? On the boundary within `ON_BOUNDARY` counts as inside. */
-function inClosedPolygon(p: Pt, poly: readonly Pt[]): boolean {
+/**
+ * Is `p` inside or on the closed polygon? On the boundary within `ON_BOUNDARY` counts as inside.
+ *
+ * The rule, exactly, because `closedPolygonCentres` reproduces it bit for bit:
+ * `p` is in when its `distanceToSegment` to some side `poly[i]`–`poly[i+1]`
+ * is at most `ON_BOUNDARY` (1e-9 px) — a point on an edge or at a vertex is in,
+ * whatever the ray says; otherwise by **even-odd** parity of a ray towards +x,
+ * where the side from `poly[j]` to `poly[i]` (`j` the one before `i`) crosses
+ * when exactly one of its ends has a y strictly greater than `p`'s — `yi > py`
+ * differs from `yj > py`, so the half-open rule counts a vertex at `p`'s height
+ * once and a horizontal side never — at
+ * `xc = ((xj − xi)·(py − yi)) / (yj − yi) + xi`, and the crossing counts when
+ * `px < xc` strictly.
+ */
+export function inClosedPolygon(p: Pt, poly: readonly Pt[]): boolean {
   const n = poly.length;
   for (let i = 0; i < n; i++) if (distanceToSegment(p, poly[i], poly[(i + 1) % n]) <= ON_BOUNDARY) return true;
   let inside = false;
@@ -705,6 +719,112 @@ function inClosedPolygon(p: Pt, poly: readonly Pt[]): boolean {
     if (yi > p[1] !== yj > p[1] && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
   }
   return inside;
+}
+
+/**
+ * A fault planted on purpose in `closedPolygonCentres`, for the mesh-quality
+ * suite's negative control: `'crossing-half-pixel'` moves every ray crossing
+ * half a pixel towards +x. `regionRows` plants none.
+ */
+export type ScanlinePlant = 'crossing-half-pixel';
+
+/**
+ * Which pixel centres of a `w`×`h` grid lie in or on a closed polygon given
+ * in drawing px — `inClosedPolygon` of every centre `((x + 0.5) / scale,
+ * (y + 0.5) / scale)`, 1 where it is true, by scanline (issue #1263).
+ *
+ * The same decision, not a cleaner one: each row's crossings are the sides
+ * `inClosedPolygon` counts for that row's centre height, by its own
+ * half-open test, at the `xc` it computes with the same expression in the same
+ * order, so they are the same doubles; sorted, the number of them a centre
+ * lies strictly left of is the number its ray counts, and its parity is the
+ * answer. The boundary band is then added side by side, each centre near a
+ * side tested with `distanceToSegment` against `ON_BOUNDARY` — the predicate's
+ * own test — so a centre on an edge or at a vertex is in exactly when the
+ * predicate says so. The rows and columns visited around a side are widened by
+ * a pixel past where it can reach, and only the exact tests decide.
+ *
+ * O(rows × sides + pixels) where testing every centre against every side is
+ * O(pixels × sides).
+ */
+export function closedPolygonCentres(poly: readonly Pt[], w: number, h: number, scale: number, plant: ScanlinePlant | null = null): Uint8Array {
+  const marks = new Uint8Array(w * h);
+  const n = poly.length;
+  if (n === 0 || w <= 0 || h <= 0) return marks;
+  const cx = (x: number): number => (x + 0.5) / scale;
+  const cy = (y: number): number => (y + 0.5) / scale;
+  const shift = plant === 'crossing-half-pixel' ? 0.5 / scale : 0;
+  /** The grid row or column of a drawing coordinate, rounded one way and widened by `slack`; NaN visits nothing. */
+  const cellOf = (v: number, round: (u: number) => number, slack: number, size: number): number => {
+    const c = round(v * scale - 0.5) + slack;
+    if (Number.isNaN(c)) return slack < 0 ? size : -1;
+    return c;
+  };
+
+  // Even-odd: per row, the crossings of a ray towards +x from the row's centre height.
+  const crossings: Array<number[] | undefined> = new Array<number[] | undefined>(h);
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    const y0 = Math.max(0, cellOf(Math.min(yi, yj), Math.floor, -1, h));
+    const y1 = Math.min(h - 1, cellOf(Math.max(yi, yj), Math.ceil, 1, h));
+    for (let y = y0; y <= y1; y++) {
+      const py = cy(y);
+      if (yi > py !== yj > py) {
+        let row = crossings[y];
+        if (row === undefined) {
+          row = [];
+          crossings[y] = row;
+        }
+        row.push(((xj - xi) * (py - yi)) / (yj - yi) + xi + shift);
+      }
+    }
+  }
+  for (let y = 0; y < h; y++) {
+    const row = crossings[y];
+    if (row === undefined) continue;
+    row.sort((a, b) => a - b);
+    const x0 = Math.max(0, cellOf(row[0], Math.floor, -1, w));
+    const x1 = Math.min(w - 1, cellOf(row[row.length - 1], Math.ceil, 1, w));
+    let left = 0;
+    for (let x = x0; x <= x1; x++) {
+      const px = cx(x);
+      while (left < row.length && !(px < row[left])) left++;
+      if ((row.length - left) & 1) marks[y * w + x] = 1;
+    }
+  }
+
+  // On the boundary: within ON_BOUNDARY of a side. Per side, the rows its ends span and, per row, the columns
+  // the side passes within a pixel of that row's centre height, each widened by a pixel; the exact test decides.
+  const unit = 1 / scale;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i];
+    const b = poly[(i + 1) % n];
+    const y0 = Math.max(0, cellOf(Math.min(a[1], b[1]), Math.floor, -1, h));
+    const y1 = Math.min(h - 1, cellOf(Math.max(a[1], b[1]), Math.ceil, 1, h));
+    const dy = b[1] - a[1];
+    for (let y = y0; y <= y1; y++) {
+      let lo = Math.min(a[0], b[0]);
+      let hi = Math.max(a[0], b[0]);
+      if (dy !== 0) {
+        const py = cy(y);
+        const t0 = Math.max(0, Math.min(1, (py - unit - a[1]) / dy));
+        const t1 = Math.max(0, Math.min(1, (py + unit - a[1]) / dy));
+        const xa = a[0] + (b[0] - a[0]) * t0;
+        const xb = a[0] + (b[0] - a[0]) * t1;
+        lo = Math.min(xa, xb);
+        hi = Math.max(xa, xb);
+      }
+      const x0 = Math.max(0, cellOf(lo, Math.floor, -1, w));
+      const x1 = Math.min(w - 1, cellOf(hi, Math.ceil, 1, w));
+      for (let x = x0; x <= x1; x++) {
+        const k = y * w + x;
+        if (marks[k]) continue;
+        if (distanceToSegment([cx(x), cy(y)], a, b) <= ON_BOUNDARY) marks[k] = 1;
+      }
+    }
+  }
+  return marks;
 }
 
 /** Does the segment `a`–`b` meet the closed polygon — an endpoint inside or on it, or any crossing or touch? */
@@ -1673,8 +1793,10 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
     // would keep, in the same order.
     const centreOf = (i: number): Pt => [((i % mask.width) + 0.5) / scale, (Math.floor(i / mask.width) + 0.5) / scale];
     const inRegion = (): Int32Array => {
+      // `inClosedPolygon` of every art pixel centre, by scanline (`closedPolygonCentres`, issue #1263).
+      const inside = closedPolygonCentres(poly, mask.width, mask.height, scale);
       const kept: number[] = [];
-      for (let i = 0; i < artBits.length; i++) if (artBits[i] && inClosedPolygon(centreOf(i), poly)) kept.push(i);
+      for (let i = 0; i < artBits.length; i++) if (artBits[i] && inside[i]) kept.push(i);
       return Int32Array.from(kept);
     };
     const regionPixels = steps === null ? inRegion() : steps.regionPixels(poly, inRegion);

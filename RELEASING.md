@@ -581,6 +581,20 @@ additive: a dependant that passes numbers type-checks and is read exactly as
 before, and only a caller that writes `null` gets the new meaning
 (docs/MESH_REDUCTION.md, §1 *A distance bound may be declared absent*).
 
+`measureAuthoredMeshFit`'s optional fifth argument, `connectivity: 4 | 8`
+([#1262](https://github.com/firejune/rigc/issues/1262)), is additive on a
+promised symbol: it defaults to 4, so a call with four arguments is read
+exactly as before — the install smoke's call of it is unchanged and holds the
+same values — and only a caller that passes `8` gets the rows' fill
+(docs/MESH_REDUCTION.md, §4, P12).
+
+The region pixel set computed by scanline
+([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
+symbol and no output, and what it adds to the module behind `rig-c/mesh` —
+`closedPolygonCentres` and `inClosedPolygon`, with `authoredMeshFitOf` from
+#1262 and the two plant types — is merely exported, so by the rule above it is
+not promised.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says
