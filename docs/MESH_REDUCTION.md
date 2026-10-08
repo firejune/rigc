@@ -2141,6 +2141,443 @@ internal segments and bone transforms, so the input was recorded as made
 instead. Reading phases off the report — wall time is never in it. Quoting one
 wall time — the seven readings and their loads are the claim.
 
+## 7. Motion-valid reduction (#1266)
+
+> **Nothing in this section is implemented.** It is Stage A of
+> [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
+> (`MQ79`, `MQ80`, `mesh-compare`), the measurements made on it, and a proposal
+> to settle with parts before any interface is written. `reduceMesh`,
+> `compareMeshesInMotion`, their rows, bounds, reports and emitted bytes are
+> unchanged by it. Marks: **Existing** cites the tree by path and symbol;
+> **[measured, #1266]** is a figure taken for this section, with the machine
+> beside it; **[proposal]** is unsettled until parts answers the questions at
+> the end by number.
+
+The gap, as the card states it: `reduceMesh` holds every static bound and
+removes every interior vertex; `compareMeshesInMotion` then refuses the result
+on `MQ_LOCAL_DEFORMATION`; and `protect.weightJump` at the value tried keeps
+motion by keeping every vertex. Ownership stays as the head of this page puts
+it — rigc owns geometry and measurement, parts owns policy and candidate
+selection, the consumer declares the motion and the bounds.
+
+### Existing
+
+- **`protect.weightJump`** (`ProtectedFeatures`, `src/meshquality.ts`) is an
+  L1 distance between two weight vectors over the bones they name
+  (`weightJump`, `src/meshreduce.ts`). It acts twice. Condition (a):
+  `protectionOf` protects every **source** edge whose endpoints differ by more
+  than the value, and both endpoints become protected vertices, never
+  candidates. Condition (b): `tryRemoval` refuses a step one of whose **added**
+  edges joins vectors further apart than the value, before the step is
+  measured. Both read one edge's endpoints and nothing of its length, so on a
+  smooth ramp the figure an edge carries is the ramp's slope times the source's
+  spacing: a value under that step protects every edge that crosses the ramp.
+- **The candidate loop** (`removeVertices`): surviving source vertices in
+  ascending source index, one attempt per vertex per pass; a step taken stays
+  taken; a pass that takes none ends `no-further-valid-reduction`. The budget
+  is checked **before** each attempt (`run.steps >= input.budget.maxCandidates`),
+  so a call with budget *k* stops after exactly *k* attempts in the state they
+  left, reported `budget-exhausted` / `best-meeting-every-bound`. Only the last
+  state is returned (`ReducedMesh`); no intermediate mesh is kept, and the
+  carried step state (`StepRasters`, *Each step carried from the last one*) is
+  dropped with the call.
+- **No pose anywhere in the reduction.** `src/meshreduce.ts` links no poser
+  (`CUR07` derives the linkers; `MQ26` holds which modules name the
+  operations), and `rig-c/mesh` stays geometry-only (§0, P1). `SourceMesh`
+  carries weights by bone name and no bone transform (§6, *Insertion
+  interpolates, then binds*).
+- **`FrameRef.role`** (`src/meshquality.ts`): `selection` exactly when the id
+  is in `schedule.selection`, `baseline` for `setup`, `held-out` otherwise;
+  each motion row keeps its reading per role (`MotionRowDetail.byRole`) and the
+  schedule says `heldOutClaim: false` when no held-out frame exists (P11,
+  `MQ42`).
+- **The comparison** (`compareMeshesInMotion`, `src/meshcompare.ts`) walks one
+  schedule once and poses any number of candidates against one reference;
+  carriers are `uvCarriers` over the §3 sample set.
+
+### The fixture
+
+`mvSource` and `mvBuild` in `selftest.ts` (beside the `mesh-compare` suite):
+a lens-shaped strip 160 × 48 px whose silhouette bulges 8 px at its middle, a
+grid every 8 px (52 boundary and 95 interior vertices, 240 triangles, 280
+bindings), the art exactly the pixels whose centre the source hull holds
+(6,828 art pixels). Bone `a` at the strip's left end, bone `b` at its middle;
+`b`'s share rises linearly from 0 at the left end to 1 at the right across the
+whole strip, so the largest source edge jump is 0.1. One animation, `idle`:
+`b` alone turns 0 → +5° → −5° → 0 over 2 s. The strict policy is the card's:
+coverage 1, overshoot ≤ 3, undercut 0, boundary deviation ≤ 1, influences
+`{ maxInfluences: 4, minWeight: 0 }`, no region, budget 5000. The comparison:
+`setup` plus `idle` at 12 fps, `grid` and `irr` (50 frames), physics `none`,
+6,880 samples (the art pixels and 52 hull UVs), bound 1.
+
+Variants used by the measurements only (scratch, not in the tree), each one
+change to that fixture: **kinked** — `b`'s share ramps over x 48..112 only,
+flat outside; **smooth** — a smoothstep ramp over the whole strip;
+**far pivot** — bone `b` 400 px off the strip's line; **scale** — `b` also
+scales (1.15, 0.85) at the +5° key and (0.85, 1.15) at the −5° key;
+**diagonal** — the share rises with x + y.
+
+### Measured — the reproducer [measured, #1266]
+
+Printed by `MQ79` and `MQ80` on every run; the figures below are one darwin
+run (Apple M4, 10 cores, darwin 25.6.0, Bun 1.4.2, 1-minute load 2.5–4.0
+throughout, other sessions running). The motion row is
+`MQ_LOCAL_DEFORMATION`, world units (the fixture's bones carry no scale, so
+one drawing px is one unit).
+
+| candidate | boundary/interior | triangles | bindings | termination | static | motion, worst frame |
+| --- | --- | --- | --- | --- | --- | --- |
+| source (reference) | 52/95 | 240 | 280 | — | pass | 0 |
+| strict | 28/0 | 26 | 52 | `no-further-valid-reduction` after 175 | accepted | **1.807703 at `idle@grid@1.5` — refused** |
+| `weightJump` 0.15 (1.5 × the largest source edge jump) | 42/0 | 40 | 80 | `no-further-valid-reduction` | accepted | 0.058835 at `idle@grid@0.5` |
+| the strict order cut at 87 candidates (half of 175) | 28/60 | 146 | 172 | `budget-exhausted`, best-meeting-every-bound | accepted | 0.218939 at `idle@grid@0.5` |
+
+The last two are the card's feasible control: fewer vertices than the source,
+every static bound the strict run holds, motion within 1 px. Neither was
+chosen by posing — the jump and the cut are derived from the source and from
+the strict run — so every frame is held out. ⚠️ Those two derivation rules
+were written after the scratch measurements below, so their held-out reading is
+a demonstration that such candidates exist, not evidence about a selection
+procedure.
+
+`MQ80`, four outcomes on the same fixture:
+
+| outcome | what was run | result |
+| --- | --- | --- |
+| rigid motion | every vertex wholly on `b` | 28/0, motion 0.000034 — the reduction to the hull passes |
+| no reduction | every source vertex in `protect.vertices` | 0 removed, `no-further-valid-reduction` naming `protect:`, motion 0 — identity, not optimisation |
+| budget exhaustion | budget 3 | `budget-exhausted` after 3, 1 removed, motion 0.036628 |
+| a bound no prefix meets | bound 0.001 | the first prefix that removes anything (budget 2) reads 0.036628 — **fail**, so of the prefixes only the source meets it |
+
+**Correction to the brief.** The brief asked for bound 0.001 as *genuinely
+unachievable — nothing but the source passes*. On this fixture that is false:
+of the 147 source vertices, 123 can be removed alone with every static bound
+held, and **33** of those removals read ≤ 0.001 (4 on the end columns, 29
+inside). `MQ80` holds one of them: the midpoint of column 1, removed alone,
+reads 0 — its share is its column neighbours' and its position their midpoint,
+so the field along that column is linear and the column's edge that spans the
+hole carries it exactly. So
+*unachievable* is a property of a **search**, not of a mesh and a bound, and
+the outcome a motion-aware reduction reports has to say which search found
+nothing. On the **diagonal** variant, where the share also climbs with y, no
+single removal reads ≤ 0.001 (smallest 0.011931 over the 123); that is the
+strongest statement measured, and it is about single removals only.
+
+### Measured — M1, `weightJump` [measured, #1266]
+
+The strict policy plus `protect.weightJump` at each value, on the fixture
+(load 2.9–3.7):
+
+| `weightJump` | removed | boundary/interior | triangles | candidates | motion, worst frame |
+| --- | --- | --- | --- | --- | --- |
+| 0.05, 0.07, 0.09 | 0 | 52/95 | 240 | 0 — `protect:` | 0 (identity) |
+| 0.11, 0.15 | 105 | 42/0 | 40 | 189 | 0.058835 `idle@grid@0.5` |
+| 0.2 | 105 | 30/12 | 52 | 278 | 0.093172 `idle@grid@1.5` |
+| 0.25 | 108 | 30/9 | 46 | 269 | 0.093172 |
+| 0.3 | 110 | 30/7 | 42 | 223 | 0.142998 |
+| 0.4 | 116 | 28/3 | 32 | 210 | 0.219972 |
+| 0.5 | 117 | 28/2 | 30 | 177 | 0.289909 |
+| 0.7 | 117 | 28/2 | 30 | 177 | 0.544040 |
+| 1.0 | 117 | 28/2 | 30 | 177 | 0.990322 |
+| none (strict) | 119 | 28/0 | 26 | 175 | **1.807703 — fail** |
+
+Every value from 0.11 to 1.0 gives a reduced, statically accepted,
+motion-valid candidate here — so on this fixture the existing control **does**
+answer the card, which the consumer's single value did not show. Every value
+at or under the largest source edge jump (0.1) protects every edge that crosses
+the ramp and removes nothing: the shape of the consumer's
+`removedVertices 0`. Whether that is what happened on the private inputs is
+parts's to measure (Q7). On the variants: **smooth** reduces at every value
+(19 removed at 0.05, 117 at 1.0) and passes at every value (0.013537 to
+0.752818); **kinked** and both **far pivot** variants pass at every value; the
+**scale** variant on the linear ramp fails at 1.0 (1.500525) and passes below
+it. So no value is safe without a motion
+comparison, and a value chosen by one is chosen on **selection** frames.
+
+### Measured — M2, the weight-field proxy, and what the motion error is made of [measured, #1266]
+
+**The card's proxy**, built in scratch: at every sample of the §3 set, each
+mesh's weight vector barycentric-interpolated in its carrying triangle
+(`uvCarriers`), and the difference between the source's and the candidate's in
+L1 and L∞ over bones, the largest over samples. Over the 119 accepted steps of
+each strict run:
+
+| variant | proxy L∞, strict result | motion, strict result | Spearman, proxy vs motion over the steps | does a proxy threshold separate pass from fail at 1 px? |
+| --- | --- | --- | --- | --- |
+| fixture (linear) | **0** | 1.807703 | undefined — the proxy is 0 at every step | no |
+| far pivot (linear) | 0 | 1.807707 | undefined | no |
+| scale (linear) | 0 | 2.507863 | undefined | no |
+| kinked | 0.352311 | 2.436222 | 0.944 | yes (passing ≤ 0.097509 < failing ≥ 0.104477) |
+| smooth | 0.089830 | 2.085513 | 0.805 | no (0.020663 on both sides) |
+| smooth, far pivot | 0.089830 | 4.104883 | 0.926 | no |
+| smooth, scale | 0.089830 | 3.126620 | 0.681 | no |
+
+L1 is twice L∞ on every row (two bones), so the two orders agree. Across the
+M1 candidates of **smooth** the same proxy value 0.020663 sits under motion
+0.138059 to 0.752818. And the proxy cannot see a pivot or a scale at all: the
+far pivot doubles the smooth strict result's motion and the scale raises it by
+half, at the same proxy.
+
+**Why it is blind on the fixture — derived, then measured.** For a mesh whose
+vertex *i* has setup position *xᵢ* and weights *wᵢₖ*, posed by bone maps
+*Dₖ(p) = Aₖ p + tₖ*, a point at barycentric *βᵢ* in its triangle is drawn at
+*Σᵢ βᵢ Σₖ wᵢₖ Dₖ xᵢ*. Write *w̄ₖ = Σᵢ βᵢ wᵢₖ* and *p = Σᵢ βᵢ xᵢ*. The
+translations cancel, and, because the shares and the barycentric coordinates
+each sum to 1, for any reference bone 0:
+
+  drawn − *Σₖ w̄ₖ Dₖ p* = *Σₖ (Aₖ − A₀) sₖ*, with *sₖ = Σᵢ βᵢ (wᵢₖ − w̄ₖ)(xᵢ − p)*;
+
+so the candidate's drawn point minus the source's, at one UV, is
+
+  *Σₖ (Aₖ − A₀)(sₖᶜ − sₖʳ)* + *Σₖ (w̄ₖᶜ − w̄ₖʳ)(Dₖ − D₀) p*.
+
+The second term is the card's weight-interpolation error times each bone's
+motion at the point — it carries the pivot's lever. The first is a product of
+weight spread and position spread inside the carrying triangle, times the
+bones' **linear** deformation only; a weight-field comparison cannot see it,
+and on a linear ramp it is the whole error. Evaluated at the two extreme key
+poses, this expression reproduced `compareMeshesInMotion`'s
+`MQ_LOCAL_DEFORMATION` to within 2·10⁻⁵ px at every one of the 7 × 119 accepted
+steps measured (the variants above). That is a two-bone measurement; the
+derivation does not depend on the number of bones, and nothing with three was
+measured.
+
+**The bound it gives.** With a declared envelope — per bone, an upper bound
+*εₖ* on the spectral norm of *Aₖ − A₀* over the motion, and a lever
+*|(Dₖ − D₀) p| ≤ εₖ |p − cₖ| + τₖ* about a declared pivot *cₖ* — the drawn
+difference is at most *Σₖ εₖ |sₖᶜ − sₖʳ| + Σₖ |w̄ₖᶜ − w̄ₖʳ| (εₖ |p − cₖ| + τₖ)*,
+pose-free and frame-free. Measured over the same 833 steps: never below the
+measured motion; measured / bound 1.0 on the fixture and its far-pivot variant
+(a pure rotation makes *Aₖ − A₀* a scaled rotation, so the norm loses
+nothing), 0.65–1.0 on kinked and smooth, 0.46–0.96 on smooth with the far
+pivot, 0.27–0.72 on both scale variants (the norm forgets direction). As a **step condition** in a scratch copy of
+`reduceMesh` (residual ≤ 1 px checked after the art rows), the strict policy
+reached 28/2 or 28/3 on six variants, every one within 1 px in motion
+(0.529452 to 0.990322) — but the kinked result reversed one triangle
+(`MQ_INVERSION` 1): the bound is about positions and certifies no orientation,
+stretch or squash.
+
+### Measured — M3, intermediate candidates [measured, #1266]
+
+From a scratch copy of `src/meshreduce.ts` that records the canonical mesh of
+every accepted removal (the copy's final mesh and report byte-identical to
+`reduceMesh`'s): the strict run takes 119 removals in 175 candidates.
+
+- **Prefix replay already exists.** `reduceMesh` with
+  `budget.maxCandidates` set to the attempt at which the *j*-th removal was
+  taken returned that removal's mesh — points, triangles and weights byte for
+  byte — for **119 of 119** steps. Every checkpoint is therefore reachable
+  today by re-running the call, holding nothing.
+- **Memory of keeping meshes instead** (JSON of `SourceMesh`): the source
+  13,691 bytes; every accepted step 962,633; every 4th 237,026; every 8th
+  115,695; every 16th 56,297. The attempt numbers alone are 119 integers.
+- **Is motion validity monotone along the order?** At a bound of 1 px, yes on
+  all seven variants: no step passes after the first that fails (the last
+  passing step: fixture 94 of 119, 28/25; kinked 69, 28/50; smooth 84,
+  28/35). The **value** is not monotone — it falls at up to 3 steps of a run,
+  by up to 0.143173 px — so at other bounds validity is not monotone either:
+  the bounds at which a later step passes after an earlier one fails are
+  [0.590995, 0.650925) on smooth/far pivot, [0.275883, 0.275897) and
+  [2.507863, 2.749208) on linear/scale, [0.408403, 0.408417) and
+  [3.126620, 3.273464) on smooth/scale, and only a sliver above the strict
+  result's own value on the rest. A search that assumes monotonicity finds *a*
+  passing prefix, not necessarily the last.
+- **A bisection over the budget**, selecting on the 25 `grid` frames: 8 calls
+  of each operation, 764 ms, budget 122 → 28/25, 76 triangles, 0.990322 on
+  selection; evaluated with those frames declared `selection` and the 24 `irr`
+  frames held out: 0.927313 at `idle@irr@1.531831`, pass, `heldOutClaim`
+  true. On smooth, 9 calls, 829 ms, budget 112 → 28/35, held out 0.886173.
+
+### Measured — M4, cost [measured, #1266]
+
+On the fixture, same machine, five repetitions unless stated, load 2.5–4.0:
+
+| what | wall time |
+| --- | --- |
+| `reduceMesh`, strict, 175 candidates | 59–68 ms |
+| `reduceMesh`, budget 0 (admission and the result's measurement) | 2.6–3.7 ms |
+| `compareMeshesInMotion`, one candidate, 50 frames × 6,880 samples | 42–46 ms |
+| the same, ten candidates in one call | 215–242 ms (about 19 ms a candidate past the first) |
+| a motion check at every accepted step: 119 candidates in one call | 2,669–2,700 ms (2 runs) |
+| the same, one call per step | 5,343–5,370 ms (2 runs) |
+| every 8th accepted step, one call | 333–334 ms (2 runs) |
+| compiling one candidate (`compile` + `modelDocument`) | 0.9–2.5 ms |
+| the residual as a step condition, recomputed in full at every step (scratch) | 861–910 ms (one run per variant) |
+
+A motion check per accepted step costs about 40 times the reduction; per 8th
+step about 5 times; a bisection about 12 times. The full-recompute residual is
+about 15 times the reduction — the card's warning about full invariant work on
+every step applies to it as written.
+
+### Proposed [proposal]
+
+**Mechanism 2 — intermediate candidates, by replay.** The minimum is a promise
+and a list, both additive:
+
+```ts
+/** [proposal] Additive on ReductionChanges (src/meshquality.ts). */
+export interface ReductionChanges {
+  // …every existing field…
+  /**
+   * The value of `candidatesTried` at which each removal step was taken, ascending —
+   * one integer per removed vertex. Refinement insertions are not in it.
+   */
+  acceptedAt: number[];
+}
+```
+
+- **The promise:** for every *j*, `reduceMesh` of the same input with
+  `budget.maxCandidates = acceptedAt[j]` returns the mesh after exactly the
+  first *j* + 1 removals, byte for byte (the 119/119 above, made a contract and
+  a control), and with `maxCandidates` 0 the canonical source with nothing
+  removed (with a region declared, the refined source — refinement steps count
+  against the same budget, so replay below their number is not a prefix of
+  the reduction and is refused by name). Work:
+  replaying step *j* costs `acceptedAt[j]` attempts, never more than the
+  original call; memory: the list.
+- **Outcomes:** source / no-op (`acceptedAt` empty, or replay at 0); reduced
+  (any replay); the original call's result (the last entry). It never says
+  *minimal* and never says *the last valid prefix*: validity along the order was
+  measured not monotone at some bounds.
+- **Schedule honesty:** every frame a consumer uses to pick a replay is
+  `selection`; a held-out claim needs frames disjoint from them (another phase,
+  another animation), or none is made.
+- **Cannot certify:** anything about meshes off the order. The prefixes of the
+  static order are one family; the fixture's best prefix keeps 53 vertices
+  where `weightJump` 0.11 and the residual condition reach 30–42.
+- **Rejected:** returning meshes (`checkpoints: { every: k }`) as the first
+  form — 0.96 MB for this fixture's 119 steps against 119 integers, and replay
+  costs one call; it can be added later if a consumer measures replay as too
+  slow.
+
+**Mechanism 1 — the weight-interpolation measurement, restated.** As the card
+words it (the source and candidate weight fields over a common UV domain) it is
+measured above to read 0 where the motion error is 1.8 px, so it is proposed
+only as the second factor of a bound that also carries the first:
+
+```ts
+/** [proposal] The motion a reduction must stay correct under — declared, never posed. Part-local drawing px, y down. */
+export interface SkinningEnvelope {
+  /** The bone every other bone's deformation is measured against (D₀). Usually the slot's bone. */
+  reference: string;
+  bones: Array<{
+    bone: string;
+    /** εₖ ≥ the spectral norm of (Aₖ − A₀) over the motion; dimensionless. A rotation by up to θ is 2·sin(θ/2). */
+    linear: number;
+    /** cₖ: the pivot of the lever bound |(Dₖ − D₀) p| ≤ εₖ·|p − cₖ| + τₖ. */
+    pivot: [number, number];
+    /** τₖ, px. */
+    translation: number;
+  }>;
+}
+
+/** [proposal] Additive on ReductionTargets. Absent = today's behaviour, byte for byte. */
+export interface ReductionTargets {
+  // …every existing field…
+  skinning?: { envelope: SkinningEnvelope; maxResidual: number };
+}
+```
+
+- **The row:** `MQ_SKINNING_RESIDUAL`, geometry section, unit `px`
+  (drawing), bound `<= maxResidual`; value the largest over samples of the
+  bound above. Samples: §3's set — every art pixel centre at the final
+  threshold and every source hull UV — carried by `uvCarriers` in the source
+  and in the candidate (correction 4's refusal applies); a sample either mesh
+  does not carry is listed, as §3 lists it, and left out. Weights: each mesh's
+  bindings **as written** — after `InfluenceLimits` pruning and the 6-decimal
+  grid — so pruning and quantisation error is inside the value, never beside
+  it. Coordinates: drawing px; converting to world is the setup map's job
+  (`MotionRowDetail.setupMap`), and the row is not stated in world units
+  because no single ratio exists under non-uniform scale (correction 4).
+  The derivation assumes the source and the candidate place each UV at the same
+  setup position — a removal keeps both, an insertion interpolates both (§6) —
+  so a source whose UVs are not one affine image of its points makes the row
+  `refused`, naming the vertex. Reported by `measureMeshQuality` when `targets.skinning` is given, required
+  by `reduceMesh` at every step when it is.
+- **The diagnostic** the card asked for — the weight-field difference in L1 and
+  L∞, worst sample — as an undeclared row beside it, never a gate alone.
+- **Work and memory:** carried per step as `StepRasters` carries the art rows:
+  a step changes the carriers only of samples in the triangles it removed and
+  added, so only those are re-read. The full recompute measured above
+  (861–910 ms against 59–68 ms) is not acceptable as written.
+- **Outcomes:** unchanged — `no-further-valid-reduction` naming
+  `MQ_SKINNING_RESIDUAL` when it blocks, `budget-exhausted` as today; a source
+  that fails its own residual cannot (it reads 0 against itself).
+- **Schedule honesty:** it reads no frame, so it selects with none; the final
+  comparison can be wholly held out **provided the envelope was declared before
+  any comparison was read** — an envelope tuned until a comparison passed is a
+  selection made through the envelope.
+- **Cannot certify:** motion outside the envelope; `MQ_INVERSION`,
+  `MQ_STRETCH`, `MQ_SQUASH` (measured: a residual-gated candidate reversed a
+  triangle); `vertices` deform keys, whose offsets a removal drops (§6, P18);
+  physics, unless the consumer bounds the simulated bones in the envelope. So
+  `compareMeshesInMotion` stays the acceptance; the residual only keeps the
+  search where acceptance is likely.
+
+**Mechanism 3 — a motion-aware search.** It needs the poser, and `rig-c/mesh`
+links none and must not (§0, P1; the reduction is pure). So inside rigc it
+could only be a composed operation on `rig-c/meshcompare` — replay over
+`acceptedAt`, compare, keep the best — which is the same two calls parts can
+compose today, with no measurement rigc could add to them. It is proposed to
+stay in parts, with rigc's part being mechanism 2's promise. If parts wants it
+in rigc instead, the signature would be
+`reduceMeshInMotion(reduction: MeshReductionInput, comparison: Omit<MotionComparisonInput, 'candidates'>): MeshQualityReport`
+on `rig-c/meshcompare`, every frame it reads recorded as `selection`, and it
+would add no row and no bound of its own.
+
+### Recommendation
+
+From the measurements: **mechanism 2 first, in its minimum form** — the
+prefix promise and `acceptedAt`. It adds no measurement, no poser and no memory
+beyond integers, its property was measured byte-exact on every step, and it
+lets parts recover a less-reduced, motion-valid candidate from any failed
+reduction today (8 replays and 8 comparisons, 0.76 s on the fixture), with
+honest roles because parts does the choosing. Its limit is that it only walks
+back along the static order (53 vertices where 30–42 were reachable here), and
+it can miss the last valid prefix at bounds where validity is not monotone.
+**Mechanism 1, restated as the envelope residual, second** — it is the one that
+moves the reduction itself towards motion-valid meshes without posing or
+selecting a frame (30–31 vertices, every one within 1 px on six variants), and
+its derivation was measured exact to 2·10⁻⁵ px; but it needs a carried
+implementation (the naive one is 15 times the reduction), an envelope parts can
+declare (Q3), and it cannot replace the comparison (inversion). The card's
+field-only form is **not** recommended as a gate: it read 0 on the very
+fixture that fails at 1.8 px. **Mechanism 3 stays in parts.** And before any
+of it, the M1 table says the existing `weightJump` above the source's own edge
+jump already yields reduced, motion-valid candidates on this fixture — a sweep
+parts can run privately now, recording the frames it chose by as `selection`
+(Q7).
+
+### Open with parts
+
+- **Q1.** Is `ReductionChanges.acceptedAt` with the replay promise enough for
+  parts's retry, or does parts need meshes returned, and at what limit of
+  steps or bytes?
+- **Q2.** A replayed prefix is reported `budget-exhausted` /
+  `best-meeting-every-bound`. Is that acceptable, or should replay be its own
+  input field (`stopAfterAccepted: number`) with its own termination, so it is
+  not read as an exhausted budget?
+- **Q3.** Can parts declare the envelope per bone — `linear` (εₖ), `pivot`,
+  `translation` — from the motion it declares, including bones physics drives?
+  Should rigc ship the helper that turns a rotation and scale range into `linear`,
+  or is that parts's?
+- **Q4.** Which bone is `reference` (D₀): the slot's bone always, or declared
+  per attachment?
+- **Q5.** `maxResidual` in drawing px, as proposed, or in world units through
+  the setup map's largest singular scale?
+- **Q6.** Is the field-only difference wanted as an undeclared diagnostic row,
+  or omitted?
+- **Q7.** On the two private attachments: what is the largest source edge jump
+  (as `MQ79` derives it), and does a `weightJump` just above it reduce and pass?
+  Aggregate figures only.
+- **Q8.** Mechanism 3 stays in parts — agreed, or is a composed operation on
+  `rig-c/meshcompare` wanted?
+- **Q9.** For a replay chosen by comparison, is the held-out set parts will
+  report the `irr` phase of the same animations, another animation, or none
+  (`heldOutClaim: false`)?
+- **Q10.** `targets.skinning` with a `vertices` deform key on the attachment:
+  refuse by name, as P18's first path has no such keys anyway?
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -2196,6 +2633,14 @@ contract's motion controls — under new codes, because their numbers are
 Beyond the contract's list, #1236 added
 `MQ64_A_COMPARISON_OVER_A_CONTOUR_GENERATED_BUILD_IS_ACCEPTED_AND_THE_SIGN_FLIPPED_ON_READ_FAILS_ORIENTATION_NAMING_THE_TRIANGLE`
 (`mesh-compare`) — *Stage C2*, the closed paragraph.
+
+[measured, #1266] §7's public reproducer, in the same suite and under the
+next free codes:
+`MQ79_A_REDUCTION_HOLDING_EVERY_STATIC_BOUND_FAILS_MOTION_ON_A_WEIGHT_RAMP_AND_A_LESS_REDUCED_CANDIDATE_OF_THE_SAME_SOURCE_PASSES`
+and
+`MQ80_RIGID_NO_REDUCTION_BUDGET_AND_A_BOUND_NO_PREFIX_MEETS_ARE_FOUR_DISTINCT_OUTCOMES_AND_THE_LAST_IS_THE_ORDERS_NOT_THE_MESHS`
+(`mesh-compare`). They hold today's behaviour on that fixture — the gap and its
+feasible controls — and implement nothing of §7's proposal.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
