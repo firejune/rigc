@@ -454,6 +454,14 @@ and, through `spine-rigc/transform`, `computeExactFrameTransforms`,
 `normaliseDegrees` and `toWorld` beside the three #1167 listed. The table in
 the smoke is the one that is checked; this one is its reading for a person.
 
+A later observation of the same entry is its own row, as the rule above says:
+spine-parts's automatic mesh mode (its `c03dd8a`, PR #131) was read calling
+`reduceMesh` with the types `SourceMesh` and `RefinementRegion` from
+`spine-rigc/mesh`, which the agreed row had not recorded — found by rigc#1238's
+D1 over the installed package, recorded by #1241. Every other import that
+package makes goes through the `./*.ts` courtesy keys, which the surface
+paragraph above already says are not promised.
+
 🤝 **One row is promised by agreement rather than observation**
 ([#1224](https://github.com/firejune/rigc/issues/1224)). Through
 `spine-rigc/mesh`, `measureMeshQuality`, `writeMeshQualityReport`,
