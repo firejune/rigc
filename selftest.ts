@@ -47278,6 +47278,110 @@ function runMeshQualitySuite(): number {
     );
   }
 
+  // --- MQ70 / MQ71 (#1253): a region's rows carried from the last step read what the full measurement reads ----
+  // A region over most of the art, so its fill row reads pixels near every vertex and the hull, and its band holds
+  // the lattice's edges. Measured in order through one StepRasters, each against a fresh measureMeshQuality: the
+  // lattice, an interior vertex moved (edges change, the vertex nearest some pixels goes), the lattice again, a fold
+  // (that vertex nine pixels away), the lattice, a corner cut (the hull moves inward across region pixels with its
+  // vertex count unchanged), the lattice, then the same lattice under the region moved five pixels (an equal vertex
+  // count, another polygon), an interior vertex moved under it, and the region with two corners swapped (refused).
+  const wide: RefinementRegion = { name: 'wide', polygon: mqSquare(C[0], C[1], 15), maxEdgeLength: 4, transition: 8, grade: 1, approximation: null };
+  const wideMoved: RefinementRegion = { ...wide, polygon: mqSquare(C[0] + 5, C[1], 15) };
+  const [q0, q1, q2, q3] = wideMoved.polygon;
+  /** The moved square with two corners swapped: as many vertices, and its sides cross — refused. */
+  const wideCrossed: RefinementRegion = { ...wide, polygon: [q0, q2, q1, q3] };
+  const regionSteps: CarriedStep[] = (
+    [
+      ['the lattice', lattice, wide],
+      ['an interior vertex moved', movedVertex(lattice, 15, 1.5, 1.25, W, H), wide],
+      ['the lattice again', lattice, wide],
+      ['a fold', movedVertex(lattice, 15, 9, 0, W, H), wide],
+      ['the lattice once more', lattice, wide],
+      ['a corner cut', movedVertex(lattice, 0, 6, 6, W, H), wide],
+      ['the lattice before the region moves', lattice, wide],
+      ['the lattice, the region moved', lattice, wideMoved],
+      ['an interior vertex moved, the region moved', movedVertex(lattice, 15, 1.5, 1.25, W, H), wideMoved],
+      ['the lattice, the region crossed', lattice, wideCrossed],
+    ] as Array<[string, SourceMesh, RefinementRegion]>
+  ).map(([label, mesh, region]) => ({ label, input: mqInput(rectMask, frame, mesh, { artFit: strict, maxBoundaryDeviation: 0, regions: [region] }, { referenceHull: hull }) }));
+  {
+    const probes: string[] = [];
+    const carried = runCarried(regionSteps, null);
+    probes.push(...carried.found);
+    const t = carried.tally;
+    const exercised: Array<[string, number]> = [
+      ['region pixel sets handed back', t.regionSetsReused],
+      ['region polygon checks handed back', t.polygonChecksReused],
+      ['region edge answers carried', t.regionEdgesCarried],
+      ['region edge answers computed', t.regionEdgesComputed],
+      ['fill hulls handed back', t.fillHullsReused],
+      ['fill hulls carried by the edges that changed', t.fillHullsCarried],
+      ["pixels measured again in a changed hull's box", t.fillHullPixelsMeasured],
+      ['nearest distances carried', t.fillNearestCarried],
+      ['nearest distances measured again for a vertex gone', t.fillNearestMeasured],
+    ];
+    for (const [what, n] of exercised) if (!(n > 0)) probes.push(`the region sequence exercised no ${what} (${n})`);
+    if (t.regionSetsComputed !== 2) probes.push(`the sequence computed ${t.regionSetsComputed} region pixel set(s); two polygons were measured, so two were required`);
+    if (t.polygonChecksComputed !== 3) probes.push(`the sequence checked ${t.polygonChecksComputed} region polygon(s) for a crossing; three were read, so three were required`);
+    const fills = regionSteps.slice(0, -1).map(({ input }) => mqRow(measureMeshQuality(input), 'MQ_FILL_DISTANCE', input.targets.regions[0].name));
+    if (fills.some((r) => typeof r?.value !== 'number')) probes.push(`a fill row has no value: ${fills.map(mqSay).join(' | ')}`);
+    if (new Set(fills.map((r) => `${r?.value}/${r?.art?.samples}`)).size < 3) probes.push(`the fill rows read ${[...new Set(fills.map((r) => `${r?.value}/${r?.art?.samples}`))].join(', ')} over the sequence, so the steps did not move what they carry`);
+    // A reduction under a region small enough to leave removals to take: refinement and removal steps carried,
+    // against every step measured in full.
+    const input = mqReduceInput(lattice, regionTargets(dense));
+    const bytes = (r: { report: MeshQualityReport; mesh: ReducedMesh | null }): string => writeMeshQualityReport(r.report) + JSON.stringify(r.mesh);
+    const rasters = artRastersOf(input.art);
+    const stepRasters = stepRastersOf(rasters);
+    const carriedRun = reduceMeshWith(input, rasters, stepRasters);
+    const full = bytes(reduceMeshWith(input, artRastersOf(input.art), null));
+    const other = bytes(carriedRun);
+    if (other !== full) {
+      let at = 0;
+      while (at < full.length && full[at] === other[at]) at++;
+      probes.push(`the reduction under the region differs from the full one at byte ${at} (${JSON.stringify(other.slice(at, at + 40))} against ${JSON.stringify(full.slice(at, at + 40))})`);
+    }
+    const st = stepRasters.tally;
+    const ch = carriedRun.report.candidates[0]?.changes;
+    if (!(st.regionEdgesCarried > 0 && st.fillNearestCarried > 0 && st.regionSetsReused > 0)) probes.push(`the reduction under the region carried ${st.regionEdgesCarried} edge answer(s) and ${st.fillNearestCarried} nearest distance(s), and handed back ${st.regionSetsReused} pixel set(s)`);
+    if (!((ch?.insertedVertices ?? 0) > 0 && (ch?.removedVertices ?? 0) > 0)) probes.push(`the reduction under the region inserted ${ch?.insertedVertices} and removed ${ch?.removedVertices}; both phases were meant to run`);
+    const held = probes.length === 0;
+    say(
+      'MQ70_CONTROL_A_REGION_READ_CARRIED_FROM_THE_LAST_STEP_READS_EVERY_ROW_THE_FULL_MEASUREMENT_READS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${regionSteps.length} measurements under a region through one step-rasters object, ${carried.rows} rows byte-identical to a fresh measureMeshQuality each (fill rows ${fills.map((r) => `${r?.value} over ${r?.art?.samples}`).join(', ')}; tally ${JSON.stringify({ regionSetsComputed: t.regionSetsComputed, regionSetsReused: t.regionSetsReused, polygonChecksComputed: t.polygonChecksComputed, polygonChecksReused: t.polygonChecksReused, regionEdgesCarried: t.regionEdgesCarried, regionEdgesComputed: t.regionEdgesComputed, fillHullsReused: t.fillHullsReused, fillHullsCarried: t.fillHullsCarried, fillHullsMeasured: t.fillHullsMeasured, fillHullPixelsMeasured: t.fillHullPixelsMeasured, fillNearestRebuilt: t.fillNearestRebuilt, fillNearestCarried: t.fillNearestCarried, fillNearestMeasured: t.fillNearestMeasured })}); the reduction under it: ${full.length} bytes identical carried and in full, ${ch?.insertedVertices} inserted and ${ch?.removedVertices} removed, ${st.regionEdgesCarried} edge answers carried, ${st.fillNearestCarried} nearest distances carried`,
+      ),
+      "issue #1253: a region's art pixels, its edge answers and its fill distances are carried from the last step (its pixel set computed once per polygon) — a cost change only if no row reads differently",
+    );
+  }
+  {
+    const probes: string[] = [];
+    const caught: string[] = [];
+    const plants: Array<[StepRasterPlant, string]> = [
+      ['stale-region', 'MQ_FILL_DISTANCE'],
+      ['stale-polygon-check', '] refused'],
+      ['stale-region-edge', 'row MQ_'],
+      ['stale-fill-hull', 'MQ_FILL_DISTANCE'],
+      ['stale-fill-nearest', 'MQ_FILL_DISTANCE'],
+    ];
+    for (const [plant, names] of plants) {
+      const { found } = runCarried(regionSteps, plant);
+      const named = found.find((f) => f.includes(names));
+      if (found.length === 0) probes.push(`${plant}: no step read differently`);
+      else if (named === undefined) probes.push(`${plant}: caught, but nothing named ${names}: ${found[0]}`);
+      else caught.push(`${plant}: ${named}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ71_A_REGION_READ_CARRIED_FROM_A_STALE_POLYGON_CHECK_EDGE_HULL_OR_NEAREST_VERTEX_IS_CAUGHT_NAMING_THE_ROW',
+      held,
+      probeDetail(held, probes, caught.join('; ')),
+      "issue #1253: each thing a region's carried read keeps — the pixel set and the crossing check per polygon, an edge's answers, a pixel's place in the hull near a changed hull edge, a pixel's nearest vertex — is planted stale once and must surface as the row it changed",
+    );
+  }
+
   rmSync(dir, { recursive: true, force: true });
   return bad;
 }

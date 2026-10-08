@@ -1599,6 +1599,112 @@ coverage (`StepRasters.coverage`), 32.0 % in the outline readings and 9.8 % in
 `squaredDistanceToSet` and 19.5 % `hausdorff`. These figures are one machine's
 reading, not a claim about another; no wall-time threshold is set here.
 
+**A region's rows, carried from the last step too**
+([#1253](https://github.com/firejune/rigc/issues/1253)). After #1246 a step
+over a mesh with no region cost about 2.6 ms; with one region it cost about
+1.8 s. The subject is spine-parts's `demo/bottomwear` (536 source vertices, a
+661 × 693 plate with 350,983 art pixels) with one declared region `hem`: a
+circle of radius 65 handed over as a circumscribed 287-gon, `maxEdgeLength`
+18, `transition` 65, one art sample — 1443 candidates, 262 inserted and 214
+removed. Its profile, split by what a step does (section timers and counters
+in an instrumented copy, the call capped at `maxCandidates` 320 for the
+profile only: all 263 refinement measurements and the first 58 removal
+attempts):
+
+- **`MQ_FILL_DISTANCE`** was 92 % of a refinement measurement (1,634 of
+  1,778 ms) and 90 % of a removal one. Every measurement tested all 350,983 art
+  pixels against the region's closed polygon (`inClosedPolygon`, 287 sides:
+  100.7 million side tests), then the 13,273 inside it against the hull (about 293
+  sides: 3.9 million) and each of those against every vertex (8.9 million
+  distances at 667 vertices).
+- **The region's edge predicates** (`edgeIsHeldByRegion`, `segmentToPolygon`,
+  `segmentMeetsPolygon` — every edge against the 287 sides) were 6.5 % and
+  1.4 %.
+- **`canonicalise`** was 0.6 ms a step and **the carried coverage** 0.6 ms:
+  an insertion flipped no pixel centre in any of the 263 refinement
+  measurements (splitting a triangle changes which triangle covers a centre,
+  never whether one does), and a removal flipped 17 on average, redoing 10.6
+  columns and 147 rows of the distance transform.
+  `canonicalise` cannot move to the end of the run in any case: the
+  refinement reads the canonical order to name the edge it splits, and the
+  removal's outline check is what refuses a step that leaves no single loop.
+- The self-intersection check of the region's polygon (`findSelfIntersection`)
+  was 0.1 % before and, once the rest was carried, the largest of the
+  region's terms in a removal step, so it is carried with them.
+
+So `regionRows` (`src/meshquality.ts`) reads each of those through the call's
+`StepRasters` (`src/meshrasters.ts`), by the rule #1246 set: each value is
+the same function of the same input.
+
+- **The region's art pixels** (`regionPixels`) — the art pixels whose centre
+  lies in the closed polygon, ascending — are a function of the art and the
+  polygon alone: computed once for a polygon equal coordinate by coordinate,
+  and handed back after. The fill scan visits them in ascending order, which
+  is the order a scan of every art pixel keeps them in.
+- **The polygon's self-intersection check** (`polygonCrossing`) is handed back
+  the same way.
+- **An edge's answers** (`regionEdges`) — whether it meets the closed polygon,
+  and whether the region holds it and at what distance — are functions of its
+  two ends and the region's polygon and band, so they are carried from the last
+  reading of the region for an edge with both ends equal, in the same order.
+- **The fill distances** (`regionFill`). Whether a region pixel lies in the
+  hull is measured again only inside the box of the hull edges that changed
+  (directed, both ends exact), widened by one unit; outside it the shared
+  edges answer the same, a changed edge is further than the boundary tolerance,
+  and the changed edges cross a horizontal ray from the pixel an even number of
+  times between them, so the parity is the last one's. A pixel's nearest-vertex
+  distance is carried by the vertices that differ from the last reading's, as
+  a multiset of exact coordinates: while the vertex that attained it remains,
+  the new minimum is the smaller of the last one and the distances to the
+  vertices added; when it is gone, the pixel is measured over every vertex
+  again. A minimum is exact, so either way it is the same number.
+- **Admission** is measured through the same `StepRasters` when the call
+  carries one, so the region's pixel set is computed once per call rather than
+  once for admission and once for the steps.
+
+`measureMeshQuality` and `measureMeshQualityWith` read none of this; their
+signatures, every row's definition, the budget, the bounds, the sample counts,
+the raster resolution and the candidate order are unchanged. `MQ70` measures a
+sequence under a region — an interior vertex moved, a fold, a corner cut that
+moves the hull across region pixels with its vertex count unchanged, the region
+moved to another polygon of as many vertices, and the region with two corners
+swapped — through one `StepRasters` against a fresh `measureMeshQuality` each,
+every row's bytes identical, and a reduction under a region carried and in full,
+byte-identical; `MQ71` plants a pixel set and a crossing check handed back on
+the vertex count alone, an edge's answers carried from an edge sharing only its
+first end, a changed hull's box not measured again and a nearest vertex kept
+after it was removed, each caught by the row it changed.
+
+**Cost, measured.** The 18 recorded inputs and the with-region one, replayed
+one process per call through the tree before and after (the with-region before
+side is the profiled run below): report, mesh and `accepted` identical, 57 of 57;
+every `measureMeshQuality`, `measureMeshQualityWith`, `reduceMesh` and
+`reduceMeshWith` output the `mesh-quality` and `mesh-compare` suites make, run by
+the selftest from before the change over both trees: 379 outputs, the same in
+order. On one Intel Core Ultra 7 265K (20 threads, WSL2 Linux 6.6, Bun 1.4.2),
+each run alone on the machine (the pool held exclusively) and the 1-minute load 0.1–1.1 at every start:
+the with-region call before, under the CPU profiler, 2,575 s (1443 candidates;
+the profiler's cost is within the noise — the unprofiled first 100 candidates
+took 188 and 193 s, 1.9 s a step, against 1.8 s a step profiled); after, 10.1–11.0 s
+in three runs, 5.7–6.3 ms a step ((full − budget-0 call) / 1443); capped at 100
+candidates, before 188.0 and 192.9 s, after 2.14 and 2.20 s. The no-region call,
+before and after in the order before, after, after, before, twice: 2.83–3.29 s
+before, 2.81–3.17 s after, 1101 candidates every run — the change does not touch
+a call without a region. A CPU profile of a fourth after-run (10.9 s) puts
+18.6 % of samples in `regionFill`, 12.9 % in computing the region's pixel set
+once, 12.3 % in the carried coverage and 11.5 % in the outline readings; before,
+88.3 % was `inClosedPolygon` and 99.8 % `regionRows`. These figures are one
+machine's reading, not a claim about another; no wall-time threshold is set here.
+
+**What a region's polygon costs the caller.** The pixel set is now computed
+once per call: one test of every art pixel against every side of the polygon.
+For `hem` that is 350,983 × 287 ≈ 100.7 million side tests, about 1.4 s of the
+10.9 s profiled call above (`inRegion`'s share of its profile), and it grows with the
+number of sides; per step, the sides are read again only by the edges a step
+changes (`regionEdges`) and by a polygon not seen before. A polygon of fewer
+sides costs proportionally less in both, and is the caller's choice of
+approximation, not something the reduction rounds away.
+
 **Left for later stages.** The motion comparison and every motion row (§3,
 stage C); a finer-grid pass, warm-up and traced-boundary gating (*Stage B
 scope*); refinement that retriangulates outside the band or flips edges, which
