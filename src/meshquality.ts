@@ -54,26 +54,22 @@
  * `MeshReductionError` is defined in `src/mesh.ts` for exactly that reason.
  */
 import {
-  artOf,
   checkHullOrder,
   distanceToSegment,
-  fillEnclosed,
   findSelfIntersection,
-  labelIslands,
   MeshError,
   MeshReductionError,
   meshEdges,
-  prunePolygon,
   r6,
   rasteriseTriangles,
   segmentsMeet,
   squaredDistanceToSet,
-  traceAlphaOutline,
   traceOutline,
   type AlphaMask,
   type MeshOutline,
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
+import { artRastersOf, type ArtRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
 // ---------------------------------------------------------------------------
@@ -1012,6 +1008,53 @@ function compareRows(a: MeasureRow, b: MeasureRow): number {
  */
 export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
   validateInput(input);
+  return measureValidated(input, artRastersOf(input.art));
+}
+
+/**
+ * `measureMeshQuality` over art rasters the caller already holds
+ * (`src/meshrasters.ts`) — what `reduceMesh` calls for every measurement of
+ * one call, so the quantities of the art alone are computed once per call
+ * rather than once per step (issue #1240). The report is the one
+ * `measureMeshQuality` returns for the same input, byte for byte; rasters
+ * taken from another art are refused (`REDUCE_ART_RASTERS_MISMATCH`), never
+ * read.
+ *
+ * Internal: it is on `spine-rigc/mesh` only because that entry re-exports this
+ * module with `export *`, and a symbol that is merely exported is not promised
+ * (RELEASING.md, *The import surface*).
+ */
+export function measureMeshQualityWith(input: MeshMeasureInput, rasters: ArtRasters): MeshQualityReport {
+  validateInput(input);
+  checkArtRasters(input, rasters);
+  return measureValidated(input, rasters);
+}
+
+/**
+ * Rasters are read only for the art they were taken from: the same mask
+ * array, mask size, threshold and frame. The first field that differs is
+ * refused by name, with the value the rasters were taken at and the value the
+ * input requires.
+ */
+function checkArtRasters(input: MeshMeasureInput, rasters: ArtRasters): void {
+  const want = input.art;
+  const got = rasters.art;
+  if (got === want) return;
+  const who = `attachment ${nameOf(input.attachment)}`;
+  const differs = (field: string, found: string, required: string): never =>
+    refuse('REDUCE_ART_RASTERS_MISMATCH', `${who}: the art rasters were taken at ${field} ${found}; required ${field} ${required}, the input's — rasters are read only for the art they were taken from`);
+  const size = (m: AlphaMask | undefined): string => (m === undefined ? 'undefined' : `${m.width}x${m.height}`);
+  if (size(got.mask) !== size(want.mask)) differs('art.mask size', size(got.mask), size(want.mask));
+  if (got.threshold !== want.threshold) differs('art.threshold', JSON.stringify(got.threshold), JSON.stringify(want.threshold));
+  for (const field of ['pageScale', 'width', 'height'] as const) {
+    if (got.frame?.[field] !== want.frame[field]) differs(`art.frame.${field}`, JSON.stringify(got.frame?.[field]), JSON.stringify(want.frame[field]));
+  }
+  if (got.mask.alpha !== want.mask.alpha) differs('art.mask.alpha', 'another array', 'the input\'s own array (the same object)');
+}
+
+/** The measurement proper, over an input `validateInput` accepted and rasters taken from its art. */
+function measureValidated(input: MeshMeasureInput, rasters: ArtRasters): MeshQualityReport {
+  rasters.tally.uses++;
   const { attachment, art, source, targets } = input;
   const { mask, threshold, frame } = art;
   const scale = frame.pageScale;
@@ -1053,9 +1096,8 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
   const w = mask.width;
   const h = mask.height;
   const grid = { width: w, height: h, pageScale: scale };
-  const artBits = artOf(mask, threshold);
-  let artCount = 0;
-  for (const bit of artBits) artCount += bit;
+  const artBits = rasters.artBits();
+  const artCount = rasters.artCount();
   const onGrid: Array<[number, number]> = source.points.map(([x, y]) => [x * scale, y * scale]);
   const covered = rasteriseTriangles(onGrid, source.triangles, w, h);
   const fit = targets.artFit;
@@ -1108,17 +1150,9 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
 
     // Overshoot and holes against the filled silhouette: 8-connected background over ALL art (P12) — and,
     // where the legacy 4-connected fill differs (a diagonal pinch), the labelled 4-connected reading beside it.
-    const fill8 = fillEnclosed(artBits, w, h, 8).filled;
-    const fill4 = fillEnclosed(artBits, w, h, 4).filled;
-    let fillsDiffer = false;
-    for (let i = 0; i < fill8.length; i++) {
-      if (fill8[i] !== fill4[i]) {
-        fillsDiffer = true;
-        break;
-      }
-    }
+    const { fill8, fill4, differ: fillsDiffer } = rasters.fills();
     const silhouetteRows = (filled: Uint8Array, connectivity: 4 | 8, gated: boolean): void => {
-      const toFilled = squaredDistanceToSet(filled, w, h);
+      const toFilled = rasters.toFilled(connectivity);
       let overAt = -1;
       let overSq = 0;
       let holes = 0;
@@ -1150,7 +1184,7 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
     if (fillsDiffer) silhouetteRows(fill4, 4, false);
 
     // Islands: the 4-connected art islands (the tracer's, `labelIslands`) the triangles cover a pixel of.
-    const { label } = labelIslands(artBits, w, h);
+    const { label } = rasters.islands();
     const touched = new Set<number>();
     for (let i = 0; i < label.length; i++) if (label[i] && covered[i]) touched.add(label[i]);
     let joinedAt = -1;
@@ -1179,14 +1213,12 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
     rows.push(measuredRow(boundarySpec, r6(hd.d), bound, hd.d === 0 ? NOTHING_WORSE : { at: { edge: edgeOfHull(hd.candidateEdge) } }, true));
   }
   const traceSpec = spec('MQ_TRACE_DEVIATION', 'px');
-  try {
-    const traced = traceAlphaOutline(mask, threshold);
-    const outlinePx = prunePolygon(traced.outline.map(([x, y]): [number, number] => [x / scale, y / scale]));
-    const hd = hausdorff(hullPolygon, outlinePx);
+  const traced = rasters.traced();
+  if ('outline' in traced) {
+    const hd = hausdorff(hullPolygon, traced.outline);
     rows.push(measuredRow(traceSpec, r6(hd.d), null, hd.d === 0 ? NOTHING_WORSE : { at: { edge: edgeOfHull(hd.candidateEdge) } }, false));
-  } catch (err) {
-    if (!(err instanceof MeshError)) throw err;
-    rows.push(unmeasuredRow(traceSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the tracer refused the art at alpha >= ${threshold}: ${err.message}`, false));
+  } else {
+    rows.push(unmeasuredRow(traceSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the tracer refused the art at alpha >= ${threshold}: ${traced.refused}`, false));
   }
 
   // --- triangles: sign, degeneracy, angle --------------------------------------------------
@@ -1233,7 +1265,7 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
   );
 
   // --- regions (§5) ------------------------------------------------------------------------
-  rows.push(...regionRows(input, outline, hullPolygon));
+  rows.push(...regionRows(input, outline, hullPolygon, rasters));
 
   const ordered = rows.slice().sort((a, b) => compareRows(a.row, b.row));
   const geometry = sectionOf(ordered);
@@ -1331,7 +1363,7 @@ interface Edge {
  * length most exceeds its own bound — so the row fails exactly when some edge
  * it covers is over — and the row names that edge and that bound.
  */
-function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: readonly Pt[]): Built[] {
+function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: readonly Pt[], rasters: ArtRasters): Built[] {
   const { attachment, source, art } = input;
   const who = `attachment ${nameOf(attachment)}`;
   const scale = art.frame.pageScale;
@@ -1407,7 +1439,7 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
 
   const floorOf = (name: string): number => input.regionArtSamples.find((f) => f.region === name)!.minArtSamples;
   const { mask, threshold } = art;
-  const artBits = artOf(mask, threshold);
+  const artBits = rasters.artBits();
 
   for (const region of input.targets.regions) {
     const refused = refusals.get(region.name);

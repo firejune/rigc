@@ -1449,9 +1449,80 @@ per fixture, the candidates tried and the wall time of each `reduceMesh` call.
 One darwin run at the commit that added it: the 20-vertex lattice reduced to
 its 4 corners in 24 candidates and 97 ms; the refinement alone, 37 insertions
 in 274 ms; the composed run, 76 candidates in 295–327 ms; the weighted
-refinement, 37 in 451 ms. Every step is one full `measureMeshQuality` over the
-plate, so the cost is the measurement's times the steps; bounding it is stage
-D's, and these figures are one machine's reading, not a claim about another.
+refinement, 37 in 451 ms. Every step is one full measurement over the plate,
+so the cost is the measurement's times the steps; bounding it is stage D's,
+and these figures are one machine's reading, not a claim about another.
+
+**The art's rasters, taken once per call**
+([#1240](https://github.com/firejune/rigc/issues/1240)). What a measurement
+reads from the art alone — the art bits at the threshold, the filled
+silhouette at both background connectivities and each one's distance
+transform, the 4-connected island labels, and the traced outline in drawing
+pixels — is an `ArtRasters` value (`artRastersOf`, `src/meshrasters.ts`).
+`reduceMesh` makes one per call before admission and hands it to every
+measurement the call makes: admission and `checkIslands`, every refinement
+and removal step through `measureAgainstTargets`, and the result's own
+measurement — each through `measureMeshQualityWith` in `src/meshquality.ts`.
+The rule:
+
+- **Passed, never kept.** There is no module-level cache: the object is made
+  by the caller, held in the call's `Run`, and dropped with it.
+  `measureMeshQuality` makes a fresh one per call, so its behaviour is the
+  uncached one, and its signature is unchanged.
+- **Computed on first read.** A measurement that returns before a raster row
+  (a source that is not one loop) or reads none (art under its sample floor)
+  computes nothing more than it did; a tracer refusal is kept as its message
+  and read back into the same `not-measurable` row.
+- **Refused for any other art.** `checkArtRasters` compares the art the
+  rasters were taken from with the input's — the mask's size, the threshold,
+  the frame's `pageScale`, `width` and `height`, and the mask array itself, by
+  identity — and the first that differs is `REDUCE_ART_RASTERS_MISMATCH`,
+  thrown, naming the field, the value the rasters were taken at and the value
+  the input requires. No stale raster is ever read.
+- **Counted.** `tally` records each quantity's computations and the
+  measurements that read the object. `MQ65` holds the cached and uncached
+  reports byte-identical on every row over fixtures that read every quantity
+  (the pinch reads the 4-connected distance and the tracer's refusal), and
+  `reduceMeshWith` — `reduceMesh` over rasters the caller made — to
+  `reduceMesh`'s report and mesh bytes; `MQ66` plants rasters at another
+  threshold, mask size and mask, each refused by name and never read, and the
+  same plant refused by `reduceMeshWith` at admission; `MQ67` reads the tally
+  of one reduction — 80 candidates, 84 measurements, every quantity computed
+  once — beside the per-step plant computing the art bits 84 times, and holds
+  `src/meshreduce.ts` to no call of `measureMeshQuality` and one of
+  `artRastersOf`.
+
+`measureMeshQualityWith` and `reduceMeshWith` are on `spine-rigc/mesh` only
+because that entry re-exports both modules with `export *`; a symbol that is
+merely exported is not promised (RELEASING.md, *The import surface*), and the
+install smoke's observed list is unchanged. `src/meshrasters.ts` is on no named
+entry. Rejected: an optional second parameter on `measureMeshQuality`, which
+changes the agreed signature; moving the measurement's body into a module
+`src/mesh.ts` does not re-export, which moves a thousand lines to keep two
+internal names off the entry.
+
+**Cost of the cache, measured.** Spine-parts's `demo/bottomwear` (a 661 × 693
+plate, 350,983 art pixels, 536 source vertices, budget 5000), its recorded
+`reduceMesh` input replayed on one Apple M4 (darwin 25.6.0, Bun 1.4.2) in the
+order before, after, after, before, each in its own process, with another
+session's reduction matrix and builds running throughout (1-minute load 5.9,
+15.4, 11.0 and 8.0 at the four starts; no stale `rigc-*` directory in
+`$TMPDIR`): 1101 candidates every run, `no-further-valid-reduction`, report
+and mesh byte-identical. Before, 184.9 s and 138.2 s — 167 and 125 ms a step
+((full − budget-0 call) / 1101); after, 76.2 s and 79.4 s — 69 and 72 ms a
+step. A CPU profile of a third after-run (55.4 s, load 7.0) puts 98.3 % of
+samples still in the measurement and 0.16 % in functions of the art alone
+(`artOf`, `fillEnclosed`, `labelIslands`, `traceAlphaOutline`), against
+≥ 40.1 % before (#1240's profile): what remains per step is the candidate's
+own coverage raster (`rasteriseTriangles`, 45.3 %), its distance transform
+(`squaredDistanceToSet`, 22.4 % with the silhouette's no longer in it) and the
+two Hausdorff readings (18.0 %). The byte identity is measured over the 18
+`reduceMesh` inputs spine-parts made at 2.20.0 (report, mesh and the
+admission-shaped measurement: 54 of 54 files identical to the tree before the
+change and to the installed 2.20.0's) and over every `measureMeshQuality` and
+`reduceMesh` call the `mesh-quality` and `mesh-compare` suites make (152
+outputs, the same in order). These figures are one loaded machine's reading,
+not a claim about another; no wall-time threshold is set here.
 
 **Left for later stages.** The motion comparison and every motion row (§3,
 stage C); a finer-grid pass, warm-up and traced-boundary gating (*Stage B

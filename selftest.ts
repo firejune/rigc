@@ -380,11 +380,13 @@ import {
   edgeIsHeldByRegion,
   measureAuthoredMeshFit,
   measureMeshQuality,
+  measureMeshQualityWith,
   MeshError,
   MeshReductionError,
   r6,
   rasteriseTriangles,
   reduceMesh,
+  reduceMeshWith,
   writeMeshQualityReport,
   type AlphaMask,
   type ArtFitBounds,
@@ -404,6 +406,7 @@ import {
   type Termination,
 } from './src/mesh.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
+import { artRastersOf, type ArtRasters } from './src/meshrasters.ts';
 import {
   boneDistance,
   BONE_QUANTITIES,
@@ -46956,6 +46959,154 @@ function runMeshQualitySuite(): number {
           `reduceMesh's cost on this suite's public fixtures, wall time outside the report: ${cpu.join('; ')}`,
       ),
       'P19 and spine-parts#126 (6042150608) item 1: with minWeight 0 a positive share that the grid cannot hold is dropped and counted rather than written as 0, no other floor applies, and a protected influence that cannot be kept is a named refusal',
+    );
+  }
+
+  // --- MQ65 (#1240): the cached and the uncached path agree on every row, and a reduction over the cache is reduceMesh's --
+  // One rasters object per art, shared across every measurement of that art (the reduction's shape), against a fresh
+  // measureMeshQuality per input. The fixtures between them read every art-only quantity: the rectangle (fills agree),
+  // the pinch (fills differ, so the 4-connected distance is read, and the tracer refuses), a region (the art bits the
+  // fill distance walks) and art under its sample floor (no silhouette read at all).
+  {
+    const probes: string[] = [];
+    const rectRasters = artRastersOf({ mask: rectMask, threshold: 1, frame });
+    const pinchRasters = artRastersOf({ mask: pinchMask, threshold: 1, frame: pinchFrame });
+    const cases: Array<[string, MeshMeasureInput, ArtRasters]> = [
+      ['exact against its own hull', mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: 0, regions: [] }, { referenceHull: hull }), rectRasters],
+      ['moved inward', mqInput(rectMask, frame, inward, { artFit: strict, maxBoundaryDeviation: null, regions: [] }), rectRasters],
+      ['pushed out', mqInput(rectMask, frame, pushed, { artFit: strict, maxBoundaryDeviation: null, regions: [] }), rectRasters],
+      ['the lattice with a region', mqInput(rectMask, frame, lattice, { artFit: strict, maxBoundaryDeviation: null, regions: [dense] }), rectRasters],
+      ['under its sample floor', mqInput(rectMask, frame, exact, noTargets, { minArtSamples: artCount(rectMask, 1) + 1 }), rectRasters],
+      ['the pinch, no targets', mqInput(pinchMask, pinchFrame, hexMesh, noTargets), pinchRasters],
+      ['the pinch, strict', mqInput(pinchMask, pinchFrame, hexMesh, { artFit: strict, maxBoundaryDeviation: null, regions: [] }), pinchRasters],
+    ];
+    let rows = 0;
+    for (const [label, input, rasters] of cases) {
+      const freshReport = measureMeshQuality(input);
+      const fresh = writeMeshQualityReport(freshReport);
+      const cached = writeMeshQualityReport(measureMeshQualityWith(input, rasters));
+      rows += mqRows(freshReport).length;
+      if (cached !== fresh) {
+        let at = 0;
+        while (at < fresh.length && fresh[at] === cached[at]) at++;
+        probes.push(`${label}: the cached report differs from the uncached one at byte ${at} (${JSON.stringify(fresh.slice(at, at + 40))} against ${JSON.stringify(cached.slice(at, at + 40))})`);
+      }
+    }
+    const pinchRead = measureMeshQuality(cases[5][1]);
+    if (mqRows(pinchRead).filter((r) => r.code === 'MQ_OVERSHOOT').length !== 2) probes.push('the pinch reads one overshoot row, so the 4-connected silhouette was not read and agreement on it compared nothing');
+    if (mqRow(pinchRead, 'MQ_TRACE_DEVIATION')?.state !== 'not-measurable') probes.push("the pinch's trace row is measured, so the tracer's refusal was not carried through the cache");
+    const tallies = [rectRasters.tally, pinchRasters.tally];
+    for (const field of ['artBits', 'fills', 'toFilled8', 'toFilled4', 'islands', 'traced'] as const) {
+      if (tallies.every((t) => t[field] === 0)) probes.push(`no fixture read ${field}, so its agreement is vacuous`);
+      for (const t of tallies) if (t[field] > 1) probes.push(`${field} was computed ${t[field]} times on one rasters object`);
+    }
+    // The reduction: reduceMesh (rasters made inside) and reduceMeshWith over rasters made here, report and mesh bytes.
+    const input = mqReduceInput(lattice, regionTargets(dense));
+    const plain = reduceMesh(input);
+    const over = reduceMeshWith(input, artRastersOf(input.art));
+    const plainText = writeMeshQualityReport(plain.report) + JSON.stringify(plain.mesh);
+    const overText = writeMeshQualityReport(over.report) + JSON.stringify(over.mesh);
+    if (plainText !== overText) probes.push(`reduceMeshWith's report and mesh (${overText.length} bytes) are not reduceMesh's (${plainText.length})`);
+    if (plain.mesh === null) probes.push(`the reduction returned no mesh (${mqSayEnd(plain.report.termination)}), so its bytes compared the empty case only`);
+    const held = probes.length === 0;
+    say(
+      'MQ65_CONTROL_THE_CACHED_AND_UNCACHED_PATHS_AGREE_ON_EVERY_ROW_AND_A_REDUCTION_OVER_THE_CACHE_IS_REDUCE_MESH',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${cases.length} measurements over two shared rasters objects, ${rows} rows, byte-identical to a fresh measureMeshQuality each (rectangle tally ${JSON.stringify(rectRasters.tally)}; pinch ${JSON.stringify(pinchRasters.tally)}); ` +
+          `the lattice with a region reduced both ways: ${plainText.length} bytes of report and mesh, identical`,
+      ),
+      'issue #1240: the art-derived rasters are taken once per reduceMesh call and handed to every step; that is only a cost change if no row reads differently through them',
+    );
+  }
+
+  // --- MQ66 (#1240): rasters taken at another threshold, mask size or mask are refused by name, never read --
+  {
+    const probes: string[] = [];
+    const base = mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: null, regions: [] });
+    const refusedWith = (rasters: ArtRasters): { code: string; message: string } | null => {
+      try {
+        measureMeshQualityWith(base, rasters);
+        return null;
+      } catch (err) {
+        if (err instanceof MeshReductionError) return { code: err.code, message: err.message };
+        return { code: '(not a MeshReductionError)', message: (err as Error).message };
+      }
+    };
+    const plants: Array<[string, ArtRasters, string[]]> = [
+      ['another threshold', artRastersOf({ mask: rectMask, threshold: 2, frame }), ['art.threshold 2', 'required art.threshold 1']],
+      ['another mask size', artRastersOf({ mask: pinchMask, threshold: 1, frame: pinchFrame }), [`art.mask size ${pinchMask.width}x${pinchMask.height}`, `required art.mask size ${W}x${H}`]],
+      ['another mask of the same size', artRastersOf({ mask: { ...rectMask, alpha: rectMask.alpha.slice() }, threshold: 1, frame }), ['art.mask.alpha another array']],
+    ];
+    const said: string[] = [];
+    for (const [label, rasters, needles] of plants) {
+      const r = refusedWith(rasters);
+      if (r === null) probes.push(`${label}: accepted`);
+      else if (r.code !== 'REDUCE_ART_RASTERS_MISMATCH' || !r.message.includes('probe-slot/probe') || needles.some((n) => !r.message.includes(n))) probes.push(`${label}: ${r.code}: ${r.message}`);
+      else said.push(`${label}: ${r.code}`);
+      if (Object.values(rasters.tally).some((n) => n !== 0)) probes.push(`${label}: the refused rasters were read (${JSON.stringify(rasters.tally)})`);
+    }
+    // The reduction refuses the same plant at admission, before any step.
+    const stale = artRastersOf({ mask: rectMask, threshold: 2, frame });
+    let reduceSaid = '';
+    try {
+      reduceMeshWith(mqReduceInput(lattice), stale);
+      probes.push('reduceMeshWith accepted rasters taken at threshold 2 for an input at 1');
+    } catch (err) {
+      reduceSaid = err instanceof MeshReductionError ? err.code : `(not a MeshReductionError) ${(err as Error).message}`;
+      if (reduceSaid !== 'REDUCE_ART_RASTERS_MISMATCH') probes.push(`reduceMeshWith over stale rasters: ${reduceSaid}`);
+    }
+    // The unplanted control: rasters from an equal art object holding the same mask are accepted.
+    const same = refusedWith(artRastersOf({ mask: rectMask, threshold: 1, frame: { ...frame } }));
+    if (same !== null) probes.push(`rasters from an equal art over the same mask were refused: ${same.code}: ${same.message}`);
+    const held = probes.length === 0;
+    say(
+      'MQ66_RASTERS_TAKEN_AT_ANOTHER_THRESHOLD_MASK_SIZE_OR_MASK_ARE_REFUSED_BY_NAME_AND_NEVER_READ',
+      held,
+      probeDetail(held, probes, `${said.join('; ')}; reduceMeshWith over the threshold plant: ${reduceSaid} at admission; rasters from an equal art over the same mask accepted`),
+      'issue #1240: rasters handed across measurements are one stale read away from a wrong report, so they name the art they were taken at and a measurement of any other art refuses them — the field, the value found and the value required',
+    );
+  }
+
+  // --- MQ67 (#1240): one reduceMesh call computes each art-only quantity once, however many steps it measures --
+  {
+    const probes: string[] = [];
+    const input = mqReduceInput(lattice, regionTargets(dense));
+    const rasters = artRastersOf(input.art);
+    const out = reduceMeshWith(input, rasters);
+    const t = out.report.termination;
+    const tried = t !== null && 'candidatesTried' in t ? t.candidatesTried : 0;
+    const { uses, ...computed } = rasters.tally;
+    if (!(tried >= 2)) probes.push(`the fixture tried ${tried} candidate(s), so "once across the steps" is not exercised`);
+    if (!(uses >= tried)) probes.push(`${uses} measurement(s) read the rasters over ${tried} candidate(s) tried — a step measured without them`);
+    for (const [field, n] of Object.entries(computed)) if (n > 1) probes.push(`${field} was computed ${n} times in one call`);
+    for (const field of ['artBits', 'fills', 'toFilled8', 'islands', 'traced'] as const) if (computed[field] !== 1) probes.push(`${field} was computed ${computed[field]} time(s); the rows read it, so once was required`);
+    // The source half: the module never measures through the public, uncached measurement, and makes rasters in one place.
+    const reduceCode = codeOnly(readFileSync(join(import.meta.dir, 'src', 'meshreduce.ts'), 'utf8'));
+    const publicCalls = (reduceCode.match(/\bmeasureMeshQuality\s*\(/g) ?? []).length;
+    const made = (reduceCode.match(/\bartRastersOf\s*\(/g) ?? []).length;
+    if (publicCalls !== 0) probes.push(`src/meshreduce.ts calls measureMeshQuality ${publicCalls} time(s), each of which takes the art's rasters afresh`);
+    if (made !== 1) probes.push(`src/meshreduce.ts calls artRastersOf ${made} time(s); required once, in reduceMesh`);
+    // The plant: the same number of measurements, each over fresh rasters — the per-step behaviour this replaced — reads as a fault.
+    let perStep = 0;
+    for (let i = 0; i < uses; i++) {
+      const r = artRastersOf(input.art);
+      measureMeshQualityWith(mqInput(rectMask, frame, lattice, { artFit: strict, maxBoundaryDeviation: null, regions: [dense] }), r);
+      perStep += r.tally.artBits;
+    }
+    if (!(perStep > 1)) probes.push(`the per-step plant computed the art bits ${perStep} time(s) over ${uses} measurement(s), so the count cannot tell the two apart`);
+    const held = probes.length === 0;
+    say(
+      'MQ67_ONE_REDUCE_MESH_CALL_COMPUTES_EACH_ART_ONLY_QUANTITY_ONCE_ACROSS_ITS_STEPS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the lattice with a region: ${tried} candidate(s) tried, ${uses} measurement(s) read one rasters object, computed ${JSON.stringify(computed)}; src/meshreduce.ts calls measureMeshQuality ${publicCalls} times and artRastersOf ${made}; the per-step plant computed the art bits ${perStep} times over ${uses} measurements`,
+      ),
+      'issue #1240: 98.98 % of a 1101-step reduction was the per-step measurement and at least 40 % of it functions of the art alone, recomputed every step; the count is what says they now are not',
     );
   }
 
