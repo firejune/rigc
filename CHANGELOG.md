@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.20.4](https://github.com/firejune/rigc/compare/v2.20.3...v2.20.4) (2026-10-08)
+
+
+### Performance Improvements
+
+* **mesh:** a region's rows are carried from the last step too — the art-pixel set of a region computed once per call, hull membership and nearest vertex re-measured only where a step changed them, edge predicates keyed by their ends — byte-identical on 19 recorded inputs, demo/bottomwear with one region 2,575 s → 10–11 s on Nova WSL ([#1253](https://github.com/firejune/rigc/issues/1253)) ([#1255](https://github.com/firejune/rigc/issues/1255)) ([e0e58df](https://github.com/firejune/rigc/commit/e0e58df5afe71b7749064d46af1c7f6aad86593a))
+
 ## [2.20.3](https://github.com/firejune/rigc/compare/v2.20.2...v2.20.3) (2026-10-08)
 
 
