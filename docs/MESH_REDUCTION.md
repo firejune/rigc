@@ -286,10 +286,10 @@ export interface SourceMesh {
 export interface ArtFitBounds {
   /** Share of art pixel centres the triangles cover, 0..1. Required. */
   minCoverage: number;
-  /** Furthest a covered pixel may sit outside the filled silhouette, px. Required. */
-  maxOvershoot: number;
-  /** Furthest an uncovered art pixel may sit from the covered set, px. Required. */
-  maxUndercut: number;
+  /** Furthest a covered pixel may sit outside the filled silhouette, px. Required; null = declared absent (#1254). */
+  maxOvershoot: number | null;
+  /** Furthest an uncovered art pixel may sit from the covered set, px. Required; null = declared absent (#1254). */
+  maxUndercut: number | null;
 }
 
 export interface ReductionTargets {
@@ -304,6 +304,32 @@ export interface ReductionTargets {
 }
 ```
 
+- [agreed, spine-parts#126 items 4–5; #1254] **A distance bound may be
+  declared absent.** `ArtFitBounds.maxOvershoot` and `maxUndercut` accept
+  `null` wherever an `ArtFitBounds` is read — `reduceMesh`'s `sourceBounds`
+  and `targets.artFit`, `measureMeshQuality`'s `targets.artFit`, and
+  `compareMeshesInMotion`'s `referenceArtFit` and `candidateArtFit`. A `null`
+  means exactly what §2 defines `undeclared` to mean: the row is measured, its
+  value and worst sample are reported, its `bound` is null and its
+  `nearBound` `clear`; it is neither `pass` nor `fail`, is not in the pass
+  count, never satisfies a required claim, never refuses a source
+  (`REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`) or a reference
+  (`COMPARE_REFERENCE_FAILS`), and never blocks a step or acceptance — in
+  `reduceMesh` the one predicate that says so is `artBoundAbsent`, read at
+  admission and by `firstBlockingRow`. It is never read as 0, as an unbounded
+  number, or as a pass. `EffectiveSettings` echoes the `null` in place
+  (`sourceBounds`, `targets.artFit`, `referenceArtFit`, `candidateArtFit`), and
+  the report writer serialises it as `null`. `minCoverage` has no such form and
+  stays a required number in 0..1.
+
+  **`undefined` and `null` differ on purpose.** A field left out is still
+  refused by name (`REDUCE_INPUT_MISSING`, `COMPARE_INPUT_MISSING`), as are NaN
+  and a negative number: an omission cannot be told from a caller that forgot
+  the field, and "no field has a default" is the rule that keeps the report the
+  record of what was declared. Only the explicit `null` is a declaration — the
+  caller saying "measure this, do not bound it" — so only it is accepted. The
+  widening is additive: an input that declares numbers is read exactly as
+  before (the replay below).
 - [agreed, spine-parts#126] **P3 — inputs are authored in drawing pixels.**
   Parts resolves every input to part-local drawing pixels, y down, before the
   call. Packing scale never changes the authored quality requirement: a bound
@@ -372,7 +398,8 @@ export interface ReductionTargets {
   throws `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`; it reports the source's fit as
   rows (`MQ19`). [implemented, #1224] `reduceMesh` throws the first four — and
   `REDUCE_INPUT_MISSING` for every field a reduction reads and a measurement
-  does not (`sourceBounds`, a non-null `targets.artFit` and
+  does not (`sourceBounds`, a non-null `targets.artFit` — whose two distances
+  may each be `null`, declared absent, but not left out — and
   `maxBoundaryDeviation`, `protect`, `influences` and `boneOrder` on a weighted
   source, `budget`, `deform`, `linkedMeshes`) — and **terminates** on the last
   two: `REDUCE_SOURCE_NOT_ONE_LOOP` as `unsupported-topology` with
@@ -383,7 +410,9 @@ export interface ReductionTargets {
   [implemented, #1224] `reduceMesh` measures the source with `sourceBounds` as
   its art fit and refuses on `MQ_COVERAGE`, the 8-connected `MQ_OVERSHOOT`,
   `MQ_UNDERCUT`, and — the source's own build gate — `MQ_ORIENTATION` and
-  `MQ_DEGENERATE`; nothing in `targets` is read for admission (`MQ32`).
+  `MQ_DEGENERATE`; nothing in `targets` is read for admission (`MQ32`). An
+  overshoot or undercut bound `sourceBounds` declares `null` is measured and
+  admits on nothing — it is not one of those conditions (#1254, `MQ72`).
   `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS` (renamed from revision 1's
   `REDUCE_SOURCE_FAILS_ITS_OWN_CONSTRAINTS`) fires **only** on
   `sourceBounds` — the source's own art fit and its own build gate, the
@@ -1711,6 +1740,40 @@ scope*); refinement that retriangulates outside the band or flips edges, which
 P16's checkable form as agreed does not admit; remapping a linked mesh's own
 keys and permuting a weighted keyed vertex's pairs (§6); a bounded-work claim
 (stage D).
+
+### A distance bound declared absent (#1254)
+
+[implemented, #1254] What §1 *A distance bound may be declared absent* agrees,
+built: `checkFit` and `measureMeshQuality`'s validation accept `null` on
+`maxOvershoot` and `maxUndercut` and refuse `undefined`, NaN and a negative by
+name, as before; `compareMeshesInMotion`'s `validateFit` does the same. The
+rows take a bound only from a number, so a `null` row is built `undeclared` by
+the same path that builds every undeclared row, and a row the art leaves
+unmeasurable under a `null` bound is not required either. Neither the carried
+step measurement (`StepRasters`) nor any other row reads a bound, so nothing
+else moved.
+
+`MQ72` reduces a lattice shifted two pixels off its art — undercut 2 and
+overshoot 2 — under `null` distances on both `sourceBounds` and
+`targets.artFit`: admitted, 16 vertices removed, accepted, both rows
+`undeclared` with their values, effective settings and document echoing
+`null`; the same nulls under `minCoverage: 1` are blocked by `MQ_COVERAGE`,
+and each distance restored to 0 refuses the source and blocks the target by its
+own row, so the `null` is what admitted it; the full, carried and `reduceMesh`
+paths agree byte for byte. `MQ73` holds the two misreadings apart from the
+reading — `null` as 0 is refused, `null` as a bound nothing reaches leaves a
+`pass` row, not an `undeclared` one — and refuses a left-out field, NaN, a
+negative and a `null` coverage by name. `MQ74` is the comparison's half: a
+reference that fails undercut 0 is admitted under `null` and refused at 0, and
+a candidate's row is `undeclared`. Four planted readings of the source —
+`null` required at admission and per step, required per step only, read as a
+passing bound, read as 0 — each turned `MQ72` and `MQ73` red; `validateFit`
+refusing `null` turned `MQ74` red.
+
+**Measured identity.** The 19 recorded `reduceMesh` inputs (the 18 of stage D1
+and the with-region one of #1253), each declaring numbers, replayed one process
+per call through the tree before and after: report, mesh and `accepted`
+identical, 57 of 57.
 
 ## The comparison as implemented (stage C1)
 

@@ -191,8 +191,11 @@ function missing(field: string, found: unknown, required: string): never {
 }
 
 function validateFit(field: string, f: unknown): void {
-  if (!isObject(f) || !isFiniteNumber(f.minCoverage) || f.minCoverage < 0 || f.minCoverage > 1 || !isFiniteNumber(f.maxOvershoot) || f.maxOvershoot < 0 || !isFiniteNumber(f.maxUndercut) || f.maxUndercut < 0) {
-    missing(field, f, '{ minCoverage in 0..1, maxOvershoot >= 0, maxUndercut >= 0 }');
+  // `null` on maxOvershoot or maxUndercut is a bound declared absent (issue #1254): measured, reported `undeclared`,
+  // never refusing a reference or failing a candidate. A field left out is still refused.
+  const distance = (v: unknown): boolean => v === null || (isFiniteNumber(v) && v >= 0);
+  if (!isObject(f) || !isFiniteNumber(f.minCoverage) || f.minCoverage < 0 || f.minCoverage > 1 || !distance(f.maxOvershoot) || !distance(f.maxUndercut)) {
+    missing(field, f, '{ minCoverage in 0..1, maxOvershoot >= 0 or null, maxUndercut >= 0 or null }');
   }
 }
 

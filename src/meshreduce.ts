@@ -29,7 +29,8 @@
  * #1240), and as `measureMeshQualityStep` carried from the last step's
  * measurement (`StepRasters`, issue #1246), each of which returns the same
  * report — and taken only when every row the caller's
- * contract requires is `pass`: the art fit at `targets.artFit`, the boundary
+ * contract requires is `pass`: the art fit at `targets.artFit` (an overshoot or
+ * undercut bound declared `null` is measured and never required), the boundary
  * deviation from the source hull at `targets.maxBoundaryDeviation`, the minimum
  * angle when declared, orientation and degeneracy at 0, and every region's
  * `MQ_MAX_EDGE` and `MQ_TRANSITION`. Before the measurement, the structural
@@ -216,9 +217,25 @@ class Stop extends Error {
 function checkFit(who: string, field: string, fit: unknown): void {
   if (fit === undefined || fit === null || !isObject(fit)) refuse('REDUCE_INPUT_MISSING', `${who}: ${field} is ${JSON.stringify(fit)}; required { minCoverage, maxOvershoot, maxUndercut } — no field has a default`);
   if (!isFiniteNumber(fit.minCoverage) || fit.minCoverage < 0 || fit.minCoverage > 1) refuse('REDUCE_INPUT_MISSING', `${who}: ${field}.minCoverage is ${JSON.stringify(fit.minCoverage)}; required a fraction in 0..1`);
+  // `null` is a bound declared absent (issue #1254): measured, reported `undeclared`, never gating. A field left
+  // out is not the same thing and stays refused — `JSON.stringify` names it `undefined` in the message.
   for (const k of ['maxOvershoot', 'maxUndercut'] as const) {
-    if (!isFiniteNumber(fit[k]) || (fit[k] as number) < 0) refuse('REDUCE_INPUT_MISSING', `${who}: ${field}.${k} is ${JSON.stringify(fit[k])}; required a finite number of px, 0 or more`);
+    const v = fit[k];
+    if (v !== null && (!isFiniteNumber(v) || v < 0)) refuse('REDUCE_INPUT_MISSING', `${who}: ${field}.${k} is ${JSON.stringify(v)}; required a finite number of px, 0 or more, or null (declared absent: measured, reported undeclared)`);
   }
+}
+
+/**
+ * Whether `fit` declares the bound of an art row absent (issue #1254): the
+ * 8-connected `MQ_OVERSHOOT` under `maxOvershoot: null`, `MQ_UNDERCUT` under
+ * `maxUndercut: null`. Such a row is `undeclared` when measured and is never
+ * required — not for admission, not for a step, not when it could not be
+ * measured. Every other row answers false.
+ */
+function artBoundAbsent(fit: ArtFitBounds, row: MeasureRow): boolean {
+  if (row.code === 'MQ_OVERSHOOT') return fit.maxOvershoot === null;
+  if (row.code === 'MQ_UNDERCUT') return fit.maxUndercut === null;
+  return false;
 }
 
 /**
@@ -755,12 +772,14 @@ function rowName(row: MeasureRow): string {
 
 /**
  * The first required row that is not `pass`, in `BLOCKING_ORDER`, or null when
- * every one passes. A row is required exactly when its bound is declared; the
+ * every one passes. A row is required exactly when its bound is declared — an
+ * art bound declared `null` is not (`artBoundAbsent`, issue #1254); the
  * overshoot row gated is the 8-connected one (P12).
  */
-function firstBlockingRow(report: MeshQualityReport): MeasureRow | null {
+function firstBlockingRow(report: MeshQualityReport, artFit: ArtFitBounds): MeasureRow | null {
   const rows = report.candidates[0]?.geometry?.rows ?? [];
   const required = (r: MeasureRow): boolean => {
+    if (artBoundAbsent(artFit, r)) return false;
     if (r.code === 'MQ_OVERSHOOT') return r.art?.connectivity === 8;
     if (r.code === 'MQ_MIN_ANGLE') return r.bound !== null;
     if (r.code === 'MQ_HOLES' || r.code === 'MQ_ISLANDS' || r.code === 'MQ_TRACE_DEVIATION' || r.code === 'MQ_FILL_DISTANCE') return false;
@@ -1142,7 +1161,7 @@ function tryRemoval(run: Run, v: number): string | null {
     undo();
     return `outline: ${err.message}`;
   }
-  const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'candidate'));
+  const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'candidate'), run.input.targets.artFit);
   if (blocking !== null) {
     undo();
     return rowName(blocking);
@@ -1250,7 +1269,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     }
     for (const code of ['MQ_ORIENTATION', 'MQ_DEGENERATE', 'MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT']) {
       const row = admitRows.find((r) => r.code === code && (code !== 'MQ_OVERSHOOT' || r.art?.connectivity === 8));
-      if (row !== undefined && row.state !== 'pass') {
+      if (row !== undefined && row.state !== 'pass' && !artBoundAbsent(input.sourceBounds, row)) {
         const found = row.state === 'fail' ? `${row.value} against ${row.bound!.op} ${row.bound!.value}` : `${row.state} (${row.reason ?? ''})`;
         throw new Stop(
           'invalid-input',
@@ -1294,7 +1313,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     const refined = refineRegions(run);
     if (refined.kind === 'budget') return noMesh({ reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'none-met-the-targets' });
     const startCanon = canonicalise(work, run.sourceTurn, boneRank);
-    const startBlock = firstBlockingRow(measureAgainstTargets(run, startCanon.mesh, 'start'));
+    const startBlock = firstBlockingRow(measureAgainstTargets(run, startCanon.mesh, 'start'), input.targets.artFit);
     let termination: Termination;
     if (startBlock !== null) {
       const constraint = refined.kind === 'stuck' ? refined.constraint : rowName(startBlock);

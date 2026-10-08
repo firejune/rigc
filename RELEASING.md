@@ -523,6 +523,12 @@ would still break. The row says so in place of an observation
 (`AGREED_IN_1224`), and it is the only exception: a symbol that is merely
 exported is not promised.
 
+`ArtFitBounds.maxOvershoot` and `maxUndercut` widened from `number` to
+`number | null` ([#1254](https://github.com/firejune/rigc/issues/1254)) is
+additive: a dependant that passes numbers type-checks and is read exactly as
+before, and only a caller that writes `null` gets the new meaning
+(docs/MESH_REDUCTION.md, §1 *A distance bound may be declared absent*).
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `spine-rigc/meshcompare`, and says
