@@ -47807,6 +47807,113 @@ function mcEdit(model: string, edit: (doc: Record<string, unknown>) => void): st
   return `${JSON.stringify(doc, null, 2)}\n`;
 }
 
+/*
+ * The #1266 reproducer: a weighted attachment the static reduction strips of
+ * every interior vertex while every static bound holds, which the motion row
+ * then refuses — and a less-reduced candidate of the same source that passes.
+ * docs/MESH_REDUCTION.md §7 carries the measurements made on it.
+ *
+ * A lens-shaped strip (the silhouette bulges by MV_BULGE at its middle, so
+ * removing a hull vertex cuts into the art and the boundary is kept) on a grid
+ * every MV_STEP px, hull first in walk order, interior after, the diagonals
+ * alternating so no direction is privileged. Two bones: `a` at the strip's left
+ * end, `b` at its middle; bone `b`'s share rises linearly from 0 at the left end
+ * to 1 at the right end across the whole strip — a smooth ramp, no rigid zone,
+ * so every source edge that crosses columns joins weight vectors one ramp step
+ * apart. One animation, `idle`: `b` alone turns 0 → +MV_BEND° → −MV_BEND° → 0
+ * over two seconds (the isolated bend of the card). The art is exactly the
+ * pixels whose centre the source hull holds, so the source covers it with
+ * coverage 1, overshoot 0 and undercut 0 by construction.
+ */
+const MV_W = 160;
+const MV_H = 48;
+const MV_STEP = 8;
+const MV_BULGE = 8;
+const MV_BEND = 5;
+
+/** The source mesh; `rigid` puts every vertex wholly on `b`, the one bone the bend turns. */
+function mvSource(rigid: boolean): SourceMesh {
+  const cols: number[] = [];
+  for (let x = 0; x <= MV_W; x += MV_STEP) cols.push(x);
+  const rows = Math.round(MV_H / MV_STEP);
+  const yAt = (x: number, r: number): number => {
+    const top = r6(MV_BULGE * ((2 * x) / MV_W - 1) ** 2);
+    return r6(top + ((MV_H - 2 * top) * r) / rows);
+  };
+  const id = new Map<string, number>();
+  const points: Array<[number, number]> = [];
+  const add = (c: number, r: number): void => {
+    id.set(`${c},${r}`, points.length);
+    points.push([cols[c], yAt(cols[c], r)]);
+  };
+  const n = cols.length;
+  for (let c = 0; c < n; c++) add(c, 0);
+  for (let r = 1; r < rows; r++) add(n - 1, r);
+  for (let c = n - 1; c >= 0; c--) add(c, rows);
+  for (let r = rows - 1; r >= 1; r--) add(0, r);
+  const hull = points.length;
+  for (let c = 1; c < n - 1; c++) for (let r = 1; r < rows; r++) add(c, r);
+  const g = (c: number, r: number): number => id.get(`${c},${r}`)!;
+  const triangles: number[] = [];
+  for (let c = 0; c < n - 1; c++) {
+    for (let r = 0; r < rows; r++) {
+      if ((c + r) % 2 === 0) triangles.push(g(c, r), g(c, r + 1), g(c + 1, r), g(c + 1, r), g(c, r + 1), g(c + 1, r + 1));
+      else triangles.push(g(c, r), g(c + 1, r + 1), g(c + 1, r), g(c, r), g(c, r + 1), g(c + 1, r + 1));
+    }
+  }
+  // Counter-clockwise in Spine world, read through cropToSpineY — the one place the conversion lives.
+  for (let t = 0; t < triangles.length; t += 3) {
+    const [a, b, c] = [points[triangles[t]], points[triangles[t + 1]], points[triangles[t + 2]]];
+    const ay = cropToSpineY(a[1], MV_H);
+    const twice = (b[0] - a[0]) * (cropToSpineY(c[1], MV_H) - ay) - (c[0] - a[0]) * (cropToSpineY(b[1], MV_H) - ay);
+    if (twice < 0) [triangles[t + 1], triangles[t + 2]] = [triangles[t + 2], triangles[t + 1]];
+  }
+  const weights = points.map(([x]) => {
+    const wb = rigid ? 1 : r6(x / MV_W);
+    const out: Array<{ bone: string; weight: number }> = [];
+    if (wb < 1) out.push({ bone: 'a', weight: r6(1 - wb) });
+    if (wb > 0) out.push({ bone: 'b', weight: wb });
+    return out;
+  });
+  return { points, uvs: points.flatMap(([x, y]) => [r6(x / MV_W), r6(y / MV_H)]), triangles, hull, weights };
+}
+
+/** Compile the ramp rig around one mesh — the source or a reduction of it — with the tree's own compiler. */
+function mvBuild(dir: string, name: string, mesh: SourceMesh): string {
+  const at = join(dir, name);
+  mkdirSync(at, { recursive: true });
+  // Bind coordinates in each bone's local setup frame: `a` at the left end of the strip's middle line, `b` MV_W / 2 along it.
+  const weights = mesh.points.map(([x, y], v) =>
+    (mesh.weights ?? [])[v].map((bnd) => (bnd.bone === 'a' ? { bone: 'a', x, y: MV_H / 2 - y, weight: bnd.weight } : { bone: 'b', x: x - MV_W / 2, y: MV_H / 2 - y, weight: bnd.weight })),
+  );
+  writeFileSync(
+    join(at, 'rig.json'),
+    JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'ramp',
+      images: '../plates',
+      skeleton: { x: 0, y: 0, width: 400, height: 200 },
+      bones: [{ name: 'root' }, { name: 'a', parent: 'root', x: 50, y: 50 }, { name: 'b', parent: 'a', x: MV_W / 2, y: 0 }],
+      slots: [{ name: 'ramp', bone: 'a', attachment: 'ramp' }],
+      skins: { default: { ramp: { ramp: { type: 'mesh', image: 'ramp.png', uvs: mesh.uvs, triangles: mesh.triangles, weights } } } },
+    }),
+  );
+  writeFileSync(
+    join(at, 'motion.json'),
+    JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'ramp',
+      cut: 'ramp',
+      easings: {},
+      animations: {
+        idle: { duration: 2, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [MV_BEND] }, { t: 1.5, v: [-MV_BEND] }, { t: 2, v: [0] }] }] },
+      },
+    }),
+  );
+  const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
+  return modelDocument(built.model, built.skeletonText, built.atlasText);
+}
+
 function runMeshCompareSuite(): number {
   console.log('\n── mesh compare: the motion section of mesh-quality-report/1 — compareMeshesInMotion through the core poser (issue #1230) ──');
   let bad = 0;
@@ -48557,6 +48664,180 @@ function runMeshCompareSuite(): number {
         `the half-strip reference under coverage ${coverage} and null distances: admitted; at maxUndercut 0: ${zero?.code}; as a candidate: MQ_UNDERCUT ${undercut?.state} ${undercut?.value}, geometry ${report?.candidates[0]?.geometry?.verdict}; effective settings echo null; a field left out: ${missing?.code}`,
       ),
       'issue #1254: ArtFitBounds is one type, so the comparison reads its declared absence as the measurement and the reduction do — measured, undeclared, never refusing a reference — and an omitted field stays refused',
+    );
+  });
+
+  // --- MQ79 / MQ80 (#1266): a static reduction that fails motion, a less-reduced control that passes, four outcomes ---
+  // The fixture is `mvSource` / `mvBuild` above; docs/MESH_REDUCTION.md §7 carries what was measured on it. Every
+  // threshold below is derived from the fixture or from a run made here — the source's largest edge jump, half the
+  // strict run's candidates — and none was chosen by posing: the schedule's selection is empty, so every frame is held
+  // out, and no candidate here was picked by motion.
+  const mvPlates = join(dir, 'plates');
+  const mvSrc = mvSource(false);
+  const mvHull = mvSrc.points.slice(0, mvSrc.hull);
+  const mvMask = mqMask(mvPlates, 'ramp', MV_W, MV_H, (x, y) => (inClosedPolygon([x + 0.5, y + 0.5], mvHull) ? 1 : 0));
+  const mvFrame = mqFrame(MV_W, MV_H);
+  const mvStrict: ArtFitBounds = { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 };
+  const mvNoProtect: ProtectedFeatures = { hull: false, vertices: [], edges: [], regionBoundaries: [], weightJump: null, influences: [] };
+  const mvReduceInput = (source: SourceMesh, over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({
+    attachment: { skin: null, slot: 'ramp', attachment: 'ramp' },
+    art: { mask: mvMask, threshold: 1, frame: mvFrame },
+    source,
+    sourceBounds: mvStrict,
+    targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] },
+    protect: mvNoProtect,
+    influences: { maxInfluences: 4, minWeight: 0 },
+    boneOrder: ['root', 'a', 'b'],
+    preset: null,
+    budget: { maxCandidates: 5000 },
+    minArtSamples: 1,
+    regionArtSamples: [],
+    deform: [],
+    linkedMeshes: [],
+    ...over,
+  });
+  const mvCompare = (reference: string, candidates: Array<{ id: string; model: string }>, bound: number): MeshQualityReport =>
+    compareMeshesInMotion({
+      reference: { id: 'source', model: reference },
+      candidates,
+      attachments: [{ attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, art: { mask: mvMask, threshold: 1, frame: mvFrame }, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+      referenceArtFit: mvStrict,
+      candidateArtFit: mvStrict,
+      schedule: { frames: ['setup', { animation: 'idle', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection: [] },
+      bounds: { maxLocalDeformation: bound },
+      motionRequired: true,
+      perFrame: false,
+    });
+  const mvCounts = (c: { counts: { boundaryVertices: number; interiorVertices: number; triangles: number; bindings: number } | null } | null | undefined): string =>
+    c?.counts ? `${c.counts.boundaryVertices}/${c.counts.interiorVertices} boundary/interior, ${c.counts.triangles} triangles, ${c.counts.bindings} bindings` : 'no counts';
+  const mvLocal = (report: MeshQualityReport, i: number): MeasureRow | undefined => report.candidates[i]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+  const mvSaid = (row: MeasureRow | undefined): string => `${row?.value} ${row?.state} at ${row?.worst?.frame?.id ?? '-'}`;
+  const mvVertices = (m: SourceMesh | null): number => m?.points.length ?? -1;
+  /** The largest L1 weight-vector difference across any source edge — the ramp's one step, read off the source. */
+  const mvEdgeJump = ((): number => {
+    let most = 0;
+    for (let t = 0; t < mvSrc.triangles.length; t += 3) {
+      for (let k = 0; k < 3; k++) {
+        const a = mvSrc.weights![mvSrc.triangles[t + k]];
+        const b = mvSrc.weights![mvSrc.triangles[t + ((k + 1) % 3)]];
+        const shares = new Map<string, number>();
+        for (const x of a) shares.set(x.bone, (shares.get(x.bone) ?? 0) + x.weight);
+        for (const x of b) shares.set(x.bone, (shares.get(x.bone) ?? 0) - x.weight);
+        most = Math.max(most, [...shares.values()].reduce((s, d) => s + Math.abs(d), 0));
+      }
+    }
+    return most;
+  })();
+
+  mcGuard('MQ79', () => {
+    const probes: string[] = [];
+    const source = mvBuild(dir, 'mv-source', mvSrc);
+    // (i) the strict static reduction: every interior vertex removed, every static bound held, a local stop.
+    const strict = reduceMesh(mvReduceInput(mvSrc));
+    const sc = strict.report.sourceCounts;
+    const rc = strict.report.candidates[0];
+    if (sc === null || sc.interiorVertices === 0) probes.push(`the source has ${sc?.interiorVertices} interior vertices; the reproducer needs some`);
+    if (strict.mesh === null || !rc.accepted || rc.counts?.interiorVertices !== 0) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${rc.accepted}, ${mvCounts(rc)}; required every interior vertex removed and every static bound held`);
+    if (strict.report.termination?.reason !== 'no-further-valid-reduction') probes.push(`the strict reduction ended ${JSON.stringify(strict.report.termination)}; required no-further-valid-reduction`);
+    const tried = strict.report.termination !== null && 'candidatesTried' in strict.report.termination ? strict.report.termination.candidatesTried : 0;
+    // (iii) two less-reduced candidates, each derived without posing: (a) weightJump just above the source's largest edge
+    // jump, so condition (a) protects no edge and condition (b) refuses only an edge spanning more than one ramp step;
+    // (b) the same strict order cut at half its candidates — a prefix of the run (i) made.
+    const jump = r6(mvEdgeJump * 1.5);
+    const guarded = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, weightJump: jump } }));
+    const half = Math.floor(tried / 2);
+    const prefix = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: half } }));
+    for (const [label, r] of [['weightJump', guarded], ['prefix', prefix]] as const) {
+      const c = r.report.candidates[0];
+      if (r.mesh === null || !c.accepted) probes.push(`the ${label} candidate: mesh ${r.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every static bound held`);
+      if (!(mvVertices(r.mesh) < mvSrc.points.length && mvVertices(r.mesh) > mvVertices(strict.mesh))) probes.push(`the ${label} candidate keeps ${mvVertices(r.mesh)} vertices; required fewer than the source's ${mvSrc.points.length} and more than the strict result's ${mvVertices(strict.mesh)}`);
+    }
+    if (prefix.report.termination?.reason !== 'budget-exhausted' || prefix.report.termination.result !== 'best-meeting-every-bound') probes.push(`the prefix ended ${JSON.stringify(prefix.report.termination)}; required budget-exhausted, best-meeting-every-bound`);
+    // (ii) the motion row over the isolated bend: the strict result refused, both less-reduced candidates within 1 px.
+    const report = strict.mesh !== null && guarded.mesh !== null && prefix.mesh !== null
+      ? mvCompare(source, [
+          { id: 'strict', model: mvBuild(dir, 'mv-strict', strict.mesh) },
+          { id: 'weight-jump', model: mvBuild(dir, 'mv-weight-jump', guarded.mesh) },
+          { id: 'prefix', model: mvBuild(dir, 'mv-prefix', prefix.mesh) },
+        ], 1)
+      : null;
+    const [s, g, p] = [0, 1, 2].map((i) => (report === null ? undefined : mvLocal(report, i)));
+    if (report !== null) {
+      if (report.candidates[0].geometry?.verdict !== 'pass') probes.push(`the strict result's setup art fit is ${report.candidates[0].geometry?.verdict}; the gap is only a gap if it passes`);
+      if (s?.state !== 'fail' || !((s.value ?? 0) > 1) || report.candidates[0].accepted) probes.push(`the strict result in motion: ${mvSaid(s)}, accepted ${report.candidates[0].accepted}; required MQ_LOCAL_DEFORMATION above 1 and not accepted`);
+      for (const [i, row] of [[1, g], [2, p]] as const) {
+        const c = report.candidates[i];
+        if (row?.state !== 'pass' || !c.accepted) probes.push(`${c.id} in motion: ${mvSaid(row)}, accepted ${c.accepted}; required within 1 and accepted`);
+      }
+      if (report.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('the schedule makes no held-out claim, though no frame chose a candidate');
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ79_A_REDUCTION_HOLDING_EVERY_STATIC_BOUND_FAILS_MOTION_ON_A_WEIGHT_RAMP_AND_A_LESS_REDUCED_CANDIDATE_OF_THE_SAME_SOURCE_PASSES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `source ${mvCounts({ counts: sc })}; strict (coverage 1, overshoot <= 3, undercut 0, boundary <= 1, influences {4, 0}, budget 5000): ${mvCounts(rc)}, ${strict.report.termination?.reason} after ${tried}, static accepted, motion ${mvSaid(s)} — refused; weightJump ${jump} (1.5 x the source's largest edge jump ${r6(mvEdgeJump)}): ${mvCounts(guarded.report.candidates[0])}, motion ${mvSaid(g)}; the strict order cut at ${half} candidates: ${mvCounts(prefix.report.candidates[0])}, motion ${mvSaid(p)}; ${MV_BEND}° bend of one of two bones, 12 fps grid + irr, every frame held out`,
+      ),
+      'issue #1266: the static bounds cannot see a bend, so a reduction can meet every one of them and still fail the motion row; the card needs a public fixture where that happens and where a reduced candidate that passes demonstrably exists',
+    );
+  });
+
+  mcGuard('MQ80', () => {
+    const probes: string[] = [];
+    const source = mvBuild(dir, 'mv-source-80', mvSrc);
+    const lines: string[] = [];
+    // Rigid: every vertex on the bone the bend turns — the reduction to the hull loses nothing in motion.
+    const rigidSrc = mvSource(true);
+    const rigidRef = mvBuild(dir, 'mv-rigid-source', rigidSrc);
+    const rigid = reduceMesh(mvReduceInput(rigidSrc));
+    const rigidReport = rigid.mesh === null ? null : mvCompare(rigidRef, [{ id: 'rigid', model: mvBuild(dir, 'mv-rigid', rigid.mesh) }], 1);
+    const rigidRow = rigidReport === null ? undefined : mvLocal(rigidReport, 0);
+    if (rigid.report.candidates[0].counts?.interiorVertices !== 0 || rigidRow?.state !== 'pass' || rigidReport?.candidates[0].accepted !== true) probes.push(`rigid: ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}; required every interior vertex removed and accepted`);
+    lines.push(`rigid (one bone): ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}`);
+    // No reduction: every source vertex protected — the source returned, motion 0 by identity, not by optimisation.
+    const all = [...Array(mvSrc.points.length).keys()];
+    const none = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all } }));
+    const noneTerm = none.report.termination;
+    if (none.report.candidates[0].changes?.removedVertices !== 0 || noneTerm?.reason !== 'no-further-valid-reduction' || !noneTerm.blockingConstraint.startsWith('protect:')) probes.push(`every vertex protected: removed ${none.report.candidates[0].changes?.removedVertices}, ${JSON.stringify(noneTerm)}; required 0 removed and a stop naming protect`);
+    // Budget exhausted: three candidates.
+    const three = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: 3 } }));
+    const threeTerm = three.report.termination;
+    if (threeTerm?.reason !== 'budget-exhausted' || threeTerm.candidatesTried !== 3 || threeTerm.result !== 'best-meeting-every-bound') probes.push(`budget 3: ${JSON.stringify(threeTerm)}; required budget-exhausted after 3, best-meeting-every-bound`);
+    // The first prefix that removes anything, and one interior vertex whose column neighbours carry it exactly: the
+    // midpoint of column 1 — its weight equals theirs and its position is their midpoint, so the field along the column is
+    // linear and the hole it leaves is spanned by that column's edge.
+    let first: ReturnType<typeof reduceMesh> | null = null;
+    for (let b = 1; b <= 10 && first === null; b++) {
+      const r = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: b } }));
+      if ((r.report.candidates[0].changes?.removedVertices ?? 0) > 0) first = r;
+    }
+    const mid = mvSrc.points.findIndex(([x, y], v) => v >= mvSrc.hull && x === MV_STEP && y === MV_H / 2);
+    const single = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all.filter((v) => v !== mid) } }));
+    if (single.report.candidates[0].changes?.removedVertices !== 1) probes.push(`the column-1 midpoint ${mid} alone: removed ${single.report.candidates[0].changes?.removedVertices}; required 1`);
+    const parts = none.mesh !== null && three.mesh !== null && first !== null && first.mesh !== null && single.mesh !== null;
+    const at1 = parts ? mvCompare(source, [{ id: 'none', model: mvBuild(dir, 'mv-none', none.mesh!) }, { id: 'budget-3', model: mvBuild(dir, 'mv-three', three.mesh!) }], 1) : null;
+    const tight = parts ? mvCompare(source, [{ id: 'first-prefix', model: mvBuild(dir, 'mv-first', first!.mesh!) }, { id: 'column-midpoint', model: mvBuild(dir, 'mv-single', single.mesh!) }], 0.001) : null;
+    if (at1 === null || tight === null) {
+      probes.push('a candidate returned no mesh');
+    } else {
+      const [n, t] = [mvLocal(at1, 0), mvLocal(at1, 1)];
+      if (n?.value !== 0 || !at1.candidates[0].accepted) probes.push(`every vertex protected in motion: ${mvSaid(n)}; required 0, accepted`);
+      if (t?.state !== 'pass' || !at1.candidates[1].accepted) probes.push(`budget 3 in motion: ${mvSaid(t)}; required within 1`);
+      lines.push(`no reduction (every vertex protected): removed 0, ${noneTerm?.reason}, motion ${mvSaid(n)} — identity, not optimisation`);
+      lines.push(`budget 3: ${threeTerm?.reason}, removed ${three.report.candidates[0].changes?.removedVertices}, motion ${mvSaid(t)}`);
+      const [f, m] = [mvLocal(tight, 0), mvLocal(tight, 1)];
+      if (f?.state !== 'fail') probes.push(`at a bound of 0.001 the first prefix that removes a vertex reads ${mvSaid(f)}; required a fail, so no prefix of the order meets it`);
+      if (m?.state !== 'pass') probes.push(`at a bound of 0.001 the column-1 midpoint removed alone reads ${mvSaid(m)}; required a pass — the bound is the order's to miss, not the mesh's`);
+      lines.push(`bound 0.001: the first prefix that removes a vertex (budget ${first!.report.termination !== null && 'candidatesTried' in first!.report.termination ? first!.report.termination.candidatesTried : '?'}) ${mvSaid(f)}, so only the source (budget 0) is a prefix that meets it; yet the column-1 midpoint removed alone reads ${mvSaid(m)}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ80_RIGID_NO_REDUCTION_BUDGET_AND_A_BOUND_NO_PREFIX_MEETS_ARE_FOUR_DISTINCT_OUTCOMES_AND_THE_LAST_IS_THE_ORDERS_NOT_THE_MESHS',
+      held,
+      probeDetail(held, probes, lines.join('; ')),
+      'issue #1266 asks the fixture to show rigid motion, an unachievable constraint, no reduction and budget exhaustion as distinct outcomes; the measurement says "unachievable" is a property of a search, so the control holds that apart from the mesh',
     );
   });
 
