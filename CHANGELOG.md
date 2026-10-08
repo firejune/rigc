@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.21.0](https://github.com/firejune/rigc/compare/v2.20.4...v2.21.0) (2026-10-08)
+
+
+### Features
+
+* **mesh:** an overshoot or undercut bound declared null is measured and reported undeclared and gates nothing — on reduceMesh's targets and sourceBounds, on measureMeshQuality and on the comparison; a field left out is still refused ([#1254](https://github.com/firejune/rigc/issues/1254)) ([#1257](https://github.com/firejune/rigc/issues/1257)) ([19b2e7f](https://github.com/firejune/rigc/commit/19b2e7fd9cd3c8556592c76972106c09013f5d49))
+
 ## [2.20.4](https://github.com/firejune/rigc/compare/v2.20.3...v2.20.4) (2026-10-08)
 
 
