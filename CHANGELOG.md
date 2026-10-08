@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.20.1](https://github.com/firejune/rigc/compare/v2.20.0...v2.20.1) (2026-10-08)
+
+
+### Performance Improvements
+
+* **mesh:** reduceMesh takes the art's rasters once per call and hands them to every step — outputs byte-identical on 18 recorded parts inputs and every fixture, demo/bottomwear 138–185 s → 76–79 s on one loaded machine ([#1240](https://github.com/firejune/rigc/issues/1240)) ([#1242](https://github.com/firejune/rigc/issues/1242)) ([3de9084](https://github.com/firejune/rigc/commit/3de9084b16da731b97472ca307a35e96eeba5f55))
+
+
+### Instrument
+
+* **smoke:** record SourceMesh and RefinementRegion as observed on spine-rigc/mesh — spine-parts c03dd8a's automatic mode uses them, which rigc[#1238](https://github.com/firejune/rigc/issues/1238) D1 found no row recording ([#1241](https://github.com/firejune/rigc/issues/1241)) ([#1244](https://github.com/firejune/rigc/issues/1244)) ([59e73b1](https://github.com/firejune/rigc/commit/59e73b172dafd8d4acf4622ec7a701d2470c92a1))
+
 ## [2.20.0](https://github.com/firejune/rigc/compare/v2.19.1...v2.20.0) (2026-10-08)
 
 
