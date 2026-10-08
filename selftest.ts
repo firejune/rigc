@@ -46144,7 +46144,7 @@ function runMeshQualitySuite(): number {
       const row = mqRow(rep, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined);
       if (row?.state !== 'pass' || row.raster?.nearBound !== 'at-bound') probes.push(`${mqSay(row)} ${row?.raster?.nearBound}, not pass at-bound`);
     }
-    if (!(atBounds.maxOvershoot > 0) || !(atBounds.minCoverage < 1)) probes.push(`the fixture measured overshoot ${atBounds.maxOvershoot} and coverage ${atBounds.minCoverage}, so a bound at the value is not a boundary case`);
+    if (!((atBounds.maxOvershoot ?? 0) > 0) || !(atBounds.minCoverage < 1)) probes.push(`the fixture measured overshoot ${atBounds.maxOvershoot} and coverage ${atBounds.minCoverage}, so a bound at the value is not a boundary case`);
     const held = probes.length === 0;
     say(
       'MQ29_CONTROL_PX_FRACTION_AND_COUNT_ROWS_STATE_THEIR_SPATIAL_QUANTUM_AND_THEIR_OWN_VALUE_INCREMENT_AND_A_VALUE_AT_ITS_BOUND_PASSES_AT_BOUND',
@@ -47382,6 +47382,148 @@ function runMeshQualitySuite(): number {
     );
   }
 
+  // --- MQ72 / MQ73 (#1254): an overshoot or undercut bound declared null is measured, reported undeclared, and gates nothing --
+  // A 4 × 3 lattice shifted two pixels right of the art: it overshoots the art's right edge and leaves a strip at its
+  // left uncovered, so either distance bound at 0 refuses it as a source and blocks it as a target. Declared null on
+  // both sourceBounds and targets.artFit, it is admitted, reduced, and accepted on the rows still required.
+  const NULL_SHIFT = 2;
+  const shifted = mqGrid(X0 + NULL_SHIFT, Y0, X1 + NULL_SHIFT, Y1, 4, 3, W, H);
+  const absent: ArtFitBounds = { minCoverage: 0, maxOvershoot: null, maxUndercut: null };
+  const underNulls = (sourceBounds: ArtFitBounds, artFit: ArtFitBounds): MeshReductionInput => mqReduceInput(shifted, { sourceBounds, targets: { artFit, maxBoundaryDeviation: 0, regions: [] } });
+  /** The null semantics read off one reduction: empty when held. MQ72 holds it on the nulls; MQ73's plants must break it. */
+  const nullReading = (out: { mesh: ReducedMesh | null; report: MeshQualityReport }): string[] => {
+    const why: string[] = [];
+    const t = out.report.termination;
+    if (t?.reason === 'invalid-input') why.push(`refused: ${mqSayEnd(t)}`);
+    if (out.mesh === null) why.push(`no mesh (${mqSayEnd(t)})`);
+    else if ((out.report.candidates[0]?.changes?.removedVertices ?? 0) === 0) why.push('no step taken');
+    if (out.report.candidates[0]?.accepted !== true) why.push(`accepted ${out.report.candidates[0]?.accepted}`);
+    for (const code of ['MQ_OVERSHOOT', 'MQ_UNDERCUT']) {
+      const row = mqRow(out.report, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined);
+      if (row === undefined) why.push(`${code}: no row`);
+      else if (row.state !== 'undeclared' || row.bound !== null || row.value === null || row.worst === null || row.raster?.nearBound !== 'clear') why.push(`${mqSay(row)} near ${row.raster?.nearBound}, not undeclared with its value, its worst and no bound`);
+    }
+    return why;
+  };
+
+  {
+    const probes: string[] = [];
+    const nul = mqReduce('null distance bounds', underNulls(absent, absent));
+    for (const w of nullReading(nul)) probes.push(`null: ${w}`);
+    const und = mqRow(nul.report, 'MQ_UNDERCUT');
+    const ovr = mqRow(nul.report, 'MQ_OVERSHOOT', null, 8);
+    if (!((und?.value ?? 0) > 0) || !((ovr?.value ?? 0) > 0)) probes.push(`the fixture measured undercut ${und?.value} and overshoot ${ovr?.value}, so a bound of 0 would not fail and the null proves nothing`);
+    const summary = nul.report.candidates[0]?.geometry?.summary;
+    if (summary === undefined || summary.undeclared < 2 || summary.measured !== summary.pass + summary.fail) probes.push(`the summary ${JSON.stringify(summary)} does not count the two undeclared rows apart from measured`);
+    // EffectiveSettings and the document echo the nulls.
+    const e = nul.report.effective;
+    for (const [name, fit] of [
+      ['sourceBounds', e.sourceBounds],
+      ['targets.artFit', e.targets?.artFit ?? undefined],
+    ] as const) {
+      if (fit === undefined || fit === null || fit.maxOvershoot !== null || fit.maxUndercut !== null) probes.push(`effective ${name} is ${JSON.stringify(fit)}, not null on both distances`);
+    }
+    const text = writeMeshQualityReport(nul.report);
+    const nullsWritten = [(text.match(/"maxOvershoot": null/g) ?? []).length, (text.match(/"maxUndercut": null/g) ?? []).length];
+    if (nullsWritten[0] !== 2 || nullsWritten[1] !== 2) probes.push(`the document writes maxOvershoot null ${nullsWritten[0]} and maxUndercut null ${nullsWritten[1]} time(s), not twice each (sourceBounds, targets.artFit)`);
+    // The remaining required rows still decide: the same nulls under a coverage target the shifted lattice misses.
+    const covered = mqReduce('null distances, full coverage asked', underNulls(absent, { ...absent, minCoverage: 1 }));
+    const ct = covered.report.termination;
+    if (ct?.reason !== 'no-further-valid-reduction' || !ct.blockingConstraint.startsWith('MQ_COVERAGE:') || covered.report.candidates[0]?.accepted === true) probes.push(`null distances under minCoverage 1: ${mqSayEnd(ct)}, accepted ${covered.report.candidates[0]?.accepted}, not blocked by MQ_COVERAGE`);
+    // The numbers restored: each distance at 0 refuses the source by its own row, and blocks the target by it.
+    const restored: string[] = [];
+    for (const [field, code] of [
+      ['maxUndercut', 'MQ_UNDERCUT'],
+      ['maxOvershoot', 'MQ_OVERSHOOT'],
+    ] as const) {
+      const zero: ArtFitBounds = { ...absent, [field]: 0 };
+      const asSource = mqReduce(`${field} 0 on sourceBounds`, underNulls(zero, absent));
+      const st = asSource.report.termination;
+      if (st?.reason !== 'invalid-input' || st.code !== 'REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS' || !st.detail.includes(`source's ${code} is`)) probes.push(`${field} 0 on sourceBounds: ${mqSayEnd(st)}, not refused naming ${code}`);
+      const asTarget = mqReduce(`${field} 0 on targets.artFit`, underNulls(absent, zero));
+      const tt = asTarget.report.termination;
+      if (tt?.reason !== 'no-further-valid-reduction' || !tt.blockingConstraint.startsWith(`${code}:`) || asTarget.report.candidates[0]?.accepted === true) probes.push(`${field} 0 on targets.artFit: ${mqSayEnd(tt)}, accepted ${asTarget.report.candidates[0]?.accepted}, not blocked by ${code}`);
+      restored.push(`${field} 0: ${st !== null && 'code' in st ? st.code : st?.reason} as a source, ${tt?.reason === 'no-further-valid-reduction' ? tt.blockingConstraint.slice(0, tt.blockingConstraint.indexOf(':')) : tt?.reason} as a target`);
+    }
+    // The carried path and the full path under the nulls: one case, report and mesh bytes (MQ65's pattern).
+    const input = underNulls(absent, absent);
+    const rasters = artRastersOf(input.art);
+    const full = reduceMeshWith(input, rasters, null);
+    const carried = reduceMeshWith(input, rasters, stepRastersOf(rasters));
+    const fullText = writeMeshQualityReport(full.report) + JSON.stringify(full.mesh);
+    const carriedText = writeMeshQualityReport(carried.report) + JSON.stringify(carried.mesh);
+    const plainText = writeMeshQualityReport(nul.report) + JSON.stringify(nul.mesh);
+    if (fullText !== carriedText || plainText !== carriedText) probes.push(`under null bounds the full path (${fullText.length} bytes), the carried path (${carriedText.length}) and reduceMesh (${plainText.length}) do not agree byte for byte`);
+    // A measurement reads the same nulls the same way.
+    const measured = measureMeshQuality(mqInput(rectMask, frame, shifted, { artFit: absent, maxBoundaryDeviation: null, regions: [] }));
+    for (const code of ['MQ_OVERSHOOT', 'MQ_UNDERCUT']) {
+      const row = mqRow(measured, code, null, code === 'MQ_OVERSHOOT' ? 8 : undefined);
+      if (row?.state !== 'undeclared' || row.value === null || row.bound !== null) probes.push(`measureMeshQuality: ${mqSay(row)}, not undeclared with its value`);
+    }
+    if (measured.candidates[0]?.accepted !== true) probes.push(`measureMeshQuality under null distances and minCoverage 0: accepted ${measured.candidates[0]?.accepted}`);
+    const held = probes.length === 0;
+    say(
+      'MQ72_CONTROL_AN_OVERSHOOT_OR_UNDERCUT_BOUND_DECLARED_NULL_IS_MEASURED_UNDECLARED_AND_GATES_NOTHING_AND_ITS_NUMBER_RESTORED_REFUSES_AND_BLOCKS',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the lattice shifted ${NULL_SHIFT} px: ${mqSay(und)}, ${mqSay(ovr)}; admitted, ${nul.report.candidates[0]?.changes?.removedVertices} vertices removed, accepted (summary ${JSON.stringify(summary)}); effective settings and the document echo null; ` +
+          `full coverage asked: ${mqSayEnd(ct)}; ${restored.join('; ')}; full, carried and reduceMesh paths ${carriedText.length} bytes, identical; measureMeshQuality undeclared on both`,
+      ),
+      'issue #1254 (spine-parts#126 items 4–5): a bound declared absent is measured and reported, never a pass and never a block — and the same fixture with the number restored is refused and blocked, so the null is what admitted it',
+    );
+  }
+
+  // --- MQ73 (#1254): a null misread as 0 or as a passing bound is caught; a field left out, NaN, a negative and minCoverage null stay refused --
+  {
+    const probes: string[] = [];
+    const caught: string[] = [];
+    const truth = nullReading(mqReduce('null, the reading the plants are judged against', underNulls(absent, absent)));
+    if (truth.length > 0) probes.push(`the true null reading fails the check the plants are judged by: ${truth.join('; ')}`);
+    // Plant: null read as 0 — what a misreading would run is refused, and the check sees it.
+    const asZero = nullReading(mqReduce('null read as 0', underNulls({ ...absent, maxOvershoot: 0, maxUndercut: 0 }, { ...absent, maxOvershoot: 0, maxUndercut: 0 })));
+    if (asZero.length === 0) probes.push('null read as 0 passes the null check, so the check cannot tell them apart');
+    else caught.push(`read as 0: ${asZero[0]}`);
+    // Plant: null read as a bound nothing reaches — the rows would pass, and a passing row is not an undeclared one.
+    const big = W * H;
+    const wide: ArtFitBounds = { ...absent, maxOvershoot: big, maxUndercut: big };
+    const asPass = nullReading(mqReduce('null read as a passing bound', underNulls(wide, wide)));
+    if (asPass.length === 0) probes.push('null read as a passing bound passes the null check, so pass and undeclared are not told apart');
+    else caught.push(`read as ${big}: ${asPass[0]}`);
+    // Refusals: a field left out is not a null; NaN, a negative and a null coverage are refused by name.
+    const refusals: Array<['sourceBounds' | 'targets.artFit', 'minCoverage' | 'maxOvershoot' | 'maxUndercut', unknown, string]> = [
+      ['targets.artFit', 'maxUndercut', undefined, 'targets.artFit.maxUndercut is undefined'],
+      ['sourceBounds', 'maxUndercut', undefined, 'sourceBounds.maxUndercut is undefined'],
+      ['sourceBounds', 'maxOvershoot', undefined, 'sourceBounds.maxOvershoot is undefined'],
+      ['targets.artFit', 'maxOvershoot', Number.NaN, 'targets.artFit.maxOvershoot is null'],
+      ['sourceBounds', 'maxUndercut', -1, 'sourceBounds.maxUndercut is -1'],
+      ['targets.artFit', 'minCoverage', null, 'targets.artFit.minCoverage is null'],
+      ['sourceBounds', 'minCoverage', null, 'sourceBounds.minCoverage is null'],
+    ];
+    for (const [where, field, value, says] of refusals) {
+      const fit: Record<string, unknown> = { ...absent };
+      if (value === undefined) delete fit[field];
+      else fit[field] = value;
+      const forged = fit as unknown as ArtFitBounds;
+      const got = reduceRefusalOf(where === 'sourceBounds' ? underNulls(forged, absent) : underNulls(absent, forged));
+      if (got?.code !== 'REDUCE_INPUT_MISSING' || !got.message.includes(says)) probes.push(`${where}.${field} = ${String(value)}: ${got === null ? 'accepted' : `${got.code}: ${got.message}`}, not REDUCE_INPUT_MISSING saying "${says}"`);
+      else caught.push(`${where}.${field} ${String(value)} refused`);
+    }
+    // A measurement refuses a null coverage the same way.
+    const nullCoverage = { ...absent, minCoverage: null } as unknown as ArtFitBounds;
+    const measuredRefusal = refusalOf(mqInput(rectMask, frame, shifted, { artFit: nullCoverage, maxBoundaryDeviation: null, regions: [] }));
+    if (measuredRefusal?.code !== 'REDUCE_INPUT_MISSING' || !measuredRefusal.message.includes('minCoverage is null')) probes.push(`measureMeshQuality with minCoverage null: ${JSON.stringify(measuredRefusal)}`);
+    else caught.push('measureMeshQuality minCoverage null refused');
+    const held = probes.length === 0;
+    say(
+      'MQ73_A_NULL_BOUND_READ_AS_0_OR_AS_A_PASSING_BOUND_IS_CAUGHT_AND_A_FIELD_LEFT_OUT_NAN_A_NEGATIVE_OR_A_NULL_COVERAGE_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, caught.join('; ')),
+      'issue #1254: null is a declared absence, and the two ways to misread it — as 0, which refuses, and as a bound nothing reaches, which passes — must each be visible; an omitted field is not a declaration and stays refused',
+    );
+  }
+
   rmSync(dir, { recursive: true, force: true });
   return bad;
 }
@@ -48229,6 +48371,43 @@ function runMeshCompareSuite(): number {
           `its triangles read with the sign flipped: MQ_ORIENTATION ${plantRow?.value} of ${triangles}, fail, naming triangle ${named}, accepted ${plant.candidates[0].accepted}`,
       ),
       '#1236: MQ_ORIENTATION holds a source counter-clockwise in Spine world, so a generated build has to arrive that way or no comparison over it can ever be accepted, and a sign read the other way has to be named',
+    );
+  });
+
+  // --- MQ74 (#1254): referenceArtFit and candidateArtFit read a distance bound declared null as mesh-quality does ---
+  mcGuard('MQ74', () => {
+    const probes: string[] = [];
+    const halfAt = MC_W / 2;
+    const half = mcBuild(dir, 'half-null', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
+    const coverage = r6(halfAt / MC_W);
+    const absent: ArtFitBounds = { minCoverage: coverage, maxOvershoot: null, maxUndercut: null };
+    // As the reference: admitted under the nulls, its undercut measured and undeclared; at 0 refused naming the row.
+    const asRef = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: absent })));
+    if (asRef !== null) probes.push(`the half reference under null distances was refused: ${asRef.code} — ${asRef.message}`);
+    const zero = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: { ...absent, maxUndercut: 0 } })));
+    if (zero?.code !== 'COMPARE_REFERENCE_FAILS' || !zero.message.includes('MQ_UNDERCUT')) probes.push(`the half reference under maxUndercut 0: ${zero?.code ?? 'compared'} — ${zero?.message}; required COMPARE_REFERENCE_FAILS naming MQ_UNDERCUT, so the null is what admitted it`);
+    // As a candidate: the row undeclared with its value, the geometry verdict decided by the rows still required.
+    const report = asRef === null ? compareMeshesInMotion(mcInput(half, [{ id: 'half', model: half }], still({ referenceArtFit: absent, candidateArtFit: absent }))) : null;
+    const undercut = report?.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_UNDERCUT');
+    if (undercut?.state !== 'undeclared' || undercut.bound !== null || !((undercut.value ?? 0) > 0)) probes.push(`the candidate's MQ_UNDERCUT is ${undercut?.state} at ${undercut?.value} (bound ${JSON.stringify(undercut?.bound)}); required undeclared with a value above 0`);
+    if (report !== null && report.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the candidate's geometry verdict is ${report.candidates[0]?.geometry?.verdict}; required pass on the rows still required`);
+    const e = report?.effective;
+    if (e?.referenceArtFit?.maxUndercut !== null || e.candidateArtFit?.maxUndercut !== null || e.referenceArtFit.maxOvershoot !== null || e.candidateArtFit.maxOvershoot !== null) probes.push(`effective referenceArtFit ${JSON.stringify(e?.referenceArtFit)} and candidateArtFit ${JSON.stringify(e?.candidateArtFit)} do not echo null`);
+    // A field left out is not a null.
+    const leftOut: Record<string, unknown> = { ...absent };
+    delete leftOut.maxUndercut;
+    const missing = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ candidateArtFit: leftOut as unknown as ArtFitBounds })));
+    if (missing?.code !== 'COMPARE_INPUT_MISSING' || !missing.message.includes('candidateArtFit')) probes.push(`candidateArtFit with maxUndercut left out: ${missing?.code ?? 'compared'} — ${missing?.message}; required COMPARE_INPUT_MISSING naming candidateArtFit`);
+    const held = probes.length === 0;
+    say(
+      'MQ74_A_COMPARISON_READS_A_DISTANCE_BOUND_DECLARED_NULL_AS_UNDECLARED_ADMITS_THE_REFERENCE_AND_REFUSES_IT_AT_0',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the half-strip reference under coverage ${coverage} and null distances: admitted; at maxUndercut 0: ${zero?.code}; as a candidate: MQ_UNDERCUT ${undercut?.state} ${undercut?.value}, geometry ${report?.candidates[0]?.geometry?.verdict}; effective settings echo null; a field left out: ${missing?.code}`,
+      ),
+      'issue #1254: ArtFitBounds is one type, so the comparison reads its declared absence as the measurement and the reduction do — measured, undeclared, never refusing a reference — and an omitted field stays refused',
     );
   });
 

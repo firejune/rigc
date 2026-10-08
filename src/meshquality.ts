@@ -116,14 +116,23 @@ export interface SourceMesh {
   weights: Array<Array<{ bone: string; weight: number }>> | null;
 }
 
-/** All distances in the drawing's pixels; converted to texels by `pageScale`. */
+/**
+ * All distances in the drawing's pixels; converted to texels by `pageScale`.
+ *
+ * `maxOvershoot` and `maxUndercut` may be `null` — a bound **declared absent**
+ * (issue #1254): the row is measured and reported `undeclared`, with its value
+ * and worst sample, and never passes, fails, blocks a step or refuses a source.
+ * A field left out (`undefined`) is still refused by name: an omission cannot be
+ * told from a caller that forgot, and only the explicit `null` says "measured,
+ * not bounded". `minCoverage` has no such form and is always required.
+ */
 export interface ArtFitBounds {
   /** Share of art pixel centres the triangles cover, 0..1. */
   minCoverage: number;
-  /** Furthest a covered pixel may sit outside the filled silhouette, px. */
-  maxOvershoot: number;
-  /** Furthest an uncovered art pixel may sit from the covered set, px. */
-  maxUndercut: number;
+  /** Furthest a covered pixel may sit outside the filled silhouette, px; null = declared absent. */
+  maxOvershoot: number | null;
+  /** Furthest an uncovered art pixel may sit from the covered set, px; null = declared absent. */
+  maxUndercut: number | null;
 }
 
 /** What a reduction's RESULT must satisfy (correction 3). Read by `reduceMesh`, stage B2. */
@@ -607,7 +616,7 @@ function validateInput(input: MeshMeasureInput): void {
     if (!isFiniteNumber(coverage) || coverage < 0 || coverage > 1) refuse('REDUCE_INPUT_MISSING', `${who}: targets.artFit.minCoverage is ${JSON.stringify(coverage)}; required a fraction in 0..1`);
     for (const field of ['maxOvershoot', 'maxUndercut'] as const) {
       const v = fit[field];
-      if (!isFiniteNumber(v) || v < 0) refuse('REDUCE_INPUT_MISSING', `${who}: targets.artFit.${field} is ${JSON.stringify(v)}; required a finite number of px, 0 or more`);
+      if (v !== null && (!isFiniteNumber(v) || v < 0)) refuse('REDUCE_INPUT_MISSING', `${who}: targets.artFit.${field} is ${JSON.stringify(v)}; required a finite number of px, 0 or more, or null (declared absent: measured, reported undeclared)`);
     }
   }
   present(who, 'targets.maxBoundaryDeviation', targets.maxBoundaryDeviation, 'a number of px or null');
@@ -1298,8 +1307,8 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
   if (artCount < input.minArtSamples) {
     const why = `attachment ${nameOf(attachment)} has ${artCount} art sample(s) at alpha >= ${threshold}; required at least ${input.minArtSamples} (minArtSamples, P9) — a row over fewer is not a measurement`;
     rows.push(withRaster(unmeasuredRow(spec('MQ_COVERAGE', 'fraction'), 'not-measurable', why, fit !== null), rasterArt(null), grid, artCount === 0 ? 1 : 1 / artCount));
-    rows.push(withRaster(unmeasuredRow(spec('MQ_OVERSHOOT', 'px'), 'not-measurable', why, fit !== null), rasterArt(8), grid, pxIncrement));
-    rows.push(withRaster(unmeasuredRow(spec('MQ_UNDERCUT', 'px'), 'not-measurable', why, fit !== null), rasterArt(null), grid, pxIncrement));
+    rows.push(withRaster(unmeasuredRow(spec('MQ_OVERSHOOT', 'px'), 'not-measurable', why, fit !== null && fit.maxOvershoot !== null), rasterArt(8), grid, pxIncrement));
+    rows.push(withRaster(unmeasuredRow(spec('MQ_UNDERCUT', 'px'), 'not-measurable', why, fit !== null && fit.maxUndercut !== null), rasterArt(null), grid, pxIncrement));
     rows.push(withRaster(unmeasuredRow(spec('MQ_HOLES', 'count'), 'not-measurable', why, false), rasterArt(8), grid, 1));
     rows.push(withRaster(unmeasuredRow(spec('MQ_ISLANDS', 'count'), 'not-measurable', why, false), rasterArt(4), grid, 1));
   } else {
@@ -1322,8 +1331,8 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
     rows.push(
       withRaster(
         !anyCovered
-          ? unmeasuredRow(undercutSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the triangles cover no pixel centre of the ${w}x${h} grid, so no art pixel has a distance to a covered one`, fit !== null)
-          : measuredRow(undercutSpec, r6(Math.sqrt(undercutSq) / scale), fit === null ? null : { op: '<=', value: fit.maxUndercut }, missingWorst, true),
+          ? unmeasuredRow(undercutSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the triangles cover no pixel centre of the ${w}x${h} grid, so no art pixel has a distance to a covered one`, fit !== null && fit.maxUndercut !== null)
+          : measuredRow(undercutSpec, r6(Math.sqrt(undercutSq) / scale), fit === null || fit.maxUndercut === null ? null : { op: '<=', value: fit.maxUndercut }, missingWorst, true),
         rasterArt(null),
         grid,
         pxIncrement,
@@ -1335,7 +1344,7 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
     const fillsDiffer = rasters.fills().differ;
     const silhouetteRows = (connectivity: 4 | 8, gated: boolean): void => {
       const { overAt, overSq, holes, holeAt } = reading.silhouette(connectivity);
-      const bound = gated && fit !== null ? { op: '<=' as const, value: fit.maxOvershoot } : null;
+      const bound = gated && fit !== null && fit.maxOvershoot !== null ? { op: '<=' as const, value: fit.maxOvershoot } : null;
       rows.push(
         withRaster(
           measuredRow(spec('MQ_OVERSHOOT', 'px'), r6(Math.sqrt(overSq) / scale), bound, overAt === -1 ? NOTHING_WORSE : { at: { pixel: pixelOf(overAt) } }, gated),
