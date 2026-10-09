@@ -319,6 +319,8 @@ that order and to one alias name, the one `ALIAS` in
 `scripts/alias_tarball.ts` states, and `CUR121` drives the tool and the
 confirmation's reading of it over fakes that differ each way they can.
 
+**The alias is kept, and never retired by a release step** ([#1278](https://github.com/firejune/rigc/issues/1278)). It stays for as long as links from outside this repository point at it — the npm page, forum threads, articles, badges other READMEs copied — and it never gets a version of its own: every cut publishes both names from one run, or neither. Retiring it (deprecating, un-publishing, letting the name fall behind the package's version line) is not a release step and not a convention; it is a separate card that opens only after three things are written down in it: **npm history** — what is lost when the alias stops (download history, the package page, the provenance links of every version published under it); **external links** — an inventory of what points at the alias name and where each resolves after the rename and after a retirement (GitHub redirects the repository URL; nothing but the alias covers the npm page); and **what the alias says** — one sentence in the README naming the package's current name, and no `npm deprecate`, because a banner on every install is a retirement wearing an alias's name. The same policy holds for every package of the toolchain (`spine-rigc` → `rig-c`, `spine-parts` → `rig-parts`, `spine-html` → `rig-play`).
+
 `prepublishOnly` runs `scripts/prepublish_gate.ts` before npm packs anything,
 so a tree that fails its own gates cannot be published — by the workflow or by
 hand. It runs `bun run typecheck` and `bun run lint` and then the selftest, the
