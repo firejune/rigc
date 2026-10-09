@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.29.0](https://github.com/firejune/rigc/compare/v2.28.0...v2.29.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** motionAmplitude.gradation is optional and the author's — no derivation from what a rig declares holds, measured on 19 subjects — so an amplitude without it measures MQ_DEFORM_LOAD and reads MQ_ALLOCATION_CONTRAST not-measurable naming it; compareMeshesInMotion takes motionAmplitude; the Stage B rerun and Q1's correction recorded ([#1291](https://github.com/firejune/rigc/issues/1291)) ([#1292](https://github.com/firejune/rigc/issues/1292)) ([931dfcb](https://github.com/firejune/rigc/commit/931dfcb83ea46e74c57e5f7af29d588e35bad00a))
+
 ## [2.28.0](https://github.com/firejune/rigc/compare/v2.27.0...v2.28.0) (2026-10-09)
 
 
