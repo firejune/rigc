@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.28.0](https://github.com/firejune/rigc/compare/v2.27.0...v2.28.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** reduceMesh takes motionAmplitude and hands it to the result's own measurement, so MQ_ALLOCATION_CONTRAST and MQ_DEFORM_LOAD are measured on a reduction's report when the caller declares it — final measurement only, measured ([#1287](https://github.com/firejune/rigc/issues/1287)) ([#1289](https://github.com/firejune/rigc/issues/1289)) ([4ab5e98](https://github.com/firejune/rigc/commit/4ab5e98a7f472584ec9b20dd679ca5876c04d7c8))
+
 ## [2.27.0](https://github.com/firejune/rigc/compare/v2.26.0...v2.27.0) (2026-10-09)
 
 
