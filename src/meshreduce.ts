@@ -430,6 +430,98 @@ function edgeKey(a: number, b: number): string {
   return a < b ? `${a},${b}` : `${b},${a}`;
 }
 
+/**
+ * Issue #1307: an undirected edge as one number, `min * n + max`, for ids below `n` — the key every edge set on the
+ * removal and boundary-run paths is held in, where `edgeKey` built a string per edge. Exact below 2^53, so for any
+ * `n` up to 94,906,265.
+ */
+function pairKey(a: number, b: number, n: number): number {
+  return a < b ? a * n + b : b * n + a;
+}
+
+/**
+ * Issue #1307: the edges `fresh`'s triangles hold that no triangle of `old` holds, each once, in the order `fresh`
+ * holds them (triangle by triangle, corner k to k + 1) — the order condition (b) reads them in and names the first
+ * over `weightJump`. Keyed by number over ids below `n`, and only the keys `fresh` holds are looked for in `old`.
+ * `addedEdgesByString` is the construction it replaced, kept as the one it is held equal to.
+ */
+function addedEdges(old: ReadonlyArray<readonly number[]>, fresh: ReadonlyArray<readonly number[]>, n: number): Array<[number, number]> {
+  const wanted = new Set<number>();
+  for (const t of fresh) for (let k = 0; k < 3; k++) wanted.add(pairKey(t[k], t[(k + 1) % 3], n));
+  const held = new Set<number>();
+  for (const t of old) {
+    for (let k = 0; k < 3; k++) {
+      const key = pairKey(t[k], t[(k + 1) % 3], n);
+      if (wanted.has(key)) held.add(key);
+    }
+  }
+  const added: Array<[number, number]> = [];
+  const seen = new Set<number>();
+  for (const t of fresh) {
+    for (let k = 0; k < 3; k++) {
+      const key = pairKey(t[k], t[(k + 1) % 3], n);
+      if (held.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      added.push([t[k], t[(k + 1) % 3]]);
+    }
+  }
+  return added;
+}
+
+/** The string-keyed construction `addedEdges` replaced (issue #1307), run only by the edge-set audit. */
+function addedEdgesByString(old: ReadonlyArray<readonly number[]>, fresh: ReadonlyArray<readonly number[]>): Array<[number, number]> {
+  const had = new Set<string>();
+  for (const t of old) for (let k = 0; k < 3; k++) had.add(edgeKey(t[k], t[(k + 1) % 3]));
+  const added: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  for (const t of fresh) {
+    for (let k = 0; k < 3; k++) {
+      const key = edgeKey(t[k], t[(k + 1) % 3]);
+      if (had.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      added.push([t[k], t[(k + 1) % 3]]);
+    }
+  }
+  return added;
+}
+
+/**
+ * Issue #1307's audit, for the `mesh-compare` suite's control: every edge set the removal and boundary-run paths
+ * build is built a second time the string-keyed way it was before the issue and compared — the added edges as a list
+ * (membership and order, the order condition (b) reads), the triangulation's edge set the protected edges are looked
+ * up in as a set (its order is never read). A difference is recorded, not thrown, so the control reads every one.
+ * `plant` is the fault applied to the numeric construction before the comparison: one edge dropped from each list
+ * and each set, or each added list of two or more reversed. With the audit and no plant, the call's result is the
+ * call's without it.
+ */
+export interface EdgeSetAudit {
+  plant?: 'drop-one' | 'reorder';
+  /** Added-edge lists compared, and the edges in them. */
+  addedLists: number;
+  addedEdges: number;
+  /** Lists among them whose order a difference could move — two edges or more. */
+  orderedLists: number;
+  /** Triangulation edge sets compared (one per operation reaching the protected-edge check), and the edges in them. */
+  edgeSets: number;
+  edgeSetEdges: number;
+  /** Each difference found, named; the first few in full. */
+  differences: string[];
+}
+
+/** One added-edge list read, through the audit when there is one: the plant applied, then the string construction compared. */
+function auditedAdded(audit: EdgeSetAudit | null, where: string, added: Array<[number, number]>, byString: () => Array<[number, number]>): Array<[number, number]> {
+  if (audit === null) return added;
+  let read = added;
+  if (audit.plant === 'drop-one' && read.length > 0) read = read.slice(0, -1);
+  if (audit.plant === 'reorder' && read.length > 1) read = [...read].reverse();
+  const want = byString();
+  audit.addedLists++;
+  audit.addedEdges += want.length;
+  if (want.length > 1) audit.orderedLists++;
+  if (JSON.stringify(read) !== JSON.stringify(want)) audit.differences.push(`${where}: added edges ${JSON.stringify(read)} against the string construction's ${JSON.stringify(want)}`);
+  return read;
+}
+
 // ---------------------------------------------------------------------------
 // the working mesh — vertices by stable id: source index, then insertion order
 // ---------------------------------------------------------------------------
@@ -823,7 +915,10 @@ interface Run {
   keyed: Map<number, { animation: string; ref: AttachmentRef; key: number; time: number }>;
   protectedVertices: Set<number>;
   protectedEdges: Array<[number, number]>;
-  sourceEdges: Set<string>;
+  /** The source's edges, `pairKey` over `work.nSource` (issue #1307). */
+  sourceEdges: Set<number>;
+  /** Issue #1307's audit of the edge sets, or null. */
+  edgeAudit: EdgeSetAudit | null;
   /** The art's rasters, taken once for the call and read by every measurement in it (issue #1240). */
   rasters: ArtRasters;
   /** The step state each removal and insertion is measured through, carried from the last measurement (issue #1246); null measures every step in full. */
@@ -1356,8 +1451,17 @@ function refineRegions(run: Run): PhaseEnd {
 // reduction (§1, §6)
 // ---------------------------------------------------------------------------
 
-/** One removal tried: the working triangles after it and the edges it added, or the structural reason it cannot be made. */
-function removalOf(work: Work, v: number): { triangles: Array<[number, number, number]>; added: Array<[number, number]> } | { blocked: string } {
+/**
+ * One removal tried: the working triangles after it and the edges it added — read through `added()`, built only when
+ * read (issue #1307) — or the structural reason it cannot be made.
+ */
+type Removal = { triangles: Array<[number, number, number]>; added: () => Array<[number, number]> } | { blocked: string };
+
+/**
+ * One removal made on `work`'s triangles: the triangles after it — every triangle not touching `v` as it was, the
+ * same tuple, then the hole's new ones, `fresh` — or the structural reason it cannot be made.
+ */
+function removalStep(work: Work, v: number): { triangles: Array<[number, number, number]>; fresh: Array<[number, number, number]> } | { blocked: string } {
   const star = work.triangles.filter((t) => t.includes(v));
   const next = new Map<number, number>();
   const incoming = new Set<number>();
@@ -1398,19 +1502,16 @@ function removalOf(work: Work, v: number): { triangles: Array<[number, number, n
   } else if (!boundary) {
     return { blocked: `retriangulation: vertex ${v} has fewer than three neighbours` };
   }
-  const old = new Set<string>();
-  for (const t of work.triangles) for (let k = 0; k < 3; k++) old.add(edgeKey(t[k], t[(k + 1) % 3]));
-  const added: Array<[number, number]> = [];
-  const seen = new Set<string>();
-  for (const t of fresh) {
-    for (let k = 0; k < 3; k++) {
-      const key = edgeKey(t[k], t[(k + 1) % 3]);
-      if (old.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      added.push([t[k], t[(k + 1) % 3]]);
-    }
-  }
-  return { triangles: [...rest, ...fresh], added };
+  return { triangles: [...rest, ...fresh], fresh };
+}
+
+/** `removalStep` with the edges it adds: those of the hole's new triangles no triangle before it holds, in their order. */
+function removalOf(work: Work, v: number, audit: EdgeSetAudit | null = null): Removal {
+  const step = removalStep(work, v);
+  if ('blocked' in step) return step;
+  const old = work.triangles;
+  const n = work.alive.length;
+  return { triangles: step.triangles, added: () => auditedAdded(audit, `removing ${v}`, addedEdges(old, step.fresh, n), () => addedEdgesByString(old, step.fresh)) };
 }
 
 /** L1 difference of two weight vectors over the bones they name. */
@@ -1447,10 +1548,10 @@ function loadOrder(run: Run): { order: number[]; load: Map<number, number> } {
   const order: number[] = [];
   for (let v = 0; v < work.nSource; v++) {
     if (!work.alive[v] || run.protectedVertices.has(v)) continue;
-    const step = removalOf(work, v);
+    const step = removalOf(work, v, run.edgeAudit);
     let most = 0;
     if ('blocked' in step) most = Infinity;
-    else for (const [a, b] of step.added) most = Math.max(most, edgeLoad(work, a, b));
+    else for (const [a, b] of step.added()) most = Math.max(most, edgeLoad(work, a, b));
     load.set(v, most);
     order.push(v);
   }
@@ -1470,32 +1571,27 @@ function loadOrder(run: Run): { order: number[]; load: Map<number, number> } {
  * structural reason one of the removals cannot be made. The outline loses the run and gains the chord from the
  * vertex before it to the vertex after it; nothing is measured in between.
  */
-function runRemovalOf(work: Work, vertices: readonly number[]): { triangles: Array<[number, number, number]>; added: Array<[number, number]> } | { blocked: string } {
+function runRemovalOf(work: Work, vertices: readonly number[], audit: EdgeSetAudit | null = null): Removal {
   const was = work.triangles;
+  // Issue #1307: each removal's own added edges are never read here, so none is built; what the run adds is read off
+  // the triangles its removals made. A triangle of `after` that no removal made is the same tuple as one of `was`
+  // (`removalStep` keeps every untouched triangle as it was), so every edge it holds is old and it adds nothing.
+  const made = new Set<readonly number[]>();
   let after: Array<[number, number, number]>;
   try {
     for (const v of vertices) {
-      const step = removalOf(work, v);
+      const step = removalStep(work, v);
       if ('blocked' in step) return step;
+      for (const t of step.fresh) made.add(t);
       work.triangles = step.triangles;
     }
     after = work.triangles;
   } finally {
     work.triangles = was;
   }
-  const old = new Set<string>();
-  for (const t of was) for (let k = 0; k < 3; k++) old.add(edgeKey(t[k], t[(k + 1) % 3]));
-  const added: Array<[number, number]> = [];
-  const seen = new Set<string>();
-  for (const t of after) {
-    for (let k = 0; k < 3; k++) {
-      const key = edgeKey(t[k], t[(k + 1) % 3]);
-      if (old.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      added.push([t[k], t[(k + 1) % 3]]);
-    }
-  }
-  return { triangles: after, added };
+  const n = work.alive.length;
+  const label = `removing ${vertices.join(', ')} as one boundary run`;
+  return { triangles: after, added: () => auditedAdded(audit, label, addedEdges(was, after.filter((t) => made.has(t)), n), () => addedEdgesByString(was, after)) };
 }
 
 /**
@@ -1630,6 +1726,28 @@ function deviationFloor(run: Run, mesh: SourceMesh, vertices: readonly number[])
 const FLOOR_MARGIN = 1e-5;
 
 /**
+ * Issue #1307's audit of the triangulation's edge set (`EdgeSetAudit`): the plant applied to `edges` in place — so
+ * the decision reads the planted set — then the set held to the string-keyed one, member for member.
+ */
+function auditEdgeSet(audit: EdgeSetAudit, edges: Set<number>, triangles: ReadonlyArray<readonly number[]>, n: number, vertices: readonly number[]): void {
+  if (audit.plant === 'drop-one') {
+    const first = edges.values().next();
+    if (first.done !== true) edges.delete(first.value);
+  }
+  const want = new Set<string>();
+  for (const t of triangles) for (let k = 0; k < 3; k++) want.add(edgeKey(t[k], t[(k + 1) % 3]));
+  audit.edgeSets++;
+  audit.edgeSetEdges += want.size;
+  const missing = [...want].filter((key) => {
+    const [a, b] = key.split(',').map(Number);
+    return !edges.has(pairKey(a, b, n));
+  });
+  if (missing.length > 0 || edges.size !== want.size) {
+    audit.differences.push(`removing ${vertices.join(', ')}: the triangulation's edge set holds ${edges.size} edge(s) against the string construction's ${want.size}${missing.length > 0 ? `, missing ${missing.slice(0, 3).join(' ')}` : ''}`);
+  }
+}
+
+/**
  * One operation — a single removal, or a boundary run of two or more — tried: null when it was taken (the working
  * mesh then holds it), else what refused it (the working mesh as it was). `full` measures every candidate that
  * reaches the rows; otherwise a candidate whose deviation floor is over the bound by `FLOOR_MARGIN` is refused
@@ -1637,12 +1755,12 @@ const FLOOR_MARGIN = 1e-5;
  */
 function tryOperation(run: Run, vertices: readonly number[], full: boolean): Refusal | null {
   const { work, input } = run;
-  const step = vertices.length === 1 ? removalOf(work, vertices[0]) : runRemovalOf(work, vertices);
+  const step = vertices.length === 1 ? removalOf(work, vertices[0], run.edgeAudit) : runRemovalOf(work, vertices, run.edgeAudit);
   if ('blocked' in step) return step.blocked;
   const jump = input.protect.weightJump;
   if (jump !== null) {
-    for (const [a, b] of step.added) {
-      if (a < work.nSource && b < work.nSource && run.sourceEdges.has(edgeKey(a, b))) continue;
+    for (const [a, b] of step.added()) {
+      if (a < work.nSource && b < work.nSource && run.sourceEdges.has(pairKey(a, b, work.nSource))) continue;
       const d = weightJump(work, a, b);
       if (d > jump) return `weightJump (b): the new edge ${a}–${b} joins weight vectors ${r6(d)} apart, over ${jump}`;
     }
@@ -1654,12 +1772,17 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
     work.triangles = was.triangles;
     for (const v of vertices) work.alive[v] = true;
   };
-  const edges = new Set<string>();
-  for (const t of work.triangles) for (let k = 0; k < 3; k++) edges.add(edgeKey(t[k], t[(k + 1) % 3]));
-  for (const [a, b] of run.protectedEdges) {
-    if (!edges.has(edgeKey(a, b))) {
-      undo();
-      return `protect (a): the protected source edge ${a}–${b} is no longer an edge`;
+  // Issue #1307: the triangulation's edge set is built only when a protected edge is looked up in it, keyed by number.
+  if (run.protectedEdges.length > 0) {
+    const n = work.alive.length;
+    const edges = new Set<number>();
+    for (const t of work.triangles) for (let k = 0; k < 3; k++) edges.add(pairKey(t[k], t[(k + 1) % 3], n));
+    if (run.edgeAudit !== null) auditEdgeSet(run.edgeAudit, edges, work.triangles, n, vertices);
+    for (const [a, b] of run.protectedEdges) {
+      if (!edges.has(pairKey(a, b, n))) {
+        undo();
+        return `protect (a): the protected source edge ${a}–${b} is no longer an edge`;
+      }
     }
   }
   let canon: Canonical;
@@ -1841,7 +1964,7 @@ function delaunayFlips(run: Run, plant: ReductionPlant | null): FlipResult {
       const sine = oppositeAngleSine(P[a], P[b], P[c], P[d]);
       if (against ? !(sine > FLIP_MARGIN) : !(sine < -FLIP_MARGIN)) continue;
       if (held(a, b) || held(c, d)) continue;
-      if (jump !== null && !(c < work.nSource && d < work.nSource && run.sourceEdges.has(edgeKey(c, d))) && weightJump(work, c, d) > jump) continue;
+      if (jump !== null && !(c < work.nSource && d < work.nSource && run.sourceEdges.has(pairKey(c, d, work.nSource))) && weightJump(work, c, d) > jump) continue;
       if (flips >= maxFlips) return { bound: `the flip bound n(n - 1)/2 = ${maxFlips} over ${alive} vertices was reached`, flips, sweeps };
       tris[i] = [a, d, c];
       tris[j] = [d, b, c];
@@ -1961,12 +2084,13 @@ export function reduceMeshWith(
   plant: ReductionPlant | null = null,
   observe: AttemptObserver | null = null,
   skinning: SkinningHooks | null = null,
+  edgeAudit: EdgeSetAudit | null = null,
 ): MeshReductionResult {
   validateReduction(input, plant);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
-  return reduceValidated(input, rasters, steps, plant, observe, skinning);
+  return reduceValidated(input, rasters, steps, plant, observe, skinning, edgeAudit);
 }
 
 /**
@@ -1980,6 +2104,7 @@ function reduceValidated(
   plant: ReductionPlant | null = null,
   observe: AttemptObserver | null = null,
   hooks: SkinningHooks | null = null,
+  edgeAudit: EdgeSetAudit | null = null,
 ): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
@@ -2047,8 +2172,12 @@ function reduceValidated(
       sourceTriangle: new Map(),
     };
     for (let i = 0; i + 2 < src.triangles.length; i += 3) work.triangles.push([src.triangles[i], src.triangles[i + 1], src.triangles[i + 2]]);
-    const sourceEdges = new Set<string>();
-    for (const t of work.triangles) for (let k = 0; k < 3; k++) sourceEdges.add(edgeKey(t[k], t[(k + 1) % 3]));
+    // The string-keyed set is read once, by `protectionOf`, whose weightJump edges follow its sorted keys; every step
+    // reads the numeric one (issue #1307).
+    const sourceEdgeNames = new Set<string>();
+    for (const t of work.triangles) for (let k = 0; k < 3; k++) sourceEdgeNames.add(edgeKey(t[k], t[(k + 1) % 3]));
+    const sourceEdges = new Set<number>();
+    for (const t of work.triangles) for (let k = 0; k < 3; k++) sourceEdges.add(pairKey(t[k], t[(k + 1) % 3], work.nSource));
     const run: Run = {
       input,
       who,
@@ -2062,8 +2191,9 @@ function reduceValidated(
       observe,
       tally: { sharesDroppedOnGrid: 0, sharesPruned: 0 },
       keyed: keyedSourceVertices(input),
-      ...protectionOf(input, work, sourceEdges),
+      ...protectionOf(input, work, sourceEdgeNames),
       sourceEdges,
+      edgeAudit,
       rasters,
       stepRasters: steps,
       skinning: null,
