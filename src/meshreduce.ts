@@ -70,6 +70,15 @@
  * is not a step: no candidate, no `acceptedAt` entry, so a replay and the
  * budget cut at the same step end on the same state and the same pass.
  *
+ * ## The amplitude (issue #1287, opt-in)
+ *
+ * With `motionAmplitude`, the result's own measurement reads it, so the
+ * report's `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD` are measured rather
+ * than `not-measurable`. No other measurement of the call is handed it — no
+ * step is decided by either row, and no report carries the other
+ * measurements' rows (`amplitudeOf`) — so the mesh and every step are the
+ * call's without it.
+ *
  * A removal whose deviation floor — the furthest removed source-hull vertex
  * from the candidate's outline, which `MQ_BOUNDARY_DEVIATION` can only exceed —
  * is over the bound is refused without the measurement; its name, when read,
@@ -119,6 +128,7 @@ import {
   edgeIsHeldByRegion,
   measureMeshQualityStep,
   measureMeshQualityWith,
+  validateMotionAmplitude,
   type AcceptedOperation,
   type AttachmentRef,
   type ArtFitBounds,
@@ -130,6 +140,7 @@ import {
   type MeshMeasureInput,
   type MeshQualityReport,
   type MeshReductionInput,
+  type MotionAmplitude,
   type RefinementRegion,
   type ReductionChanges,
   type Retriangulation,
@@ -274,7 +285,7 @@ function artBoundAbsent(fit: ArtFitBounds, row: MeasureRow): boolean {
  * by `measureMeshQuality`'s own validation when the source is first measured,
  * with the same codes.
  */
-function validateReduction(input: MeshReductionInput): void {
+function validateReduction(input: MeshReductionInput, plant: ReductionPlant | null = null): void {
   if (!isObject(input)) refuse('REDUCE_INPUT_MISSING', `the input is ${JSON.stringify(input)}; required a MeshReductionInput object`);
   if (!isRef(input.attachment)) refuse('REDUCE_INPUT_MISSING', `attachment is ${JSON.stringify(input.attachment)}; required { skin: string | null, slot: string, attachment: string }`);
   const who = `attachment ${nameOf(input.attachment)}`;
@@ -305,6 +316,9 @@ function validateReduction(input: MeshReductionInput): void {
   if ('removalOrder' in input && input.removalOrder !== undefined && input.removalOrder !== 'deformation-load') {
     refuse('REDUCE_INPUT_MISSING', `${who}: removalOrder is ${JSON.stringify(input.removalOrder)}; required "deformation-load" — single removals in ascending predicted deformation load, ties by source index — or the field left out (issue #1283: ascending source index)`);
   }
+  // Issue #1287: refused here, before the admission measurement and any step, in the measurement's own words — the
+  // admission does not carry the field, and a call whose source is refused never reaches the one measurement that does.
+  if (plant !== 'amplitude-unvalidated') validateMotionAmplitude(who, input.motionAmplitude);
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
   const n = src.points.length;
@@ -791,8 +805,11 @@ interface Run {
   stepRasters: StepRasters | null;
 }
 
-/** A measurement of a canonical mesh against the result's full contract. */
-function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string): MeshQualityReport {
+/**
+ * A measurement of a canonical mesh against the result's full contract. `final` marks the result's own measurement —
+ * the one whose rows the report carries, and the only one handed the input's `motionAmplitude` (`amplitudeOf`).
+ */
+function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string, final = false): MeshQualityReport {
   const { input } = run;
   const targets = input.targets;
   const measureInput: MeshMeasureInput = {
@@ -808,8 +825,31 @@ function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string): MeshQual
     influences: input.influences,
     boneOrder: input.boneOrder,
     preset: input.preset,
+    ...amplitudeOf(run.input, run.plant, final),
   };
   return run.stepRasters === null ? measureMeshQualityWith(measureInput, run.rasters) : measureMeshQualityStep(measureInput, run.stepRasters);
+}
+
+/**
+ * Issue #1287: what one measurement of a reduction is handed as `motionAmplitude` — the input's, on the result's own
+ * measurement (`final`) only. The admission, every refinement and removal step and the post-pass are measured without
+ * it: no row it adds is read by a step (both are `undeclared`, so `firstBlockingRow` never names one) and no report
+ * carries those measurements' rows, so carrying it there would buy nothing and cost Δ's own silhouette search at every
+ * step (docs/MESH_REDUCTION.md §8, *Stage B — the amplitude on a reduction*, measured). A field left out is passed as
+ * left out and `null` as `null`, so the rows' reasons say which.
+ */
+function amplitudeOf(input: MeshReductionInput, plant: ReductionPlant | null, final: boolean): { motionAmplitude?: MotionAmplitude | null } {
+  const amplitude = input.motionAmplitude;
+  if (!final && plant !== 'amplitude-every-measurement' && plant !== 'amplitude-gates-steps') return {};
+  if (plant === 'amplitude-not-carried') return {};
+  if (plant === 'amplitude-invented' && (amplitude === undefined || amplitude === null)) {
+    const bones = [...new Set((input.source.weights ?? []).flatMap((v) => v.map((b) => b.bone)))].sort();
+    const pairs: Array<{ bones: [string, string]; theta: number }> = [];
+    for (let i = 0; i < bones.length; i++) for (let j = i + 1; j < bones.length; j++) pairs.push({ bones: [bones[i], bones[j]], theta: 1 });
+    return { motionAmplitude: { tracks: [{ track: 'invented', pairs, epsilon: 1 }], gradation: 0 } };
+  }
+  if (plant === 'null-read-as-left-out' && amplitude === null) return {};
+  return amplitude === undefined ? {} : { motionAmplitude: amplitude };
 }
 
 /** The order constraints are named in when several fail on one step: structure, then shape, then art, then density. */
@@ -1051,7 +1091,8 @@ export type ReductionPlant =
   | 'measure-every-candidate'
   | 'floor-half-a-pixel-short'
   | RetriangulationPlant
-  | OrderPlant;
+  | OrderPlant
+  | AmplitudePlant;
 
 /**
  * Issue #1283's faults in the triangulation post-pass: the pass run on a call that did not opt in; the pass skipped
@@ -1063,6 +1104,24 @@ export type RetriangulationPlant = 'flips-without-opt-in' | 'flips-not-on-replay
 
 /** Issue #1283's faults in the removal order: the load order used by a call that did not opt in, and the loads ranked descending. */
 export type OrderPlant = 'order-without-opt-in' | 'order-descending';
+
+/**
+ * Issue #1287's faults in carrying `motionAmplitude`: the amplitude not handed to the result's measurement; an
+ * amplitude invented (every pair of the source's bones at θ 1, ε 1, gradation 0) when the field is left out or
+ * `null`; `null` passed to the measurement as the field left out; the field not validated by the reduction; a
+ * measured allocation row read as blocking a step; and `effective` echoing `null` for a field left out. And one path
+ * that is not a fault, held equal to the call: the amplitude handed to every measurement of the call — the admission,
+ * each step, the post-pass — which is what the decision to carry it on the result's measurement only is measured
+ * against.
+ */
+export type AmplitudePlant =
+  | 'amplitude-not-carried'
+  | 'amplitude-invented'
+  | 'null-read-as-left-out'
+  | 'amplitude-unvalidated'
+  | 'amplitude-gates-steps'
+  | 'echo-when-unset'
+  | 'amplitude-every-measurement';
 
 /** One removal-phase attempt as a control reads it (issue #1279): what was tried, and what refused it or null when taken. */
 export interface AttemptRecord {
@@ -1484,7 +1543,10 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
       };
     }
   }
-  const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'candidate'), run.input.targets.artFit);
+  const measured = measureAgainstTargets(run, canon.mesh, 'candidate');
+  const blocking =
+    firstBlockingRow(measured, run.input.targets.artFit) ??
+    (run.plant === 'amplitude-gates-steps' ? ((measured.candidates[0]?.geometry?.rows ?? []).find((r) => (r.code === 'MQ_DEFORM_LOAD' || r.code === 'MQ_ALLOCATION_CONTRAST') && r.state === 'undeclared') ?? null) : null);
   if (blocking !== null) {
     undo();
     return rowName(blocking);
@@ -1722,7 +1784,7 @@ export function reduceMeshWith(
   plant: ReductionPlant | null = null,
   observe: AttemptObserver | null = null,
 ): MeshReductionResult {
-  validateReduction(input);
+  validateReduction(input, plant);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
@@ -1754,9 +1816,10 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     influences: input.influences,
     boneOrder: input.boneOrder,
     preset: input.preset,
+    ...amplitudeOf(input, plant, false),
   };
   const admit = steps === null ? measureMeshQualityWith(admitInput, rasters) : measureMeshQualityStep(admitInput, steps);
-  const effective = effectiveOf(input, admit.effective, sourceHull);
+  const effective = effectiveOf(input, admit.effective, sourceHull, plant);
   const sourceCounts = admit.sourceCounts;
   const noMesh = (termination: Termination): MeshReductionResult => ({
     mesh: null,
@@ -1911,7 +1974,7 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     }
     throw err;
   }
-  const measured = measureAgainstTargets(run, canon.mesh, 'result');
+  const measured = measureAgainstTargets(run, canon.mesh, 'result', true);
   const candidate = measured.candidates[0];
   const changes: ReductionChanges = {
     removedVertices: indexMap.filter((r) => r === null).length,
@@ -1952,7 +2015,8 @@ function reportOf(effective: EffectiveSettings, sourceCounts: MeshCounts | null,
 }
 
 /** Correction 1: the reduction's inputs echoed with their structure — the measurement's echo, with what a reduction adds. */
-function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sourceHull: Array<[number, number]>): EffectiveSettings {
+function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sourceHull: Array<[number, number]>, plant: ReductionPlant | null): EffectiveSettings {
+  const amplitude = plant === 'echo-when-unset' && input.motionAmplitude === undefined ? null : input.motionAmplitude;
   const fit = (f: ArtFitBounds): ArtFitBounds => ({ minCoverage: f.minCoverage, maxOvershoot: f.maxOvershoot, maxUndercut: f.maxUndercut });
   return {
     ...measured,
@@ -1962,6 +2026,7 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     budget: { maxCandidates: input.budget.maxCandidates },
     ...(input.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: input.stopAfterAccepted }),
     ...(input.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: input.boundaryRuns.maxVertices } }),
+    ...(amplitude === undefined ? {} : { motionAmplitude: amplitude }),
     ...(input.retriangulate === undefined ? {} : { retriangulate: input.retriangulate }),
     ...(input.removalOrder === undefined ? {} : { removalOrder: input.removalOrder }),
   };

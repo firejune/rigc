@@ -479,9 +479,11 @@ keys remapped (each with the source vertices whose offsets were dropped) and
 re-evaluated, and the linked meshes — and, last, `acceptedAt` ([implemented,
 #1268]; one entry per accepted operation since [implemented, #1279]). It is
 absent on a `measure` and whenever no mesh is returned. `effective` also echoes
-a reduction's `stopAfterAccepted`, `boundaryRuns`, `retriangulate` and
-`removalOrder`, each only when the input set it ([implemented, #1283] for the
-last two). With `retriangulate` set, `changes` ends in one more key,
+a reduction's `stopAfterAccepted`, `boundaryRuns`, `motionAmplitude`,
+`retriangulate` and `removalOrder`, each only when the input set it — `null`
+included for `motionAmplitude`, and whether or not a mesh is returned
+([implemented, #1283] for the last two, [implemented, #1287] for
+`motionAmplitude`). With `retriangulate` set, `changes` ends in one more key,
 `retriangulation` — which triangulation the returned mesh carries, and what the
 operation does not promise about its steps (§8 *Stage B — triangulation
 post-pass and weight-aware order*):
@@ -709,6 +711,15 @@ export interface MeshCounts {
   of an input that declares nothing new is the report it was before but for
   those five rows and the summary counts they add (§8, *Implemented — the
   allocation rows*; `MQ124`, `MQ126`).
+- [implemented, #1287] **A fourth, on the reduction**:
+  `MeshReductionInput.motionAmplitude`, the measurement's field with the
+  measurement's handling — left out, not declared; `null`, declared absent;
+  anything else refused `REDUCE_INPUT_MISSING` naming its path, before any
+  work — read by the result's own measurement only, so a `reduce` report's
+  `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD` are measured when the call
+  declares it, and echoed in `effective` as above. A call without it writes
+  the bytes it wrote before (§8, *Stage B — the amplitude on a reduction*;
+  `MQ109`, `MQ110`).
 
 ## 3. Comparing different triangulations on a common domain
 
@@ -2843,7 +2854,9 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 > #1283], in *Stage B — triangulation post-pass and weight-aware order* after
 > it. Everything above them is Stage A as recorded, and the reproducer's
 > figures (`MQ85`–`MQ90`) are unchanged by either: they are a call without the
-> opt-ins.
+> opt-ins. The reduction also carries the allocation rows' amplitude into its
+> result's measurement, [implemented, #1287], in *Stage B — the amplitude on a
+> reduction* at the end of this section.
 
 The consumer's problem, in its own aggregate figures: after #1266's replay
 (parts PR #141), two attachments reduce to motion-valid meshes — A from 109/145
@@ -3188,7 +3201,11 @@ only `MQ_ALLOCATION_CONTRAST` reads it.
 change adds none, so on every `reduceMesh` report Δ and the load are
 `not-measurable`, naming the field; B\*, grade and P10 are measured. A caller
 that wants them measures the returned mesh with `measureMeshQuality` and its
-amplitude.
+amplitude. ⚠️ **Changed by [implemented, #1287]:** `MeshReductionInput` now
+carries the field, into the result's own measurement, so a caller that
+declares it reads both rows on the reduction's report — the same rows that
+second measurement reads (`MQ106`); without it they stay `not-measurable` as
+written here (*Stage B — the amplitude on a reduction*).
 
 **Fixtures [implemented, #1280].** `MQ120` rebuilds the six fixtures above in
 the suite and reads every figure of their table to the printed precision —
@@ -3720,6 +3737,92 @@ acceptance, P19, the deform remap or the UV window; relocation (Q5) stays
 unbuilt. Whether a replay under either passes motion is parts's comparison to
 decide, on the replay, as every step is (Q6).
 
+### Stage B — the amplitude on a reduction [implemented, #1287]
+
+`MeshReductionInput.motionAmplitude?: MotionAmplitude | null` — the field
+*Implemented — the allocation rows* defines on the measurement, with the same
+shape and the same handling:
+
+- **Left out**, it is not declared, and the call is the one it was before the
+  field existed: the result's `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD`
+  are `not-measurable` naming the field left out, and `effective` has no key
+  for it. **`null`** declares it absent — the same two rows `not-measurable`,
+  the reason saying so, and `effective.motionAmplitude: null`. Anything else
+  that is not a `MotionAmplitude` in full is refused `REDUCE_INPUT_MISSING`
+  naming its path (`motionAmplitude.tracks[0].pairs[0].theta`, …), by the
+  measurement's own validator (`validateMotionAmplitude`, so the two refuse
+  one value in the same words) and **before any work** — before the
+  admission, because a call whose source the admission refuses never reaches
+  the one measurement that reads the field, and a check left to that
+  measurement would accept a malformed value there (`MQ108`).
+- **Set**, the result's own measurement — the one `candidates[0]` carries —
+  reads it, so the two rows are measured on the reduction's report, equal to
+  what measuring the returned mesh again with `measureMeshQuality`, the
+  call's targets, the source hull and the same amplitude reads (`MQ106`). It
+  is echoed in `effective`, between `boundaryRuns` and `retriangulate`, also
+  on a call that returns no mesh (`MQ110`).
+- **Both rows stay `undeclared`**: no step is decided by either and nothing
+  counts them towards acceptance, so the mesh, `acceptedAt`, the termination,
+  `accepted`, the verdict and every byte of the report but the two rows, the
+  echo and the section summaries are the call's without the field (`MQ109`).
+
+**Where it is read — decided on measurement.** The card asked for the
+amplitude in every measurement the reduction takes (admission, each step,
+final), unless the per-step cost said otherwise. It does: the result's own
+measurement only. Two reasons, the second measured. (1) Nothing reads the
+two rows anywhere else — the admission's rows decide only the source's art
+bounds and its refusals, a step's only `firstBlockingRow`, which names none
+of the five allocation rows, and the post-pass's only the same; no report
+carries those measurements' rows. (2) The cost: Δ reads B\* over the
+*measured mesh's own* hull, which changes at every step, so the memo that
+makes B\* over the source hull once per call does not apply. Nova pool
+(WSL2, Bun 1.4.2, 1-minute load 0.0–1.05), median of three alternating runs
+for the first two columns, one run for the third, the call's measurements
+counted on its rasters (`tally.uses`), under the assumed amplitude of
+*Implemented — the allocation rows* (θ = 2 sin 2.5° between every pair of the
+source's weighted bones, ε 1, G 0.75):
+
+| input | without the field | result's measurement only | every measurement (measurements) | per measurement |
+| --- | --- | --- | --- | --- |
+| demo/bottomwear | 1,056 ms | 1,017 ms | 42,564 ms (258) | +161 ms |
+| demo/bottomwear, `boundaryRuns` 8 | 4,873 | 4,505 | 54,706 (288) | +174 |
+| sample/bottomwear | 226 | 289 | 5,355 (133) | +38 |
+| sample/sleeves | 219 | 279 | 1,894 (45) | +36 |
+| sample/topwear | 69 | 75 | 1,298 (83) | +15 |
+| sample/neck | 27 | 33 | 626 (85) | +7 |
+| demo/neck | 20 | 21 | 403 (79) | +5 |
+
+Carried into every measurement the call costs 9× to 40× (demo/bottomwear:
++41.5 s) and writes **the same bytes** as carried into the result's alone —
+on all 54 calls below and in suite (`MQ109`, which runs that path as a
+`ReductionPlant` that is not a fault). On the result's alone the cost is one
+Δ and one load over the result, inside the spread of the runs here (−368 to
++63 ms against the column before it).
+
+**Measured on the recorded inputs** [measured, #1287] — the tree at
+`5be70d8` against this one, the 18 inputs of the stage-D1 record at 2.20.0,
+same machine:
+
+- **Opt-out bytes.** A call without the field — mesh and report — is
+  byte-identical to `5be70d8`'s on **90 of 90** calls: every input with no
+  opt-in, with `boundaryRuns: { maxVertices: 8 }`, with `retriangulate`, with
+  `removalOrder` and with all three.
+- **With the field and with `null`**, on every input without an opt-in, with
+  `boundaryRuns` 8 and with `retriangulate` (**54 of 54**): the mesh
+  identical to the call without it, and the report identical but for the two
+  rows, the echo and the summaries; termination, `acceptedAt`, `accepted` and
+  the verdict identical; a second call with the field identical to the first.
+  On the 8 example inputs that return a mesh the load is measured (demo/neck
+  0.508863 px, sample/neck 1.156903, sample/bottomwear 4.932996, demo/bottomwear
+  13.320207 without an opt-in) and Δ reads 0 — on these results every vertex
+  is on the outline. On the synthetic inputs, which are unweighted, both
+  rows stay `not-measurable` naming `source.weights` — not the amplitude.
+  sample/hair_back and one synthetic input return no mesh, so no row.
+
+**Not done here.** The field is read by no step; a removal order or an
+acceptance that reads the amplitude would be a separate opt-in, as
+`removalOrder` is, and none is proposed.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -3874,6 +3977,26 @@ and
 (`AttemptRecord`) carries two more fields for `MQ100` and `MQ103`: the pass
 an attempt was made in, and the load a single removal was ranked by under the
 load order (null otherwise).
+
+[implemented, #1287] §8's amplitude on a reduction, on `MQ79`'s ramp and the
+same fixture in the `mesh-compare` suite, under the next free codes — each
+read beside a plant that must make it fire (`AmplitudePlant`, a member of
+`ReductionPlant`):
+`MQ106_WITH_MOTION_AMPLITUDE_THE_REDUCTIONS_REPORT_MEASURES_THE_DEFORM_LOAD_AS_THE_RETURNED_MESH_MEASURES_AND_IT_SCALES_WITH_THETA`
+(plant: the amplitude not carried to the result's measurement),
+`MQ107_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_TWO_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH`
+(plants: an amplitude invented for a field left out; `null` passed on as
+left out),
+`MQ108_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_REDUCTION_BEFORE_ANY_WORK_NAMING_ITS_PATH_IN_THE_MEASUREMENTS_WORDS`
+(plant: the field left to the result's measurement to validate),
+`MQ109_THE_FIELD_MOVES_NO_STEP_NO_MESH_AND_NO_BYTE_BEYOND_THE_TWO_ROWS_AND_ITS_ECHO_AND_EVERY_MEASUREMENT_CARRYING_IT_WRITES_THE_SAME`
+(plant: a measured row read as blocking a step — the bytes against
+`5be70d8` are measured out of suite, §8, as for `MQ93` and `MQ100`) and
+`MQ110_THE_REDUCTION_ECHOES_MOTION_AMPLITUDE_ONCE_EXACTLY_WHEN_SET_NULL_INCLUDED_AND_ALSO_WHEN_NO_MESH_IS_RETURNED`
+(plant: `null` echoed for a field left out). `MQ109` also holds the path the
+decision in §8 was measured against — the amplitude carried into every
+measurement of the call, a `ReductionPlant` that is not a fault — to the same
+bytes as the result's alone.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.

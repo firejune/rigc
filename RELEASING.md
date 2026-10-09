@@ -625,6 +625,20 @@ stage-D1 record, 18 of 18 without `boundaryRuns` and 18 of 18 with it
 weight-aware order*). A caller that sets `retriangulate` gets triangles that
 are no longer the removals', and a report that says so.
 
+The amplitude on a reduction
+([#1287](https://github.com/firejune/rigc/issues/1287)) is additive on the
+agreed row's types: one optional input, `MeshReductionInput.motionAmplitude`
+(`MotionAmplitude | null`, the measurement's field from #1280), read by the
+result's own measurement only and echoed in `effective` only when set. A
+call without it writes the mesh and every byte of the report as before —
+measured byte-identical against `5be70d8` on the 18 inputs of the stage-D1
+record, 90 of 90 calls across no opt-in, `boundaryRuns`, `retriangulate`,
+`removalOrder` and all three — and a call with it changes no mesh, step or
+acceptance, only the two rows it measures and its echo, 54 of 54
+(docs/MESH_REDUCTION.md, §8 *Stage B — the amplitude on a reduction*). The
+validator it shares with the measurement, `validateMotionAmplitude`, is
+merely exported, so by the rule above it is not promised.
+
 The region pixel set computed by scanline
 ([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —
