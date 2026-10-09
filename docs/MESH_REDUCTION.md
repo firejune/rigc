@@ -4979,6 +4979,117 @@ The fixtures are `selftest.ts`'s own (`mvSource`, `mvBuild`, `abSource`,
 `abBuild`, `mqMask`, `mqFrame` and the suite's input policy), extracted by line
 range, not rewritten.
 
+
+### §9's C1 — edge sets without strings, built only where read [implemented, #1307]
+
+[implemented, #1307] What changed is the representation of the edge sets on
+the removal and boundary-run paths (`src/meshreduce.ts`), and where they are
+built:
+
+- **Keyed by number.** An undirected edge is `pairKey(a, b, n)` = `min * n +
+  max` over the ids below `n` — exact for any `n` up to 94,906,265 — in a
+  `Set<number>`, where `edgeKey` built a string per edge. The source's edge set
+  the steps read (condition (b)'s source-edge exemption, the post-pass's) is
+  keyed the same way over the source vertex count; `protectionOf` still reads
+  the string-keyed set once per call, because the weightJump edges it protects
+  follow that set's sorted keys and their order names the first protected edge
+  a step loses.
+- **A run builds no per-removal edge set.** `removalStep` makes one removal's
+  triangles; `removalOf` adds the edges it added, and `runRemovalOf` reads what
+  the whole run added off the triangles its removals made — a triangle no
+  removal made is the same tuple as one before the run, so every edge it holds
+  is old and it adds nothing. Only the keys the new triangles hold are looked
+  up among the old ones.
+- **Built only where read.** The added edges are a thunk, built by condition
+  (b) when `weightJump` is declared and by the load order (whose maximum reads
+  no order); the triangulation's edge set is built only when a protected edge
+  is looked up in it. Where order is read it is the order before: the added
+  edges triangle by triangle, corner k to k + 1, so condition (b) names the
+  same first edge over the jump; the protected edges in their own list's
+  order, unchanged.
+
+No candidate, order, row, bound, budget or message moves, and the observer's
+`AttemptRecord`s are the same records.
+
+**Byte identity** [measured, #1307]. §9's population — the 19 recorded inputs
+(the stage-D1 record's 18 and #1253's with-region input), `MQ79`'s ramp and
+`MQ85`'s traced bean, each under `rec`, T, TS, TA and TSA, the nine unweighted
+synthetic inputs taking no envelope — through `reduceMesh` on main (`6458e15`)
+and on the cut, and through the cut again under the edge-set audit below:
+`writeMeshQualityReport(report)` and the mesh hashed, **identical on 87 of
+87 calls**, 18 skipped; the audit compared 17,968 added-edge lists (45,072
+edges, 13,724 of two or more) and found no difference. No recorded input
+declares `weightJump`, so none reads condition (b) or the protected-edge set;
+the same run under T with `protect.weightJump` 0.5 on the twelve weighted
+inputs — beyond the population — is identical on **12 of 12**, the audit
+comparing 17,425 added-edge lists and 10,571 triangulation edge sets (9.9
+million edges) with no difference. The `mesh-quality` and `mesh-compare`
+suites print the same text on main and the cut (Nova, `--jobs 4`) but for the
+wall-time clauses (`MQ18`, `MQ24`, `MQ43`, `MQ46`–`MQ48`, `MQ55`) and
+`MQ150`'s three lines.
+
+**Cost** [measured, #1307]. Nova pool (WSL2 Linux 6.6, x86_64, 20 threads,
+Bun 1.4.2), pooled rather than exclusive, the 1-minute load **2.4–8.4 (median
+4.0)** at the calls' starts — above §9's 1.0–2.5, other pool jobs running
+beside it. Each call in its own process, main and the cut alternated, three
+of each; the median, ms; every call of a pair wrote the same hash:
+
+| input | T main | T cut | saved | TS main | TS cut | saved | §9's bound, T / TS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| demo/neck | 77 | 63 | 18 % | 124 | 99 | 20 % | 15–27 % (necks) |
+| sample/neck | 130 | 99 | 24 % | 187 | 146 | 22 % | 15–27 % (necks) |
+| `scarf__hair_front` | 289 | 160 | 45 % | 641 | 379 | 41 % | 41–46 % / 10–41 % |
+| sample/topwear | 393 | 228 | 42 % | 806 | 565 | 30 % | 41–46 % / 10–41 % |
+| `scarf__handwear_l` | 1,126 | 561 | 50 % | 2,167 | 1,292 | 40 % | 41–46 % / 10–41 % |
+| sample/sleeves | 1,575 | 842 | 47 % | 2,112 | 1,297 | 39 % | 41–46 % / 10–41 % |
+| sample/bottomwear | 877 | 500 | 43 % | 2,483 | 1,813 | 27 % | 41–46 % / 10–41 % |
+| demo/bottomwear | 4,052 | 1,767 | **56 %** | 10,842 | 6,633 | **39 %** | **54 % / 38 %** |
+| `demo__bottomwear__region` | 10,492 | 5,327 | 49 % | 2,806 | 2,809 | 0 % | 41–46 % / — |
+| `MQ79` ramp | 413 | 318 | 23 % | 468 | 384 | 18 % | 22 % / — |
+| `MQ85` bean | 825 | 394 | 52 % | 2,438 | 1,395 | 43 % | 48 % / — |
+
+- **At the bound or up to four points over it** (demo/bottomwear 56 % against
+  54 %, the bean 52 % against 48 %, `scarf__handwear_l` 50 % against 41–46 %).
+  §9's bound is the time its section timers put on the work the cut removes; the cut
+  also drops the strings that work allocated, and peak RSS under T fell
+  327 → 265 MiB on demo/bottomwear and 403 → 350 MiB on the with-region input.
+  That the excess over the bound is the collector's share of those strings is
+  [estimate, #1307]: the reading is the RSS beside the wall, and the
+  collector's time was not measured.
+- **The with-region input under TS is unchanged**, as §9 predicts: the
+  refined source reads over the residual bound and the call stops before any
+  removal.
+- **The synthetic inputs** save −5 to 17 % at 11–50 ms, within the
+  spread; `synthetic__tiny_region_source_at_L0` (617 vertices) 1,398 →
+  1,087 ms (22 %).
+- The removed work also lowers C2's and C4's denominators, as §9's
+  recommended order says; their bounds are to be measured again over this
+  tree, not read off §9's table.
+
+**Held in suite** by `MQ150` (the `mesh-compare` suite, numbered from 150 to
+leave MQ144 onwards to #1302's controls): `reduceMeshWith`'s seventh argument,
+an `EdgeSetAudit`, builds every added-edge list and every triangulation edge
+set a second time the string-keyed way they were built before and compares
+them — a list member for member and in order, a set member for member — on
+two subjects under T that read both paths: `MQ85`'s bean at half its largest
+source edge jump (1,460 lists, 1,035 sets, condition (b) refusing 173
+attempts) and `MQ79`'s ramp at 1.5 times its own (1,646 lists; condition (b)
+refusing 1,184). The audited calls write the unaudited calls' bytes. Its
+plants are the audit's own: one edge dropped from every list and set, found
+as 169 list and 151 set differences on the bean, and every list of two or
+more reversed, 159 on the bean.
+
+The method and scripts are the stage-A record's (#1304), reused for a pair
+of trees rather than a tree and its instrumented copy:
+
+```sh
+bash mkbundle.sh <worktree> <bundle>     # main's src, the cut's src, the recorded inputs, the harness
+cd <bundle>                              # then, on the Nova pool runner (pooled, never exclusive):
+bash batch.sh identity                   # main / cut / cut under the audit, one hash each, 87 calls
+VARIANTS=TJ bash batch.sh identity       # T with weightJump 0.5 on the weighted inputs
+bash batch.sh time                       # 3 main + 3 cut runs per T and TS call, one process each, alternated
+```
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the

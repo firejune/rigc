@@ -432,6 +432,7 @@ import {
   type ReductionPlant,
   type AttemptObserver,
   type AttemptRecord,
+  type EdgeSetAudit,
   type AcceptedOperation,
   type Retriangulation,
   type SourceFrame,
@@ -49250,6 +49251,7 @@ const MESH_COMPARE_UNITS = [
   'MQ134-MQ135',
   'MQ136-MQ137',
   'MQ138-MQ142',
+  'MQ150',
 ] as const;
 type MeshCompareUnitName = (typeof MESH_COMPARE_UNITS)[number];
 
@@ -49272,6 +49274,7 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ99-MQ102',
   'MQ91-MQ95',
   'MQ138-MQ142',
+  'MQ150',
   'MQ116-MQ133',
   'MQ106-MQ108',
   'MQ79-MQ80',
@@ -52915,6 +52918,97 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
             `plants: the run cut at three candidates stored under the key — ${swapCaught ? `${swappedBytes.length} bytes, not the fresh computation's` : 'not caught'}; the stored mesh's first vertex moved 1 px — the next read refused, naming the key`,
         ),
         'issue #1300: the memo hands one run to every control that reads its input, so a wrong or edited entry would reach each of them with a green gate — a hit is held to a fresh computation, and each way an entry can be wrong has a plant here',
+      );
+    });
+  });
+
+  // --- MQ150 (#1307): the edge sets keyed by number, built only where read, held to the string-keyed construction ----
+  // Numbered from MQ150, not the next free MQ144: issue #1302's controls are written from MQ144 in parallel, and the
+  // gap keeps the two cards from claiming one number. The reduction's added-edge lists (condition (b) and the load
+  // order read them, (b) in order — it names the first edge over weightJump) and the triangulation's edge set the
+  // protected edges are looked up in are each built a second time the way they were before the issue, string-keyed,
+  // through `EdgeSetAudit`, and compared: a list member for member and in order, a set member for member. Two
+  // subjects under the dependant's trial policy (boundary runs 8, the load order, the post-pass): MQ85's traced bean at
+  // half its largest source edge jump, so edges are protected and (b) refuses, and MQ79's ramp at 1.5 times its own,
+  // so nothing is protected and (b) reads every added edge. No recorded input declares weightJump, so these are where
+  // those two paths are read. The audit with no plant must leave the call's bytes as they are; each plant — an edge
+  // dropped from every list and set, every list of two or more reversed — must be found.
+  unit('MQ150', () => {
+    mcGuard('MQ150', () => {
+      const probes: string[] = [];
+      const jumpOf = (src: SourceMesh): number => {
+        let most = 0;
+        for (let t = 0; t < src.triangles.length; t += 3) {
+          for (let k = 0; k < 3; k++) {
+            const shares = new Map<string, number>();
+            for (const x of src.weights![src.triangles[t + k]]) shares.set(x.bone, (shares.get(x.bone) ?? 0) + x.weight);
+            for (const x of src.weights![src.triangles[t + ((k + 1) % 3)]]) shares.set(x.bone, (shares.get(x.bone) ?? 0) - x.weight);
+            most = Math.max(most, [...shares.values()].reduce((sum, d) => sum + Math.abs(d), 0));
+          }
+        }
+        return most;
+      };
+      const plates150 = join(dir, 'plates-mq150');
+      mkdirSync(plates150, { recursive: true });
+      const beanMask = mqMask(plates150, 'bean', AB_W, AB_H, (x, y) => (abInside(x + 0.5, y + 0.5) ? 1 : 0));
+      const bean = abSource(beanMask).mesh;
+      const trial = { boundaryRuns: { maxVertices: 8 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' } as const;
+      const beanJump = r6(jumpOf(bean) / 2);
+      const rampJump = r6(jumpOf(mvSrc) * 1.5);
+      const subjects: Array<{ label: string; input: MeshReductionInput; protects: boolean }> = [
+        {
+          label: `the bean at weightJump ${beanJump} (half its largest source edge jump)`,
+          input: { ...mvReduceInput(bean, { ...trial, protect: { ...mvNoProtect, weightJump: beanJump } }), attachment: { skin: null, slot: 'bean', attachment: 'bean' }, art: { mask: beanMask, threshold: 1, frame: mqFrame(AB_W, AB_H) }, boneOrder: ['root', 'a', 'b', 'c'] },
+          protects: true,
+        },
+        { label: `the ramp at weightJump ${rampJump} (1.5 times its largest source edge jump)`, input: mvReduceInput(mvSrc, { ...trial, protect: { ...mvNoProtect, weightJump: rampJump } }), protects: false },
+      ];
+      const fresh = (): EdgeSetAudit => ({ addedLists: 0, addedEdges: 0, orderedLists: 0, edgeSets: 0, edgeSetEdges: 0, differences: [] });
+      const lines: string[] = [];
+      const caught: string[] = [];
+      for (const subject of subjects) {
+        const rasters = artRastersOf(subject.input.art);
+        const run = (audit: EdgeSetAudit | null, observe: AttemptObserver | null = null, over: Partial<MeshReductionInput> = {}): ReturnType<typeof reduceMeshWith> =>
+          reduceMeshWith({ ...subject.input, ...over }, rasters, stepRastersOf(rasters), null, observe, null, audit);
+        const plain = run(null);
+        const audit = fresh();
+        const refusedBy = new Map<string, number>();
+        let runAttempts = 0;
+        const audited = run(audit, (a) => {
+          if (a.kind === 'boundary-run') runAttempts++;
+          // A floor refusal's name is a full measurement; the structural names are what this control is about.
+          if (a.refusedBy === null || a.decidedByFloor) return;
+          const name = a.refusedBy().split(':')[0];
+          refusedBy.set(name, (refusedBy.get(name) ?? 0) + 1);
+        });
+        if (reductionBytes(audited) !== reductionBytes(plain)) probes.push(`${subject.label}: the audited call wrote other bytes than the call without the audit`);
+        for (const d of audit.differences.slice(0, 2)) probes.push(`${subject.label}: ${d}`);
+        if (audit.differences.length > 2) probes.push(`${subject.label}: ${audit.differences.length - 2} difference(s) more`);
+        if (audit.orderedLists === 0) probes.push(`${subject.label}: no added-edge list of two or more was compared, so no order was held`);
+        if (subject.protects && audit.edgeSets === 0) probes.push(`${subject.label}: no triangulation edge set was compared — nothing was protected`);
+        if (!subject.protects && audit.edgeSets !== 0) probes.push(`${subject.label}: ${audit.edgeSets} triangulation edge set(s) built with nothing protected — built where nothing reads it`);
+        if ((refusedBy.get('weightJump (b)') ?? 0) === 0) probes.push(`${subject.label}: condition (b) refused no attempt, so the order it reads decided nothing here`);
+        if (runAttempts === 0) probes.push(`${subject.label}: no boundary run was tried`);
+        lines.push(
+          `${subject.label}: ${mvCounts(plain.report.candidates[0])}, ${audit.addedLists} added-edge list(s) (${audit.addedEdges} edges, ${audit.orderedLists} of two or more) and ${audit.edgeSets} edge set(s) (${audit.edgeSetEdges} edges) equal to the string construction, ${runAttempts} boundary-run attempt(s), refusals ${[...refusedBy].map(([k, n]) => `${k} ${n}`).join(', ')}`,
+        );
+        // The plants: the first 200 candidates are enough for each to show, and the plain run's prefix is not compared.
+        for (const plant of ['drop-one', 'reorder'] as const) {
+          const planted: EdgeSetAudit = { ...fresh(), plant };
+          run(planted, null, { budget: { maxCandidates: 200 } });
+          const lists = planted.differences.filter((d) => d.includes('added edges')).length;
+          const sets = planted.differences.filter((d) => d.includes('edge set')).length;
+          const wanted = plant === 'reorder' ? lists > 0 : lists > 0 && (sets > 0 || !subject.protects);
+          if (!wanted) probes.push(`${subject.label}: the plant ${plant} was not found (${lists} list and ${sets} set difference(s))`);
+          caught.push(`${plant} on ${subject.label.split(' at ')[0]}: ${lists} list and ${sets} set difference(s)`);
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ150_THE_EDGE_SETS_KEYED_BY_NUMBER_AND_BUILT_ONLY_WHERE_READ_EQUAL_THE_STRING_KEYED_CONSTRUCTION_IN_MEMBERSHIP_AND_READ_ORDER',
+        held,
+        probeDetail(held, probes, `${lines.join('; ')}; the audited calls wrote the unaudited calls' bytes; plants: ${caught.join('; ')}`),
+        'issue #1307: the edge sets on the removal and boundary-run paths changed representation for cost alone, so they are held to the construction they replaced on every attempt of two subjects that read them, and each way the new one could differ — an edge lost, the order (b) reads changed — has a plant here',
       );
     });
   });
