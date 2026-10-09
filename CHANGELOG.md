@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.31.0](https://github.com/firejune/rigc/compare/v2.30.0...v2.31.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** reduceMesh takes targets.skinning — every removal, boundary run and post-pass is held to MQ_SKINNING_RESIDUAL against the call's own source and refused by name when over it, the residual carried per sample and equal to the full recompute on every trial; and uvCarriers searches a grid instead of every triangle, carriers unchanged ([#1295](https://github.com/firejune/rigc/issues/1295)) ([#1298](https://github.com/firejune/rigc/issues/1298)) ([43545f9](https://github.com/firejune/rigc/commit/43545f9b0f793f4e0ed6f186cbc3b878d40fe7f0))
+
 ## [2.30.0](https://github.com/firejune/rigc/compare/v2.29.0...v2.30.0) (2026-10-09)
 
 
