@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.26.0](https://github.com/firejune/rigc/compare/v2.25.0...v2.26.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** five allocation rows — MQ_GRADE, MQ_MIN_ANGLE_P10, MQ_ALLOCATION_CONTRAST, MQ_DEFORM_LOAD, MQ_BOUNDARY_NECESSARY — reported undeclared by every measurement, and the optional motionAmplitude the two weight-aware rows read, not-measurable without it ([#1280](https://github.com/firejune/rigc/issues/1280)) ([#1284](https://github.com/firejune/rigc/issues/1284)) ([44c5fc9](https://github.com/firejune/rigc/commit/44c5fc9963ae77e986133d9eb6a7d52038fbc8d8))
+
 ## [2.25.0](https://github.com/firejune/rigc/compare/v2.24.1...v2.25.0) (2026-10-09)
 
 
