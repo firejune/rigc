@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.27.0](https://github.com/firejune/rigc/compare/v2.26.0...v2.27.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** reduceMesh takes retriangulate: 'delaunay' — a post-pass that re-triangulates the kept vertex set once the reduction ends, taken only when every required row still passes — and removalOrder: 'deformation-load'; both opt-in, the opt-out path byte-identical, replay byte-exact ([#1283](https://github.com/firejune/rigc/issues/1283)) ([#1286](https://github.com/firejune/rigc/issues/1286)) ([5be70d8](https://github.com/firejune/rigc/commit/5be70d8162bbba5b96977538217e7a1752243e7d))
+
 ## [2.26.0](https://github.com/firejune/rigc/compare/v2.25.0...v2.26.0) (2026-10-09)
 
 
