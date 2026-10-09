@@ -1278,6 +1278,27 @@ export interface RefinementRegion {
   against `weightJump` before the step is measured (`MQ18`). Condition (b) is
   applied to the edges a removal adds; an edge the refinement adds joins an
   inserted vertex whose weights are interpolated between its neighbours'.
+- [measured, #1268] **`weightJump` acts through (b) long after (a) has
+  stopped protecting anything — read it as a cap on every new edge, not as a
+  seam detector.** Condition (a) reads source edges only, so at any value at
+  or above the largest source edge jump *J* it protects nothing. Condition (b)
+  reads the edges a removal *adds*, and a new edge spans several source edges:
+  on a ramp its endpoints differ by several steps, so (b) refuses it at any
+  value under that span — up to the largest L1 difference between **any** two
+  source vertices, which is 2 whenever two vertices share no bone. Measured at
+  exactly *J* on §7's reproducer and on three of spine-parts's recorded
+  inputs: (a) protected 0 edges every time; (b) refused 76, 93, 5 and 67
+  candidates, and with (b) switched off in a scratch copy the result was the
+  run without `weightJump` byte for byte, while with (a) switched off it was
+  the run at *J* byte for byte (table in §7, *Measured — `weightJump` at
+  exactly J*). So a consumer choosing a value should expect: under *J*, every
+  source edge above the value protected and its endpoints never candidates (on
+  the reproducer's linear ramp that is every vertex); from *J* up to the
+  largest pairwise difference, no protected edge but a reduction held back by
+  (b) — fewer vertices removed than without the field, by an amount no source
+  edge predicts; at or above that pairwise maximum, exactly the run without
+  `weightJump`. The two conditions are unchanged; this is what they already
+  said, measured.
 
 ```ts
 /** [proposal] with P19/P20 folded in. [implemented, #1224] declared in `src/meshquality.ts`, echoed in `effective`, read by `reduceMesh`. */
@@ -2143,12 +2164,14 @@ wall time — the seven readings and their loads are the claim.
 
 ## 7. Motion-valid reduction (#1266)
 
-> **Nothing in this section is implemented.** It is Stage A of
+> **Mechanism 2 is implemented** ([#1268](https://github.com/firejune/rigc/issues/1268),
+> *Mechanism 2 — implemented* below); nothing else in this section is. The
+> rest is Stage A of
 > [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
 > (`MQ79`, `MQ80`, `mesh-compare`), the measurements made on it, and a proposal
-> to settle with parts before any interface is written. `reduceMesh`,
-> `compareMeshesInMotion`, their rows, bounds, reports and emitted bytes are
-> unchanged by it. Marks: **Existing** cites the tree by path and symbol;
+> settled with parts (spine-parts#126, comment 6072801422). #1268 adds one
+> report key and one optional input; `compareMeshesInMotion`, every row, bound,
+> the reduction's order and budget, and the emitted bytes are unchanged. Marks: **Existing** cites the tree by path and symbol;
 > **[measured, #1266]** is a figure taken for this section, with the machine
 > beside it; **[proposal]** is unsettled until parts answers the questions at
 > the end by number.
@@ -2172,6 +2195,8 @@ selection, the consumer declares the motion and the bounds.
   measured. Both read one edge's endpoints and nothing of its length, so on a
   smooth ramp the figure an edge carries is the ramp's slope times the source's
   spacing: a value under that step protects every edge that crosses the ramp.
+  At and above it, (a) protects nothing and (b) still refuses a new edge that
+  spans more than the value — measured in *`weightJump` at exactly J* below.
 - **The candidate loop** (`removeVertices`): surviving source vertices in
   ascending source index, one attempt per vertex per pass; a step taken stays
   taken; a pass that takes none ends `no-further-valid-reduction`. The budget
@@ -2180,7 +2205,8 @@ selection, the consumer declares the motion and the bounds.
   left, reported `budget-exhausted` / `best-meeting-every-bound`. Only the last
   state is returned (`ReducedMesh`); no intermediate mesh is kept, and the
   carried step state (`StepRasters`, *Each step carried from the last one*) is
-  dropped with the call.
+  dropped with the call. Since #1268 any earlier state is reachable by replay
+  (*Mechanism 2 — implemented*).
 - **No pose anywhere in the reduction.** `src/meshreduce.ts` links no poser
   (`CUR07` derives the linkers; `MQ26` holds which modules name the
   operations), and `rig-c/mesh` stays geometry-only (§0, P1). `SourceMesh`
@@ -2293,6 +2319,54 @@ parts's to measure (Q7). On the variants: **smooth** reduces at every value
 **scale** variant on the linear ramp fails at 1.0 (1.500525) and passes below
 it. So no value is safe without a motion
 comparison, and a value chosen by one is chosen on **selection** frames.
+
+⚠️ **Correction [measured, #1268].** "At or under" is wrong at the boundary:
+the values measured were 0.09 and 0.11, never 0.1 itself. At exactly 0.1 — the
+fixture's *J*, nothing strictly above it — no edge is protected and the result
+is the 0.11 row's mesh byte for byte (105 removed, 42/0, 189 candidates, motion
+0.058835). The sentence holds for values **under** *J*.
+
+### Measured — `weightJump` at exactly J [measured, #1268]
+
+spine-parts reported (spine-parts#126, comment 6072801422, observation (a))
+that at `weightJump` = *J* — the largest source edge jump, so condition (a)
+protects nothing — the result still differs from the run without the field.
+Measured with a scratch copy of `src/meshreduce.ts` that counts, per
+candidate, which condition refused it and can switch either off (its
+unswitched results byte-identical to `reduceMesh`'s on every call below), on
+the reproducer and on the three parts inputs parts named, from the inputs
+recorded for stage D1 (rig-c 2.20.0, strict policy, no `weightJump` of their
+own). *J* derived as `MQ79` derives it. darwin, Apple M4, load 2.5–2.9.
+
+| input | *J* | `weightJump` | (a) edges protected | refused by (a) | refused by (b) | removed | candidates | mesh |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| reproducer | 0.1 | unset | — | — | — | 119 | 175 | A |
+| | | *J* | 0 | 0 | 76 | 105 | 189 | B |
+| | | *J*, (b) off | 0 | 0 | — | 119 | 175 | = A |
+| | | *J*, (a) off | — | — | 76 | 105 | 189 | = B |
+| | | 1.1 *J* | 0 | 0 | 76 | 105 | 189 | = B |
+| demo/bottomwear | 1.426772 | unset | — | — | — | 254 | 1101 | A |
+| | | *J* | 0 | 0 | 93 | 239 | 1457 | B |
+| | | *J*, (b) off / (a) off | | | | | | = A / = B |
+| | | 1.1 *J* | 0 | 0 | 79 | 240 | 1446 | C |
+| sample/sleeves | 1.445506 | unset | — | — | — | 41 | 421 | A |
+| | | *J* | 0 | 0 | 5 | 39 | 423 | B |
+| | | *J*, (b) off / (a) off | | | | | | = A / = B |
+| | | 1.1 *J* | 0 | 0 | 5 | 39 | 423 | = B |
+| sample/bottomwear | 1.56238 | unset | — | — | — | 129 | 331 | A |
+| | | *J* | 0 | 0 | 67 | 118 | 583 | B |
+| | | *J*, (b) off / (a) off | | | | | | = A / = B |
+| | | 1.1 *J* | 0 | 0 | 25 | 126 | 454 | C |
+
+At 1.1 *J* the same held: (b) off gave the unset mesh and (a) off the 1.1 *J*
+mesh, on all four. The removed counts at *J* (239, 39, 118) are the ones parts
+reported, so the recorded inputs are the calls parts measured. **Condition (b)
+is the whole of the difference, and (a) none of it.** It stops when the value
+reaches the largest L1 difference between any two source vertices: 2.0 on
+both bottomwears, 1.989220 on sleeves, and `weightJump` set to exactly that
+returned the unset mesh on all three (on demo/bottomwear and
+sample/bottomwear, 0.95 of it still did not). That is the `> 2` parts read
+off its own 1.5 *J* row. §6 carries the consumer's reading.
 
 ### Measured — M2, the weight-field proxy, and what the motion error is made of [measured, #1266]
 
@@ -2409,9 +2483,86 @@ step about 5 times; a bisection about 12 times. The full-recompute residual is
 about 15 times the reduction — the card's warning about full invariant work on
 every step applies to it as written.
 
+### Mechanism 2 — implemented [implemented, #1268]
+
+Agreed with parts (spine-parts#126, comment 6072801422): Q1 — the list and the
+replay promise are enough, parts keeps no intermediate mesh and asks for no
+step or byte limit beyond `budget.maxCandidates`; Q2 — a replay is its own
+input with its own termination, accepted by parts on the same footing as
+`no-further-valid-reduction` and `budget-exhausted` / `best-meeting-every-bound`
+provided every declared row passes; Q9 — when parts picks a replay by
+comparison, it chooses on the `grid` frames and holds out the `irr` frames of
+the same animation, and its held-out claim names them as untouched by the
+choice (`heldOutClaim: true`, phases listed; another animation only when the
+rig declares one; no held-out set is not something parts reports as a pass). The choosing is parts's
+(mechanism 3, Q8); rigc supplies the list and the replay.
+
+```ts
+/** src/meshquality.ts — additive. */
+export interface ReductionChanges {
+  // …every existing field…
+  /** `candidatesTried` as it stood when each accepted step was taken, 1-based, ascending. */
+  acceptedAt: number[];
+}
+export interface MeshReductionInput {
+  // …every existing field…
+  /** Stop after the n-th accepted step. Left out = today. A whole number, 0 or more. */
+  stopAfterAccepted?: number;
+}
+// Termination gains one reason, and the run's own two may carry a stop they did not reach:
+//   | { reason: 'replayed-to-accepted-step'; acceptedSteps: number; candidatesTried: number }
+//   no-further-valid-reduction / budget-exhausted: stopAfterAccepted?: { requested: number; acceptedSteps: number }
+```
+
+- **`acceptedAt`** lists every accepted step — each refinement insertion and
+  each removal taken — so its length is `insertedVertices + removedVertices`,
+  written last in `changes` (the only key a reader of the earlier report meets
+  that it did not know).
+- **The contract:** `stopAfterAccepted: n` returns, byte for byte, the mesh the
+  same call without the field held after its *n*-th accepted step, terminated
+  `replayed-to-accepted-step` with `acceptedSteps: n` and `candidatesTried:
+  acceptedAt[n − 1]`, and its own `acceptedAt` is the full run's first *n*. The
+  stop is read straight after the step, before the budget is read again, so a
+  replay is never reported as an exhausted budget. `n = 0` takes no step and
+  returns the canonical source (with a region declared, the unrefined one).
+- **A stop the run does not reach** leaves the run to end as it would have,
+  with its own termination, which then carries `stopAfterAccepted: {
+  requested, acceptedSteps }`; the input is echoed as
+  `effective.stopAfterAccepted`. A refusal (`invalid-input`,
+  `unsupported-topology`) does not carry it — the refusal is the answer.
+- **Inside a refinement** a replay returns the partly refined mesh and its own
+  measurement, which may not be accepted: a refinement step is not required to
+  meet the targets, only the steps after it are. A removal step is taken only
+  when every required row passes after it, so a replay to one carries that.
+- **Refused:** a `stopAfterAccepted` that is not a whole number 0 or more, as
+  `REDUCE_INPUT_MISSING` naming the field.
+- **Measured** [measured, #1268]: on the reproducer, `stopAfterAccepted: k`
+  equals the budget cut at `acceptedAt[k − 1]` for **119 of 119** k, termination
+  named each time. On the 19 inputs recorded for stage D1, main (5db8e45)
+  against this tree without the field: mesh, `accepted` and the report with
+  `changes.acceptedAt` removed identical, **57 of 57**; replays at the first,
+  middle and last accepted step equal main's budget cut wherever that cut
+  returns a mesh (a budget spent inside a refinement returns none, which is
+  why the replay, not the budget, is the contract). Cost: a replay to step *k*
+  costs its first `acceptedAt[k − 1]` attempts — on the reproducer 4.1 s for
+  all 119, against 0.12 s for the run itself, so a consumer searching the steps
+  should bisect (§7 M3: 8 replays) rather than walk them.
+- **Controls:** `MQ81` (replay identity at a derived sample of 20 of the
+  reproducer's 119 steps — the cost above is quadratic in a walk — and across a
+  refinement), `MQ82` (the termination, `n = 0`, `n` beyond the run, a budget
+  the stop outlives, the report without the field), `MQ83` (a replay planted to
+  stop one step early or late is caught naming the step), `MQ84` (refusals).
+
 ### Proposed [proposal]
 
-**Mechanism 2 — intermediate candidates, by replay.** The minimum is a promise
+**Mechanism 2 — intermediate candidates, by replay.** [implemented, #1268] —
+see the subsection above; the proposal is kept as written, and the
+implementation departs from it in three places, each for a reason stated
+there: `acceptedAt` counts refinement insertions too (one count for the list
+and the replay); the promise is `stopAfterAccepted`, not
+`budget.maxCandidates` (parts's Q2, and a budget cut inside a refinement
+returns no mesh); and a replay inside a refinement returns the mesh rather
+than being refused. The minimum is a promise
 and a list, both additive:
 
 ```ts
@@ -2550,6 +2701,10 @@ parts can run privately now, recording the frames it chose by as `selection`
 
 ### Open with parts
 
+Answered on spine-parts#126 (comment 6072801422); Q1, Q2 and Q9 are folded
+into *Mechanism 2 — implemented*, observation (a) of Q7 into *`weightJump` at
+exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
+
 - **Q1.** Is `ReductionChanges.acceptedAt` with the replay promise enough for
   parts's retry, or does parts need meshes returned, and at what limit of
   steps or bytes?
@@ -2641,6 +2796,15 @@ and
 `MQ80_RIGID_NO_REDUCTION_BUDGET_AND_A_BOUND_NO_PREFIX_MEETS_ARE_FOUR_DISTINCT_OUTCOMES_AND_THE_LAST_IS_THE_ORDERS_NOT_THE_MESHS`
 (`mesh-compare`). They hold today's behaviour on that fixture — the gap and its
 feasible controls — and implement nothing of §7's proposal.
+
+[implemented, #1268] §7's mechanism 2, in the `mesh-quality` suite, under the
+next free codes:
+`MQ81_CONTROL_STOP_AFTER_ACCEPTED_K_RETURNS_THE_MESH_OF_THE_KTH_ACCEPTED_STEP_ON_THE_REPRODUCERS_STRICT_RUN`,
+`MQ82_CONTROL_A_REPLAY_TERMINATES_REPLAYED_TO_ACCEPTED_STEP_ZERO_TAKES_NO_STEP_AND_A_STOP_BEYOND_THE_RUN_KEEPS_ITS_OWN_TERMINATION_NAMING_IT`,
+`MQ83_A_REPLAY_PLANTED_TO_STOP_ONE_ACCEPTED_STEP_EARLY_OR_LATE_IS_CAUGHT_NAMING_THE_STEP`
+(the plant is `ReplayPlant`, passed through `reduceMeshWith`; `reduceMesh`
+plants none) and
+`MQ84_A_STOP_AFTER_ACCEPTED_THAT_IS_NOT_A_WHOLE_NUMBER_0_OR_MORE_IS_REFUSED_NAMING_THE_FIELD`.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
@@ -2751,11 +2915,17 @@ attempted, which is also what `budget.maxCandidates` bounds:
 
 ```ts
 export type Termination =
-  | { reason: 'no-further-valid-reduction'; candidatesTried: number; blockingConstraint: string }
-  | { reason: 'budget-exhausted'; candidatesTried: number; budget: number; result: 'best-meeting-every-bound' | 'none-met-the-targets' }
+  | { reason: 'no-further-valid-reduction'; candidatesTried: number; blockingConstraint: string; stopAfterAccepted?: StopNotReached }
+  | { reason: 'budget-exhausted'; candidatesTried: number; budget: number; result: 'best-meeting-every-bound' | 'none-met-the-targets'; stopAfterAccepted?: StopNotReached }
+  | { reason: 'replayed-to-accepted-step'; acceptedSteps: number; candidatesTried: number }
   | { reason: 'invalid-input'; code: string; detail: string }
   | { reason: 'unsupported-topology'; code: string; detail: string };
 ```
+
+[implemented, #1268] `replayed-to-accepted-step` and the optional
+`stopAfterAccepted: { requested, acceptedSteps }` on the run's own two
+reasons exist only when the input sets `stopAfterAccepted` (§7, *Mechanism 2
+— implemented*).
 
 - **no-further-valid-reduction** — every candidate step from the result
   violates a declared constraint; the report names the constraint that blocked
@@ -2767,6 +2937,10 @@ export type Termination =
   and nothing implies more reduction was impossible or that it is optimal.
   With `none-met-the-targets`, **no mesh is returned and nothing is accepted**;
   the report keeps `sourceCounts` and carries no `geometry`.
+- **replayed-to-accepted-step** — the input's `stopAfterAccepted` was
+  reached; the mesh is the one the call without it held after that many
+  accepted steps, byte for byte. It says nothing about the steps the run would
+  have taken next.
 - **invalid-input** — a refusal from §1, §3, §5 or §6 by code; no mesh is
   returned.
 - **unsupported-topology** — the source is not one loop, a requested

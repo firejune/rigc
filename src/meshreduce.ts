@@ -105,6 +105,7 @@ import {
   type RefinementRegion,
   type ReductionChanges,
   type SourceMesh,
+  type StopNotReached,
   type Termination,
 } from './meshquality.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasters } from './meshrasters.ts';
@@ -259,6 +260,9 @@ function validateReduction(input: MeshReductionInput): void {
   const b = input.budget;
   if (!isObject(b) || !Number.isInteger(b.maxCandidates) || (b.maxCandidates as number) < 0) {
     refuse('REDUCE_INPUT_MISSING', `${who}: budget is ${JSON.stringify(b)}; required { maxCandidates: a whole number, 0 or more } — the work bound has no default`);
+  }
+  if ('stopAfterAccepted' in input && input.stopAfterAccepted !== undefined && (!Number.isInteger(input.stopAfterAccepted) || input.stopAfterAccepted < 0)) {
+    refuse('REDUCE_INPUT_MISSING', `${who}: stopAfterAccepted is ${JSON.stringify(input.stopAfterAccepted)}; required a whole number of accepted steps, 0 or more, or the field left out (issue #1268: replay to that step)`);
   }
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
@@ -729,6 +733,10 @@ interface Run {
   sourceHull: Array<[number, number]>;
   /** Steps tried so far, refinement insertions and removal attempts alike. */
   steps: number;
+  /** Issue #1268: `steps` as it stood at each accepted step — every insertion made and every removal taken — in order. */
+  acceptedAt: number[];
+  /** The replay fault planted for a control, or null. */
+  plant: ReplayPlant | null;
   tally: Tally;
   keyed: Map<number, { animation: string; ref: AttachmentRef; key: number; time: number }>;
   protectedVertices: Set<number>;
@@ -959,7 +967,27 @@ function insertPoint(run: Run, p: Pt): boolean {
 type PhaseEnd =
   | { kind: 'done' }
   | { kind: 'budget' }
-  | { kind: 'stuck'; constraint: string };
+  | { kind: 'stuck'; constraint: string }
+  | { kind: 'replayed' };
+
+/**
+ * Record an accepted step (issue #1268) and say whether the call's `stopAfterAccepted` is now reached — checked
+ * straight after the step, before the budget is read again, so the replay stops in exactly the state the
+ * unreplayed run held after that step.
+ */
+function accept(run: Run): boolean {
+  run.acceptedAt.push(run.steps);
+  const stop = run.input.stopAfterAccepted;
+  if (stop === undefined) return false;
+  const at = run.plant === 'stop-one-early' ? stop - 1 : run.plant === 'stop-one-late' ? stop + 1 : stop;
+  return run.acceptedAt.length >= at;
+}
+
+/**
+ * A fault planted on purpose in the replay, for the mesh-quality suite's controls (issue #1268): the stop taken
+ * one accepted step before or after the one asked for. `reduceMesh` plants none.
+ */
+export type ReplayPlant = 'stop-one-early' | 'stop-one-late';
 
 /**
  * Refine the working mesh until every region's `MQ_MAX_EDGE` and
@@ -983,6 +1011,7 @@ function refineRegions(run: Run): PhaseEnd {
     if (target.state === 'not-measurable') {
       const p: Pt = [r6(region.polygon[0][0]), r6(region.polygon[0][1])];
       if (!insertPoint(run, p)) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no triangle holding the region's first vertex)` };
+      if (accept(run)) return { kind: 'replayed' };
       continue;
     }
     const [ra, rb] = target.worst!.at.edge!;
@@ -1000,7 +1029,10 @@ function refineRegions(run: Run): PhaseEnd {
       exited = true;
       break;
     }
-    if (exited) continue;
+    if (exited) {
+      if (accept(run)) return { kind: 'replayed' };
+      continue;
+    }
     // An end outside the region and its band further beyond it than the edge's own bound, with no split on
     // the band's outer boundary that frees the piece to it — always so with transition 0, where a contact
     // with the authored boundary stays held: every split keeps a held edge from a vertex inside the region
@@ -1023,6 +1055,7 @@ function refineRegions(run: Run): PhaseEnd {
     const p = splitPoint(run.work.pos[a], run.work.pos[b], region);
     if (p === null) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no point of edge ${ra}–${rb} strictly between its ends inside region "${region.name}" or its band)` };
     splitEdge(run, a, b, p);
+    if (accept(run)) return { kind: 'replayed' };
   }
 }
 
@@ -1115,8 +1148,10 @@ function removeVertices(run: Run): PhaseEnd {
       run.steps++;
       tried++;
       const block = tryRemoval(run, v);
-      if (block === null) taken++;
-      else lastBlock = `${block}, removing source vertex ${v}`;
+      if (block === null) {
+        taken++;
+        if (accept(run)) return { kind: 'replayed' };
+      } else lastBlock = `${block}, removing source vertex ${v}`;
     }
     if (taken === 0) {
       if (tried === 0) lastBlock = 'protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge)';
@@ -1193,6 +1228,11 @@ function tryRemoval(run: Run, v: number): string | null {
  *   returned when it meets every required bound, and none is when it does not;
  * - `no-further-valid-reduction`: a pass took no step, naming what blocked the
  *   last one. A local stop: nothing here says the result is the smallest.
+ * - `replayed-to-accepted-step`: the input's `stopAfterAccepted` was reached —
+ *   the mesh is the one the same call without it held after that many accepted
+ *   steps, byte for byte (issue #1268). Never reported as an exhausted budget; a
+ *   stop the run does not reach leaves the run's own termination, which then
+ *   carries `stopAfterAccepted: { requested, acceptedSteps }`.
  */
 export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
   validateReduction(input);
@@ -1215,19 +1255,19 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
  * module with `export *`, and a symbol that is merely exported is not promised
  * (RELEASING.md, *The import surface*).
  */
-export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null = stepRastersOf(rasters)): MeshReductionResult {
+export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null = stepRastersOf(rasters), plant: ReplayPlant | null = null): MeshReductionResult {
   validateReduction(input);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
-  return reduceValidated(input, rasters, steps);
+  return reduceValidated(input, rasters, steps, plant);
 }
 
 /**
  * The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in
  * `rasters`, and every refinement and removal step is measured through `steps` when it is given (issue #1246).
  */
-function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null): MeshReductionResult {
+function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null, plant: ReplayPlant | null = null): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
@@ -1302,6 +1342,8 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
       sourceTurn: Math.sign(signedArea(sourceHull)),
       sourceHull,
       steps: 0,
+      acceptedAt: [],
+      plant,
       tally: { sharesDroppedOnGrid: 0, sharesPruned: 0 },
       keyed: keyedSourceVertices(input),
       ...protectionOf(input, work, sourceEdges),
@@ -1310,20 +1352,28 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
       stepRasters: steps,
     };
 
+    // Issue #1268: a replay ends in its own termination, never as an exhausted budget; a stop the run never reaches
+    // leaves the run's own termination, which then carries `stopAfterAccepted` saying so.
+    const replayed = (): Termination => ({ reason: 'replayed-to-accepted-step', acceptedSteps: run.acceptedAt.length, candidatesTried: run.steps });
+    const stop = input.stopAfterAccepted;
+    const notReached = (): { stopAfterAccepted?: StopNotReached } => (stop === undefined ? {} : { stopAfterAccepted: { requested: stop, acceptedSteps: run.acceptedAt.length } });
+    if (stop === 0) return finish(run, effective, sourceCounts, replayed());
     const refined = refineRegions(run);
-    if (refined.kind === 'budget') return noMesh({ reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'none-met-the-targets' });
+    if (refined.kind === 'replayed') return finish(run, effective, sourceCounts, replayed());
+    if (refined.kind === 'budget') return noMesh({ reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'none-met-the-targets', ...notReached() });
     const startCanon = canonicalise(work, run.sourceTurn, boneRank);
     const startBlock = firstBlockingRow(measureAgainstTargets(run, startCanon.mesh, 'start'), input.targets.artFit);
     let termination: Termination;
     if (startBlock !== null) {
       const constraint = refined.kind === 'stuck' ? refined.constraint : rowName(startBlock);
-      termination = { reason: 'no-further-valid-reduction', candidatesTried: run.steps, blockingConstraint: `${constraint} — before any removal: the refined source does not meet its targets, so no step from it can` };
+      termination = { reason: 'no-further-valid-reduction', candidatesTried: run.steps, blockingConstraint: `${constraint} — before any removal: the refined source does not meet its targets, so no step from it can`, ...notReached() };
     } else {
       const reduced = removeVertices(run);
+      if (reduced.kind === 'replayed') return finish(run, effective, sourceCounts, replayed());
       termination =
         reduced.kind === 'budget'
-          ? { reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'best-meeting-every-bound' }
-          : { reason: 'no-further-valid-reduction', candidatesTried: run.steps, blockingConstraint: reduced.kind === 'stuck' ? reduced.constraint : '' };
+          ? { reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'best-meeting-every-bound', ...notReached() }
+          : { reason: 'no-further-valid-reduction', candidatesTried: run.steps, blockingConstraint: reduced.kind === 'stuck' ? reduced.constraint : '', ...notReached() };
     }
     return finish(run, effective, sourceCounts, termination);
   } catch (err) {
@@ -1403,6 +1453,7 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     deformRemapped: deform.remapped.map((d) => ({ animation: d.animation, attachment: d.attachment, key: d.key, droppedVertices: d.droppedVertices })),
     deformReevaluated: deform.reevaluated.map((d) => ({ animation: d.animation, attachment: d.attachment, key: d.key })),
     linkedMeshes: input.linkedMeshes,
+    acceptedAt: [...run.acceptedAt],
   };
   const counts = candidate.counts!;
   const mesh: ReducedMesh = {
@@ -1440,5 +1491,6 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     targets: input.targets,
     referenceHull: sourceHull,
     budget: { maxCandidates: input.budget.maxCandidates },
+    ...(input.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: input.stopAfterAccepted }),
   };
 }

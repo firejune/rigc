@@ -235,6 +235,14 @@ export interface MeshReductionInput {
   deform: DeformTimelineInput[];
   /** Every linked mesh of the source (they inherit the new topology); empty when none. */
   linkedMeshes: AttachmentRef[];
+  /**
+   * Replay (issue #1268, §7 mechanism 2): stop after the n-th accepted step — a refinement insertion or a removal
+   * taken, counted as `ReductionChanges.acceptedAt` counts them — and return the mesh the same call without this field
+   * had at that step, byte for byte, terminated `replayed-to-accepted-step`. Left out = today's behaviour. A whole
+   * number, 0 or more: 0 takes no step. A number the run never reaches leaves the run to end as it would have, and
+   * that termination says so (`stopAfterAccepted` on it).
+   */
+  stopAfterAccepted?: number;
 }
 
 /**
@@ -402,6 +410,12 @@ export interface ReductionChanges {
   deformReevaluated: Array<{ animation: string; attachment: AttachmentRef; key: number }>;
   /** Every linked mesh of the source: each inherits the new topology. */
   linkedMeshes: AttachmentRef[];
+  /**
+   * Issue #1268: the attempt number — `candidatesTried` as it stood when the step was taken, 1-based — of every
+   * accepted step, ascending: each refinement insertion and each removal, so its length is
+   * `insertedVertices + removedVertices`. `stopAfterAccepted: k` replays to the step at `acceptedAt[k - 1]`.
+   */
+  acceptedAt: number[];
 }
 
 export interface MeshQualityReport {
@@ -445,6 +459,8 @@ export interface EffectiveSettings {
   boneOrder: string[] | null;
   schedule: MotionSchedule | null;
   budget: { maxCandidates: number } | null;
+  /** A reduction's `stopAfterAccepted`, echoed when the input set it (issue #1268); absent otherwise. */
+  stopAfterAccepted?: number;
 }
 
 export interface MeshCounts {
@@ -457,10 +473,20 @@ export interface MeshCounts {
   maxInfluences: number;
 }
 
+/**
+ * Issue #1268: carried by a run's own termination when the input asked for `stopAfterAccepted` and the run ended
+ * before that many steps were accepted — `requested` the input's n, `acceptedSteps` how many the run took.
+ */
+export interface StopNotReached {
+  requested: number;
+  acceptedSteps: number;
+}
+
 /** *Termination reasons*. Every `reduce` report carries exactly one; a `measure` carries one only when it could not read the mesh. */
 export type Termination =
-  | { reason: 'no-further-valid-reduction'; candidatesTried: number; blockingConstraint: string }
-  | { reason: 'budget-exhausted'; candidatesTried: number; budget: number; result: 'best-meeting-every-bound' | 'none-met-the-targets' }
+  | { reason: 'no-further-valid-reduction'; candidatesTried: number; blockingConstraint: string; stopAfterAccepted?: StopNotReached }
+  | { reason: 'budget-exhausted'; candidatesTried: number; budget: number; result: 'best-meeting-every-bound' | 'none-met-the-targets'; stopAfterAccepted?: StopNotReached }
+  | { reason: 'replayed-to-accepted-step'; acceptedSteps: number; candidatesTried: number }
   | { reason: 'invalid-input'; code: string; detail: string }
   | { reason: 'unsupported-topology'; code: string; detail: string };
 
@@ -1963,6 +1989,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     boneOrder: e.boneOrder === null ? null : [...e.boneOrder],
     schedule: scheduleJson(e.schedule),
     budget: e.budget === null ? null : { maxCandidates: e.budget.maxCandidates },
+    ...(e.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: e.stopAfterAccepted }),
   };
 }
 
@@ -2040,18 +2067,24 @@ function candidateJson(c: CandidateReport): Json {
       deformRemapped: k.deformRemapped.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key, droppedVertices: [...d.droppedVertices] })),
       deformReevaluated: k.deformReevaluated.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key })),
       linkedMeshes: k.linkedMeshes.map(attachmentJson),
+      acceptedAt: [...k.acceptedAt],
     };
   }
   return out;
 }
 
+const notReachedJson = (s: StopNotReached | undefined): { [key: string]: Json } =>
+  s === undefined ? {} : { stopAfterAccepted: { requested: s.requested, acceptedSteps: s.acceptedSteps } };
+
 function terminationJson(t: Termination | null): Json {
   if (t === null) return null;
   switch (t.reason) {
     case 'no-further-valid-reduction':
-      return { reason: t.reason, candidatesTried: t.candidatesTried, blockingConstraint: t.blockingConstraint };
+      return { reason: t.reason, candidatesTried: t.candidatesTried, blockingConstraint: t.blockingConstraint, ...notReachedJson(t.stopAfterAccepted) };
     case 'budget-exhausted':
-      return { reason: t.reason, candidatesTried: t.candidatesTried, budget: t.budget, result: t.result };
+      return { reason: t.reason, candidatesTried: t.candidatesTried, budget: t.budget, result: t.result, ...notReachedJson(t.stopAfterAccepted) };
+    case 'replayed-to-accepted-step':
+      return { reason: t.reason, acceptedSteps: t.acceptedSteps, candidatesTried: t.candidatesTried };
     case 'invalid-input':
     case 'unsupported-topology':
       return { reason: t.reason, code: t.code, detail: t.detail };

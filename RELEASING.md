@@ -588,6 +588,14 @@ exactly as before — the install smoke's call of it is unchanged and holds the
 same values — and only a caller that passes `8` gets the rows' fill
 (docs/MESH_REDUCTION.md, §4, P12).
 
+Replay to an accepted step ([#1268](https://github.com/firejune/rigc/issues/1268))
+is additive on the agreed row's types: `ReductionChanges.acceptedAt` is a new
+key, written last in `changes`, and `MeshReductionInput.stopAfterAccepted` an
+optional input that, left out, leaves the mesh, `accepted` and every other
+report byte as before (measured on 19 recorded inputs), while a caller that
+sets it may meet a new `Termination` reason, `replayed-to-accepted-step`
+(docs/MESH_REDUCTION.md, §7 *Mechanism 2*).
+
 The region pixel set computed by scanline
 ([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —
