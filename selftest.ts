@@ -417,6 +417,7 @@ import {
   type AttemptObserver,
   type AttemptRecord,
   type AcceptedOperation,
+  type Retriangulation,
   type SourceFrame,
   type SourceMesh,
   type Termination,
@@ -50362,6 +50363,412 @@ function runMeshCompareSuite(): number {
         held,
         probeDetail(held, probes, `${subjects.length} runs byte-identical with the floor and with every candidate measured; on the traced boundary with runs the floor decided ${runTried > 0 ? `${floored} of ${runTried}` : floored} attempts; the plant (the floor half a pixel short): ${caught.join('; ')}`),
         'issue #1279: most boundary attempts on a traced outline cannot pass the deviation row, and a lower bound on that row decides them without the measurement — a cost change only if no result reads differently',
+      );
+    });
+
+    // --- MQ97–MQ105 (#1283): the triangulation post-pass and the deformation-load order, both opt-in --------------
+    // Stage B's second landing, on MQ79's ramp and this section's traced boundary under the same policies. Each claim
+    // is read off runs made here, and each predicate is also read on a plant that must make it fire: the call without the
+    // field (the removals' triangles), the pass skipped on a replay, the flip criterion inverted with and without the
+    // pass's measurement, the pass flipping edges a region holds, the pass or the order applied without the opt-in, and
+    // the loads ranked descending.
+    const delaunay = { retriangulate: 'delaunay' as const };
+    const byLoad = { removalOrder: 'deformation-load' as const };
+    const mvRasters = artRastersOf(mvReduceInput(mvSrc).art);
+    const mvReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
+      reduceMeshWith(mvReduceInput(mvSrc, over), mvRasters, stepRastersOf(mvRasters), plant, observe);
+    const retriOf = (r: AbRun): Retriangulation | undefined => r.report.candidates[0]?.changes?.retriangulation;
+    /** Everything of a mesh but its triangles and edges: the vertex set, its attributes and the maps a consumer carries. */
+    const vertexSet = (m: ReducedMesh | null): string => (m === null ? 'no mesh' : JSON.stringify([m.points, m.uvs, m.hull, m.weights, m.indexMap, m.inserted, m.deform]));
+    const staticHeld = (r: AbRun): boolean => r.mesh !== null && r.report.candidates[0].accepted && r.report.candidates[0].geometry?.verdict === 'pass';
+    const failing = (r: AbRun): string => (r.report.candidates[0]?.geometry?.rows ?? []).filter((x) => x.state === 'fail').map((x) => `${x.code} ${x.value}`).join(', ') || 'none';
+    const sameLoop = (p: AbRun, q: AbRun): boolean =>
+      JSON.stringify(opsOf(p)) === JSON.stringify(opsOf(q)) && JSON.stringify(p.report.termination) === JSON.stringify(q.report.termination);
+    /** Bisect `stopAfterAccepted` over `count` accepted steps of the traced boundary, choosing on the grid frames as MQ88 does. */
+    const bisect = (over: Partial<MeshReductionInput>, count: number, tag: string): { lo: number; hi: number; chosen: AbRun | null; report: MeshQualityReport | null; replays: number } => {
+      let lo = 0;
+      let hi = count;
+      const seen = new Map<number, { run: AbRun; report: MeshQualityReport | null }>();
+      while (grid.length > 0 && hi - lo > 1) {
+        const mid = Math.floor((lo + hi) / 2);
+        const replay = abReduce({ ...over, stopAfterAccepted: mid });
+        const report = replay.mesh === null ? null : abCompare([{ id: `${tag}${mid}`, model: abBuild(dir, `ab-${tag}${mid}`, replay.mesh) }], grid);
+        seen.set(mid, { run: replay, report });
+        if (report !== null && selectionPasses(report)) lo = mid;
+        else hi = mid;
+      }
+      const got = seen.get(lo);
+      return { lo, hi, chosen: got?.run ?? null, report: got?.report ?? null, replays: seen.size };
+    };
+    const strictOn = abReduce(delaunay);
+
+    mcGuard('MQ97', () => {
+      const probes: string[] = [];
+      const off = mvReduce();
+      const on = mvReduce(delaunay);
+      const t = retriOf(on);
+      if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed a vertex, a UV, a weight, the hull, indexMap or the deform keys');
+      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+      if (off.mesh !== null && on.mesh !== null && JSON.stringify(off.mesh.triangles) === JSON.stringify(on.mesh.triangles)) probes.push('the returned triangles are the removals\'');
+      if (!staticHeld(on)) probes.push(`the post-pass result: accepted ${on.report.candidates[0].accepted}, failing ${failing(on)}; required every static row held`);
+      if (!sameLoop(off, on)) probes.push('the removal sequence or the termination moved under the opt-in');
+      const report = off.mesh !== null && on.mesh !== null
+        ? mvCompare(mvBuild(dir, 'mv-source-97', mvSrc), [{ id: 'removals', model: mvBuild(dir, 'mv-removals-97', off.mesh) }, { id: 'delaunay', model: mvBuild(dir, 'mv-delaunay-97', on.mesh) }], 1)
+        : null;
+      const passes = (i: number): boolean => report !== null && report.candidates[i].accepted && mvLocal(report, i)?.state === 'pass';
+      const [e, d] = [0, 1].map((i) => (report === null ? undefined : mvLocal(report, i)));
+      if (!passes(1)) probes.push(`the post-pass result in motion: ${mvSaid(d)}, accepted ${report?.candidates[1].accepted}; required within 1 and accepted`);
+      if (passes(0)) probes.push(`the plant — the same vertices as the removals triangulated them, the call without the field — passes the same predicate (${mvSaid(e)}), so it cannot fire`);
+      const held = probes.length === 0;
+      say(
+        'MQ97_THE_POST_PASS_RE_TRIANGULATES_THE_RAMPS_STRICT_RESULT_ON_ITS_OWN_VERTICES_AND_IT_PASSES_THE_MOTION_ROW_THE_REMOVALS_TRIANGLES_FAIL',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `MQ79's strict policy: ${mvCounts(on.report.candidates[0])} either way, the same vertices, UVs, weights, indexMap and acceptedAt; ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; motion — the removals' triangles ${mvSaid(e)}, refused (the plant), the post-pass's ${mvSaid(d)}, accepted; every frame held out`,
+        ),
+        'issue #1283 (§8 Q3/Q9): on the ramp the vertex set the strict reduction keeps is not what fails the bend, its triangulation is — so the post-pass keeps every vertex and changes only the triangles, and the motion row is where that shows',
+      );
+    });
+
+    mcGuard('MQ98', () => {
+      const probes: string[] = [];
+      const bisectOn = bisect(delaunay, opsOf(strictOn).length, 'd');
+      const t = retriOf(strictOn);
+      if (vertexSet(strict.mesh) !== vertexSet(strictOn.mesh)) probes.push('the post-pass changed the strict result\'s vertex set');
+      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+      if (!staticHeld(strictOn)) probes.push(`the post-pass result: accepted ${strictOn.report.candidates[0].accepted}, failing ${failing(strictOn)}; required every static row held`);
+      if (!sameLoop(strict, strictOn)) probes.push('the removal sequence or the termination moved under the opt-in');
+      const chosenOn = bisectOn.chosen;
+      const local = bisectOn.report === null ? undefined : row(bisectOn.report, 'MQ_LOCAL_DEFORMATION');
+      const heldOut = local?.motion?.byRole.heldOut ?? null;
+      /** The claim: a bisected replay with fewer vertices than the removals' own bisected replay (MQ88), passing on its held-out frames. */
+      const fewerAndPasses = (m: ReducedMesh | null | undefined, report: MeshQualityReport | null, out: { state: string } | null): string | null => {
+        if (m === null || m === undefined || report === null) return 'no replay was chosen';
+        if (!(m.points.length < replayVertices)) return `it keeps ${m.points.length} vertices against the removals' replay's ${replayVertices}`;
+        if (!report.candidates[0].accepted || out === null || out.state !== 'pass') return `held out ${JSON.stringify(out)}, accepted ${report.candidates[0].accepted}`;
+        return null;
+      };
+      const said = fewerAndPasses(chosenOn?.mesh, bisectOn.report, heldOut);
+      if (said !== null) probes.push(`the post-pass replay bisected on grid: ${said}`);
+      // The plant: the pass skipped on every replay leaves the bisection reading the removals' replays — MQ88's, chosen there.
+      if (fewerAndPasses(chosen?.mesh ?? null, chosen?.report ?? null, chosenLocal?.motion?.byRole.heldOut ?? null) === null) probes.push('the plant — the removals\' own bisected replay (MQ88) — reads as fewer than itself');
+      const held = probes.length === 0;
+      say(
+        'MQ98_ON_THE_TRACED_BOUNDARY_THE_POST_PASS_KEEPS_EVERY_VERTEX_AND_ITS_BISECTED_REPLAY_KEEPS_FEWER_THAN_THE_REMOVALS_AND_PASSES_HELD_OUT',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `strict with the post-pass: ${counts(strictOn.mesh)}, the vertex set and acceptedAt of the call without it, ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; bisected on grid in ${bisectOn.replays} replays over ${opsOf(strictOn).length} steps: step ${bisectOn.lo}, ${counts(chosenOn?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the removals' ${replayVertices} at step ${lo} (MQ88, the plant); the operation promises no monotone validity along the steps (§8 Q4), so the step found is a passing one, not necessarily the last`,
+        ),
+        'issue #1283 (§8 Q3/Q9): the stage-A record measured the replay going 191 → 135 vertices under the pass on this fixture at a lower motion error — the interior the removals keep is the triangulation\'s cost, not the motion\'s',
+      );
+    });
+
+    mcGuard('MQ99', () => {
+      const probes: string[] = [];
+      const ops = opsOf(strictOn);
+      const sample = [...new Set([1, Math.ceil(ops.length / 2), ops.length - 1, ops.length])].filter((k) => k >= 1 && k <= ops.length).sort((a, b) => a - b);
+      const dumps = new Map(sample.map((k) => [k, abReduce({ ...delaunay, budget: { maxCandidates: ops[k - 1].step } }).mesh]));
+      const removalsAt = new Map(sample.map((k) => [k, abReduce({ stopAfterAccepted: k }).mesh]));
+      /** The first sampled step whose replay under the opt-in is not the budget cut's mesh, the removals' vertex set, or its termination. */
+      const parted = (plant: ReductionPlant | null): string | null => {
+        for (const k of sample) {
+          const r = abReduce({ ...delaunay, stopAfterAccepted: k }, plant);
+          const at = `step ${k} (attempt ${ops[k - 1].step})`;
+          if (JSON.stringify(r.mesh) !== JSON.stringify(dumps.get(k) ?? null)) return `${at}: the replayed mesh is not the budget cut's under the opt-in`;
+          if (vertexSet(r.mesh) !== vertexSet(removalsAt.get(k) ?? null)) return `${at}: the replayed vertex set is not the replay's without the field`;
+          const t = r.report.termination;
+          if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== ops[k - 1].step) return `${at}: termination ${JSON.stringify(t)}`;
+          if (retriOf(r)?.taken !== true) return `${at}: retriangulation ${JSON.stringify(retriOf(r))}`;
+        }
+        return null;
+      };
+      const own = parted(null);
+      if (own !== null) probes.push(own);
+      const skipped = parted('flips-not-on-replay');
+      if (skipped === null) probes.push('the plant — the pass skipped when a replay stops the run — replayed the budget cut at every sampled step');
+      // The removal loop does not read the pass: acceptedAt and the termination are the call's without it. The plant
+      // that must move them is any change to the loop under the opt-in — the load order without its opt-in.
+      const moved = abReduce(delaunay, 'order-without-opt-in');
+      const loopMoved = !sameLoop(strict, moved);
+      if (!sameLoop(strict, strictOn)) probes.push('acceptedAt or the termination under the opt-in is not the call\'s without it');
+      if (!loopMoved) probes.push('the plant — the loop reordered under the opt-in — left acceptedAt and the termination as they were, so their equality cannot fire');
+      const held = probes.length === 0;
+      say(
+        'MQ99_CONTROL_UNDER_THE_POST_PASS_STOP_AFTER_ACCEPTED_IS_THE_BUDGET_CUT_BYTE_FOR_BYTE_AND_THE_REMOVALS_VERTEX_SET',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${ops.length} accepted steps, acceptedAt and the termination those of the call without the field; at k = ${sample.join(', ')} stopAfterAccepted k under the opt-in returned the budget cut at acceptedAt[k - 1].step under the opt-in, byte for byte, with the vertex set of the replay without it and the pass taken; plants: the pass skipped on a replay — ${skipped}; the loop reordered under the opt-in — acceptedAt ${loopMoved ? 'moved' : 'unmoved'} (${opsOf(moved).length} steps)`,
+        ),
+        'issue #1283 (§8 Q9): the replay parts bisects stands on stopAfterAccepted k being the state the run held after k operations — the pass is a function of that state run once at the end, never inside the loop, so the replay stays byte-exact under it',
+      );
+    });
+
+    mcGuard('MQ100', () => {
+      const probes: string[] = [];
+      /** What is wrong with a call that set neither field: a key it did not write before, or singles out of source order. */
+      const optOutFaults = (r: AbRun, attempts: AttemptRecord[]): string[] => {
+        const out: string[] = [];
+        const text = writeMeshQualityReport(r.report);
+        if (/retriangulat|removalOrder/.test(text)) out.push('the report writes retriangulate, retriangulation or removalOrder');
+        const keys = Object.keys(JSON.parse(text).candidates[0]?.changes ?? {}).join(',');
+        if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') out.push(`changes keys ${keys}`);
+        const singles = attempts.filter((a) => a.kind === 'removal');
+        const bent = singles.findIndex((a, i) => a.predictedLoad !== null || (i > 0 && singles[i - 1].pass === a.pass && a.sourceVertices[0] <= singles[i - 1].sourceVertices[0]));
+        if (bent !== -1) out.push(`single removal ${bent} (vertex ${singles[bent].sourceVertices[0]}, pass ${singles[bent].pass}, load ${singles[bent].predictedLoad}) is out of ascending source order`);
+        return out;
+      };
+      const watched = (go: (o: AttemptObserver) => AbRun): { r: AbRun; attempts: AttemptRecord[] } => {
+        const attempts: AttemptRecord[] = [];
+        const r = go((a) => attempts.push(a));
+        return { r, attempts };
+      };
+      const subjects: Array<[string, AbRun, (p: ReductionPlant | null, o: AttemptObserver) => AbRun]> = [
+        ['the ramp', mvReduce(), (p, o) => mvReduce({}, p, o)],
+        ['the traced boundary, singles only', strict, (p, o) => abReduce({}, p, o)],
+        ['the traced boundary, boundary runs', runs, (p, o) => abReduce({ boundaryRuns: abRuns }, p, o)],
+      ];
+      const planted: string[] = [];
+      for (const [label, own, go] of subjects) {
+        const w = watched((o) => go(null, o));
+        if (bytesOf(w.r) !== bytesOf(own)) probes.push(`${label}: observing changed the result`);
+        probes.push(...optOutFaults(w.r, w.attempts).map((f) => `${label}: ${f}`));
+        for (const plant of ['flips-without-opt-in', 'order-without-opt-in'] as const) {
+          const p = watched((o) => go(plant, o));
+          const said = optOutFaults(p.r, p.attempts);
+          if (said.length === 0) probes.push(`${label}: the plant ${plant} writes the shape a call without the fields writes`);
+          else if (label === 'the ramp') planted.push(`${plant}: ${said[0]}`);
+        }
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ100_A_CALL_WITHOUT_RETRIANGULATE_OR_REMOVAL_ORDER_WRITES_NO_NEW_KEY_AND_ATTEMPTS_ITS_SINGLES_IN_SOURCE_ORDER',
+        held,
+        probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: no retriangulate, retriangulation or removalOrder key, changes keys as before, every pass's single removals in ascending source index with no load read; the plants on the ramp: ${planted.join('; ')}`),
+        'issue #1283: a call that opts into neither is the call it was before the fields existed — byte for byte, which the tree keeps no older copy to compare with in-suite, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected',
+      );
+    });
+
+    mcGuard('MQ101', () => {
+      const probes: string[] = [];
+      // The traced boundary's source with every vertex protected, so the removals take nothing and the pass is handed a
+      // Delaunay mesh — and a declared minimum angle at the source's own smallest (floored onto the r6 grid), which the
+      // source meets and the Delaunay pass cannot lower, while a flip to the other diagonal of a quad lowers its pair's.
+      const own = abMeasure('source', ab.mesh).candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value ?? 0;
+      const minAngle = Math.floor(own * 1e6) / 1e6;
+      const pinned = {
+        protect: { ...mvNoProtect, vertices: [...Array(ab.mesh.points.length).keys()] },
+        targets: { artFit: mvStrict, maxBoundaryDeviation: 1, minAngle, regions: [] },
+      };
+      const off = abReduce(pinned);
+      const on = abReduce({ ...pinned, ...delaunay });
+      const against = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay');
+      const unmeasured = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay-unmeasured');
+      const brief = (t: Retriangulation | undefined): string => JSON.stringify(t === undefined ? t : { ...t, monotonicity: '…' });
+      const ta = retriOf(against);
+      // The claim is staticHeld: a mesh the reduction returns under the post-pass holds every required row, whatever the flips proposed.
+      if (!staticHeld(off)) probes.push(`the call without the field: failing ${failing(off)}; the plant needs a result that holds every row`);
+      if (!staticHeld(against)) probes.push(`the inverted flips: accepted ${against.report.candidates[0].accepted}, failing ${failing(against)}; required every row held`);
+      if (ta?.taken !== false || !(ta.refusedBy ?? '').startsWith('MQ_MIN_ANGLE') || !(ta.flips > 0)) probes.push(`the inverted flips: retriangulation ${brief(ta)}; required refused naming MQ_MIN_ANGLE, after at least one flip`);
+      if (JSON.stringify(against.mesh) !== JSON.stringify(off.mesh)) probes.push('the refused pass returned another mesh than the call without the field');
+      const strip = (r: AbRun): string => {
+        const doc = JSON.parse(writeMeshQualityReport(r.report));
+        delete doc.effective.retriangulate;
+        if (doc.candidates[0].changes !== undefined) delete doc.candidates[0].changes.retriangulation;
+        return JSON.stringify(doc);
+      };
+      if (strip(against) !== strip(off)) probes.push('the refused pass\'s report differs from the call without the field in more than the echo and retriangulation');
+      if (retriOf(on)?.taken !== true || !staticHeld(on)) probes.push(`the Delaunay pass under the same minimum angle: ${brief(retriOf(on))}, failing ${failing(on)}; required taken and every row held`);
+      if (staticHeld(unmeasured)) probes.push(`the plant — the inverted flips taken without the measurement — reads as holding every row (${brief(retriOf(unmeasured))})`);
+      const angle = (r: AbRun): number | null | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value;
+      const held = probes.length === 0;
+      say(
+        'MQ101_A_POST_PASS_WHOSE_FLIPS_WOULD_BREACH_A_DECLARED_ROW_IS_NOT_TAKEN_AND_NAMES_THE_ROW',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the traced boundary's source, every vertex protected, minAngle ${minAngle} (its own smallest): the call without the field ${angle(off)}°; the Delaunay pass ${retriOf(on)?.flips} flips, ${angle(on)}° — taken; the inverted flips (${ta?.flips} in one sweep) refused: ${ta?.refusedBy} — the mesh and the report those of the call without the field but for the echo; the plant (the inverted flips unmeasured) returns ${angle(unmeasured)}°, failing ${failing(unmeasured)}`,
+        ),
+        'issue #1283: the pass is taken whole and refused whole, measured like any result — a re-triangulation that would breach a declared row leaves the mesh as the removals left it and says which row, rather than returning a mesh the contract refuses',
+      );
+    });
+
+    mcGuard('MQ102', () => {
+      const probes: string[] = [];
+      // A region across the ramp's middle, its density bound twice the source's grid step and a band of one step.
+      const region: RefinementRegion = {
+        name: 'middle',
+        polygon: [[(MV_W * 3) / 8, MV_H / 4], [(MV_W * 5) / 8, MV_H / 4], [(MV_W * 5) / 8, (MV_H * 3) / 4], [(MV_W * 3) / 8, (MV_H * 3) / 4]],
+        maxEdgeLength: 2 * MV_STEP,
+        grade: 0.5,
+        transition: MV_STEP,
+        approximation: null,
+      };
+      const regioned = { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [region] }, regionArtSamples: [{ region: region.name, minArtSamples: 1 }] };
+      const off = mvReduce(regioned);
+      const on = mvReduce({ ...regioned, ...delaunay });
+      const ignoring = mvReduce({ ...regioned, ...delaunay }, 'flips-ignore-regions');
+      /** The edges of a mesh the region holds, by their ends' positions. */
+      const heldEdges = (m: ReducedMesh | null): string => {
+        if (m === null) return 'no mesh';
+        const out = new Set<string>();
+        for (let t = 0; t < m.triangles.length; t += 3) {
+          for (let k = 0; k < 3; k++) {
+            const a = m.points[m.triangles[t + k]];
+            const b = m.points[m.triangles[t + ((k + 1) % 3)]];
+            if (!edgeIsHeldByRegion(a, b, region)) continue;
+            const [p, q] = [JSON.stringify(a), JSON.stringify(b)].sort();
+            out.add(`${p}-${q}`);
+          }
+        }
+        return [...out].sort().join(';');
+      };
+      const regionRows = (r: AbRun): string => JSON.stringify((r.report.candidates[0]?.geometry?.rows ?? []).filter((x) => x.object.region === region.name && x.code !== 'MQ_FILL_DISTANCE'));
+      const t = retriOf(on);
+      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+      if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed the vertex set');
+      if (heldEdges(on.mesh) !== heldEdges(off.mesh)) probes.push('the post-pass flipped or made an edge the region holds');
+      if (regionRows(on) !== regionRows(off)) probes.push(`the region's rows moved: ${regionRows(on)} against ${regionRows(off)}`);
+      if (heldEdges(ignoring.mesh) === heldEdges(off.mesh)) probes.push(`the plant — flips that ignore the region — left every held edge as it was (${JSON.stringify(retriOf(ignoring))}), so the predicate cannot fire`);
+      const inserted = off.report.candidates[0]?.changes?.insertedVertices;
+      const maxEdge = (r: AbRun): string => {
+        const x = r.report.candidates[0]?.geometry?.rows.find((y) => y.code === 'MQ_MAX_EDGE' && y.object.region === region.name);
+        return `${x?.value} ${x?.state}`;
+      };
+      const held = probes.length === 0;
+      say(
+        'MQ102_THE_POST_PASS_NEITHER_FLIPS_NOR_MAKES_AN_EDGE_A_REGION_HOLDS_SO_EVERY_REGION_ROW_READS_AS_THE_REMOVALS_LEFT_IT',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the ramp with region "${region.name}" (L0 ${region.maxEdgeLength}, band ${region.transition}): ${inserted} inserted, ${mvCounts(off.report.candidates[0])}; the pass ${t?.flips} flips, the held edges and MQ_MAX_EDGE (${maxEdge(on)}) / MQ_TRANSITION as the removals left them; the plant (flips that ignore the region, ${retriOf(ignoring)?.flips} flips): the held edges change, MQ_MAX_EDGE ${maxEdge(ignoring)}, ${retriOf(ignoring)?.taken ? 'taken' : `refused — ${retriOf(ignoring)?.refusedBy}`}`,
+        ),
+        'issue #1283: a region\'s density is the refinement\'s and its rows read exactly the edges edgeIsHeldByRegion names — so the pass leaves those edges alone rather than re-deciding what the refinement met',
+      );
+    });
+
+    mcGuard('MQ103', () => {
+      const probes: string[] = [];
+      const loadAttempts: AttemptRecord[] = [];
+      const ordered = abReduce(byLoad, null, (a) => loadAttempts.push(a));
+      const bisectLoad = bisect(byLoad, opsOf(ordered).length, 'l');
+      /** The first single removal out of the order: ascending load within its pass, ties by source index. */
+      const outOfOrder = (attempts: AttemptRecord[]): string | null => {
+        const singles = attempts.filter((a) => a.kind === 'removal');
+        for (let i = 0; i < singles.length; i++) {
+          const a = singles[i];
+          if (a.predictedLoad === null) return `vertex ${a.sourceVertices[0]} was attempted with no load`;
+          const p = singles[i - 1];
+          if (p === undefined || p.pass !== a.pass) continue;
+          const pl = p.predictedLoad ?? -Infinity;
+          if (a.predictedLoad < pl || (a.predictedLoad === pl && a.sourceVertices[0] <= p.sourceVertices[0])) return `pass ${a.pass}: vertex ${a.sourceVertices[0]} (load ${a.predictedLoad}) after vertex ${p.sourceVertices[0]} (load ${pl})`;
+        }
+        return null;
+      };
+      const own = outOfOrder(loadAttempts);
+      if (own !== null) probes.push(own);
+      const descending: AttemptRecord[] = [];
+      abReduce(byLoad, 'order-descending', (a) => descending.push(a));
+      const caught = outOfOrder(descending);
+      if (caught === null) probes.push('the plant — the loads ranked descending — reads as ascending');
+      if (!(new Set(loadAttempts.filter((a) => a.kind === 'removal').map((a) => a.predictedLoad)).size > 1)) probes.push('every load ranked is the same, so the order was the default\'s');
+      if (!staticHeld(ordered)) probes.push(`the load-ordered result: failing ${failing(ordered)}`);
+      // The effect, measured as the stage-A record did: the replay bisected on grid frames.
+      const chosenL = bisectLoad.chosen;
+      const local = bisectLoad.report === null ? undefined : row(bisectLoad.report, 'MQ_LOCAL_DEFORMATION');
+      const heldOut = local?.motion?.byRole.heldOut ?? null;
+      if (chosenL?.mesh === null || chosenL === null || !(chosenL.mesh.points.length < replayVertices) || heldOut?.state !== 'pass') probes.push(`the load-ordered replay bisected on grid: ${counts(chosenL?.mesh ?? null)}, held out ${JSON.stringify(heldOut)}; required fewer than the source order's ${replayVertices}, passing held out`);
+      const passes = new Set(loadAttempts.map((a) => a.pass)).size;
+      const held = probes.length === 0;
+      say(
+        'MQ103_THE_DEFORMATION_LOAD_ORDER_ATTEMPTS_EACH_PASSS_SINGLES_IN_ASCENDING_PREDICTED_LOAD_AND_ITS_REPLAY_KEEPS_FEWER_VERTICES',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the traced boundary, removalOrder deformation-load: ${loadAttempts.filter((a) => a.kind === 'removal').length} single attempts over ${passes} passes, each pass ascending in load then source index; strict ${counts(ordered.mesh)} after ${ordered.report.termination !== null && 'candidatesTried' in ordered.report.termination ? ordered.report.termination.candidatesTried : '?'} candidates; bisected on grid in ${bisectLoad.replays} replays: step ${bisectLoad.lo}, ${counts(chosenL?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the source order's ${replayVertices}; the plant (loads descending): ${caught}`,
+        ),
+        'issue #1283 (§8 Q11): removals that add little deformation load go first, so a prefix of the steps keeps the vertices a bend needs — the stage-A record measured the replay at 140 against 191 on this fixture',
+      );
+    });
+
+    mcGuard('MQ104', () => {
+      const probes: string[] = [];
+      const seen: string[] = [];
+      const refusalOf = (input: MeshReductionInput): string | null => {
+        try {
+          reduceMesh(input);
+          return null;
+        } catch (err) {
+          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+          return `(not a MeshReductionError) ${(err as Error).message}`;
+        }
+      };
+      const cheap = (over: Record<string, unknown>): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), ...over }) as MeshReductionInput;
+      const wrongs: unknown[] = [null, 'Delaunay', 'delaunay ', '', 1, true, [], {}, { method: 'delaunay' }];
+      for (const field of ['retriangulate', 'removalOrder'] as const) {
+        for (const wrong of field === 'removalOrder' ? [...wrongs, 'source-index', 'deformation_load'] : wrongs) {
+          const said = refusalOf(cheap({ [field]: wrong }));
+          if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes(`${field} is`)) probes.push(`${field} ${JSON.stringify(wrong)}: ${said ?? 'accepted'}`);
+          else seen.push(`${field} ${JSON.stringify(wrong)}`);
+        }
+      }
+      for (const right of [{}, { retriangulate: undefined, removalOrder: undefined }, delaunay, byLoad, { ...delaunay, ...byLoad }]) {
+        const said = refusalOf(cheap(right));
+        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ104_A_RETRIANGULATE_OR_REMOVAL_ORDER_THAT_IS_NOT_ITS_ONE_VALUE_IS_REFUSED_NAMING_THE_FIELD',
+        held,
+        probeDetail(held, probes, `${seen.length} values refused REDUCE_INPUT_MISSING naming the field (${seen.slice(0, 4).join(', ')}, …); each field left out, set undefined or set to its one value admitted`),
+        'issue #1283: undefined is the field left out and means the call before the field; null names no method and no order, and is refused like any other value — as stopAfterAccepted and boundaryRuns are',
+      );
+    });
+
+    mcGuard('MQ105', () => {
+      const probes: string[] = [];
+      /** What is wrong with the echo: each field echoed in effective exactly when set, retriangulation written last in changes exactly when retriangulate is set. */
+      const echoFaults = (r: AbRun, input: Partial<MeshReductionInput>): string[] => {
+        const out: string[] = [];
+        const doc = JSON.parse(writeMeshQualityReport(r.report));
+        const e = doc.effective;
+        if (e.retriangulate !== input.retriangulate) out.push(`effective.retriangulate is ${JSON.stringify(e.retriangulate)} for ${JSON.stringify(input.retriangulate)}`);
+        if (e.removalOrder !== input.removalOrder) out.push(`effective.removalOrder is ${JSON.stringify(e.removalOrder)} for ${JSON.stringify(input.removalOrder)}`);
+        const keys = Object.keys(doc.candidates[0]?.changes ?? {});
+        const has = keys.includes('retriangulation');
+        if (has !== (input.retriangulate !== undefined)) out.push(`changes ${has ? 'carries' : 'lacks'} retriangulation for retriangulate ${JSON.stringify(input.retriangulate)}`);
+        if (has) {
+          if (keys[keys.length - 1] !== 'retriangulation') out.push(`retriangulation is not the last key of changes (${keys.join(',')})`);
+          const x = doc.candidates[0].changes.retriangulation;
+          if (Object.keys(x).join(',') !== 'method,taken,flips,sweeps,refusedBy,monotonicity') out.push(`retriangulation keys ${Object.keys(x).join(',')}`);
+          if (x.method !== input.retriangulate || typeof x.monotonicity !== 'string' || !x.monotonicity.startsWith('not promised') || !x.monotonicity.includes('not necessarily the last')) out.push(`retriangulation ${JSON.stringify(x)} does not state the method or what is not promised`);
+        }
+        return out;
+      };
+      const cases: Array<[Partial<MeshReductionInput>, AbRun]> = [
+        [{}, mvReduce()],
+        [delaunay, mvReduce(delaunay)],
+        [byLoad, mvReduce(byLoad)],
+        [{ ...delaunay, ...byLoad }, mvReduce({ ...delaunay, ...byLoad })],
+      ];
+      for (const [input, r] of cases) probes.push(...echoFaults(r, input).map((f) => `${JSON.stringify(input)}: ${f}`));
+      const planted = echoFaults(mvReduce({}, 'flips-without-opt-in'), {});
+      if (planted.length === 0) probes.push('the plant — the pass run without the opt-in — writes the echo of a call without it');
+      const both = cases[3][1];
+      const held = probes.length === 0;
+      say(
+        'MQ105_THE_REPORT_ECHOES_EACH_FIELD_ONLY_WHEN_SET_AND_SAYS_WHICH_TRIANGULATION_THE_MESH_CARRIES_AND_WHAT_IS_NOT_PROMISED',
+        held,
+        probeDetail(held, probes, `neither, each and both set on the ramp: effective echoes exactly what was set; with retriangulate, changes ends in retriangulation ${JSON.stringify({ ...retriOf(both), monotonicity: '…' })}; the plant (the pass without the opt-in): ${planted[0]}`),
+        'issue #1283 (§8 Q4): a reader of the report has to know which triangulation it is holding and that a bisection over its steps finds a passing step, not the last — the report is where the consumer reads both',
       );
     });
   });

@@ -55,6 +55,21 @@
  * Every accepted operation is one `acceptedAt` entry and one unit of
  * `stopAfterAccepted`.
  *
+ * With `removalOrder: 'deformation-load'` (issue #1283, opt-in) each pass's
+ * single removals are attempted in ascending predicted deformation load, ties
+ * by source index, ranked once at the start of those singles (`loadOrder`);
+ * every attempt is still a candidate, held exactly as before.
+ *
+ * ## The triangulation post-pass (issue #1283, opt-in)
+ *
+ * With `retriangulate: 'delaunay'`, once the reduction ends — a replay's stop
+ * included — the kept vertices are re-triangulated by Delaunay edge flips that
+ * never touch the outline, a protected edge or an edge a region holds
+ * (`delaunayFlips`), and the result is taken whole only when every required
+ * row passes on it, else refused whole and named (`retriangulateResult`). It
+ * is not a step: no candidate, no `acceptedAt` entry, so a replay and the
+ * budget cut at the same step end on the same state and the same pass.
+ *
  * A removal whose deviation floor — the furthest removed source-hull vertex
  * from the candidate's outline, which `MQ_BOUNDARY_DEVIATION` can only exceed —
  * is over the bound is refused without the measurement; its name, when read,
@@ -117,6 +132,7 @@ import {
   type MeshReductionInput,
   type RefinementRegion,
   type ReductionChanges,
+  type Retriangulation,
   type SourceMesh,
   type StopNotReached,
   type Termination,
@@ -282,6 +298,12 @@ function validateReduction(input: MeshReductionInput): void {
     if (!isObject(runs) || !Number.isInteger(runs.maxVertices) || (runs.maxVertices as number) < 2) {
       refuse('REDUCE_INPUT_MISSING', `${who}: boundaryRuns is ${JSON.stringify(runs)}; required { maxVertices: a whole number, 2 or more } — the longest run one chord may replace, which has no default — or the field left out (issue #1279: no run is tried)`);
     }
+  }
+  if ('retriangulate' in input && input.retriangulate !== undefined && input.retriangulate !== 'delaunay') {
+    refuse('REDUCE_INPUT_MISSING', `${who}: retriangulate is ${JSON.stringify(input.retriangulate)}; required "delaunay" — the kept vertices re-triangulated by Delaunay edge flips once the reduction ends — or the field left out (issue #1283: the triangles the removals leave)`);
+  }
+  if ('removalOrder' in input && input.removalOrder !== undefined && input.removalOrder !== 'deformation-load') {
+    refuse('REDUCE_INPUT_MISSING', `${who}: removalOrder is ${JSON.stringify(input.removalOrder)}; required "deformation-load" — single removals in ascending predicted deformation load, ties by source index — or the field left out (issue #1283: ascending source index)`);
   }
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
@@ -1021,7 +1043,26 @@ export type ReplayPlant = 'stop-one-early' | 'stop-one-late';
  * measured, with no deviation floor (the path the floor is held equal to); and the floor read half a pixel short
  * of the bound, so it refuses steps the rows would take.
  */
-export type ReductionPlant = ReplayPlant | 'runs-without-opt-in' | 'run-split-per-vertex' | 'run-skips-rows' | 'measure-every-candidate' | 'floor-half-a-pixel-short';
+export type ReductionPlant =
+  | ReplayPlant
+  | 'runs-without-opt-in'
+  | 'run-split-per-vertex'
+  | 'run-skips-rows'
+  | 'measure-every-candidate'
+  | 'floor-half-a-pixel-short'
+  | RetriangulationPlant
+  | OrderPlant;
+
+/**
+ * Issue #1283's faults in the triangulation post-pass: the pass run on a call that did not opt in; the pass skipped
+ * when a replay stops the run, so a replay is not the budget cut at the same step; the flip
+ * criterion inverted, so the pass flips edges that are locally Delaunay — the flips a declared row can refuse — with
+ * its result measured as the pass's is, or taken without the measurement; and the pass flipping edges a region holds.
+ */
+export type RetriangulationPlant = 'flips-without-opt-in' | 'flips-not-on-replay' | 'flips-against-delaunay' | 'flips-against-delaunay-unmeasured' | 'flips-ignore-regions';
+
+/** Issue #1283's faults in the removal order: the load order used by a call that did not opt in, and the loads ranked descending. */
+export type OrderPlant = 'order-without-opt-in' | 'order-descending';
 
 /** One removal-phase attempt as a control reads it (issue #1279): what was tried, and what refused it or null when taken. */
 export interface AttemptRecord {
@@ -1032,6 +1073,10 @@ export interface AttemptRecord {
   refusedBy: (() => string) | null;
   /** Whether the deviation floor refused it without a measurement. */
   decidedByFloor: boolean;
+  /** The removal pass it was tried in, 1-based (issue #1283). */
+  pass: number;
+  /** A single removal under `removalOrder: 'deformation-load'`: the load it was ranked by (Infinity when the removal cannot be made); else null (issue #1283). */
+  predictedLoad: number | null;
 }
 
 /** Called once per removal-phase attempt, after it. */
@@ -1180,6 +1225,46 @@ function weightJump(work: Work, a: number, b: number): number {
 }
 
 /**
+ * Issue #1283, §8's deformation load of one edge: its length in px times half the L1 difference of its ends' weight
+ * vectors (Δshare, the share of the field that changes along it). 0 on an unweighted mesh.
+ */
+function edgeLoad(work: Work, a: number, b: number): number {
+  const dx = work.pos[a][0] - work.pos[b][0];
+  const dy = work.pos[a][1] - work.pos[b][1];
+  return Math.sqrt(dx * dx + dy * dy) * (weightJump(work, a, b) / 2);
+}
+
+/**
+ * Issue #1283 (`removalOrder: 'deformation-load'`): the surviving, unprotected source vertices in the order a pass
+ * attempts their single removals — ascending by the predicted load of each removal, the largest `edgeLoad` over the
+ * edges its re-triangulated hole adds (0 when it adds none), a removal `removalOf` cannot make ranked Infinity; ties
+ * by source index. Nothing is measured and nothing is counted as a candidate: one `removalOf` per vertex and one
+ * sort. The plant `order-descending` ranks the loads the other way.
+ */
+function loadOrder(run: Run): { order: number[]; load: Map<number, number> } {
+  const { work } = run;
+  const load = new Map<number, number>();
+  const order: number[] = [];
+  for (let v = 0; v < work.nSource; v++) {
+    if (!work.alive[v] || run.protectedVertices.has(v)) continue;
+    const step = removalOf(work, v);
+    let most = 0;
+    if ('blocked' in step) most = Infinity;
+    else for (const [a, b] of step.added) most = Math.max(most, edgeLoad(work, a, b));
+    load.set(v, most);
+    order.push(v);
+  }
+  const sign = run.plant === 'order-descending' ? -1 : 1;
+  order.sort((p, q) => {
+    const lp = load.get(p)!;
+    const lq = load.get(q)!;
+    if (lp !== lq) return lp < lq ? -sign : sign;
+    return p - q;
+  });
+  return { order, load };
+}
+
+/**
  * Several boundary vertices removed one after another as one operation (issue #1279): the working triangles after
  * the last and the edges they hold that the triangles before the first did not, in the order they appear — or the
  * structural reason one of the removals cannot be made. The outline loses the run and gains the chord from the
@@ -1250,12 +1335,15 @@ function outlineWalk(run: Run): number[] {
 function removeVertices(run: Run): PhaseEnd {
   const { work, input } = run;
   const runs = run.plant === 'runs-without-opt-in' ? { maxVertices: 2 } : input.boundaryRuns;
+  const byLoad = input.removalOrder === 'deformation-load' || run.plant === 'order-without-opt-in';
   const hull = input.source.hull;
   let lastBlock: { refusal: Refusal; what: string } | null = null;
   const lastName = (): string => (lastBlock === null ? '' : `${refusalText(lastBlock.refusal)}, ${lastBlock.what}`);
+  let pass = 0;
   for (;;) {
     let taken = 0;
     let tried = 0;
+    pass++;
     if (runs !== undefined) {
       let walk: number[] | null = null;
       for (let s = 0; s < hull; s++) {
@@ -1275,7 +1363,7 @@ function removeVertices(run: Run): PhaseEnd {
           run.steps++;
           tried++;
           const block = tryOperation(run, members, false);
-          if (run.observe !== null) run.observe({ step: run.steps, kind: 'boundary-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' });
+          if (run.observe !== null) run.observe({ step: run.steps, kind: 'boundary-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function', pass, predictedLoad: null });
           if (block === null) {
             taken++;
             walk = null;
@@ -1286,13 +1374,18 @@ function removeVertices(run: Run): PhaseEnd {
         }
       }
     }
-    for (let v = 0; v < work.nSource; v++) {
+    // Issue #1283: with the load order the pass's singles are ranked once, here, over the mesh the runs left; without
+    // it they are every source index ascending, exactly as before the field.
+    const ranked = byLoad ? loadOrder(run) : null;
+    const singles = ranked === null ? null : ranked.order;
+    for (let i = 0, end = singles === null ? work.nSource : singles.length; i < end; i++) {
+      const v = singles === null ? i : singles[i];
       if (!work.alive[v] || run.protectedVertices.has(v)) continue;
       if (run.steps >= input.budget.maxCandidates) return { kind: 'budget' };
       run.steps++;
       tried++;
       const block = tryOperation(run, [v], false);
-      if (run.observe !== null) run.observe({ step: run.steps, kind: 'removal', sourceVertices: [v], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' });
+      if (run.observe !== null) run.observe({ step: run.steps, kind: 'removal', sourceVertices: [v], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function', pass, predictedLoad: ranked === null ? null : ranked.load.get(v)! });
       if (block === null) {
         taken++;
         if (accept(run, 'removal', [v])) return { kind: 'replayed' };
@@ -1397,6 +1490,178 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
     return rowName(blocking);
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// the triangulation post-pass (issue #1283)
+// ---------------------------------------------------------------------------
+
+/**
+ * How far past π the two angles opposite an edge have to sum before the edge is flipped, read as the sine of their
+ * sum: the flip is made when that sine is below `-FLIP_MARGIN`. The flip turns the sum into 2π minus it, so its sine
+ * changes sign and the new edge is never flipped back in the same or a later sweep; cocircular quads (sine within the
+ * margin) are left as they are.
+ */
+const FLIP_MARGIN = 1e-9;
+
+/** Twice the signed area of p, q, r in drawing px (y down), the orientation test the flip reads. */
+function orient(p: Pt, q: Pt, r: Pt): number {
+  return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+}
+
+/**
+ * sin(α + β) for the angles α at `c` and β at `d` opposite the edge a–b — negative exactly when α + β > π, the edge
+ * is then not locally Delaunay. From cross and dot products and square roots only, so it reads the same wherever IEEE
+ * arithmetic does (no libm call).
+ */
+function oppositeAngleSine(a: Pt, b: Pt, c: Pt, d: Pt): number {
+  const angle = (o: Pt): { sin: number; cos: number } => {
+    const ux = a[0] - o[0];
+    const uy = a[1] - o[1];
+    const vx = b[0] - o[0];
+    const vy = b[1] - o[1];
+    const lengths = Math.sqrt(ux * ux + uy * uy) * Math.sqrt(vx * vx + vy * vy);
+    return { sin: Math.abs(ux * vy - uy * vx) / lengths, cos: (ux * vx + uy * vy) / lengths };
+  };
+  const p = angle(c);
+  const q = angle(d);
+  return p.sin * q.cos + p.cos * q.sin;
+}
+
+/** The sentence every report of a call with `retriangulate` carries (§8 Q4, [agreed, rig-parts#126]). */
+const MONOTONICITY_NOT_PROMISED =
+  'not promised: the pass re-triangulates whatever mesh the removals leave, so along acceptedAt a step whose result passes a comparison may be followed by one that fails and then by one that passes again; a bisection over acceptedAt finds a passing step, not necessarily the last (§8 Q4, agreed on rig-parts#126)';
+
+type FlipResult = { triangles: Array<[number, number, number]>; flips: number; sweeps: number } | { bound: string; flips: number; sweeps: number };
+
+/**
+ * Lawson's edge flips over the working mesh's interior edges, toward the Delaunay triangulation of the same vertices
+ * constrained by what the mesh must keep. A sweep visits every interior edge (two triangles) in ascending (smaller id,
+ * larger id), skipping an edge whose triangles a flip of this sweep already replaced, and flips it when:
+ *
+ * - the quad its two triangles form is strictly convex, so both new triangles keep the winding;
+ * - the angles opposite it sum past π by `FLIP_MARGIN` (`oppositeAngleSine`) — the Delaunay criterion;
+ * - it is not a protected edge (`protect.edges`, and every source edge over `protect.weightJump`);
+ * - no declared region holds it, and none would hold the new edge (`edgeIsHeldByRegion`), so every region row reads
+ *   the same edges and lengths after the pass as before it;
+ * - the new edge is a source edge, or its ends' weight vectors are within `protect.weightJump` (condition (b), as a
+ *   removal's new edges are held).
+ *
+ * The outline is never touched (an outline edge has one triangle) and no vertex is added, moved or removed. Sweeps
+ * continue until one flips nothing. **Bounded work:** every flip made is one the criterion allows, which lowers the
+ * triangulation's lifting onto the paraboloid strictly, so an edge flipped away never comes back and a pass makes at
+ * most n(n − 1)/2 flips over n vertices; a sweep that continues has flipped at least one, so there are at most one more
+ * sweeps than flips, and each visits at most 3n interior edges. The bound is also held by count: reaching it ends the
+ * pass with the bound named rather than the triangles, which the criterion makes unreachable.
+ */
+function delaunayFlips(run: Run, plant: ReductionPlant | null): FlipResult {
+  const { work, input } = run;
+  const P = work.pos;
+  const tris = work.triangles.map((t): [number, number, number] => [t[0], t[1], t[2]]);
+  const alive = work.alive.reduce((n, a) => n + (a ? 1 : 0), 0);
+  const maxFlips = (alive * (alive - 1)) / 2;
+  const guarded = new Set(run.protectedEdges.map(([a, b]) => edgeKey(a, b)));
+  const jump = input.protect.weightJump;
+  const regions = plant === 'flips-ignore-regions' ? [] : input.targets.regions;
+  const heldCache = new Map<string, boolean>();
+  const held = (a: number, b: number): boolean => {
+    if (regions.length === 0) return false;
+    const key = edgeKey(a, b);
+    let hit = heldCache.get(key);
+    if (hit === undefined) {
+      hit = regions.some((r) => edgeIsHeldByRegion(P[a], P[b], r));
+      heldCache.set(key, hit);
+    }
+    return hit;
+  };
+  const against = plant === 'flips-against-delaunay' || plant === 'flips-against-delaunay-unmeasured';
+  let flips = 0;
+  let sweeps = 0;
+  for (;;) {
+    sweeps++;
+    const sides = new Map<string, number[]>();
+    tris.forEach((t, i) => {
+      for (let k = 0; k < 3; k++) {
+        const key = edgeKey(t[k], t[(k + 1) % 3]);
+        const list = sides.get(key);
+        if (list === undefined) sides.set(key, [i]);
+        else list.push(i);
+      }
+    });
+    const interior: Array<[number, number]> = [];
+    for (const [key, list] of sides) {
+      if (list.length !== 2) continue;
+      const [a, b] = key.split(',').map(Number);
+      interior.push([a, b]);
+    }
+    interior.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const replaced = new Set<number>();
+    let flipped = 0;
+    for (const [u, w] of interior) {
+      const [i, j] = sides.get(edgeKey(u, w))!;
+      if (replaced.has(i) || replaced.has(j)) continue;
+      if (guarded.has(edgeKey(u, w))) continue;
+      // Rotate so the edge is t1's a → b in its own winding; t2 then holds b → a.
+      const t1 = tris[i];
+      const k1 = t1.findIndex((x, k) => (x === u && t1[(k + 1) % 3] === w) || (x === w && t1[(k + 1) % 3] === u));
+      const a = t1[k1];
+      const b = t1[(k1 + 1) % 3];
+      const c = t1[(k1 + 2) % 3];
+      const t2 = tris[j];
+      const k2 = t2.findIndex((x, k) => x === b && t2[(k + 1) % 3] === a);
+      if (k2 === -1) continue;
+      const d = t2[(k2 + 2) % 3];
+      if (c === d) continue;
+      const turn = Math.sign(orient(P[a], P[b], P[c]));
+      const o1 = orient(P[a], P[d], P[c]);
+      const o2 = orient(P[d], P[b], P[c]);
+      if (Math.sign(o1) !== turn || Math.sign(o2) !== turn || Math.abs(o1) < 1e-9 || Math.abs(o2) < 1e-9) continue;
+      const sine = oppositeAngleSine(P[a], P[b], P[c], P[d]);
+      if (against ? !(sine > FLIP_MARGIN) : !(sine < -FLIP_MARGIN)) continue;
+      if (held(a, b) || held(c, d)) continue;
+      if (jump !== null && !(c < work.nSource && d < work.nSource && run.sourceEdges.has(edgeKey(c, d))) && weightJump(work, c, d) > jump) continue;
+      if (flips >= maxFlips) return { bound: `the flip bound n(n - 1)/2 = ${maxFlips} over ${alive} vertices was reached`, flips, sweeps };
+      tris[i] = [a, d, c];
+      tris[j] = [d, b, c];
+      replaced.add(i);
+      replaced.add(j);
+      flips++;
+      flipped++;
+    }
+    // The inverted criterion is a plant: one sweep, since flipping a Delaunay edge makes a non-Delaunay one it would
+    // flip straight back.
+    if (flipped === 0 || against) return { triangles: tris, flips, sweeps };
+  }
+}
+
+/**
+ * Issue #1283: the post-pass on the working mesh the reduction ended on, taken whole or refused whole — the working
+ * triangles are the pass's only when every required row passes on its result (the measurement reads the canonical
+ * mesh exactly as the result's own does). Undefined when the call did not opt in. One flip pass and at most one
+ * measurement, never counted as a candidate: a replay and the budget cut at the same step end on the same state and
+ * both are followed by it.
+ *
+ * Why whole rather than flip by flip: the rows a flip can move are the region rows (held edges, which the pass never
+ * flips nor makes) and the minimum angle, which a Delaunay flip only raises; the art rows and the boundary deviation
+ * read the outline and the union of the triangles, which no flip changes. A measurement per flip would buy nothing a
+ * row can see and cost one measurement per flip — up to n(n − 1)/2 — where the whole pass costs one.
+ */
+function retriangulateResult(run: Run, termination: Termination): Retriangulation | undefined {
+  const plant = run.plant;
+  if (run.input.retriangulate === undefined && plant !== 'flips-without-opt-in') return undefined;
+  if (plant === 'flips-not-on-replay' && termination.reason === 'replayed-to-accepted-step') return undefined;
+  const result = delaunayFlips(run, plant);
+  const out = (taken: boolean, refusedBy: string | null): Retriangulation => ({ method: 'delaunay', taken, flips: result.flips, sweeps: result.sweeps, refusedBy, monotonicity: MONOTONICITY_NOT_PROMISED });
+  if (!('triangles' in result)) return out(false, result.bound);
+  if (result.flips === 0) return out(true, null);
+  const was = run.work.triangles;
+  run.work.triangles = result.triangles;
+  if (plant === 'flips-against-delaunay-unmeasured') return out(true, null);
+  const canon = canonicalise(run.work, run.sourceTurn, run.boneRank);
+  const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'retriangulated'), run.input.targets.artFit);
+  if (blocking === null) return out(true, null);
+  run.work.triangles = was;
+  return out(false, rowName(blocking));
 }
 
 // ---------------------------------------------------------------------------
@@ -1632,6 +1897,7 @@ function protectionOf(input: MeshReductionInput, work: Work, sourceEdges: Set<st
 /** The result, canonical, with its deform keys carried and its own measurement as the report's one candidate. */
 function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts | null, termination: Termination): MeshReductionResult {
   const { input, work } = run;
+  const retriangulation = retriangulateResult(run, termination);
   const canon = canonicalise(work, run.sourceTurn, run.boneRank);
   const indexMap: Array<number | null> = [];
   for (let v = 0; v < work.nSource; v++) indexMap.push(work.alive[v] ? canon.indexOf.get(v)! : null);
@@ -1656,6 +1922,7 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     deformReevaluated: deform.reevaluated.map((d) => ({ animation: d.animation, attachment: d.attachment, key: d.key })),
     linkedMeshes: input.linkedMeshes,
     acceptedAt: run.acceptedAt.map((a) => ({ step: a.step, kind: a.kind, count: a.count, sourceVertices: [...a.sourceVertices] })),
+    ...(retriangulation === undefined ? {} : { retriangulation }),
   };
   const counts = candidate.counts!;
   const mesh: ReducedMesh = {
@@ -1695,5 +1962,7 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     budget: { maxCandidates: input.budget.maxCandidates },
     ...(input.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: input.stopAfterAccepted }),
     ...(input.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: input.boundaryRuns.maxVertices } }),
+    ...(input.retriangulate === undefined ? {} : { retriangulate: input.retriangulate }),
+    ...(input.removalOrder === undefined ? {} : { removalOrder: input.removalOrder }),
   };
 }

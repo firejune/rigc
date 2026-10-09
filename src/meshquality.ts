@@ -252,6 +252,46 @@ export interface MeshReductionInput {
    * 2 or more, and has no default; `null` is refused like any value that is not that object.
    */
   boundaryRuns?: BoundaryRuns;
+  /**
+   * The triangulation post-pass (issue #1283, §8 Q3/Q9) — opt-in. Left out = the returned mesh carries the triangles
+   * the removals left, and the call is the one it was before the field existed. `'delaunay'`: once the reduction has
+   * ended (or a replay has stopped), the kept vertices are re-triangulated by Delaunay edge flips — no vertex added,
+   * moved or removed; no outline edge, protected edge or edge a region holds is flipped, and no flip makes an edge a
+   * region holds or one over `protect.weightJump` — and the pass is taken whole only when every required row still
+   * passes on its result, else the mesh is returned as the removals left it and the report names the row
+   * (`ReductionChanges.retriangulation`). It is not a step: it tries no candidate and is not counted in the budget.
+   * Any other value, `null` included, is refused.
+   */
+  retriangulate?: 'delaunay';
+  /**
+   * The order single removals are attempted in (issue #1283, §8 Q11) — opt-in. Left out = ascending source index.
+   * `'deformation-load'`: at the start of each pass's single removals, every candidate is ranked by the deformation
+   * load its removal would add — the largest L · Δshare over the edges the re-triangulated hole adds, L the edge's
+   * length in px and Δshare half the L1 difference of its ends' weight vectors — and attempted in ascending load, ties
+   * by source index; a removal that cannot be made ranks last. Boundary runs keep their own order. Reads weights only:
+   * on an unweighted source every load is 0 and the order is the default's. Any other value, `null` included, is
+   * refused.
+   */
+  removalOrder?: 'deformation-load';
+}
+
+/**
+ * Issue #1283: which triangulation a reduced mesh carries, written in `ReductionChanges` only when the input set
+ * `retriangulate`.
+ */
+export interface Retriangulation {
+  /** The input's `retriangulate`. */
+  method: 'delaunay';
+  /** Whether the returned mesh carries the pass's triangles (true) or the removals' (false, `refusedBy` says why). */
+  taken: boolean;
+  /** Edge flips the pass made — on the returned mesh when taken, on the one it refused otherwise. */
+  flips: number;
+  /** Sweeps over the interior edges, the last of them flipping none. */
+  sweeps: number;
+  /** Null when taken; else the first required row that failed on the pass's result, or the bound the pass reached. */
+  refusedBy: string | null;
+  /** What the operation does not promise about the accepted steps under the pass — the same sentence on every report. */
+  monotonicity: string;
 }
 
 /** Issue #1279: the opt-in to boundary runs — the most consecutive outline vertices one chord may replace. */
@@ -495,6 +535,8 @@ export interface ReductionChanges {
    * `stopAfterAccepted: k` replays to the operation at `acceptedAt[k - 1]`.
    */
   acceptedAt: AcceptedOperation[];
+  /** Issue #1283: which triangulation the mesh carries — present only when the input set `retriangulate`, written last. */
+  retriangulation?: Retriangulation;
 }
 
 export interface MeshQualityReport {
@@ -544,6 +586,10 @@ export interface EffectiveSettings {
   boundaryRuns?: BoundaryRuns;
   /** A measurement's `motionAmplitude`, echoed when the input set it — `null` included (issue #1280); absent otherwise. */
   motionAmplitude?: MotionAmplitude | null;
+  /** A reduction's `retriangulate`, echoed when the input set it (issue #1283); absent otherwise. */
+  retriangulate?: 'delaunay';
+  /** A reduction's `removalOrder`, echoed when the input set it (issue #1283); absent otherwise — the order was ascending source index. */
+  removalOrder?: 'deformation-load';
 }
 
 export interface MeshCounts {
@@ -2259,6 +2305,8 @@ function effectiveJson(e: EffectiveSettings): Json {
     ...(e.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: e.stopAfterAccepted }),
     ...(e.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: e.boundaryRuns.maxVertices } }),
     ...(e.motionAmplitude === undefined ? {} : { motionAmplitude: amplitudeJson(e.motionAmplitude) }),
+    ...(e.retriangulate === undefined ? {} : { retriangulate: e.retriangulate }),
+    ...(e.removalOrder === undefined ? {} : { removalOrder: e.removalOrder }),
   };
 }
 
@@ -2360,6 +2408,18 @@ function candidateJson(c: CandidateReport): Json {
       deformReevaluated: k.deformReevaluated.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key })),
       linkedMeshes: k.linkedMeshes.map(attachmentJson),
       acceptedAt: k.acceptedAt.map((a) => ({ step: a.step, kind: a.kind, count: a.count, sourceVertices: [...a.sourceVertices] })),
+      ...(k.retriangulation === undefined
+        ? {}
+        : {
+            retriangulation: {
+              method: k.retriangulation.method,
+              taken: k.retriangulation.taken,
+              flips: k.retriangulation.flips,
+              sweeps: k.retriangulation.sweeps,
+              refusedBy: k.retriangulation.refusedBy,
+              monotonicity: k.retriangulation.monotonicity,
+            },
+          }),
     };
   }
   return out;
