@@ -611,6 +611,20 @@ measured byte-identical with the floor and with every candidate measured,
 *Stage B — boundary runs as steps*). The record holds 18 inputs where §7
 cites 19; §7's figure is its own measurement and stays as written.
 
+The triangulation post-pass and the weight-aware removal order
+([#1283](https://github.com/firejune/rigc/issues/1283)) are additive on the
+agreed row's types, agreed by its only reader (rig-parts#126, §8 Q3, Q9 and
+Q11): two optional inputs, `MeshReductionInput.retriangulate` (`'delaunay'`)
+and `MeshReductionInput.removalOrder` (`'deformation-load'`), each echoed in
+`effective` only when set, and one new key written last in `changes`,
+`retriangulation` (`Retriangulation`), only when `retriangulate` is set. A
+call that sets neither writes the mesh and every byte of the report as
+before — measured byte-identical against `b2503e4` on the 18 inputs of the
+stage-D1 record, 18 of 18 without `boundaryRuns` and 18 of 18 with it
+(docs/MESH_REDUCTION.md, §8 *Stage B — triangulation post-pass and
+weight-aware order*). A caller that sets `retriangulate` gets triangles that
+are no longer the removals', and a report that says so.
+
 The region pixel set computed by scanline
 ([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —

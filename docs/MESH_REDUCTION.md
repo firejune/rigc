@@ -479,8 +479,28 @@ keys remapped (each with the source vertices whose offsets were dropped) and
 re-evaluated, and the linked meshes — and, last, `acceptedAt` ([implemented,
 #1268]; one entry per accepted operation since [implemented, #1279]). It is
 absent on a `measure` and whenever no mesh is returned. `effective` also echoes
-a reduction's `stopAfterAccepted` and `boundaryRuns`, each only when the input
-set it.
+a reduction's `stopAfterAccepted`, `boundaryRuns`, `retriangulate` and
+`removalOrder`, each only when the input set it ([implemented, #1283] for the
+last two). With `retriangulate` set, `changes` ends in one more key,
+`retriangulation` — which triangulation the returned mesh carries, and what the
+operation does not promise about its steps (§8 *Stage B — triangulation
+post-pass and weight-aware order*):
+
+```ts
+/** src/meshquality.ts [implemented, #1283] — written last in `changes`, only when the input set `retriangulate`. */
+export interface Retriangulation {
+  method: 'delaunay';
+  /** The returned mesh carries the pass's triangles (true) or the removals' (false). */
+  taken: boolean;
+  /** Edge flips the pass made, and its sweeps over the interior edges (the last flipping none). */
+  flips: number;
+  sweeps: number;
+  /** Null when taken; else the first required row that failed on the pass's result, or the flip bound reached. */
+  refusedBy: string | null;
+  /** The same sentence on every report: monotone validity along acceptedAt is not promised (§8 Q4). */
+  monotonicity: string;
+}
+```
 
 `acceptedAt` lists the accepted operations in the order taken, each written
 with its keys in this order:
@@ -2818,9 +2838,12 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 > **Stage B's first landing is implemented** — boundary runs taken as steps and
 > `acceptedAt` one entry per operation, [implemented, #1279], in *Stage B —
 > boundary runs as steps* at the end of this section, with the decisions it
-> rests on [agreed, rig-parts#126]. Everything above it is Stage A as recorded,
-> and the reproducer's figures (`MQ85`–`MQ90`) are unchanged by it: they are a
-> call without the opt-in.
+> rests on [agreed, rig-parts#126]. **So is its second** — the triangulation
+> post-pass and the weight-aware removal order, both opt-in, [implemented,
+> #1283], in *Stage B — triangulation post-pass and weight-aware order* after
+> it. Everything above them is Stage A as recorded, and the reproducer's
+> figures (`MQ85`–`MQ90`) are unchanged by either: they are a call without the
+> opt-ins.
 
 The consumer's problem, in its own aggregate figures: after #1266's replay
 (parts PR #141), two attachments reduce to motion-valid meshes — A from 109/145
@@ -3537,6 +3560,166 @@ UV window hold as for any removal; nothing in this landing touches the
 triangulation (Q3/Q9) or the order of the single removals (Q11). Whether a run
 passes motion is parts's comparison to decide (Q6), on the replay.
 
+### Stage B — triangulation post-pass and weight-aware order [implemented, #1283]
+
+**Decided** [agreed, rig-parts#126, its answers to the questions above]: Q3 —
+a post-pass that keeps the vertex set and re-triangulates is acceptable, opt-in
+only, so a call without it stays byte-identical; Q9 — the returned
+triangulation becomes the operation's own under that opt-in, with the replay
+byte-exact and the non-monotone interval disclosed rather than prevented; Q4 —
+neither side promises that passing is monotone along the steps: rig-parts's
+search reports a passing prefix found by bisection, not necessarily the last,
+and re-compares the chosen step on the whole schedule; Q11 — the weight-aware
+order is rig-c's, pose-free, inside `rig-c/mesh` behind an opt-in.
+
+```ts
+/** src/meshquality.ts — the input's two new fields; Retriangulation is in §2. */
+export interface MeshReductionInput {
+  // …every existing field…
+  /** Opt-in. Left out = the triangles the removals leave. */
+  retriangulate?: 'delaunay';
+  /** Opt-in. Left out = single removals in ascending source index. */
+  removalOrder?: 'deformation-load';
+}
+```
+
+Each field has one value. `undefined` is the field left out; `null`, another
+spelling or any other type is refused `REDUCE_INPUT_MISSING` naming the field,
+as `stopAfterAccepted` and `boundaryRuns` are (`MQ104`). Each is echoed in
+`effective` only when set.
+
+- **The post-pass.** Once the reduction has ended — any termination that
+  returns a mesh, a replay's included — the kept vertices are re-triangulated
+  by Lawson edge flips toward the Delaunay triangulation (`delaunayFlips`,
+  `src/meshreduce.ts`). No vertex is added, moved or removed, so `indexMap`,
+  the canonical order, the weights and the deform remap are the removals'. A
+  sweep visits every interior edge in ascending (smaller id, larger id) and
+  flips it when the quad it closes is strictly convex, the two opposite angles
+  sum past π (read as sin(α + β) < −10⁻⁹ from cross and dot products — no libm
+  call), the edge is not protected (`protect.edges` and every source edge over
+  `protect.weightJump`), no declared region holds it or would hold the new
+  edge (`edgeIsHeldByRegion`), and the new edge is a source edge or within
+  `protect.weightJump`. An outline edge has one triangle and is never visited.
+- **Taken whole, or refused whole.** The pass's result is canonicalised and
+  measured against the call's targets exactly as a result is; it is taken only
+  when every required row passes, and otherwise the mesh is returned as the
+  removals left it, with `changes.retriangulation.refusedBy` naming the first
+  failing row. Whole rather than flip by flip, because the rows a flip can
+  move are few and the pass already keeps them: the art rows and
+  `MQ_BOUNDARY_DEVIATION` read the outline and the union of the triangles,
+  which a flip inside a convex quad does not change; a region's rows read only
+  the edges it holds, which the pass never flips nor makes (`MQ102`); and a
+  Delaunay flip only raises the smaller angle of its pair. A measurement per
+  flip would cost one per flip — up to n(n − 1)/2 — and buy nothing a row can
+  see; the whole pass costs one. On a result that already fails a required
+  row — a refined source that cannot meet its targets — the pass is refused
+  naming that row (one input of the stage-D1 record, below).
+- **Not a step.** The pass tries no candidate, is not counted in
+  `budget.maxCandidates` and writes no `acceptedAt` entry. That is what keeps
+  the replay byte-exact: `stopAfterAccepted: k` and the budget cut at
+  `acceptedAt[k − 1].step` end on the same state, and both are followed by
+  the same deterministic pass (`MQ99`). The removal loop never reads the
+  pass, so `acceptedAt` and the termination are the call's without it.
+- **Bounded work on the post-pass path.** Every flip the criterion allows
+  lowers the triangulation's lifting onto the paraboloid strictly, so an edge
+  flipped away never returns: at most n(n − 1)/2 flips over the n kept
+  vertices; a sweep that continues has flipped at least one, so at most one
+  more sweeps than flips, each visiting at most 3n interior edges; then one
+  measurement. The flip bound is also held by count — reaching it refuses the
+  pass naming the bound, which the criterion makes unreachable.
+- **The weight-aware order.** With `removalOrder: 'deformation-load'`, each
+  pass ranks its single-removal candidates once, after that pass's boundary
+  runs (which keep #1279's order): the predicted load of removing a vertex is
+  the largest L · Δshare over the edges its re-triangulated hole adds — L the
+  edge's length in px, Δshare half the L1 difference of its ends' weight
+  vectors (§8's deformation load) — 0 when the hole adds none, and a removal
+  `removalOf` cannot make ranks last. Ascending load, ties by source index.
+  Every attempt is still a candidate counted against the budget, held to every
+  row exactly as before; only the order moves. On an unweighted source every
+  load is 0 and the order is the default's.
+  ⚠️ **Rejected:** the card's wording "over the removed vertex's incident
+  edges". §8 defines `dprio` over the edges the removal *adds*, and every
+  stage-A figure for it was measured that way; the incident edges are the ones
+  the removal takes away, so they rank what is lost rather than the load the
+  result carries.
+- **Bounded work on the order path.** Per pass: one `removalOf` per surviving,
+  unprotected source vertex (each a scan of the triangles) and one sort of
+  those *c* candidates, O(*c* log *c*) comparisons; nothing is measured for
+  the ranking and it tries no candidate. Passes are bounded as before — one
+  more than the removable vertices — and the budget bounds the call.
+- **The report.** With `retriangulate`, `changes` ends in `retriangulation`
+  (§2): `method`, `taken`, `flips`, `sweeps`, `refusedBy` and `monotonicity`,
+  the sentence that monotone validity along `acceptedAt` is not promised — a
+  step that passes a comparison may be followed by one that fails and then by
+  one that passes again, and a bisection finds a passing step, not necessarily
+  the last. It is a field and not a row: it measures nothing, and a row with
+  no value would read as a measurement. `removalOrder` is echoed in
+  `effective`; without it the order ran was ascending source index.
+
+**Measured in the suite** [measured, #1283] (darwin, Apple M4, the controls'
+own lines):
+
+| subject | the removals' triangles | with the post-pass | with the load order |
+| --- | --- | --- | --- |
+| `MQ79`'s ramp, strict (28 / 0) | `MQ_LOCAL_DEFORMATION` 1.807703, refused | **0.244565, accepted** — same 28 vertices, 30 flips (`MQ97`) | — |
+| this section's fixture, bisected on `grid` | step 45 of 134, 191 vertices (`MQ88`) | **step 101, 135 vertices**, grid 0.912243, held-out 0.854203 (`MQ98`) | **step 96, 140 vertices**, 0.655363 / 0.613681 (`MQ103`) |
+
+These are the stage-A record's figures (0.2446; 135; 140) — the ramp differs
+in the sixth decimal from the record's 0.244563 by a cocircular tie the
+record also names. The fixture's strict run keeps its 102 / 0 under either
+opt-in; the load order reaches it in the same 338 candidates.
+
+**Measured on the recorded inputs** [measured, #1283] — the tree at
+`b2503e4` against this one, the 18 inputs of the stage-D1 record at 2.20.0
+(`reduceMeshWith` over the recorded input; darwin, Apple M4, 1-minute load
+2.4–3.6 with other sessions running):
+
+- **Opt-out bytes.** Mesh and report identical, **18 of 18** without
+  `boundaryRuns` and **18 of 18** with `boundaryRuns: { maxVertices: 8 }`.
+- **The vertex set under the pass.** Points, UVs, hull, weights, `indexMap`,
+  insertions and deform keys identical to the call without it on **16 of 16**
+  inputs that return a mesh (18 of 18 with `boundaryRuns`); the pass was taken
+  on 15 and refused on 1 — a synthetic input whose refined source already
+  fails `MQ_DEGENERATE` before any removal, which the pass's result fails too.
+- **Replay under the pass.** `stopAfterAccepted: k` at the first, middle and
+  last operation equals the budget cut at that operation's `step`, mesh for
+  mesh, on **116 of 116** probes that land on a removal or a boundary run
+  (`retriangulate`, both opt-ins, and `retriangulate` with `boundaryRuns`).
+  The 12 probes that land on a refinement insertion have no budget cut to
+  compare with — a budget spent inside the refinement returns no mesh, with or
+  without the opt-in (`MQ81`).
+
+Vertices kept / candidates / elapsed ms, the median of three runs, each
+(tree, path) in its own process:
+
+| input | b2503e4 | opted out | `retriangulate` (flips) | `removalOrder` | both | `boundaryRuns` 8, b2503e4 | `boundaryRuns` 8 | + `retriangulate` | + both |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| demo/bottomwear | 282 / 1,101 / 1,131 | 282 / 1,101 / 1,202 | 282 / 1,101 / 1,221 (247) | 282 / **818** / 1,191 | 282 / 818 / 1,121 | 223 / 4,029 / 3,963 | 223 / 4,029 / 4,148 | 223 / 4,029 / 4,231 | 223 / 4,029 / 4,213 |
+| demo/neck | 14 / 103 / 21 | 14 / 103 / 22 | 14 / 103 / 27 (11) | 14 / 103 / 24 | 14 / 103 / 24 | 14 / 299 / 30 | 14 / 299 / 30 | 14 / 299 / 32 | 14 / 299 / 33 |
+| sample/bottomwear | 101 / 331 / 243 | 101 / 331 / 252 | 101 / 331 / 296 (63) | 101 / 331 / 241 | 101 / 331 / 251 | 95 / 1,694 / 781 | 95 / 1,694 / 748 | 95 / 1,694 / 798 | 95 / 1,694 / 881 |
+| sample/neck | 26 / 133 / 26 | 26 / 133 / 26 | 26 / 133 / 30 (28) | 26 / 133 / 32 | 26 / 133 / 32 | 21 / 430 / 59 | 21 / 430 / 55 | 21 / 430 / 55 | 21 / 430 / 65 |
+| sample/sleeves | 190 / 421 / 209 | 190 / 421 / 192 | 190 / 421 / 221 (83) | 190 / 421 / 230 | 190 / 421 / 233 | 166 / 2,810 / 1,438 | 166 / 2,810 / 1,206 | 166 / 2,810 / 1,275 | 166 / 2,810 / 1,352 |
+| sample/topwear | 63 / 205 / 78 | 63 / 205 / 70 | 63 / 205 / 84 (40) | 63 / 205 / 77 | 63 / 205 / 81 | 59 / 1,031 / 229 | 59 / 1,031 / 230 | 59 / 1,031 / 234 | 59 / 1,031 / 247 |
+
+(sample/hair_back is `invalid-input` at admission on every path.) Kept is the
+result's vertex count — every one of them on the outline, no interior vertex
+left on any path. The post-pass changes no count by construction — what
+it changes is the motion of a replay, which these inputs have no public rig
+to pose (D2 is where they are posed) — and costs +2 to +23 % of the
+opted-out median here, the largest share on the smallest inputs and inside
+the spread of three runs on the largest (demo/bottomwear 1,205–1,345 ms
+against 886–1,282). The load order keeps the same fully reduced results,
+needs **283 fewer candidates on demo/bottomwear** (1,101 → 818) and the same
+elsewhere, and costs −4 to +23 % of the opted-out median. The runs' path is
+unchanged by either field in candidates, as its own order says. The stage-A
+record's +0–5 % and +0–15 % were a scratch copy's, on another load; these are
+the tree's.
+
+**Not done here.** Neither field touches the boundary runs' order or
+acceptance, P19, the deform remap or the UV window; relocation (Q5) stays
+unbuilt. Whether a replay under either passes motion is parts's comparison to
+decide, on the replay, as every step is (Q6).
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -3664,6 +3847,33 @@ and
 — each plant named in §8's paragraph on them. `MQ00` reads the allocation
 rows aside: on its unweighted mesh with no amplitude, two of them are
 `not-measurable` by design, and `MQ122` holds those states.
+
+[implemented, #1283] §8's Stage B second landing, on `MQ79`'s ramp and the
+same fixture in the `mesh-compare` suite, under the next free codes — each
+read beside a plant that must make it fire (`RetriangulationPlant` and
+`OrderPlant`, members of `ReductionPlant`):
+`MQ97_THE_POST_PASS_RE_TRIANGULATES_THE_RAMPS_STRICT_RESULT_ON_ITS_OWN_VERTICES_AND_IT_PASSES_THE_MOTION_ROW_THE_REMOVALS_TRIANGLES_FAIL`
+(plant: the call without the field),
+`MQ98_ON_THE_TRACED_BOUNDARY_THE_POST_PASS_KEEPS_EVERY_VERTEX_AND_ITS_BISECTED_REPLAY_KEEPS_FEWER_THAN_THE_REMOVALS_AND_PASSES_HELD_OUT`
+(plant: `MQ88`'s bisection over the removals' triangles),
+`MQ99_CONTROL_UNDER_THE_POST_PASS_STOP_AFTER_ACCEPTED_IS_THE_BUDGET_CUT_BYTE_FOR_BYTE_AND_THE_REMOVALS_VERTEX_SET`
+(plants: the pass skipped on a replay; the loop reordered under the opt-in),
+`MQ100_A_CALL_WITHOUT_RETRIANGULATE_OR_REMOVAL_ORDER_WRITES_NO_NEW_KEY_AND_ATTEMPTS_ITS_SINGLES_IN_SOURCE_ORDER`
+(plants: the pass, and the order, without the opt-in — the bytes against
+`b2503e4` are measured out of suite, §8, as for `MQ93`),
+`MQ101_A_POST_PASS_WHOSE_FLIPS_WOULD_BREACH_A_DECLARED_ROW_IS_NOT_TAKEN_AND_NAMES_THE_ROW`
+(plants: the flip criterion inverted, measured and unmeasured),
+`MQ102_THE_POST_PASS_NEITHER_FLIPS_NOR_MAKES_AN_EDGE_A_REGION_HOLDS_SO_EVERY_REGION_ROW_READS_AS_THE_REMOVALS_LEFT_IT`
+(plant: flips that ignore the region),
+`MQ103_THE_DEFORMATION_LOAD_ORDER_ATTEMPTS_EACH_PASSS_SINGLES_IN_ASCENDING_PREDICTED_LOAD_AND_ITS_REPLAY_KEEPS_FEWER_VERTICES`
+(plant: the loads ranked descending),
+`MQ104_A_RETRIANGULATE_OR_REMOVAL_ORDER_THAT_IS_NOT_ITS_ONE_VALUE_IS_REFUSED_NAMING_THE_FIELD`
+and
+`MQ105_THE_REPORT_ECHOES_EACH_FIELD_ONLY_WHEN_SET_AND_SAYS_WHICH_TRIANGULATION_THE_MESH_CARRIES_AND_WHAT_IS_NOT_PROMISED`
+(plant: the pass without the opt-in). The observer `MQ94` and `MQ96` read
+(`AttemptRecord`) carries two more fields for `MQ100` and `MQ103`: the pass
+an attempt was made in, and the load a single removal was ranked by under the
+load order (null otherwise).
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
