@@ -379,10 +379,20 @@ export interface MotionAmplitude {
   /** One entry per track the caller declares (an animation, a parameter axis — its name is echoed, never read). */
   tracks: TrackAmplitude[];
   /**
-   * G, px per px: how fast a declared need relaxes away from its source — the size a need allows at distance d is its
-   * own plus G × d (the form of a region's `grade`). Read by `MQ_ALLOCATION_CONTRAST` only. Finite, 0 or more.
+   * G, px per px — an author's number, read by `MQ_ALLOCATION_CONTRAST` only (issue #1291). Δ asks of each vertex
+   * whether the mesh still meets every declared need without it; a need — a silhouette edge of the B\* outline, a
+   * deforming triangle sized by θ and ε, a region — allows edges of its own size h at its source and h + G × d at
+   * distance d from it, the form of a region's `grade`. So G is the fastest rate at which the author allows the mesh to
+   * coarsen away from what needs density: a larger G lets the need relax sooner, so more dense vertices read as
+   * removable and Δ and economy E rise (graded layers read as slack); a smaller G keeps more of them needed, and at 0
+   * every point needs the smallest size any source declares, so nothing reads as removable. The value an author
+   * declares on a region's `grade` for the same mesh is the same quantity; §8's fixtures used 0.75 because it is the
+   * one `grade` any of them declares. Nothing a rig or a reduction declares fixes G — docs/MESH_REDUCTION.md §8
+   * measured every candidate derivation, and Δ moves with G on every input there — so none is assumed: left out, it is
+   * not declared, and `null` declares it absent; either leaves `MQ_ALLOCATION_CONTRAST` `not-measurable` naming this
+   * field, and `MQ_DEFORM_LOAD`, which does not read G, measured. Set, finite and 0 or more.
    */
-  gradation: number;
+  gradation?: number | null;
 }
 
 /** One track's amplitude: the pairs of bones a share moves between in it, each with θ, and the track's ε. */
@@ -865,8 +875,11 @@ export function validateMotionAmplitude(who: string, amplitude: unknown): void {
   if (amplitude === undefined || amplitude === null) return;
   const shape = '{ tracks: [{ track, pairs: [{ bones: [a, b], theta }], epsilon }], gradation }';
   if (!isObject(amplitude) || !Array.isArray(amplitude.tracks)) refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude is ${JSON.stringify(amplitude)}; required ${shape}, null, or the field left out`);
-  if (!isFiniteNumber(amplitude.gradation) || amplitude.gradation < 0) {
-    refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude.gradation is ${JSON.stringify(amplitude.gradation)}; required a finite number of px per px, 0 or more — no gradation is assumed`);
+  // Issue #1291: `gradation` left out or `null` is accepted — MQ_ALLOCATION_CONTRAST then reads not-measurable naming it.
+  if (amplitude.gradation !== undefined && amplitude.gradation !== null && (!isFiniteNumber(amplitude.gradation) || amplitude.gradation < 0)) {
+    // A non-finite number is named as itself: JSON would print NaN as null, which this field now accepts.
+    const found = typeof amplitude.gradation === 'number' ? String(amplitude.gradation) : JSON.stringify(amplitude.gradation);
+    refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude.gradation is ${found}; required a finite number of px per px, 0 or more, null, or the field left out — no gradation is assumed`);
   }
   amplitude.tracks.forEach((track: unknown, i: number) => {
     const at = `motionAmplitude.tracks[${i}]`;
@@ -1858,7 +1871,7 @@ function allocationRows(input: MeshMeasureInput, outline: MeshOutline, rasters: 
   const allocationArt: AllocationArt = { mask: art.mask, bits: rasters.artBits(), scale: art.frame.pageScale };
 
   // MQ_DEFORM_LOAD.
-  const loadWhy = amplitudeMissing ?? unweighted;
+  const loadWhy = amplitudeMissing ?? unweighted ?? (plant === 'load-needs-gradation' && (amplitude?.gradation === undefined || amplitude.gradation === null) ? `${who}: planted — the load refused for want of a gradation it does not read` : null);
   if (loadWhy !== null || amplitude === undefined || amplitude === null || source.weights === null) {
     row('MQ_DEFORM_LOAD', 'px', missing('MQ_DEFORM_LOAD', 'px', loadWhy ?? ''));
   } else {
@@ -1875,6 +1888,15 @@ function allocationRows(input: MeshMeasureInput, outline: MeshOutline, rasters: 
   // MQ_ALLOCATION_CONTRAST.
   const planted = plant === 'contrast-without-amplitude' && (amplitude === undefined || amplitude === null) ? { tracks: [], gradation: 0 } : null;
   const declared = planted ?? amplitude;
+  // Issue #1291: G is the author's; an amplitude without it measures the load and leaves Δ unread, naming the field.
+  const declaredGradation = declared === undefined || declared === null ? undefined : declared.gradation;
+  const gradation = plant === 'gradation-defaulted' && (declaredGradation === undefined || declaredGradation === null) ? 0.75 : declaredGradation;
+  const gradationMissing =
+    declared === undefined || declared === null || (gradation !== undefined && gradation !== null)
+      ? null
+      : gradation === undefined
+        ? `${who}: motionAmplitude.gradation is not declared (the field is left out), so no rate says how fast a declared need relaxes away from its source; required G, px per px, 0 or more — none is assumed, because Δ moves with G and nothing a rig declares fixes it (docs/MESH_REDUCTION.md §8)`
+        : `${who}: motionAmplitude.gradation is declared absent (null), so no rate says how fast a declared need relaxes away from its source; required G, px per px, 0 or more, for this row — none is assumed`;
   let regionWhy: string | null = null;
   for (const region of targets.regions) {
     const refusal = regionRefusal(region, art.frame.pageScale, who, steps);
@@ -1883,13 +1905,13 @@ function allocationRows(input: MeshMeasureInput, outline: MeshOutline, rasters: 
       break;
     }
   }
-  const contrastWhy = (planted === null ? amplitudeMissing : null) ?? unweighted ?? noDelta ?? fewArt ?? regionWhy;
-  if (contrastWhy !== null || declared === undefined || declared === null || source.weights === null || delta === null) {
+  const contrastWhy = (planted === null ? amplitudeMissing : null) ?? gradationMissing ?? unweighted ?? noDelta ?? fewArt ?? regionWhy;
+  if (contrastWhy !== null || declared === undefined || declared === null || gradation === undefined || gradation === null || source.weights === null || delta === null) {
     row('MQ_ALLOCATION_CONTRAST', 'fraction', missing('MQ_ALLOCATION_CONTRAST', 'fraction', contrastWhy ?? ''));
   } else {
     const ownHull = points.slice(0, outline.hull);
     const silhouette = boundaryNecessityOnce(rasters, ownHull, delta, allocationArt, null).path;
-    const contrast = allocationContrast(points, source.triangles, outline.hull, source.weights, delta, allocationArt, targets.regions, declared, silhouette, plant);
+    const contrast = allocationContrast(points, source.triangles, outline.hull, source.weights, delta, allocationArt, targets.regions, declared, gradation, silhouette, plant);
     if (contrast.measured) {
       const c = contrast.value;
       row('MQ_ALLOCATION_CONTRAST', 'fraction', measured('MQ_ALLOCATION_CONTRAST', 'fraction', c.contrast, { at: { vertex: c.worstVertex } }), {
@@ -2387,7 +2409,7 @@ function amplitudeJson(a: MotionAmplitude | null): Json {
   if (a === null) return null;
   return {
     tracks: a.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: [p.bones[0], p.bones[1]], theta: p.theta })), epsilon: t.epsilon })),
-    gradation: a.gradation,
+    ...(a.gradation === undefined ? {} : { gradation: a.gradation }),
   };
 }
 

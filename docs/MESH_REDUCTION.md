@@ -2856,7 +2856,10 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 > figures (`MQ85`–`MQ90`) are unchanged by either: they are a call without the
 > opt-ins. The reduction also carries the allocation rows' amplitude into its
 > result's measurement, [implemented, #1287], in *Stage B — the amplitude on a
-> reduction* at the end of this section.
+> reduction* at the end of this section. After it: what Δ's gradation G derives
+> from, measured, and the comparison's own amplitude, [implemented, #1291]; and
+> rig-parts's rerun of all of Stage B on its eight public parts, [observed,
+> rig-parts PR #147].
 
 The consumer's problem, in its own aggregate figures: after #1266's replay
 (parts PR #141), two attachments reduce to motion-valid meshes — A from 109/145
@@ -3116,7 +3119,7 @@ report it writes — and so of every `reduceMesh` result and every
 | --- | --- | --- | --- | --- |
 | `MQ_GRADE` | grade max: the largest \|h_u − h_v\| / L over the mesh's unique edges, h a vertex's mean incident edge length | ratio | the edge (the first in sorted order on a tie) | an edge has zero length |
 | `MQ_MIN_ANGLE_P10` | the tenth percentile of the triangles' smallest angles, nearest rank at round((n − 1) · 0.1), ties by triangle index; the angle is `MQ_MIN_ANGLE`'s formula | degrees | the triangle at that rank | never on a mesh `traceOutline` accepts |
-| `MQ_ALLOCATION_CONTRAST` | Δ, as defined above; economy E and the counts both are taken from in `allocation.contrast` | fraction | the dense vertex with the lowest ν | `motionAmplitude` left out or `null`, `source.weights` null, `targets.maxBoundaryDeviation` null, fewer art samples than `minArtSamples`, a refused region, a pair of bones no track declares, or an empty dense or rest class |
+| `MQ_ALLOCATION_CONTRAST` | Δ, as defined above; economy E and the counts both are taken from in `allocation.contrast` | fraction | the dense vertex with the lowest ν | `motionAmplitude` left out or `null`, its `gradation` left out or `null` (#1291), `source.weights` null, `targets.maxBoundaryDeviation` null, fewer art samples than `minArtSamples`, a refused region, a pair of bones no track declares, or an empty dense or rest class |
 | `MQ_DEFORM_LOAD` | the largest L · Δshare · θ / 4 over the edges, px: the chord-error bound of the mesh's own weight field under the declared amplitude | px | the edge; `{ at: {} }` when no edge moves a share | `motionAmplitude` left out or `null`, `source.weights` null, or a pair of bones no track declares |
 | `MQ_BOUNDARY_NECESSARY` | B\*, over the **reference hull**; the search's work in `allocation.search` | count | the first vertex of this mesh's hull, in walk order, that is not on the B\* outline; `{ at: {} }` when every one is | no `referenceHull`, `targets.maxBoundaryDeviation` null, or fewer art samples than `minArtSamples` |
 
@@ -3162,7 +3165,12 @@ upper bound. The field declares no bound; it changes no other row.
 a gradation G (the table above: "needs … gradation G"), and the stage-A
 record left who declares G open. No default is invented, so G is
 `motionAmplitude.gradation`, declared beside the amplitude it is read with;
-only `MQ_ALLOCATION_CONTRAST` reads it.
+only `MQ_ALLOCATION_CONTRAST` reads it. ⚠️ **Changed by [implemented,
+#1291]:** the field stays the author's — nothing a rig declares fixes it,
+measured in *G — what it derives from* below — but it is no longer required to
+send the amplitude: `gradation?: number | null`, and left out or `null` it
+leaves `MQ_ALLOCATION_CONTRAST` `not-measurable` naming it while
+`MQ_DEFORM_LOAD`, which never read G, is measured.
 
 **Readings the tree fixes that the stage-A record left open** — each measured:
 
@@ -3420,6 +3428,13 @@ comes from a measurement above; none is settled by this page.
   rig-parts's search reports a passing prefix found by bisection, not
   necessarily the last, no monotonicity is promised by either side, and the
   chosen step is re-compared on the whole schedule before anything is written.
+  **Seen on a real part [observed, rig-parts PR #147]:** in rig-parts's rerun
+  at rig-c 2.28.0, sample/sleeves under `boundaryRuns` alone wrote **223**
+  vertices against the baseline's 192, because the bisection found a passing
+  step 3 of 50, not the last — the non-monotone case §7 M3 and this question
+  disclosed, on an ear-clipped replay with the runs as steps rather than on the
+  Delaunay walk measured above; with all three opt-ins the part writes fewer
+  than its baseline (*Stage B — rig-parts's rerun* at the end of this section).
 - **Q5.** Is relocation wanted at all? The fewest-vertex controls (C2, C3) need
   positions not in the source, which breaks the index correspondence a
   `vertices` deform key relies on (§6, P18), needs a weight-transfer rule (the
@@ -3470,6 +3485,24 @@ back out of; Q10 — `acceptedAt` counts operations, recording each one's kind
 and count, the prototype's cost accepted while it is brought down, absolute
 runtime and candidates reported; Q4 — nothing here promises that passing is
 monotone along the steps.
+
+⚠️ **Correction to Q1 [agreed, rig-parts#126]:** the answer recorded above
+read "(ii) is parts's own experiment", from parts's first reply, which put
+option (ii) first and gave it before the trial ran. The trial refuted it, and
+parts withdrew (ii) on its own measurement (rig-parts PR #146, rig-c 2.24.1):
+with every declared bound unchanged and the source hull sampled at tolerance
+0.5 and 0.25 on its eight parts, 84–100 % of hull vertices then sit at or under
+1 px, yet every reduction still stops on `MQ_BOUNDARY_DEVIATION`, and the parts
+the motion comparison refused get **worse** — a finer source has more
+accepted steps and the bisection lands earlier (sample/sleeves 190 + 2 →
+665 + 33 vertices at 0.5; demo/bottomwear 283 + 132 → 379 + 99), and at 0.25
+demo/bottomwear is refused outright, its unreduced source failing
+`MQ_INVERSION` against itself (one triangle, at `idle@grid@2.583333`), so no
+search runs. So Q1's answer is **option (iv) alone** — boundary runs taken as
+steps inside `rig-c/mesh`, held to the art bounds and the declared deviation,
+judged by parts's motion comparison before acceptance (Q6) — with (i) and
+(iii) refused as before. Those figures are parts's, posted on rig-parts#126;
+none was re-measured here.
 
 ```ts
 /** src/meshquality.ts — the input's one new field; AcceptedOperation is in §2. */
@@ -3822,6 +3855,227 @@ same machine:
 **Not done here.** The field is read by no step; a removal order or an
 acceptance that reads the amplitude would be a separate opt-in, as
 `removalOrder` is, and none is proposed.
+
+### G — what it derives from [measured, #1291]
+
+rig-parts's STOP on rig-parts#126, after its rerun of Stage B: parts derives
+θ per pair and ε from the motion it declares and then has nothing to put in
+`motionAmplitude.gradation` — no field of a rig or of its configuration
+declares it, and inventing a number is not parts's to do — so it sends no
+amplitude, and `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD` read
+`not-measurable` in every cell of the rerun. Its preference, in order: G
+derives from what a rig declares; it becomes optional with a stated default;
+it stays an author number with its meaning written for an author.
+
+**What G is.** Δ's need field (*Implemented — the allocation rows*,
+`allocationContrast` in `src/meshallocation.ts`) is h\*(p) = min over the
+sources of h_s + G · d(p, s): each B\*-outline edge needs its own length, each
+deforming triangle needs √(4ε / (θ · |∇share|)), and each declared region
+holds its own L0 inside and L0 + `grade` · d over its band — the region
+already relaxes at its own declared `grade`, so G governs the first two kinds
+only. A vertex is removable alone when its cheapest collapse makes no new edge
+longer than h\* at its midpoint (and breaks no other need). G is therefore the
+rate at which a need is allowed to relax with distance: it is what makes a
+graded layer beside a dense source read as needed rather than as slack.
+
+**Every candidate derivation, measured.** On §8's six fixtures (their own
+amplitude: θ = 5° in radians, ε = 0.035 px), on `MQ79`'s source, its
+motion-accepted replay at step 94 and its strict result (θ = 5°, ε = 1), on
+the #1271 reproducer's (`MQ85`) source, its bisected replay at step 45 and its
+strict result (θ = 2 sin 2.5° on each of the pairs a–b, b–c, a–c, ε = 1), and
+on the sources of the seven demo and sample inputs of the stage-D1 record [the
+assumed amplitude of *Implemented — the allocation rows*: θ = 5° between every
+pair of the source's weighted bones, ε = 1] — which reproduce that subsection's
+G 0.75 readings (sample/neck −0.214, sample/topwear −0.514, sample/bottomwear
+−0.047, demo/bottomwear −0.351). Δ, by G (∞ read at G = 10¹², where the need is
+carried at its source only):
+
+| subject | 0 | 0.25 | 0.5 | 0.75 | 1 | 1.64 | 4 | ∞ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| F+ (accept) | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| N1 (flag) | 0.871 | 0.871 | 0.871 | 0.890 | 0.890 | 0.852 | 0.909 | 0.909 |
+| N2 (accept) | 0 | 0 | 0 | 0 | 0.005 | 0.124 | **0.267** | **0.267** |
+| N2a (accept) | 0 | 0 | 0 | 0 | 0 | 0.019 | 0.019 | 0.019 |
+| N3 (accept) | 0 | 0 | −0.364 | −0.941 | −0.898 | −0.592 | −0.592 | −0.592 |
+| N4 (flag) | 0.429 | 0.429 | 0.510 | 0.510 | 0.510 | 0.510 | 0.510 | 0.510 |
+| `MQ79` source | 0 | 0.061 | **0.306** | 0.020 | 0.163 | −0.112 | −0.112 | −0.071 |
+| `MQ79` replay, step 94 | **0** | 0.024 | **0.238** | 0.357 | 0.385 | 0.481 | 0.481 | 0.481 |
+| `MQ79` strict | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `MQ85` source | 0 | 0 | 0 | −0.434 | −0.697 | −0.728 | −0.697 | −0.697 |
+| `MQ85` replay, step 45 | 0 | 0 | −0.041 | 0.060 | 0.173 | 0.237 | −0.094 | −0.094 |
+| `MQ85` strict | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| demo/bottomwear | 0 | 0 | −0.064 | −0.351 | −0.540 | −0.812 | −0.836 | −0.835 |
+| demo/neck | 0 | 0.394 | 0.530 | 0.450 | 0.375 | 0.350 | 0.350 | 0.350 |
+| sample/bottomwear | 0 | 0 | 0 | −0.047 | −0.360 | −0.607 | −0.697 | −0.697 |
+| sample/hair_back | 0 | 0 | 0 | 0 | 0 | −0.167 | −0.649 | −0.676 |
+| sample/neck | 0 | 0 | −0.210 | −0.214 | −0.228 | −0.243 | −0.209 | −0.209 |
+| sample/sleeves | 0 | 0 | 0 | 0 | 0 | −0.167 | −0.631 | −0.671 |
+| sample/topwear | 0 | 0 | −0.162 | −0.514 | −0.622 | −0.684 | −0.659 | −0.659 |
+
+Scratch script importing the tree at `32e5cc1` (v2.28.0), the fixtures built
+by the suite's own builders; darwin, Apple M4, Bun 1.4.2, 1-minute load 4.4.
+The fixtures' separation is the record's (must-accept ≤ 0.124 against must-flag
+≥ 0.510 over G 0.5–1.64, §8's bar 0.25 between them).
+
+| candidate | G from | where it is defined | what it reads | verdict |
+| --- | --- | --- | --- | --- |
+| (a) a region's band | the region's declared `grade` — (L(T) − L0) / T, the band's own slope; the record's 0.75 is N2's | 2 of 19 subjects (N2, N2a) | 0 and 0 there | ✗ undefined on every input parts sends: none of the seven declares a region, nor `MQ79` or `MQ85` |
+| (a′) the band against the local edge length | L0 / `transition` | the same 2 | 4 / 16 = 0.25: 0 and 0 there; applied to `MQ79` anyway, its uneven replay reads 0.024 against the bar 0.25 | ✗ as (a) |
+| (b) the policy's spacing alone | a declared `maxEdgeLength` or spacing outside a region | nowhere: `RefinementRegion.maxEdgeLength` is the only declared length, and `MeshMeasureInput` and `MeshReductionInput` declare no spacing | — | ✗ no such input |
+| (b′) the only spacing without a region — the mesh's own | the measured mesh's `MQ_GRADE` | every subject | fixtures separate (accept ≤ 0.019, flag ≥ 0.510); `MQ79` 0.082 / 0.481; but the recorded sources' own grade is 1.19–10.15 and `MQ85`'s replay and strict 13.08 and 36.58, so on every real input it sits past the fixtures' range and reads within 0.03 of the ∞ column | ✗ a standard taken from the thing measured — the rejection §8 already makes of a transition term built from the mesh's own sizes — and it moves at every step of a reduction |
+| (c1) need carried at its source only | G → ∞ (no decay constant) | every subject | N2, which must be accepted, reads **0.267**, over the bar | ✗ loses a separation |
+| (c2) need carried everywhere | G = 0 | every subject | E = 0 at every `MQ79` step measured (24, 47, 70, 94); the replay that the other readings flag reads 0, and so does every recorded source | ✗ reads nothing |
+| (c3) a feature size's constant | G = 1, the Lipschitz constant of the local feature size | every subject | holds on the fixtures (0.005) and `MQ79` (0.163 / 0.385) | ✗ a constant of another construction: h\* is not a feature size, so nothing in Δ's definition yields 1 |
+| (c4) §8's grade bar | G = 1.64 | every subject | holds on the fixtures (0.124) and `MQ79` (−0.112 / 0.481) | ✗ the midpoint of a separation on six fixtures from one synthetic domain, for an `undeclared` row; Δ's definition would then be that domain's |
+
+**No derivation holds, and G is not removable from Δ's definition.** It
+enters only as the rate in h\*; the collapse test compares an edge with h\* and
+says nothing about how h\* falls away from its sources. The two readings that
+need no constant are its limits, and each loses something §8 relies on: carried
+at the source only, the must-accept N2 crosses the bar; carried everywhere,
+nothing is removable and the reading is blind. Every value between is a
+choice, and the choice matters: on the seven recorded sources Δ moves by up to
+0.84 across G and is not monotone in it (demo/neck 0.394 → 0.530 → 0.450 →
+0.375 → 0.350), and inside the range §8 recorded as safe on its fixtures, `MQ79`'s
+uniformly over-dense source and its uneven replay **swap order** — 0.306 /
+0.238 at G 0.5 (the source over the bar, the replay under it) against
+0.020 / 0.357 at 0.75. ⚠️ **Correction [measured, #1291]** to *Measured —
+spatial measurements of allocation*: "holds for gradation G 0.5–1.64" is true
+of the six fixtures and does not transfer — on `MQ79` the separation that row
+reports holds from 0.75, not from 0.5.
+
+**So the field stays, and it is the author's** (parts's option 3): option 2
+needs a default that derives from the row's own definition, and the
+measurement shows there is none to state. What changed is that it is no
+longer required to send an amplitude: `MotionAmplitude.gradation?: number |
+null`, validated as before when set (finite, 0 or more; a non-finite value is
+now named as itself, `NaN` rather than JSON's `null`, which the field accepts).
+Left out or `null`, `MQ_ALLOCATION_CONTRAST` is `not-measurable` with a reason
+naming `motionAmplitude.gradation` — left out or declared absent — and
+`MQ_DEFORM_LOAD`, which never read G, is measured from θ alone: on the seven
+recorded sources it reads the same row with and without a gradation, 7 of 7.
+That is what the STOP cost parts: θ and ε were declared, and the load was
+withheld for want of a number it does not read. The echo writes `gradation`
+only when the caller set it, `null` included.
+
+**For an author: what a value of G means.** G, px per px, is how fast the
+mesh may coarsen away from something that needs density — an edge of the
+B\* outline, a triangle whose weights turn under the declared motion. At d px
+from a need of size h the reading allows edges up to h + G · d, exactly the
+form of a region's `grade`, and it is the same quantity: if the author would
+grade a region at some rate on this mesh, that rate is the G to declare.
+Larger G lets the need relax sooner, so more dense vertices read as removable
+— Δ and economy E rise, and a graded layer around a need starts to read as
+slack; smaller G keeps more of them needed, and at 0 every point needs the
+smallest size any source declares, so nothing reads as removable. §8's
+fixtures used 0.75 because it is the one `grade` any of them declares (N2's
+region), so the other needs were graded like the declared one; it is a value
+those fixtures chose, not a default rigc holds.
+
+**What the card and the brief said that the tree does not.** The card's
+acceptance said an absent `gradation` "already" reads `not-measurable`; it was
+refused — `{ tracks }` without `gradation` was `REDUCE_INPUT_MISSING`
+(`MQ127`'s "gradation left out" case, now moved to the admitted ones). The
+candidate "the band relative to the local declared edge length" is (a′): a
+region already declares its slope as `grade`, so the band yields G directly
+where there is one, and there is none on parts's inputs. The reason sentence
+for an amplitude left out still says "required { tracks, gradation }" on both
+rows; rewording it for the load would move the bytes of every report written
+without an amplitude, so it stays, and the load's own reading is the
+correction.
+
+**Controls [implemented, #1291]**, in `mesh-quality`: `MQ127` (a gradation
+that is a string, negative, `NaN` or infinite refused naming its own value;
+left out and `null` admitted), `MQ128` (an amplitude without gradation, and
+with it `null`: the load as with it, Δ `not-measurable` naming which, every
+other row, the verdict and the acceptance unchanged, the echo with no key and
+with `null`; plants: an absent gradation read at 0.75 — the default this
+subsection declines — and the load refused for want of it) and `MQ129` (the
+two limits and the swap above, on N2 and on `MQ79`'s source and step-94
+replay; plant: the need relaxed at 0.75 whatever is declared, which makes all
+three claims fail).
+
+**Opt-out [measured, #1291].** The tree at `32e5cc1` against this one, the 18
+inputs of the stage-D1 record at 2.20.0, one process per tree, darwin, Apple
+M4: report and mesh identical on **108 of 108** calls — `reduceMesh` with no
+opt-in, with all three opt-ins, with an amplitude carrying a gradation and with
+it `null`, and `measureMeshQuality` on the source without and with that
+amplitude.
+
+### Stage B — the amplitude on a comparison [implemented, #1291]
+
+rig-parts noted with its rerun that `MotionComparisonInput` had no
+`motionAmplitude`, so the amplitude could not reach the comparison's
+measurement. It was not intended. `compareMeshesInMotion`'s setup section is
+`measureMeshQuality` run on each build's mesh at the setup pose, so the field
+is the measurement's, with the measurement's handling:
+
+- **Left out**, the comparison is the one it was: the setup sections'
+  `MQ_DEFORM_LOAD` and `MQ_ALLOCATION_CONTRAST` are `not-measurable` naming the
+  field left out, and `effective` has no key for it. **`null`** declares it
+  absent, the reasons saying so, and `effective.motionAmplitude: null`.
+- **Set**, it is handed to the setup measurement of the reference and of every
+  candidate, and to nothing else: `MQ_DEFORM_LOAD` is measured on each setup
+  section (`MQ111`: on `MQ79`'s ramp, 0.012441 px on the source and 1.813205
+  on its strict reduction, doubling with θ). **`MQ_ALLOCATION_CONTRAST` stays
+  `not-measurable` there, naming `targets.maxBoundaryDeviation`**: the
+  comparison declares no deviation bound and no reference hull, so Δ, which
+  reads both, has nothing to be held to. Rather than invent either, the row
+  says which.
+- **Refused** when it is not a `MotionAmplitude` in full — with
+  `COMPARE_INPUT_MISSING`, the comparison's own code, in the measurement's
+  words (`validateMotionAmplitude`), before any build is read (`MQ113`);
+  left to the setup measurement it would be refused under the measurement's
+  code, and only after both model documents had been parsed.
+- **Echoed** in `effective` when set, `null` included, in the type's key order
+  and without a `gradation` key when the caller left it out (`MQ114`).
+- **No verdict moves**: both rows are `undeclared`, and no frame, motion row
+  or acceptance reads the field — a posed comparison with the field and with
+  `null` is the one without it but for the two setup rows, the echo and the
+  setup summaries (`MQ115`).
+
+Controls `MQ111`–`MQ115` in `mesh-compare`, each with a plant
+(`ComparePlant`, through the internal `compareMeshesInMotionPlanted`): the
+amplitude not carried, `null` carried as left out, the field not validated
+before the builds are read, `null` echoed for a field left out, and the load
+counted towards the setup verdict. **Opt-out [measured, #1291]:** the
+recorded inputs carry no builds, so the comparison's bytes were measured on
+`MQ79`'s ramp instead — its source build against its reduction replayed to
+steps 0, 47 and 94 and fully, posed on `idle` at 12 fps on `grid` and `irr`,
+the tree at `32e5cc1` against this one: the report identical, **4 of 4**
+(darwin, Apple M4). `MQ115` holds the shape in suite.
+
+### Stage B — rig-parts's rerun [observed, rig-parts PR #147]
+
+**[observed, rig-parts PR #147]** marks figures parts measured and posted on
+rig-parts#126 (its `docs/evidence/auto-stageb-survey.md`, re-runnable); none
+was re-measured here. parts reran all of Stage B on its eight public parts at
+rig-c 2.28.0 under its stated policy, unchanged — bound 1 rig px,
+`maxBoundaryDeviation` 1, source tolerance 1:
+
+| configuration | vertices written over the eight parts |
+| --- | --- |
+| baseline (no opt-in) | 934 |
+| `boundaryRuns` | 919 |
+| `retriangulate: 'delaunay'` | 862 |
+| `removalOrder: 'deformation-load'` | 896 |
+| all three | **694** |
+
+- **Every cell accepted — 40 of 40** — by parts's motion comparison.
+- **demo/bottomwear**, the part #1266's replay alone left at 415 vertices,
+  writes **229** with all three.
+- **The non-monotone case on a real part**: sample/sleeves under
+  `boundaryRuns` alone writes 223 against the baseline's 192, because the
+  bisection found a passing step 3 of 50 and not the last — recorded under
+  Q4's correction above; with all three opt-ins it is fine.
+- **Replay byte-exact under every opt-in** on parts's inputs, 64 of 64 probes.
+  The regenerated baseline matches parts's tracked survey but for the version
+  string; its lattice and contour outputs are byte-identical.
+- On parts's side the opt-ins are author fields on `meshes.<part>.auto`
+  (absent = off), `acceptedAt` is read per accepted operation, and the five
+  allocation rows are carried `undeclared` — with Δ and the load
+  `not-measurable` in every cell for want of a gradation, the STOP *G — what
+  it derives from* answers.
 
 ## Stage A controls
 

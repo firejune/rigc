@@ -79,6 +79,7 @@ import { artOf, MeshReductionError, r6 } from './mesh.ts';
 import {
   measureMeshQuality,
   MESH_QUALITY_REPORT_SPEC,
+  validateMotionAmplitude,
   type ArtFitBounds,
   type ArtInput,
   type AttachmentRef,
@@ -89,6 +90,7 @@ import {
   type MeasureRow,
   type MeshCounts,
   type MeshQualityReport,
+  type MotionAmplitude,
   type MotionBounds,
   type MotionReading,
   type MotionRowDetail,
@@ -151,7 +153,26 @@ export interface MotionComparisonInput {
   bounds: MotionBounds;
   motionRequired: boolean;
   perFrame: boolean;
+  /**
+   * Issue #1291: the motion amplitude the setup art fit's measurement reads — `MeshMeasureInput.motionAmplitude`, the
+   * same shape and the same handling, handed to that measurement of every build and to nothing else (no frame, no
+   * motion row and no acceptance reads it). Left out, it is not declared and the setup sections' `MQ_DEFORM_LOAD`
+   * and `MQ_ALLOCATION_CONTRAST` are `not-measurable` naming it, as before the field existed; `null` declares it
+   * absent; set, `MQ_DEFORM_LOAD` is measured on each build's setup section. `MQ_ALLOCATION_CONTRAST` stays
+   * `not-measurable` there either way, naming `targets.maxBoundaryDeviation`: the comparison declares no deviation
+   * bound and no reference hull. Anything that is not a `MotionAmplitude` in full is refused `COMPARE_INPUT_MISSING`
+   * before any build is read, in the measurement's words. Echoed in `effective` when set, `null` included.
+   */
+  motionAmplitude?: MotionAmplitude | null;
 }
+
+/**
+ * Issue #1291's faults in carrying `motionAmplitude` into the setup measurement, for the `mesh-compare` suite's
+ * negative controls: the amplitude not handed over; `null` handed over as the field left out; the field not validated
+ * before the builds are read; `null` echoed for a field left out; and the load counted as a required row, so the
+ * amplitude moves a verdict. `compareMeshesInMotion` plants none.
+ */
+export type ComparePlant = 'amplitude-not-carried' | 'null-read-as-left-out' | 'amplitude-unvalidated' | 'echo-when-unset' | 'amplitude-gates-acceptance';
 
 // ---------------------------------------------------------------------------
 // fixed tolerances — the tree's own
@@ -204,7 +225,7 @@ function validateFit(field: string, f: unknown): void {
  * art itself (mask, threshold, frame) is `measureMeshQuality`'s to refuse, by
  * its own codes, when the setup art fit is taken.
  */
-function validateInput(input: MotionComparisonInput): void {
+function validateInput(input: MotionComparisonInput, plant: ComparePlant | null): void {
   if (!isObject(input)) missing('the input', input, 'a MotionComparisonInput object');
   const builds = [input.reference, ...(Array.isArray(input.candidates) ? input.candidates : [])];
   if (!Array.isArray(input.candidates) || input.candidates.length === 0) missing('candidates', input.candidates, 'a non-empty list of builds');
@@ -257,6 +278,16 @@ function validateInput(input: MotionComparisonInput): void {
   if (b.minStretch !== undefined && (!isFiniteNumber(b.minStretch) || b.minStretch < 0)) missing('bounds.minStretch', b.minStretch, 'a finite ratio >= 0, or the field left out');
   if (typeof input.motionRequired !== 'boolean') missing('motionRequired', input.motionRequired, 'true or false (P6)');
   if (typeof input.perFrame !== 'boolean') missing('perFrame', input.perFrame, 'true or false (P7)');
+  if (plant !== 'amplitude-unvalidated') {
+    // Issue #1291: the measurement's own validator, so a comparison and a measurement refuse one value in the same
+    // words — under the comparison's code, and here, before any build is read.
+    try {
+      validateMotionAmplitude('the comparison', input.motionAmplitude);
+    } catch (err) {
+      if (err instanceof MeshReductionError) refuse('COMPARE_INPUT_MISSING', err.message.slice(err.code.length + 2));
+      throw err;
+    }
+  }
   const s = input.schedule;
   if (s === null) return;
   if (!isObject(s)) missing('schedule', s, 'a MotionSchedule, or null for no motion');
@@ -852,7 +883,24 @@ function foldingSlots(raw: unknown, who: string): Set<string> {
  * undercut at the setup pose fails `referenceArtFit`, and `measureMeshQuality`'s own codes for the art).
  */
 export function compareMeshesInMotion(input: MotionComparisonInput): MeshQualityReport {
-  validateInput(input);
+  return compareMeshesInMotionWith(input, null);
+}
+
+/**
+ * `compareMeshesInMotion` with a fault planted in how it carries `motionAmplitude` (`ComparePlant`) — the
+ * `mesh-compare` suite's negative controls. Internal: merely exported, so not promised (RELEASING.md *The import
+ * surface*).
+ */
+export function compareMeshesInMotionPlanted(input: MotionComparisonInput, plant: ComparePlant): MeshQualityReport {
+  return compareMeshesInMotionWith(input, plant);
+}
+
+function compareMeshesInMotionWith(input: MotionComparisonInput, plant: ComparePlant | null): MeshQualityReport {
+  validateInput(input, plant);
+  const amplitude = input.motionAmplitude;
+  // What the setup measurement is handed: the field as the caller set it — left out as left out, `null` as `null`.
+  const handed: { motionAmplitude?: MotionAmplitude | null } =
+    plant === 'amplitude-not-carried' || amplitude === undefined || (plant === 'null-read-as-left-out' && amplitude === null) ? {} : { motionAmplitude: amplitude };
   const refs = input.attachments.map((a) => a.attachment);
   const reference = readBuild(input.reference, 'reference', refs);
   const candidates = input.candidates.map((c, i) => readBuild(c, `candidates[${i}]`, refs));
@@ -895,9 +943,14 @@ export function compareMeshesInMotion(input: MotionComparisonInput): MeshQuality
         influences: null,
         boneOrder: null,
         preset: null,
+        ...handed,
       });
       const c = measured.candidates[0];
       if (c.geometry === null || c.counts === null) return { geometry: null, counts: null };
+      if (plant === 'amplitude-gates-acceptance') {
+        const load = c.geometry.rows.find((r) => r.code === 'MQ_DEFORM_LOAD');
+        if (load !== undefined && load.state === 'undeclared') c.geometry.verdict = 'fail';
+      }
       sections.push(c.geometry);
       counts.push(c.counts);
     }
@@ -1176,6 +1229,7 @@ export function compareMeshesInMotion(input: MotionComparisonInput): MeshQuality
     boneOrder: null,
     schedule,
     budget: null,
+    ...(amplitude === undefined ? (plant === 'echo-when-unset' ? { motionAmplitude: null } : {}) : { motionAmplitude: amplitude }),
   };
   return {
     spec: MESH_QUALITY_REPORT_SPEC,

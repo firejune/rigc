@@ -48517,9 +48517,10 @@ function runMeshQualitySuite(): number {
     const cases: Array<[string, unknown, string]> = [
       ['not an object', 5, 'motionAmplitude is 5'],
       ['tracks not a list', { gradation: 1, tracks: {} }, 'motionAmplitude is'],
-      ['gradation left out', { tracks: a.tracks }, 'motionAmplitude.gradation is undefined'],
+      ['gradation a string', { ...a, gradation: '0.75' }, 'motionAmplitude.gradation is "0.75"'],
       ['gradation negative', { ...a, gradation: -1 }, 'motionAmplitude.gradation is -1'],
-      ['gradation NaN', { ...a, gradation: NaN }, 'motionAmplitude.gradation is null'],
+      ['gradation NaN', { ...a, gradation: NaN }, 'motionAmplitude.gradation is NaN'],
+      ['gradation infinite', { ...a, gradation: Infinity }, 'motionAmplitude.gradation is Infinity'],
       ['a track unnamed', { ...a, tracks: [{ ...track, track: '' }] }, 'motionAmplitude.tracks[0] is'],
       ['epsilon 0', { ...a, tracks: [{ ...track, epsilon: 0 }] }, 'motionAmplitude.tracks[0].epsilon is 0'],
       ['epsilon left out', { ...a, tracks: [{ track: 'bend', pairs: track.pairs }] }, 'motionAmplitude.tracks[0].epsilon is undefined'],
@@ -48537,6 +48538,8 @@ function runMeshQualitySuite(): number {
       ['left out', undefined],
       ['null', null],
       ['no tracks', { tracks: [], gradation: 0 }],
+      ['gradation left out', { tracks: a.tracks }],
+      ['gradation null', { tracks: a.tracks, gradation: null }],
     ] as Array<[string, MotionAmplitude | null | undefined]>) {
       const refusal = refusalOf(alInput(n4, { motionAmplitude: value }));
       if (refusal !== null) probes.push(`${label}: refused ${refusal.code}: ${refusal.message}`);
@@ -48545,8 +48548,121 @@ function runMeshQualitySuite(): number {
     say(
       'MQ127_A_MOTION_AMPLITUDE_THAT_IS_NOT_A_MOTION_AMPLITUDE_IS_REFUSED_NAMING_THE_FIELD',
       held,
-      probeDetail(held, probes, `${seen.join(', ')} — each refused REDUCE_INPUT_MISSING naming the field and the attachment; left out, null and a declaration of no track admitted`),
-      'issue #1280: the declaration has no default inside the operation — a field the rows would read is either a number they can use or a refusal by name, never a value filled in',
+      probeDetail(held, probes, `${seen.join(', ')} — each refused REDUCE_INPUT_MISSING naming the field and the attachment, a non-finite gradation by its own value rather than JSON's null; left out, null, a declaration of no track, and gradation left out or null admitted (MQ128 reads what those two leave unmeasured)`),
+      'issue #1280: the declaration has no default inside the operation — a field the rows would read is either a number they can use or a refusal by name, never a value filled in; issue #1291: gradation is the author\'s, so left out or null it is admitted and named by the one row that reads it',
+    );
+  }
+
+  // --- MQ128 (#1291): gradation is the author's — without it the load is measured and Δ names the field ---------------
+  {
+    const probes: string[] = [];
+    const n4 = byId('N4');
+    const a = alAmplitude();
+    const withG = alReports.get('N4')!;
+    const leftOut = measureMeshQuality(alInput(n4, { motionAmplitude: { tracks: a.tracks } }));
+    const declaredNull = measureMeshQuality(alInput(n4, { motionAmplitude: { tracks: a.tracks, gradation: null } }));
+    /** Every row but Δ, and the verdict: what an absent gradation may not move. */
+    const besideContrast = (rep: MeshQualityReport): string => JSON.stringify([mqRows(rep).filter((r) => r.code !== 'MQ_ALLOCATION_CONTRAST'), rep.candidates[0]?.geometry?.verdict, rep.candidates[0]?.accepted]);
+    const words = { leftOut: 'motionAmplitude.gradation is not declared (the field is left out)', declaredNull: 'motionAmplitude.gradation is declared absent (null)' };
+    for (const [label, rep, said] of [
+      ['left out', leftOut, words.leftOut],
+      ['null', declaredNull, words.declaredNull],
+    ] as Array<[string, MeshQualityReport, string]>) {
+      const contrast = mqRow(rep, 'MQ_ALLOCATION_CONTRAST');
+      if (contrast?.state !== 'not-measurable' || contrast.value !== null || !(contrast.reason ?? '').includes(said)) probes.push(`gradation ${label}: ${mqSay(contrast)} (${contrast?.reason}) — required not-measurable naming "${said}"`);
+      const load = mqRow(rep, 'MQ_DEFORM_LOAD');
+      if (load?.state !== 'undeclared' || JSON.stringify(load) !== JSON.stringify(mqRow(withG, 'MQ_DEFORM_LOAD'))) probes.push(`gradation ${label}: ${mqSay(load)} — required the load the amplitude with gradation reads, ${mqSay(mqRow(withG, 'MQ_DEFORM_LOAD'))}`);
+      if (besideContrast(rep) !== besideContrast(withG)) probes.push(`gradation ${label}: a row other than MQ_ALLOCATION_CONTRAST, the verdict or the acceptance moved`);
+    }
+    // The echo says which: no key for a gradation left out, null for one declared absent.
+    const echoed = (rep: MeshQualityReport): string => JSON.stringify(JSON.parse(writeMeshQualityReport(rep)).effective.motionAmplitude);
+    const echoLeftOut = echoed(leftOut);
+    const echoNull = echoed(declaredNull);
+    if (echoLeftOut.includes('gradation')) probes.push(`gradation left out is echoed: ${echoLeftOut}`);
+    if (!echoNull.endsWith(',"gradation":null}')) probes.push(`gradation null is echoed ${echoNull}; required "gradation": null, last`);
+    // The plants: an absent gradation read at the fixtures' 0.75, and the load refused for want of it.
+    const defaulted = mqRow(measureMeshQualityPlanted(alInput(n4, { motionAmplitude: { tracks: a.tracks } }), 'gradation-defaulted'), 'MQ_ALLOCATION_CONTRAST');
+    if (defaulted?.state === 'not-measurable') probes.push('planted gradation-defaulted: Δ still not-measurable, so the plant did not reach the row');
+    else if (defaulted?.state !== 'undeclared' || defaulted.value !== mqRow(withG, 'MQ_ALLOCATION_CONTRAST')?.value) probes.push(`planted gradation-defaulted: ${mqSay(defaulted)} — not the value at 0.75, so the plant is not the default it names`);
+    const loadPlanted = mqRow(measureMeshQualityPlanted(alInput(n4, { motionAmplitude: { tracks: a.tracks } }), 'load-needs-gradation'), 'MQ_DEFORM_LOAD');
+    if (loadPlanted?.state !== 'not-measurable') probes.push('planted load-needs-gradation: the load still measured');
+    const held = probes.length === 0;
+    say(
+      'MQ128_AN_AMPLITUDE_WITHOUT_GRADATION_MEASURES_THE_LOAD_AND_LEAVES_THE_CONTRAST_NOT_MEASURABLE_NAMING_GRADATION',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `N4, the amplitude without gradation: MQ_DEFORM_LOAD ${mqRow(leftOut, 'MQ_DEFORM_LOAD')?.value} px as with it, MQ_ALLOCATION_CONTRAST not-measurable naming the field left out; with gradation null, the same, naming it declared absent; every other row, the verdict and the acceptance those of the amplitude with gradation; echoed ${echoLeftOut} and ${echoNull}; planted, an absent gradation read at 0.75 measures Δ ${defaulted?.value}, and the load refused for want of it reads ${loadPlanted?.state} — each caught`,
+      ),
+      'issue #1291 (rig-parts#126, the STOP): §8 measured that G derives from nothing a rig declares and that Δ moves with it, so no default is chosen — a caller with θ and ε and no G still reads the load, which never reads G, and Δ says which field it is missing',
+    );
+  }
+
+  // --- MQ129 (#1291): G is a reading's input, not a constant either limit can stand in for -------------------------
+  // §8 *G — what it derives from*: the two constant-free readings of the need field each lose a separation — carried at
+  // its source only (G → ∞, read at 1e12, finite so the validator admits it) flags the must-accept N2 at §8's bar, and
+  // carried everywhere (G = 0) leaves nothing removable on MQ79's motion-accepted replay — and inside the range the
+  // fixtures allow, MQ79's uniformly over-dense source and its uneven replay swap order. The replay is step 94 of the
+  // strict run (§7, §8: the step the motion comparison accepts); the bar is §8's printed midpoint.
+  {
+    const probes: string[] = [];
+    const BAR = 0.25;
+    const at = (f: AlFixture, gradation: number, plant: AllocationPlant | null): number => {
+      const input = alInput(f, { motionAmplitude: alAmplitude(gradation) });
+      return mqRow(plant === null ? measureMeshQuality(input) : measureMeshQualityPlanted(input, plant), 'MQ_ALLOCATION_CONTRAST')?.value ?? NaN;
+    };
+    const mvSrc = mvSource(false);
+    const mvHull = mvSrc.points.slice(0, mvSrc.hull);
+    const mvMask = mqMask(dir, 'allocation-ramp', MV_W, MV_H, (x, y) => (inClosedPolygon([x + 0.5, y + 0.5], mvHull) ? 1 : 0));
+    const mvArt = { mask: mvMask, threshold: 1, frame: mqFrame(MV_W, MV_H) };
+    const mvFit: ArtFitBounds = { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 };
+    const replay = reduceMesh({
+      attachment: { skin: null, slot: 'probe-slot', attachment: 'probe' },
+      art: mvArt,
+      source: mvSrc,
+      sourceBounds: mvFit,
+      targets: { artFit: mvFit, maxBoundaryDeviation: 1, regions: [] },
+      protect: { hull: false, vertices: [], edges: [], regionBoundaries: [], weightJump: null, influences: [] },
+      influences: { maxInfluences: 4, minWeight: 0 },
+      boneOrder: ['root', 'a', 'b'],
+      preset: null,
+      budget: { maxCandidates: 5000 },
+      minArtSamples: 1,
+      regionArtSamples: [],
+      deform: [],
+      linkedMeshes: [],
+      stopAfterAccepted: 94,
+    }).mesh;
+    const mvTheta = 2 * Math.sin((MV_BEND * Math.PI) / 360);
+    const ramp = (mesh: SourceMesh, gradation: number, plant: AllocationPlant | null): { contrast: number; economy: number } => {
+      const input = mqInput(mvMask, mvArt.frame, mesh, { artFit: mvFit, maxBoundaryDeviation: 1, regions: [] }, { referenceHull: mvHull, motionAmplitude: { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: mvTheta }], epsilon: 1 }], gradation } });
+      const row = mqRow(plant === null ? measureMeshQuality(input) : measureMeshQualityPlanted(input, plant), 'MQ_ALLOCATION_CONTRAST');
+      return { contrast: row?.value ?? NaN, economy: row?.allocation?.contrast?.economy ?? NaN };
+    };
+    const lines: string[] = [];
+    const claims = (plant: AllocationPlant | null): string[] => {
+      const out: string[] = [];
+      const n2 = at(byId('N2'), 1e12, plant);
+      if (!(n2 >= BAR)) out.push(`G 1e12: N2, which must be accepted, reads Δ ${n2} — not at or above the bar ${BAR}`);
+      if (replay === null) return [...out, 'no replay at step 94'];
+      const zero = ramp(replay, 0, plant);
+      const usual = ramp(replay, 0.75, plant);
+      if (!(zero.contrast === 0 && zero.economy === 0 && usual.contrast > 0)) out.push(`G 0: MQ79's replay reads Δ ${zero.contrast}, E ${zero.economy} against Δ ${usual.contrast} at 0.75 — not nothing removable`);
+      const [srcLow, repLow, srcMid, repMid] = [ramp(mvSrc, 0.5, plant).contrast, ramp(replay, 0.5, plant).contrast, ramp(mvSrc, 0.75, plant).contrast, usual.contrast];
+      if (!(srcLow > repLow && srcMid < repMid)) out.push(`MQ79 source / replay: ${srcLow} / ${repLow} at G 0.5 and ${srcMid} / ${repMid} at 0.75 — not swapped`);
+      if (plant === null) lines.push(`N2 at G 1e12 ${n2}; the replay at G 0 Δ ${zero.contrast} E ${zero.economy} (at 0.75: ${usual.contrast}); source / replay ${srcLow} / ${repLow} at 0.5, ${srcMid} / ${repMid} at 0.75`);
+      return out;
+    };
+    probes.push(...claims(null));
+    const ignored = claims('gradation-ignored');
+    if (ignored.length === 0) probes.push('planted gradation-ignored: every claim still held, so they do not read the declared G');
+    const held = probes.length === 0;
+    say(
+      'MQ129_NEITHER_LIMIT_OF_GRADATION_KEEPS_THE_SEPARATIONS_AND_MQ79_SWAPS_ORDER_INSIDE_THE_FIXTURES_RANGE_SO_G_IS_DECLARED',
+      held,
+      probeDetail(held, probes, `${lines.join('')}; planted gradation-ignored (the need relaxed at 0.75 whatever is declared): ${ignored.join('; ')}`),
+      'issue #1291: whether G could leave the declaration — a derivation that drops it has to be one of its limits or a constant, and the limits each lose a separation §8 relies on while the order of two readings already moves inside the range the six fixtures allow',
     );
   }
 
@@ -48578,7 +48694,7 @@ function runMeshQualitySuite(): number {
 // (`SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`), because only
 // an install without spine-core can show the entry needs none.
 
-import { compareMeshesInMotion, uvCarriers, type CompareAttachment, type MotionComparisonInput } from './src/meshcompare.ts';
+import { compareMeshesInMotion, compareMeshesInMotionPlanted, uvCarriers, type CompareAttachment, type ComparePlant, type MotionComparisonInput } from './src/meshcompare.ts';
 
 /** The plate every compare fixture draws: a strip, opaque everywhere, so every pixel centre is a sample. */
 const MC_W = 64;
@@ -50933,7 +51049,7 @@ function runMeshCompareSuite(): number {
         else if (early !== said) probes.push(`${JSON.stringify(wrong)} on a source the admission refuses: ${early ?? 'accepted'}; required the same refusal, before any work`);
         else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
       }
-      for (const right of [undefined, null, mvAmp, { tracks: [], gradation: 0 }]) {
+      for (const right of [undefined, null, mvAmp, { tracks: [], gradation: 0 }, { tracks: [] }, { tracks: [], gradation: null }]) {
         const said = refusalOf(cheap(right));
         if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
       }
@@ -50943,7 +51059,7 @@ function runMeshCompareSuite(): number {
       say(
         'MQ108_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_REDUCTION_BEFORE_ANY_WORK_NAMING_ITS_PATH_IN_THE_MEASUREMENTS_WORDS',
         held,
-        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused REDUCE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} — the measurement's words, also on a source the admission refuses; left out, null, the ramp's amplitude and an empty one admitted; the plant (not validated): ${planted ?? 'accepted'}`),
+        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused REDUCE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} — the measurement's words, also on a source the admission refuses; left out, null, the ramp's amplitude and an empty one — with gradation 0, left out or null (#1291) — admitted; the plant (not validated): ${planted ?? 'accepted'}`),
         'issue #1287: a malformed amplitude is refused as every other input is, by name — and before the admission, because a call whose source is refused never reaches the one measurement that reads the field, so a check left to that measurement would accept it',
       );
     });
@@ -51014,6 +51130,193 @@ function runMeshCompareSuite(): number {
         held,
         probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, also on a call the admission refuses (${noMesh.report.termination?.reason}); with every optional field set: ${order}; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
         'issue #1287 (correction 1): every input is echoed with its structure, and a field left out is not a field set to null — the echo is how a report says which amplitude its two rows were read under',
+      );
+    });
+
+    // --- MQ111–MQ115 (#1291): the comparison hands motionAmplitude to its setup measurement --------------------------
+    // MQ79's ramp, its source build against its strict reduction's. Each claim is read off comparisons made here, and
+    // each predicate is also read on a plant that must make it fire (`ComparePlant`): the amplitude not carried, null
+    // carried as left out, the field not validated before the builds are read, null echoed for a field left out, and
+    // the load counted towards the setup verdict. Most calls pose nothing (schedule null, motion not required); MQ115
+    // poses the ramp's `idle`, because what it holds is that the motion section does not move.
+    const cmpSource = mvBuild(dir, 'mv-source-111', mvSrc);
+    const cmpStrict = mvReduce().mesh;
+    const cmpCandidate = cmpStrict === null ? null : mvBuild(dir, 'mv-strict-111', cmpStrict);
+    const cmpInput = (over: Partial<MotionComparisonInput> = {}, posed = false): MotionComparisonInput => ({
+      reference: { id: 'source', model: cmpSource },
+      candidates: [{ id: 'strict', model: cmpCandidate ?? cmpSource }],
+      attachments: [{ attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, art: { mask: mvMask, threshold: 1, frame: mvFrame }, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+      referenceArtFit: mvStrict,
+      candidateArtFit: mvStrict,
+      schedule: posed ? { frames: ['setup', { animation: 'idle', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection: [] } : null,
+      bounds: { maxLocalDeformation: 1 },
+      motionRequired: posed,
+      perFrame: false,
+      ...over,
+    });
+    const cmp = (over: Partial<MotionComparisonInput> = {}, plant: ComparePlant | null = null, posed = false): MeshQualityReport =>
+      plant === null ? compareMeshesInMotion(cmpInput(over, posed)) : compareMeshesInMotionPlanted(cmpInput(over, posed), plant);
+    /** A setup row of the reference (`reference`) or of the one candidate. */
+    const setupRow = (r: MeshQualityReport, who: 'reference' | 'strict', code: string): MeasureRow | undefined =>
+      (who === 'reference' ? r.reference : r.candidates[0])?.geometry?.rows.find((x) => x.code === code);
+    const cmpRefusal = (over: Partial<MotionComparisonInput>, plant: ComparePlant | null = null): string | null => {
+      try {
+        cmp(over, plant);
+        return null;
+      } catch (err) {
+        return err instanceof MeshReductionError ? err.message : `(not a MeshReductionError) ${(err as Error).message}`;
+      }
+    };
+
+    mcGuard('MQ111', () => {
+      const probes: string[] = [];
+      const on = cmp({ motionAmplitude: mvAmp });
+      const twice = cmp({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
+      const noG = cmp({ motionAmplitude: { tracks: mvAmp.tracks } });
+      const said: string[] = [];
+      for (const who of ['reference', 'strict'] as const) {
+        const load = setupRow(on, who, 'MQ_DEFORM_LOAD');
+        const load2 = setupRow(twice, who, 'MQ_DEFORM_LOAD');
+        if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`${who}: MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
+        if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6) probes.push(`${who}: MQ_DEFORM_LOAD at θ ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
+        if (JSON.stringify(setupRow(noG, who, 'MQ_DEFORM_LOAD')) !== JSON.stringify(load)) probes.push(`${who}: the amplitude without gradation reads MQ_DEFORM_LOAD ${rowSaid(setupRow(noG, who, 'MQ_DEFORM_LOAD'))}; required ${rowSaid(load)} — the load does not read G`);
+        const contrast = setupRow(on, who, 'MQ_ALLOCATION_CONTRAST');
+        if (contrast?.state !== 'not-measurable' || !(contrast.reason ?? '').includes('targets.maxBoundaryDeviation is null')) probes.push(`${who}: MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required not-measurable naming the deviation bound the comparison does not declare`);
+        said.push(`${who} ${load?.value} px (2θ: ${load2?.value})`);
+      }
+      const planted = setupRow(cmp({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'reference', 'MQ_DEFORM_LOAD');
+      if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
+      const held = probes.length === 0;
+      say(
+        'MQ111_WITH_MOTION_AMPLITUDE_THE_COMPARISONS_SETUP_SECTIONS_MEASURE_THE_DEFORM_LOAD_AND_THE_CONTRAST_NAMES_THE_DEVIATION_BOUND_IT_LACKS',
+        held,
+        probeDetail(held, probes, `MQ_DEFORM_LOAD on the setup sections: ${said.join(', ')}, and the same without gradation; MQ_ALLOCATION_CONTRAST not-measurable naming targets.maxBoundaryDeviation on both; the plant (not carried): ${rowSaid(planted)}`),
+        'issue #1291 (rig-parts#126): the comparison\'s setup section is a measurement, and a caller that declares the amplitude reads its load there as on a reduction — and Δ says the one thing the comparison does not declare, rather than reading a number from nothing',
+      );
+    });
+
+    mcGuard('MQ112', () => {
+      const probes: string[] = [];
+      const off = cmp();
+      const nul = cmp({ motionAmplitude: null });
+      const leftOut = 'motionAmplitude is not declared (the field is left out)';
+      const absent = 'motionAmplitude is declared absent (null)';
+      for (const who of ['reference', 'strict'] as const) {
+        for (const code of TWO_ROWS) {
+          const a = setupRow(off, who, code);
+          const b = setupRow(nul, who, code);
+          if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${who} ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
+          if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${who} ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
+        }
+      }
+      const nulled = setupRow(cmp({ motionAmplitude: null }, 'null-read-as-left-out'), 'reference', 'MQ_DEFORM_LOAD');
+      if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null carried as the field left out — still says declared absent');
+      const held = probes.length === 0;
+      say(
+        'MQ112_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_COMPARISONS_SETUP_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
+        held,
+        probeDetail(held, probes, `left out: ${rowSaid(setupRow(off, 'reference', 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(setupRow(nul, 'reference', 'MQ_DEFORM_LOAD'))}; on the reference's and the candidate's setup sections, both rows; the plant (null read as left out): ${rowSaid(nulled)}`),
+        'issue #1291, as #1280 for a measurement and #1287 for a reduction: no amplitude is assumed, and undefined is not null',
+      );
+    });
+
+    mcGuard('MQ113', () => {
+      const probes: string[] = [];
+      const seen: string[] = [];
+      const measuredWords = (amplitude: unknown): string | null => {
+        const base = mvReduceInput(mvSrc);
+        try {
+          measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
+          return null;
+        } catch (err) {
+          return err instanceof MeshReductionError ? err.message : (err as Error).message;
+        }
+      };
+      const fromField = (s: string | null): string => (s === null ? '(accepted)' : s.slice(s.indexOf('motionAmplitude')));
+      const unreadable = { reference: { id: 'source', model: 'not a model document' } };
+      const wrongs: unknown[] = ['idle', { gradation: 0.75 }, { tracks: [], gradation: -1 }, { tracks: [], gradation: 'G' }, { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'a'], theta: 0.1 }], epsilon: 1 }] }];
+      for (const wrong of wrongs) {
+        const said = cmpRefusal({ motionAmplitude: wrong as MotionAmplitude });
+        const early = cmpRefusal({ ...unreadable, motionAmplitude: wrong as MotionAmplitude });
+        if (said === null || !said.startsWith('COMPARE_INPUT_MISSING: the comparison: motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required COMPARE_INPUT_MISSING naming motionAmplitude`);
+        else if (fromField(said) !== fromField(measuredWords(wrong))) probes.push(`${JSON.stringify(wrong)}: the comparison says "${fromField(said)}", the measurement "${fromField(measuredWords(wrong))}"; required the same words`);
+        else if (early !== said) probes.push(`${JSON.stringify(wrong)} beside an unreadable reference: ${early ?? 'accepted'}; required the same refusal, before any build is read`);
+        else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
+      }
+      for (const right of [undefined, null, mvAmp, { tracks: mvAmp.tracks }, { tracks: mvAmp.tracks, gradation: null }]) {
+        const said = cmpRefusal({ motionAmplitude: right as MotionAmplitude | null | undefined });
+        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+      }
+      const planted = cmpRefusal({ ...unreadable, motionAmplitude: 'idle' as unknown as MotionAmplitude }, 'amplitude-unvalidated');
+      if (planted !== null && planted.includes('motionAmplitude')) probes.push(`the plant — the field not validated before the builds are read — still refused naming the amplitude: ${planted}`);
+      const held = probes.length === 0;
+      say(
+        'MQ113_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_COMPARISON_BEFORE_ANY_BUILD_IS_READ_IN_THE_MEASUREMENTS_WORDS',
+        held,
+        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused COMPARE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} in the measurement's words, also beside an unreadable reference; left out, null, the ramp's amplitude and it without gradation or with gradation null admitted; the plant (not validated): ${planted?.slice(0, 80) ?? 'accepted'}`),
+        'issue #1291: a malformed amplitude is refused by name under the comparison\'s own code, before a build is read — left to the setup measurement it would be refused under the measurement\'s code, and only once two builds had been parsed',
+      );
+    });
+
+    mcGuard('MQ114', () => {
+      const probes: string[] = [];
+      const echoOf = (r: MeshQualityReport): { has: boolean; value: unknown } => {
+        const e = JSON.parse(writeMeshQualityReport(r)).effective;
+        return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude };
+      };
+      const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
+      const withoutG = canonical.replace(/,"gradation":[^}]*\}$/, '}');
+      const off = echoOf(cmp());
+      const nul = echoOf(cmp({ motionAmplitude: null }));
+      const set = echoOf(cmp({ motionAmplitude: mvAmp }));
+      const noG = echoOf(cmp({ motionAmplitude: { tracks: mvAmp.tracks } }));
+      if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
+      if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
+      if (JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
+      if (JSON.stringify(noG.value) !== withoutG) probes.push(`set without gradation: ${JSON.stringify(noG.value)}; required ${withoutG}`);
+      const planted = echoOf(cmp({}, 'echo-when-unset'));
+      if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
+      const held = probes.length === 0;
+      say(
+        'MQ114_THE_COMPARISON_ECHOES_MOTION_AMPLITUDE_EXACTLY_WHEN_SET_NULL_INCLUDED',
+        held,
+        probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, without a gradation key when the caller left it out; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
+        'issue #1291 (correction 1): the echo is how a comparison report says which amplitude its setup rows were read under, and a field left out is not a field set to null',
+      );
+    });
+
+    mcGuard('MQ115', () => {
+      const probes: string[] = [];
+      /** The text with the echo, the two amplitude rows and the setup summaries taken out: what the field may not move. */
+      const beyond = (r: MeshQualityReport): string => {
+        const doc = JSON.parse(writeMeshQualityReport(r));
+        delete doc.effective.motionAmplitude;
+        for (const c of [doc.reference, ...doc.candidates]) {
+          if (c.geometry === null) continue;
+          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => !TWO_ROWS.includes(x.code));
+          delete c.geometry.summary;
+        }
+        return JSON.stringify(doc);
+      };
+      const off = cmp({}, null, true);
+      const offText = writeMeshQualityReport(off);
+      const on = cmp({ motionAmplitude: mvAmp }, null, true);
+      const nul = cmp({ motionAmplitude: null }, null, true);
+      if (writeMeshQualityReport(cmp({}, null, true)) !== offText) probes.push('two comparisons without the field wrote other bytes');
+      if (/"motionAmplitude"/.test(offText)) probes.push('the comparison without the field writes a motionAmplitude key');
+      if (beyond(on) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under the field');
+      if (beyond(nul) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under null');
+      const motionOf = (r: MeshQualityReport): string => JSON.stringify([r.reference?.motion, r.candidates.map((c) => [c.motion, c.accepted])]);
+      if (motionOf(on) !== motionOf(off)) probes.push('the motion sections or an acceptance moved under the field');
+      const gated = cmp({ motionAmplitude: mvAmp }, 'amplitude-gates-acceptance', true);
+      const plantSaid = beyond(gated) === beyond(off) ? null : `the candidate accepted ${gated.candidates[0]?.accepted} against ${off.candidates[0]?.accepted}, setup verdict ${gated.candidates[0]?.geometry?.verdict}`;
+      if (plantSaid === null) probes.push('the plant — the load counted towards the setup verdict — moved no byte beyond the rows');
+      const held = probes.length === 0;
+      say(
+        'MQ115_THE_FIELD_MOVES_NO_BYTE_OF_A_COMPARISON_BEYOND_THE_TWO_SETUP_ROWS_ITS_ECHO_AND_THE_SETUP_SUMMARIES',
+        held,
+        probeDetail(held, probes, `the ramp posed on idle, the source against its strict reduction (candidate accepted: ${off.candidates[0]?.accepted}): without the field, one text twice and no motionAmplitude key; with the field and with null, every byte but the two rows, the echo and the setup summaries that text's, the motion sections and the acceptances included; the plant (the load gating the setup verdict): ${plantSaid}`),
+        'issue #1291: both rows are undeclared, so the amplitude may change what the setup section reads and nothing the comparison decides — the bytes of a comparison without it against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §8), and this holds the shape that comparison projected',
       );
     });
   });
