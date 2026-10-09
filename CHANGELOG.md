@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.31.1](https://github.com/firejune/rigc/compare/v2.31.0...v2.31.1) (2026-10-09)
+
+
+### Performance Improvements
+
+* **mesh:** edge sets on the removal and boundary-run paths keyed without strings and built only where read — byte-identical on 87 of 87 recorded calls and 12 of 12 under weightJump, 56 % off the trial call and 39 % off the skinning call on the largest public input ([#1307](https://github.com/firejune/rigc/issues/1307), §9's C1) ([#1308](https://github.com/firejune/rigc/issues/1308)) ([2412292](https://github.com/firejune/rigc/commit/241229274a5bffd9215766c3a3807bf939102712))
+
 ## [2.31.0](https://github.com/firejune/rigc/compare/v2.30.0...v2.31.0) (2026-10-09)
 
 
