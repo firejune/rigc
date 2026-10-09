@@ -596,6 +596,21 @@ report byte as before (measured on 19 recorded inputs), while a caller that
 sets it may meet a new `Termination` reason, `replayed-to-accepted-step`
 (docs/MESH_REDUCTION.md, §7 *Mechanism 2*).
 
+Boundary runs and `acceptedAt` per operation
+([#1279](https://github.com/firejune/rigc/issues/1279)) change the shape of
+one key of the agreed row's types, agreed by its only reader
+(rig-parts#126, §8 Q10): `ReductionChanges.acceptedAt` goes from `number[]`
+to `AcceptedOperation[]`, `{ step, kind, count, sourceVertices }`, and a
+reader of the attempt number reads `.step`. A call without the new optional
+`MeshReductionInput.boundaryRuns` tries no run, every entry has `count: 1`,
+and every other byte of the mesh and the report is as before — measured on
+the 18 inputs of the stage-D1 record at 2.20.0. The deviation floor the same
+landing adds refuses no candidate the rows would accept: every result was
+measured byte-identical with the floor and with every candidate measured,
+18 of 18 without the field and 18 of 18 with it (docs/MESH_REDUCTION.md, §8
+*Stage B — boundary runs as steps*). The record holds 18 inputs where §7
+cites 19; §7's figure is its own measurement and stays as written.
+
 The region pixel set computed by scanline
 ([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —

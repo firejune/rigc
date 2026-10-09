@@ -236,13 +236,42 @@ export interface MeshReductionInput {
   /** Every linked mesh of the source (they inherit the new topology); empty when none. */
   linkedMeshes: AttachmentRef[];
   /**
-   * Replay (issue #1268, §7 mechanism 2): stop after the n-th accepted step — a refinement insertion or a removal
-   * taken, counted as `ReductionChanges.acceptedAt` counts them — and return the mesh the same call without this field
-   * had at that step, byte for byte, terminated `replayed-to-accepted-step`. Left out = today's behaviour. A whole
-   * number, 0 or more: 0 takes no step. A number the run never reaches leaves the run to end as it would have, and
-   * that termination says so (`stopAfterAccepted` on it).
+   * Replay (issue #1268, §7 mechanism 2): stop after the n-th accepted operation — a refinement insertion, a removal
+   * or a boundary run taken, one each, counted as `ReductionChanges.acceptedAt` counts them (issue #1279) — and return
+   * the mesh the same call without this field had after it, byte for byte, terminated `replayed-to-accepted-step`.
+   * Left out = today's behaviour. A whole number, 0 or more: 0 takes no step. A number the run never reaches leaves
+   * the run to end as it would have, and that termination says so (`stopAfterAccepted` on it).
    */
   stopAfterAccepted?: number;
+  /**
+   * Boundary runs taken as steps (issue #1279, §8 option (iv)) — opt-in. Left out = no run is tried, and the call is
+   * the one it was before the field existed. Set, each removal pass first tries to replace a run of 2 to
+   * `maxVertices` consecutive surviving source-hull vertices of the outline with one chord, as one step held to every
+   * required row exactly as a single removal is, before that pass's single removals. `maxVertices` is a whole number,
+   * 2 or more, and has no default; `null` is refused like any value that is not that object.
+   */
+  boundaryRuns?: BoundaryRuns;
+}
+
+/** Issue #1279: the opt-in to boundary runs — the most consecutive outline vertices one chord may replace. */
+export interface BoundaryRuns {
+  /** A whole number, 2 or more: the longest run tried. */
+  maxVertices: number;
+}
+
+/**
+ * Issue #1279: one accepted operation of a reduction, in the order taken — the entry `ReductionChanges.acceptedAt`
+ * carries for it and the unit `stopAfterAccepted` counts.
+ */
+export interface AcceptedOperation {
+  /** The attempt number — `candidatesTried` as it stood when the operation was taken, 1-based. */
+  step: number;
+  /** A refinement insertion, one source vertex removed, or a boundary run replaced by one chord. */
+  kind: 'insertion' | 'removal' | 'boundary-run';
+  /** Vertices the operation inserted (an insertion: 1) or removed (a removal: 1; a boundary run: 2 or more). */
+  count: number;
+  /** The source indices it removed, in outline order for a run — each `null` in `indexMap`; empty for an insertion. */
+  sourceVertices: number[];
 }
 
 /**
@@ -411,11 +440,13 @@ export interface ReductionChanges {
   /** Every linked mesh of the source: each inherits the new topology. */
   linkedMeshes: AttachmentRef[];
   /**
-   * Issue #1268: the attempt number — `candidatesTried` as it stood when the step was taken, 1-based — of every
-   * accepted step, ascending: each refinement insertion and each removal, so its length is
-   * `insertedVertices + removedVertices`. `stopAfterAccepted: k` replays to the step at `acceptedAt[k - 1]`.
+   * Issue #1268, one entry per accepted operation since issue #1279: each refinement insertion, each removal and each
+   * boundary run taken, in order, with the attempt it was taken at (`step`, strictly ascending), its kind, how many
+   * vertices it inserted or removed and which source vertices it removed. The counts sum to
+   * `insertedVertices + removedVertices`; with no boundary run every count is 1 and the length is that sum.
+   * `stopAfterAccepted: k` replays to the operation at `acceptedAt[k - 1]`.
    */
-  acceptedAt: number[];
+  acceptedAt: AcceptedOperation[];
 }
 
 export interface MeshQualityReport {
@@ -461,6 +492,8 @@ export interface EffectiveSettings {
   budget: { maxCandidates: number } | null;
   /** A reduction's `stopAfterAccepted`, echoed when the input set it (issue #1268); absent otherwise. */
   stopAfterAccepted?: number;
+  /** A reduction's `boundaryRuns`, echoed when the input set it (issue #1279); absent otherwise. */
+  boundaryRuns?: BoundaryRuns;
 }
 
 export interface MeshCounts {
@@ -1990,6 +2023,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     schedule: scheduleJson(e.schedule),
     budget: e.budget === null ? null : { maxCandidates: e.budget.maxCandidates },
     ...(e.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: e.stopAfterAccepted }),
+    ...(e.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: e.boundaryRuns.maxVertices } }),
   };
 }
 
@@ -2067,7 +2101,7 @@ function candidateJson(c: CandidateReport): Json {
       deformRemapped: k.deformRemapped.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key, droppedVertices: [...d.droppedVertices] })),
       deformReevaluated: k.deformReevaluated.map((d) => ({ animation: d.animation, attachment: attachmentJson(d.attachment), key: d.key })),
       linkedMeshes: k.linkedMeshes.map(attachmentJson),
-      acceptedAt: [...k.acceptedAt],
+      acceptedAt: k.acceptedAt.map((a) => ({ step: a.step, kind: a.kind, count: a.count, sourceVertices: [...a.sourceVertices] })),
     };
   }
   return out;
