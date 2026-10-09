@@ -4637,6 +4637,348 @@ rig-c 2.28.0 under its stated policy, unchanged — bound 1 rig px,
   `not-measurable` in every cell for want of a gradation, the STOP *G — what
   it derives from* answers.
 
+## 9. Cost — the reduction and the comparison, profiled by phase and by row (#1304)
+
+[measured, #1304] Stage A of
+[#1304](https://github.com/firejune/rigc/issues/1304): where a `reduceMesh`
+call under the dependant's trial policy spends its time and memory, and what
+`compareMeshesInMotion` spends at the trial's schedule — **measured, nothing
+changed**. No bound, budget, threshold, frame rate or sample count moves in
+any candidate below; a candidate that would need one is listed as rejected
+with the reason. Every figure is one machine's reading at the load stated, not
+a claim about another; the scripts, logs and profiles are in the stage-A
+record for #1304, and its commands are at the end of this section.
+
+### Method
+
+- **An instrumented copy.** The tree at `5e8acd6` (`src/`, `tools/`,
+  `package.json`) copied and patched by exact-text edits: section timers and
+  counters in `src/meshreduce.ts`, `src/meshquality.ts`,
+  `src/meshrasters.ts`, `src/meshskinning.ts`, `src/meshcarriers.ts` and
+  `src/meshcompare.ts` (`src/meshallocation.ts` is timed at its call sites),
+  each behind one switch — off, a site costs a clock call that returns 0 and
+  a boolean read. Per attempt,
+  every section's time is folded under the attempt's outcome (taken, refused by
+  the floor, by a named row, by the residual, by the structure), so "what the
+  attempts the floor refuses spend before the floor" is a reading, not an
+  apportionment. A second switch (`check`) adds two readings used below: the
+  floor read off a predicted outline beside the floor read off the canonical
+  candidate, and where in a vetoed residual trial the first sample over the
+  bound falls.
+- **The population.** The 18 recorded inputs of the stage-D1 record, the
+  with-region input of #1253 (`demo__bottomwear__region` below), `MQ79`'s ramp
+  and `MQ85`'s traced bean, each under five policies: as recorded (`rec`); the
+  trial policy **T** — `boundaryRuns: { maxVertices: 8 }`, `retriangulate:
+  'delaunay'`, `removalOrder: 'deformation-load'`; **TS** — T with
+  `targets.skinning` at #1295's stand-in envelope (every bound bone at
+  `linear` 0.1 about the origin, no translation term, reference `(none)`,
+  `maxResidual` 1); **TA** — T with #1287's assumed `motionAmplitude` (θ =
+  2 sin 2.5° between every pair of the source's weighted bones, ε 1,
+  G 0.75); **TSA** — both. The stand-in envelope decides which steps are
+  vetoed, so every TS figure is this envelope's, not parts's. The nine
+  unweighted synthetic inputs take no envelope: 87 calls, 18 skipped. Inputs
+  other than demo/\* and sample/\* are named by the record's label.
+- **The machine.** Nova pool jobs (WSL2 Linux 6.6, x86_64, 20 threads,
+  Bun 1.4.2), pooled rather than exclusive, the 1-minute load read at every
+  call's start: 1.0–2.5 for the population run, 1.1–1.9 for the run the
+  phase and outcome tables are read from. Each call in its own process: three
+  tree runs and three instrumented runs, alternated; the tables give the
+  median. The instrumented wall is 0.90–1.25 times the tree's (median 1.02).
+  Live heap sizes were read on an Apple M4 (darwin, Bun 1.4.2): they are the
+  engine's, not the machine's.
+
+### Byte identity of the instrumented copy
+
+`writeMeshQualityReport(report)` and the mesh, hashed, for the tree, the copy
+switched off and the copy switched on: **identical on 87 of 87 calls**, at
+each of the four versions the copy went through; with the `check` switch on,
+the same 87 of 87. The comparison's report through the copy equals the tree's on
+both fixtures (6 of 6 runs).
+
+### Where a call's time goes
+
+Tree wall (median of three, ms) and candidates tried, per policy; peak RSS
+under T and TS:
+
+| input | rec | T | TA | TS | TSA | peak RSS MiB, T / TS |
+| --- | --- | --- | --- | --- | --- | --- |
+| demo/neck | 47 (103) | 61 (299) | 63 (299) | 95 (305) | 97 (305) | 73 / 81 |
+| sample/neck | 67 (133) | 106 (430) | 108 (430) | 162 (440) | 169 (440) | 81 / 101 |
+| `scarf__hair_front` | 77 (176) | 237 (850) | 236 (850) | 598 (1,433) | 625 (1,433) | 92 / 135 |
+| sample/topwear | 128 (205) | 334 (1,031) | 340 (1,031) | 701 (1,595) | 713 (1,595) | 105 / 224 |
+| `scarf__handwear_l` | 376 (445) | 958 (1,344) | 953 (1,344) | 1,985 (2,158) | 1,987 (2,158) | 131 / 294 |
+| sample/sleeves | 296 (421) | 1,550 (2,810) | 1,410 (2,810) | 2,078 (3,027) | 2,072 (3,027) | 213 / 383 |
+| sample/bottomwear | 282 (331) | 773 (1,694) | 798 (1,694) | 2,276 (1,907) | 2,418 (1,907) | 167 / 690 |
+| demo/bottomwear | 1,112 (1,101) | 4,266 (4,029) | 4,095 (4,029) | 11,823 (4,514) | 11,714 (4,514) | 341 / 1,950 |
+| `demo__bottomwear__region` | 3,973 (1,443) | 10,716 (4,315) | 11,589 (4,315) | 2,814 (262) | 5,007 (262) | 399 / 1,768 |
+| `MQ79` ramp | 161 (175) | 415 (627) | 408 (627) | 475 (627) | 475 (627) | 118 / 142 |
+| `MQ85` bean | 228 (338) | 815 (1,776) | 822 (1,776) | 2,382 (4,407) | 2,363 (4,407) | 150 / 317 |
+
+The nine synthetic inputs run in 17–49 ms each but
+`synthetic__tiny_region_source_at_L0` (617 vertices, 1.0–1.2 s on every
+policy). Under TS the with-region input
+stops before any removal — the refined source reads over the residual bound —
+so its TS call is the refinement, the carried state's build and the result's
+row, and is shorter than its T call. The amplitude (TA) is read by the
+result's measurement only (#1287): Δ and the load cost 52 ms on
+demo/bottomwear and 1.3 s on the with-region input (C7 below).
+
+**By phase**, the instrumented wall (median of three, ms, and share); a dash
+is under 0.5 ms:
+
+| phase | demo/bottomwear T | demo/bottomwear TS | sample/neck T | sample/neck TS |
+| --- | --- | --- | --- | --- |
+| wall | 4,062 | 11,509 | 111 | 168 |
+| the art's rasters (once per call) | 76 (1.9 %) | 79 (0.7 %) | 4 (3.3 %) | 4 (2.1 %) |
+| residual admission and carried-state build | — | 251 (2.2 %) | — | 8 (4.6 %) |
+| admission (less the rasters) and start check | 96 (2.4 %) | 106 (0.9 %) | 12 (11.2 %) | 13 (7.5 %) |
+| load order and outline walks | 91 (2.2 %) | 174 (1.5 %) | 5 (4.7 %) | 5 (3.2 %) |
+| **single removals, every attempt** | 573 (14.1 %) | 4,156 (36.1 %) | 38 (34.2 %) | 72 (42.5 %) |
+| — structure: the removal's triangles and added edges | 69 (1.7 %) | 164 (1.4 %) | 4 (3.4 %) | 4 (2.2 %) |
+| — structure: protected-edge set (a), `weightJump` (b) | 49 (1.2 %) | 122 (1.1 %) | 4 (3.2 %) | 2 (1.2 %) |
+| — structure: canonical order and outline | 148 (3.6 %) | 369 (3.2 %) | 6 (5.2 %) | 9 (5.2 %) |
+| — deviation floor | 2 (0.0 %) | 3 (0.0 %) | — | — |
+| — the rows (measurement and verdict) | 307 (7.6 %) | 780 (6.8 %) | 25 (22.0 %) | 31 (18.4 %) |
+| — the residual: carried trial, commit or rollback | — | 2,753 (23.9 %) | — | 25 (14.9 %) |
+| **boundary runs, every attempt** | 3,164 (77.9 %) | 6,072 (52.8 %) | 45 (40.6 %) | 49 (29.3 %) |
+| — structure: the removals' triangles and added edges | 1,977 (48.7 %) | 3,769 (32.7 %) | 29 (26.3 %) | 33 (19.3 %) |
+| — structure: protected-edge set (a), `weightJump` (b) | 231 (5.7 %) | 514 (4.5 %) | 2 (1.7 %) | 2 (1.2 %) |
+| — structure: canonical order and outline | 770 (19.0 %) | 1,465 (12.7 %) | 9 (8.0 %) | 8 (5.0 %) |
+| — deviation floor | 56 (1.4 %) | 66 (0.6 %) | 1 (0.5 %) | — |
+| — the rows (measurement and verdict) | 123 (3.0 %) | 195 (1.7 %) | 3 (3.0 %) | 4 (2.3 %) |
+| — the residual | — | 51 (0.4 %) | — | 1 (0.8 %) |
+| a floor refusal's name, measured when read | 11 (0.3 %) | — | 1 (0.7 %) | 1 (0.6 %) |
+| post-pass (flips, one measurement, residual) | 26 (0.6 %) | 34 (0.3 %) | 3 (2.3 %) | 6 (3.4 %) |
+| final measurement | — | 765 (6.6 %) | — | 6 (3.3 %) |
+| — of which `MQ_SKINNING_RESIDUAL` | — | 761 (6.6 %) | — | 4 (2.6 %) |
+| unattributed | 3 (0.1 %) | 19 (0.2 %) | 1 (1.3 %) | 3 (2.1 %) |
+
+- **The boundary runs are most of a T call, and almost none of it is their
+  rows.** On demo/bottomwear 3,300 of 3,335 run attempts are refused by #1279's
+  deviation floor — a test of 56 ms over all of them — after the structure has
+  been built for each: 1,977 ms of the removals' triangles and added edges,
+  770 ms of canonical order, 231 ms of the protected-edge set. Inside the
+  removals, 1,568 ms is each inner removal's set of the triangulation's edges
+  (`removalOf` builds it to name the edges it adds, and a run discards all but
+  the last removal's) and 417 ms the run's own added-edge set; the ear-clip is
+  29 ms.
+- **The residual's carried trial is a quarter of a TS call, and nearly all of
+  it is trials it vetoes.** demo/bottomwear: 530 trials, 501 vetoed; the
+  search over affected samples is 2,638 ms, 2,558 ms of it in vetoed trials;
+  1,916,478 samples recomputed and 8,500,629 containment tests; no fallback
+  rescan. The `check` reading: in a vetoed trial the first sample over the
+  bound is reached after **3.9 %** of the trial's affected samples
+  (73,445 of 1,899,571, demo/bottomwear), 3.7 % on sample/bottomwear,
+  7.2–31 % on the seven other TS calls, 6.9 % over every TS and TSA call
+  together (474,996 of 6,872,294) — and every one of the 3,848 vetoed trials
+  has an affected sample over the bound.
+- **The result's residual row is measured whole**: 761 ms on demo/bottomwear,
+  of which the terms over every sample 571 ms, the two carrier searches 72 ms
+  (source) and 87 ms (candidate), the contract 26 ms.
+
+### The step measurement's rows
+
+What a measurement of a step spends, demo/bottomwear T (284 measurements,
+429 ms) and the with-region input under T (321 measurements, 1,382 ms; its
+refinement, 263 measurements more, 930 ms):
+
+| row or part | demo/bottomwear T | `demo__bottomwear__region` T | read by the decision? |
+| --- | --- | --- | --- |
+| coverage, carried (`StepRasters.coverage`) | 188 (43.8 %) | 210 (15.2 %) | yes |
+| allocation rows (`MQ_GRADE` 39, `MQ_MIN_ANGLE_P10` 13, B\* memo 4) | 63 (14.7 %) | 140 (10.1 %) | **no** — never required |
+| `MQ_BOUNDARY_DEVIATION` | 55 (12.8 %) | 55 (4.0 %) | yes |
+| region rows with no region (`meshEdges`, its sort, the refusal loop) | 43 (9.9 %) | — | **no** |
+| region rows: `MQ_MAX_EDGE`, `MQ_TRANSITION` | — | 410 (29.7 %) | yes |
+| region rows: `MQ_FILL_DISTANCE` | — | 419 (30.3 %) | **no** — never required |
+| outline (`traceOutline`, `checkHullOrder`) | 24 (5.5 %) | 42 (3.1 %) | yes (the measured mesh) |
+| `MQ_MIN_ANGLE`, no bound declared | 19 (4.3 %) | 54 (3.9 %) | **no** |
+| orientation, degeneracy | 8 (1.9 %) | 13 (0.9 %) | yes |
+| overshoot 8-connected / 4-connected and holes | 6 / 6 | 9 / 9 | 8: yes / 4: **no** |
+| islands, echo, assembly | 3 | 4 | no |
+
+The refinement reads `MQ_MAX_EDGE` and `MQ_TRANSITION` only; of its 930 ms the
+rows it does not read come to 585 ms (`MQ_FILL_DISTANCE` 279, allocation rows
+164 — B\* is first computed here, 50 ms — coverage 77, minimum angle 28).
+
+### What is tried, and what refuses it
+
+| input (T / TS) | single: tried, taken, floor, rows, residual, structure | runs: tried, taken, floor, rows, residual, structure |
+| --- | --- | --- |
+| demo/bottomwear T | 694, 248, 444, 2, —, 0 | 3,335, 27, 3,300, 7, —, 1 |
+| demo/bottomwear TS | 968, 6, 472, 4, 486, 0 | 3,546, 23, 3,501, 7, 15, 0 |
+| `demo__bottomwear__region` T | 738, 210, 452, 76, —, 0 | 3,315, 26, 3,279, 9, —, 1 |
+| sample/bottomwear T | 317, 127, 188, 2, —, 0 | 1,377, 3, 1,350, 3, —, 21 |
+| sample/bottomwear TS | 451, 1, 196, 2, 252, 0 | 1,456, 2, 1,386, 3, 7, 58 |
+| sample/sleeves T | 370, 38, 324, 8, —, 0 | 2,440, 12, 2,406, 4, —, 18 |
+| sample/sleeves TS | 430, 4, 344, 8, 74, 0 | 2,597, 7, 2,530, 1, 11, 48 |
+| sample/topwear T | 195, 77, 118, 0, —, 0 | 836, 1, 782, 0, —, 53 |
+| sample/neck T | 123, 81, 42, 0, —, 0 | 307, 2, 191, 0, —, 114 |
+| `scarf__handwear_l` TS | 800, 161, 183, 3, 453, 0 | 1,358, 3, 1,139, 3, 0, 213 |
+| `MQ79` ramp T | 159, 103, 8, 48, —, 0 | 468, 4, 237, 172, —, 55 |
+| `MQ85` bean TS | 865, 80, 500, 0, 285, 0 | 3,542, 1, 3,458, 0, 0, 83 |
+
+The rows that refuse: `MQ_BOUNDARY_DEVIATION` everywhere it is not the floor;
+the region's `MQ_MAX_EDGE` 28 and `MQ_TRANSITION` 50 on the with-region input;
+`MQ_COVERAGE` on the ramp, 220 attempts (its art is exactly the hull's pixel
+centres, so any hull removal uncovers some) — and on no recorded input.
+Attempts refused by a named row other than the deviation and the residual
+spend at most 4.1 % of a recorded input's wall (the region's two rows on the
+with-region input under T) and 52–62 % of the ramp's.
+
+### Memory
+
+| input | the art's rasters | step rasters | carried residual: live heap / `memoryBytes()` | peak RSS, T / TS |
+| --- | --- | --- | --- | --- |
+| demo/bottomwear | 10.2 MiB | 12.4 MiB | **315 / 129 MiB** | 341 / 1,950 MiB |
+| sample/bottomwear | 3.3 | 6.8 | 84 / 41 | 167 / 690 |
+| sample/sleeves | 2.9 | 13.4 | 28 / 12.5 | 213 / 383 |
+| sample/topwear | 1.2 | 3.6 | 12.3 / 5.0 | 105 / 224 |
+| sample/neck | 0.3 | 1.2 | 1.6 / 0.6 | 81 / 101 |
+
+Live heap: the heap after two full collections with the structure held, less
+the heap before it (darwin; the rasters fully computed, the step rasters after
+one admission-shaped measurement, the carried state as built before any step).
+`memoryBytes()` counts the doubles; the live heap is 2.1–2.7 times it on these
+five (3.0 on demo/neck), because each sample's source terms are a
+`SampleTerms` object of small arrays. The TS peak RSS is another 1.3–1.6 GiB over that on demo/bottomwear — what the
+trials and the result's row allocate and drop (per-sample terms, carriers and
+residual arrays). A per-process measurement, so it includes the harness
+(the recorded input and its base64 mask).
+
+### CPU profile of the largest input
+
+`bun --cpu-prof-md` over the tree, demo/bottomwear (Nova pool, load 2.1–2.2;
+4.0 s and 10.3 s of samples at 1 ms). Self time:
+
+| T (4.0 s) | | TS (10.3 s) | |
+| --- | --- | --- | --- |
+| `removalOf`, the line building its edge set | 15.1 % | `removalOf`, the same line | 18.4 % |
+| `Set.prototype.add` (native) | 14.6 % | `sampleResidual` | 9.1 % |
+| `edgeKey` (a string per edge) | 8.8 % | `termsAt` | 7.9 % |
+| `runRemovalOf` (its own edge sets) | 8.3 % | `Set.prototype.add` (native) | 5.4 % |
+| `tryOperation`, the protected-edge set line | 5.5 % | `tryOperation`, the protected-edge set line | 5.3 % |
+| `sort` (native: canonical order, load order) | 3.9 % | | |
+| `traceOutline` | 3.5 % | `runRemovalOf` | 6.1 % |
+| | | `traceOutline` | 4.9 % |
+| | | `Math.hypot` (native) | 4.0 % |
+
+Under T, string-keyed edge sets — the set each removal builds, its `edgeKey`
+strings, `Set.prototype.add`, the run's own sets and the protected-edge set —
+are about half of every sample; under TS the residual's arithmetic
+(`sampleResidual`, `termsAt`, `hypot`) is a fifth. On the with-region input
+under T a runtime-internal frame (`hideFromStack`) carries 20.7 % of the
+samples and the same edge sets most of the rest; that frame is recorded, not
+interpreted.
+
+### The comparison
+
+`compareMeshesInMotion` of one candidate — the fixture's T reduction —
+against its source at the trial's schedule (`grid` and `irr` at 12 fps over
+±5° bends, physics none, bound 1): the ramp walks 50 frames (setup, `idle`
+25 + 24), the bean 99 (setup, `bend_b` and `bend_c` 25 + 24 each). Same Nova
+job as the profiles; instrumented, median of three:
+
+| part | `MQ79` ramp: 160 × 48 mask, 51 ms | `MQ85` bean: 416 × 195 mask, 614 ms |
+| --- | --- | --- |
+| the frame loop, every sample at every frame | 39.2 (77.0 %) | 544 (88.6 %) |
+| — the reference against itself | 18.6 (36.6 %) | 207 (33.7 %) |
+| — the candidate against the reference | 21.5 (42.3 %) | 337 (54.8 %) |
+| — stretch and reversal per triangle (inside the above) | 0.8 | 3.8 |
+| setup measurement, reference and candidate | 6.2 (12.1 %) | 38.4 (6.3 %) |
+| carrier search, reference and candidate | 2.1 | 12.5 |
+| posing, reference and candidate | 1.8 | 7.6 |
+| reading and diffing the builds, schedule, samples | 1.4 | 3.0 |
+
+Tree walls 49–64 ms and 589–609 ms (load 2.2); the report equal to the
+tree's on all six runs. **The reference is compared with itself on every call**: its
+`MQ_LOCAL_DEFORMATION` reads each sample's carried point in the reference's
+pose twice, so every distance is 0 by construction — a third of the call. The
+dependant replays the comparison seven times per part, each against the same
+reference.
+
+### The candidates
+
+Each bound is what the profile says the candidate could save **at most** on
+today's tree — the time the work it removes takes, from the folded readings —
+not an estimate of the cut. Bounds overlap: C1 and C2 remove some of the same
+work, so they do not add. Share of the instrumented wall, median of three:
+
+| candidate | what it removes | bound: demo/bottomwear T / TS; other inputs | must prove | risk |
+| --- | --- | --- | --- | --- |
+| **C1 — edge sets without strings, and only where read** | the per-removal set of every edge (a run discards all but the last), the run's added-edge set when no `weightJump` is declared, the protected-edge set when nothing is protected; the remaining sets keyed by number | 54 % / 38 %; T 41–46 % on the other recorded inputs, 15–27 % on the necks, 22 % ramp, 48 % bean; TS 10–41 % | the added edges in the same order where they are read; byte identity on the 87 calls and the suites' outputs | low: a representation change, no decision reads it differently |
+| **C2 — the deviation floor before the structure** | for a removal of source-hull vertices, the floor read off the current outline walk less the removed vertices, turned as `canonicalise` turns it; over the bound, refused by the thunk that already names a floor refusal — so the structure, the protected-edge set and the canonical order are not built for it | 77 % / 52 %; T 51–70 % on the inputs over 300 ms, 14–24 % on the ramp and the necks | the candidate's outline is that walk whenever the structure passes — **82,426 of 82,426** structurally passing attempts on the 87 calls, 18 of them reversed (concave synthetic runs, where `canonicalise` turns the remaining loop the other way), the floor equal bit for bit on all 82,426; of the 73,154 attempts the predicted floor refuses, 69,247 are the floor's today, **3,907 are the structure's** (the thunk then names the structure — the name is the full path's) and **0 are taken** | medium: a run's outline must be derived without the triangles; an observer's `decidedByFloor` changes for those 3,907 |
+| **C3 — a verdict measurement for steps** | the rows no step's decision reads: allocation rows, `MQ_FILL_DISTANCE`, `MQ_MIN_ANGLE` with no bound, the 4-connected overshoot and holes, islands, `MQ_TRACE_DEVIATION`, region rows with no region; and in the refinement every row but `MQ_MAX_EDGE` and `MQ_TRANSITION` | 5 % / 4 %; 11 % with-region T, 23 % with-region TS, 5–17 % the others, 29–33 % ramp | the first blocking row and its name, and the refinement's target edge, equal to the full measurement's on every step; the carried step rasters only change cost (#1246's rule) | medium: a second measurement path held equal to the first, the shape of `MQ65`/`MQ68` |
+| **C4 — the residual's veto stops at the first sample over the bound** | the rest of a vetoed trial's search; the refusal named by a thunk that runs the trial whole, as the floor's is | ≤ 24 % of demo/bottomwear TS (vetoed trials' search and rollback, 2,767 ms), ≤ 31 % sample/bottomwear TS, 5–15 % the other TS calls; by the `check` reading the first crossing comes after 3.7–31 % of the affected samples, so most of that bound | a partial trial rolled back to exactly the state before it; the veto text read lazily equal to today's; `MQ135`'s carried-against-full checks | medium; envelope-dependent: the stand-in vetoes 486 of 492 single trials on demo/bottomwear |
+| **C5 — the source's terms as typed arrays** | per-sample `SampleTerms` objects in the carried state | memory: 315 → ~129 MiB live on demo/bottomwear (the doubles `memoryBytes()` counts); time: inside the residual's 17 % of TS self time, the allocation's part not separable here | the same arithmetic in the same order, so the same bits | low-medium |
+| **C6 — the result's row reads the carried source side** | the result's `uvCarriers` over the source and the source's `termsAt` per sample: the same function of the same source, samples and envelope as the carried state's, computed once more | ≤ 3 % demo/bottomwear TS (357 ms of the row's 761), 10 % with-region TS, 1–4 % the rest | identical by construction; the candidate side is not reused (below) | low |
+| **C7 — Δ with a declared region** | found here, not in the card's list: `MQ_ALLOCATION_CONTRAST` on the result costs 1,281 ms (with-region TA) and 2,147 ms (with-region TSA, 798 vertices) against 25 ms without a region | 11 % / 43 % of those calls; 0 without a region | its inner split is not measured here — profile `allocationContrast`'s region term first | unknown until then |
+| **K1 — the comparison's reference not compared with itself point by point** | the reference's per-sample distance loop, whose every value is 0 by construction (the worst is the first sample both carry, at 0) | 34–37 % of a comparison | the reference's rows and per-frame table equal; stretch and reversal still measured | low |
+
+**Rejected, each with its reason.**
+
+- **The `uvCarriers` grid cell.** At 1, 2, 4 (the tree's), 8, 16 and 32
+  samples per cell the carriers are identical on every subject (16 searches,
+  8 inputs × source and T result), and the time moves within the run-to-run
+  spread: 33–55 ms on demo/bottomwear's source, under 13 ms elsewhere. Every
+  `uvCarriers` call of a TS call together is 0.9–5.3 % of it. No lever.
+- **The post-pass's measurement.** Under 100 ms and at most 3.5 % of any call.
+  Not worth a card on its own; C3 covers its unread rows.
+- **Sample-domain reuse across the final measurements.** The samples are
+  rebuilt by the admission's contract, the carried state and the result's
+  row — 15–26 ms each on demo/bottomwear. Folded into C6 if wanted.
+- **A floor for `MQ_COVERAGE`.** It would refuse on the ramp, where coverage
+  refuses 220 attempts (52–62 % of the call), and on no recorded input, where
+  no attempt is refused by coverage. A cut aimed at a fixture's mechanism.
+- **The result's row from the carried candidate side.** Not identical by
+  construction: the carried values are summed in the working mesh's corner
+  order and the measurement's in the canonical mesh's, which #1295 declares
+  differs by up to 1e-14 px, and the row's `r6` value and worst sample could
+  move with it.
+- **Coverage carried across interior removals.** That an interior removal
+  never flips a pixel centre was observed for insertions (#1253), not proven
+  for the centre test's ties; a skipped coverage would be a value, not a cost.
+- **The comparison's reference prepared once across the dependant's seven
+  calls.** It needs a new entry or a held reference — an interface for parts
+  to agree to, not a cut inside one call.
+- **Anything that moves a bound, a budget, the floor's margin, a sample count
+  or a frame rate.** Out of scope by the card.
+
+### Recommended order
+
+1. **C1** — the largest bound on T, the policy every dependant call now runs,
+   and the only one a representation change alone delivers; it also lowers
+   C2's and C4's denominators, so measure them again after it.
+2. **C2** — then the floor-decided attempts cost their floor; its proof
+   obligation is already measured on the population.
+3. **C4** — the TS calls' largest term after C1–C2; its bound depends on the
+   envelope, so its before/after pair should also be read on parts's.
+4. **C3**, then **C6** and **K1** — smaller, independent, each byte-identical
+   by construction or by a held-equal second path.
+5. **C5** and **C7** — after a finer profile: C5's time share and C7's inner
+   split are not separable from these readings.
+
+### Reproducing
+
+In the stage-A record for #1304, from a clone at `5e8acd6` and the stage-D1
+record's inputs:
+
+```sh
+python3 make_instr.py <tree> <copy>        # the instrumented copy
+bash mkbundle.sh <bundle>                  # tree copy, instrumented copy, the recorded inputs, the harness
+cd <bundle>                                # then, on the Nova pool runner (pooled, never exclusive):
+bash batch.sh identity                     # tree / copy off / copy on, one hash each, 87 calls
+bash batch.sh check                        # the predicted floor and the veto's first crossing (RIGC1304_CHECK=1)
+bash batch.sh time                         # 3 tree + 3 instrumented runs per call, one process each, alternated
+bash batch.sh prof                         # bun --cpu-prof-md over the tree, demo/bottomwear T and TS, with-region T
+bash batch.sh compare                      # compareMeshesInMotion on MQ79's and MQ85's fixtures
+bash batch.sh uvc                          # uvCarriers at 1–32 samples per cell, carriers hashed
+bun mem.ts <bundle> <input>…               # live heap of each carried structure
+```
+
+The fixtures are `selftest.ts`'s own (`mvSource`, `mvBuild`, `abSource`,
+`abBuild`, `mqMask`, `mqFrame` and the suite's input policy), extracted by line
+range, not rewritten.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
