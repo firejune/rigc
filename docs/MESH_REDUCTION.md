@@ -5090,6 +5090,129 @@ VARIANTS=TJ bash batch.sh identity       # T with weightJump 0.5 on the weighted
 bash batch.sh time                       # 3 main + 3 cut runs per T and TS call, one process each, alternated
 ```
 
+### §9's C2 — the deviation floor read before the structure [implemented, #1309]
+
+[implemented, #1309] What changed is *when* the deviation floor is read
+(`src/meshreduce.ts`), not what it reads or decides:
+
+- **Read off the outline walk, before anything is built.** `earlyFloor` takes
+  the current outline's canonical walk (`canonicalWalk`, cached per working
+  triangulation), drops the removed vertices, and turns what remains the way
+  `canonicalise` turns a hull (`turnedFromSmallest`, the one rule both now
+  share): rotated to its smallest id, walked the other way when its signed area
+  does not turn as the source's does. The floor is `deviationFloor`'s loop over
+  that polygon. Whenever the structure passes, the candidate's outline is that
+  walk, so the two floors read the same segments in the same order. A removal
+  of no source-hull vertex reads 0 without the walk.
+- **Refused through #1279's thunk.** An attempt the early floor refuses builds
+  no removal, no added-edge list, no protected-edge set and no canonical
+  candidate. Its refusal is the same thunk: read, it runs the full path in the
+  state it was tried in, so it names the structure's reason when the structure
+  would have refused first — the 3,907 attempts §9 counted — and the rows'
+  otherwise.
+- **What a reader sees is held, `decidedByFloor` included.** The observer's
+  `decidedByFloor` still means what it meant: that the path before, which read
+  the floor after every structural check, was decided by it. So it is false
+  for those 3,907. It costs the structure once per floor-refused attempt, and
+  only when an observer (a control) or the floor audit is attached; with
+  neither it is never computed. `AttemptRecord`'s shape and every value in it
+  are unchanged, and so are the candidates tried, their order, and every row,
+  bound, budget and message; the floor is no longer read a second time after
+  the structure, since the two are equal wherever the structure passes.
+  `FLOOR_MARGIN` and the `floor-half-a-pixel-short` plant now apply to the
+  early floor, the only one the call reads.
+
+**Byte identity** [measured, #1309]. §9's population through `reduceMesh` on
+main (`2412292`, C1 included) and on the cut, through the cut again with an
+observer and the floor audit below, and through main with an observer:
+`writeMeshQualityReport(report)` and the mesh hashed, **identical on 87 of 87
+calls**, 18 skipped; the observers' records — every attempt's step, kind,
+vertices, pass, predicted load, `decidedByFloor` and, where the floor did not
+decide it, the refusal's name — identical on 87 of 87 (86,341 attempts, 69,247
+read `decidedByFloor`). The audit read the floor on every one of the 86,341,
+compared the early floor with the floor off the canonical candidate on the
+**82,426** whose structure passes — 18 of them walked the other way — and found
+them equal bit for bit and decided alike; of the **73,154** the early floor
+refused, **3,907** are refused by the structure first and were named by it, as
+§9 predicted to the attempt. The same run under T with `protect.weightJump`
+0.5 on the twelve weighted inputs is identical on **12 of 12** (14,676
+attempts, 13,205 refused early, 4,960 of them structurally) with no difference.
+The `mesh-quality` and `mesh-compare` suites print the same text on main and
+the cut (Nova) but for the wall-time clauses (`MQ46`, `MQ47`, `MQ48` on that
+run), the `mesh-compare` summary's rss and children high-water, and
+`MQ151`'s lines.
+
+**The bound after C1** [measured, #1309]. A copy of the cut that, for every
+attempt the early floor refuses, also builds and times the structure the path
+before built for it — the work this cut removes, on the tree it removes it
+from: **52 %** of a T call and **26 %** of a TS call on demo/bottomwear (§9
+read 77 % / 52 % before C1), 42–48 % of T on sample/sleeves,
+sample/bottomwear, sample/topwear, `scarf__hair_front` and the bean, 34–35 %
+on `scarf__handwear_l` and the with-region input, 16–25 % on the necks, 9 % on
+the ramp; under TS 8–36 % on the inputs that reach a removal. Same pool, the
+load 2.18–2.39; each figure the median of three runs' shares.
+
+**Cost** [measured, #1309]. Nova pool (WSL2 Linux 6.6, x86_64, 20 threads,
+Bun 1.4.2), pooled rather than exclusive, the 1-minute load **2.08–2.52
+(median 2.18)** at the calls' starts. Each call in its own process, main and
+the cut alternated, three of each; the median, ms; every call of a pair wrote
+the same hash (33 of 33):
+
+| input | T main | T cut | saved | TS main | TS cut | saved | bound after C1, T / TS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| demo/neck | 53 | 48 | 9 % | 85 | 80 | 6 % | 16 % / 8 % |
+| sample/neck | 76 | 65 | 15 % | 128 | 121 | 5 % | 25 % / 14 % |
+| `scarf__hair_front` | 131 | 77 | 41 % | 344 | 243 | 29 % | 46 % / 32 % |
+| sample/topwear | 198 | 118 | 40 % | 501 | 413 | 18 % | 44 % / 25 % |
+| `scarf__handwear_l` | 506 | 351 | 31 % | 1,132 | 874 | 23 % | 34 % / 25 % |
+| sample/sleeves | 743 | 421 | 43 % | 1,189 | 798 | 33 % | 48 % / 36 % |
+| sample/bottomwear | 438 | 275 | 37 % | 1,653 | 1,423 | 14 % | 42 % / 17 % |
+| demo/bottomwear | 1,662 | 845 | **49 %** | 5,983 | 4,672 | **22 %** | **52 % / 26 %** |
+| `demo__bottomwear__region` | 5,134 | 3,564 | 31 % | 2,861 | 2,892 | −1 % | 35 % / 0 % |
+| `MQ79` ramp | 345 | 317 | 8 % | 403 | 380 | 6 % | 9 % / 7 % |
+| `MQ85` bean | 414 | 238 | 43 % | 1,441 | 962 | 33 % | 48 % / 35 % |
+
+- **Every saving is at or under its bound**, 1–10 points below it: the cut
+  keeps what the floor itself costs and the walk it reads (one canonical walk
+  per mesh the steps leave). The necks and the ramp save least because their
+  hulls are short and most of their attempts are taken or refused by a row.
+- **The with-region input under TS is unchanged**, as for C1: it stops before
+  any removal.
+- **The synthetic inputs** save −1 to 18 % at 10–46 ms, within the spread;
+  `synthetic__tiny_region_source_at_L0` 948 → 897 ms.
+- Peak RSS fell with the work: 255 → 238 MiB on demo/bottomwear under T,
+  362 → 341 MiB on the with-region input. Not a claim the cut makes.
+
+**Held in suite** by `MQ151` (the `mesh-compare` suite; MQ150 is C1's and
+MQ144 onwards #1302's): `reduceMeshWith`'s eighth argument, a `FloorAudit`,
+runs the path before beside the early floor on every attempt the floor is read
+on — every structural check, then the floor off the canonical candidate,
+decided at `FLOOR_MARGIN` — and compares: the two floors bit for bit and their
+decisions where the structure passes; where the early floor refuses an attempt
+the structure refuses first, the name a reader is shown against the
+structure's, and `decidedByFloor` against false. Two subjects under T:
+`MQ85`'s bean (1,776 attempts, 1,693 compared, 1,641 refused early, 83 of them
+structurally) and `MQ79`'s ramp (627, 572, 300, 55); the audited, observed
+calls write the plain calls' bytes, and the observer's `decidedByFloor` count
+equals the floor's own refusals with a passing structure. Its plants: the floor
+read half a pixel short of the bound (`MQ96`'s), which changes the bean's bytes
+(the ramp's hull sits within 0.08 px of its chords, as `MQ96` notes, so it has
+to fire on one subject); and an early refusal named off the floor, never
+reaching the structural check that would have refused first, found by the
+audit as 83 differences on the bean and 55 on the ramp.
+
+The method and scripts are C1's, with a third tree: the bound copy is the cut
+patched by one exact-text edit (`make_bound.py`).
+
+```sh
+bash mkbundle.sh <worktree> <main meshreduce.ts> <bundle>  # main, the cut, the bound copy, the recorded inputs, the harness
+cd <bundle>                                 # then, on the Nova pool runner (pooled, never exclusive):
+bash batch.sh identity                      # main / cut / cut audited and observed / main observed, 87 calls
+VARIANTS=TJ bash batch.sh identity          # T with weightJump 0.5 on the weighted inputs
+bash batch.sh bound                         # the bound after C1: 3 runs per T and TS call
+bash batch.sh time                          # 3 main + 3 cut runs per T and TS call, one process each, alternated
+```
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
