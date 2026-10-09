@@ -54,6 +54,10 @@ type Weights = ReadonlyArray<ReadonlyArray<{ bone: string; weight: number }>>;
  * - `bstar-ignores-art`: B\* without the art test.
  * - `rows-required`: the rows counted as required.
  * - `mutates-input`: the measurement sorts the caller's triangle list in place.
+ * - `gradation-defaulted`: an amplitude whose `gradation` is left out or `null` read at 0.75, §8's fixtures' value —
+ *   the default issue #1291 measured and refused to choose.
+ * - `load-needs-gradation`: `MQ_DEFORM_LOAD` left unread for want of a `gradation` it does not read.
+ * - `gradation-ignored`: the need relaxed at 0.75 whatever `gradation` declares, so Δ no longer reads the field.
  */
 export type AllocationPlant =
   | 'omit-rows'
@@ -64,7 +68,10 @@ export type AllocationPlant =
   | 'undeclared-pair-is-rigid'
   | 'bstar-ignores-art'
   | 'rows-required'
-  | 'mutates-input';
+  | 'mutates-input'
+  | 'gradation-defaulted'
+  | 'load-needs-gradation'
+  | 'gradation-ignored';
 
 /** The art as the allocation rows read it: art pixels on the mask's grid, and the scale that grid is at. */
 export interface AllocationArt {
@@ -493,7 +500,11 @@ export interface AllocationContrast {
   worstVertex: number;
 }
 
-/** h\*: the largest local size every primary need allows at a point, each relaxed at gradation G away from its source. */
+/**
+ * h\*: the largest local size every primary need allows at a point, each relaxed at gradation G away from its source —
+ * G the caller's `motionAmplitude.gradation`, never a constant of this module: §8 measured that it derives from nothing
+ * a rig declares and that Δ moves with it (issue #1291). A region relaxes at its own declared `grade` over its band.
+ */
 interface Need {
   at(p: Pt): number;
 }
@@ -559,7 +570,8 @@ function needField(points: readonly Pt[], triangles: readonly number[], weights:
 const twiceSigned = (a: Pt, b: Pt, c: Pt): number => (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
 
 /**
- * Δ and E (§8; the stage-A record for #1271, M7). For each vertex the
+ * Δ and E (§8; the stage-A record for #1271, M7), with the need relaxing at `gradation` — the caller's declared G,
+ * which `measureMeshQuality` hands over only when it is set. For each vertex the
  * cheapest half-edge collapse into a neighbour — a hull vertex only along the
  * hull — that turns no triangle over; ν is the largest, over what that
  * collapse changes, of: the silhouette (the moved outline's chord distance
@@ -580,13 +592,15 @@ export function allocationContrast(
   art: AllocationArt,
   regions: readonly RefinementRegion[],
   declared: MotionAmplitude,
+  gradation: number,
   silhouette: number[],
   plant: AllocationPlant | null,
 ): Reading<AllocationContrast> {
   const n = points.length;
   const pairs = new PairAmplitudes(declared, plant);
   const amplitudeRead = plant !== 'contrast-without-amplitude';
-  const need = needField(points, triangles, weights, silhouette, regions, amplitudeRead ? pairs : new PairAmplitudes({ tracks: [], gradation: declared.gradation }, 'undeclared-pair-is-rigid'), declared.gradation);
+  const G = plant === 'gradation-ignored' ? 0.75 : gradation;
+  const need = needField(points, triangles, weights, silhouette, regions, amplitudeRead ? pairs : new PairAmplitudes({ tracks: [] }, 'undeclared-pair-is-rigid'), G);
   if (need === null) return unmeasured(undeclaredPairReason(pairs.missing!));
   const nb: Array<Set<number>> = Array.from({ length: n }, () => new Set<number>());
   const triOf: number[][] = Array.from({ length: n }, () => []);

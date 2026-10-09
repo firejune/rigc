@@ -639,6 +639,25 @@ acceptance, only the two rows it measures and its echo, 54 of 54
 validator it shares with the measurement, `validateMotionAmplitude`, is
 merely exported, so by the rule above it is not promised.
 
+The gradation left to the author and the comparison's amplitude
+([#1291](https://github.com/firejune/rigc/issues/1291)) are additive on the
+agreed rows' types, asked for by their only sender (rig-parts#126, its STOP
+on the rerun): `MotionAmplitude.gradation` widens from `number` to an
+optional `number | null`, so an amplitude that sets it type-checks and is
+read exactly as before, and one that leaves it out or sets `null` — refused
+until now — is admitted, measures `MQ_DEFORM_LOAD` and leaves
+`MQ_ALLOCATION_CONTRAST` `not-measurable` naming it; and
+`MotionComparisonInput.motionAmplitude` (`MotionAmplitude | null`) is a new
+optional input, handed to the setup measurement only and echoed in
+`effective` only when set. A call that sets neither writes every byte as
+before — measured against `32e5cc1` on the 18 inputs of the stage-D1 record,
+108 of 108 reduction and measurement calls, and on `MQ79`'s ramp, 4 of 4
+posed comparisons (docs/MESH_REDUCTION.md, §8 *G — what it derives from* and
+*Stage B — the amplitude on a comparison*). A reader of `gradation` as a
+`number` reads `number | null | undefined`. `ComparePlant` and
+`compareMeshesInMotionPlanted` on `rig-c/meshcompare` are the suite's
+plants, merely exported, so by the rule above not promised.
+
 The region pixel set computed by scanline
 ([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —
