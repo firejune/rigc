@@ -70,6 +70,7 @@ import {
   type MeshOutline,
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
+import { allocationContrast, boundaryNecessityOnce, deformLoad, gradeMax, minAngleP10, type AllocationArt, type AllocationPlant } from './meshallocation.ts';
 import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
@@ -311,6 +312,41 @@ export interface MeshMeasureInput {
   influences: InfluenceLimits | null;
   boneOrder: string[] | null;
   preset: { name: string; version: string } | null;
+  /**
+   * Issue #1280 (§8, [agreed, rig-parts#126] Q2): the motion amplitude the two weight-aware allocation rows read —
+   * `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD`. Left out, it is not declared and those two rows are
+   * `not-measurable`, naming this field; `null` declares it absent, with the same result and a reason saying so (as a
+   * `null` art bound is declared absent, #1257). It declares no bound: every allocation row stays `undeclared`.
+   */
+  motionAmplitude?: MotionAmplitude | null;
+}
+
+/**
+ * Issue #1280: the amplitude a caller's motion moves a mesh's weight field by, per track, as the allocation rows read
+ * it. Nothing in it has a default; nothing in it gates anything.
+ */
+export interface MotionAmplitude {
+  /** One entry per track the caller declares (an animation, a parameter axis — its name is echoed, never read). */
+  tracks: TrackAmplitude[];
+  /**
+   * G, px per px: how fast a declared need relaxes away from its source — the size a need allows at distance d is its
+   * own plus G × d (the form of a region's `grade`). Read by `MQ_ALLOCATION_CONTRAST` only. Finite, 0 or more.
+   */
+  gradation: number;
+}
+
+/** One track's amplitude: the pairs of bones a share moves between in it, each with θ, and the track's ε. */
+export interface TrackAmplitude {
+  /** The caller's name for the track; echoed, never read. */
+  track: string;
+  /**
+   * Each pair of bones whose relative transform the track moves, and θ: the largest ‖M − I‖ of the relative linear
+   * part M over the track — 2 sin(α / 2) for a rotation by α (≈ α in radians for a small one), |s − 1| for a uniform
+   * scale by s. Dimensionless, finite, 0 or more. A pair is unordered; declared twice, the larger θ is read.
+   */
+  pairs: Array<{ bones: [string, string]; theta: number }>;
+  /** ε, drawing px: the chord error the track tolerates — what a deformation need is sized against. Finite, above 0. */
+  epsilon: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +380,18 @@ export interface MeasureRow {
   sampling?: { domain: string; count: number };
   /** Motion rows only (stage C, `src/meshcompare.ts`): how the row's value was taken over the schedule. */
   motion?: MotionRowDetail;
+  /** The five allocation rows only (issue #1280): what the value is a reading of, and what it was read from. */
+  allocation?: AllocationDetail;
+}
+
+/** Issue #1280: an allocation row's own fields. Written on those five rows, measured or not, and on no other. */
+export interface AllocationDetail {
+  /** One sentence: what the value is a reading of — and, for `MQ_DEFORM_LOAD`, that it is not predicted motion. */
+  reading: string;
+  /** `MQ_ALLOCATION_CONTRAST` when measured: economy E, and the counts Δ and E are taken from. */
+  contrast?: { economy: number; dense: { vertices: number; removableAlone: number }; rest: { vertices: number; removableAlone: number } };
+  /** `MQ_BOUNDARY_NECESSARY` when measured: the shortcuts the search tested, and the bound n × (n − 2) it is held to. */
+  search?: { shortcutsTested: number; bound: number };
 }
 
 /** Correction 2: the spatial grid and the value's own granularity are two fields. */
@@ -494,6 +542,8 @@ export interface EffectiveSettings {
   stopAfterAccepted?: number;
   /** A reduction's `boundaryRuns`, echoed when the input set it (issue #1279); absent otherwise. */
   boundaryRuns?: BoundaryRuns;
+  /** A measurement's `motionAmplitude`, echoed when the input set it — `null` included (issue #1280); absent otherwise. */
+  motionAmplitude?: MotionAmplitude | null;
 }
 
 export interface MeshCounts {
@@ -746,6 +796,33 @@ function validateInput(input: MeshMeasureInput): void {
   if (input.preset !== null && (!isObject(input.preset) || typeof input.preset.name !== 'string' || typeof input.preset.version !== 'string')) {
     refuse('REDUCE_INPUT_MISSING', `${who}: preset is not { name, version }; required that, or null`);
   }
+  validateAmplitude(who, input.motionAmplitude);
+}
+
+/** Issue #1280: `motionAmplitude` left out or `null` is accepted as it stands; anything else is a `MotionAmplitude` in full. */
+function validateAmplitude(who: string, amplitude: unknown): void {
+  if (amplitude === undefined || amplitude === null) return;
+  const shape = '{ tracks: [{ track, pairs: [{ bones: [a, b], theta }], epsilon }], gradation }';
+  if (!isObject(amplitude) || !Array.isArray(amplitude.tracks)) refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude is ${JSON.stringify(amplitude)}; required ${shape}, null, or the field left out`);
+  if (!isFiniteNumber(amplitude.gradation) || amplitude.gradation < 0) {
+    refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude.gradation is ${JSON.stringify(amplitude.gradation)}; required a finite number of px per px, 0 or more — no gradation is assumed`);
+  }
+  amplitude.tracks.forEach((track: unknown, i: number) => {
+    const at = `motionAmplitude.tracks[${i}]`;
+    if (!isObject(track) || typeof track.track !== 'string' || track.track === '' || !Array.isArray(track.pairs)) {
+      refuse('REDUCE_INPUT_MISSING', `${who}: ${at} is ${JSON.stringify(track)}; required { track: a non-empty name, pairs: a list, epsilon }`);
+    }
+    if (!isFiniteNumber(track.epsilon) || track.epsilon <= 0) refuse('REDUCE_INPUT_MISSING', `${who}: ${at}.epsilon is ${JSON.stringify(track.epsilon)}; required a finite number of px above 0`);
+    track.pairs.forEach((pair: unknown, j: number) => {
+      const here = `${at}.pairs[${j}]`;
+      const bones = isObject(pair) ? pair.bones : undefined;
+      if (!Array.isArray(bones) || bones.length !== 2 || bones.some((b) => typeof b !== 'string' || b === '') || bones[0] === bones[1]) {
+        refuse('REDUCE_INPUT_MISSING', `${who}: ${here}.bones is ${JSON.stringify(bones)}; required two different bone names`);
+      }
+      const theta = (pair as Record<string, unknown>).theta;
+      if (!isFiniteNumber(theta) || theta < 0) refuse('REDUCE_INPUT_MISSING', `${who}: ${here}.theta is ${JSON.stringify(theta)}; required a finite number, 0 or more (‖M − I‖ of the pair's relative linear part)`);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,6 +1088,24 @@ export function edgeIsHeldByRegion(a: readonly [number, number], b: readonly [nu
     last = Math.max(last, t);
   }
   return (last - first) * length > BAND_CONTACT_TOLERANCE;
+}
+
+/**
+ * The density bound the regions hold the segment `a`–`b` to, as `regionRows` reads it for a mesh edge — the
+ * smallest over every region that holds it (`edgeIsHeldByRegion`): `L0` where it meets the closed polygon, else
+ * `L0 + grade·d` on the `r6` grid — or null when no region holds it. Read by `MQ_ALLOCATION_CONTRAST` (issue #1280)
+ * for the edges a collapse would create. The regions are taken as given: the caller has refused any that
+ * `regionRefusal` refuses. Internal, as `measureMeshQualityWith` is: on `rig-c/mesh` only through `export *`.
+ */
+export function regionEdgeBound(a: readonly [number, number], b: readonly [number, number], regions: readonly RefinementRegion[]): number | null {
+  let bound: number | null = null;
+  for (const region of regions) {
+    if (!edgeIsHeldByRegion(a, b, region)) continue;
+    const d = segmentToPolygon(a, b, region.polygon);
+    const here = d === 0 ? region.maxEdgeLength : r6(region.maxEdgeLength + region.grade * d);
+    if (bound === null || here < bound) bound = here;
+  }
+  return bound;
 }
 
 /** Distance from a point to a closed polyline (the polygon's boundary), and the edge that realises it. */
@@ -1321,7 +1416,17 @@ function compareRows(a: MeasureRow, b: MeasureRow): number {
  */
 export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
   validateInput(input);
-  return measureValidated(input, artRastersOf(input.art), null);
+  return measureValidated(input, artRastersOf(input.art), null, null);
+}
+
+/**
+ * `measureMeshQuality` with a fault planted in its allocation rows (issue #1280, `AllocationPlant` in
+ * `src/meshallocation.ts`) — the `mesh-quality` suite's negative controls, and with `omit-rows` the report without
+ * those rows that the opt-out identity is held to. Internal, as `measureMeshQualityWith` is.
+ */
+export function measureMeshQualityPlanted(input: MeshMeasureInput, plant: AllocationPlant): MeshQualityReport {
+  validateInput(input);
+  return measureValidated(input, artRastersOf(input.art), null, plant);
 }
 
 /**
@@ -1340,7 +1445,7 @@ export function measureMeshQuality(input: MeshMeasureInput): MeshQualityReport {
 export function measureMeshQualityWith(input: MeshMeasureInput, rasters: ArtRasters): MeshQualityReport {
   validateInput(input);
   checkArtRasters(input, rasters);
-  return measureValidated(input, rasters, null);
+  return measureValidated(input, rasters, null, null);
 }
 
 /**
@@ -1357,7 +1462,7 @@ export function measureMeshQualityWith(input: MeshMeasureInput, rasters: ArtRast
 export function measureMeshQualityStep(input: MeshMeasureInput, steps: StepRasters): MeshQualityReport {
   validateInput(input);
   checkArtRasters(input, steps.rasters);
-  return measureValidated(input, steps.rasters, steps);
+  return measureValidated(input, steps.rasters, steps, null);
 }
 
 /**
@@ -1433,7 +1538,7 @@ function checkArtRasters(input: MeshMeasureInput, rasters: ArtRasters): void {
 }
 
 /** The measurement proper, over an input `validateInput` accepted and rasters taken from its art. */
-function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: StepRasters | null): MeshQualityReport {
+function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: StepRasters | null, plant: AllocationPlant | null): MeshQualityReport {
   rasters.tally.uses++;
   const { attachment, art, source, targets } = input;
   const { mask, threshold, frame } = art;
@@ -1471,6 +1576,9 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
   const spec = (code: string, unit: MeasureRow['unit'], region: string | null = null): RowSpec => ({ code, unit, region, attachment });
   const points: Pt[] = source.points;
   const hullPolygon: Pt[] = outline.walk.map((v) => points[v]);
+
+  // --- allocation rows (issue #1280): undeclared or not-measurable, never required ------------
+  if (plant !== 'omit-rows') rows.push(...allocationRows(input, outline, rasters, steps, plant));
 
   // --- raster rows ---------------------------------------------------------
   const w = mask.width;
@@ -1621,6 +1729,131 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
   const geometry = sectionOf(ordered);
   const accepted = geometry.verdict === 'pass';
   return report(counts, { id: input.id, counts, geometry, motion: null, accepted }, null);
+}
+
+/** What each allocation row is a reading of — `AllocationDetail.reading`, one fixed sentence per code. */
+const ALLOCATION_READINGS: Record<string, string> = {
+  MQ_GRADE:
+    'the largest |h_u − h_v| / L over the edges, h a vertex\'s mean incident edge length: how abruptly the local size changes, whether or not the density is justified',
+  MQ_MIN_ANGLE_P10: 'the tenth percentile, nearest rank, of the triangles\' smallest angles: sliver fans, where MQ_MIN_ANGLE reads the single worst triangle',
+  MQ_ALLOCATION_CONTRAST:
+    'Δ: the share of the dense vertices removable alone against the declared needs (silhouette, deformation under motionAmplitude, regions) minus that share among the rest; economy E is the share of all',
+  MQ_DEFORM_LOAD:
+    'the largest L · Δshare · θ / 4 over the edges, Δshare the share of weight that moves across the edge: a bound on the chord error of the mesh\'s own weight field under motionAmplitude, read to locate the edge; it is not predicted motion and no difference to any reference (docs/MESH_REDUCTION.md §8)',
+  MQ_BOUNDARY_NECESSARY:
+    'B*: the fewest vertices of the reference hull a closed outline can keep with every skipped run within maxBoundaryDeviation of its chord both ways and no art pixel centre cut off (overshoot is not tested); worst is the first hull vertex of this mesh not on that outline',
+};
+
+/**
+ * The five allocation rows (issue #1280; docs/MESH_REDUCTION.md §8): each `undeclared` with its value and worst
+ * sample, or `not-measurable` with the sentence naming what is missing — never required, so none can block a step,
+ * refuse a source, or count towards acceptance. `MQ_BOUNDARY_NECESSARY` is read against the reference hull once per
+ * art rasters object (`boundaryNecessityOnce`), so a reduction computes it once per call.
+ */
+function allocationRows(input: MeshMeasureInput, outline: MeshOutline, rasters: ArtRasters, steps: StepRasters | null, plant: AllocationPlant | null): Built[] {
+  const { attachment, source, targets, art } = input;
+  const who = `attachment ${nameOf(attachment)}`;
+  if (plant === 'mutates-input') {
+    const tris = source.triangles;
+    for (let t = 0; t + 2 < tris.length; t += 3) [tris[t + 1], tris[t + 2]] = [tris[t + 2], tris[t + 1]];
+  }
+  const points: Pt[] = source.points;
+  const out: Built[] = [];
+  const row = (code: string, unit: MeasureRow['unit'], built: Built, detail: Omit<AllocationDetail, 'reading'> = {}): void => {
+    built.row.allocation = { reading: ALLOCATION_READINGS[code], ...detail };
+    if (plant === 'rows-required') built.required = true;
+    out.push(built);
+  };
+  const spec = (code: string, unit: MeasureRow['unit']): RowSpec => ({ code, unit, region: null, attachment });
+  const measured = (code: string, unit: MeasureRow['unit'], value: number, worst: WorstSample): Built => measuredRow(spec(code, unit), value, null, worst, false);
+  const missing = (code: string, unit: MeasureRow['unit'], reason: string): Built => unmeasuredRow(spec(code, unit), 'not-measurable', reason, false);
+
+  // Geometry alone.
+  const grade = gradeMax(points, source.triangles, plant);
+  row('MQ_GRADE', 'ratio', grade.measured ? measured('MQ_GRADE', 'ratio', grade.value.value, { at: { edge: grade.value.edge } }) : missing('MQ_GRADE', 'ratio', `${who}: ${grade.reason}`));
+  const p10 = minAngleP10(points, source.triangles, plant);
+  row(
+    'MQ_MIN_ANGLE_P10',
+    'degrees',
+    p10.measured ? measured('MQ_MIN_ANGLE_P10', 'degrees', p10.value.value, { at: { triangle: p10.value.triangle } }) : missing('MQ_MIN_ANGLE_P10', 'degrees', `${who}: ${p10.reason}`),
+  );
+
+  // What the weight-aware and art-reading rows need.
+  const amplitude = input.motionAmplitude;
+  const amplitudeMissing =
+    amplitude === undefined
+      ? `${who}: motionAmplitude is not declared (the field is left out), so no motion amplitude sizes a deformation need; required { tracks, gradation } — no amplitude is assumed, and without one no reading of justification separates anything (§8)`
+      : amplitude === null
+        ? `${who}: motionAmplitude is declared absent (null), so no motion amplitude sizes a deformation need; required { tracks, gradation } for this row — no amplitude is assumed`
+        : null;
+  const unweighted = source.weights === null ? `${who}: source.weights is null — an unweighted mesh has no weight field for a motion to move` : null;
+  const delta = targets.maxBoundaryDeviation;
+  const noDelta = delta === null ? `${who}: targets.maxBoundaryDeviation is null, so no skip of the outline has a deviation to be held to` : null;
+  const artCount = rasters.artCount();
+  const fewArt =
+    artCount < input.minArtSamples
+      ? `${who} has ${artCount} art sample(s) at alpha >= ${art.threshold}; required at least ${input.minArtSamples} (minArtSamples, P9) — a row over fewer is not a measurement`
+      : null;
+  const allocationArt: AllocationArt = { mask: art.mask, bits: rasters.artBits(), scale: art.frame.pageScale };
+
+  // MQ_DEFORM_LOAD.
+  const loadWhy = amplitudeMissing ?? unweighted;
+  if (loadWhy !== null || amplitude === undefined || amplitude === null || source.weights === null) {
+    row('MQ_DEFORM_LOAD', 'px', missing('MQ_DEFORM_LOAD', 'px', loadWhy ?? ''));
+  } else {
+    const load = deformLoad(points, source.triangles, source.weights, amplitude, plant);
+    row(
+      'MQ_DEFORM_LOAD',
+      'px',
+      load.measured
+        ? measured('MQ_DEFORM_LOAD', 'px', load.value.value, load.value.edge === null ? NOTHING_WORSE : { at: { edge: load.value.edge } })
+        : missing('MQ_DEFORM_LOAD', 'px', `${who}: ${load.reason}`),
+    );
+  }
+
+  // MQ_ALLOCATION_CONTRAST.
+  const planted = plant === 'contrast-without-amplitude' && (amplitude === undefined || amplitude === null) ? { tracks: [], gradation: 0 } : null;
+  const declared = planted ?? amplitude;
+  let regionWhy: string | null = null;
+  for (const region of targets.regions) {
+    const refusal = regionRefusal(region, art.frame.pageScale, who, steps);
+    if (refusal !== null) {
+      regionWhy = `${who}: region "${region.name}" is refused (${refusal.code}), so its density cannot be read as a declared need`;
+      break;
+    }
+  }
+  const contrastWhy = (planted === null ? amplitudeMissing : null) ?? unweighted ?? noDelta ?? fewArt ?? regionWhy;
+  if (contrastWhy !== null || declared === undefined || declared === null || source.weights === null || delta === null) {
+    row('MQ_ALLOCATION_CONTRAST', 'fraction', missing('MQ_ALLOCATION_CONTRAST', 'fraction', contrastWhy ?? ''));
+  } else {
+    const ownHull = points.slice(0, outline.hull);
+    const silhouette = boundaryNecessityOnce(rasters, ownHull, delta, allocationArt, null).path;
+    const contrast = allocationContrast(points, source.triangles, outline.hull, source.weights, delta, allocationArt, targets.regions, declared, silhouette, plant);
+    if (contrast.measured) {
+      const c = contrast.value;
+      row('MQ_ALLOCATION_CONTRAST', 'fraction', measured('MQ_ALLOCATION_CONTRAST', 'fraction', c.contrast, { at: { vertex: c.worstVertex } }), {
+        contrast: { economy: c.economy, dense: c.dense, rest: c.rest },
+      });
+    } else {
+      row('MQ_ALLOCATION_CONTRAST', 'fraction', missing('MQ_ALLOCATION_CONTRAST', 'fraction', `${who}: ${contrast.reason}`));
+    }
+  }
+
+  // MQ_BOUNDARY_NECESSARY.
+  const reference = input.referenceHull;
+  const noReference = reference === null ? `${who}: no referenceHull was given, so there is no source hull to find the necessary outline of` : null;
+  const necessaryWhy = noReference ?? noDelta ?? fewArt;
+  if (necessaryWhy !== null || reference === null || delta === null) {
+    row('MQ_BOUNDARY_NECESSARY', 'count', missing('MQ_BOUNDARY_NECESSARY', 'count', necessaryWhy ?? ''));
+  } else {
+    const found = boundaryNecessityOnce(rasters, reference, delta, allocationArt, plant);
+    const kept = new Set(found.path.map((i) => pointKey(reference[i])));
+    const beyond = outline.walk.find((v) => !kept.has(pointKey(points[v])));
+    row('MQ_BOUNDARY_NECESSARY', 'count', measured('MQ_BOUNDARY_NECESSARY', 'count', found.count, beyond === undefined ? NOTHING_WORSE : { at: { vertex: beyond } }), {
+      search: { shortcutsTested: found.tests, bound: found.bound },
+    });
+  }
+  return out;
 }
 
 /** What one source states about itself: hull and interior from the outline, bindings from the weights. */
@@ -1934,6 +2167,7 @@ function effectiveOf(input: MeshMeasureInput): EffectiveSettings {
     boneOrder: input.boneOrder,
     schedule: null,
     budget: null,
+    ...(input.motionAmplitude === undefined ? {} : { motionAmplitude: input.motionAmplitude }),
   };
 }
 
@@ -2024,6 +2258,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     budget: e.budget === null ? null : { maxCandidates: e.budget.maxCandidates },
     ...(e.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: e.stopAfterAccepted }),
     ...(e.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: e.boundaryRuns.maxVertices } }),
+    ...(e.motionAmplitude === undefined ? {} : { motionAmplitude: amplitudeJson(e.motionAmplitude) }),
   };
 }
 
@@ -2067,7 +2302,30 @@ function rowJson(r: MeasureRow): Json {
   }
   if (r.sampling !== undefined) out.sampling = { domain: r.sampling.domain, count: r.sampling.count };
   if (r.motion !== undefined) out.motion = motionDetailJson(r.motion);
+  if (r.allocation !== undefined) out.allocation = allocationDetailJson(r.allocation);
   return out;
+}
+
+function allocationDetailJson(a: AllocationDetail): Json {
+  const out: { [key: string]: Json } = { reading: a.reading };
+  if (a.contrast !== undefined) {
+    const c = a.contrast;
+    out.contrast = {
+      economy: c.economy,
+      dense: { vertices: c.dense.vertices, removableAlone: c.dense.removableAlone },
+      rest: { vertices: c.rest.vertices, removableAlone: c.rest.removableAlone },
+    };
+  }
+  if (a.search !== undefined) out.search = { shortcutsTested: a.search.shortcutsTested, bound: a.search.bound };
+  return out;
+}
+
+function amplitudeJson(a: MotionAmplitude | null): Json {
+  if (a === null) return null;
+  return {
+    tracks: a.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: [p.bones[0], p.bones[1]], theta: p.theta })), epsilon: t.epsilon })),
+    gradation: a.gradation,
+  };
 }
 
 function sectionJson(s: EvidenceSection): { [key: string]: Json } {
