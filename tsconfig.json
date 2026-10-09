@@ -27,7 +27,7 @@
     // `MeshKind` where the return type said `'ring' | 'ribbon'` (fixed in the
     // same change). The measurement is the one a dependant with `strict: true`
     // runs on this tree when its tsc reaches `src/` through an import, which is
-    // how that error was found (spine-parts, whose selftest imports
+    // how that error was found (rig-parts, whose selftest imports
     // `src/render.ts`). What was true of the comment above stays true of the
     // code: it leans on `x === undefined` narrowing everywhere, and `strict`
     // keeps `strictNullChecks` on.

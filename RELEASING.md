@@ -112,7 +112,7 @@ the commit that introduces these files, and is not maintained afterwards.
    there):
 
    ```sh
-   bun scripts/dependant_check.ts --dependant ../spine-parts -- bun cli.ts build --config examples/sample/config.json --source examples/sample/inputs/painting.png --full examples/sample/inputs/layers/full --head examples/sample/inputs/layers/head --out '{out}'
+   bun scripts/dependant_check.ts --dependant ../rig-parts -- bun cli.ts build --config examples/sample/config.json --source examples/sample/inputs/painting.png --full examples/sample/inputs/layers/full --head examples/sample/inputs/layers/head --out '{out}'
    ```
 
    It writes nothing into the dependant: it packs this tree as the smoke
@@ -136,7 +136,7 @@ the commit that introduces these files, and is not maintained afterwards.
    package's own, `rig-c`, or the alias it is also published as,
    `spine-rigc` — in which case the candidate is repacked under that name by
    `scripts/alias_tarball.ts`, its files unchanged, so the dependant's own
-   imports resolve. spine-parts 0.16.0 declares `spine-rigc`, and on the tree
+   imports resolve. rig-parts 0.16.0 declares `spine-rigc`, and on the tree
    that renamed the package the check came back green against
    `spine-rigc@latest` (2.20.4): type check exit 0, 106 of 106 files
    byte-identical.
@@ -542,7 +542,7 @@ somebody is seen using is added to that table with their name and the issue
 — a later observation of an entry already listed is a row of its own, so
 each row still says when its symbols were first seen.
 
-What the three #1212 named promise, as observed in spine-parts 0.14.0 — every
+What the three #1212 named promise, as observed in rig-parts 0.14.0 — every
 import of the package anywhere in its tree, its `src/` and its dev files
 alike:
 
@@ -557,7 +557,7 @@ and, through `rig-c/transform`, `computeExactFrameTransforms`,
 the smoke is the one that is checked; this one is its reading for a person.
 
 A later observation of the same entry is its own row, as the rule above says:
-spine-parts's automatic mesh mode (its `c03dd8a`, PR #131) was read calling
+rig-parts's automatic mesh mode (its `c03dd8a`, PR #131) was read calling
 `reduceMesh` with the types `SourceMesh` and `RefinementRegion` from
 `rig-c/mesh`, which the agreed row had not recorded — found by rigc#1238's
 D1 over the installed package, recorded by #1241. Every other import that
@@ -570,7 +570,7 @@ paragraph above already says are not promised.
 `MeshReductionError`, `MESH_QUALITY_REPORT_SPEC` and `reduceMesh` are held, and
 the report's and the reduction's types recorded, because the dependant agreed in writing to import them from
 that entry before either side had written them (docs/MESH_REDUCTION.md, P1;
-spine-parts#126) — a contract nobody can be observed using yet, which renaming
+rig-parts#126) — a contract nobody can be observed using yet, which renaming
 would still break. The row says so in place of an observation
 (`AGREED_IN_1224`), and it is the only exception: a symbol that is merely
 exported is not promised.

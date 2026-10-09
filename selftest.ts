@@ -45115,7 +45115,7 @@ function rawShiftedMeshWeights(rigText: string, flag: boolean): string {
 //
 // The two operations each have a control that runs with the other idle (MQ46:
 // no region; MQ47: every source vertex protected), because the consumer asked
-// for them to pass independently (spine-parts#126, comment 6042150608). The
+// for them to pass independently (rig-parts#126, comment 6042150608). The
 // last control's line carries reduceMesh's wall time and candidates tried on
 // these fixtures — outside the report document, which a time would break.
 //
@@ -45312,7 +45312,7 @@ function mqEdgePairs(mesh: ReducedMesh): Array<[number, number]> {
 }
 
 /**
- * The test's own reading of spine-parts#126's exemption over a rectangular
+ * The test's own reading of rig-parts#126's exemption over a rectangular
  * region, independent of `edgeIsHeldByRegion`: an edge that meets the
  * rectangle is held; with no band nothing else is; otherwise the edge is
  * sampled at `MQ_EDGE_SAMPLES` points and held when it comes within
@@ -46278,7 +46278,7 @@ function runMeshQualitySuite(): number {
         `no region: the ${lattice.points.length}-vertex lattice reduced to ${mesh?.points.length} (${mesh?.hull} on the hull) at coverage 1, overshoot 0, undercut 0 and boundary deviation 0, accepted, survivors unmoved, re-measured on their own and accepted; ` +
           `${mqSayEnd(t)}; the octagon with its boundary held at 0: ${mqSayEnd(bt)}; cost ${run.tried} candidate(s) in ${run.ms.toFixed(1)} ms and ${blocked.tried} in ${blocked.ms.toFixed(1)} ms`,
       ),
-      'spine-parts#126 (6042150608): the reduction is one of two composed operations and has to pass with the other idle — a step is taken only when every declared bound holds after it, and a stop says which bound stopped it, never that the result is minimal',
+      'rig-parts#126 (6042150608): the reduction is one of two composed operations and has to pass with the other idle — a step is taken only when every declared bound holds after it, and a stop says which bound stopped it, never that the result is minimal',
     );
   }
 
@@ -46326,7 +46326,7 @@ function runMeshQualitySuite(): number {
           `${mqSay(mqRow(report, 'MQ_MAX_EDGE', 'dense'))} and ${mqSay(mqRow(report, 'MQ_TRANSITION', 'dense'))} after, no edge over by the test's own reading, accepted; ${mqSayEnd(t)}; ` +
           `half a texel: ${pt?.reason} ${pt && 'code' in pt ? pt.code : ''}; cost ${run.tried} candidate(s) in ${run.ms.toFixed(1)} ms`,
       ),
-      'spine-parts#126 (6042150608): refinement is the other composed operation and has to pass with the reduction idle — P16\'s checkable form, every inserted vertex inside the region or its band, and §5\'s L(R) on the emitted edges, measured whole',
+      'rig-parts#126 (6042150608): refinement is the other composed operation and has to pass with the reduction idle — P16\'s checkable form, every inserted vertex inside the region or its band, and §5\'s L(R) on the emitted edges, measured whole',
     );
   }
 
@@ -46599,7 +46599,7 @@ function runMeshQualitySuite(): number {
     );
   }
 
-  // --- spine-parts#126 (issue #1229): which edges a region holds — one predicate, read by both operations --
+  // --- rig-parts#126 (issue #1229): which edges a region holds — one predicate, read by both operations --
   // The exact fan's top edge [0, 1] runs along y = Y0; every region below sits under its middle, inside
   // triangle 0–1–centre and clear of the two spokes, so the top edge is the only edge any band can reach.
   const topA = hull[0];
@@ -46680,7 +46680,7 @@ function runMeshQualitySuite(): number {
           `composed ${run.mesh?.inserted.length} inserted, ${run.tried} candidate(s), ${run.ms.toFixed(1)} ms, accepted (${mqSayEnd(run.report.termination)}); every insertion inside the region or its band and no edge over by the test's own reading; ` +
           `${freed.length} kept edge(s) touch the band only from outside and are over the bound the 2.19.0 reading held them to (${freed.join(', ')})`,
       ),
-      'spine-parts#126 (6045645512, option 1): an edge whose intersection with a region\'s domain is one point on the band\'s outer boundary is exempt, so splitting where an edge leaves the band frees the piece beyond — the B2 record\'s stop on this quad came from holding that piece',
+      'rig-parts#126 (6045645512, option 1): an edge whose intersection with a region\'s domain is one point on the band\'s outer boundary is exempt, so splitting where an edge leaves the band frees the piece beyond — the B2 record\'s stop on this quad came from holding that piece',
     );
   }
 
@@ -46753,7 +46753,7 @@ function runMeshQualitySuite(): number {
         `a diamond over the spoke, its ${BAND} px band touching the top edge at one point and holding the left edge: edgeIsHeldByRegion false on the top edge, ${mqSay(row)}, ${mqSay(maxRow)}; a band of ${wider.transition}: ${mqSay(widerRow)}; ` +
           `refined beside a second region, every source vertex protected: ${m?.inserted.length} inserted in ${refined.tried} candidate(s), the top edge kept whole though the 2.19.0 reading holds it over ${graded}, accepted`,
       ),
-      'spine-parts#126 (6045645512): exempt only when the intersection with the region\'s domain is a single point on the band\'s outer boundary and the rest of the edge is outside — and measurement and reduction use the same boundary semantics',
+      'rig-parts#126 (6045645512): exempt only when the intersection with the region\'s domain is a single point on the band\'s outer boundary and the rest of the edge is outside — and measurement and reduction use the same boundary semantics',
     );
   }
 
@@ -46789,7 +46789,7 @@ function runMeshQualitySuite(): number {
         `the top edge runs ${run} px along the outer boundary of a bar's ${BAND} px band: edgeIsHeldByRegion true, ${mqSay(row)}; ` +
           `planted, the exemption widened to any contact with the outer boundary: ${planted.join('; ')}`,
       ),
-      'spine-parts#126 (6045645512): positive-length intersections, including boundary-aligned segments, remain constrained — a contact is exempt only when it is one point',
+      'rig-parts#126 (6045645512): positive-length intersections, including boundary-aligned segments, remain constrained — a contact is exempt only when it is one point',
     );
   }
 
@@ -46828,7 +46828,7 @@ function runMeshQualitySuite(): number {
         `the top edge through a ${BAND} px band, ${dThrough} px from the bar: ${mqSay(throughRow)}; through the polygon: ${mqSay(astrideRow)}; ` +
           `an edge from (${onBoundary.join(', ')}) on the outer boundary to (${beyond.join(', ')}) over the bar: held`,
       ),
-      'spine-parts#126 (6045645512) and P15: a crossing is a positive-length intersection, measured whole, and a shared endpoint does not make a crossing edge exempt',
+      'rig-parts#126 (6045645512) and P15: a crossing is a positive-length intersection, measured whole, and a shared endpoint does not make a crossing edge exempt',
     );
   }
 
@@ -46856,7 +46856,7 @@ function runMeshQualitySuite(): number {
         probes,
         `the top edge touches "a-touch"'s band at one point and lies ${mqSegmentRect(topA, topB, near.polygon)} px inside "b-near"'s: ${mqSay(nearRow)} — "b-near"'s bound, not "a-touch"'s ${touchBound}; ${mqSay(touchRow)}`,
       ),
-      'spine-parts#126 (6045645512): overlapping regions are evaluated independently — an exemption for one region cannot erase another region\'s constraint, and the minimum applies only over the regions that hold the edge',
+      'rig-parts#126 (6045645512): overlapping regions are evaluated independently — an exemption for one region cannot erase another region\'s constraint, and the minimum applies only over the regions that hold the edge',
     );
   }
 
@@ -46886,7 +46886,7 @@ function runMeshQualitySuite(): number {
         probes,
         `a diamond touching the top edge at one point, transition 0: ${mqSay(pointRow)}; the coarse quad with transition 0 (corners up to ${farthest.toFixed(3)} px from the region): ${mqSayEnd(t)}, accepted false`,
       ),
-      'spine-parts#126 (6045645512): with transition 0 the authored boundary stays constrained under the closed-region rule, and a case that leaves infeasible reports the named limitation',
+      'rig-parts#126 (6045645512): with transition 0 the authored boundary stays constrained under the closed-region rule, and a case that leaves infeasible reports the named limitation',
     );
   }
 
@@ -46907,7 +46907,7 @@ function runMeshQualitySuite(): number {
       'MQ54_A_REFINEMENT_LIMITED_BY_ITS_BUDGET_OR_A_MINIMUM_ANGLE_IS_NOT_ACCEPTED_AND_NAMES_WHICH',
       held,
       probeDetail(held, probes, `the coarse quad with a budget one under the ${quadInserted} insertions it needs: ${mqSayEnd(st)}, no mesh; with a 61° minimum angle: ${mqSayEnd(at)}, not accepted`),
-      'spine-parts#126 (6045645512): no convergence is promised under arbitrary protection, minimum-angle or art bounds, coordinate precision or budget — a target left unmet is accepted false with a concrete blocking constraint or a budget termination',
+      'rig-parts#126 (6045645512): no convergence is promised under arbitrary protection, minimum-angle or art bounds, coordinate precision or budget — a target left unmet is accepted false with a concrete blocking constraint or a budget termination',
     );
   }
 
@@ -46974,7 +46974,7 @@ function runMeshQualitySuite(): number {
           `two protected influences under a cap of 1: ${ot && 'code' in ot ? ot.code : ''}. The boundary is the 6-decimal grid's — representation, not motion quality. ` +
           `reduceMesh's cost on this suite's public fixtures, wall time outside the report: ${cpu.join('; ')}`,
       ),
-      'P19 and spine-parts#126 (6042150608) item 1: with minWeight 0 a positive share that the grid cannot hold is dropped and counted rather than written as 0, no other floor applies, and a protected influence that cannot be kept is a named refusal',
+      'P19 and rig-parts#126 (6042150608) item 1: with minWeight 0 a positive share that the grid cannot hold is dropped and counted rather than written as 0, no other floor applies, and a protected influence that cannot be kept is a named refusal',
     );
   }
 
@@ -47477,7 +47477,7 @@ function runMeshQualitySuite(): number {
         `the lattice shifted ${NULL_SHIFT} px: ${mqSay(und)}, ${mqSay(ovr)}; admitted, ${nul.report.candidates[0]?.changes?.removedVertices} vertices removed, accepted (summary ${JSON.stringify(summary)}); effective settings and the document echo null; ` +
           `full coverage asked: ${mqSayEnd(ct)}; ${restored.join('; ')}; full, carried and reduceMesh paths ${carriedText.length} bytes, identical; measureMeshQuality undeclared on both`,
       ),
-      'issue #1254 (spine-parts#126 items 4–5): a bound declared absent is measured and reported, never a pass and never a block — and the same fixture with the number restored is refused and blocked, so the null is what admitted it',
+      'issue #1254 (rig-parts#126 items 4–5): a bound declared absent is measured and reported, never a pass and never a block — and the same fixture with the number restored is refused and blocked, so the null is what admitted it',
     );
   }
 
@@ -47886,7 +47886,7 @@ function runMeshQualitySuite(): number {
 // planted — a vertex moved k px, a bone scaled by two declared factors, a bend
 // that grows with time — never typed in.
 //
-// The authorisation (spine-parts#126, comment 6045645512) asks C1 to carry its
+// The authorisation (rig-parts#126, comment 6045645512) asks C1 to carry its
 // own executable controls for UV carrier mapping, schedule identity and
 // held-out separation, and report states; those are MQ35–MQ37, MQ22 and MQ42,
 // and MQ10 and MQ15. Stage C2 adds the rest of the contract's motion controls —
@@ -53472,7 +53472,7 @@ function runPackerSuite(): number {
       'PK83_THE_PACK_LINE_ENDS_WITH_THE_SHAPE_UNDER_BOTH_SHAPES',
       lineHeld,
       probeDetail(lineHeld, lineProbes, lineRuns.map(([flags, run]) => `${flags}: ${lineOf(run).trim()}`).join('; ') + '; A18 PASS on both gates of each'),
-      'issue #1099: spine-parts reads the pack line whole (`CHECK_PACK_LINE_READS`), so the field is appended rather ' +
+      'issue #1099: rig-parts reads the pack line whole (`CHECK_PACK_LINE_READS`), so the field is appended rather ' +
         'than inserted, and it is printed under the default too, so a reader never infers the mode from an absent word',
     );
 
@@ -53667,7 +53667,7 @@ function runPackerSuite(): number {
     // A49 replaced A06's tiling clause: two regions on one page are refused
     // where their rectangles overlap AND what they draw does — a mesh's hull,
     // every other region's rectangle. These hold it over real art: the gallery,
-    // built the way spine-parts' `check` stage builds a demo, the plant a
+    // built the way rig-parts' `check` stage builds a demo, the plant a
     // polygon pack must never pass, the pack it must pass, the plant a rect
     // pack must not pass, and the gate's footprints held to the packer's.
     const FOOTPRINT_RULE = 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP';
@@ -53694,7 +53694,7 @@ function runPackerSuite(): number {
     const a49Lines = (report: { failures: Array<{ assertion: string; detail: string }> }): string[] => report.failures.filter((f) => f.assertion === FOOTPRINT_RULE).map((f) => f.detail);
     const galleryProbes = galleryNames.length === 0 ? [`no gallery rig under ${galleryRoot}, so nothing here measured real art`] : [];
 
-    // PK86: the route spine-parts' `check` stage runs — every gallery rig built
+    // PK86: the route rig-parts' `check` stage runs — every gallery rig built
     // `--pack --page-edges free --pack-shape polygon` through the CLI, under both
     // profiles — exits 0, with A49 measured (PASS) under `spine-html` and out of
     // profile under `spine`. The case is only worth something because some of
@@ -77297,7 +77297,7 @@ function runGeometryExportSuite(): number {
           `${measured.frame}, ratio x${measured.ratio.toFixed(6)} (tolerance 1e-5, the float32 offsets); the same grid ` +
           `under keys that deform nothing reads x${still.ratio} over ${still.triangles} triangle(s)`,
       ),
-      'spine-parts #31 reads texture stretch off this file and nothing else, so the formula AUTHORING §8 states has to ' +
+      'rig-parts #31 reads texture stretch off this file and nothing else, so the formula AUTHORING §8 states has to ' +
         'find the triangle a closed form predicts and say exactly 1 where the pose never moved a vertex',
     );
   }
@@ -99543,7 +99543,7 @@ function runModelBonesSuite(): { failures: number; gateHole: boolean } {
           `dropped moves (${plantDiff ?? 'no difference'}); and \`tsc\` holds that both shapes are posable and one ` +
           'carrying both spellings is not',
       ),
-      'issue #915: `computeWorldTransforms` takes a structural bone so spine-parts (Spine bones) and `compile` (model ' +
+      'issue #915: `computeWorldTransforms` takes a structural bone so rig-parts (Spine bones) and `compile` (model ' +
         'bones) share one door, reading the mode as `inheritMode ?? inherit`; a bit here can move a float32 spelling ' +
         'in the file, so equality is to the bit',
     );

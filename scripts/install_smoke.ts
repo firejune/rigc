@@ -367,18 +367,18 @@ interface ObservedEntry {
   types: string[];
 }
 
-const OBSERVED_IN_1167 = 'spine-parts 0.8.2, issue #1167';
+const OBSERVED_IN_1167 = 'rig-parts 0.8.2, issue #1167';
 /** The same dependant read again — every import of the package anywhere in its tree, `src/` and its dev files alike. */
-const OBSERVED_IN_1212 = 'spine-parts 0.14.0, issue #1212';
+const OBSERVED_IN_1212 = 'rig-parts 0.14.0, issue #1212';
 /**
  * Promised before it could be observed: the mesh-quality operations the
  * dependant agreed to import through `rig-c/mesh` (docs/MESH_REDUCTION.md
- * P1, spine-parts#126) and that issue #1224 added. RELEASING.md *The import
+ * P1, rig-parts#126) and that issue #1224 added. RELEASING.md *The import
  * surface* says why an agreed contract is the one exception to "observed".
  */
-const AGREED_IN_1224 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1), issue #1224';
-/** The dependant's automatic mesh mode read (spine-parts c03dd8a, its PR #131): two types of the agreed row it uses that no row had recorded — found by rigc#1238 D1, recorded by #1241. */
-const OBSERVED_IN_131 = 'spine-parts c03dd8a (its PR #131), issue #1241';
+const AGREED_IN_1224 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md, P1), issue #1224';
+/** The dependant's automatic mesh mode read (rig-parts c03dd8a, its PR #131): two types of the agreed row it uses that no row had recorded — found by rigc#1238 D1, recorded by #1241. */
+const OBSERVED_IN_131 = 'rig-parts c03dd8a (its PR #131), issue #1241';
 /**
  * The second agreed row: the motion comparison, which the same contract puts
  * on an entry of its own, `rig-c/meshcompare` (docs/MESH_REDUCTION.md P1
@@ -387,7 +387,7 @@ const OBSERVED_IN_131 = 'spine-parts c03dd8a (its PR #131), issue #1241';
  * from the install with the runtime taken away — `MESHCOMPARE_PROBE_SOURCE`,
  * the contract's `MQ45`.
  */
-const AGREED_IN_1230 = 'spine-parts#126 agreed (docs/MESH_REDUCTION.md, P1 and P2), issue #1230';
+const AGREED_IN_1230 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md, P1 and P2), issue #1230';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -563,7 +563,7 @@ for (const row of OBSERVED_SYMBOLS) {
 
 /**
  * The deep paths a dependant was observed importing before the map existed —
- * spine-parts, on 2026-09-27 — which the pattern courtesy has to keep.
+ * rig-parts, on 2026-09-27 — which the pattern courtesy has to keep.
  * They are also inside the every-shipped-path sweep below; they are named here
  * so that the failure a dependant would hit is the one this prints.
  */

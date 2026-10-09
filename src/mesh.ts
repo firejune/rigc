@@ -2036,7 +2036,7 @@ export function meshEdges(vertexCount: number, triangles: readonly number[], hul
 // that used to re-implement distance weighting outside the compiler states the
 // segment list and nothing else.
 //
-// The algorithm is a port of `spine-parts`' lattice mesh and segment weights
+// The algorithm is a port of `rig-parts`' lattice mesh and segment weights
 // (MIT, same owner). What it does, in order:
 //
 //   1. **Cells.** A square lattice of `cell`-pixel squares over the part; the

@@ -68,7 +68,7 @@ import { modeMatrix, RUNTIME_ARITHMETIC, worldTransforms, type CoreWorld, type W
 
 /**
  * What `computeWorldTransforms` reads off a bone — a structural type, so both a
- * Spine bone (`SpineBone`, what spine-parts and every skeleton reader hold) and
+ * Spine bone (`SpineBone`, what rig-parts and every skeleton reader hold) and
  * a compiled-model bone (`ModelBone`, what `compile` holds) satisfy it as they
  * are, without a cast.
  *

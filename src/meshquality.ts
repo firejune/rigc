@@ -934,7 +934,7 @@ function runsAlongOuterBoundary(a: Pt, b: Pt, poly: readonly Pt[], transition: n
 }
 
 /**
- * [agreed, spine-parts#126] Is the edge `a`–`b` held by `region` — does the
+ * [agreed, rig-parts#126] Is the edge `a`–`b` held by `region` — does the
  * region's density bound (`MQ_MAX_EDGE` or `MQ_TRANSITION`) apply to it? The
  * one definition both `measureMeshQuality` and `reduceMesh`'s refinement read.
  *
@@ -1674,7 +1674,7 @@ interface Edge {
  *
  * Which edges a region holds is `edgeIsHeldByRegion`'s answer and nothing
  * else's: an edge that only touches the band's outer boundary at one point,
- * from outside, is not held (spine-parts#126). One bound per edge, the smallest
+ * from outside, is not held (rig-parts#126). One bound per edge, the smallest
  * applicable anywhere on it (P16): `L0` of every region whose closed polygon it
  * meets, and `L0 + grade·d` of every other region that holds it, `d` its
  * distance from that region. A row's value is the edge whose
