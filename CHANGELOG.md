@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.0](https://github.com/firejune/rigc/compare/v2.23.0...v2.24.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** reduceMesh reports acceptedAt and replays to the n-th accepted step by name — stopAfterAccepted ends as replayed-to-accepted-step, never as an exhausted budget; and weightJump at exactly J is condition (b), measured ([#1268](https://github.com/firejune/rigc/issues/1268)) ([#1269](https://github.com/firejune/rigc/issues/1269)) ([7473753](https://github.com/firejune/rigc/commit/74737533fa728cab9cde7dd00e9bd3de0136da13))
+
 ## [2.23.0](https://github.com/firejune/rigc/compare/v2.22.0...v2.23.0) (2026-10-08)
 
 
