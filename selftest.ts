@@ -388,6 +388,7 @@ import {
   measureAuthoredMeshFit,
   measureMeshQuality,
   measureMeshQualityPlanted,
+  measureMeshQualitySkinningPlanted,
   measureMeshQualityStep,
   measureMeshQualityWith,
   MeshError,
@@ -396,9 +397,19 @@ import {
   rasteriseTriangles,
   reduceMesh,
   reduceMeshWith,
+  skinningEnvelopeBone,
+  skinningEnvelopeBonePlanted,
+  skinningSamplesOf,
   squaredDistanceToSet,
+  termsAt,
   writeMeshQualityReport,
+  artOf,
   type AlphaMask,
+  type BoneMotionRange,
+  type EnvelopePlant,
+  type SkinningEnvelope,
+  type SkinningPlant,
+  type SkinningResidualInput,
   type ArtFitBounds,
   type DeformTimelineInput,
   type MeasureRow,
@@ -48908,6 +48919,88 @@ function mvBuild(dir: string, name: string, mesh: SourceMesh): string {
 }
 
 /*
+ * The #1294 fixtures: MQ79's lens strip — `mvSource`'s points, UVs and
+ * triangles, so the art and `mvMask` are the same — under another weight field
+ * and another skeleton: two or three bones, a pivot near or far, rotate and
+ * scale keys at the two times MQ79's `idle` keys (0.5 s and 1.5 s). Every bone
+ * is unrotated and unscaled at setup and stands at a joint given in drawing px,
+ * so a vertex's bind coordinates under a bone are its offset from that joint
+ * with y flipped — `mvBuild`'s placement, `a` at (0, MV_H / 2) and at world
+ * (50, 50). docs/MESH_REDUCTION.md §7 *Mechanism 1 — implemented* carries what
+ * was measured on them.
+ */
+interface SkBone {
+  name: string;
+  parent: string;
+  /** The setup joint, drawing px, y down. */
+  joint: [number, number];
+  /** The local rotation at the 0.5 s and 1.5 s keys, degrees (0 at 0 s and 2 s); null keys none. */
+  rotate: [number, number] | null;
+  /** The local scale at the same two keys (1, 1 at 0 s and 2 s); null keys none. */
+  scale: [[number, number], [number, number]] | null;
+}
+
+const SK_A_JOINT: [number, number] = [0, MV_H / 2];
+/** Bone `a`'s setup world position, `mvBuild`'s — the drawing frame maps to world by (x, y) → (SK_A_WORLD + x, SK_A_WORLD + MV_H / 2 − y). */
+const SK_A_WORLD = 50;
+
+/** Shares on the 6-decimal weight grid, zeros dropped, the last closed at 1 − others — the rule §6 writes bindings by. */
+function skClosed(shares: Record<string, number>): Array<{ bone: string; weight: number }> {
+  const entries = Object.entries(shares)
+    .map(([bone, w]) => ({ bone, weight: r6(w) }))
+    .filter((e) => e.weight > 0);
+  if (entries.length === 0) return entries;
+  const others = entries.slice(0, -1).reduce((s, e) => s + e.weight, 0);
+  entries[entries.length - 1].weight = r6(1 - others);
+  return entries;
+}
+
+/** MQ79's strip with each vertex's shares read off `field` at its setup position. */
+function skSource(field: (x: number, y: number) => Record<string, number>): SourceMesh {
+  const base = mvSource(false);
+  return { ...base, weights: base.points.map(([x, y]) => skClosed(field(x, y))) };
+}
+
+/** Compile the strip rig around one mesh, with `a` as `mvBuild` places it and `bones` below it, through the tree's own compiler. */
+function skBuild(dir: string, name: string, mesh: SourceMesh, bones: readonly SkBone[]): string {
+  const at = join(dir, name);
+  mkdirSync(at, { recursive: true });
+  const joint = new Map<string, [number, number]>([['a', SK_A_JOINT]]);
+  for (const b of bones) joint.set(b.name, b.joint);
+  const weights = mesh.points.map(([x, y], v) =>
+    (mesh.weights ?? [])[v].map((bnd) => {
+      const j = joint.get(bnd.bone)!;
+      return { bone: bnd.bone, x: x - j[0], y: j[1] - y, weight: bnd.weight };
+    }),
+  );
+  const rigBones: Array<Record<string, unknown>> = [{ name: 'root' }, { name: 'a', parent: 'root', x: SK_A_WORLD, y: SK_A_WORLD }];
+  for (const b of bones) {
+    const p = joint.get(b.parent)!;
+    rigBones.push({ name: b.name, parent: b.parent, x: b.joint[0] - p[0], y: p[1] - b.joint[1] });
+  }
+  writeFileSync(
+    join(at, 'rig.json'),
+    JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'ramp',
+      images: '../plates',
+      skeleton: { x: 0, y: 0, width: 400, height: 200 },
+      bones: rigBones,
+      slots: [{ name: 'ramp', bone: 'a', attachment: 'ramp' }],
+      skins: { default: { ramp: { ramp: { type: 'mesh', image: 'ramp.png', uvs: mesh.uvs, triangles: mesh.triangles, weights } } } },
+    }),
+  );
+  const tracks: Array<Record<string, unknown>> = [];
+  for (const b of bones) {
+    if (b.rotate !== null) tracks.push({ bone: b.name, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [b.rotate[0]] }, { t: 1.5, v: [b.rotate[1]] }, { t: 2, v: [0] }] });
+    if (b.scale !== null) tracks.push({ bone: b.name, property: 'scale', keys: [{ t: 0, v: [1, 1] }, { t: 0.5, v: b.scale[0] }, { t: 1.5, v: b.scale[1] }, { t: 2, v: [1, 1] }] });
+  }
+  writeFileSync(join(at, 'motion.json'), JSON.stringify({ spec: 'rigc-motion/1', archetype: 'ramp', cut: 'ramp', easings: {}, animations: { idle: { duration: 2, tracks } } }));
+  const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
+  return modelDocument(built.model, built.skeletonText, built.atlasText);
+}
+
+/*
  * The #1271 reproducer: a boundary the static reduction keeps beside an
  * interior it empties. docs/MESH_REDUCTION.md §8 carries the measurements made
  * on it, and this is the fixture they were made on, at the same scale.
@@ -51319,6 +51412,713 @@ function runMeshCompareSuite(): number {
         'issue #1291: both rows are undeclared, so the amplitude may change what the setup section reads and nothing the comparison decides — the bytes of a comparison without it against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §8), and this holds the shape that comparison projected',
       );
     });
+  });
+
+  // --- MQ116–MQ119, MQ130–MQ133 (#1294): the skinning-envelope residual ----------------------------------------
+  // §7's mechanism 1, measured against the poser it is meant to predict without running. The subjects are MQ79's
+  // strip under seven fields and skeletons (`skSource` / `skBuild`): the ramp, its far pivot, its scale keys, a kinked
+  // and a diagonal ramp, three bones, and three bones with a far pivot and nonuniform scale keys — each source against
+  // its strict reduction (MQ79's policy), and each three-bone source against its own bindings pruned to two
+  // influences on the weight grid. Every envelope comes from the helper (`skinningEnvelopeBone`) over the keys the
+  // fixture writes; no figure below is a literal the suite was told — each tolerance is derived beside its use.
+  const skVariants: Array<{ name: string; field: (x: number, y: number) => Record<string, number>; bones: SkBone[] }> = [
+    { name: 'ramp', field: (x) => ({ a: 1 - x / MV_W, b: x / MV_W }), bones: [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }] },
+    { name: 'far pivot', field: (x) => ({ a: 1 - x / MV_W, b: x / MV_W }), bones: [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2 - 400], rotate: [MV_BEND, -MV_BEND], scale: null }] },
+    {
+      name: 'scale',
+      field: (x) => ({ a: 1 - x / MV_W, b: x / MV_W }),
+      bones: [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: [[1.15, 0.85], [0.85, 1.15]] }],
+    },
+    {
+      name: 'kinked',
+      field: (x) => {
+        const t = Math.min(1, Math.max(0, (x - 48) / 64));
+        return { a: 1 - t, b: t };
+      },
+      bones: [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }],
+    },
+    { name: 'diagonal', field: (x, y) => ({ a: 1 - (x + y) / (MV_W + MV_H), b: (x + y) / (MV_W + MV_H) }), bones: [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }] },
+    {
+      name: 'three bones',
+      field: (x) => {
+        const t = x / MV_W;
+        return { a: (1 - t) ** 2, b: 2 * t * (1 - t), c: t * t };
+      },
+      bones: [
+        { name: 'b', parent: 'a', joint: [56, MV_H / 2], rotate: [6, -4], scale: null },
+        { name: 'c', parent: 'b', joint: [112, MV_H / 2], rotate: [-8, 8], scale: null },
+      ],
+    },
+    {
+      name: 'three bones, far pivot, scale',
+      field: (x, y) => {
+        const t = (x + y / 2) / (MV_W + MV_H / 2);
+        return { a: (1 - t) ** 2, b: 2 * t * (1 - t), c: t * t };
+      },
+      bones: [
+        { name: 'b', parent: 'a', joint: [56, MV_H / 2], rotate: [6, -4], scale: null },
+        { name: 'c', parent: 'b', joint: [112, 300], rotate: [-3, 3], scale: [[1.1, 0.9], [0.92, 1.08]] },
+      ],
+    },
+  ];
+  const skAttachment = { skin: null, slot: 'ramp', attachment: 'ramp' };
+  /** A bone that does not move, at a joint — the reference chain's bones, and the shape every range starts from. */
+  const skStill = (bone: string, pivot: [number, number]): BoneMotionRange => ({
+    bone,
+    source: 'keys',
+    pivot,
+    rotate: [0, 0],
+    scaleX: [1, 1],
+    scaleY: [1, 1],
+    translate: 0,
+    setup: { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, inherit: 'normal' },
+  });
+  /** A fixture bone's declared range, read off the keys `skBuild` writes for it (setup included). */
+  const skRange = (b: SkBone): BoneMotionRange => {
+    const rot = b.rotate ?? [0, 0];
+    const sc = b.scale ?? [[1, 1], [1, 1]];
+    return {
+      ...skStill(b.name, b.joint),
+      rotate: [Math.min(0, ...rot), Math.max(0, ...rot)],
+      scaleX: [Math.min(1, sc[0][0], sc[1][0]), Math.max(1, sc[0][0], sc[1][0])],
+      scaleY: [Math.min(1, sc[0][1], sc[1][1]), Math.max(1, sc[0][1], sc[1][1])],
+    };
+  };
+  /** The reference chain: `root` at world (0, 0), which is drawing (−50, 74), and `a`; neither moves. */
+  const skReferenceChain = [skStill('root', [-SK_A_WORLD, MV_H / 2 + SK_A_WORLD]), skStill('a', SK_A_JOINT)];
+  const skChainOf = (bones: readonly SkBone[], b: SkBone): SkBone[] => {
+    const out: SkBone[] = [];
+    for (let x: SkBone | undefined = b; x !== undefined; x = bones.find((y) => y.name === x!.parent)) out.unshift(x);
+    return out;
+  };
+  const skEnvelope = (bones: readonly SkBone[], plant: EnvelopePlant | null = null): SkinningEnvelope => ({
+    reference: 'a',
+    bones: bones.map((b) => {
+      const ranges = { referenceChain: skReferenceChain, chain: skChainOf(bones, b).map(skRange) };
+      return plant === null ? skinningEnvelopeBone(ranges) : skinningEnvelopeBonePlanted(ranges, plant);
+    }),
+  });
+  const skInput = (candidate: SourceMesh, skinning: SkinningResidualInput | null | undefined, over: Partial<MeshMeasureInput> = {}): MeshMeasureInput => ({
+    id: 'candidate',
+    attachment: skAttachment,
+    art: { mask: mvMask, threshold: 1, frame: mvFrame },
+    source: candidate,
+    targets: { artFit: mvStrict, maxBoundaryDeviation: null, regions: [] },
+    referenceHull: null,
+    minArtSamples: 1,
+    regionArtSamples: [],
+    protect: null,
+    influences: null,
+    boneOrder: null,
+    preset: null,
+    ...(skinning === undefined ? {} : { skinning }),
+    ...over,
+  });
+  const skDeclared = (source: SourceMesh, envelope: SkinningEnvelope, maxResidual: number | null = 1, over: Partial<SkinningResidualInput> = {}): SkinningResidualInput => ({
+    source: { id: 'source', mesh: source },
+    envelope,
+    maxResidual,
+    deform: [],
+    ...over,
+  });
+  const skMeasure = (candidate: SourceMesh, skinning: SkinningResidualInput | null | undefined, plant: SkinningPlant | null = null, over: Partial<MeshMeasureInput> = {}): MeshQualityReport =>
+    plant === null ? measureMeshQuality(skInput(candidate, skinning, over)) : measureMeshQualitySkinningPlanted(skInput(candidate, skinning, over), plant);
+  const skRow = (r: MeshQualityReport): MeasureRow | undefined => r.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_SKINNING_RESIDUAL');
+  const skSaid = (row: MeasureRow | undefined): string => `${row?.state} ${row?.value ?? row?.reason}`;
+  const skCompare = (reference: string, candidates: Array<{ id: string; model: string }>): MeshQualityReport =>
+    compareMeshesInMotion({
+      reference: { id: 'source', model: reference },
+      candidates,
+      attachments: [{ attachment: skAttachment, art: { mask: mvMask, threshold: 1, frame: mvFrame }, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+      referenceArtFit: mvStrict,
+      candidateArtFit: mvStrict,
+      schedule: { frames: ['setup', { animation: 'idle', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection: [] },
+      bounds: { maxLocalDeformation: 1 },
+      motionRequired: true,
+      perFrame: true,
+    });
+  /** Each bone's deformation D = posed world × setup world⁻¹, as 2×3 [a, b, c, d, x, y], by name — read off the core poser. */
+  type SkAffine = [number, number, number, number, number, number];
+  const skWorld = (b: { a: number; b: number; c: number; d: number; worldX: number; worldY: number }): SkAffine => [b.a, b.b, b.c, b.d, b.worldX, b.worldY];
+  const skInverse = (m: SkAffine): SkAffine => {
+    const det = m[0] * m[3] - m[1] * m[2];
+    const [a, b, c, d] = [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det];
+    return [a, b, c, d, -(a * m[4] + b * m[5]), -(c * m[4] + d * m[5])];
+  };
+  const skCompose = (p: SkAffine, q: SkAffine): SkAffine => [
+    p[0] * q[0] + p[1] * q[2],
+    p[0] * q[1] + p[1] * q[3],
+    p[2] * q[0] + p[3] * q[2],
+    p[2] * q[1] + p[3] * q[3],
+    p[0] * q[4] + p[1] * q[5] + p[4],
+    p[2] * q[4] + p[3] * q[5] + p[5],
+  ];
+  /** Every bone's deformation at each pose of `idle` the steps reach (the setup pose first), from the build's model document. */
+  const skDeformations = (model: string, steps: number[]): Array<Map<string, SkAffine>> => {
+    const view = underNoSkin(readModel(model));
+    const setup = poseRawSetup(view);
+    return poseRawAnimation(view, 'idle', steps).map((pose) => {
+      const out = new Map<string, SkAffine>();
+      for (const b of pose.bones) out.set(b.name, skCompose(skWorld(b), skInverse(skWorld(setup.bones.find((s) => s.name === b.name)!))));
+      return out;
+    });
+  };
+  /**
+   * The drawn difference at each sample carried by both meshes under one pose's deformations, by §7's identity — the
+   * covariance term, the weight-field term and the setup-position term, in world units (`mvBuild`'s placement: x, then
+   * y flipped about MV_H / 2, offset by bone `a`'s world position). `dropCovariance` leaves the first term out — the
+   * suite's own plant of the identity. The largest over the samples.
+   */
+  const skIdentity = (source: SourceMesh, candidate: SourceMesh, bones: readonly string[], D: Map<string, SkAffine>, dropCovariance: boolean): number => {
+    const index = new Map(bones.map((b, i) => [b, i]));
+    const { samples } = skinningSamplesOf(artOf(mvMask, 1), MV_W, MV_H, source);
+    const cs = uvCarriers(source.uvs, source.triangles, samples, 'source');
+    const cc = uvCarriers(candidate.uvs, candidate.triangles, samples, 'candidate');
+    const D0 = D.get('a')!;
+    const toWorld = (q: readonly [number, number]): [number, number] => [SK_A_WORLD + q[0], SK_A_WORLD + MV_H / 2 - q[1]];
+    const flip = (d: readonly [number, number]): [number, number] => [d[0], -d[1]];
+    const lin = (m: readonly number[], q: readonly [number, number]): [number, number] => [m[0] * q[0] + m[1] * q[1], m[2] * q[0] + m[3] * q[1]];
+    let worst = 0;
+    for (let j = 0; j < samples.length; j++) {
+      const sj = cs[j];
+      const cj = cc[j];
+      if (sj === null || cj === null) continue;
+      const r = termsAt(source, sj, index);
+      const c = termsAt(candidate, cj, index);
+      const dp = flip([c.p[0] - r.p[0], c.p[1] - r.p[1]]);
+      const pr = toWorld(r.p);
+      const base = lin(D0, dp);
+      let x = base[0];
+      let y = base[1];
+      for (const name of bones) {
+        const k = index.get(name)!;
+        const Dk = D.get(name)!;
+        const E = Dk.map((v, i) => v - D0[i]);
+        const cov = lin(E, flip([c.moment[k][0] - r.moment[k][0], c.moment[k][1] - r.moment[k][1]]));
+        const lever = [E[0] * pr[0] + E[1] * pr[1] + E[4], E[2] * pr[0] + E[3] * pr[1] + E[5]];
+        const setupTerm = lin(E, dp);
+        const dw = c.wbar[k] - r.wbar[k];
+        x += (dropCovariance ? 0 : cov[0]) + dw * lever[0] + c.wbar[k] * setupTerm[0];
+        y += (dropCovariance ? 0 : cov[1]) + dw * lever[1] + c.wbar[k] * setupTerm[1];
+      }
+      worst = Math.max(worst, Math.hypot(x, y));
+    }
+    return worst;
+  };
+  /** Each shared vertex of a three-bone source pruned to its two strongest shares and closed on the grid — §6's pruning, written. */
+  const skPruned = (source: SourceMesh): SourceMesh => ({
+    ...source,
+    weights: source.weights!.map((ws) => {
+      if (ws.length < 3) return ws;
+      const keep = [...ws].sort((p, q) => q.weight - p.weight || (p.bone < q.bone ? -1 : 1)).slice(0, 2);
+      const sum = keep[0].weight + keep[1].weight;
+      return skClosed(Object.fromEntries(keep.map((k) => [k.bone, k.weight / sum])));
+    }),
+  });
+  /**
+   * The population: each variant's source, its strict reduction and — three bones — its pruned bindings; each
+   * candidate's residual under the variant's helper envelope at maxResidual 1, and the poser's `MQ_LOCAL_DEFORMATION`
+   * over `idle` at 12 fps, grid and irr, with every frame's value.
+   */
+  interface SkCase {
+    label: string;
+    variant: (typeof skVariants)[number];
+    source: SourceMesh;
+    candidate: SourceMesh;
+    envelope: SkinningEnvelope;
+    row: MeasureRow | undefined;
+    oracle: MeasureRow | undefined;
+    perFrame: Map<string, number | null>;
+    sourceModel: string;
+  }
+  const skCases: SkCase[] = [];
+  let skBuildError: string | null = null;
+  try {
+    skVariants.forEach((v, vi) => {
+      const source = skSource(v.field);
+      const envelope = skEnvelope(v.bones);
+      const strict = reduceMesh(mvReduceInput(source, { boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)] }));
+      const candidates: Array<[string, SourceMesh]> = [];
+      if (strict.mesh !== null) candidates.push([`${v.name}, strict`, strict.mesh]);
+      if (v.bones.length > 1) candidates.push([`${v.name}, pruned to two`, skPruned(source)]);
+      const sourceModel = skBuild(dir, `sk-${vi}-source`, source, v.bones);
+      const report = skCompare(
+        sourceModel,
+        candidates.map(([label, m], ci) => ({ id: label, model: skBuild(dir, `sk-${vi}-${ci}`, m, v.bones) })),
+      );
+      candidates.forEach(([label, candidate], ci) => {
+        const c = report.candidates[ci];
+        skCases.push({
+          label,
+          variant: v,
+          source,
+          candidate,
+          envelope,
+          row: skRow(skMeasure(candidate, skDeclared(source, envelope))),
+          oracle: c?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null),
+          perFrame: new Map((c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION').map((p) => [p.frame, p.value])),
+          sourceModel,
+        });
+      });
+    });
+  } catch (err) {
+    skBuildError = `${(err as Error).name}: ${(err as Error).message}`;
+  }
+  const skCase = (label: string): SkCase | undefined => skCases.find((c) => c.label === label);
+  /** The term outside the value — ‖A₀ + Σ w̄ₖ (Aₖ − A₀)‖ |Δp|, ‖A₀‖ 1 here since `a` never moves — plus the identity's measured band. */
+  const SK_IDENTITY_TOLERANCE = 1e-5;
+  const skTolerance = (c: SkCase): number => (1 + Math.max(0, ...c.envelope.bones.map((b) => b.linear))) * (c.row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
+
+  mcGuard('MQ116', () => {
+    const probes: string[] = [];
+    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+    const ramp = skCase('ramp, strict');
+    const row = ramp?.row;
+    const oracle = ramp?.oracle?.value ?? null;
+    if (row?.state !== 'fail' || row.skinning === undefined) probes.push(`the ramp's strict reduction: ${skSaid(row)}; required measured above maxResidual 1`);
+    const wf = row?.skinning?.weightField;
+    if (wf === undefined || wf.l1 !== 0 || wf.lInf !== 0) probes.push(`the weight-field difference reads ${JSON.stringify(wf)}; required 0 in L1 and L∞ — the ramp is linear and both meshes interpolate it exactly`);
+    if (!(row?.value !== null && (row?.value ?? 0) > 0)) probes.push(`the residual reads ${row?.value}; required above 0 where the field difference is 0`);
+    if (oracle === null || ramp === undefined || Math.abs((row?.value ?? 0) - oracle) > skTolerance(ramp)) probes.push(`the residual ${row?.value} against the poser's ${oracle}: required within ${ramp === undefined ? '-' : skTolerance(ramp)} — on a pure rotation the bound loses nothing (§7, M2)`);
+    const self = ramp === undefined ? undefined : skRow(skMeasure(ramp.source, skDeclared(ramp.source, ramp.envelope)));
+    if (self?.state !== 'pass' || self.value !== 0 || JSON.stringify(self.worst) !== '{"at":{}}') probes.push(`the source against itself: ${skSaid(self)}, worst ${JSON.stringify(self?.worst)}; required 0, pass, nothing worse than ideal`);
+    const planted = ramp === undefined ? undefined : skRow(skMeasure(ramp.candidate, skDeclared(ramp.source, ramp.envelope), 'drop-covariance'));
+    if (planted?.value !== 0) probes.push(`the plant (the covariance term dropped — the field-only bound) reads ${planted?.value}; required 0, which is what makes the term necessary`);
+    const held = probes.length === 0;
+    say(
+      'MQ116_A_ZERO_WEIGHT_FIELD_DIFFERENCE_IS_NOT_A_ZERO_MOTION_ERROR_AND_THE_RESIDUAL_SEES_THE_COVARIANCE_IT_COMES_FROM',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `MQ79's ramp, the source against its strict reduction: weight field L1 ${wf?.l1}, L∞ ${wf?.lInf}; MQ_SKINNING_RESIDUAL ${row?.value} (covariance ${row?.skinning?.worst?.covariance}, lever ${row?.skinning?.worst?.lever}) against the poser's MQ_LOCAL_DEFORMATION ${oracle}; the source against itself ${self?.value}; the plant without the covariance term ${planted?.value}`,
+      ),
+      'issue #1294 acceptance 1: the field-only proxy reads 0 on the very fixture that fails at 1.8 px (§7, M2), so a residual made of it alone would pass it — the covariance within each carrying triangle is the error',
+    );
+  });
+
+  mcGuard('MQ117', () => {
+    const probes: string[] = [];
+    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+    let compared = 0;
+    let worst = 0;
+    let plantWorst = 0;
+    for (const c of skCases) {
+      const bones = ['a', ...c.variant.bones.map((b) => b.name)];
+      const poses = skDeformations(c.sourceModel, [0.5, 1.0]).slice(1);
+      ['idle@grid@0.5', 'idle@grid@1.5'].forEach((id, i) => {
+        const oracle = c.perFrame.get(id);
+        if (oracle === undefined || oracle === null) {
+          probes.push(`${c.label}: the poser has no value at ${id}`);
+          return;
+        }
+        const identity = skIdentity(c.source, c.candidate, bones, poses[i], false);
+        const planted = skIdentity(c.source, c.candidate, bones, poses[i], true);
+        compared++;
+        worst = Math.max(worst, Math.abs(identity - oracle));
+        plantWorst = Math.max(plantWorst, Math.abs(planted - oracle));
+        if (Math.abs(identity - oracle) > SK_IDENTITY_TOLERANCE) probes.push(`${c.label} at ${id}: the identity reads ${identity}, the poser ${oracle}; required within ${SK_IDENTITY_TOLERANCE}`);
+      });
+    }
+    if (compared === 0) probes.push('nothing was compared');
+    if (!(plantWorst > SK_IDENTITY_TOLERANCE)) probes.push(`the plant (the covariance term dropped from the identity) differs from the poser by at most ${plantWorst}; required beyond ${SK_IDENTITY_TOLERANCE}`);
+    const held = probes.length === 0;
+    say(
+      'MQ117_THE_COVARIANCE_IDENTITY_REPRODUCES_THE_POSERS_LOCAL_DEFORMATION_AT_EVERY_KEY_POSE_OF_TWO_AND_THREE_BONES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${compared} (candidate, key pose) pairs — ${skCases.length} candidates of ${skVariants.length} variants, two and three bones, a far pivot, nonuniform scale, pruning to two influences, at 0.5 s and 1.5 s: the identity Σk (Ak − A0) Δsk + Σk Δw̄k (Dk − D0) p + (A0 + Σk w̄k (Ak − A0)) Δp, its D read off the core poser, against the poser's MQ_LOCAL_DEFORMATION within ${SK_IDENTITY_TOLERANCE} px, worst ${worst.toExponential(2)}; without the covariance term, up to ${r6(plantWorst)} px off`,
+      ),
+      'issue #1294 acceptance 2: the bound is only as good as the identity under it, and the identity is only established against the oracle it predicts, on more than the two-bone ramp it was derived on',
+    );
+  });
+
+  mcGuard('MQ118', () => {
+    const probes: string[] = [];
+    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+    let worstUnder = -Infinity;
+    let worstLabel = '';
+    const ratios: string[] = [];
+    const planted: Record<string, string[]> = { 'drop-covariance': [], 'drop-lever': [] };
+    for (const c of skCases) {
+      const value = c.row?.value ?? null;
+      const oracle = c.oracle?.value ?? null;
+      if (c.row?.state === undefined || value === null || oracle === null) {
+        probes.push(`${c.label}: residual ${skSaid(c.row)}, poser ${oracle}`);
+        continue;
+      }
+      const under = oracle - value;
+      if (under > worstUnder) {
+        worstUnder = under;
+        worstLabel = c.label;
+      }
+      ratios.push(`${c.label} ${oracle}/${value}`);
+      if (under > skTolerance(c)) probes.push(`${c.label}: the poser measures ${oracle} and the residual bounds it by ${value}; required no understatement beyond ${skTolerance(c)}`);
+      for (const plant of Object.keys(planted) as SkinningPlant[]) {
+        const p = skRow(skMeasure(c.candidate, skDeclared(c.source, c.envelope), plant))?.value ?? null;
+        if (p !== null && oracle - p > skTolerance(c)) planted[plant].push(c.label);
+      }
+    }
+    for (const [plant, caught] of Object.entries(planted)) if (caught.length === 0) probes.push(`the plant ${plant} understates no candidate of the population`);
+    const held = probes.length === 0;
+    say(
+      'MQ118_UNDER_ITS_ENVELOPE_THE_RESIDUAL_NEVER_UNDERSTATES_THE_POSERS_ERROR_AND_EACH_TERM_DROPPED_DOES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${skCases.length} candidates, idle at 12 fps grid + irr, every frame; the poser's MQ_LOCAL_DEFORMATION over the residual: ${ratios.join('; ')}; worst understatement ${r6(worstUnder)} (${worstLabel}) against a tolerance of (1 + max εk) × sampleGap + ${SK_IDENTITY_TOLERANCE}; understated by the plants — covariance dropped: ${planted['drop-covariance'].join(', ')}; lever dropped: ${planted['drop-lever'].join(', ')}`,
+      ),
+      'issue #1294 acceptance 2: a bound that a valid envelope lets the poser exceed is not a bound; and a term none of the controls needs is a term nobody has shown to be load-bearing',
+    );
+  });
+
+  mcGuard('MQ119', () => {
+    const probes: string[] = [];
+    // The ramp bent ±15°, and a candidate that is the source but for the two triangles at the top middle vertex,
+    // re-triangulated as a sliver along the rim (its height the rim's 0.08 px sag) and the triangle under it. No art
+    // pixel centre lies in the sliver, so no sample is carried differently there; the bend flips it.
+    const bend = 3 * MV_BEND;
+    const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [bend, -bend], scale: null }];
+    const source = skSource((x) => ({ a: 1 - x / MV_W, b: x / MV_W }));
+    const at = (x: number, top: boolean): number => source.points.findIndex((p, i) => p[0] === x && (top ? i < source.hull && p[1] < MV_STEP / 2 : i >= source.hull && Math.abs(p[1] - MV_STEP) < MV_STEP / 2));
+    const [left, mid, right, below] = [at(MV_W / 2 - MV_STEP, true), at(MV_W / 2, true), at(MV_W / 2 + MV_STEP, true), at(MV_W / 2, false)];
+    const triangles: number[] = [];
+    for (let t = 0; t < source.triangles.length; t += 3) if (!source.triangles.slice(t, t + 3).includes(mid)) triangles.push(...source.triangles.slice(t, t + 3));
+    for (const tri of [[left, mid, right], [left, below, right]]) {
+      const [p, q, r] = tri.map((v) => source.points[v]);
+      const twice = (q[0] - p[0]) * (cropToSpineY(r[1], MV_H) - cropToSpineY(p[1], MV_H)) - (r[0] - p[0]) * (cropToSpineY(q[1], MV_H) - cropToSpineY(p[1], MV_H));
+      triangles.push(...(twice < 0 ? [tri[0], tri[2], tri[1]] : tri));
+    }
+    const sliver: SourceMesh = { ...source, triangles };
+    const envelope = skEnvelope(bones);
+    const measured = skMeasure(sliver, skDeclared(source, envelope));
+    const row = skRow(measured);
+    const report = skCompare(skBuild(dir, 'sk-sliver-source', source, bones), [
+      { id: 'sliver', model: skBuild(dir, 'sk-sliver', sliver, bones) },
+      { id: 'itself', model: skBuild(dir, 'sk-sliver-itself', source, bones) },
+    ]);
+    const inv = (i: number): MeasureRow | undefined => report.candidates[i]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION');
+    const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+    if ([left, mid, right, below].some((v) => v < 0)) probes.push(`the sliver's vertices were not found: ${[left, mid, right, below].join(', ')}`);
+    if (row?.state !== 'pass') probes.push(`the residual reads ${skSaid(row)}; required pass at maxResidual 1`);
+    if (measured.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the sliver's static geometry is ${measured.candidates[0]?.geometry?.verdict}; required pass, so only motion can tell`);
+    if (local?.state !== 'pass') probes.push(`the poser's local deformation reads ${local?.value} ${local?.state}; required within 1 — the positions are right`);
+    if (inv(0)?.state !== 'fail' || !((inv(0)?.value ?? 0) >= 1)) probes.push(`MQ_INVERSION of the sliver reads ${inv(0)?.value} ${inv(0)?.state}; required a reversed triangle, failing`);
+    // The negative half: the source as its own candidate passes the same residual with no reversal, so the fold is the sliver's.
+    if (inv(1)?.value !== 0) probes.push(`MQ_INVERSION of the source as a candidate reads ${inv(1)?.value}; required 0`);
+    const held = probes.length === 0;
+    say(
+      'MQ119_A_CANDIDATE_THE_RESIDUAL_PASSES_STILL_FAILS_MQ_INVERSION_SO_THE_RESIDUAL_NEVER_REPLACES_THE_COMPARISON',
+      held,
+      probeDetail(held, probes, `the ramp bent ±${bend}°, a rim sliver in place of the two triangles at the top middle vertex: MQ_SKINNING_RESIDUAL ${row?.value} pass, static geometry ${measured.candidates[0]?.geometry?.verdict}, MQ_LOCAL_DEFORMATION ${local?.value} pass, MQ_INVERSION ${inv(0)?.value} ${inv(0)?.state} at ${inv(0)?.worst?.frame?.id ?? '-'}; the source as its own candidate: MQ_INVERSION ${inv(1)?.value}`),
+      'issue #1294 acceptance 3: the residual bounds positions at samples, and a triangle no sample lies in can reverse within a bound of positions — it certifies no orientation, stretch or squash, and the comparison stays the acceptance',
+    );
+  });
+
+  mcGuard('MQ130', () => {
+    const probes: string[] = [];
+    // Rigid relative motion: two rigid halves, `a` left of the middle column and `b` from it, a hard seam. The seam
+    // kept (`protect.weightJump` under its jump, so every seam edge is protected) is the positive; the strict
+    // reduction smears it. Every vertex on `b` — rigid with the moving bone — is the third.
+    const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }];
+    const envelope = skEnvelope(bones);
+    const seam = skSource((x): Record<string, number> => (x < MV_W / 2 ? { a: 1 } : { b: 1 }));
+    const rigid = skSource(() => ({ b: 1 }));
+    const kept = reduceMesh(mvReduceInput(seam, { protect: { ...mvNoProtect, weightJump: 1 } })).mesh;
+    const smeared = reduceMesh(mvReduceInput(seam)).mesh;
+    const rigidStrict = reduceMesh(mvReduceInput(rigid)).mesh;
+    const subjects: Array<{ label: string; source: SourceMesh; candidate: SourceMesh | null }> = [
+      { label: 'seam kept', source: seam, candidate: kept },
+      { label: 'seam smeared', source: seam, candidate: smeared },
+      { label: 'rigid on the moving bone', source: rigid, candidate: rigidStrict },
+    ];
+    const lines: string[] = [];
+    const verdicts: Array<{ label: string; residual: string | undefined; oracle: string | undefined; plantUnder: number }> = [];
+    subjects.forEach((s, i) => {
+      if (s.candidate === null) {
+        probes.push(`${s.label}: the reduction returned no mesh`);
+        return;
+      }
+      const row = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope)));
+      const planted = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope), 'drop-covariance'));
+      const report = skCompare(skBuild(dir, `sk-rigid-${i}-source`, s.source, bones), [{ id: s.label, model: skBuild(dir, `sk-rigid-${i}`, s.candidate, bones) }]);
+      const oracle = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+      const tol = (1 + envelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
+      verdicts.push({ label: s.label, residual: row?.state, oracle: oracle?.state, plantUnder: (oracle?.value ?? 0) - (planted?.value ?? 0) - tol });
+      lines.push(`${s.label}: ${s.candidate.points.length} vertices, residual ${row?.value} ${row?.state}, poser ${oracle?.value} ${oracle?.state}, covariance dropped ${planted?.value}`);
+      if (row?.value === null || oracle?.value === null || row === undefined || oracle === undefined || (oracle.value ?? 0) - (row.value ?? 0) > tol) probes.push(`${s.label}: the poser's ${oracle?.value} exceeds the residual ${row?.value} by more than ${tol}`);
+    });
+    const v = (label: string) => verdicts.find((x) => x.label === label);
+    if (v('seam kept')?.residual !== 'pass' || v('seam kept')?.oracle !== 'pass') probes.push(`the seam kept: residual ${v('seam kept')?.residual}, poser ${v('seam kept')?.oracle}; required both pass`);
+    if (v('seam smeared')?.residual !== 'fail' || v('seam smeared')?.oracle !== 'fail') probes.push(`the seam smeared: residual ${v('seam smeared')?.residual}, poser ${v('seam smeared')?.oracle}; required both fail`);
+    if (v('rigid on the moving bone')?.residual !== 'pass') probes.push(`rigid on the moving bone: residual ${v('rigid on the moving bone')?.residual}; required pass`);
+    // The varying fields of the population: a residual that passes is never a poser that fails.
+    for (const c of skCases) {
+      if (c.row?.state === 'pass' && c.oracle?.state !== 'pass') probes.push(`${c.label}: the residual passes at 1 and the poser reads ${c.oracle?.value}`);
+    }
+    const passing = skCases.filter((c) => c.row?.state === 'pass').map((c) => c.label);
+    const failing = skCases.filter((c) => c.row?.state === 'fail').map((c) => c.label);
+    if (passing.length === 0 || failing.length === 0) probes.push(`the varying fields give ${passing.length} passing and ${failing.length} failing residuals; required both`);
+    // The plant: the covariance term dropped understates the smeared seam — the term a hard seam smeared needs.
+    if (!((v('seam smeared')?.plantUnder ?? 0) > 0)) probes.push(`the plant (covariance dropped) on the smeared seam understates the poser by ${v('seam smeared')?.plantUnder} beyond the tolerance; required above 0`);
+    const held = probes.length === 0;
+    say(
+      'MQ130_RIGID_RELATIVE_MOTION_AND_VARYING_FIELDS_PASS_AND_FAIL_THE_RESIDUAL_AS_THE_POSER_DOES_AND_A_DROPPED_COVARIANCE_UNDERSTATES_A_SMEARED_SEAM',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')}; the population at maxResidual 1 — passing: ${passing.join(', ')}; failing: ${failing.join(', ')}`),
+      'issue #1294 acceptance 1: rigid relative motion is the seam the field-only reading does see and the lever carries, a varying field is the covariance the M2 measurement found — each needs a pass and a fail it is right about',
+    );
+  });
+
+  mcGuard('MQ131', () => {
+    const probes: string[] = [];
+    const ramp = skCase('ramp, strict');
+    if (ramp === undefined) {
+      probes.push('the ramp case was not built');
+    } else {
+      const { source, candidate, envelope } = ramp;
+      const declared = skDeclared(source, envelope);
+      const thrown = (skinning: unknown): string | null => {
+        try {
+          measureMeshQuality(skInput(candidate, skinning as SkinningResidualInput));
+          return null;
+        } catch (err) {
+          return err instanceof MeshReductionError ? `${err.code}: ${err.message}` : `(not a MeshReductionError) ${(err as Error).message}`;
+        }
+      };
+      const bone0 = envelope.bones[0];
+      const malformed: Array<[string, unknown, string]> = [
+        ['a number', 5, 'skinning is 5'],
+        ['an empty source id', { ...declared, source: { id: '', mesh: source } }, 'skinning.source.id'],
+        ['a source point', { ...declared, source: { id: 'source', mesh: { ...source, points: [[0, Number.NaN], ...source.points.slice(1)] } } }, 'skinning.source.mesh.points[0]'],
+        ['an empty reference', { ...declared, envelope: { ...envelope, reference: '' } }, 'skinning.envelope.reference'],
+        ['a negative linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: -1 }] } }, 'skinning.envelope.bones[0].linear'],
+        ['a NaN linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: Number.NaN }] } }, 'skinning.envelope.bones[0].linear is NaN'],
+        ['a pivot', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, pivot: [0] }] } }, 'skinning.envelope.bones[0].pivot'],
+        ['a negative translation', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, translation: -1 }] } }, 'skinning.envelope.bones[0].translation'],
+        ['a bone twice', { ...declared, envelope: { ...envelope, bones: [bone0, bone0] } }, 'declared twice'],
+        ['the reference among the bones', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, bone: 'a' }] } }, "the envelope's reference"],
+        ['maxResidual left out', { source: declared.source, envelope, deform: [] }, 'skinning.maxResidual is missing'],
+        ['a negative maxResidual', { ...declared, maxResidual: -1 }, 'skinning.maxResidual is -1'],
+        ['deform not a list', { ...declared, deform: null }, 'skinning.deform'],
+      ];
+      const caught: string[] = [];
+      for (const [label, value, path] of malformed) {
+        const m = thrown(value);
+        if (m === null || !m.startsWith('REDUCE_INPUT_MISSING') || !m.includes(path)) probes.push(`${label}: ${m ?? 'measured'}; required REDUCE_INPUT_MISSING naming ${path}`);
+        else caught.push(label);
+      }
+      // Refused rows: what the measurement cannot read, by code — and required, so the verdict is not a pass.
+      const moved: SourceMesh = { ...candidate, points: candidate.points.map((p, i) => (i === 3 ? [p[0] + 0.5, p[1]] : p)) };
+      const short: SourceMesh = { ...candidate, weights: candidate.weights!.map((ws, i) => (i === 3 ? ws.map((w) => ({ ...w, weight: w.weight * 0.99 })) : ws)) };
+      const overlapping: SourceMesh = { ...source, triangles: [...source.triangles, 0, source.hull - 1, source.hull] };
+      const keyed = (kind: 'vertices' | 'transform'): SkinningResidualInput['deform'] => [
+        { animation: 'idle', attachment: skAttachment, keys: [{ time: 0, kind: 'setup' }, kind === 'vertices' ? { time: 1, kind, offset: 0, vertices: [1, 1] } : { time: 1, kind }] },
+      ];
+      const refusals: Array<[string, MeshQualityReport, string, SkinningPlant]> = [
+        ['an undeclared bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [] })), 'SKINNING_BONE_NOT_DECLARED', 'undeclared-bone-ignored'],
+        ['an unknown bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] })), 'SKINNING_BONE_UNKNOWN', 'unknown-bone-accepted'],
+        ['a vertex off its UV', skMeasure(moved, declared), 'SKINNING_SETUP_MISMATCH', 'setup-unchecked'],
+        ['a vertices deform key', skMeasure(candidate, { ...declared, deform: keyed('vertices') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
+        ['a transform deform key', skMeasure(candidate, { ...declared, deform: keyed('transform') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
+      ];
+      const refusedLines: string[] = [];
+      for (const [label, report, code, plant] of refusals) {
+        const row = skRow(report);
+        if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
+        else refusedLines.push(`${label} ${code}`);
+        if (report.candidates[0]?.geometry?.verdict === 'pass' || report.candidates[0]?.accepted) probes.push(`${label}: the refused row, required by its bound, left the verdict ${report.candidates[0]?.geometry?.verdict}`);
+        const inputOf = (): MeshMeasureInput => {
+          if (label === 'an undeclared bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [] }));
+          if (label === 'an unknown bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] }));
+          if (label === 'a vertex off its UV') return skInput(moved, declared);
+          return skInput(candidate, { ...declared, deform: keyed(label === 'a vertices deform key' ? 'vertices' : 'transform') });
+        };
+        const plantedRow = skRow(measureMeshQualitySkinningPlanted(inputOf(), plant));
+        if (plantedRow?.state === 'refused') probes.push(`the plant ${plant} still refused ${label}`);
+      }
+      for (const [label, mesh, which, code] of [
+        ['a share sum off the grid', short, 'candidate', 'SKINNING_WEIGHT_SUM'],
+        ['an unweighted candidate', { ...candidate, weights: null }, 'candidate', 'SKINNING_UNWEIGHTED'],
+        ['overlapping source UV triangles', overlapping, 'source', 'SKINNING_UV_CARRIER_NOT_UNIQUE'],
+      ] as const) {
+        const row = skRow(which === 'candidate' ? skMeasure(mesh, declared) : skMeasure(candidate, skDeclared(mesh, envelope)));
+        if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
+        else refusedLines.push(`${label} ${code}`);
+      }
+      // Not measurable — never a value: under the art floor, both unweighted, no sample carried by both.
+      const floor = skRow(skMeasure(candidate, declared, null, { minArtSamples: 10 ** 7 }));
+      const bothBare = skRow(skMeasure({ ...candidate, weights: null }, skDeclared({ ...source, weights: null }, envelope)));
+      const corner: SourceMesh = { points: [[0, 0], [4, 0], [0, 4]], uvs: [0, 0, 4 / MV_W, 0, 0, 4 / MV_H], triangles: [0, 2, 1], hull: 3, weights: [[{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }]] };
+      const cornerOk = (() => {
+        const t = corner.triangles;
+        const p = corner.points;
+        const twice = (p[t[1]][0] - p[t[0]][0]) * (cropToSpineY(p[t[2]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H)) - (p[t[2]][0] - p[t[0]][0]) * (cropToSpineY(p[t[1]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H));
+        return twice > 0 ? corner : { ...corner, triangles: [0, 1, 2] };
+      })();
+      const none = skRow(skMeasure(cornerOk, declared));
+      const nonePlanted = skRow(skMeasure(cornerOk, declared, 'uncarried-read-as-zero'));
+      for (const [label, row] of [['a floor above the art', floor], ['both unweighted', bothBare], ['no sample carried by both', none]] as const) {
+        if (row?.state !== 'not-measurable' || row.value !== null || row.reason === null) probes.push(`${label}: ${skSaid(row)}; required not-measurable, no value, a reason`);
+      }
+      if (nonePlanted?.state === 'not-measurable') probes.push('the plant (no carried sample read as 0) still read not-measurable');
+      const held = probes.length === 0;
+      say(
+        'MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `thrown before any work, REDUCE_INPUT_MISSING naming the path: ${caught.join(', ')}; refused rows: ${refusedLines.join(', ')}; not measurable: a floor above the art (${floor?.reason?.slice(0, 40)}…), both unweighted, no sample carried by both; each refusal's plant measured instead, and the uncarried plant read ${nonePlanted?.state} ${nonePlanted?.value}`,
+        ),
+        'issue #1294 acceptance 4: malformed declarations, unknown bones, incompatible setup and UV maps and unsupported deform data name the failing input, and a reading over nothing is not a reading',
+      );
+      return;
+    }
+    say('MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE', false, probes.join('; '), 'issue #1294 acceptance 4');
+  });
+
+  mcGuard('MQ132', () => {
+    const probes: string[] = [];
+    const ramp = skCase('ramp, strict');
+    if (ramp === undefined) {
+      probes.push('the ramp case was not built');
+    } else {
+      const { source, candidate, envelope } = ramp;
+      const offText = writeMeshQualityReport(skMeasure(candidate, undefined));
+      if (writeMeshQualityReport(skMeasure(candidate, undefined)) !== offText) probes.push('two measurements without the field wrote other bytes');
+      if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push('the measurement without the field writes a skinning key or row');
+      /** The text with the residual's row, its echo and the summary taken out: what the field may not move. */
+      const beyond = (r: MeshQualityReport): string => {
+        const doc = JSON.parse(writeMeshQualityReport(r));
+        delete doc.effective.skinning;
+        for (const c of doc.candidates) {
+          if (c.geometry === null) continue;
+          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
+          delete c.geometry.summary;
+        }
+        return JSON.stringify(doc);
+      };
+      const undeclared = skMeasure(candidate, skDeclared(source, envelope, null));
+      if (beyond(undeclared) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under the field with no bound');
+      if (skRow(undeclared)?.state !== 'undeclared' || undeclared.candidates[0]?.geometry?.summary.undeclared !== (skMeasure(candidate, undefined).candidates[0]?.geometry?.summary.undeclared ?? 0) + 1) probes.push(`maxResidual null: ${skSaid(skRow(undeclared))}; required one more undeclared row and nothing else counted`);
+      const nul = skMeasure(candidate, null);
+      const nulDoc = JSON.parse(writeMeshQualityReport(nul));
+      if (nulDoc.effective.skinning !== null || skRow(nul)?.state !== 'not-measurable' || !(skRow(nul)?.reason ?? '').includes('declared absent')) probes.push(`null: echo ${JSON.stringify(nulDoc.effective.skinning)}, row ${skSaid(skRow(nul))}; required the echo null and the row not-measurable saying declared absent`);
+      if (beyond(nul) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under null');
+      // Determinism, and the key order of the declaration.
+      const on = writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope)));
+      const reversed: SkinningResidualInput = {
+        deform: [],
+        maxResidual: 1,
+        envelope: { bones: envelope.bones.map((b) => ({ translation: b.translation, pivot: b.pivot, linear: b.linear, bone: b.bone })), reference: envelope.reference },
+        source: { mesh: { weights: source.weights, hull: source.hull, triangles: source.triangles, uvs: source.uvs, points: source.points }, id: 'source' },
+      };
+      if (writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope))) !== on) probes.push('two measurements with the field wrote other bytes');
+      if (writeMeshQualityReport(skMeasure(candidate, reversed)) !== on) probes.push('the declaration built in reverse key order wrote other bytes');
+      const digest = JSON.parse(on).effective.skinning?.source?.digest as string | undefined;
+      if (digest === undefined || !/^sha256:[0-9a-f]{64}$/.test(digest)) probes.push(`the source's digest is ${digest}`);
+      const otherDigest = JSON.parse(writeMeshQualityReport(skMeasure(candidate, skDeclared(candidate, envelope)))).effective.skinning?.source?.digest;
+      if (otherDigest === digest) probes.push('another source mesh wrote the same digest');
+      // The plants: the echo, or the row, written for a call that did not set the field.
+      const echoPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'echo-when-unset'));
+      const rowPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'row-when-unset'));
+      if (echoPlant === offText) probes.push('the plant (the echo written when unset) wrote the bytes of the call without the field');
+      if (rowPlant === offText) probes.push('the plant (the row written when unset) wrote the bytes of the call without the field');
+      const held = probes.length === 0;
+      say(
+        'MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `without the field: one text (${offText.length} bytes) twice, no skinning key or row; maxResidual null: every byte but the row, its echo and the summary that text's, one more undeclared row; null: echo null, row not-measurable; with the field: one text twice and in reverse key order, the source named by ${digest?.slice(0, 15)}…; the plants (echo, row written when unset) moved the bytes`,
+        ),
+        'issue #1294 acceptance 4: calls without the feature keep their output bytes — measured out of suite on the 18 recorded inputs (docs/MESH_REDUCTION.md §7) — and repeated reports are deterministic',
+      );
+      return;
+    }
+    say('MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT', false, probes.join('; '), 'issue #1294 acceptance 4');
+  });
+
+  mcGuard('MQ133', () => {
+    const probes: string[] = [];
+    // The helper against the poser: each fixture bone's envelope entry against the largest ‖Ak − A0‖ and
+    // |(Dk − D0) ck| the core poses over idle at 48 steps a second. The poser's own matrices carry rounding the exact
+    // rotation does not — measured up to 5.4e-9 in the linear part, which a joint 400 px from the origin turns into
+    // 1.7e-6 px — so the linear part is held to 1e-8 and the lever to 1e-8 × |ck| + 1e-6.
+    const LINEAR_TOLERANCE = 1e-8;
+    const leverTolerance = (c: readonly [number, number]): number => 1e-8 * Math.hypot(c[0], c[1]) + 1e-6;
+    const norm2 = (a: number, b: number, c: number, d: number): number => {
+      const s = a * a + b * b + c * c + d * d;
+      const det = a * d - b * c;
+      return Math.sqrt((s + Math.sqrt(Math.max(0, s * s - 4 * det * det))) / 2);
+    };
+    const lines: string[] = [];
+    const caught: Record<string, string[]> = { 'scale-ignored': [], 'translation-ignored': [] };
+    skVariants.forEach((v, vi) => {
+      const model = skBuild(dir, `sk-helper-${vi}`, skSource(v.field), v.bones);
+      const poses = skDeformations(model, Array.from({ length: 96 }, () => 2 / 96));
+      for (const b of v.bones) {
+        const ranges = { referenceChain: skReferenceChain, chain: skChainOf(v.bones, b).map(skRange) };
+        const entry = skinningEnvelopeBone(ranges);
+        const c: [number, number] = [SK_A_WORLD + b.joint[0], SK_A_WORLD + MV_H / 2 - b.joint[1]];
+        let linear = 0;
+        let lever = 0;
+        for (const D of poses) {
+          const Dk = D.get(b.name)!;
+          const D0 = D.get('a')!;
+          const E = Dk.map((x, i) => x - D0[i]);
+          linear = Math.max(linear, norm2(E[0], E[1], E[2], E[3]));
+          lever = Math.max(lever, Math.hypot(E[0] * c[0] + E[1] * c[1] + E[4], E[2] * c[0] + E[3] * c[1] + E[5]));
+        }
+        lines.push(`${v.name} ${b.name}: ε ${r6(entry.linear)} ≥ ${r6(linear)}, τ ${r6(entry.translation)} ≥ ${r6(lever)}`);
+        if (linear - entry.linear > LINEAR_TOLERANCE || lever - entry.translation > leverTolerance(c)) probes.push(`${v.name}, bone ${b.name}: the poser reaches ‖Ak − A0‖ ${linear} and lever ${lever}; the helper declares ${entry.linear} and ${entry.translation}`);
+        for (const plant of Object.keys(caught) as EnvelopePlant[]) {
+          const p = skinningEnvelopeBonePlanted(ranges, plant);
+          if (linear - p.linear > LINEAR_TOLERANCE || lever - p.translation > leverTolerance(c)) caught[plant].push(`${v.name} ${b.name}`);
+        }
+      }
+    });
+    for (const [plant, where] of Object.entries(caught)) if (where.length === 0) probes.push(`the plant ${plant} understates no bone of the fixtures`);
+    // Refusals: what the helper cannot certify, by name; what is malformed, by path.
+    const base = { referenceChain: skReferenceChain, chain: [skRange(skVariants[0].bones[0])] };
+    const refusedBy = (ranges: unknown): string | null => {
+      try {
+        skinningEnvelopeBone(ranges as Parameters<typeof skinningEnvelopeBone>[0]);
+        return null;
+      } catch (err) {
+        return err instanceof MeshReductionError ? `${err.code}: ${err.message}` : `(not a MeshReductionError) ${(err as Error).message}`;
+      }
+    };
+    const one = base.chain[0];
+    const cases: Array<[string, unknown, string, string]> = [
+      ['a physics range', { ...base, chain: [{ ...one, source: 'physics' }] }, 'SKINNING_RANGE_UNSUPPORTED', 'chain[0] (bone "b").source'],
+      ['a nonuniform setup scale', { ...base, chain: [{ ...one, setup: { ...one.setup, scaleY: 2 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup scale'],
+      ['a setup shear', { ...base, chain: [{ ...one, setup: { ...one.setup, shearX: 10 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup shear'],
+      ['another inherit', { ...base, chain: [{ ...one, setup: { ...one.setup, inherit: 'noScale' } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup.inherit'],
+      ['a nonuniform reference setup', { ...base, referenceChain: [skReferenceChain[0], { ...skReferenceChain[1], setup: { ...skReferenceChain[1].setup, scaleX: 3 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'referenceChain[1]'],
+      ['an empty chain', { ...base, chain: [] }, 'REDUCE_INPUT_MISSING', 'chain is empty'],
+      ['a rotation range backwards', { ...base, chain: [{ ...one, rotate: [5, -5] }] }, 'REDUCE_INPUT_MISSING', '.rotate'],
+      ['a scale of 0', { ...base, chain: [{ ...one, scaleX: [0, 1] }] }, 'REDUCE_INPUT_MISSING', '.scaleX'],
+      ['a negative translate', { ...base, chain: [{ ...one, translate: -1 }] }, 'REDUCE_INPUT_MISSING', '.translate'],
+    ];
+    const refused: string[] = [];
+    for (const [label, input, code, path] of cases) {
+      const m = refusedBy(input);
+      if (m === null || !m.startsWith(code) || !m.includes(path)) probes.push(`${label}: ${m ?? 'derived'}; required ${code} naming ${path}`);
+      else refused.push(label);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ133_THE_HELPERS_LINEAR_AND_TRANSLATION_BOUND_THE_POSERS_BONE_MOTION_AND_WHAT_IT_CANNOT_CERTIFY_IS_REFUSED_BY_NAME',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')} (within ${LINEAR_TOLERANCE} and 1e-8 × |ck| + 1e-6 px); understated by the plants — scale ignored: ${caught['scale-ignored'].join(', ')}; joint motion ignored: ${caught['translation-ignored'].join(', ')}; refused: ${refused.join(', ')}`),
+      'issue #1294 work 3 (rig-parts#126 Q3): one definition of linear, rig-c\'s, held to the poser it stands in for, and an input outside its assumptions refused rather than turned into a number',
+    );
   });
 
   rmSync(dir, { recursive: true, force: true });

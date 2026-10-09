@@ -50,9 +50,11 @@ import type { ModelBinding, ModelVertices } from './model.ts';
 // two form an import cycle: safe only because neither reads the other's
 // bindings while it is being evaluated — every use is inside a function.
 // The reduction (`reduceMesh`, stage B2 of #1224) sits in the same cycle, by
-// the same rule.
+// the same rule. So does the skinning residual and its envelope helper
+// (`src/meshskinning.ts`, issue #1294), which the measurement reads.
 export * from './meshquality.ts';
 export * from './meshreduce.ts';
+export * from './meshskinning.ts';
 
 export interface MeshSpecInput {
   /** Polygon in part-local pixels, y down, in manifest order. */

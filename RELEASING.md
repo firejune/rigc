@@ -665,6 +665,29 @@ symbol and no output, and what it adds to the module behind `rig-c/mesh` —
 #1262 and the two plant types — is merely exported, so by the rule above it is
 not promised.
 
+The skinning-envelope residual and its helper
+([#1294](https://github.com/firejune/rigc/issues/1294)) are additive on the
+agreed row's types and add a row of their own. `MeshMeasureInput.skinning`
+(`SkinningResidualInput | null`) is a new optional input; set, the report
+gains one row, `MQ_SKINNING_RESIDUAL`, the key `MeasureRow.skinning` on that
+row only, and `effective.skinning`, the echo. `skinningEnvelopeBone` — the
+helper that turns declared rotation and scale ranges into an envelope entry,
+which the dependant asked to be rig-c's so that both sides read one
+definition of `linear` (rig-parts#126, Q3) — is held through `rig-c/mesh`
+under the `AGREED_IN_1294` row, with `SkinningEnvelope`,
+`SkinningEnvelopeBone`, `SkinningResidualInput`, `SkinningDetail`,
+`SkinningEcho`, `BoneMotionRange` and `EnvelopeBoneRanges` recorded. A call
+without the field writes every byte as before — measured against `e948469` on
+the 18 inputs of the stage-D1 record, 70 of 70 reduction reports, meshes and
+measurements (docs/MESH_REDUCTION.md, §7 *Mechanism 1 — implemented, the
+measurement half*). `uvCarriers` is now defined in `src/meshcarriers.ts`
+and re-exported from `rig-c/meshcompare` as it was, so the `AGREED_IN_1230`
+row reads the same function. `skinningResidual`, `termsAt`,
+`skinningSamplesOf`, `validateSkinning`, `sourceMeshDigest`,
+`skinningEchoOf`, `SKINNING_READING`, the plant types and the two planted
+entries (`measureMeshQualitySkinningPlanted`, `skinningEnvelopeBonePlanted`)
+are merely exported, so by the rule above they are not promised.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says

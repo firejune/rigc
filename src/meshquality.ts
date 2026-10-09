@@ -71,6 +71,7 @@ import {
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
 import { allocationContrast, boundaryNecessityOnce, deformLoad, gradeMax, minAngleP10, type AllocationArt, type AllocationPlant } from './meshallocation.ts';
+import { skinningEchoOf, skinningResidual, validateSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
 import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
@@ -369,6 +370,16 @@ export interface MeshMeasureInput {
    * `null` art bound is declared absent, #1257). It declares no bound: every allocation row stays `undeclared`.
    */
   motionAmplitude?: MotionAmplitude | null;
+  /**
+   * Issue #1294 (§7, mechanism 1): the skinning-envelope residual of this mesh — the candidate — against the original
+   * source it was made from, under a declared envelope (`SkinningResidualInput`, `src/meshskinning.ts`). Left out, it
+   * is not asked for: no `MQ_SKINNING_RESIDUAL` row and no echo, so the report is the one written without the field,
+   * byte for byte. `null` declares it absent: the row is `not-measurable` saying so, and the echo is `null`. Set, the
+   * row is measured over §3's samples at `art.threshold` and is required when `maxResidual` is a number; a source or an
+   * envelope the measurement cannot read refuses the row by name. Anything that is not a `SkinningResidualInput` in
+   * full is refused `REDUCE_INPUT_MISSING` naming its path, before any work.
+   */
+  skinning?: SkinningResidualInput | null;
 }
 
 /**
@@ -442,6 +453,8 @@ export interface MeasureRow {
   motion?: MotionRowDetail;
   /** The five allocation rows only (issue #1280): what the value is a reading of, and what it was read from. */
   allocation?: AllocationDetail;
+  /** `MQ_SKINNING_RESIDUAL` when measured (issue #1294): the source, the samples, the worst sample's terms and the contract's own figures. */
+  skinning?: SkinningDetail;
 }
 
 /** Issue #1280: an allocation row's own fields. Written on those five rows, measured or not, and on no other. */
@@ -610,6 +623,8 @@ export interface EffectiveSettings {
   retriangulate?: 'delaunay';
   /** A reduction's `removalOrder`, echoed when the input set it (issue #1283); absent otherwise — the order was ascending source index. */
   removalOrder?: 'deformation-load';
+  /** A measurement's `skinning`, echoed when the input set it — `null` included (issue #1294): the source by id and digest. Absent otherwise. */
+  skinning?: SkinningEcho | null;
 }
 
 export interface MeshCounts {
@@ -863,6 +878,7 @@ function validateInput(input: MeshMeasureInput): void {
     refuse('REDUCE_INPUT_MISSING', `${who}: preset is not { name, version }; required that, or null`);
   }
   validateMotionAmplitude(who, input.motionAmplitude);
+  validateSkinning(who, input.skinning);
 }
 
 /**
@@ -1504,6 +1520,15 @@ export function measureMeshQualityPlanted(input: MeshMeasureInput, plant: Alloca
 }
 
 /**
+ * `measureMeshQuality` with a fault planted in the skinning residual or its report (issue #1294, `SkinningPlant` in
+ * `src/meshskinning.ts`) — the `mesh-compare` suite's negative controls. Internal, as `measureMeshQualityWith` is.
+ */
+export function measureMeshQualitySkinningPlanted(input: MeshMeasureInput, plant: SkinningPlant): MeshQualityReport {
+  validateInput(input);
+  return measureValidated(input, artRastersOf(input.art), null, null, plant);
+}
+
+/**
  * `measureMeshQuality` over art rasters the caller already holds
  * (`src/meshrasters.ts`) — what `reduceMesh` calls for every measurement of
  * one call, so the quantities of the art alone are computed once per call
@@ -1612,12 +1637,12 @@ function checkArtRasters(input: MeshMeasureInput, rasters: ArtRasters): void {
 }
 
 /** The measurement proper, over an input `validateInput` accepted and rasters taken from its art. */
-function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: StepRasters | null, plant: AllocationPlant | null): MeshQualityReport {
+function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: StepRasters | null, plant: AllocationPlant | null, skinningPlant: SkinningPlant | null = null): MeshQualityReport {
   rasters.tally.uses++;
   const { attachment, art, source, targets } = input;
   const { mask, threshold, frame } = art;
   const scale = frame.pageScale;
-  const effective = effectiveOf(input);
+  const effective = effectiveOf(input, skinningPlant);
   const report = (sourceCounts: MeshCounts | null, candidate: CandidateReport, termination: Termination | null): MeshQualityReport => ({
     spec: MESH_QUALITY_REPORT_SPEC,
     operation: 'measure',
@@ -1653,6 +1678,9 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
 
   // --- allocation rows (issue #1280): undeclared or not-measurable, never required ------------
   if (plant !== 'omit-rows') rows.push(...allocationRows(input, outline, rasters, steps, plant));
+
+  // --- the skinning residual (issue #1294): only when the input asked for it ------------------
+  if (input.skinning !== undefined || skinningPlant === 'row-when-unset') rows.push(skinningRow(input, rasters, skinningPlant));
 
   // --- raster rows ---------------------------------------------------------
   const w = mask.width;
@@ -1803,6 +1831,53 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
   const geometry = sectionOf(ordered);
   const accepted = geometry.verdict === 'pass';
   return report(counts, { id: input.id, counts, geometry, motion: null, accepted }, null);
+}
+
+/**
+ * `MQ_SKINNING_RESIDUAL` (issue #1294, `src/meshskinning.ts`): a geometry row in drawing px, required when
+ * `skinning.maxResidual` is a number. `null` for the field reads `not-measurable` saying it was declared absent;
+ * a refusal of the source or the envelope is a `refused` row whose reason opens with its code. The samples are §3's:
+ * art pixel centres at `art.threshold` and the source hull's UVs.
+ */
+function skinningRow(input: MeshMeasureInput, rasters: ArtRasters, plant: SkinningPlant | null): Built {
+  const { attachment, art } = input;
+  const spec: RowSpec = { code: 'MQ_SKINNING_RESIDUAL', unit: 'px', region: null, attachment };
+  const skinning = input.skinning;
+  if (skinning === undefined || skinning === null) {
+    const why =
+      skinning === null
+        ? `attachment ${nameOf(attachment)}: skinning is null — the residual is declared absent, so there is no source or envelope to measure against`
+        : `attachment ${nameOf(attachment)}: skinning was not set`;
+    return unmeasuredRow(spec, 'not-measurable', why, false);
+  }
+  const bound = skinning.maxResidual === null ? null : { op: '<=' as const, value: skinning.maxResidual };
+  const reading = skinningResidual(
+    {
+      attachment,
+      frame: art.frame,
+      artBits: rasters.artBits(),
+      maskWidth: art.mask.width,
+      maskHeight: art.mask.height,
+      minArtSamples: input.minArtSamples,
+      threshold: art.threshold,
+      candidate: input.source,
+      skinning,
+    },
+    plant,
+  );
+  const sampling = { domain: `art pixel centres at alpha >= ${art.threshold} and the source's hull UVs, on the region UV square, carried by the source's and this mesh's UV triangles`, count: reading.samples };
+  const artField = { threshold: art.threshold, connectivity: null, samples: reading.art };
+  if (reading.state !== 'measured') {
+    const built = unmeasuredRow(spec, reading.state, reading.reason, bound !== null);
+    built.row.art = artField;
+    built.row.sampling = sampling;
+    return built;
+  }
+  const built = measuredRow(spec, reading.value, bound, reading.worst, true);
+  built.row.art = artField;
+  built.row.sampling = sampling;
+  built.row.skinning = reading.detail;
+  return built;
 }
 
 /** What each allocation row is a reading of — `AllocationDetail.reading`, one fixed sentence per code. */
@@ -2223,7 +2298,7 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
 // the echo, and the document's text
 // ---------------------------------------------------------------------------
 
-function effectiveOf(input: MeshMeasureInput): EffectiveSettings {
+function effectiveOf(input: MeshMeasureInput, skinningPlant: SkinningPlant | null = null): EffectiveSettings {
   const { art } = input;
   return {
     preset: input.preset,
@@ -2251,6 +2326,7 @@ function effectiveOf(input: MeshMeasureInput): EffectiveSettings {
     schedule: null,
     budget: null,
     ...(input.motionAmplitude === undefined ? {} : { motionAmplitude: input.motionAmplitude }),
+    ...(input.skinning === undefined ? (skinningPlant === 'echo-when-unset' ? { skinning: null } : {}) : { skinning: skinningEchoOf(input.skinning) }),
   };
 }
 
@@ -2344,6 +2420,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     ...(e.motionAmplitude === undefined ? {} : { motionAmplitude: amplitudeJson(e.motionAmplitude) }),
     ...(e.retriangulate === undefined ? {} : { retriangulate: e.retriangulate }),
     ...(e.removalOrder === undefined ? {} : { removalOrder: e.removalOrder }),
+    ...(e.skinning === undefined ? {} : { skinning: skinningEchoJson(e.skinning) }),
   };
 }
 
@@ -2388,7 +2465,38 @@ function rowJson(r: MeasureRow): Json {
   if (r.sampling !== undefined) out.sampling = { domain: r.sampling.domain, count: r.sampling.count };
   if (r.motion !== undefined) out.motion = motionDetailJson(r.motion);
   if (r.allocation !== undefined) out.allocation = allocationDetailJson(r.allocation);
+  if (r.skinning !== undefined) out.skinning = skinningDetailJson(r.skinning);
   return out;
+}
+
+function deformJson(t: DeformTimelineInput): Json {
+  return {
+    animation: t.animation,
+    attachment: attachmentJson(t.attachment),
+    keys: t.keys.map((k): Json => (k.kind === 'vertices' ? { time: k.time, kind: k.kind, offset: k.offset, vertices: [...k.vertices] } : { time: k.time, kind: k.kind })),
+  };
+}
+
+function skinningEchoJson(e: SkinningEcho | null): Json {
+  if (e === null) return null;
+  return {
+    source: { id: e.source.id, digest: e.source.digest },
+    envelope: { reference: e.envelope.reference, bones: e.envelope.bones.map((b) => ({ bone: b.bone, linear: b.linear, pivot: pair(b.pivot), translation: b.translation })) },
+    maxResidual: e.maxResidual,
+    deform: e.deform.map(deformJson),
+  };
+}
+
+function skinningDetailJson(d: SkinningDetail): Json {
+  return {
+    reading: d.reading,
+    source: { id: d.source.id, digest: d.source.digest },
+    reference: d.reference,
+    samples: { measured: d.samples.measured, uncarried: { source: d.samples.uncarried.source.map(pair), candidate: d.samples.uncarried.candidate.map(pair) } },
+    worst: d.worst === null ? null : { covariance: d.worst.covariance, lever: d.worst.lever, bones: d.worst.bones.map((b) => ({ bone: b.bone, covariance: b.covariance, lever: b.lever })) },
+    weightField: { l1: d.weightField.l1, lInf: d.weightField.lInf },
+    setup: { vertexGap: d.setup.vertexGap, vertexSlack: pair(d.setup.vertexSlack), sampleGap: d.setup.sampleGap, weightSumGap: d.setup.weightSumGap },
+  };
 }
 
 function allocationDetailJson(a: AllocationDetail): Json {

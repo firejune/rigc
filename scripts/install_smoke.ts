@@ -388,6 +388,13 @@ const OBSERVED_IN_131 = 'rig-parts c03dd8a (its PR #131), issue #1241';
  * the contract's `MQ45`.
  */
 const AGREED_IN_1230 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md, P1 and P2), issue #1230';
+/**
+ * The third agreed row: the skinning residual's envelope helper, which the dependant asked to be rig-c's — "one
+ * definition, under rig-c's controls, so parts and the measurement agree on what `linear` means" (rig-parts#126,
+ * comment 6072801422, Q3; docs/MESH_REDUCTION.md §7) — and the types of the input it fills
+ * (`MeshMeasureInput.skinning`), added by issue #1294 on `rig-c/mesh`, which the measurement already lives behind.
+ */
+const AGREED_IN_1294 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md §7, Q3), issue #1294';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -482,6 +489,13 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
     needsRuntime: false,
     values: { reduceMesh: 'function' },
     types: ['SourceMesh', 'RefinementRegion'],
+  },
+  {
+    entry: './mesh',
+    observed: AGREED_IN_1294,
+    needsRuntime: false,
+    values: { skinningEnvelopeBone: 'function' },
+    types: ['SkinningEnvelope', 'SkinningEnvelopeBone', 'SkinningResidualInput', 'SkinningDetail', 'SkinningEcho', 'BoneMotionRange', 'EnvelopeBoneRanges'],
   },
   {
     entry: './meshcompare',
