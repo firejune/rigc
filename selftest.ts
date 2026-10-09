@@ -135,12 +135,13 @@
  * ## What `--jobs` does
  *
  * A suite's independent units — `render-hashes`' `render_hashes.ts` runs and
- * CLI batches, `packer`'s packs by set, `core`'s posing-heavy controls — run up
- * to `--jobs` at once through `inParallel` (issues #1128, #1133), and the suite
- * prints its case lines after every unit has finished, in the sequential order,
- * so the log is one text at any `--jobs`. `TY32` holds the flag's refusals,
- * `TY33` the order and a plant that interleaves units' lines, `RH08`, `PK105`
- * and `CO41`–`CO42` the three suites' units.
+ * CLI batches, `packer`'s packs by set, `core`'s posing-heavy controls,
+ * `mesh-compare`'s runs of controls — run up to `--jobs` at once through
+ * `inParallel` (issues #1128, #1133, #1300), and the suite prints its case lines
+ * after every unit has finished, in the sequential order, so the log is one text
+ * at any `--jobs`. `TY32` holds the flag's refusals, `TY33` the order and a
+ * plant that interleaves units' lines, `RH08`, `PK105`, `CO41`–`CO42` and
+ * `MQ143` the four suites' units.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -49195,7 +49196,236 @@ function abBuild(dir: string, name: string, mesh: SourceMesh): string {
   return modelDocument(built.model, built.skeletonText, built.atlasText);
 }
 
-function runMeshCompareSuite(): number {
+// ---------------------------------------------------------------------------
+// mesh-compare's units and its run memo (issue #1300)
+// ---------------------------------------------------------------------------
+
+/**
+ * The `mesh-compare` controls as units (issue #1300): each name is a
+ * contiguous run of controls in the order the suite prints them, and above
+ * `--jobs 1` each runs in a `--unit` process of its own, up to `--jobs` at
+ * once, started at the top of the suite — every unit builds the fixtures it
+ * reads in its own work directory and reads nothing another unit writes, which
+ * is the condition `inParallel` cannot check and this list states.
+ *
+ * ⚡ Cut by measurement, not by family. On main at 43545f9 the suite was one
+ * process of 120–186 s and the run's critical path: ten controls held 145 s of
+ * it, and no repeated input explains that — instrumenting every reduction and
+ * comparison the suite made found 411 calls, of which the unplanted, unobserved
+ * calls repeating an earlier input came to about 6.5 s. What the ten share is a
+ * fixture, not a run: each varies the policy, an opt-in, a plant or an
+ * observer. So the cut is the units, and a control that reads a run another
+ * unit also makes (MQ88's bisection, read again by MQ98 and MQ103) makes it
+ * again in its own process.
+ *
+ * 📏 Measured after the cut, each pair on one machine, `--only mesh-compare
+ * --jobs 4`: on Nova's WSL (linux, load under 2), two before/after pairs read
+ * 94.8 and 75.7 s against 26.1 and 27.3 s, the process tree's peak 1.85 and
+ * 1.10 GB against 0.74 and 1.00 GB (the largest unit, MQ99–MQ102, 0.72–0.98
+ * GB) — for about a third more CPU, the setup the units each make again. On a
+ * shared M4 (4 performance and 6 efficiency cores, load 5–15) three pairs read
+ * a median of 132.1 s against 90.3 s: four lanes there are not four fast cores,
+ * and the units' CPU came to 2.3 times the one process's.
+ *
+ * 🔒 Whatever `--jobs`, the suite prints the same text: a unit prints nothing
+ * to this process, and the parent prints each unit's lines, adds its FAIL
+ * count and applies its shares of the run state at that unit's own position,
+ * in the sequential order (`unit` in `runMeshCompareSuite`). At `--jobs 1`
+ * every unit runs in this process, in that order, as the suite did before.
+ */
+const MESH_COMPARE_UNITS = [
+  'MQ55-MQ74',
+  'MQ79-MQ80',
+  'MQ85-MQ90',
+  'MQ91-MQ95',
+  'MQ96',
+  'MQ97-MQ98',
+  'MQ99-MQ102',
+  'MQ103',
+  'MQ104-MQ105',
+  'MQ106-MQ108',
+  'MQ109-MQ110',
+  'MQ111-MQ115',
+  'MQ116-MQ133',
+  'MQ134-MQ135',
+  'MQ136-MQ137',
+  'MQ138-MQ142',
+] as const;
+type MeshCompareUnitName = (typeof MESH_COMPARE_UNITS)[number];
+
+/**
+ * The order a batch starts the units in (issue #1300): heaviest first, by each
+ * unit's seconds in a `--unit` process at `--jobs 4`, measured 2026-10-10 on
+ * one machine (`RIGC_UNIT_PEAKS`). Scheduling
+ * only — a stale order moves when a unit finishes and never what the suite
+ * prints — and `meshCompareUnitBatch` refuses it unless it is
+ * `MESH_COMPARE_UNITS` exactly, each once.
+ */
+const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
+  'MQ103',
+  'MQ97-MQ98',
+  'MQ134-MQ135',
+  'MQ109-MQ110',
+  'MQ85-MQ90',
+  'MQ96',
+  'MQ136-MQ137',
+  'MQ99-MQ102',
+  'MQ91-MQ95',
+  'MQ138-MQ142',
+  'MQ116-MQ133',
+  'MQ106-MQ108',
+  'MQ79-MQ80',
+  'MQ104-MQ105',
+  'MQ111-MQ115',
+  'MQ55-MQ74',
+];
+
+/** What a mesh-compare unit hands back: the lines its controls printed, exactly as they would have printed them, its FAIL count, and its shares of the run state (`runStates()`, in that order). */
+interface MeshCompareUnitResult {
+  unit: MeshCompareUnitName;
+  lines: string[];
+  bad: number;
+  states: unknown[];
+}
+
+/** The suite run inside a unit's process: the unit it was handed, and where it leaves its result. */
+interface MeshCompareChild {
+  unit: MeshCompareUnitName;
+  result: MeshCompareUnitResult | null;
+}
+
+/** One mesh-compare unit's work, in whichever process holds it: the suite run for that unit alone. */
+function meshCompareUnitWork(unit: MeshCompareUnitName): MeshCompareUnitResult {
+  const child: MeshCompareChild = { unit, result: null };
+  runMeshCompareSuite(child);
+  if (child.result === null) throw new Error(`selftest --unit: the mesh-compare suite reached no unit named ${JSON.stringify(unit)}`);
+  return child.result;
+}
+
+/** Every unit run in `--unit` processes, up to `jobs` at once, heaviest first; their results by name. Refuses a start order that is not the unit list. */
+function meshCompareUnitBatch(jobs: number): Map<MeshCompareUnitName, MeshCompareUnitResult> {
+  const order = MESH_COMPARE_UNITS_HEAVIEST_FIRST;
+  if (order.length !== MESH_COMPARE_UNITS.length || MESH_COMPARE_UNITS.some((u) => order.filter((o) => o === u).length !== 1)) {
+    throw new Error(`MESH_COMPARE_UNITS_HEAVIEST_FIRST is not MESH_COMPARE_UNITS each once: [${order.join(', ')}] against [${MESH_COMPARE_UNITS.join(', ')}]`);
+  }
+  const values = unitValues(order.map((unit): SelftestUnitSpec => ({ kind: 'mesh-compare', unit })), jobs) as MeshCompareUnitResult[];
+  const out = new Map<MeshCompareUnitName, MeshCompareUnitResult>();
+  order.forEach((unit, k) => {
+    if (values[k]?.unit !== unit) throw new Error(`selftest --unit: mesh-compare unit ${unit} handed back ${JSON.stringify(values[k]?.unit)}`);
+    out.set(unit, values[k]);
+  });
+  return out;
+}
+
+/** A value computed on first read and kept: the suite's shared setup, made only in the process whose units read it. */
+function lazily<T>(make: () => T): () => T {
+  let made: { value: T } | null = null;
+  return () => (made ??= { value: make() }).value;
+}
+
+/**
+ * The key a memo entry is stored under (issue #1300): the entry point's name
+ * and a digest of its whole input, every leaf spelled so that values JSON
+ * would merge stay apart (`-0`, `NaN`, `±Infinity`, `undefined`), a typed
+ * array by a digest of its bytes, and keys in the input's own order — an input
+ * built in another key order is another key, a miss rather than a guess.
+ * Refuses anything it cannot spell exactly: a function, a Map, a Set or any
+ * other class instance, whose JSON is `{}` whatever it holds.
+ */
+function meshCompareMemoKey(entry: string, input: unknown): string {
+  const hash = createHash('sha256');
+  const walk = (v: unknown, at: string): void => {
+    if (v === undefined) return void hash.update('u;');
+    if (v === null) return void hash.update('z;');
+    if (typeof v === 'number') return void hash.update(`n${Object.is(v, -0) ? '-0' : String(v)};`);
+    if (typeof v === 'string') return void hash.update(`s${v.length}:${v};`);
+    if (typeof v === 'boolean') return void hash.update(v ? 't;' : 'f;');
+    if (ArrayBuffer.isView(v)) {
+      const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+      return void hash.update(`b${v.constructor.name}${bytes.length}:`).update(bytes).update(';');
+    }
+    if (Array.isArray(v)) {
+      hash.update(`a${v.length}[`);
+      v.forEach((x, i) => walk(x, `${at}[${i}]`));
+      return void hash.update(']');
+    }
+    if (typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+      const keys = Object.keys(v);
+      hash.update(`o${keys.length}{`);
+      for (const k of keys) {
+        hash.update(`k${k.length}:${k}=`);
+        walk((v as Record<string, unknown>)[k], `${at}.${k}`);
+      }
+      return void hash.update('}');
+    }
+    throw new Error(`meshCompareMemoKey: ${entry} input${at} is a ${typeof v === 'object' ? (v as object).constructor?.name ?? 'object' : typeof v}, which no key can spell exactly`);
+  };
+  walk(input, '');
+  return `${entry}:${hash.digest('hex')}`;
+}
+
+/**
+ * A run memo for one process of the mesh-compare suite (issue #1300): an
+ * unplanted, unobserved run is computed once per key and every later read of
+ * the key gets the same value. Determinism is the contract (A18), so a hit is
+ * the value a fresh computation of the same input would give — `MQ142` holds
+ * that against a fresh run, and a planted entry against it.
+ *
+ * 🔒 Two things it never does. A planted or observed run is not stored: the
+ * callers reach the memo only with no plant and no observer, so a plant's
+ * result cannot be read back under the unplanted key. And a stored value is not
+ * handed out changed: its bytes are taken when it is stored and read again on
+ * every hit, and a hit whose value no longer reads as it was stored throws,
+ * naming the key — a control that edited a shared run in place would
+ * otherwise hand its edit to every control after it.
+ *
+ * ⚠️ A control whose claim is that two calls write one text (MQ106's second
+ * call with the amplitude, MQ140's second call without the field) calls the
+ * module directly for its second run: through the memo that comparison would
+ * read one object twice and could not fail.
+ *
+ * 📏 What it holds is reductions only, because that is all the suite repeats.
+ * Measured on main at 43545f9 over every reduction and comparison the suite
+ * made (411 calls): the unplanted, unobserved reductions that repeated an
+ * earlier input — the ramp's strict run read by nine controls, the traced
+ * boundary's runs, a budget cut read twice — came to about 6.5 s of the
+ * suite's 120 s, and the one posed comparison that repeated an input is
+ * MQ115's, whose claim is that it does. The bisections, the opt-in variants,
+ * the plants and the observed runs, which are the rest of the cost, are each
+ * made once.
+ */
+class MeshCompareMemo {
+  private readonly entries = new Map<string, { value: unknown; bytes: string }>();
+  hits = 0;
+  misses = 0;
+  run<T>(key: string, bytesOf: (value: T) => string, compute: () => T): T {
+    const at = this.entries.get(key);
+    if (at !== undefined) {
+      if (bytesOf(at.value as T) !== at.bytes) throw new Error(`mesh-compare memo: the entry ${key} no longer reads as it was stored — a reader changed a shared run in place`);
+      this.hits++;
+      return at.value as T;
+    }
+    const value = compute();
+    this.entries.set(key, { value, bytes: bytesOf(value) });
+    this.misses++;
+    return value;
+  }
+  /** Whether `key` holds an entry, read without counting a hit. */
+  has(key: string): boolean {
+    return this.entries.has(key);
+  }
+  /** `MQ142`'s plant only: `value` stored under `key` in place of a computation. */
+  plantEntry<T>(key: string, value: T, bytesOf: (value: T) => string): void {
+    this.entries.set(key, { value, bytes: bytesOf(value) });
+  }
+}
+
+/** A reduction's bytes, the report as written and the mesh: what a memo entry is fingerprinted by and `MQ142` compares. */
+function reductionBytes(r: ReturnType<typeof reduceMesh>): string {
+  return writeMeshQualityReport(r.report) + JSON.stringify(r.mesh);
+}
+
+function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
   console.log('\n── mesh compare: the motion section of mesh-quality-report/1 — compareMeshesInMotion through the core poser (issue #1230) ──');
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
@@ -49248,704 +49478,763 @@ function runMeshCompareSuite(): number {
     }
   };
 
-  // --- MQ55 (MQ00's motion half): a mesh compared with itself is 0 on every row and frame; one vertex moved k px reads k ---
-  // Numbered MQ55, not MQ00: mesh-quality opens the MQ prefix at 00 and this suite continues it (TY18).
-  mcGuard('MQ55', () => {
-    const probes: string[] = [];
-    const t0 = performance.now();
-    const report = compareMeshesInMotion(mcInput(reference, [{ id: 'itself', model: reference }]));
-    const wall = performance.now() - t0;
-    const self = report.candidates[0];
-    const frames = self.motion?.schedule.walked.length ?? 0;
-    const samples = rowOf(self, 'MQ_LOCAL_DEFORMATION')?.sampling?.count ?? 0;
-    const local = (self.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
-    if (frames === 0 || local.length !== frames) probes.push(`${local.length} per-frame local-deformation value(s) over ${frames} frame(s)`);
-    const nonzero = local.filter((p) => p.value !== 0);
-    if (nonzero.length > 0) probes.push(`a mesh against itself reads ${nonzero.map((p) => `${p.value} at ${p.frame}`).join(', ')}`);
-    // The stretch, squash and inversion of a candidate that IS the reference are the reference's own, frame by frame.
-    for (const code of ['MQ_STRETCH', 'MQ_SQUASH', 'MQ_INVERSION']) {
-      const mine = JSON.stringify((self.perFrame ?? []).filter((p) => p.code === code));
-      const its = JSON.stringify((report.reference?.perFrame ?? []).filter((p) => p.code === code));
-      if (mine !== its) probes.push(`${code} per frame differs from the reference's own: ${mine} vs ${its}`);
+  // ⚡ Issue #1300: the units. Above `--jobs 1` every unit `MESH_COMPARE_UNITS` names runs in a `--unit` process, all
+  // started here — no unit reads anything the suite builds above it, each builds its own fixtures in its own work
+  // directory — in one batch the suite waits on. Each unit's lines and shares are then printed and applied at its own
+  // position below (`unit`), so the log and the run state are what `--jobs 1` leaves. In a unit's own process (`child`)
+  // this suite runs that unit alone: every other unit is skipped, and the unit's lines are taken, not printed. The
+  // setup a unit reads is made on first read (`lazily`), so a process makes only what its unit reads.
+  const batch = child === null && JOBS > 1 ? meshCompareUnitBatch(JOBS) : null;
+  /** The units this process printed from the batch, in the order it printed them. */
+  const replayed: MeshCompareUnitName[] = [];
+  /** Every unit this process reached, in the order it reached them, whatever it then did with each. */
+  const reached: MeshCompareUnitName[] = [];
+  /** Each unit's controls as this process was handed them, run or not — `MQ143` runs one again here. */
+  const bodies = new Map<MeshCompareUnitName, () => void>();
+  /** One unit's controls run here, under one guard named for the unit: a throw outside every control's own guard is that unit's failure, by name, at any `--jobs`. */
+  const guardedUnit = (name: MeshCompareUnitName, body: () => void): void => mcGuard(name.replace('-', '_TO_'), body);
+  /** Run one unit's controls in this process and take what they printed and left (a unit's own process). */
+  const taken = (name: MeshCompareUnitName, body: () => void): MeshCompareUnitResult => {
+    const print = console.log;
+    const states = runStates();
+    const marks = states.map((s) => s.mark());
+    const badBefore = bad;
+    const lines: string[] = [];
+    console.log = (...args: unknown[]): void => {
+      lines.push(args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' '));
+    };
+    try {
+      guardedUnit(name, body);
+    } finally {
+      console.log = print;
     }
-    if (self.motion?.verdict !== 'pass' || !self.accepted) probes.push(`itself: motion ${self.motion?.verdict}, accepted ${self.accepted} under a bound of 0`);
-    if (report.poser?.kind !== 'core' || report.poser.rigcVersion !== JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')).version) probes.push(`poser ${JSON.stringify(report.poser)}`);
-    // The planted half: hull vertex 1 (top row, x = 16, bound wholly to `a`) moved up K px in setup, its UV kept. Every
-    // sample's displacement is its barycentric share of the moved vertex's, so the worst is the vertex's own UV — a hull
-    // sample — and reads K: bone `a` carries it rigidly (no scale), at every frame.
-    const K = 3;
-    const moved = mcBuild(dir, 'moved', { mesh: mcMesh({ columns: fine, moved: { vertex: 1, dx: 0, dy: -K } }), physics: true });
-    const plant = compareMeshesInMotion(mcInput(reference, [{ id: 'moved', model: moved }], { bounds: { maxLocalDeformation: K } }));
-    const row = rowOf(plant.candidates[0], 'MQ_LOCAL_DEFORMATION');
-    const uv1: [number, number] = [fine[1] / MC_W, 0];
-    if (row?.value !== K || row.state !== 'pass' || row.worst?.at.vertex !== 1 || JSON.stringify(row.worst.at.uv) !== JSON.stringify(uv1)) probes.push(`a vertex moved ${K} px reads ${row?.value} (${row?.state}) worst ${JSON.stringify(row?.worst?.at)}; required ${K} at the vertex's own uv ${JSON.stringify(uv1)}, at its bound`);
-    const perFrameK = (plant.candidates[0].perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION' && p.value !== K);
-    if (perFrameK.length > 0) probes.push(`frames that do not read ${K}: ${perFrameK.map((p) => `${p.frame} ${p.value}`).join(', ')}`);
-    const held = probes.length === 0;
-    say(
-      'MQ55_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME',
-      held,
-      probeDetail(
-        held,
-        probes,
-        `the reference against itself reads 0 at all ${frames} frames (setup, grid and irr at 4 fps, physics stepped at 1/60) and its stretch, squash and inversion are the reference's own frame for frame; ` +
-          `hull vertex 1 moved ${K} px reads ${row?.value} world units at uv ${JSON.stringify(row?.worst?.at.uv)} on every frame — the vertex is bound wholly to an unscaled bone. ` +
-          `Cost, outside the report: one comparison of 1 candidate over ${frames} frames × ${samples} samples (posing the reference and the candidate, and the setup art fit of both) took ${wall.toFixed(1)} ms of wall time on this machine`,
-      ),
-      '§3 and MQ00\'s motion half: a comparison that reads anything but zero for a mesh against itself is measuring the instrument, and a planted displacement must read back as the displacement — the derivation, not the module, says what K is',
-    );
-  });
-
-  // --- MQ10: no motion supplied leaves motion null, and motionRequired is then not accepted --------------------
-  mcGuard('MQ10', () => {
-    const probes: string[] = [];
-    const required = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: true }));
-    const optional = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: false }));
-    for (const [label, r] of [['required', required], ['not required', optional]] as const) {
-      for (const c of [r.reference, ...r.candidates]) {
-        if (c?.motion !== null) probes.push(`${label}: ${c?.id} carries a motion section with no schedule`);
-        if (c?.perFrame !== undefined) probes.push(`${label}: ${c?.id} carries a per-frame table with no schedule`);
-        if (c?.geometry?.verdict !== 'pass') probes.push(`${label}: ${c?.id}'s geometry is ${c?.geometry?.verdict}, so the control could not tell acceptance by motion apart`);
-      }
-      if (r.poser !== null) probes.push(`${label}: poser ${JSON.stringify(r.poser)} with nothing posed`);
-    }
-    if (required.candidates[0].accepted || required.reference?.accepted) probes.push('motionRequired with no motion was accepted');
-    if (!optional.candidates[0].accepted) probes.push('with motion not required, a passing geometry was not accepted');
-    if (!writeMeshQualityReport(required).includes('"motion": null')) probes.push('the document does not write "motion": null');
-    const held = probes.length === 0;
-    say(
-      'MQ10_NO_MOTION_SUPPLIED_LEAVES_MOTION_NULL_AND_MOTION_REQUIRED_IS_NOT_ACCEPTED',
-      held,
-      probeDetail(held, probes, `schedule null: every build's motion is null and no poser is named; geometry passes on both runs, so the motion requirement is the only difference — required: accepted ${required.candidates[0].accepted}; not required: accepted ${optional.candidates[0].accepted}`),
-      'P6: no motion supplied is never an empty PASS, and a caller that required motion evidence does not get acceptance without it',
-    );
-  });
-
-  // --- MQ15: a verdict that differs between phases says so, naming both frame ids ---------------------------
-  mcGuard('MQ15', () => {
-    const probes: string[] = [];
-    const still = (bound: number): MotionComparisonInput => mcInput(stillRef, [{ id: 'quad', model: stillQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: bound } });
-    // With no physics the coarse quad's error grows with the bend, and the bend with time (0 → 60° linearly): each
-    // phase's worst is its LAST frame — grid's at the duration, irr's one interval's IRR_OFFSET short of it.
-    const wide = compareMeshesInMotion(still(1e9));
-    const byPhase = rowOf(wide.candidates[0], 'MQ_LOCAL_DEFORMATION')?.motion?.byPhase ?? [];
-    const grid = byPhase.find((p) => p.phase === 'grid');
-    const irr = byPhase.find((p) => p.phase === 'irr');
-    const walked = wide.candidates[0].motion?.schedule.walked ?? [];
-    const lastOf = (phase: string): string | undefined => walked.filter((f) => f.phase === phase).at(-1)?.id;
-    if (grid?.frame !== lastOf('grid') || irr?.frame !== lastOf('irr')) probes.push(`per-phase worst frames ${grid?.frame} and ${irr?.frame}; the bend grows with time, so required each phase's last frame, ${lastOf('grid')} and ${lastOf('irr')}`);
-    if (grid?.value === null || irr?.value === null || grid === undefined || irr === undefined || !(grid.value! > irr.value!)) probes.push(`grid reads ${grid?.value} and irr ${irr?.value}; grid's last frame is the furthest bend, so required grid > irr`);
-    if (wide.candidates[0].motion?.rows.some((r) => r.motion?.phasesDisagree !== null)) probes.push('with the bound above both phases a disagreement was reported');
-    let between = 0;
-    if (grid?.value != null && irr?.value != null) {
-      between = (grid.value + irr.value) / 2;
-      const split = compareMeshesInMotion(still(between));
-      const row = rowOf(split.candidates[0], 'MQ_LOCAL_DEFORMATION');
-      const d = row?.motion?.phasesDisagree;
-      if (row?.state !== 'fail') probes.push(`the row is ${row?.state} with grid over its bound; the row is the worst over both phases`);
-      if (d?.pass !== irr.frame || d?.fail !== grid.frame || !d.sentence.includes(irr.frame!) || !d.sentence.includes(grid.frame!)) probes.push(`the disagreement reads ${JSON.stringify(d)}; required pass ${irr.frame}, fail ${grid.frame}, both named in the sentence`);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ15_A_VERDICT_THAT_DIFFERS_BETWEEN_PHASES_SAYS_SO_NAMING_BOTH_FRAME_IDS',
-      held,
-      probeDetail(held, probes, `grid worst ${grid?.value} at ${grid?.frame}, irr worst ${irr?.value} at ${irr?.frame}; a bound of ${r6(between)} between them fails the row and names both frames; a bound above both reports no disagreement`),
-      'P7 and §4 *Transition in time*: a row is the worst over the phases, and a verdict that holds at one phase and not another is said, with the frames, rather than folded into the worse one',
-    );
-  });
-
-  // --- MQ20 / MQ39: correction 5 — one bone field, one physics setting, refused naming the input and both values --
-  mcGuard('MQ20 / MQ39', () => {
-    const probes: string[] = [];
-    const boneX = mcEdit(quad, (doc) => {
-      const bones = doc.bones as Array<Record<string, unknown>>;
-      const b = bones.find((x) => x.name === 'b')!;
-      b.x = (b.x as number) + 1;
-    });
-    const r20 = refusalOf(mcInput(reference, [{ id: 'moved-bone', model: boneX }]));
-    const want20 = [`bones["b"].x`, `${MC_W / 2}`, `${MC_W / 2 + 1}`, 'candidate "moved-bone"'];
-    if (r20?.code !== 'COMPARE_INPUTS_DIFFER' || !want20.every((w) => r20.message.includes(w))) probes.push(`a bone field changed: ${r20?.code ?? 'not refused'} — ${r20?.message}`);
-    const strength = mcEdit(quad, (doc) => {
-      const c = (doc.constraints as Array<Record<string, unknown>>).find((x) => x.name === 'b_follow')!;
-      c.strength = (c.strength as number) - 10;
-    });
-    const r39 = refusalOf(mcInput(reference, [{ id: 'softer', model: strength }]));
-    const want39 = [`constraints["b_follow"].strength`, '100', '90'];
-    if (r39?.code !== 'COMPARE_INPUTS_DIFFER' || !want39.every((w) => r39.message.includes(w))) probes.push(`a physics strength changed: ${r39?.code ?? 'not refused'} — ${r39?.message}`);
-    // The bones of the two documents are identical: the refusal is the physics setting's alone.
-    if (JSON.stringify(JSON.parse(strength).bones) !== JSON.stringify(JSON.parse(reference).bones)) probes.push('the physics plant also changed a bone');
-    // The positive half: the coarse quad differs from the reference only on the allowlist, and is compared.
-    if (refusalOf(mcInput(reference, [{ id: 'quad', model: quad }])) !== null) probes.push(`the unplanted quad was refused: ${refusalOf(mcInput(reference, [{ id: 'quad', model: quad }]))?.message}`);
-    const held = probes.length === 0;
-    say(
-      'MQ20_SKELETONS_THAT_DIFFER_IN_ONE_BONE_FIELD_ARE_REFUSED_NAMING_IT',
-      held && r20 !== null,
-      probeDetail(held, probes, `${r20?.message.slice(0, 220)}…`),
-      'correction 5: identical bone rosters are necessary and not sufficient, and a candidate whose skeleton differs is not a comparison of meshes',
-    );
-    say(
-      'MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES',
-      held && r39 !== null,
-      probeDetail(held, probes, `${r39?.message.slice(0, 220)}… — the bones identical, the unplanted quad (mesh, bindings, the meshes entry and the Spine digest all different) compared`),
-      'correction 5: a changed physics setting confounds the comparison while every bone still matches, so equality covers every non-mesh input',
-    );
-  });
-
-  // --- MQ22: the same reset for every candidate, and a changed dt moves the rows -------------------------------
-  mcGuard('MQ22', () => {
-    const probes: string[] = [];
-    const twin = compareMeshesInMotion(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
-    const swapped = compareMeshesInMotion(mcInput(reference, [{ id: 'second', model: quad }, { id: 'first', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
-    const section = (r: MeshQualityReport, id: string): string => JSON.stringify(r.candidates.find((c) => c.id === id)?.motion);
-    if (section(twin, 'first') !== section(twin, 'second')) probes.push('two copies of one candidate in one call measured differently');
-    if (section(twin, 'first') !== section(swapped, 'first')) probes.push("a candidate's motion section moved when the candidates were listed in the other order");
-    const sched = (c: MeshQualityReport['candidates'][number] | null | undefined): string => stepsOf(c?.motion?.schedule);
-    if (sched(twin.reference) !== sched(twin.candidates[0]) || sched(twin.candidates[0]) !== sched(twin.candidates[1])) probes.push('the reference and the candidates were walked on different schedules');
-    if (twin.candidates[0].motion?.schedule.reset !== 'physics reset at time 0') probes.push(`reset reads ${twin.candidates[0].motion?.schedule.reset}`);
-    const walks = twin.candidates[0].motion?.schedule.walks ?? [];
-    // 1 s at dt 1/60 is at least 60 steps on the grid walk to its last frame at the duration, and at most one more per
-    // frame (the step that lands on a frame between two of dt's); the oracle's rule, read here as a range rather than restated.
-    const gridSteps = walks.find((w) => w.phase === 'grid')?.steps ?? 0;
-    const gridFrames = (twin.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').length;
-    if (gridSteps < 60 || gridSteps > 60 + gridFrames) probes.push(`the grid walk took ${gridSteps} step(s); at dt 1/60 to t = 1 over ${gridFrames} frames, required 60 to ${60 + gridFrames}`);
-    const at = (model: string, ref: string, dt: number): number | null | undefined => rowOf(compareMeshesInMotion(mcInput(ref, [{ id: 'quad', model }], { schedule: stepped(dt), bounds: { maxLocalDeformation: 1e9 } })).candidates[0], 'MQ_LOCAL_DEFORMATION')?.value;
-    const sixty = at(quad, reference, 1 / 60);
-    const thirty = at(quad, reference, 1 / 30);
-    if (sixty === thirty) probes.push(`dt 1/60 and 1/30 both read ${sixty} on the rig with a physics constraint on the bending bone`);
-    // The control: without physics the step size moves nothing — what moved above was the physics.
-    const stillSixty = at(stillQuad, stillRef, 1 / 60);
-    const stillThirty = at(stillQuad, stillRef, 1 / 30);
-    if (stillSixty !== stillThirty) probes.push(`with no physics constraint dt 1/60 reads ${stillSixty} and 1/30 ${stillThirty}`);
-    const held = probes.length === 0;
-    say(
-      'MQ22_PHYSICS_RESET_IS_THE_SAME_FOR_EVERY_CANDIDATE_AND_A_CHANGED_DT_MOVES_THE_ROWS',
-      held,
-      probeDetail(held, probes, `two copies of one candidate, in either order, measure byte-identically on one schedule the reference shares (grid walk ${gridSteps} steps); local deformation ${sixty} at dt 1/60 and ${thirty} at 1/30 with physics on the bending bone, ${stillSixty} at both without it`),
-      'P10: physics resets at time 0 and steps at the declared dt identically for the reference and every candidate, and the dt is an input that changes what is measured',
-    );
-  });
-
-  // --- MQ35: a sample on a shared UV edge is one hit, carried to one world point ------------------------------
-  mcGuard('MQ35', () => {
-    const probes: string[] = [];
-    // A column at x = 16.5 puts a vertical edge through every pixel centre of column 16: (16.5/64, (y + 0.5)/16).
-    const edgeCols = [0, 16.5, 32, 48, 64];
-    const edged = mcBuild(dir, 'edged', { mesh: mcMesh({ columns: edgeCols }), physics: true });
-    const doc = readModel(edged);
-    const g = doc.skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
-    const pose = poseRawSetup(underNoSkin(doc));
-    const world = pose.drawn.find((d) => d.slot === 'strip')?.vertices ?? [];
-    let onEdge = 0;
-    if (g === undefined || g.kind !== 'mesh') probes.push('the edged build has no strip mesh');
-    else {
-      const samples: Array<{ uv: [number, number] }> = [];
-      for (let y = 0; y < MC_H; y++) samples.push({ uv: [(edgeCols[1]) / MC_W, (y + 0.5) / MC_H] });
-      const carriers = uvCarriers(g.uvs, g.triangles, samples, 'edged');
-      carriers.forEach((c, j) => {
-        if (c === null) {
-          probes.push(`sample ${j} on the edge has no carrier`);
-          return;
-        }
-        // The test's own reading: every triangle containing the sample, and the point each carries it to.
-        const points: Array<[number, number]> = [];
-        for (let t = 0; t * 3 < g.triangles.length; t++) {
-          const ids = [g.triangles[t * 3], g.triangles[t * 3 + 1], g.triangles[t * 3 + 2]];
-          const [a, b, cc] = ids.map((i) => [g.uvs[i * 2], g.uvs[i * 2 + 1]]);
-          const p = samples[j].uv;
-          const det = (b[1] - cc[1]) * (a[0] - cc[0]) + (cc[0] - b[0]) * (a[1] - cc[1]);
-          const l0 = ((b[1] - cc[1]) * (p[0] - cc[0]) + (cc[0] - b[0]) * (p[1] - cc[1])) / det;
-          const l1 = ((cc[1] - a[1]) * (p[0] - cc[0]) + (a[0] - cc[0]) * (p[1] - cc[1])) / det;
-          const lam = [l0, l1, 1 - l0 - l1];
-          if (Math.min(...lam) < -1e-9) continue;
-          points.push([lam.reduce((s, l, k) => s + l * world[ids[k] * 2], 0), lam.reduce((s, l, k) => s + l * world[ids[k] * 2 + 1], 0)]);
-        }
-        if (points.length >= 2) onEdge++;
-        const spread = Math.max(...points.map((q) => Math.hypot(q[0] - points[0][0], q[1] - points[0][1])));
-        if (spread > 1e-9) probes.push(`sample ${j}: its ${points.length} containing triangles carry it to points ${spread} apart`);
-      });
-      if (onEdge === 0) probes.push('no sample lay in two triangles, so the shared edge was never exercised');
-    }
-    const r = refusalOf(mcInput(edged, [{ id: 'itself', model: edged }]));
-    const run = r === null ? compareMeshesInMotion(mcInput(edged, [{ id: 'itself', model: edged }])) : null;
-    if (r !== null) probes.push(`the edged mesh against itself was refused: ${r.message}`);
-    else if (rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value !== 0) probes.push(`the edged mesh against itself reads ${rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value}`);
-    const held = probes.length === 0;
-    say(
-      'MQ35_CONTROL_A_SAMPLE_ON_A_SHARED_UV_EDGE_IS_ONE_HIT_CARRIED_TO_ONE_WORLD_POINT',
-      held,
-      probeDetail(held, probes, `${onEdge} pixel centres on the edge x = ${edgeCols[1]} each lie in two triangles by the test's own barycentric reading, which carry them to one setup world point; each is one carrier, and the mesh compares with itself at 0 without a refusal`),
-      'correction 4: across a shared edge or vertex the carriers agree on the carried point by construction, so the hit is one hit — the refusal is for overlap, not adjacency',
-    );
-  });
-
-  // --- MQ36: overlapping UV triangles give a sample two carriers, refused naming the sample and both triangles ---
-  mcGuard('MQ36', () => {
-    const probes: string[] = [];
-    // Top vertex 1's UV slid past vertex 2's: triangles 0–3 now fold over their neighbours in UV, positions untouched.
-    const folded = mcEdit(reference, (doc) => {
-      const skin = (doc.skins as Array<Record<string, unknown>>).find((k) => k.name === 'default')!;
-      const att = ((skin.attachments as Record<string, Record<string, Record<string, unknown>>>).strip.strip);
-      const uvs = att.uvs as number[];
-      uvs[2] = 40 / MC_W;
-    });
-    const r = refusalOf(mcInput(reference, [{ id: 'folded', model: folded }]));
-    const m = r?.message.match(/sample at uv \(([^,]+), ([^)]+)\) lies in (\d+) UV triangles — (.*?) — that do not/);
-    const named = m === null || m === undefined ? [] : [...m[4].matchAll(/triangle (\d+) \(vertices (\d+), (\d+), (\d+)\)/g)].map((x) => ({ t: Number(x[1]), v: [Number(x[2]), Number(x[3]), Number(x[4])] }));
-    if (r?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE' || !r.message.includes('candidate "folded"')) probes.push(`refusal ${r?.code ?? 'none'}: ${r?.message}`);
-    else if (named.length < 2) probes.push(`the refusal names ${named.length} triangle(s): ${r.message}`);
-    else {
-      // The test's own check: the named sample lies in every named triangle of the folded UVs, and no two of them share
-      // the edge or vertex it sits on.
-      const doc = JSON.parse(folded) as { skins: Array<{ name: string; attachments: { strip: { strip: { uvs: number[] } } } }> };
-      const uvs = doc.skins.find((k) => k.name === 'default')!.attachments.strip.strip.uvs;
-      const p = [Number(m![1]), Number(m![2])];
-      const inside = named.every(({ v }) => {
-        const [a, b, c] = v.map((i) => [uvs[i * 2], uvs[i * 2 + 1]]);
-        const cross = (o: number[], q: number[], s: number[]): number => (q[0] - o[0]) * (s[1] - o[1]) - (q[1] - o[1]) * (s[0] - o[0]);
-        const s1 = cross(a, b, p);
-        const s2 = cross(b, c, p);
-        const s3 = cross(c, a, p);
-        return (s1 >= -1e-12 && s2 >= -1e-12 && s3 >= -1e-12) || (s1 <= 1e-12 && s2 <= 1e-12 && s3 <= 1e-12);
-      });
-      if (!inside) probes.push(`the named sample (${p.join(', ')}) is not inside every named triangle by the test's own reading`);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ36_OVERLAPPING_UV_TRIANGLES_GIVING_A_SAMPLE_TWO_CARRIERS_ARE_REFUSED_NAMING_THE_SAMPLE_AND_BOTH_TRIANGLES',
-      held,
-      probeDetail(held, probes, `${r?.message.slice(0, 300)}…`),
-      'correction 4: a sample two overlapping triangles carry would be carried by an arbitrary one, so the comparison map is unambiguous or refused',
-    );
-  });
-
-  // --- MQ37: a nonuniformly scaled setup reports its two declared singular scales and no single ratio ---------
-  mcGuard('MQ37', () => {
-    const probes: string[] = [];
-    const SX = 2;
-    const SY = 0.5;
-    const ROT = 30;
-    const scaledRef = mcBuild(dir, 'scaled-reference', { mesh: mcMesh({ columns: fine }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
-    const scaledQuad = mcBuild(dir, 'scaled-quad', { mesh: mcMesh({ columns: [0, 64] }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
-    const report = compareMeshesInMotion(mcInput(scaledRef, [{ id: 'quad', model: scaledQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: 1e9 } }));
-    const row = rowOf(report.candidates[0], 'MQ_LOCAL_DEFORMATION');
-    const map = row?.motion?.setupMap;
-    // A rotation times a scale: its singular values are the two scales; its matrix [cos·sx, −sin·sy; sin·sx, cos·sy].
-    const rad = (ROT * Math.PI) / 180;
-    const expected = [Math.cos(rad) * SX, -Math.sin(rad) * SY, Math.sin(rad) * SX, Math.cos(rad) * SY];
-    if (map === undefined) probes.push('no setup map on the world row');
-    else {
-      if (map.bone !== 'a') probes.push(`the map is bone ${map.bone}'s; the slot's bone is a`);
-      if (JSON.stringify(map.singularScales) !== JSON.stringify([Math.max(SX, SY), Math.min(SX, SY)])) probes.push(`singular scales ${JSON.stringify(map.singularScales)}; declared ${SX} and ${SY}`);
-      if (map.linear.some((v, i) => Math.abs(v - expected[i]) > 1e-5)) probes.push(`linear ${JSON.stringify(map.linear)}; the declared rotation and scale give ${JSON.stringify(expected.map(r6))}`);
-      if (JSON.stringify(Object.keys(map)) !== JSON.stringify(['bone', 'linear', 'singularScales'])) probes.push(`the map carries ${Object.keys(map).join(', ')}`);
-    }
-    if (row?.unit !== 'world') probes.push(`the row's unit is ${row?.unit}`);
-    const text = writeMeshQualityReport(report);
-    if (/ratio"?\s*:\s*\d|worldPerPixel|pxPerWorld|"scale"\s*:/i.test(text.replace(/"unit": "ratio"/g, ''))) probes.push('the document carries a single world/px ratio');
-    const held = probes.length === 0;
-    say(
-      'MQ37_A_NONUNIFORMLY_SCALED_SETUP_REPORTS_TWO_DECLARED_SINGULAR_SCALES_AND_NO_SINGLE_RATIO',
-      held,
-      probeDetail(held, probes, `bone a declared at scale ${SX} × ${SY}, turned ${ROT}°: the world row states its slot bone's setup 2×2 ${JSON.stringify(map?.linear)} and singular scales ${JSON.stringify(map?.singularScales)}, and no single ratio anywhere in the document`),
-      'correction 4: a single world-per-pixel ratio is wrong under nonuniform scale or shear, so the declared map is stated with its two singular scales, read from the build and never fitted to vertices',
-    );
-  });
-
-  // --- MQ41: a nonzero warm-up is refused by name and not run as zero -----------------------------------------
-  mcGuard('MQ41', () => {
-    const probes: string[] = [];
-    const warm = (w: number, ref = reference): MotionComparisonInput => mcInput(ref, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'step', dt: 1 / 60, warmupSteps: w as 0 } } });
-    const r = refusalOf(warm(1));
-    if (r?.code !== 'COMPARE_WARMUP_UNSUPPORTED' || !r.message.includes('warmupSteps is 1') || !r.message.includes('required 0')) probes.push(`warmupSteps 1: ${r?.code ?? 'not refused'} — ${r?.message}`);
-    // Refused before anything is read or posed: the same input with an unreadable reference still names the warm-up.
-    const early = refusalOf(warm(1, 'not a model document'));
-    if (early?.code !== 'COMPARE_WARMUP_UNSUPPORTED') probes.push(`with an unreadable reference the refusal is ${early?.code}: the warm-up is refused before any build is read`);
-    // The same call at 0 runs — so the refusal is the warm-up's, not the schedule's.
-    const zero = refusalOf(warm(0));
-    if (zero !== null) probes.push(`warmupSteps 0 was refused too: ${zero.message}`);
-    const held = probes.length === 0;
-    say(
-      'MQ41_A_NONZERO_WARMUP_IS_REFUSED_BY_NAME_AND_NOT_RUN_AS_ZERO',
-      held,
-      probeDetail(held, probes, `${r?.message} — refused before any document is read, and the same schedule at 0 runs`),
-      'P10: no warm-up exists in the tree; a caller asking for one gets a refusal by name rather than a report it would read as warmed up',
-    );
-  });
-
-  // --- MQ42: a selection frame is never held out, and an empty held-out set makes no held-out claim -----------
-  mcGuard('MQ42', () => {
-    const probes: string[] = [];
-    const chosen = 'bend@grid@0.5';
-    const one = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: [chosen] }, bounds: { maxLocalDeformation: 1e9 } }));
-    const walked = one.candidates[0].motion?.schedule.walked ?? [];
-    const roleOf = (id: string): string | undefined => walked.find((f) => f.id === id)?.role;
-    if (roleOf(chosen) !== 'selection') probes.push(`${chosen} is ${roleOf(chosen)}`);
-    if (roleOf('setup') !== 'baseline') probes.push(`setup is ${roleOf('setup')}`);
-    if (walked.some((f) => f.id !== chosen && f.id !== 'setup' && f.role !== 'held-out')) probes.push('a frame outside the selection is not held out');
-    const row = rowOf(one.candidates[0], 'MQ_LOCAL_DEFORMATION');
-    if (row?.motion?.byRole.heldOut?.frame === chosen) probes.push('the held-out worst is the selection frame');
-    if (row?.motion?.byRole.selection?.frame !== chosen) probes.push(`the selection reading is at ${row?.motion?.byRole.selection?.frame}`);
-    if (one.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('a schedule with held-out frames made no held-out claim');
-    // Every walked frame chosen: no held-out frame, no held-out claim, and no held-out reading on any row.
-    const all = walked.filter((f) => f.id !== 'setup').map((f) => f.id);
-    const none = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: all }, bounds: { maxLocalDeformation: 1e9 } }));
-    const s = none.candidates[0].motion?.schedule;
-    if (s?.heldOutClaim !== false || JSON.stringify(s.roles) !== JSON.stringify(['baseline', 'selection'])) probes.push(`every frame selected: heldOutClaim ${s?.heldOutClaim}, roles ${JSON.stringify(s?.roles)}`);
-    if (none.candidates[0].motion?.rows.some((r) => r.motion?.byRole.heldOut !== null)) probes.push('a row carries a held-out reading with no held-out frame');
-    // Planted: a selection id the schedule does not walk would be read as held out if it were not refused.
-    const stray = refusalOf(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: ['bend@grid@0.3'] } }));
-    if (stray?.code !== 'COMPARE_INPUT_MISSING' || !stray.message.includes('"bend@grid@0.3"')) probes.push(`an unscheduled selection id: ${stray?.code ?? 'not refused'} — ${stray?.message}`);
-    const held = probes.length === 0;
-    say(
-      'MQ42_A_SELECTION_FRAME_IS_NEVER_HELD_OUT_AND_AN_EMPTY_HELD_OUT_SET_MAKES_NO_HELD_OUT_CLAIM',
-      held,
-      probeDetail(held, probes, `${chosen} selected: it is the selection reading and never the held-out one, setup is the baseline, the other ${walked.length - 2} frames held out; all ${all.length} frames selected: roles ${JSON.stringify(s?.roles)}, heldOutClaim ${s?.heldOutClaim}, no held-out reading; a selection id the schedule does not walk is ${stray?.code}`),
-      'P11: parts supplies the split and rigc invents none — a frame that chose a candidate is not evidence about it, and no held-out claim is made from no held-out frame',
-    );
-  });
-
-  // ===== Stage C2 (issue #1230): the rest of the contract's motion controls, printed from MQ56 up ===============
-  // The contract numbers them MQ11, MQ12, MQ13, MQ31, MQ38 and the motion halves of MQ19, MQ21 and MQ28; those
-  // numbers are mesh-quality's or already printed here, and a code names one control (TY17), so each is printed under
-  // the next free number with the contract's statement — the mapping is docs/MESH_REDUCTION.md's control list.
-  const still = (over: Partial<MotionComparisonInput> = {}): Partial<MotionComparisonInput> => ({ schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, ...over });
-  /** The art samples of a mask at the final threshold, counted by the test: every pixel with alpha >= 1. */
-  const artCount = (m: { alpha: Uint8Array }): number => m.alpha.reduce((n, a) => n + (a >= 1 ? 1 : 0), 0);
-  /** A build's hull, read off its own document. */
-  const hullOf = (model: string): number => {
-    const g = readModel(model).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
-    return g !== undefined && g.kind === 'mesh' && g.hull !== undefined ? g.hull : -1;
+    return { unit: name, lines, bad: bad - badBefore, states: states.map((s, k) => s.since(marks[k])) };
   };
-  const geometryRow = (c: { geometry: { rows: MeasureRow[] } | null } | null | undefined, code: string): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === code && r.object.region === null);
-  const localPerFrame = (c: { perFrame?: Array<{ code: string; frame: string; value: number | null }> } | null | undefined): Array<{ frame: string; value: number | null }> => (c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
-  // Rigs whose strip is bound wholly to bone `b`, the one the bend turns: every vertex moves rigidly with it.
-  const rigidRef = mcBuild(dir, 'rigid-reference', { mesh: mcMesh({ columns: fine, bone: 'b' }) });
-  const rigidQuad = mcBuild(dir, 'rigid-quad', { mesh: mcMesh({ columns: [0, MC_W], bone: 'b' }) });
+  /** Run one unit's controls, or print and apply what its process handed back, at their own position. */
+  const unit = (name: MeshCompareUnitName, body: () => void): void => {
+    reached.push(name);
+    bodies.set(name, body);
+    if (child !== null) {
+      if (child.unit === name) child.result = taken(name, body);
+      return;
+    }
+    if (batch === null) {
+      guardedUnit(name, body);
+      return;
+    }
+    const result = batch.get(name);
+    if (result === undefined) throw new Error(`mesh-compare: no unit process handed back ${name}`);
+    // The order one process makes them in: the shares, then the lines that report on them.
+    runStates().forEach((s, k) => s.apply(result.states[k]));
+    for (const line of result.lines) console.log(line);
+    bad += result.bad;
+    replayed.push(name);
+  };
+  /** This process's run memo (issue #1300): unplanted, unobserved reductions of the suite's fixtures, by their whole input. */
+  const memo = new MeshCompareMemo();
+  /** `reduceMesh` through the memo — for a run another control also reads, never for a control's second run of one input. */
+  const memoReduceMesh = (input: MeshReductionInput): ReturnType<typeof reduceMesh> => memo.run(meshCompareMemoKey('reduceMesh', input), reductionBytes, () => reduceMesh(input));
 
-  // --- MQ56 (the contract's MQ11): two candidates that drop the same art agree and both fail coverage ------------
-  mcGuard('MQ56', () => {
-    const probes: string[] = [];
-    // Both stop at x = 24 — a different triangulation of the same left part of the strip, the right part dropped — and
-    // both ride bone `b` rigidly, so where they carry art at all they carry it to the same world point at every frame.
-    const keep = 24;
-    const three = mcBuild(dir, 'drop-three', { mesh: mcMesh({ columns: [0, keep / 3, keep], bone: 'b' }) });
-    const two = mcBuild(dir, 'drop-two', { mesh: mcMesh({ columns: [0, keep], bone: 'b' }) });
-    const coverage = r6(keep / MC_W);
-    const strict: ArtFitBounds = { minCoverage: 1, maxOvershoot: MC_W, maxUndercut: MC_W };
-    // Pairwise, as a diagnostic: one of them standing in as the reference under a loose bound, the other compared to it.
-    const pair = compareMeshesInMotion(mcInput(three, [{ id: 'two', model: two }], still()));
-    const pairValues = localPerFrame(pair.candidates[0]);
-    if (pairValues.length === 0 || pairValues.some((p) => p.value !== 0)) probes.push(`the two read ${JSON.stringify(pairValues.map((p) => p.value))} against each other; they agree, so 0 at every frame`);
-    if (pair.candidates[0].motion?.verdict !== 'pass') probes.push(`their pairwise motion verdict is ${pair.candidates[0].motion?.verdict} under a bound of 0`);
-    // Against the source that carries all the art, held to coverage: each fails it, by the art it dropped, and neither is accepted.
-    const real = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'three', model: three }, { id: 'two', model: two }], still({ candidateArtFit: strict })));
-    for (const c of real.candidates) {
-      const row = geometryRow(c, 'MQ_COVERAGE');
-      if (row?.state !== 'fail' || row.value !== coverage) probes.push(`${c.id}: coverage ${row?.value} (${row?.state}); it keeps ${keep} of ${MC_W} columns, so ${coverage}, failing a bound of 1`);
-      if (c.accepted) probes.push(`${c.id} was accepted`);
+  unit('MQ55-MQ74', () => {
+    // --- MQ55 (MQ00's motion half): a mesh compared with itself is 0 on every row and frame; one vertex moved k px reads k ---
+    // Numbered MQ55, not MQ00: mesh-quality opens the MQ prefix at 00 and this suite continues it (TY18).
+    mcGuard('MQ55', () => {
+      const probes: string[] = [];
+      const t0 = performance.now();
+      const report = compareMeshesInMotion(mcInput(reference, [{ id: 'itself', model: reference }]));
+      const wall = performance.now() - t0;
+      const self = report.candidates[0];
+      const frames = self.motion?.schedule.walked.length ?? 0;
+      const samples = rowOf(self, 'MQ_LOCAL_DEFORMATION')?.sampling?.count ?? 0;
+      const local = (self.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
+      if (frames === 0 || local.length !== frames) probes.push(`${local.length} per-frame local-deformation value(s) over ${frames} frame(s)`);
+      const nonzero = local.filter((p) => p.value !== 0);
+      if (nonzero.length > 0) probes.push(`a mesh against itself reads ${nonzero.map((p) => `${p.value} at ${p.frame}`).join(', ')}`);
+      // The stretch, squash and inversion of a candidate that IS the reference are the reference's own, frame by frame.
+      for (const code of ['MQ_STRETCH', 'MQ_SQUASH', 'MQ_INVERSION']) {
+        const mine = JSON.stringify((self.perFrame ?? []).filter((p) => p.code === code));
+        const its = JSON.stringify((report.reference?.perFrame ?? []).filter((p) => p.code === code));
+        if (mine !== its) probes.push(`${code} per frame differs from the reference's own: ${mine} vs ${its}`);
+      }
+      if (self.motion?.verdict !== 'pass' || !self.accepted) probes.push(`itself: motion ${self.motion?.verdict}, accepted ${self.accepted} under a bound of 0`);
+      if (report.poser?.kind !== 'core' || report.poser.rigcVersion !== JSON.parse(readFileSync(join(import.meta.dir, 'package.json'), 'utf8')).version) probes.push(`poser ${JSON.stringify(report.poser)}`);
+      // The planted half: hull vertex 1 (top row, x = 16, bound wholly to `a`) moved up K px in setup, its UV kept. Every
+      // sample's displacement is its barycentric share of the moved vertex's, so the worst is the vertex's own UV — a hull
+      // sample — and reads K: bone `a` carries it rigidly (no scale), at every frame.
+      const K = 3;
+      const moved = mcBuild(dir, 'moved', { mesh: mcMesh({ columns: fine, moved: { vertex: 1, dx: 0, dy: -K } }), physics: true });
+      const plant = compareMeshesInMotion(mcInput(reference, [{ id: 'moved', model: moved }], { bounds: { maxLocalDeformation: K } }));
+      const row = rowOf(plant.candidates[0], 'MQ_LOCAL_DEFORMATION');
+      const uv1: [number, number] = [fine[1] / MC_W, 0];
+      if (row?.value !== K || row.state !== 'pass' || row.worst?.at.vertex !== 1 || JSON.stringify(row.worst.at.uv) !== JSON.stringify(uv1)) probes.push(`a vertex moved ${K} px reads ${row?.value} (${row?.state}) worst ${JSON.stringify(row?.worst?.at)}; required ${K} at the vertex's own uv ${JSON.stringify(uv1)}, at its bound`);
+      const perFrameK = (plant.candidates[0].perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION' && p.value !== K);
+      if (perFrameK.length > 0) probes.push(`frames that do not read ${K}: ${perFrameK.map((p) => `${p.frame} ${p.value}`).join(', ')}`);
+      const held = probes.length === 0;
+      say(
+        'MQ55_CONTROL_A_MESH_COMPARED_WITH_ITSELF_MEASURES_ZERO_ON_EVERY_ROW_AND_EVERY_FRAME',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the reference against itself reads 0 at all ${frames} frames (setup, grid and irr at 4 fps, physics stepped at 1/60) and its stretch, squash and inversion are the reference's own frame for frame; ` +
+            `hull vertex 1 moved ${K} px reads ${row?.value} world units at uv ${JSON.stringify(row?.worst?.at.uv)} on every frame — the vertex is bound wholly to an unscaled bone. ` +
+            `Cost, outside the report: one comparison of 1 candidate over ${frames} frames × ${samples} samples (posing the reference and the candidate, and the setup art fit of both) took ${wall.toFixed(1)} ms of wall time on this machine`,
+        ),
+        '§3 and MQ00\'s motion half: a comparison that reads anything but zero for a mesh against itself is measuring the instrument, and a planted displacement must read back as the displacement — the derivation, not the module, says what K is',
+      );
+    });
+
+    // --- MQ10: no motion supplied leaves motion null, and motionRequired is then not accepted --------------------
+    mcGuard('MQ10', () => {
+      const probes: string[] = [];
+      const required = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: true }));
+      const optional = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: null, motionRequired: false }));
+      for (const [label, r] of [['required', required], ['not required', optional]] as const) {
+        for (const c of [r.reference, ...r.candidates]) {
+          if (c?.motion !== null) probes.push(`${label}: ${c?.id} carries a motion section with no schedule`);
+          if (c?.perFrame !== undefined) probes.push(`${label}: ${c?.id} carries a per-frame table with no schedule`);
+          if (c?.geometry?.verdict !== 'pass') probes.push(`${label}: ${c?.id}'s geometry is ${c?.geometry?.verdict}, so the control could not tell acceptance by motion apart`);
+        }
+        if (r.poser !== null) probes.push(`${label}: poser ${JSON.stringify(r.poser)} with nothing posed`);
+      }
+      if (required.candidates[0].accepted || required.reference?.accepted) probes.push('motionRequired with no motion was accepted');
+      if (!optional.candidates[0].accepted) probes.push('with motion not required, a passing geometry was not accepted');
+      if (!writeMeshQualityReport(required).includes('"motion": null')) probes.push('the document does not write "motion": null');
+      const held = probes.length === 0;
+      say(
+        'MQ10_NO_MOTION_SUPPLIED_LEAVES_MOTION_NULL_AND_MOTION_REQUIRED_IS_NOT_ACCEPTED',
+        held,
+        probeDetail(held, probes, `schedule null: every build's motion is null and no poser is named; geometry passes on both runs, so the motion requirement is the only difference — required: accepted ${required.candidates[0].accepted}; not required: accepted ${optional.candidates[0].accepted}`),
+        'P6: no motion supplied is never an empty PASS, and a caller that required motion evidence does not get acceptance without it',
+      );
+    });
+
+    // --- MQ15: a verdict that differs between phases says so, naming both frame ids ---------------------------
+    mcGuard('MQ15', () => {
+      const probes: string[] = [];
+      const still = (bound: number): MotionComparisonInput => mcInput(stillRef, [{ id: 'quad', model: stillQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: bound } });
+      // With no physics the coarse quad's error grows with the bend, and the bend with time (0 → 60° linearly): each
+      // phase's worst is its LAST frame — grid's at the duration, irr's one interval's IRR_OFFSET short of it.
+      const wide = compareMeshesInMotion(still(1e9));
+      const byPhase = rowOf(wide.candidates[0], 'MQ_LOCAL_DEFORMATION')?.motion?.byPhase ?? [];
+      const grid = byPhase.find((p) => p.phase === 'grid');
+      const irr = byPhase.find((p) => p.phase === 'irr');
+      const walked = wide.candidates[0].motion?.schedule.walked ?? [];
+      const lastOf = (phase: string): string | undefined => walked.filter((f) => f.phase === phase).at(-1)?.id;
+      if (grid?.frame !== lastOf('grid') || irr?.frame !== lastOf('irr')) probes.push(`per-phase worst frames ${grid?.frame} and ${irr?.frame}; the bend grows with time, so required each phase's last frame, ${lastOf('grid')} and ${lastOf('irr')}`);
+      if (grid?.value === null || irr?.value === null || grid === undefined || irr === undefined || !(grid.value! > irr.value!)) probes.push(`grid reads ${grid?.value} and irr ${irr?.value}; grid's last frame is the furthest bend, so required grid > irr`);
+      if (wide.candidates[0].motion?.rows.some((r) => r.motion?.phasesDisagree !== null)) probes.push('with the bound above both phases a disagreement was reported');
+      let between = 0;
+      if (grid?.value != null && irr?.value != null) {
+        between = (grid.value + irr.value) / 2;
+        const split = compareMeshesInMotion(still(between));
+        const row = rowOf(split.candidates[0], 'MQ_LOCAL_DEFORMATION');
+        const d = row?.motion?.phasesDisagree;
+        if (row?.state !== 'fail') probes.push(`the row is ${row?.state} with grid over its bound; the row is the worst over both phases`);
+        if (d?.pass !== irr.frame || d?.fail !== grid.frame || !d.sentence.includes(irr.frame!) || !d.sentence.includes(grid.frame!)) probes.push(`the disagreement reads ${JSON.stringify(d)}; required pass ${irr.frame}, fail ${grid.frame}, both named in the sentence`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ15_A_VERDICT_THAT_DIFFERS_BETWEEN_PHASES_SAYS_SO_NAMING_BOTH_FRAME_IDS',
+        held,
+        probeDetail(held, probes, `grid worst ${grid?.value} at ${grid?.frame}, irr worst ${irr?.value} at ${irr?.frame}; a bound of ${r6(between)} between them fails the row and names both frames; a bound above both reports no disagreement`),
+        'P7 and §4 *Transition in time*: a row is the worst over the phases, and a verdict that holds at one phase and not another is said, with the frames, rather than folded into the worse one',
+      );
+    });
+
+    // --- MQ20 / MQ39: correction 5 — one bone field, one physics setting, refused naming the input and both values --
+    mcGuard('MQ20 / MQ39', () => {
+      const probes: string[] = [];
+      const boneX = mcEdit(quad, (doc) => {
+        const bones = doc.bones as Array<Record<string, unknown>>;
+        const b = bones.find((x) => x.name === 'b')!;
+        b.x = (b.x as number) + 1;
+      });
+      const r20 = refusalOf(mcInput(reference, [{ id: 'moved-bone', model: boneX }]));
+      const want20 = [`bones["b"].x`, `${MC_W / 2}`, `${MC_W / 2 + 1}`, 'candidate "moved-bone"'];
+      if (r20?.code !== 'COMPARE_INPUTS_DIFFER' || !want20.every((w) => r20.message.includes(w))) probes.push(`a bone field changed: ${r20?.code ?? 'not refused'} — ${r20?.message}`);
+      const strength = mcEdit(quad, (doc) => {
+        const c = (doc.constraints as Array<Record<string, unknown>>).find((x) => x.name === 'b_follow')!;
+        c.strength = (c.strength as number) - 10;
+      });
+      const r39 = refusalOf(mcInput(reference, [{ id: 'softer', model: strength }]));
+      const want39 = [`constraints["b_follow"].strength`, '100', '90'];
+      if (r39?.code !== 'COMPARE_INPUTS_DIFFER' || !want39.every((w) => r39.message.includes(w))) probes.push(`a physics strength changed: ${r39?.code ?? 'not refused'} — ${r39?.message}`);
+      // The bones of the two documents are identical: the refusal is the physics setting's alone.
+      if (JSON.stringify(JSON.parse(strength).bones) !== JSON.stringify(JSON.parse(reference).bones)) probes.push('the physics plant also changed a bone');
+      // The positive half: the coarse quad differs from the reference only on the allowlist, and is compared.
+      if (refusalOf(mcInput(reference, [{ id: 'quad', model: quad }])) !== null) probes.push(`the unplanted quad was refused: ${refusalOf(mcInput(reference, [{ id: 'quad', model: quad }]))?.message}`);
+      const held = probes.length === 0;
+      say(
+        'MQ20_SKELETONS_THAT_DIFFER_IN_ONE_BONE_FIELD_ARE_REFUSED_NAMING_IT',
+        held && r20 !== null,
+        probeDetail(held, probes, `${r20?.message.slice(0, 220)}…`),
+        'correction 5: identical bone rosters are necessary and not sufficient, and a candidate whose skeleton differs is not a comparison of meshes',
+      );
+      say(
+        'MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES',
+        held && r39 !== null,
+        probeDetail(held, probes, `${r39?.message.slice(0, 220)}… — the bones identical, the unplanted quad (mesh, bindings, the meshes entry and the Spine digest all different) compared`),
+        'correction 5: a changed physics setting confounds the comparison while every bone still matches, so equality covers every non-mesh input',
+      );
+    });
+
+    // --- MQ22: the same reset for every candidate, and a changed dt moves the rows -------------------------------
+    mcGuard('MQ22', () => {
+      const probes: string[] = [];
+      const twin = compareMeshesInMotion(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
+      const swapped = compareMeshesInMotion(mcInput(reference, [{ id: 'second', model: quad }, { id: 'first', model: quad }], { bounds: { maxLocalDeformation: 1e9 } }));
+      const section = (r: MeshQualityReport, id: string): string => JSON.stringify(r.candidates.find((c) => c.id === id)?.motion);
+      if (section(twin, 'first') !== section(twin, 'second')) probes.push('two copies of one candidate in one call measured differently');
+      if (section(twin, 'first') !== section(swapped, 'first')) probes.push("a candidate's motion section moved when the candidates were listed in the other order");
+      const sched = (c: MeshQualityReport['candidates'][number] | null | undefined): string => stepsOf(c?.motion?.schedule);
+      if (sched(twin.reference) !== sched(twin.candidates[0]) || sched(twin.candidates[0]) !== sched(twin.candidates[1])) probes.push('the reference and the candidates were walked on different schedules');
+      if (twin.candidates[0].motion?.schedule.reset !== 'physics reset at time 0') probes.push(`reset reads ${twin.candidates[0].motion?.schedule.reset}`);
+      const walks = twin.candidates[0].motion?.schedule.walks ?? [];
+      // 1 s at dt 1/60 is at least 60 steps on the grid walk to its last frame at the duration, and at most one more per
+      // frame (the step that lands on a frame between two of dt's); the oracle's rule, read here as a range rather than restated.
+      const gridSteps = walks.find((w) => w.phase === 'grid')?.steps ?? 0;
+      const gridFrames = (twin.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').length;
+      if (gridSteps < 60 || gridSteps > 60 + gridFrames) probes.push(`the grid walk took ${gridSteps} step(s); at dt 1/60 to t = 1 over ${gridFrames} frames, required 60 to ${60 + gridFrames}`);
+      const at = (model: string, ref: string, dt: number): number | null | undefined => rowOf(compareMeshesInMotion(mcInput(ref, [{ id: 'quad', model }], { schedule: stepped(dt), bounds: { maxLocalDeformation: 1e9 } })).candidates[0], 'MQ_LOCAL_DEFORMATION')?.value;
+      const sixty = at(quad, reference, 1 / 60);
+      const thirty = at(quad, reference, 1 / 30);
+      if (sixty === thirty) probes.push(`dt 1/60 and 1/30 both read ${sixty} on the rig with a physics constraint on the bending bone`);
+      // The control: without physics the step size moves nothing — what moved above was the physics.
+      const stillSixty = at(stillQuad, stillRef, 1 / 60);
+      const stillThirty = at(stillQuad, stillRef, 1 / 30);
+      if (stillSixty !== stillThirty) probes.push(`with no physics constraint dt 1/60 reads ${stillSixty} and 1/30 ${stillThirty}`);
+      const held = probes.length === 0;
+      say(
+        'MQ22_PHYSICS_RESET_IS_THE_SAME_FOR_EVERY_CANDIDATE_AND_A_CHANGED_DT_MOVES_THE_ROWS',
+        held,
+        probeDetail(held, probes, `two copies of one candidate, in either order, measure byte-identically on one schedule the reference shares (grid walk ${gridSteps} steps); local deformation ${sixty} at dt 1/60 and ${thirty} at 1/30 with physics on the bending bone, ${stillSixty} at both without it`),
+        'P10: physics resets at time 0 and steps at the declared dt identically for the reference and every candidate, and the dt is an input that changes what is measured',
+      );
+    });
+
+    // --- MQ35: a sample on a shared UV edge is one hit, carried to one world point ------------------------------
+    mcGuard('MQ35', () => {
+      const probes: string[] = [];
+      // A column at x = 16.5 puts a vertical edge through every pixel centre of column 16: (16.5/64, (y + 0.5)/16).
+      const edgeCols = [0, 16.5, 32, 48, 64];
+      const edged = mcBuild(dir, 'edged', { mesh: mcMesh({ columns: edgeCols }), physics: true });
+      const doc = readModel(edged);
+      const g = doc.skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+      const pose = poseRawSetup(underNoSkin(doc));
+      const world = pose.drawn.find((d) => d.slot === 'strip')?.vertices ?? [];
+      let onEdge = 0;
+      if (g === undefined || g.kind !== 'mesh') probes.push('the edged build has no strip mesh');
+      else {
+        const samples: Array<{ uv: [number, number] }> = [];
+        for (let y = 0; y < MC_H; y++) samples.push({ uv: [(edgeCols[1]) / MC_W, (y + 0.5) / MC_H] });
+        const carriers = uvCarriers(g.uvs, g.triangles, samples, 'edged');
+        carriers.forEach((c, j) => {
+          if (c === null) {
+            probes.push(`sample ${j} on the edge has no carrier`);
+            return;
+          }
+          // The test's own reading: every triangle containing the sample, and the point each carries it to.
+          const points: Array<[number, number]> = [];
+          for (let t = 0; t * 3 < g.triangles.length; t++) {
+            const ids = [g.triangles[t * 3], g.triangles[t * 3 + 1], g.triangles[t * 3 + 2]];
+            const [a, b, cc] = ids.map((i) => [g.uvs[i * 2], g.uvs[i * 2 + 1]]);
+            const p = samples[j].uv;
+            const det = (b[1] - cc[1]) * (a[0] - cc[0]) + (cc[0] - b[0]) * (a[1] - cc[1]);
+            const l0 = ((b[1] - cc[1]) * (p[0] - cc[0]) + (cc[0] - b[0]) * (p[1] - cc[1])) / det;
+            const l1 = ((cc[1] - a[1]) * (p[0] - cc[0]) + (a[0] - cc[0]) * (p[1] - cc[1])) / det;
+            const lam = [l0, l1, 1 - l0 - l1];
+            if (Math.min(...lam) < -1e-9) continue;
+            points.push([lam.reduce((s, l, k) => s + l * world[ids[k] * 2], 0), lam.reduce((s, l, k) => s + l * world[ids[k] * 2 + 1], 0)]);
+          }
+          if (points.length >= 2) onEdge++;
+          const spread = Math.max(...points.map((q) => Math.hypot(q[0] - points[0][0], q[1] - points[0][1])));
+          if (spread > 1e-9) probes.push(`sample ${j}: its ${points.length} containing triangles carry it to points ${spread} apart`);
+        });
+        if (onEdge === 0) probes.push('no sample lay in two triangles, so the shared edge was never exercised');
+      }
+      const r = refusalOf(mcInput(edged, [{ id: 'itself', model: edged }]));
+      const run = r === null ? compareMeshesInMotion(mcInput(edged, [{ id: 'itself', model: edged }])) : null;
+      if (r !== null) probes.push(`the edged mesh against itself was refused: ${r.message}`);
+      else if (rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value !== 0) probes.push(`the edged mesh against itself reads ${rowOf(run!.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value}`);
+      const held = probes.length === 0;
+      say(
+        'MQ35_CONTROL_A_SAMPLE_ON_A_SHARED_UV_EDGE_IS_ONE_HIT_CARRIED_TO_ONE_WORLD_POINT',
+        held,
+        probeDetail(held, probes, `${onEdge} pixel centres on the edge x = ${edgeCols[1]} each lie in two triangles by the test's own barycentric reading, which carry them to one setup world point; each is one carrier, and the mesh compares with itself at 0 without a refusal`),
+        'correction 4: across a shared edge or vertex the carriers agree on the carried point by construction, so the hit is one hit — the refusal is for overlap, not adjacency',
+      );
+    });
+
+    // --- MQ36: overlapping UV triangles give a sample two carriers, refused naming the sample and both triangles ---
+    mcGuard('MQ36', () => {
+      const probes: string[] = [];
+      // Top vertex 1's UV slid past vertex 2's: triangles 0–3 now fold over their neighbours in UV, positions untouched.
+      const folded = mcEdit(reference, (doc) => {
+        const skin = (doc.skins as Array<Record<string, unknown>>).find((k) => k.name === 'default')!;
+        const att = ((skin.attachments as Record<string, Record<string, Record<string, unknown>>>).strip.strip);
+        const uvs = att.uvs as number[];
+        uvs[2] = 40 / MC_W;
+      });
+      const r = refusalOf(mcInput(reference, [{ id: 'folded', model: folded }]));
+      const m = r?.message.match(/sample at uv \(([^,]+), ([^)]+)\) lies in (\d+) UV triangles — (.*?) — that do not/);
+      const named = m === null || m === undefined ? [] : [...m[4].matchAll(/triangle (\d+) \(vertices (\d+), (\d+), (\d+)\)/g)].map((x) => ({ t: Number(x[1]), v: [Number(x[2]), Number(x[3]), Number(x[4])] }));
+      if (r?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE' || !r.message.includes('candidate "folded"')) probes.push(`refusal ${r?.code ?? 'none'}: ${r?.message}`);
+      else if (named.length < 2) probes.push(`the refusal names ${named.length} triangle(s): ${r.message}`);
+      else {
+        // The test's own check: the named sample lies in every named triangle of the folded UVs, and no two of them share
+        // the edge or vertex it sits on.
+        const doc = JSON.parse(folded) as { skins: Array<{ name: string; attachments: { strip: { strip: { uvs: number[] } } } }> };
+        const uvs = doc.skins.find((k) => k.name === 'default')!.attachments.strip.strip.uvs;
+        const p = [Number(m![1]), Number(m![2])];
+        const inside = named.every(({ v }) => {
+          const [a, b, c] = v.map((i) => [uvs[i * 2], uvs[i * 2 + 1]]);
+          const cross = (o: number[], q: number[], s: number[]): number => (q[0] - o[0]) * (s[1] - o[1]) - (q[1] - o[1]) * (s[0] - o[0]);
+          const s1 = cross(a, b, p);
+          const s2 = cross(b, c, p);
+          const s3 = cross(c, a, p);
+          return (s1 >= -1e-12 && s2 >= -1e-12 && s3 >= -1e-12) || (s1 <= 1e-12 && s2 <= 1e-12 && s3 <= 1e-12);
+        });
+        if (!inside) probes.push(`the named sample (${p.join(', ')}) is not inside every named triangle by the test's own reading`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ36_OVERLAPPING_UV_TRIANGLES_GIVING_A_SAMPLE_TWO_CARRIERS_ARE_REFUSED_NAMING_THE_SAMPLE_AND_BOTH_TRIANGLES',
+        held,
+        probeDetail(held, probes, `${r?.message.slice(0, 300)}…`),
+        'correction 4: a sample two overlapping triangles carry would be carried by an arbitrary one, so the comparison map is unambiguous or refused',
+      );
+    });
+
+    // --- MQ37: a nonuniformly scaled setup reports its two declared singular scales and no single ratio ---------
+    mcGuard('MQ37', () => {
+      const probes: string[] = [];
+      const SX = 2;
+      const SY = 0.5;
+      const ROT = 30;
+      const scaledRef = mcBuild(dir, 'scaled-reference', { mesh: mcMesh({ columns: fine }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
+      const scaledQuad = mcBuild(dir, 'scaled-quad', { mesh: mcMesh({ columns: [0, 64] }), a: { scaleX: SX, scaleY: SY, rotation: ROT } });
+      const report = compareMeshesInMotion(mcInput(scaledRef, [{ id: 'quad', model: scaledQuad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, bounds: { maxLocalDeformation: 1e9 } }));
+      const row = rowOf(report.candidates[0], 'MQ_LOCAL_DEFORMATION');
+      const map = row?.motion?.setupMap;
+      // A rotation times a scale: its singular values are the two scales; its matrix [cos·sx, −sin·sy; sin·sx, cos·sy].
+      const rad = (ROT * Math.PI) / 180;
+      const expected = [Math.cos(rad) * SX, -Math.sin(rad) * SY, Math.sin(rad) * SX, Math.cos(rad) * SY];
+      if (map === undefined) probes.push('no setup map on the world row');
+      else {
+        if (map.bone !== 'a') probes.push(`the map is bone ${map.bone}'s; the slot's bone is a`);
+        if (JSON.stringify(map.singularScales) !== JSON.stringify([Math.max(SX, SY), Math.min(SX, SY)])) probes.push(`singular scales ${JSON.stringify(map.singularScales)}; declared ${SX} and ${SY}`);
+        if (map.linear.some((v, i) => Math.abs(v - expected[i]) > 1e-5)) probes.push(`linear ${JSON.stringify(map.linear)}; the declared rotation and scale give ${JSON.stringify(expected.map(r6))}`);
+        if (JSON.stringify(Object.keys(map)) !== JSON.stringify(['bone', 'linear', 'singularScales'])) probes.push(`the map carries ${Object.keys(map).join(', ')}`);
+      }
+      if (row?.unit !== 'world') probes.push(`the row's unit is ${row?.unit}`);
+      const text = writeMeshQualityReport(report);
+      if (/ratio"?\s*:\s*\d|worldPerPixel|pxPerWorld|"scale"\s*:/i.test(text.replace(/"unit": "ratio"/g, ''))) probes.push('the document carries a single world/px ratio');
+      const held = probes.length === 0;
+      say(
+        'MQ37_A_NONUNIFORMLY_SCALED_SETUP_REPORTS_TWO_DECLARED_SINGULAR_SCALES_AND_NO_SINGLE_RATIO',
+        held,
+        probeDetail(held, probes, `bone a declared at scale ${SX} × ${SY}, turned ${ROT}°: the world row states its slot bone's setup 2×2 ${JSON.stringify(map?.linear)} and singular scales ${JSON.stringify(map?.singularScales)}, and no single ratio anywhere in the document`),
+        'correction 4: a single world-per-pixel ratio is wrong under nonuniform scale or shear, so the declared map is stated with its two singular scales, read from the build and never fitted to vertices',
+      );
+    });
+
+    // --- MQ41: a nonzero warm-up is refused by name and not run as zero -----------------------------------------
+    mcGuard('MQ41', () => {
+      const probes: string[] = [];
+      const warm = (w: number, ref = reference): MotionComparisonInput => mcInput(ref, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, physics: { mode: 'step', dt: 1 / 60, warmupSteps: w as 0 } } });
+      const r = refusalOf(warm(1));
+      if (r?.code !== 'COMPARE_WARMUP_UNSUPPORTED' || !r.message.includes('warmupSteps is 1') || !r.message.includes('required 0')) probes.push(`warmupSteps 1: ${r?.code ?? 'not refused'} — ${r?.message}`);
+      // Refused before anything is read or posed: the same input with an unreadable reference still names the warm-up.
+      const early = refusalOf(warm(1, 'not a model document'));
+      if (early?.code !== 'COMPARE_WARMUP_UNSUPPORTED') probes.push(`with an unreadable reference the refusal is ${early?.code}: the warm-up is refused before any build is read`);
+      // The same call at 0 runs — so the refusal is the warm-up's, not the schedule's.
+      const zero = refusalOf(warm(0));
+      if (zero !== null) probes.push(`warmupSteps 0 was refused too: ${zero.message}`);
+      const held = probes.length === 0;
+      say(
+        'MQ41_A_NONZERO_WARMUP_IS_REFUSED_BY_NAME_AND_NOT_RUN_AS_ZERO',
+        held,
+        probeDetail(held, probes, `${r?.message} — refused before any document is read, and the same schedule at 0 runs`),
+        'P10: no warm-up exists in the tree; a caller asking for one gets a refusal by name rather than a report it would read as warmed up',
+      );
+    });
+
+    // --- MQ42: a selection frame is never held out, and an empty held-out set makes no held-out claim -----------
+    mcGuard('MQ42', () => {
+      const probes: string[] = [];
+      const chosen = 'bend@grid@0.5';
+      const one = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: [chosen] }, bounds: { maxLocalDeformation: 1e9 } }));
+      const walked = one.candidates[0].motion?.schedule.walked ?? [];
+      const roleOf = (id: string): string | undefined => walked.find((f) => f.id === id)?.role;
+      if (roleOf(chosen) !== 'selection') probes.push(`${chosen} is ${roleOf(chosen)}`);
+      if (roleOf('setup') !== 'baseline') probes.push(`setup is ${roleOf('setup')}`);
+      if (walked.some((f) => f.id !== chosen && f.id !== 'setup' && f.role !== 'held-out')) probes.push('a frame outside the selection is not held out');
+      const row = rowOf(one.candidates[0], 'MQ_LOCAL_DEFORMATION');
+      if (row?.motion?.byRole.heldOut?.frame === chosen) probes.push('the held-out worst is the selection frame');
+      if (row?.motion?.byRole.selection?.frame !== chosen) probes.push(`the selection reading is at ${row?.motion?.byRole.selection?.frame}`);
+      if (one.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('a schedule with held-out frames made no held-out claim');
+      // Every walked frame chosen: no held-out frame, no held-out claim, and no held-out reading on any row.
+      const all = walked.filter((f) => f.id !== 'setup').map((f) => f.id);
+      const none = compareMeshesInMotion(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: all }, bounds: { maxLocalDeformation: 1e9 } }));
+      const s = none.candidates[0].motion?.schedule;
+      if (s?.heldOutClaim !== false || JSON.stringify(s.roles) !== JSON.stringify(['baseline', 'selection'])) probes.push(`every frame selected: heldOutClaim ${s?.heldOutClaim}, roles ${JSON.stringify(s?.roles)}`);
+      if (none.candidates[0].motion?.rows.some((r) => r.motion?.byRole.heldOut !== null)) probes.push('a row carries a held-out reading with no held-out frame');
+      // Planted: a selection id the schedule does not walk would be read as held out if it were not refused.
+      const stray = refusalOf(mcInput(reference, [{ id: 'quad', model: quad }], { schedule: { ...stepped(1 / 60)!, selection: ['bend@grid@0.3'] } }));
+      if (stray?.code !== 'COMPARE_INPUT_MISSING' || !stray.message.includes('"bend@grid@0.3"')) probes.push(`an unscheduled selection id: ${stray?.code ?? 'not refused'} — ${stray?.message}`);
+      const held = probes.length === 0;
+      say(
+        'MQ42_A_SELECTION_FRAME_IS_NEVER_HELD_OUT_AND_AN_EMPTY_HELD_OUT_SET_MAKES_NO_HELD_OUT_CLAIM',
+        held,
+        probeDetail(held, probes, `${chosen} selected: it is the selection reading and never the held-out one, setup is the baseline, the other ${walked.length - 2} frames held out; all ${all.length} frames selected: roles ${JSON.stringify(s?.roles)}, heldOutClaim ${s?.heldOutClaim}, no held-out reading; a selection id the schedule does not walk is ${stray?.code}`),
+        'P11: parts supplies the split and rigc invents none — a frame that chose a candidate is not evidence about it, and no held-out claim is made from no held-out frame',
+      );
+    });
+
+    // ===== Stage C2 (issue #1230): the rest of the contract's motion controls, printed from MQ56 up ===============
+    // The contract numbers them MQ11, MQ12, MQ13, MQ31, MQ38 and the motion halves of MQ19, MQ21 and MQ28; those
+    // numbers are mesh-quality's or already printed here, and a code names one control (TY17), so each is printed under
+    // the next free number with the contract's statement — the mapping is docs/MESH_REDUCTION.md's control list.
+    const still = (over: Partial<MotionComparisonInput> = {}): Partial<MotionComparisonInput> => ({ schedule: { ...stepped(1 / 60)!, physics: { mode: 'none' } }, ...over });
+    /** The art samples of a mask at the final threshold, counted by the test: every pixel with alpha >= 1. */
+    const artCount = (m: { alpha: Uint8Array }): number => m.alpha.reduce((n, a) => n + (a >= 1 ? 1 : 0), 0);
+    /** A build's hull, read off its own document. */
+    const hullOf = (model: string): number => {
+      const g = readModel(model).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+      return g !== undefined && g.kind === 'mesh' && g.hull !== undefined ? g.hull : -1;
+    };
+    const geometryRow = (c: { geometry: { rows: MeasureRow[] } | null } | null | undefined, code: string): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === code && r.object.region === null);
+    const localPerFrame = (c: { perFrame?: Array<{ code: string; frame: string; value: number | null }> } | null | undefined): Array<{ frame: string; value: number | null }> => (c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION');
+    // Rigs whose strip is bound wholly to bone `b`, the one the bend turns: every vertex moves rigidly with it.
+    const rigidRef = mcBuild(dir, 'rigid-reference', { mesh: mcMesh({ columns: fine, bone: 'b' }) });
+    const rigidQuad = mcBuild(dir, 'rigid-quad', { mesh: mcMesh({ columns: [0, MC_W], bone: 'b' }) });
+
+    // --- MQ56 (the contract's MQ11): two candidates that drop the same art agree and both fail coverage ------------
+    mcGuard('MQ56', () => {
+      const probes: string[] = [];
+      // Both stop at x = 24 — a different triangulation of the same left part of the strip, the right part dropped — and
+      // both ride bone `b` rigidly, so where they carry art at all they carry it to the same world point at every frame.
+      const keep = 24;
+      const three = mcBuild(dir, 'drop-three', { mesh: mcMesh({ columns: [0, keep / 3, keep], bone: 'b' }) });
+      const two = mcBuild(dir, 'drop-two', { mesh: mcMesh({ columns: [0, keep], bone: 'b' }) });
+      const coverage = r6(keep / MC_W);
+      const strict: ArtFitBounds = { minCoverage: 1, maxOvershoot: MC_W, maxUndercut: MC_W };
+      // Pairwise, as a diagnostic: one of them standing in as the reference under a loose bound, the other compared to it.
+      const pair = compareMeshesInMotion(mcInput(three, [{ id: 'two', model: two }], still()));
+      const pairValues = localPerFrame(pair.candidates[0]);
+      if (pairValues.length === 0 || pairValues.some((p) => p.value !== 0)) probes.push(`the two read ${JSON.stringify(pairValues.map((p) => p.value))} against each other; they agree, so 0 at every frame`);
+      if (pair.candidates[0].motion?.verdict !== 'pass') probes.push(`their pairwise motion verdict is ${pair.candidates[0].motion?.verdict} under a bound of 0`);
+      // Against the source that carries all the art, held to coverage: each fails it, by the art it dropped, and neither is accepted.
+      const real = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'three', model: three }, { id: 'two', model: two }], still({ candidateArtFit: strict })));
+      for (const c of real.candidates) {
+        const row = geometryRow(c, 'MQ_COVERAGE');
+        if (row?.state !== 'fail' || row.value !== coverage) probes.push(`${c.id}: coverage ${row?.value} (${row?.state}); it keeps ${keep} of ${MC_W} columns, so ${coverage}, failing a bound of 1`);
+        if (c.accepted) probes.push(`${c.id} was accepted`);
+        const values = localPerFrame(c);
+        if (values.some((p) => p.value !== 0)) probes.push(`${c.id} against the reference reads ${JSON.stringify(values.map((p) => p.value))}; on the art it carries it moves with the reference`);
+      }
+      // And neither can stand in as the reference under the bound the candidates are held to.
+      const asReference = refusalOf(mcInput(three, [{ id: 'two', model: two }], still({ referenceArtFit: strict })));
+      if (asReference?.code !== 'COMPARE_REFERENCE_FAILS') probes.push(`one of them as the reference under coverage 1: ${asReference?.code ?? 'compared'}`);
+      const held = probes.length === 0;
+      say(
+        'MQ56_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE',
+        held,
+        probeDetail(held, probes, `two triangulations that keep ${keep} of ${MC_W} columns read 0 against each other at every frame and against the reference on what they carry, yet each has coverage ${coverage} and fails a bound of 1, so neither is accepted; one of them as the reference under that bound is ${asReference?.code}`),
+        '§3 *Independent evidence* (the contract\'s MQ11): two candidates that drop the same art agree perfectly, so pairwise agreement is necessary and never acceptance — each is held to its own art',
+      );
+    });
+
+    // --- MQ57 (the contract's MQ12): a single-bone rigid motion needs no interior vertex to measure zero ------------
+    mcGuard('MQ57', () => {
+      const probes: string[] = [];
+      const report = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'quad', model: rigidQuad }], still()));
+      const c = report.candidates[0];
       const values = localPerFrame(c);
-      if (values.some((p) => p.value !== 0)) probes.push(`${c.id} against the reference reads ${JSON.stringify(values.map((p) => p.value))}; on the art it carries it moves with the reference`);
-    }
-    // And neither can stand in as the reference under the bound the candidates are held to.
-    const asReference = refusalOf(mcInput(three, [{ id: 'two', model: two }], still({ referenceArtFit: strict })));
-    if (asReference?.code !== 'COMPARE_REFERENCE_FAILS') probes.push(`one of them as the reference under coverage 1: ${asReference?.code ?? 'compared'}`);
-    const held = probes.length === 0;
-    say(
-      'MQ56_TWO_CANDIDATES_THAT_DROP_THE_SAME_ART_AGREE_AND_BOTH_FAIL_COVERAGE',
-      held,
-      probeDetail(held, probes, `two triangulations that keep ${keep} of ${MC_W} columns read 0 against each other at every frame and against the reference on what they carry, yet each has coverage ${coverage} and fails a bound of 1, so neither is accepted; one of them as the reference under that bound is ${asReference?.code}`),
-      '§3 *Independent evidence* (the contract\'s MQ11): two candidates that drop the same art agree perfectly, so pairwise agreement is necessary and never acceptance — each is held to its own art',
-    );
-  });
-
-  // --- MQ57 (the contract's MQ12): a single-bone rigid motion needs no interior vertex to measure zero ------------
-  mcGuard('MQ57', () => {
-    const probes: string[] = [];
-    const report = compareMeshesInMotion(mcInput(rigidRef, [{ id: 'quad', model: rigidQuad }], still()));
-    const c = report.candidates[0];
-    const values = localPerFrame(c);
-    if (values.length === 0 || values.some((p) => p.value !== 0)) probes.push(`a four-vertex quad on the one bone the bend turns reads ${JSON.stringify(values.map((p) => p.value))}`);
-    if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
-    if (c.motion?.verdict !== 'pass' || !c.accepted) probes.push(`motion ${c.motion?.verdict}, accepted ${c.accepted} under a bound of 0`);
-    // The same quad split across the two bones is the contrast: the bend is no longer rigid, and it reads.
-    const split = rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
-    if (!(typeof split?.value === 'number' && split.value > 0)) probes.push(`the same quad weighted across both bones reads ${split?.value}; a bend it has no vertex for has to show`);
-    const held = probes.length === 0;
-    say(
-      'MQ57_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO',
-      held,
-      probeDetail(held, probes, `the 4-vertex quad, 0 interior vertices, bound wholly to the bone the bend turns, reads 0 against the ${hullOf(rigidRef)}-vertex reference at all ${values.length} frames; weighted across both bones it reads ${split?.value}`),
-      'the contract\'s MQ12: a rigid motion carries every sample by one transform, so a reduction to the hull alone loses nothing in motion — the row must not penalise vertex count',
-    );
-  });
-
-  // --- MQ58 (the contract's MQ13): a multi-bone bend without interior vertices fails local deformation at the bend frame ---
-  mcGuard('MQ58', () => {
-    const probes: string[] = [];
-    const report = compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still()));
-    const c = report.candidates[0];
-    const row = rowOf(c, 'MQ_LOCAL_DEFORMATION');
-    const walked = c.motion?.schedule.walked ?? [];
-    // The bend is 0 → 60° linearly over the animation, so the furthest bend is the walked frame at the latest time.
-    const bendFrame = walked.filter((f) => f.time !== null).reduce<(typeof walked)[number] | null>((best, f) => (best === null || (f.time ?? 0) > (best.time ?? 0) ? f : best), null);
-    if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
-    if (row?.state !== 'fail' || !(typeof row.value === 'number' && row.value > 0)) probes.push(`local deformation ${row?.value} (${row?.state}) under a bound of 0`);
-    if (row?.worst?.frame?.id !== bendFrame?.id) probes.push(`the worst frame is ${row?.worst?.frame?.id}; the furthest bend is ${bendFrame?.id}`);
-    const atSetup = localPerFrame(c).find((p) => p.frame === 'setup')?.value;
-    if (atSetup !== 0) probes.push(`at setup, before any bend, it reads ${atSetup}`);
-    if (c.accepted) probes.push('a candidate failing local deformation with motion required was accepted');
-    const held = probes.length === 0;
-    say(
-      'MQ58_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME',
-      held,
-      probeDetail(held, probes, `the 4-vertex quad weighted across two bones reads 0 at setup and ${row?.value} world units at ${row?.worst?.frame?.id}, the furthest bend, against a reference with a column at the joint; failed, not accepted`),
-      'the contract\'s MQ13: a bend needs vertices where it bends, and a mesh without them passes every setup bound — only the motion row can see it, and it has to name the frame',
-    );
-  });
-
-  // --- MQ59 (the contract's MQ19, motion half): a reference that fails its own coverage is refused as a reference --
-  mcGuard('MQ59', () => {
-    const probes: string[] = [];
-    const halfAt = MC_W / 2;
-    const half = mcBuild(dir, 'half', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
-    const coverage = r6(halfAt / MC_W);
-    const at = (minCoverage: number): ArtFitBounds => ({ minCoverage, maxOvershoot: MC_W, maxUndercut: MC_W });
-    const r = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(1) })));
-    const want = ['reference "reference"', 'MQ_COVERAGE', `${coverage}`, '>= 1'];
-    if (r?.code !== 'COMPARE_REFERENCE_FAILS' || !want.every((w) => r.message.includes(w))) probes.push(`the half reference under coverage 1: ${r?.code ?? 'compared'} — ${r?.message}`);
-    // At its own coverage it is admitted: the refusal is the bound's, not the mesh's.
-    const atOwn = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(coverage) })));
-    if (atOwn !== null) probes.push(`at its own coverage ${coverage} it was refused: ${atOwn.message}`);
-    // The same mesh as a CANDIDATE under the same bound is measured and reported failing, never refused.
-    const asCandidate = refusalOf(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) })));
-    const reported = asCandidate === null ? compareMeshesInMotion(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) }))).candidates[0] : null;
-    if (asCandidate !== null) probes.push(`as a candidate it was refused: ${asCandidate.message}`);
-    else if (reported?.geometry?.verdict !== 'fail' || reported.accepted) probes.push(`as a candidate: geometry ${reported?.geometry?.verdict}, accepted ${reported?.accepted}`);
-    const held = probes.length === 0;
-    say(
-      'MQ59_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE',
-      held,
-      probeDetail(held, probes, `${r?.message.slice(0, 260)}… — at its own coverage ${coverage} it is admitted, and as a candidate under the same bound it is reported failing, not refused`),
-      'P8 and §3 *Independent evidence* (a), the contract\'s MQ19: a deviation from a reference that does not carry its own art is not evidence, so the reference is gated before anything is compared to it',
-    );
-  });
-
-  // --- MQ60 (the contract's MQ21, motion half): a domain under its floor is not measurable with its count ---------
-  mcGuard('MQ60', () => {
-    const probes: string[] = [];
-    const art = artCount(mask);
-    const hull = hullOf(stillRef);
-    if (hull < 1) probes.push(`the reference states a hull of ${hull}, so there is no hull sample to test the floor against`);
-    const local = (floor: number, regions: CompareAttachment['regions'] = []): MeasureRow[] =>
-      (compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, minArtSamples: floor, regions }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0].motion?.rows ?? []).filter((r) => r.code === 'MQ_LOCAL_DEFORMATION');
-    // The attachment: a floor one above its art. Its hull samples would meet it, and do not count.
-    const under = local(art + 1).find((r) => r.object.region === null);
-    if (under?.state !== 'not-measurable' || under.art?.samples !== art || under.sampling?.count !== art + hull || !under.reason?.includes(`${art} art sample(s)`) || !under.reason.includes(`${art + 1}`)) {
-      probes.push(`a floor of ${art + 1}: ${under?.state}, art ${under?.art?.samples}, sampled ${under?.sampling?.count}, "${under?.reason}"; required not-measurable naming ${art} of ${art + 1}, over ${art + hull} samples`);
-    }
-    const at = local(art).find((r) => r.object.region === null);
-    if (at?.state !== 'pass') probes.push(`at a floor of exactly ${art} the row is ${at?.state}`);
-    // A region: the strip's left end, closed, so the hull's two left vertices lie on it. Counted by the test.
-    const edge = MC_W / 8;
-    const polygon: Array<[number, number]> = [[0, 0], [edge, 0], [edge, MC_H], [0, MC_H]];
-    const inside = (x: number, y: number): boolean => x >= 0 && x <= edge && y >= 0 && y <= MC_H;
-    let regionArt = 0;
-    for (let y = 0; y < MC_H; y++) for (let x = 0; x < MC_W; x++) if (mask.alpha[y * MC_W + x] >= 1 && inside(x + 0.5, y + 0.5)) regionArt++;
-    const g = readModel(stillRef).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
-    let regionHull = 0;
-    if (g !== undefined && g.kind === 'mesh') for (let v = 0; v < hull; v++) if (inside(g.uvs[v * 2] * MC_W, g.uvs[v * 2 + 1] * MC_H)) regionHull++;
-    if (regionHull < 1) probes.push('no hull vertex lies in the region, so the region floor cannot show hull samples not counting');
-    const rows = local(art, [
-      { name: 'under', polygon, minArtSamples: regionArt + 1 },
-      { name: 'at', polygon, minArtSamples: regionArt },
-    ]);
-    const rUnder = rows.find((r) => r.object.region === 'under');
-    const rAt = rows.find((r) => r.object.region === 'at');
-    if (rUnder?.state !== 'not-measurable' || rUnder.art?.samples !== regionArt || rUnder.sampling?.count !== regionArt + regionHull) probes.push(`region floor ${regionArt + 1}: ${rUnder?.state}, art ${rUnder?.art?.samples}, sampled ${rUnder?.sampling?.count}; required not-measurable with ${regionArt} art over ${regionArt + regionHull} samples`);
-    if (rAt?.state !== 'pass' || rAt.art?.samples !== regionArt) probes.push(`region floor ${regionArt}: ${rAt?.state} with ${rAt?.art?.samples} art`);
-    const held = probes.length === 0;
-    say(
-      'MQ60_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT',
-      held,
-      probeDetail(held, probes, `the attachment: ${art} art samples and ${hull} hull samples, a floor of ${art + 1} is not measurable naming ${art} and one of ${art} passes; a region with ${regionArt} art and ${regionHull} hull samples: floor ${regionArt + 1} not measurable, ${regionArt} measured`),
-      'P9, the contract\'s MQ21: a domain under its floor is never a pass over nothing, and the hull UVs are samples of the comparison but not evidence of art, so they never lift a domain over its floor',
-    );
-  });
-
-  // --- MQ61 (the contract's MQ28, motion half): a duplicate candidate id is refused naming both ------------------
-  mcGuard('MQ61', () => {
-    const probes: string[] = [];
-    const twin = refusalOf(mcInput(reference, [{ id: 'twin', model: quad }, { id: 'twin', model: quad }]));
-    if (twin?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[1]', 'candidates[0]', '"twin"'].every((w) => twin.message.includes(w))) probes.push(`two candidates "twin": ${twin?.code ?? 'compared'} — ${twin?.message}`);
-    const asRef = refusalOf(mcInput(reference, [{ id: 'reference', model: quad }]));
-    if (asRef?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[0]', 'that reference has', '"reference"'].every((w) => asRef.message.includes(w))) probes.push(`a candidate with the reference's id: ${asRef?.code ?? 'compared'} — ${asRef?.message}`);
-    const distinct = refusalOf(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }]));
-    if (distinct !== null) probes.push(`two distinct ids were refused: ${distinct.message}`);
-    const held = probes.length === 0;
-    say(
-      'MQ61_A_DUPLICATE_CANDIDATE_ID_IS_REFUSED_NAMING_BOTH',
-      held,
-      probeDetail(held, probes, `${twin?.message.slice(0, 200)}…; a candidate under the reference's id is refused the same way, and the same model under two distinct ids is compared`),
-      'correction 1, the contract\'s MQ28: a report echoes each build by its id, so two builds under one id would be one row nobody can attribute',
-    );
-  });
-
-  // --- MQ62 (the contract's MQ31): local deformation states its sample domain and count; a sample removed lowers it ---
-  mcGuard('MQ62', () => {
-    const probes: string[] = [];
-    const hull = hullOf(stillRef);
-    const rowWith = (m: typeof mask): MeasureRow | undefined => rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, art: { ...compared.art, mask: m } }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
-    const whole = rowWith(mask);
-    const art = artCount(mask);
-    if (whole?.sampling === undefined || whole.sampling.count !== art + hull || !whole.sampling.domain.includes('alpha >= 1') || !whole.sampling.domain.includes('hull')) probes.push(`the row samples ${JSON.stringify(whole?.sampling)}; required the finite domain named (art at alpha >= 1 and the hull's UVs) over ${art} + ${hull}`);
-    if (whole?.art?.samples !== art) probes.push(`art samples ${whole?.art?.samples}; the mask has ${art}`);
-    // One art pixel cleared, inside the strip: one sample fewer, and nothing else about the domain changes.
-    const cleared = new Uint8Array(mask.alpha);
-    cleared[(MC_H / 2) * MC_W + MC_W / 4] = 0;
-    const less = rowWith({ ...mask, alpha: cleared });
-    if (less?.sampling?.count !== (whole?.sampling?.count ?? 0) - 1 || less?.art?.samples !== art - 1 || less.sampling.domain !== whole?.sampling?.domain) probes.push(`one pixel cleared: sampled ${less?.sampling?.count}, art ${less?.art?.samples}; required one fewer of each over the same domain`);
-    const held = probes.length === 0;
-    say(
-      'MQ62_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT',
-      held,
-      probeDetail(held, probes, `"${whole?.sampling?.domain}", ${whole?.sampling?.count} samples (${art} art + ${hull} hull); one art pixel cleared: ${less?.sampling?.count}`),
-      'correction 2, the contract\'s MQ31: a sampled row is a maximum over a finite set it names, never a continuous maximum, and the count is the set\'s — so removing a sample has to show',
-    );
-  });
-
-  // --- MQ63 (the contract's MQ38): candidates differing only in allowlisted inputs are compared; a permitted fold is listed --
-  mcGuard('MQ63', () => {
-    const probes: string[] = [];
-    // The bend taken far enough to turn the quad's first triangle over (b at 170°, the joint 32 px from the far edge),
-    // under a rig that exempts the slot from A39 — and the same rig without the exemption, as the contrast.
-    const far = 170;
-    const foldRef = mcBuild(dir, 'fold-reference', { mesh: mcMesh({ columns: fine }), bend: far, mayFold: true });
-    const foldQuad = mcBuild(dir, 'fold-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far, mayFold: true });
-    const heldRef = mcBuild(dir, 'held-reference', { mesh: mcMesh({ columns: fine }), bend: far });
-    const heldQuad = mcBuild(dir, 'held-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far });
-    // Allowlisted inputs beyond the mesh: atlas layout (the pages) and the Spine file's digest, both moved.
-    const relaid = mcEdit(foldQuad, (doc) => {
-      // The page doubled in each direction and every region moved into its right half: a different packing of the same art.
-      for (const page of doc.pages as Array<{ width: number; height: number; regions: Array<{ x: number }> }>) {
-        for (const region of page.regions) region.x += page.width;
-        page.width *= 2;
-        page.height *= 2;
-      }
-      const spine = doc.spine as Record<string, unknown>;
-      spine.sha256 = '0'.repeat(64);
-    });
-    const loose = { bounds: { maxLocalDeformation: 1e9 } };
-    const refused = refusalOf(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose)));
-    if (refused !== null) probes.push(`the relaid quad was refused: ${refused.message}`);
-    const run = refused === null ? compareMeshesInMotion(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose))) : null;
-    const row = rowOf(run?.candidates[0], 'MQ_INVERSION');
-    const folds = row?.motion?.folds ?? [];
-    const walkedIds = new Set((run?.candidates[0].motion?.schedule.walked ?? []).map((f) => f.id));
-    // The test's own reading of the list: the most folds at one frame is the row's value.
-    const perFrameFolds = new Map<string, number>();
-    for (const f of folds) perFrameFolds.set(f.frame, (perFrameFolds.get(f.frame) ?? 0) + 1);
-    const most = Math.max(0, ...perFrameFolds.values());
-    if (folds.length === 0) probes.push('no fold was listed; the bend was meant to turn a triangle over');
-    if (row?.state !== 'undeclared' || row.bound !== null || row.value !== most || most === 0) probes.push(`the exempt row is ${row?.state}, bound ${JSON.stringify(row?.bound)}, value ${row?.value}; required undeclared, no bound, and the fold count ${most} — never zeroed`);
-    if (folds.some((f) => !walkedIds.has(f.frame))) probes.push(`a fold names a frame the schedule did not walk: ${JSON.stringify(folds)}`);
-    // Without the exemption the same count is held to 0 and fails: the exemption moved the bound and nothing else.
-    const strict = rowOf(compareMeshesInMotion(mcInput(heldRef, [{ id: 'quad', model: heldQuad }], still(loose))).candidates[0], 'MQ_INVERSION');
-    if (strict?.state !== 'fail' || strict.value !== row?.value || strict.motion?.folds !== undefined) probes.push(`without the exemption: ${strict?.state} at ${strict?.value}, folds ${JSON.stringify(strict?.motion?.folds)}; required the same count failing a bound of 0`);
-    const held = probes.length === 0;
-    say(
-      'MQ63_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED',
-      held,
-      probeDetail(held, probes, `a quad with its pages and Spine digest also changed is compared; bent to ${far}° under deformMayFold its inversion row is ${row?.state} at ${row?.value} with ${folds.length} fold(s) listed at ${[...perFrameFolds.keys()].join(', ')}; without the exemption the same ${strict?.value} fails`),
-      'correction 5, the contract\'s MQ38: the allowlist is exactly the mesh, what follows from it and atlas layout, so those may differ and be compared; and an exemption from A39 removes a bound, never the evidence',
-    );
-  });
-
-  // --- MQ64 (#1236): a comparison over a contour-GENERATED build is accepted; the sign flipped on read fails orientation --
-  // ⭐ Every other control here compares authored strips, which the test winds counter-clockwise itself — so the one
-  // input a consumer most often brings, a mesh the `contour` generator built, was never compared. It was refused on
-  // every build: the generator emitted clockwise in Spine world and MQ_ORIENTATION read all of it as flipped (#1236,
-  // found by the install smoke's flag rig). Built here by the tree's compiler from a lozenge of art inside the window.
-  mcGuard('MQ64', () => {
-    const probes: string[] = [];
-    const lozengeMask = mqMask(plates, 'lozenge', MC_W, MC_H, (x, y) => (x >= 6 && x < MC_W - 6 && y >= 3 && y < MC_H - 3 && Math.abs(x - MC_W / 2) / (MC_W / 2 - 6) + Math.abs(y - MC_H / 2) / (MC_H / 2) < 1.4 ? 255 : 0));
-    const lozenge: CompareAttachment = { ...compared, art: { ...compared.art, mask: lozengeMask } };
-    const contour = mcBuild(dir, 'contour', {
-      mesh: { type: 'mesh', image: 'lozenge.png', generator: { kind: 'contour', tolerance: 0.9, margin: 1.2, maxVertices: 32 } },
-      budget: { meshSlots: 1, meshTriangles: 64 },
-    });
-    const input = (candidate: string, id: string): MotionComparisonInput => mcInput(contour, [{ id, model: candidate }], { attachments: [lozenge] });
-    const self = compareMeshesInMotion(input(contour, 'itself'));
-    const orientationOf = (c: MeshQualityReport['candidates'][number] | null | undefined): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION');
-    const refRow = orientationOf(self.reference);
-    const selfRow = orientationOf(self.candidates[0]);
-    const triangles = self.candidates[0].counts?.triangles ?? 0;
-    if (triangles === 0) probes.push('the contour build carries no triangles to read');
-    if (refRow?.value !== 0 || refRow.state !== 'pass') probes.push(`the reference's MQ_ORIENTATION is ${refRow?.state} at ${refRow?.value}; required 0`);
-    if (selfRow?.value !== 0 || selfRow.state !== 'pass') probes.push(`the candidate's MQ_ORIENTATION is ${selfRow?.state} at ${selfRow?.value}; required 0`);
-    if (self.candidates[0].accepted !== true) probes.push(`the contour build against itself is not accepted: geometry ${self.candidates[0].geometry?.verdict}, motion ${self.candidates[0].motion?.verdict}`);
-    // The plant: the sign flipped on read — every triangle's last two corners swapped in the candidate's model document,
-    // which is how the generator's triangles read before #1236. Triangles are allowlisted, so the pair is still compared.
-    const flipped = mcEdit(contour, (doc) => {
-      for (const skin of doc.skins as Array<{ attachments: Record<string, Record<string, { triangles?: number[] }>> }>) {
-        const t = skin.attachments.strip?.strip?.triangles;
-        if (t === undefined) continue;
-        for (let i = 0; i + 2 < t.length; i += 3) [t[i + 1], t[i + 2]] = [t[i + 2], t[i + 1]];
-      }
-    });
-    const plant = compareMeshesInMotion(input(flipped, 'flipped'));
-    const plantRow = orientationOf(plant.candidates[0]);
-    const named = plantRow?.worst?.at.triangle;
-    if (plantRow?.state !== 'fail' || plantRow.value !== triangles || typeof named !== 'number' || named < 0 || named >= triangles) probes.push(`the sign flipped on read: MQ_ORIENTATION ${plantRow?.state} at ${plantRow?.value} naming ${JSON.stringify(plantRow?.worst?.at)}; required fail at ${triangles} naming one of them`);
-    if (plant.candidates[0].accepted !== false) probes.push('the flipped candidate is accepted');
-    const held = probes.length === 0;
-    say(
-      'MQ64_A_COMPARISON_OVER_A_CONTOUR_GENERATED_BUILD_IS_ACCEPTED_AND_THE_SIGN_FLIPPED_ON_READ_FAILS_ORIENTATION_NAMING_THE_TRIANGLE',
-      held,
-      probeDetail(
+      if (values.length === 0 || values.some((p) => p.value !== 0)) probes.push(`a four-vertex quad on the one bone the bend turns reads ${JSON.stringify(values.map((p) => p.value))}`);
+      if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
+      if (c.motion?.verdict !== 'pass' || !c.accepted) probes.push(`motion ${c.motion?.verdict}, accepted ${c.accepted} under a bound of 0`);
+      // The same quad split across the two bones is the contrast: the bend is no longer rigid, and it reads.
+      const split = rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
+      if (!(typeof split?.value === 'number' && split.value > 0)) probes.push(`the same quad weighted across both bones reads ${split?.value}; a bend it has no vertex for has to show`);
+      const held = probes.length === 0;
+      say(
+        'MQ57_A_SINGLE_BONE_RIGID_MOTION_NEEDS_NO_INTERIOR_VERTEX_TO_MEASURE_ZERO',
         held,
-        probes,
-        `a contour-generated build of ${triangles} triangles against itself: MQ_ORIENTATION ${refRow?.value} for the reference and ${selfRow?.value} for the candidate, accepted ${self.candidates[0].accepted}; ` +
-          `its triangles read with the sign flipped: MQ_ORIENTATION ${plantRow?.value} of ${triangles}, fail, naming triangle ${named}, accepted ${plant.candidates[0].accepted}`,
-      ),
-      '#1236: MQ_ORIENTATION holds a source counter-clockwise in Spine world, so a generated build has to arrive that way or no comparison over it can ever be accepted, and a sign read the other way has to be named',
-    );
-  });
+        probeDetail(held, probes, `the 4-vertex quad, 0 interior vertices, bound wholly to the bone the bend turns, reads 0 against the ${hullOf(rigidRef)}-vertex reference at all ${values.length} frames; weighted across both bones it reads ${split?.value}`),
+        'the contract\'s MQ12: a rigid motion carries every sample by one transform, so a reduction to the hull alone loses nothing in motion — the row must not penalise vertex count',
+      );
+    });
 
-  // --- MQ74 (#1254): referenceArtFit and candidateArtFit read a distance bound declared null as mesh-quality does ---
-  mcGuard('MQ74', () => {
-    const probes: string[] = [];
-    const halfAt = MC_W / 2;
-    const half = mcBuild(dir, 'half-null', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
-    const coverage = r6(halfAt / MC_W);
-    const absent: ArtFitBounds = { minCoverage: coverage, maxOvershoot: null, maxUndercut: null };
-    // As the reference: admitted under the nulls, its undercut measured and undeclared; at 0 refused naming the row.
-    const asRef = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: absent })));
-    if (asRef !== null) probes.push(`the half reference under null distances was refused: ${asRef.code} — ${asRef.message}`);
-    const zero = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: { ...absent, maxUndercut: 0 } })));
-    if (zero?.code !== 'COMPARE_REFERENCE_FAILS' || !zero.message.includes('MQ_UNDERCUT')) probes.push(`the half reference under maxUndercut 0: ${zero?.code ?? 'compared'} — ${zero?.message}; required COMPARE_REFERENCE_FAILS naming MQ_UNDERCUT, so the null is what admitted it`);
-    // As a candidate: the row undeclared with its value, the geometry verdict decided by the rows still required.
-    const report = asRef === null ? compareMeshesInMotion(mcInput(half, [{ id: 'half', model: half }], still({ referenceArtFit: absent, candidateArtFit: absent }))) : null;
-    const undercut = report?.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_UNDERCUT');
-    if (undercut?.state !== 'undeclared' || undercut.bound !== null || !((undercut.value ?? 0) > 0)) probes.push(`the candidate's MQ_UNDERCUT is ${undercut?.state} at ${undercut?.value} (bound ${JSON.stringify(undercut?.bound)}); required undeclared with a value above 0`);
-    if (report !== null && report.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the candidate's geometry verdict is ${report.candidates[0]?.geometry?.verdict}; required pass on the rows still required`);
-    const e = report?.effective;
-    if (e?.referenceArtFit?.maxUndercut !== null || e.candidateArtFit?.maxUndercut !== null || e.referenceArtFit.maxOvershoot !== null || e.candidateArtFit.maxOvershoot !== null) probes.push(`effective referenceArtFit ${JSON.stringify(e?.referenceArtFit)} and candidateArtFit ${JSON.stringify(e?.candidateArtFit)} do not echo null`);
-    // A field left out is not a null.
-    const leftOut: Record<string, unknown> = { ...absent };
-    delete leftOut.maxUndercut;
-    const missing = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ candidateArtFit: leftOut as unknown as ArtFitBounds })));
-    if (missing?.code !== 'COMPARE_INPUT_MISSING' || !missing.message.includes('candidateArtFit')) probes.push(`candidateArtFit with maxUndercut left out: ${missing?.code ?? 'compared'} — ${missing?.message}; required COMPARE_INPUT_MISSING naming candidateArtFit`);
-    const held = probes.length === 0;
-    say(
-      'MQ74_A_COMPARISON_READS_A_DISTANCE_BOUND_DECLARED_NULL_AS_UNDECLARED_ADMITS_THE_REFERENCE_AND_REFUSES_IT_AT_0',
-      held,
-      probeDetail(
+    // --- MQ58 (the contract's MQ13): a multi-bone bend without interior vertices fails local deformation at the bend frame ---
+    mcGuard('MQ58', () => {
+      const probes: string[] = [];
+      const report = compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still()));
+      const c = report.candidates[0];
+      const row = rowOf(c, 'MQ_LOCAL_DEFORMATION');
+      const walked = c.motion?.schedule.walked ?? [];
+      // The bend is 0 → 60° linearly over the animation, so the furthest bend is the walked frame at the latest time.
+      const bendFrame = walked.filter((f) => f.time !== null).reduce<(typeof walked)[number] | null>((best, f) => (best === null || (f.time ?? 0) > (best.time ?? 0) ? f : best), null);
+      if (c.counts?.interiorVertices !== 0) probes.push(`the quad has ${c.counts?.interiorVertices} interior vertices`);
+      if (row?.state !== 'fail' || !(typeof row.value === 'number' && row.value > 0)) probes.push(`local deformation ${row?.value} (${row?.state}) under a bound of 0`);
+      if (row?.worst?.frame?.id !== bendFrame?.id) probes.push(`the worst frame is ${row?.worst?.frame?.id}; the furthest bend is ${bendFrame?.id}`);
+      const atSetup = localPerFrame(c).find((p) => p.frame === 'setup')?.value;
+      if (atSetup !== 0) probes.push(`at setup, before any bend, it reads ${atSetup}`);
+      if (c.accepted) probes.push('a candidate failing local deformation with motion required was accepted');
+      const held = probes.length === 0;
+      say(
+        'MQ58_A_MULTI_BONE_BEND_WITHOUT_INTERIOR_VERTICES_FAILS_LOCAL_DEFORMATION_AT_THE_BEND_FRAME',
         held,
-        probes,
-        `the half-strip reference under coverage ${coverage} and null distances: admitted; at maxUndercut 0: ${zero?.code}; as a candidate: MQ_UNDERCUT ${undercut?.state} ${undercut?.value}, geometry ${report?.candidates[0]?.geometry?.verdict}; effective settings echo null; a field left out: ${missing?.code}`,
-      ),
-      'issue #1254: ArtFitBounds is one type, so the comparison reads its declared absence as the measurement and the reduction do — measured, undeclared, never refusing a reference — and an omitted field stays refused',
-    );
+        probeDetail(held, probes, `the 4-vertex quad weighted across two bones reads 0 at setup and ${row?.value} world units at ${row?.worst?.frame?.id}, the furthest bend, against a reference with a column at the joint; failed, not accepted`),
+        'the contract\'s MQ13: a bend needs vertices where it bends, and a mesh without them passes every setup bound — only the motion row can see it, and it has to name the frame',
+      );
+    });
+
+    // --- MQ59 (the contract's MQ19, motion half): a reference that fails its own coverage is refused as a reference --
+    mcGuard('MQ59', () => {
+      const probes: string[] = [];
+      const halfAt = MC_W / 2;
+      const half = mcBuild(dir, 'half', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
+      const coverage = r6(halfAt / MC_W);
+      const at = (minCoverage: number): ArtFitBounds => ({ minCoverage, maxOvershoot: MC_W, maxUndercut: MC_W });
+      const r = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(1) })));
+      const want = ['reference "reference"', 'MQ_COVERAGE', `${coverage}`, '>= 1'];
+      if (r?.code !== 'COMPARE_REFERENCE_FAILS' || !want.every((w) => r.message.includes(w))) probes.push(`the half reference under coverage 1: ${r?.code ?? 'compared'} — ${r?.message}`);
+      // At its own coverage it is admitted: the refusal is the bound's, not the mesh's.
+      const atOwn = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: at(coverage) })));
+      if (atOwn !== null) probes.push(`at its own coverage ${coverage} it was refused: ${atOwn.message}`);
+      // The same mesh as a CANDIDATE under the same bound is measured and reported failing, never refused.
+      const asCandidate = refusalOf(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) })));
+      const reported = asCandidate === null ? compareMeshesInMotion(mcInput(stillRef, [{ id: 'half', model: half }], still({ candidateArtFit: at(1) }))).candidates[0] : null;
+      if (asCandidate !== null) probes.push(`as a candidate it was refused: ${asCandidate.message}`);
+      else if (reported?.geometry?.verdict !== 'fail' || reported.accepted) probes.push(`as a candidate: geometry ${reported?.geometry?.verdict}, accepted ${reported?.accepted}`);
+      const held = probes.length === 0;
+      say(
+        'MQ59_A_REFERENCE_THAT_FAILS_ITS_OWN_COVERAGE_IS_REFUSED_AS_A_REFERENCE',
+        held,
+        probeDetail(held, probes, `${r?.message.slice(0, 260)}… — at its own coverage ${coverage} it is admitted, and as a candidate under the same bound it is reported failing, not refused`),
+        'P8 and §3 *Independent evidence* (a), the contract\'s MQ19: a deviation from a reference that does not carry its own art is not evidence, so the reference is gated before anything is compared to it',
+      );
+    });
+
+    // --- MQ60 (the contract's MQ21, motion half): a domain under its floor is not measurable with its count ---------
+    mcGuard('MQ60', () => {
+      const probes: string[] = [];
+      const art = artCount(mask);
+      const hull = hullOf(stillRef);
+      if (hull < 1) probes.push(`the reference states a hull of ${hull}, so there is no hull sample to test the floor against`);
+      const local = (floor: number, regions: CompareAttachment['regions'] = []): MeasureRow[] =>
+        (compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, minArtSamples: floor, regions }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0].motion?.rows ?? []).filter((r) => r.code === 'MQ_LOCAL_DEFORMATION');
+      // The attachment: a floor one above its art. Its hull samples would meet it, and do not count.
+      const under = local(art + 1).find((r) => r.object.region === null);
+      if (under?.state !== 'not-measurable' || under.art?.samples !== art || under.sampling?.count !== art + hull || !under.reason?.includes(`${art} art sample(s)`) || !under.reason.includes(`${art + 1}`)) {
+        probes.push(`a floor of ${art + 1}: ${under?.state}, art ${under?.art?.samples}, sampled ${under?.sampling?.count}, "${under?.reason}"; required not-measurable naming ${art} of ${art + 1}, over ${art + hull} samples`);
+      }
+      const at = local(art).find((r) => r.object.region === null);
+      if (at?.state !== 'pass') probes.push(`at a floor of exactly ${art} the row is ${at?.state}`);
+      // A region: the strip's left end, closed, so the hull's two left vertices lie on it. Counted by the test.
+      const edge = MC_W / 8;
+      const polygon: Array<[number, number]> = [[0, 0], [edge, 0], [edge, MC_H], [0, MC_H]];
+      const inside = (x: number, y: number): boolean => x >= 0 && x <= edge && y >= 0 && y <= MC_H;
+      let regionArt = 0;
+      for (let y = 0; y < MC_H; y++) for (let x = 0; x < MC_W; x++) if (mask.alpha[y * MC_W + x] >= 1 && inside(x + 0.5, y + 0.5)) regionArt++;
+      const g = readModel(stillRef).skins.find((k) => k.name === 'default')?.attachments.strip?.strip?.geometry;
+      let regionHull = 0;
+      if (g !== undefined && g.kind === 'mesh') for (let v = 0; v < hull; v++) if (inside(g.uvs[v * 2] * MC_W, g.uvs[v * 2 + 1] * MC_H)) regionHull++;
+      if (regionHull < 1) probes.push('no hull vertex lies in the region, so the region floor cannot show hull samples not counting');
+      const rows = local(art, [
+        { name: 'under', polygon, minArtSamples: regionArt + 1 },
+        { name: 'at', polygon, minArtSamples: regionArt },
+      ]);
+      const rUnder = rows.find((r) => r.object.region === 'under');
+      const rAt = rows.find((r) => r.object.region === 'at');
+      if (rUnder?.state !== 'not-measurable' || rUnder.art?.samples !== regionArt || rUnder.sampling?.count !== regionArt + regionHull) probes.push(`region floor ${regionArt + 1}: ${rUnder?.state}, art ${rUnder?.art?.samples}, sampled ${rUnder?.sampling?.count}; required not-measurable with ${regionArt} art over ${regionArt + regionHull} samples`);
+      if (rAt?.state !== 'pass' || rAt.art?.samples !== regionArt) probes.push(`region floor ${regionArt}: ${rAt?.state} with ${rAt?.art?.samples} art`);
+      const held = probes.length === 0;
+      say(
+        'MQ60_A_DOMAIN_UNDER_ITS_SAMPLE_FLOOR_IS_NOT_MEASURABLE_WITH_ITS_COUNT_AND_HULL_SAMPLES_DO_NOT_RAISE_IT',
+        held,
+        probeDetail(held, probes, `the attachment: ${art} art samples and ${hull} hull samples, a floor of ${art + 1} is not measurable naming ${art} and one of ${art} passes; a region with ${regionArt} art and ${regionHull} hull samples: floor ${regionArt + 1} not measurable, ${regionArt} measured`),
+        'P9, the contract\'s MQ21: a domain under its floor is never a pass over nothing, and the hull UVs are samples of the comparison but not evidence of art, so they never lift a domain over its floor',
+      );
+    });
+
+    // --- MQ61 (the contract's MQ28, motion half): a duplicate candidate id is refused naming both ------------------
+    mcGuard('MQ61', () => {
+      const probes: string[] = [];
+      const twin = refusalOf(mcInput(reference, [{ id: 'twin', model: quad }, { id: 'twin', model: quad }]));
+      if (twin?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[1]', 'candidates[0]', '"twin"'].every((w) => twin.message.includes(w))) probes.push(`two candidates "twin": ${twin?.code ?? 'compared'} — ${twin?.message}`);
+      const asRef = refusalOf(mcInput(reference, [{ id: 'reference', model: quad }]));
+      if (asRef?.code !== 'COMPARE_INPUT_MISSING' || !['candidates[0]', 'that reference has', '"reference"'].every((w) => asRef.message.includes(w))) probes.push(`a candidate with the reference's id: ${asRef?.code ?? 'compared'} — ${asRef?.message}`);
+      const distinct = refusalOf(mcInput(reference, [{ id: 'first', model: quad }, { id: 'second', model: quad }]));
+      if (distinct !== null) probes.push(`two distinct ids were refused: ${distinct.message}`);
+      const held = probes.length === 0;
+      say(
+        'MQ61_A_DUPLICATE_CANDIDATE_ID_IS_REFUSED_NAMING_BOTH',
+        held,
+        probeDetail(held, probes, `${twin?.message.slice(0, 200)}…; a candidate under the reference's id is refused the same way, and the same model under two distinct ids is compared`),
+        'correction 1, the contract\'s MQ28: a report echoes each build by its id, so two builds under one id would be one row nobody can attribute',
+      );
+    });
+
+    // --- MQ62 (the contract's MQ31): local deformation states its sample domain and count; a sample removed lowers it ---
+    mcGuard('MQ62', () => {
+      const probes: string[] = [];
+      const hull = hullOf(stillRef);
+      const rowWith = (m: typeof mask): MeasureRow | undefined => rowOf(compareMeshesInMotion(mcInput(stillRef, [{ id: 'quad', model: stillQuad }], still({ attachments: [{ ...compared, art: { ...compared.art, mask: m } }], bounds: { maxLocalDeformation: 1e9 } }))).candidates[0], 'MQ_LOCAL_DEFORMATION');
+      const whole = rowWith(mask);
+      const art = artCount(mask);
+      if (whole?.sampling === undefined || whole.sampling.count !== art + hull || !whole.sampling.domain.includes('alpha >= 1') || !whole.sampling.domain.includes('hull')) probes.push(`the row samples ${JSON.stringify(whole?.sampling)}; required the finite domain named (art at alpha >= 1 and the hull's UVs) over ${art} + ${hull}`);
+      if (whole?.art?.samples !== art) probes.push(`art samples ${whole?.art?.samples}; the mask has ${art}`);
+      // One art pixel cleared, inside the strip: one sample fewer, and nothing else about the domain changes.
+      const cleared = new Uint8Array(mask.alpha);
+      cleared[(MC_H / 2) * MC_W + MC_W / 4] = 0;
+      const less = rowWith({ ...mask, alpha: cleared });
+      if (less?.sampling?.count !== (whole?.sampling?.count ?? 0) - 1 || less?.art?.samples !== art - 1 || less.sampling.domain !== whole?.sampling?.domain) probes.push(`one pixel cleared: sampled ${less?.sampling?.count}, art ${less?.art?.samples}; required one fewer of each over the same domain`);
+      const held = probes.length === 0;
+      say(
+        'MQ62_LOCAL_DEFORMATION_STATES_ITS_SAMPLE_DOMAIN_AND_COUNT_AND_A_SAMPLE_REMOVED_LOWERS_THE_COUNT',
+        held,
+        probeDetail(held, probes, `"${whole?.sampling?.domain}", ${whole?.sampling?.count} samples (${art} art + ${hull} hull); one art pixel cleared: ${less?.sampling?.count}`),
+        'correction 2, the contract\'s MQ31: a sampled row is a maximum over a finite set it names, never a continuous maximum, and the count is the set\'s — so removing a sample has to show',
+      );
+    });
+
+    // --- MQ63 (the contract's MQ38): candidates differing only in allowlisted inputs are compared; a permitted fold is listed --
+    mcGuard('MQ63', () => {
+      const probes: string[] = [];
+      // The bend taken far enough to turn the quad's first triangle over (b at 170°, the joint 32 px from the far edge),
+      // under a rig that exempts the slot from A39 — and the same rig without the exemption, as the contrast.
+      const far = 170;
+      const foldRef = mcBuild(dir, 'fold-reference', { mesh: mcMesh({ columns: fine }), bend: far, mayFold: true });
+      const foldQuad = mcBuild(dir, 'fold-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far, mayFold: true });
+      const heldRef = mcBuild(dir, 'held-reference', { mesh: mcMesh({ columns: fine }), bend: far });
+      const heldQuad = mcBuild(dir, 'held-quad', { mesh: mcMesh({ columns: [0, MC_W] }), bend: far });
+      // Allowlisted inputs beyond the mesh: atlas layout (the pages) and the Spine file's digest, both moved.
+      const relaid = mcEdit(foldQuad, (doc) => {
+        // The page doubled in each direction and every region moved into its right half: a different packing of the same art.
+        for (const page of doc.pages as Array<{ width: number; height: number; regions: Array<{ x: number }> }>) {
+          for (const region of page.regions) region.x += page.width;
+          page.width *= 2;
+          page.height *= 2;
+        }
+        const spine = doc.spine as Record<string, unknown>;
+        spine.sha256 = '0'.repeat(64);
+      });
+      const loose = { bounds: { maxLocalDeformation: 1e9 } };
+      const refused = refusalOf(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose)));
+      if (refused !== null) probes.push(`the relaid quad was refused: ${refused.message}`);
+      const run = refused === null ? compareMeshesInMotion(mcInput(foldRef, [{ id: 'relaid', model: relaid }], still(loose))) : null;
+      const row = rowOf(run?.candidates[0], 'MQ_INVERSION');
+      const folds = row?.motion?.folds ?? [];
+      const walkedIds = new Set((run?.candidates[0].motion?.schedule.walked ?? []).map((f) => f.id));
+      // The test's own reading of the list: the most folds at one frame is the row's value.
+      const perFrameFolds = new Map<string, number>();
+      for (const f of folds) perFrameFolds.set(f.frame, (perFrameFolds.get(f.frame) ?? 0) + 1);
+      const most = Math.max(0, ...perFrameFolds.values());
+      if (folds.length === 0) probes.push('no fold was listed; the bend was meant to turn a triangle over');
+      if (row?.state !== 'undeclared' || row.bound !== null || row.value !== most || most === 0) probes.push(`the exempt row is ${row?.state}, bound ${JSON.stringify(row?.bound)}, value ${row?.value}; required undeclared, no bound, and the fold count ${most} — never zeroed`);
+      if (folds.some((f) => !walkedIds.has(f.frame))) probes.push(`a fold names a frame the schedule did not walk: ${JSON.stringify(folds)}`);
+      // Without the exemption the same count is held to 0 and fails: the exemption moved the bound and nothing else.
+      const strict = rowOf(compareMeshesInMotion(mcInput(heldRef, [{ id: 'quad', model: heldQuad }], still(loose))).candidates[0], 'MQ_INVERSION');
+      if (strict?.state !== 'fail' || strict.value !== row?.value || strict.motion?.folds !== undefined) probes.push(`without the exemption: ${strict?.state} at ${strict?.value}, folds ${JSON.stringify(strict?.motion?.folds)}; required the same count failing a bound of 0`);
+      const held = probes.length === 0;
+      say(
+        'MQ63_CONTROL_CANDIDATES_DIFFERING_ONLY_IN_ALLOWLISTED_INPUTS_ARE_COMPARED_AND_A_PERMITTED_FOLD_IS_LISTED_NOT_ZEROED',
+        held,
+        probeDetail(held, probes, `a quad with its pages and Spine digest also changed is compared; bent to ${far}° under deformMayFold its inversion row is ${row?.state} at ${row?.value} with ${folds.length} fold(s) listed at ${[...perFrameFolds.keys()].join(', ')}; without the exemption the same ${strict?.value} fails`),
+        'correction 5, the contract\'s MQ38: the allowlist is exactly the mesh, what follows from it and atlas layout, so those may differ and be compared; and an exemption from A39 removes a bound, never the evidence',
+      );
+    });
+
+    // --- MQ64 (#1236): a comparison over a contour-GENERATED build is accepted; the sign flipped on read fails orientation --
+    // ⭐ Every other control here compares authored strips, which the test winds counter-clockwise itself — so the one
+    // input a consumer most often brings, a mesh the `contour` generator built, was never compared. It was refused on
+    // every build: the generator emitted clockwise in Spine world and MQ_ORIENTATION read all of it as flipped (#1236,
+    // found by the install smoke's flag rig). Built here by the tree's compiler from a lozenge of art inside the window.
+    mcGuard('MQ64', () => {
+      const probes: string[] = [];
+      const lozengeMask = mqMask(plates, 'lozenge', MC_W, MC_H, (x, y) => (x >= 6 && x < MC_W - 6 && y >= 3 && y < MC_H - 3 && Math.abs(x - MC_W / 2) / (MC_W / 2 - 6) + Math.abs(y - MC_H / 2) / (MC_H / 2) < 1.4 ? 255 : 0));
+      const lozenge: CompareAttachment = { ...compared, art: { ...compared.art, mask: lozengeMask } };
+      const contour = mcBuild(dir, 'contour', {
+        mesh: { type: 'mesh', image: 'lozenge.png', generator: { kind: 'contour', tolerance: 0.9, margin: 1.2, maxVertices: 32 } },
+        budget: { meshSlots: 1, meshTriangles: 64 },
+      });
+      const input = (candidate: string, id: string): MotionComparisonInput => mcInput(contour, [{ id, model: candidate }], { attachments: [lozenge] });
+      const self = compareMeshesInMotion(input(contour, 'itself'));
+      const orientationOf = (c: MeshQualityReport['candidates'][number] | null | undefined): MeasureRow | undefined => c?.geometry?.rows.find((r) => r.code === 'MQ_ORIENTATION');
+      const refRow = orientationOf(self.reference);
+      const selfRow = orientationOf(self.candidates[0]);
+      const triangles = self.candidates[0].counts?.triangles ?? 0;
+      if (triangles === 0) probes.push('the contour build carries no triangles to read');
+      if (refRow?.value !== 0 || refRow.state !== 'pass') probes.push(`the reference's MQ_ORIENTATION is ${refRow?.state} at ${refRow?.value}; required 0`);
+      if (selfRow?.value !== 0 || selfRow.state !== 'pass') probes.push(`the candidate's MQ_ORIENTATION is ${selfRow?.state} at ${selfRow?.value}; required 0`);
+      if (self.candidates[0].accepted !== true) probes.push(`the contour build against itself is not accepted: geometry ${self.candidates[0].geometry?.verdict}, motion ${self.candidates[0].motion?.verdict}`);
+      // The plant: the sign flipped on read — every triangle's last two corners swapped in the candidate's model document,
+      // which is how the generator's triangles read before #1236. Triangles are allowlisted, so the pair is still compared.
+      const flipped = mcEdit(contour, (doc) => {
+        for (const skin of doc.skins as Array<{ attachments: Record<string, Record<string, { triangles?: number[] }>> }>) {
+          const t = skin.attachments.strip?.strip?.triangles;
+          if (t === undefined) continue;
+          for (let i = 0; i + 2 < t.length; i += 3) [t[i + 1], t[i + 2]] = [t[i + 2], t[i + 1]];
+        }
+      });
+      const plant = compareMeshesInMotion(input(flipped, 'flipped'));
+      const plantRow = orientationOf(plant.candidates[0]);
+      const named = plantRow?.worst?.at.triangle;
+      if (plantRow?.state !== 'fail' || plantRow.value !== triangles || typeof named !== 'number' || named < 0 || named >= triangles) probes.push(`the sign flipped on read: MQ_ORIENTATION ${plantRow?.state} at ${plantRow?.value} naming ${JSON.stringify(plantRow?.worst?.at)}; required fail at ${triangles} naming one of them`);
+      if (plant.candidates[0].accepted !== false) probes.push('the flipped candidate is accepted');
+      const held = probes.length === 0;
+      say(
+        'MQ64_A_COMPARISON_OVER_A_CONTOUR_GENERATED_BUILD_IS_ACCEPTED_AND_THE_SIGN_FLIPPED_ON_READ_FAILS_ORIENTATION_NAMING_THE_TRIANGLE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `a contour-generated build of ${triangles} triangles against itself: MQ_ORIENTATION ${refRow?.value} for the reference and ${selfRow?.value} for the candidate, accepted ${self.candidates[0].accepted}; ` +
+            `its triangles read with the sign flipped: MQ_ORIENTATION ${plantRow?.value} of ${triangles}, fail, naming triangle ${named}, accepted ${plant.candidates[0].accepted}`,
+        ),
+        '#1236: MQ_ORIENTATION holds a source counter-clockwise in Spine world, so a generated build has to arrive that way or no comparison over it can ever be accepted, and a sign read the other way has to be named',
+      );
+    });
+
+    // --- MQ74 (#1254): referenceArtFit and candidateArtFit read a distance bound declared null as mesh-quality does ---
+    mcGuard('MQ74', () => {
+      const probes: string[] = [];
+      const halfAt = MC_W / 2;
+      const half = mcBuild(dir, 'half-null', { mesh: mcMesh({ columns: [0, halfAt / 2, halfAt] }) });
+      const coverage = r6(halfAt / MC_W);
+      const absent: ArtFitBounds = { minCoverage: coverage, maxOvershoot: null, maxUndercut: null };
+      // As the reference: admitted under the nulls, its undercut measured and undeclared; at 0 refused naming the row.
+      const asRef = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: absent })));
+      if (asRef !== null) probes.push(`the half reference under null distances was refused: ${asRef.code} — ${asRef.message}`);
+      const zero = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ referenceArtFit: { ...absent, maxUndercut: 0 } })));
+      if (zero?.code !== 'COMPARE_REFERENCE_FAILS' || !zero.message.includes('MQ_UNDERCUT')) probes.push(`the half reference under maxUndercut 0: ${zero?.code ?? 'compared'} — ${zero?.message}; required COMPARE_REFERENCE_FAILS naming MQ_UNDERCUT, so the null is what admitted it`);
+      // As a candidate: the row undeclared with its value, the geometry verdict decided by the rows still required.
+      const report = asRef === null ? compareMeshesInMotion(mcInput(half, [{ id: 'half', model: half }], still({ referenceArtFit: absent, candidateArtFit: absent }))) : null;
+      const undercut = report?.candidates[0]?.geometry?.rows.find((r) => r.code === 'MQ_UNDERCUT');
+      if (undercut?.state !== 'undeclared' || undercut.bound !== null || !((undercut.value ?? 0) > 0)) probes.push(`the candidate's MQ_UNDERCUT is ${undercut?.state} at ${undercut?.value} (bound ${JSON.stringify(undercut?.bound)}); required undeclared with a value above 0`);
+      if (report !== null && report.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the candidate's geometry verdict is ${report.candidates[0]?.geometry?.verdict}; required pass on the rows still required`);
+      const e = report?.effective;
+      if (e?.referenceArtFit?.maxUndercut !== null || e.candidateArtFit?.maxUndercut !== null || e.referenceArtFit.maxOvershoot !== null || e.candidateArtFit.maxOvershoot !== null) probes.push(`effective referenceArtFit ${JSON.stringify(e?.referenceArtFit)} and candidateArtFit ${JSON.stringify(e?.candidateArtFit)} do not echo null`);
+      // A field left out is not a null.
+      const leftOut: Record<string, unknown> = { ...absent };
+      delete leftOut.maxUndercut;
+      const missing = refusalOf(mcInput(half, [{ id: 'quad', model: stillQuad }], still({ candidateArtFit: leftOut as unknown as ArtFitBounds })));
+      if (missing?.code !== 'COMPARE_INPUT_MISSING' || !missing.message.includes('candidateArtFit')) probes.push(`candidateArtFit with maxUndercut left out: ${missing?.code ?? 'compared'} — ${missing?.message}; required COMPARE_INPUT_MISSING naming candidateArtFit`);
+      const held = probes.length === 0;
+      say(
+        'MQ74_A_COMPARISON_READS_A_DISTANCE_BOUND_DECLARED_NULL_AS_UNDECLARED_ADMITS_THE_REFERENCE_AND_REFUSES_IT_AT_0',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the half-strip reference under coverage ${coverage} and null distances: admitted; at maxUndercut 0: ${zero?.code}; as a candidate: MQ_UNDERCUT ${undercut?.state} ${undercut?.value}, geometry ${report?.candidates[0]?.geometry?.verdict}; effective settings echo null; a field left out: ${missing?.code}`,
+        ),
+        'issue #1254: ArtFitBounds is one type, so the comparison reads its declared absence as the measurement and the reduction do — measured, undeclared, never refusing a reference — and an omitted field stays refused',
+      );
+    });
   });
 
   // --- MQ79 / MQ80 (#1266): a static reduction that fails motion, a less-reduced control that passes, four outcomes ---
@@ -50009,117 +50298,126 @@ function runMeshCompareSuite(): number {
     }
     return most;
   })();
+  // The ramp's reduction over rasters made once (MQ97 onwards): an unplanted, unobserved run goes through the memo
+  // (issue #1300); `mvFresh` is the same call around it, for a control whose claim is that a second run writes one text.
+  const mvRasters = artRastersOf(mvReduceInput(mvSrc).art);
+  const mvFresh = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): ReturnType<typeof reduceMeshWith> =>
+    reduceMeshWith(mvReduceInput(mvSrc, over), mvRasters, stepRastersOf(mvRasters), plant, observe);
+  const mvReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): ReturnType<typeof reduceMeshWith> =>
+    plant === null && observe === null ? memo.run(meshCompareMemoKey('reduceMeshWith', mvReduceInput(mvSrc, over)), reductionBytes, () => mvFresh(over)) : mvFresh(over, plant, observe);
 
-  mcGuard('MQ79', () => {
-    const probes: string[] = [];
-    const source = mvBuild(dir, 'mv-source', mvSrc);
-    // (i) the strict static reduction: every interior vertex removed, every static bound held, a local stop.
-    const strict = reduceMesh(mvReduceInput(mvSrc));
-    const sc = strict.report.sourceCounts;
-    const rc = strict.report.candidates[0];
-    if (sc === null || sc.interiorVertices === 0) probes.push(`the source has ${sc?.interiorVertices} interior vertices; the reproducer needs some`);
-    if (strict.mesh === null || !rc.accepted || rc.counts?.interiorVertices !== 0) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${rc.accepted}, ${mvCounts(rc)}; required every interior vertex removed and every static bound held`);
-    if (strict.report.termination?.reason !== 'no-further-valid-reduction') probes.push(`the strict reduction ended ${JSON.stringify(strict.report.termination)}; required no-further-valid-reduction`);
-    const tried = strict.report.termination !== null && 'candidatesTried' in strict.report.termination ? strict.report.termination.candidatesTried : 0;
-    // (iii) two less-reduced candidates, each derived without posing: (a) weightJump just above the source's largest edge
-    // jump, so condition (a) protects no edge and condition (b) refuses only an edge spanning more than one ramp step;
-    // (b) the same strict order cut at half its candidates — a prefix of the run (i) made.
-    const jump = r6(mvEdgeJump * 1.5);
-    const guarded = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, weightJump: jump } }));
-    const half = Math.floor(tried / 2);
-    const prefix = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: half } }));
-    for (const [label, r] of [['weightJump', guarded], ['prefix', prefix]] as const) {
-      const c = r.report.candidates[0];
-      if (r.mesh === null || !c.accepted) probes.push(`the ${label} candidate: mesh ${r.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every static bound held`);
-      if (!(mvVertices(r.mesh) < mvSrc.points.length && mvVertices(r.mesh) > mvVertices(strict.mesh))) probes.push(`the ${label} candidate keeps ${mvVertices(r.mesh)} vertices; required fewer than the source's ${mvSrc.points.length} and more than the strict result's ${mvVertices(strict.mesh)}`);
-    }
-    if (prefix.report.termination?.reason !== 'budget-exhausted' || prefix.report.termination.result !== 'best-meeting-every-bound') probes.push(`the prefix ended ${JSON.stringify(prefix.report.termination)}; required budget-exhausted, best-meeting-every-bound`);
-    // (ii) the motion row over the isolated bend: the strict result refused, both less-reduced candidates within 1 px.
-    const report = strict.mesh !== null && guarded.mesh !== null && prefix.mesh !== null
-      ? mvCompare(source, [
-          { id: 'strict', model: mvBuild(dir, 'mv-strict', strict.mesh) },
-          { id: 'weight-jump', model: mvBuild(dir, 'mv-weight-jump', guarded.mesh) },
-          { id: 'prefix', model: mvBuild(dir, 'mv-prefix', prefix.mesh) },
-        ], 1)
-      : null;
-    const [s, g, p] = [0, 1, 2].map((i) => (report === null ? undefined : mvLocal(report, i)));
-    if (report !== null) {
-      if (report.candidates[0].geometry?.verdict !== 'pass') probes.push(`the strict result's setup art fit is ${report.candidates[0].geometry?.verdict}; the gap is only a gap if it passes`);
-      if (s?.state !== 'fail' || !((s.value ?? 0) > 1) || report.candidates[0].accepted) probes.push(`the strict result in motion: ${mvSaid(s)}, accepted ${report.candidates[0].accepted}; required MQ_LOCAL_DEFORMATION above 1 and not accepted`);
-      for (const [i, row] of [[1, g], [2, p]] as const) {
-        const c = report.candidates[i];
-        if (row?.state !== 'pass' || !c.accepted) probes.push(`${c.id} in motion: ${mvSaid(row)}, accepted ${c.accepted}; required within 1 and accepted`);
+  unit('MQ79-MQ80', () => {
+    mcGuard('MQ79', () => {
+      const probes: string[] = [];
+      const source = mvBuild(dir, 'mv-source', mvSrc);
+      // (i) the strict static reduction: every interior vertex removed, every static bound held, a local stop.
+      const strict = memoReduceMesh(mvReduceInput(mvSrc));
+      const sc = strict.report.sourceCounts;
+      const rc = strict.report.candidates[0];
+      if (sc === null || sc.interiorVertices === 0) probes.push(`the source has ${sc?.interiorVertices} interior vertices; the reproducer needs some`);
+      if (strict.mesh === null || !rc.accepted || rc.counts?.interiorVertices !== 0) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${rc.accepted}, ${mvCounts(rc)}; required every interior vertex removed and every static bound held`);
+      if (strict.report.termination?.reason !== 'no-further-valid-reduction') probes.push(`the strict reduction ended ${JSON.stringify(strict.report.termination)}; required no-further-valid-reduction`);
+      const tried = strict.report.termination !== null && 'candidatesTried' in strict.report.termination ? strict.report.termination.candidatesTried : 0;
+      // (iii) two less-reduced candidates, each derived without posing: (a) weightJump just above the source's largest edge
+      // jump, so condition (a) protects no edge and condition (b) refuses only an edge spanning more than one ramp step;
+      // (b) the same strict order cut at half its candidates — a prefix of the run (i) made.
+      const jump = r6(mvEdgeJump * 1.5);
+      const guarded = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, weightJump: jump } }));
+      const half = Math.floor(tried / 2);
+      const prefix = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: half } }));
+      for (const [label, r] of [['weightJump', guarded], ['prefix', prefix]] as const) {
+        const c = r.report.candidates[0];
+        if (r.mesh === null || !c.accepted) probes.push(`the ${label} candidate: mesh ${r.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every static bound held`);
+        if (!(mvVertices(r.mesh) < mvSrc.points.length && mvVertices(r.mesh) > mvVertices(strict.mesh))) probes.push(`the ${label} candidate keeps ${mvVertices(r.mesh)} vertices; required fewer than the source's ${mvSrc.points.length} and more than the strict result's ${mvVertices(strict.mesh)}`);
       }
-      if (report.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('the schedule makes no held-out claim, though no frame chose a candidate');
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ79_A_REDUCTION_HOLDING_EVERY_STATIC_BOUND_FAILS_MOTION_ON_A_WEIGHT_RAMP_AND_A_LESS_REDUCED_CANDIDATE_OF_THE_SAME_SOURCE_PASSES',
-      held,
-      probeDetail(
+      if (prefix.report.termination?.reason !== 'budget-exhausted' || prefix.report.termination.result !== 'best-meeting-every-bound') probes.push(`the prefix ended ${JSON.stringify(prefix.report.termination)}; required budget-exhausted, best-meeting-every-bound`);
+      // (ii) the motion row over the isolated bend: the strict result refused, both less-reduced candidates within 1 px.
+      const report = strict.mesh !== null && guarded.mesh !== null && prefix.mesh !== null
+        ? mvCompare(source, [
+            { id: 'strict', model: mvBuild(dir, 'mv-strict', strict.mesh) },
+            { id: 'weight-jump', model: mvBuild(dir, 'mv-weight-jump', guarded.mesh) },
+            { id: 'prefix', model: mvBuild(dir, 'mv-prefix', prefix.mesh) },
+          ], 1)
+        : null;
+      const [s, g, p] = [0, 1, 2].map((i) => (report === null ? undefined : mvLocal(report, i)));
+      if (report !== null) {
+        if (report.candidates[0].geometry?.verdict !== 'pass') probes.push(`the strict result's setup art fit is ${report.candidates[0].geometry?.verdict}; the gap is only a gap if it passes`);
+        if (s?.state !== 'fail' || !((s.value ?? 0) > 1) || report.candidates[0].accepted) probes.push(`the strict result in motion: ${mvSaid(s)}, accepted ${report.candidates[0].accepted}; required MQ_LOCAL_DEFORMATION above 1 and not accepted`);
+        for (const [i, row] of [[1, g], [2, p]] as const) {
+          const c = report.candidates[i];
+          if (row?.state !== 'pass' || !c.accepted) probes.push(`${c.id} in motion: ${mvSaid(row)}, accepted ${c.accepted}; required within 1 and accepted`);
+        }
+        if (report.candidates[0].motion?.schedule.heldOutClaim !== true) probes.push('the schedule makes no held-out claim, though no frame chose a candidate');
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ79_A_REDUCTION_HOLDING_EVERY_STATIC_BOUND_FAILS_MOTION_ON_A_WEIGHT_RAMP_AND_A_LESS_REDUCED_CANDIDATE_OF_THE_SAME_SOURCE_PASSES',
         held,
-        probes,
-        `source ${mvCounts({ counts: sc })}; strict (coverage 1, overshoot <= 3, undercut 0, boundary <= 1, influences {4, 0}, budget 5000): ${mvCounts(rc)}, ${strict.report.termination?.reason} after ${tried}, static accepted, motion ${mvSaid(s)} — refused; weightJump ${jump} (1.5 x the source's largest edge jump ${r6(mvEdgeJump)}): ${mvCounts(guarded.report.candidates[0])}, motion ${mvSaid(g)}; the strict order cut at ${half} candidates: ${mvCounts(prefix.report.candidates[0])}, motion ${mvSaid(p)}; ${MV_BEND}° bend of one of two bones, 12 fps grid + irr, every frame held out`,
-      ),
-      'issue #1266: the static bounds cannot see a bend, so a reduction can meet every one of them and still fail the motion row; the card needs a public fixture where that happens and where a reduced candidate that passes demonstrably exists',
-    );
-  });
+        probeDetail(
+          held,
+          probes,
+          `source ${mvCounts({ counts: sc })}; strict (coverage 1, overshoot <= 3, undercut 0, boundary <= 1, influences {4, 0}, budget 5000): ${mvCounts(rc)}, ${strict.report.termination?.reason} after ${tried}, static accepted, motion ${mvSaid(s)} — refused; weightJump ${jump} (1.5 x the source's largest edge jump ${r6(mvEdgeJump)}): ${mvCounts(guarded.report.candidates[0])}, motion ${mvSaid(g)}; the strict order cut at ${half} candidates: ${mvCounts(prefix.report.candidates[0])}, motion ${mvSaid(p)}; ${MV_BEND}° bend of one of two bones, 12 fps grid + irr, every frame held out`,
+        ),
+        'issue #1266: the static bounds cannot see a bend, so a reduction can meet every one of them and still fail the motion row; the card needs a public fixture where that happens and where a reduced candidate that passes demonstrably exists',
+      );
+    });
 
-  mcGuard('MQ80', () => {
-    const probes: string[] = [];
-    const source = mvBuild(dir, 'mv-source-80', mvSrc);
-    const lines: string[] = [];
-    // Rigid: every vertex on the bone the bend turns — the reduction to the hull loses nothing in motion.
-    const rigidSrc = mvSource(true);
-    const rigidRef = mvBuild(dir, 'mv-rigid-source', rigidSrc);
-    const rigid = reduceMesh(mvReduceInput(rigidSrc));
-    const rigidReport = rigid.mesh === null ? null : mvCompare(rigidRef, [{ id: 'rigid', model: mvBuild(dir, 'mv-rigid', rigid.mesh) }], 1);
-    const rigidRow = rigidReport === null ? undefined : mvLocal(rigidReport, 0);
-    if (rigid.report.candidates[0].counts?.interiorVertices !== 0 || rigidRow?.state !== 'pass' || rigidReport?.candidates[0].accepted !== true) probes.push(`rigid: ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}; required every interior vertex removed and accepted`);
-    lines.push(`rigid (one bone): ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}`);
-    // No reduction: every source vertex protected — the source returned, motion 0 by identity, not by optimisation.
-    const all = [...Array(mvSrc.points.length).keys()];
-    const none = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all } }));
-    const noneTerm = none.report.termination;
-    if (none.report.candidates[0].changes?.removedVertices !== 0 || noneTerm?.reason !== 'no-further-valid-reduction' || !noneTerm.blockingConstraint.startsWith('protect:')) probes.push(`every vertex protected: removed ${none.report.candidates[0].changes?.removedVertices}, ${JSON.stringify(noneTerm)}; required 0 removed and a stop naming protect`);
-    // Budget exhausted: three candidates.
-    const three = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: 3 } }));
-    const threeTerm = three.report.termination;
-    if (threeTerm?.reason !== 'budget-exhausted' || threeTerm.candidatesTried !== 3 || threeTerm.result !== 'best-meeting-every-bound') probes.push(`budget 3: ${JSON.stringify(threeTerm)}; required budget-exhausted after 3, best-meeting-every-bound`);
-    // The first prefix that removes anything, and one interior vertex whose column neighbours carry it exactly: the
-    // midpoint of column 1 — its weight equals theirs and its position is their midpoint, so the field along the column is
-    // linear and the hole it leaves is spanned by that column's edge.
-    let first: ReturnType<typeof reduceMesh> | null = null;
-    for (let b = 1; b <= 10 && first === null; b++) {
-      const r = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: b } }));
-      if ((r.report.candidates[0].changes?.removedVertices ?? 0) > 0) first = r;
-    }
-    const mid = mvSrc.points.findIndex(([x, y], v) => v >= mvSrc.hull && x === MV_STEP && y === MV_H / 2);
-    const single = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all.filter((v) => v !== mid) } }));
-    if (single.report.candidates[0].changes?.removedVertices !== 1) probes.push(`the column-1 midpoint ${mid} alone: removed ${single.report.candidates[0].changes?.removedVertices}; required 1`);
-    const parts = none.mesh !== null && three.mesh !== null && first !== null && first.mesh !== null && single.mesh !== null;
-    const at1 = parts ? mvCompare(source, [{ id: 'none', model: mvBuild(dir, 'mv-none', none.mesh!) }, { id: 'budget-3', model: mvBuild(dir, 'mv-three', three.mesh!) }], 1) : null;
-    const tight = parts ? mvCompare(source, [{ id: 'first-prefix', model: mvBuild(dir, 'mv-first', first!.mesh!) }, { id: 'column-midpoint', model: mvBuild(dir, 'mv-single', single.mesh!) }], 0.001) : null;
-    if (at1 === null || tight === null) {
-      probes.push('a candidate returned no mesh');
-    } else {
-      const [n, t] = [mvLocal(at1, 0), mvLocal(at1, 1)];
-      if (n?.value !== 0 || !at1.candidates[0].accepted) probes.push(`every vertex protected in motion: ${mvSaid(n)}; required 0, accepted`);
-      if (t?.state !== 'pass' || !at1.candidates[1].accepted) probes.push(`budget 3 in motion: ${mvSaid(t)}; required within 1`);
-      lines.push(`no reduction (every vertex protected): removed 0, ${noneTerm?.reason}, motion ${mvSaid(n)} — identity, not optimisation`);
-      lines.push(`budget 3: ${threeTerm?.reason}, removed ${three.report.candidates[0].changes?.removedVertices}, motion ${mvSaid(t)}`);
-      const [f, m] = [mvLocal(tight, 0), mvLocal(tight, 1)];
-      if (f?.state !== 'fail') probes.push(`at a bound of 0.001 the first prefix that removes a vertex reads ${mvSaid(f)}; required a fail, so no prefix of the order meets it`);
-      if (m?.state !== 'pass') probes.push(`at a bound of 0.001 the column-1 midpoint removed alone reads ${mvSaid(m)}; required a pass — the bound is the order's to miss, not the mesh's`);
-      lines.push(`bound 0.001: the first prefix that removes a vertex (budget ${first!.report.termination !== null && 'candidatesTried' in first!.report.termination ? first!.report.termination.candidatesTried : '?'}) ${mvSaid(f)}, so only the source (budget 0) is a prefix that meets it; yet the column-1 midpoint removed alone reads ${mvSaid(m)}`);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ80_RIGID_NO_REDUCTION_BUDGET_AND_A_BOUND_NO_PREFIX_MEETS_ARE_FOUR_DISTINCT_OUTCOMES_AND_THE_LAST_IS_THE_ORDERS_NOT_THE_MESHS',
-      held,
-      probeDetail(held, probes, lines.join('; ')),
-      'issue #1266 asks the fixture to show rigid motion, an unachievable constraint, no reduction and budget exhaustion as distinct outcomes; the measurement says "unachievable" is a property of a search, so the control holds that apart from the mesh',
-    );
+    mcGuard('MQ80', () => {
+      const probes: string[] = [];
+      const source = mvBuild(dir, 'mv-source-80', mvSrc);
+      const lines: string[] = [];
+      // Rigid: every vertex on the bone the bend turns — the reduction to the hull loses nothing in motion.
+      const rigidSrc = mvSource(true);
+      const rigidRef = mvBuild(dir, 'mv-rigid-source', rigidSrc);
+      const rigid = reduceMesh(mvReduceInput(rigidSrc));
+      const rigidReport = rigid.mesh === null ? null : mvCompare(rigidRef, [{ id: 'rigid', model: mvBuild(dir, 'mv-rigid', rigid.mesh) }], 1);
+      const rigidRow = rigidReport === null ? undefined : mvLocal(rigidReport, 0);
+      if (rigid.report.candidates[0].counts?.interiorVertices !== 0 || rigidRow?.state !== 'pass' || rigidReport?.candidates[0].accepted !== true) probes.push(`rigid: ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}; required every interior vertex removed and accepted`);
+      lines.push(`rigid (one bone): ${mvCounts(rigid.report.candidates[0])}, motion ${mvSaid(rigidRow)}`);
+      // No reduction: every source vertex protected — the source returned, motion 0 by identity, not by optimisation.
+      const all = [...Array(mvSrc.points.length).keys()];
+      const none = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all } }));
+      const noneTerm = none.report.termination;
+      if (none.report.candidates[0].changes?.removedVertices !== 0 || noneTerm?.reason !== 'no-further-valid-reduction' || !noneTerm.blockingConstraint.startsWith('protect:')) probes.push(`every vertex protected: removed ${none.report.candidates[0].changes?.removedVertices}, ${JSON.stringify(noneTerm)}; required 0 removed and a stop naming protect`);
+      // Budget exhausted: three candidates.
+      const three = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: 3 } }));
+      const threeTerm = three.report.termination;
+      if (threeTerm?.reason !== 'budget-exhausted' || threeTerm.candidatesTried !== 3 || threeTerm.result !== 'best-meeting-every-bound') probes.push(`budget 3: ${JSON.stringify(threeTerm)}; required budget-exhausted after 3, best-meeting-every-bound`);
+      // The first prefix that removes anything, and one interior vertex whose column neighbours carry it exactly: the
+      // midpoint of column 1 — its weight equals theirs and its position is their midpoint, so the field along the column is
+      // linear and the hole it leaves is spanned by that column's edge.
+      let first: ReturnType<typeof reduceMesh> | null = null;
+      for (let b = 1; b <= 10 && first === null; b++) {
+        const r = reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: b } }));
+        if ((r.report.candidates[0].changes?.removedVertices ?? 0) > 0) first = r;
+      }
+      const mid = mvSrc.points.findIndex(([x, y], v) => v >= mvSrc.hull && x === MV_STEP && y === MV_H / 2);
+      const single = reduceMesh(mvReduceInput(mvSrc, { protect: { ...mvNoProtect, vertices: all.filter((v) => v !== mid) } }));
+      if (single.report.candidates[0].changes?.removedVertices !== 1) probes.push(`the column-1 midpoint ${mid} alone: removed ${single.report.candidates[0].changes?.removedVertices}; required 1`);
+      const parts = none.mesh !== null && three.mesh !== null && first !== null && first.mesh !== null && single.mesh !== null;
+      const at1 = parts ? mvCompare(source, [{ id: 'none', model: mvBuild(dir, 'mv-none', none.mesh!) }, { id: 'budget-3', model: mvBuild(dir, 'mv-three', three.mesh!) }], 1) : null;
+      const tight = parts ? mvCompare(source, [{ id: 'first-prefix', model: mvBuild(dir, 'mv-first', first!.mesh!) }, { id: 'column-midpoint', model: mvBuild(dir, 'mv-single', single.mesh!) }], 0.001) : null;
+      if (at1 === null || tight === null) {
+        probes.push('a candidate returned no mesh');
+      } else {
+        const [n, t] = [mvLocal(at1, 0), mvLocal(at1, 1)];
+        if (n?.value !== 0 || !at1.candidates[0].accepted) probes.push(`every vertex protected in motion: ${mvSaid(n)}; required 0, accepted`);
+        if (t?.state !== 'pass' || !at1.candidates[1].accepted) probes.push(`budget 3 in motion: ${mvSaid(t)}; required within 1`);
+        lines.push(`no reduction (every vertex protected): removed 0, ${noneTerm?.reason}, motion ${mvSaid(n)} — identity, not optimisation`);
+        lines.push(`budget 3: ${threeTerm?.reason}, removed ${three.report.candidates[0].changes?.removedVertices}, motion ${mvSaid(t)}`);
+        const [f, m] = [mvLocal(tight, 0), mvLocal(tight, 1)];
+        if (f?.state !== 'fail') probes.push(`at a bound of 0.001 the first prefix that removes a vertex reads ${mvSaid(f)}; required a fail, so no prefix of the order meets it`);
+        if (m?.state !== 'pass') probes.push(`at a bound of 0.001 the column-1 midpoint removed alone reads ${mvSaid(m)}; required a pass — the bound is the order's to miss, not the mesh's`);
+        lines.push(`bound 0.001: the first prefix that removes a vertex (budget ${first!.report.termination !== null && 'candidatesTried' in first!.report.termination ? first!.report.termination.candidatesTried : '?'}) ${mvSaid(f)}, so only the source (budget 0) is a prefix that meets it; yet the column-1 midpoint removed alone reads ${mvSaid(m)}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ80_RIGID_NO_REDUCTION_BUDGET_AND_A_BOUND_NO_PREFIX_MEETS_ARE_FOUR_DISTINCT_OUTCOMES_AND_THE_LAST_IS_THE_ORDERS_NOT_THE_MESHS',
+        held,
+        probeDetail(held, probes, lines.join('; ')),
+        'issue #1266 asks the fixture to show rigid motion, an unachievable constraint, no reduction and budget exhaustion as distinct outcomes; the measurement says "unachievable" is a property of a search, so the control holds that apart from the mesh',
+      );
+    });
   });
 
   // --- MQ85–MQ90 (#1271): a traced boundary the reduction keeps beside an interior it empties ---------------------
@@ -50179,153 +50477,175 @@ function runMeshCompareSuite(): number {
     const keepsTheBoundary = (r: { boundary: number; interior: number }): boolean => r.interior === sourceInterior && r.boundary >= 0 && r.boundary * 10 <= sourceHull;
     const stopsOnDeviation = (t: ReturnType<typeof reduceMesh>['report']['termination']): boolean => t?.reason === 'no-further-valid-reduction' && t.blockingConstraint.startsWith('MQ_BOUNDARY_DEVIATION:');
 
+    // ⚡ Issue #1300: the runs this section's units share are made on first read (`lazily`) — in the process whose unit
+    // reads them, and once in it — and a reduction of the traced fixture goes through the suite's memo (`abReduceMesh`).
+    const abReduceMesh = (over: Partial<MeshReductionInput> = {}): ReturnType<typeof reduceMesh> => {
+      const input = abInput(over);
+      return memo.run(meshCompareMemoKey('reduceMesh', input), reductionBytes, () => reduceMesh(input));
+    };
     // The strict run, the policy of §8: coverage 1, overshoot <= 3, undercut 0, boundary deviation <= 1, influences {4, 0}.
-    const strict = reduceMesh(abInput());
-    const strictRemoved = removed(strict.mesh);
-    const strictTerm = strict.report.termination;
-    const steps = strict.report.candidates[0].changes?.acceptedAt.length ?? 0;
-    // The deviation bound at twice the source's tolerance, and out of reach (the frame's width) — every art bound kept.
-    const loose = reduceMesh(abInput({ targets: { artFit: mvStrict, maxBoundaryDeviation: 2, regions: [] } }));
-    const looseRemoved = removed(loose.mesh);
-    const free = reduceMesh(abInput({ targets: { artFit: mvStrict, maxBoundaryDeviation: AB_W, regions: [] } }));
-    const freeTerm = free.report.termination;
-
-    {
-      const probes: string[] = [];
-      if (!keepsTheBoundary(strictRemoved)) probes.push(`the strict reduction removed ${strictRemoved.boundary} of ${sourceHull} boundary and ${strictRemoved.interior} of ${sourceInterior} interior vertices; required every interior vertex and at most a tenth of the boundary`);
-      if (keepsTheBoundary(looseRemoved)) probes.push(`the plant — deviation bound 2 — removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices and still reads as keeping the boundary, so the predicate cannot fire`);
-      const held = probes.length === 0;
-      say(
-        'MQ85_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_REMOVES_EVERY_INTERIOR_VERTEX_AND_AT_MOST_A_TENTH_OF_THE_BOUNDARY',
-        held,
-        probeDetail(held, probes, `source ${counts(ab.mesh)} (boundary by buildContourMesh at tolerance 1, margin 1); strict: ${counts(strict.mesh)}, removed ${strictRemoved.boundary} boundary / ${strictRemoved.interior} interior; the plant (deviation bound 2) removed ${looseRemoved.boundary} boundary, which the same predicate refuses`),
-        'issue #1271: the consumer saw a dense boundary kept beside an emptied interior; this is the public fixture where the static reduction does exactly that',
-      );
-    }
-    {
-      const probes: string[] = [];
-      if (!stopsOnDeviation(strictTerm)) probes.push(`the strict reduction ended ${JSON.stringify(strictTerm)}; required no-further-valid-reduction naming MQ_BOUNDARY_DEVIATION`);
-      if (stopsOnDeviation(freeTerm)) probes.push(`the plant — deviation bound ${AB_W}, out of reach — still stops on ${JSON.stringify(freeTerm)}, so the predicate cannot fire`);
-      const held = probes.length === 0;
-      say(
-        'MQ86_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_STOPS_ON_MQ_BOUNDARY_DEVIATION',
-        held,
-        probeDetail(held, probes, `strict: ${strictTerm !== null && 'blockingConstraint' in strictTerm ? strictTerm.blockingConstraint : JSON.stringify(strictTerm)}; with the deviation bound at ${AB_W} the run keeps ${counts(free.mesh)} and stops on ${freeTerm !== null && 'blockingConstraint' in freeTerm ? freeTerm.blockingConstraint : JSON.stringify(freeTerm)}`),
-        'issue #1271 asks what prevents boundary removal; on a traced outline simplified at 1 px the 1 px deviation bound, measured against that same outline, is the row that stops the run',
-      );
-    }
-
+    const abStrict = lazily(() => {
+      const strict = abReduceMesh();
+      return { strict, strictRemoved: removed(strict.mesh), strictTerm: strict.report.termination, steps: strict.report.candidates[0].changes?.acceptedAt.length ?? 0 };
+    });
     // The strict result in motion, every frame held out; its walk also yields the grid frame ids the bisection chooses on.
-    const strictReport = strict.mesh === null ? null : abCompare([{ id: 'strict', model: abBuild(dir, 'ab-strict', strict.mesh) }], []);
-    const strictLocal = strictReport === null ? undefined : row(strictReport, 'MQ_LOCAL_DEFORMATION');
-    const strictInversion = strictReport === null ? undefined : row(strictReport, 'MQ_INVERSION');
+    const abStrictMotion = lazily(() => {
+      const { strict } = abStrict();
+      const strictReport = strict.mesh === null ? null : abCompare([{ id: 'strict', model: abBuild(dir, 'ab-strict', strict.mesh) }], []);
+      return {
+        strictReport,
+        strictLocal: strictReport === null ? undefined : row(strictReport, 'MQ_LOCAL_DEFORMATION'),
+        strictInversion: strictReport === null ? undefined : row(strictReport, 'MQ_INVERSION'),
+        grid: (strictReport?.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').map((f) => f.id),
+      };
+    });
     const motionFails = (r: MeshQualityReport | null): boolean => r !== null && r.candidates[0].geometry?.verdict === 'pass' && !r.candidates[0].accepted && row(r, 'MQ_LOCAL_DEFORMATION')?.state === 'fail';
-    {
-      const probes: string[] = [];
-      if (strict.mesh === null || !strict.report.candidates[0].accepted) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${strict.report.candidates[0].accepted}; required every static bound held`);
-      if (!motionFails(strictReport)) probes.push(`the strict result in motion: setup ${strictReport?.candidates[0].geometry?.verdict}, ${mvSaid(strictLocal)}, accepted ${strictReport?.candidates[0].accepted}; required the setup fit passing and MQ_LOCAL_DEFORMATION failing`);
-      const held = probes.length === 0;
-      say(
-        'MQ87_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_HOLDS_EVERY_STATIC_BOUND_AND_FAILS_MOTION',
-        held,
-        probeDetail(held, probes, `strict ${counts(strict.mesh)}: static accepted; motion ${mvSaid(strictLocal)}, MQ_INVERSION ${strictInversion?.value} — refused; ${AB_BEND}° bend of each of two joints, 12 fps grid + irr, bound 1, every frame held out (MQ88 and MQ89 read the passing side of the same predicate)`),
-        'issue #1271 keeps the final motion comparison as the acceptance: the fixture is only a reproducer if its fully reduced mesh is refused there',
-      );
-    }
-
     // parts's replay: bisection over the accepted steps, lo = 0 (the source) and hi = the full run, choosing on grid frames.
-    const grid = (strictReport?.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').map((f) => f.id);
     type AbReduced = ReturnType<typeof reduceMesh>['mesh'];
-    const tried = new Map<number, { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean }>();
     const selectionPasses = (r: MeshQualityReport): boolean => {
       const local = row(r, 'MQ_LOCAL_DEFORMATION')?.motion?.byRole.selection ?? null;
       const inversion = row(r, 'MQ_INVERSION')?.motion?.byRole.selection ?? null;
       return r.candidates[0].geometry?.verdict === 'pass' && local !== null && local.state === 'pass' && (inversion === null || inversion.value === 0);
     };
-    let lo = 0;
-    let hi = steps;
-    while (grid.length > 0 && hi - lo > 1) {
-      const mid = Math.floor((lo + hi) / 2);
-      const replay = reduceMesh(abInput({ stopAfterAccepted: mid }));
-      const report = replay.mesh === null ? null : abCompare([{ id: `k${mid}`, model: abBuild(dir, `ab-k${mid}`, replay.mesh) }], grid);
-      const pass = report !== null && selectionPasses(report);
-      tried.set(mid, { mesh: replay.mesh, report, pass });
-      if (pass) lo = mid;
-      else hi = mid;
-    }
-    const chosen = tried.get(lo);
-    const next: { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean } | undefined = hi === steps ? { mesh: strict.mesh, report: null, pass: false } : tried.get(hi);
-    const chosenLocal = chosen?.report ? row(chosen.report, 'MQ_LOCAL_DEFORMATION') : undefined;
-    const nextLocal = next?.report ? row(next.report, 'MQ_LOCAL_DEFORMATION') : strictLocal;
-    {
-      const probes: string[] = [];
-      if (grid.length === 0) probes.push('the strict comparison walked no grid frame, so there is nothing to choose on');
-      if (chosen === undefined || chosen.report === null || lo === 0) probes.push(`the bisection chose step ${lo} of ${steps}; required a reduced step whose replay was compared`);
-      else {
-        const heldOut = chosenLocal?.motion?.byRole.heldOut ?? null;
-        if (!chosen.pass || !chosen.report.candidates[0].accepted || heldOut === null || heldOut.state !== 'pass' || chosen.report.candidates[0].motion?.schedule.heldOutClaim !== true) {
-          probes.push(`step ${lo}: selection ${chosen.pass ? 'pass' : 'fail'}, held out ${JSON.stringify(heldOut)}, accepted ${chosen.report.candidates[0].accepted}, heldOutClaim ${chosen.report.candidates[0].motion?.schedule.heldOutClaim}; required a pass on grid, on the held-out irr frames and over all`);
-        }
+    const abBisected = lazily(() => {
+      const { strict, steps } = abStrict();
+      const { strictLocal, grid } = abStrictMotion();
+      const tried = new Map<number, { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean }>();
+      let lo = 0;
+      let hi = steps;
+      while (grid.length > 0 && hi - lo > 1) {
+        const mid = Math.floor((lo + hi) / 2);
+        const replay = abReduceMesh({ stopAfterAccepted: mid });
+        const report = replay.mesh === null ? null : abCompare([{ id: `k${mid}`, model: abBuild(dir, `ab-k${mid}`, replay.mesh) }], grid);
+        const pass = report !== null && selectionPasses(report);
+        tried.set(mid, { mesh: replay.mesh, report, pass });
+        if (pass) lo = mid;
+        else hi = mid;
       }
-      if (next === undefined || next.pass) probes.push(`the step after the chosen one (${hi}) ${next === undefined ? 'was never compared' : 'passes'}; required it to fail, or the bisection did not find an edge`);
-      const held = probes.length === 0;
-      say(
-        'MQ88_A_REPLAY_BISECTED_ON_GRID_FRAMES_PASSES_ON_ITS_HELD_OUT_IRR_FRAMES_AND_THE_NEXT_STEP_FAILS',
-        held,
-        probeDetail(held, probes, `${tried.size} replays over ${steps} accepted steps chose ${lo}: ${counts(chosen?.mesh ?? null)}, removed ${removed(chosen?.mesh ?? null).boundary} boundary; grid ${chosenLocal?.motion?.byRole.selection?.value}, held-out irr ${chosenLocal?.motion?.byRole.heldOut?.value}; step ${hi}: ${nextLocal?.motion?.byRole.selection?.value ?? nextLocal?.value} — fails`),
-        'issue #1271 starts from the replay parts runs after #1266: it recovers a motion-valid mesh, and that mesh still carries the strict run\'s boundary beside a partly emptied interior',
-      );
-    }
+      const chosen = tried.get(lo);
+      const next: { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean } | undefined = hi === steps ? { mesh: strict.mesh, report: null, pass: false } : tried.get(hi);
+      const chosenLocal = chosen?.report ? row(chosen.report, 'MQ_LOCAL_DEFORMATION') : undefined;
+      const nextLocal = next?.report ? row(next.report, 'MQ_LOCAL_DEFORMATION') : strictLocal;
+      return { tried, lo, hi, chosen, next, chosenLocal, nextLocal, replayVertices: chosen?.mesh?.points.length ?? 0 };
+    });
 
-    // A hand-built control over the SAME boundary: the source's own outline and every other grid column and row, Delaunay.
-    const even = ab.interior.map((_, k) => k).filter((k) => ab.cell[k][0] % 2 === 0 && ab.cell[k][1] % 2 === 0);
-    const weighOf = (keep: number[]) => (i: number): Array<{ bone: string; weight: number }> => ab.mesh.weights![i < sourceHull ? i : sourceHull + keep[i - sourceHull]];
-    const control = abMeshOver(ab.boundary, even.map((k) => ab.interior[k]), weighOf(even));
-    const controlStatic = abMeasure('even', control);
-    const controlMotion = abCompare([{ id: 'even', model: abBuild(dir, 'ab-even', control) }], []);
-    const controlLocal = row(controlMotion, 'MQ_LOCAL_DEFORMATION');
-    const replayVertices = chosen?.mesh?.points.length ?? 0;
-    const fewer = (m: SourceMesh): boolean => replayVertices > 0 && m.points.length < replayVertices;
-    // Plant 1: the control with its interior restored — the source — is not fewer. Plant 2: the hull vertex furthest
-    // along x pushed out by the bound plus one pixel fails the deviation row, by name.
-    let far = 0;
-    for (let i = 1; i < sourceHull; i++) if (ab.boundary[i][0] > ab.boundary[far][0]) far = i;
-    const push = 1 + 1;
-    const pushedPoints = control.points.map(([x, y], i): MqPt => (i === far ? [r6(x + push), y] : [x, y]));
-    const pushed: SourceMesh = { ...control, points: pushedPoints, uvs: pushedPoints.flatMap(([x, y]) => [r6(x / AB_W), r6(y / AB_H)]) };
-    const pushedRows = abMeasure('pushed', pushed).candidates[0].geometry?.rows ?? [];
-    const pushedDeviation = pushedRows.find((r) => r.code === 'MQ_BOUNDARY_DEVIATION');
-    {
-      const probes: string[] = [];
-      if (!fewer(control)) probes.push(`the control keeps ${control.points.length} vertices against the replay's ${replayVertices}; required fewer`);
-      if (fewer(ab.mesh)) probes.push(`the plant — the control with its interior restored, ${ab.mesh.points.length} vertices — reads as fewer than the replay's ${replayVertices}`);
-      if (controlStatic.candidates[0].geometry?.verdict !== 'pass' || !controlStatic.candidates[0].accepted) probes.push(`the control's static rows: ${controlStatic.candidates[0].geometry?.verdict}, failing ${(controlStatic.candidates[0].geometry?.rows ?? []).filter((r) => r.state === 'fail').map((r) => `${r.code} ${r.value}`).join(', ')}; required every row passing`);
-      if (pushedDeviation?.state !== 'fail') probes.push(`the plant — hull vertex ${far} pushed ${push} px out — reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} ${pushedDeviation?.state}; required a fail`);
-      if (controlLocal?.state !== 'pass' || !controlMotion.candidates[0].accepted || (row(controlMotion, 'MQ_INVERSION')?.value ?? 1) !== 0) probes.push(`the control in motion: ${mvSaid(controlLocal)}, MQ_INVERSION ${row(controlMotion, 'MQ_INVERSION')?.value}, accepted ${controlMotion.candidates[0].accepted}; required within 1 with no inversion`);
-      if (!motionFails(strictReport)) probes.push('the same motion predicate does not refuse the strict result (MQ87), so a pass here proves nothing');
-      const held = probes.length === 0;
-      say(
-        'MQ89_A_HAND_BUILT_MESH_OVER_THE_SAME_BOUNDARY_WITH_FEWER_VERTICES_THAN_THE_REPLAY_PASSES_EVERY_STATIC_ROW_AND_MOTION',
-        held,
-        probeDetail(held, probes, `the source's outline + every other grid column and row: ${counts(control)} against the replay's ${replayVertices}, static ${controlStatic.candidates[0].geometry?.verdict}, motion ${mvSaid(controlLocal)}, every frame held out; plants: the source (${ab.mesh.points.length}) is not fewer, hull vertex ${far} pushed ${push} px reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} — fail`),
-        'issue #1271 asks for a feasible better control under the SAME silhouette and motion limits; this one keeps the source\'s boundary untouched, so what it saves over the replay is interior allocation alone',
-      );
-    }
-    {
-      const probes: string[] = [];
-      const artRows = (loose.report.candidates[0].geometry?.rows ?? []).filter((r) => ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT'].includes(r.code) && r.object.region === null);
-      if (loose.mesh === null || !loose.report.candidates[0].accepted || artRows.length === 0 || artRows.some((r) => r.state !== 'pass')) probes.push(`deviation bound 2: mesh ${loose.mesh === null ? 'none' : 'returned'}, accepted ${loose.report.candidates[0].accepted}, art rows ${artRows.map((r) => `${r.code} ${r.value} ${r.state}`).join(', ') || 'none'}; required accepted with every art row passing`);
-      if (!(looseRemoved.boundary * 10 > sourceHull)) probes.push(`deviation bound 2 removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices; required more than a tenth`);
-      if (strictRemoved.boundary * 10 > sourceHull) probes.push(`the plant — the strict run, bound 1 — removed ${strictRemoved.boundary} of ${sourceHull}, which the same predicate reads as reducing the boundary`);
-      const held = probes.length === 0;
-      say(
-        'MQ90_WITH_THE_DEVIATION_BOUND_AT_TWICE_THE_SOURCE_TOLERANCE_THE_BOUNDARY_REDUCES_AND_EVERY_ART_ROW_STILL_PASSES',
-        held,
-        probeDetail(held, probes, `deviation bound 2, coverage 1, overshoot <= 3, undercut 0 unchanged: ${counts(loose.mesh)}, removed ${looseRemoved.boundary} of ${sourceHull} boundary, ${artRows.map((r) => `${r.code} ${r.value}`).join(', ')}; at bound 1 (the plant): removed ${strictRemoved.boundary}`),
-        'issue #1271 asks what actually prevents boundary removal: holding every art bound and moving only the deviation bound off the tolerance the outline was simplified at releases the boundary, so the two equal tolerances are the mechanism, not the art',
-      );
-    }
+    unit('MQ85-MQ90', () => {
+      const { strict, strictRemoved, strictTerm, steps } = abStrict();
+      // The deviation bound at twice the source's tolerance, and out of reach (the frame's width) — every art bound kept.
+      const loose = abReduceMesh({ targets: { artFit: mvStrict, maxBoundaryDeviation: 2, regions: [] } });
+      const looseRemoved = removed(loose.mesh);
+      const free = abReduceMesh({ targets: { artFit: mvStrict, maxBoundaryDeviation: AB_W, regions: [] } });
+      const freeTerm = free.report.termination;
 
+      {
+        const probes: string[] = [];
+        if (!keepsTheBoundary(strictRemoved)) probes.push(`the strict reduction removed ${strictRemoved.boundary} of ${sourceHull} boundary and ${strictRemoved.interior} of ${sourceInterior} interior vertices; required every interior vertex and at most a tenth of the boundary`);
+        if (keepsTheBoundary(looseRemoved)) probes.push(`the plant — deviation bound 2 — removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices and still reads as keeping the boundary, so the predicate cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ85_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_REMOVES_EVERY_INTERIOR_VERTEX_AND_AT_MOST_A_TENTH_OF_THE_BOUNDARY',
+          held,
+          probeDetail(held, probes, `source ${counts(ab.mesh)} (boundary by buildContourMesh at tolerance 1, margin 1); strict: ${counts(strict.mesh)}, removed ${strictRemoved.boundary} boundary / ${strictRemoved.interior} interior; the plant (deviation bound 2) removed ${looseRemoved.boundary} boundary, which the same predicate refuses`),
+          'issue #1271: the consumer saw a dense boundary kept beside an emptied interior; this is the public fixture where the static reduction does exactly that',
+        );
+      }
+      {
+        const probes: string[] = [];
+        if (!stopsOnDeviation(strictTerm)) probes.push(`the strict reduction ended ${JSON.stringify(strictTerm)}; required no-further-valid-reduction naming MQ_BOUNDARY_DEVIATION`);
+        if (stopsOnDeviation(freeTerm)) probes.push(`the plant — deviation bound ${AB_W}, out of reach — still stops on ${JSON.stringify(freeTerm)}, so the predicate cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ86_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_STOPS_ON_MQ_BOUNDARY_DEVIATION',
+          held,
+          probeDetail(held, probes, `strict: ${strictTerm !== null && 'blockingConstraint' in strictTerm ? strictTerm.blockingConstraint : JSON.stringify(strictTerm)}; with the deviation bound at ${AB_W} the run keeps ${counts(free.mesh)} and stops on ${freeTerm !== null && 'blockingConstraint' in freeTerm ? freeTerm.blockingConstraint : JSON.stringify(freeTerm)}`),
+          'issue #1271 asks what prevents boundary removal; on a traced outline simplified at 1 px the 1 px deviation bound, measured against that same outline, is the row that stops the run',
+        );
+      }
+
+      const { strictReport, strictLocal, strictInversion } = abStrictMotion();
+      {
+        const probes: string[] = [];
+        if (strict.mesh === null || !strict.report.candidates[0].accepted) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${strict.report.candidates[0].accepted}; required every static bound held`);
+        if (!motionFails(strictReport)) probes.push(`the strict result in motion: setup ${strictReport?.candidates[0].geometry?.verdict}, ${mvSaid(strictLocal)}, accepted ${strictReport?.candidates[0].accepted}; required the setup fit passing and MQ_LOCAL_DEFORMATION failing`);
+        const held = probes.length === 0;
+        say(
+          'MQ87_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_HOLDS_EVERY_STATIC_BOUND_AND_FAILS_MOTION',
+          held,
+          probeDetail(held, probes, `strict ${counts(strict.mesh)}: static accepted; motion ${mvSaid(strictLocal)}, MQ_INVERSION ${strictInversion?.value} — refused; ${AB_BEND}° bend of each of two joints, 12 fps grid + irr, bound 1, every frame held out (MQ88 and MQ89 read the passing side of the same predicate)`),
+          'issue #1271 keeps the final motion comparison as the acceptance: the fixture is only a reproducer if its fully reduced mesh is refused there',
+        );
+      }
+
+      const { grid } = abStrictMotion();
+      const { tried, lo, hi, chosen, next, chosenLocal, nextLocal, replayVertices } = abBisected();
+      {
+        const probes: string[] = [];
+        if (grid.length === 0) probes.push('the strict comparison walked no grid frame, so there is nothing to choose on');
+        if (chosen === undefined || chosen.report === null || lo === 0) probes.push(`the bisection chose step ${lo} of ${steps}; required a reduced step whose replay was compared`);
+        else {
+          const heldOut = chosenLocal?.motion?.byRole.heldOut ?? null;
+          if (!chosen.pass || !chosen.report.candidates[0].accepted || heldOut === null || heldOut.state !== 'pass' || chosen.report.candidates[0].motion?.schedule.heldOutClaim !== true) {
+            probes.push(`step ${lo}: selection ${chosen.pass ? 'pass' : 'fail'}, held out ${JSON.stringify(heldOut)}, accepted ${chosen.report.candidates[0].accepted}, heldOutClaim ${chosen.report.candidates[0].motion?.schedule.heldOutClaim}; required a pass on grid, on the held-out irr frames and over all`);
+          }
+        }
+        if (next === undefined || next.pass) probes.push(`the step after the chosen one (${hi}) ${next === undefined ? 'was never compared' : 'passes'}; required it to fail, or the bisection did not find an edge`);
+        const held = probes.length === 0;
+        say(
+          'MQ88_A_REPLAY_BISECTED_ON_GRID_FRAMES_PASSES_ON_ITS_HELD_OUT_IRR_FRAMES_AND_THE_NEXT_STEP_FAILS',
+          held,
+          probeDetail(held, probes, `${tried.size} replays over ${steps} accepted steps chose ${lo}: ${counts(chosen?.mesh ?? null)}, removed ${removed(chosen?.mesh ?? null).boundary} boundary; grid ${chosenLocal?.motion?.byRole.selection?.value}, held-out irr ${chosenLocal?.motion?.byRole.heldOut?.value}; step ${hi}: ${nextLocal?.motion?.byRole.selection?.value ?? nextLocal?.value} — fails`),
+          'issue #1271 starts from the replay parts runs after #1266: it recovers a motion-valid mesh, and that mesh still carries the strict run\'s boundary beside a partly emptied interior',
+        );
+      }
+
+      // A hand-built control over the SAME boundary: the source's own outline and every other grid column and row, Delaunay.
+      const even = ab.interior.map((_, k) => k).filter((k) => ab.cell[k][0] % 2 === 0 && ab.cell[k][1] % 2 === 0);
+      const weighOf = (keep: number[]) => (i: number): Array<{ bone: string; weight: number }> => ab.mesh.weights![i < sourceHull ? i : sourceHull + keep[i - sourceHull]];
+      const control = abMeshOver(ab.boundary, even.map((k) => ab.interior[k]), weighOf(even));
+      const controlStatic = abMeasure('even', control);
+      const controlMotion = abCompare([{ id: 'even', model: abBuild(dir, 'ab-even', control) }], []);
+      const controlLocal = row(controlMotion, 'MQ_LOCAL_DEFORMATION');
+      const fewer = (m: SourceMesh): boolean => replayVertices > 0 && m.points.length < replayVertices;
+      // Plant 1: the control with its interior restored — the source — is not fewer. Plant 2: the hull vertex furthest
+      // along x pushed out by the bound plus one pixel fails the deviation row, by name.
+      let far = 0;
+      for (let i = 1; i < sourceHull; i++) if (ab.boundary[i][0] > ab.boundary[far][0]) far = i;
+      const push = 1 + 1;
+      const pushedPoints = control.points.map(([x, y], i): MqPt => (i === far ? [r6(x + push), y] : [x, y]));
+      const pushed: SourceMesh = { ...control, points: pushedPoints, uvs: pushedPoints.flatMap(([x, y]) => [r6(x / AB_W), r6(y / AB_H)]) };
+      const pushedRows = abMeasure('pushed', pushed).candidates[0].geometry?.rows ?? [];
+      const pushedDeviation = pushedRows.find((r) => r.code === 'MQ_BOUNDARY_DEVIATION');
+      {
+        const probes: string[] = [];
+        if (!fewer(control)) probes.push(`the control keeps ${control.points.length} vertices against the replay's ${replayVertices}; required fewer`);
+        if (fewer(ab.mesh)) probes.push(`the plant — the control with its interior restored, ${ab.mesh.points.length} vertices — reads as fewer than the replay's ${replayVertices}`);
+        if (controlStatic.candidates[0].geometry?.verdict !== 'pass' || !controlStatic.candidates[0].accepted) probes.push(`the control's static rows: ${controlStatic.candidates[0].geometry?.verdict}, failing ${(controlStatic.candidates[0].geometry?.rows ?? []).filter((r) => r.state === 'fail').map((r) => `${r.code} ${r.value}`).join(', ')}; required every row passing`);
+        if (pushedDeviation?.state !== 'fail') probes.push(`the plant — hull vertex ${far} pushed ${push} px out — reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} ${pushedDeviation?.state}; required a fail`);
+        if (controlLocal?.state !== 'pass' || !controlMotion.candidates[0].accepted || (row(controlMotion, 'MQ_INVERSION')?.value ?? 1) !== 0) probes.push(`the control in motion: ${mvSaid(controlLocal)}, MQ_INVERSION ${row(controlMotion, 'MQ_INVERSION')?.value}, accepted ${controlMotion.candidates[0].accepted}; required within 1 with no inversion`);
+        if (!motionFails(strictReport)) probes.push('the same motion predicate does not refuse the strict result (MQ87), so a pass here proves nothing');
+        const held = probes.length === 0;
+        say(
+          'MQ89_A_HAND_BUILT_MESH_OVER_THE_SAME_BOUNDARY_WITH_FEWER_VERTICES_THAN_THE_REPLAY_PASSES_EVERY_STATIC_ROW_AND_MOTION',
+          held,
+          probeDetail(held, probes, `the source's outline + every other grid column and row: ${counts(control)} against the replay's ${replayVertices}, static ${controlStatic.candidates[0].geometry?.verdict}, motion ${mvSaid(controlLocal)}, every frame held out; plants: the source (${ab.mesh.points.length}) is not fewer, hull vertex ${far} pushed ${push} px reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} — fail`),
+          'issue #1271 asks for a feasible better control under the SAME silhouette and motion limits; this one keeps the source\'s boundary untouched, so what it saves over the replay is interior allocation alone',
+        );
+      }
+      {
+        const probes: string[] = [];
+        const artRows = (loose.report.candidates[0].geometry?.rows ?? []).filter((r) => ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT'].includes(r.code) && r.object.region === null);
+        if (loose.mesh === null || !loose.report.candidates[0].accepted || artRows.length === 0 || artRows.some((r) => r.state !== 'pass')) probes.push(`deviation bound 2: mesh ${loose.mesh === null ? 'none' : 'returned'}, accepted ${loose.report.candidates[0].accepted}, art rows ${artRows.map((r) => `${r.code} ${r.value} ${r.state}`).join(', ') || 'none'}; required accepted with every art row passing`);
+        if (!(looseRemoved.boundary * 10 > sourceHull)) probes.push(`deviation bound 2 removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices; required more than a tenth`);
+        if (strictRemoved.boundary * 10 > sourceHull) probes.push(`the plant — the strict run, bound 1 — removed ${strictRemoved.boundary} of ${sourceHull}, which the same predicate reads as reducing the boundary`);
+        const held = probes.length === 0;
+        say(
+          'MQ90_WITH_THE_DEVIATION_BOUND_AT_TWICE_THE_SOURCE_TOLERANCE_THE_BOUNDARY_REDUCES_AND_EVERY_ART_ROW_STILL_PASSES',
+          held,
+          probeDetail(held, probes, `deviation bound 2, coverage 1, overshoot <= 3, undercut 0 unchanged: ${counts(loose.mesh)}, removed ${looseRemoved.boundary} of ${sourceHull} boundary, ${artRows.map((r) => `${r.code} ${r.value}`).join(', ')}; at bound 1 (the plant): removed ${strictRemoved.boundary}`),
+          'issue #1271 asks what actually prevents boundary removal: holding every art bound and moving only the deviation bound off the tolerance the outline was simplified at releases the boundary, so the two equal tolerances are the mechanism, not the art',
+        );
+      }
+    });
     // --- MQ91–MQ96 (#1279): boundary runs taken as steps, and `acceptedAt` one entry per accepted operation ---------
     // Stage B of #1271 on the same fixture and policy, opted in with `boundaryRuns: { maxVertices: 8 }` (the run
     // length §8's bounded alternatives measured). Each claim is read off runs made here, and each predicate is also read
@@ -50334,8 +50654,10 @@ function runMeshCompareSuite(): number {
     const abRasters = artRastersOf(abArt);
     const abRuns = { maxVertices: 8 };
     type AbRun = ReturnType<typeof reduceMeshWith>;
-    const abReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
+    const abFresh = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
       reduceMeshWith(abInput(over), abRasters, stepRastersOf(abRasters), plant, observe);
+    const abReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
+      plant === null && observe === null ? memo.run(meshCompareMemoKey('reduceMeshWith', abInput(over)), reductionBytes, () => abFresh(over)) : abFresh(over, plant, observe);
     const opsOf = (r: AbRun): AcceptedOperation[] => r.report.candidates[0]?.changes?.acceptedAt ?? [];
     const bytesOf = (r: AbRun): string => writeMeshQualityReport(r.report) + JSON.stringify(r.mesh);
     /** What is wrong with a result's acceptedAt against its own mesh; empty when every entry fits its kind and the entries account for every vertex removed. */
@@ -50357,18 +50679,32 @@ function runMeshCompareSuite(): number {
       if (sum !== k.removedVertices + k.insertedVertices) out.push(`the counts sum to ${sum}; removed ${k.removedVertices} + inserted ${k.insertedVertices}`);
       return out;
     };
-    const runs = abReduce({ boundaryRuns: abRuns });
-    const runOps = opsOf(runs);
-    const runSteps = runOps.filter((a) => a.kind === 'boundary-run');
-    const firstRun = runOps.findIndex((a) => a.kind === 'boundary-run');
-    const runTerm = runs.report.termination;
-    const runTried = runTerm !== null && 'candidatesTried' in runTerm ? runTerm.candidatesTried : -1;
-    // The replay sample, derived from the run: the first and last operations, the middle one, and the first boundary
-    // run with the operation either side of it — where an off-by-one between operations and vertices would show.
-    const runSample = [...new Set([1, firstRun, firstRun + 1, firstRun + 2, Math.ceil(runOps.length / 2), runOps.length])].filter((k) => k >= 1 && k <= runOps.length).sort((a, b) => a - b);
-    const runDump = new Map(runSample.map((k) => [k, abReduce({ boundaryRuns: abRuns, budget: { maxCandidates: runOps[k - 1].step } }).mesh]));
+    const abRunsOf = lazily(() => {
+      const runs = abReduce({ boundaryRuns: abRuns });
+      const runOps = opsOf(runs);
+      const firstRun = runOps.findIndex((a) => a.kind === 'boundary-run');
+      const runTerm = runs.report.termination;
+      // The replay sample, derived from the run: the first and last operations, the middle one, and the first boundary
+      // run with the operation either side of it — where an off-by-one between operations and vertices would show.
+      const runSample = [...new Set([1, firstRun, firstRun + 1, firstRun + 2, Math.ceil(runOps.length / 2), runOps.length])].filter((k) => k >= 1 && k <= runOps.length).sort((a, b) => a - b);
+      return {
+        runs,
+        runOps,
+        runSteps: runOps.filter((a) => a.kind === 'boundary-run'),
+        firstRun,
+        runTerm,
+        runTried: runTerm !== null && 'candidatesTried' in runTerm ? runTerm.candidatesTried : -1,
+        runSample,
+      };
+    });
+    const abRunDump = lazily(() => {
+      const { runOps, runSample } = abRunsOf();
+      return new Map(runSample.map((k) => [k, abReduce({ boundaryRuns: abRuns, budget: { maxCandidates: runOps[k - 1].step } }).mesh]));
+    });
     /** Replay each sampled k, planted or not, and name the first operation whose mesh, termination or list is not the unplanted run's. */
     const replayFaults = (plant: ReductionPlant | null): string[] => {
+      const { runOps, runSample } = abRunsOf();
+      const runDump = abRunDump();
       for (const k of runSample) {
         const r = abReduce({ boundaryRuns: abRuns, stopAfterAccepted: k }, plant);
         const t = r.report.termination;
@@ -50380,203 +50716,214 @@ function runMeshCompareSuite(): number {
       }
       return [];
     };
-    mcGuard('MQ91', () => {
-      const probes: string[] = [...shapeFaults(runs)];
-      if (runSteps.length === 0) probes.push('the run took no boundary run, so the new entry was never written');
-      if (!(runTried >= runOps[runOps.length - 1]?.step)) probes.push(`the last operation is at attempt ${runOps[runOps.length - 1]?.step}, past the run's ${runTried} candidates`);
-      probes.push(...replayFaults(null));
-      const split = replayFaults('run-split-per-vertex');
-      if (split.length === 0) probes.push('the plant — each run recorded as one removal per vertex, the shape before #1279 — replayed identically at every sampled operation');
-      const held = probes.length === 0;
-      say(
-        'MQ91_CONTROL_ACCEPTED_AT_IS_ONE_ENTRY_PER_ACCEPTED_OPERATION_AND_STOP_AFTER_ACCEPTED_REPLAYS_TO_IT_ACROSS_A_BOUNDARY_RUN',
-        held,
-        probeDetail(
+    unit('MQ91-MQ95', () => {
+      mcGuard('MQ91', () => {
+        const { firstRun, runOps, runSample, runSteps, runTried, runs } = abRunsOf();
+        const probes: string[] = [...shapeFaults(runs)];
+        if (runSteps.length === 0) probes.push('the run took no boundary run, so the new entry was never written');
+        if (!(runTried >= runOps[runOps.length - 1]?.step)) probes.push(`the last operation is at attempt ${runOps[runOps.length - 1]?.step}, past the run's ${runTried} candidates`);
+        probes.push(...replayFaults(null));
+        const split = replayFaults('run-split-per-vertex');
+        if (split.length === 0) probes.push('the plant — each run recorded as one removal per vertex, the shape before #1279 — replayed identically at every sampled operation');
+        const held = probes.length === 0;
+        say(
+          'MQ91_CONTROL_ACCEPTED_AT_IS_ONE_ENTRY_PER_ACCEPTED_OPERATION_AND_STOP_AFTER_ACCEPTED_REPLAYS_TO_IT_ACROSS_A_BOUNDARY_RUN',
           held,
-          probes,
-          `boundaryRuns { maxVertices ${abRuns.maxVertices} }: ${runOps.length} operations in ${runTried} candidates — ${runSteps.length} boundary runs removing ${runSteps.reduce((s, a) => s + a.count, 0)} vertices (first at operation ${firstRun + 1}, attempt ${runOps[firstRun]?.step}: ${JSON.stringify(runOps[firstRun]?.sourceVertices)}); every entry { step, kind, count, sourceVertices } fits its kind and the entries name exactly indexMap's removed vertices; stopAfterAccepted k returned the budget cut's mesh at acceptedAt[k - 1].step, its termination and the run's first k entries at k = ${runSample.join(', ')}; the plant (a run recorded per vertex) parts: ${split[0]}`,
-        ),
-        'issue #1279 (rig-parts#126, §8 Q10): a boundary run removes several vertices in one accepted step, so the list parts bisects and the replay it stands on count operations — held against a budget cut the new field did not produce, across the run itself',
-      );
-    });
-    mcGuard('MQ92', () => {
-      const probes: string[] = [];
-      /** The claim: a result that keeps fewer boundary vertices than the singles-only run, through a boundary run, with every static row held. */
-      const reachesPastSingles = (r: AbRun): string | null => {
-        const rows = r.report.candidates[0]?.geometry?.rows ?? [];
-        const failing = rows.filter((x) => x.state === 'fail').map((x) => `${x.code} ${x.value}`);
-        if (r.mesh === null || strict.mesh === null) return 'no mesh';
-        if (!opsOf(r).some((a) => a.kind === 'boundary-run')) return 'no boundary run was taken';
-        if (!(r.mesh.hull < strict.mesh.hull)) return `it keeps ${r.mesh.hull} boundary vertices against the singles-only run's ${strict.mesh.hull}`;
-        if (!r.report.candidates[0].accepted || r.report.candidates[0].geometry?.verdict !== 'pass') return `accepted ${r.report.candidates[0].accepted}, failing ${failing.join(', ') || 'none'}`;
-        return null;
-      };
-      const said = reachesPastSingles(runs);
-      if (said !== null) probes.push(`boundary runs: ${said}`);
-      if (reachesPastSingles(strict) === null) probes.push('the plant — the singles-only run itself — reads as reaching past it');
-      const skipped = abReduce({ boundaryRuns: abRuns }, 'run-skips-rows');
-      const skippedSaid = reachesPastSingles(skipped);
-      if (skippedSaid === null) probes.push(`the plant — runs taken without their rows — reads as holding every static row (${counts(skipped.mesh)})`);
-      const deviation = runs.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
-      const held = probes.length === 0;
-      say(
-        'MQ92_ON_THE_TRACED_BOUNDARY_A_BOUNDARY_RUN_TAKES_THE_RESULT_PAST_WHAT_SINGLE_REMOVALS_REACH_WITH_EVERY_STATIC_ROW_HELD',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `source ${counts(ab.mesh)}; singles only: ${counts(strict.mesh)}; boundary runs: ${counts(runs.mesh)}, accepted, MQ_BOUNDARY_DEVIATION ${deviation?.value} against <= 1, every art bound as declared; plants: the singles-only run (${counts(strict.mesh)}) and runs taken without their rows (${counts(skipped.mesh)}: ${skippedSaid}) are each refused by the same predicate`,
-        ),
-        'issue #1271 / #1279: on an outline simplified at the deviation bound every single removal is refused, and one chord over a run of vertices is the move that is not (§8, option (iv)) — under every bound as declared',
-      );
-    });
-    mcGuard('MQ93', () => {
-      const probes: string[] = [...shapeFaults(strict)];
-      const strictOps = opsOf(strict);
-      const k = strict.report.candidates[0]?.changes;
-      /** The shape a call without the field writes: every entry one vertex, no run, no echo. */
-      const optOutFaults = (r: AbRun): string[] => {
-        const out: string[] = [];
-        const ops = opsOf(r);
-        const c = r.report.candidates[0]?.changes;
-        const text = writeMeshQualityReport(r.report);
-        if (ops.some((a) => a.kind === 'boundary-run' || a.count !== 1)) out.push(`an entry ${JSON.stringify(ops.find((a) => a.kind === 'boundary-run' || a.count !== 1))} removes more than one vertex`);
-        if (c === undefined || ops.length !== c.removedVertices + c.insertedVertices) out.push(`acceptedAt has ${ops.length} entries; removed ${c?.removedVertices} + inserted ${c?.insertedVertices}`);
-        if (text.includes('boundaryRuns') || text.includes('boundary-run')) out.push('the report writes boundaryRuns or a boundary-run entry');
-        return out;
-      };
-      probes.push(...optOutFaults(strict));
-      const keys = Object.keys(JSON.parse(writeMeshQualityReport(strict.report)).candidates[0]?.changes ?? {}).join(',');
-      if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') probes.push(`changes keys ${keys}`);
-      const planted = optOutFaults(abReduce({}, 'runs-without-opt-in'));
-      if (planted.length === 0) probes.push('the plant — boundary runs tried by a call that did not opt in — writes the opt-out shape');
-      const held = probes.length === 0;
-      say(
-        'MQ93_A_CALL_WITHOUT_BOUNDARY_RUNS_TRIES_NONE_AND_WRITES_ONE_SINGLE_VERTEX_ENTRY_PER_STEP',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `without the field: ${strictOps.length} entries = removed ${k?.removedVertices} + inserted ${k?.insertedVertices}, each { step, kind: ${[...new Set(strictOps.map((a) => a.kind))].join(' | ')}, count 1, sourceVertices [v] }, no boundaryRuns echo, changes keys as before; the plant (runs without the opt-in): ${planted[0]}`,
-        ),
-        "issue #1279: a call that does not opt in is the call it was before the field, acceptedAt's new shape aside — byte for byte, which the tree has no older copy to compare against here, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected",
-      );
-    });
-    mcGuard('MQ94', () => {
-      const probes: string[] = [];
-      // Every refused run is counted; the first few are named by a full measurement, which is what the floor skips.
-      const named: Array<{ attempt: AttemptRecord; said: string }> = [];
-      let refusedRuns = 0;
-      let flooredRuns = 0;
-      const observed = abReduce({ boundaryRuns: abRuns }, null, (a) => {
-        if (a.kind !== 'boundary-run' || a.refusedBy === null) return;
-        refusedRuns++;
-        if (a.decidedByFloor) flooredRuns++;
-        if (named.length < 8) named.push({ attempt: a, said: a.refusedBy() });
+          probeDetail(
+            held,
+            probes,
+            `boundaryRuns { maxVertices ${abRuns.maxVertices} }: ${runOps.length} operations in ${runTried} candidates — ${runSteps.length} boundary runs removing ${runSteps.reduce((s, a) => s + a.count, 0)} vertices (first at operation ${firstRun + 1}, attempt ${runOps[firstRun]?.step}: ${JSON.stringify(runOps[firstRun]?.sourceVertices)}); every entry { step, kind, count, sourceVertices } fits its kind and the entries name exactly indexMap's removed vertices; stopAfterAccepted k returned the budget cut's mesh at acceptedAt[k - 1].step, its termination and the run's first k entries at k = ${runSample.join(', ')}; the plant (a run recorded per vertex) parts: ${split[0]}`,
+          ),
+          'issue #1279 (rig-parts#126, §8 Q10): a boundary run removes several vertices in one accepted step, so the list parts bisects and the replay it stands on count operations — held against a budget cut the new field did not produce, across the run itself',
+        );
       });
-      const refused = named.filter((n) => n.said.startsWith('MQ_BOUNDARY_DEVIATION:'));
-      if (refused.length === 0) probes.push(`none of the first ${named.length} refused boundary runs names MQ_BOUNDARY_DEVIATION (${named.map((n) => n.said.slice(0, 40)).join('; ')}), so the refusal was never exercised`);
-      if (bytesOf(observed) !== bytesOf(runs)) probes.push('observing the attempts changed the result');
-      /** The claim: the result of a run with boundary runs holds the deviation bound as declared. */
-      const deviationOf = (r: AbRun): MeasureRow | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
-      const ownRow = deviationOf(runs);
-      if (ownRow?.state !== 'pass') probes.push(`the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} ${ownRow?.state}`);
-      const skippedRow = deviationOf(abReduce({ boundaryRuns: abRuns }, 'run-skips-rows'));
-      if (skippedRow?.state !== 'fail') probes.push(`the plant — runs taken without their rows — reads MQ_BOUNDARY_DEVIATION ${skippedRow?.value} ${skippedRow?.state}; required a fail`);
-      const held = probes.length === 0;
-      say(
-        'MQ94_A_BOUNDARY_RUN_THAT_WOULD_BREACH_THE_DEVIATION_BOUND_IS_REFUSED_NAMING_THE_ROW',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `${refusedRuns} boundary runs refused (${flooredRuns} by the deviation floor); of the first ${named.length}, measured in full, ${refused.length} name the row, e.g. attempt ${refused[0]?.attempt.step} over ${JSON.stringify(refused[0]?.attempt.sourceVertices)}: ${refused[0]?.said}; the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} — pass; the plant (runs taken without their rows) reads ${skippedRow?.value} — fail`,
-        ),
-        'issue #1279: a run is held to every declared row exactly as a single removal is — a chord too far from the source hull is refused, by name, and never loosens the bound to fit',
-      );
-    });
-    mcGuard('MQ95', () => {
-      const probes: string[] = [];
-      const seen: string[] = [];
-      const refusalOf = (input: MeshReductionInput): string | null => {
-        try {
-          reduceMesh(input);
+      mcGuard('MQ92', () => {
+        const { runs } = abRunsOf();
+        const { strict } = abStrict();
+        const probes: string[] = [];
+        /** The claim: a result that keeps fewer boundary vertices than the singles-only run, through a boundary run, with every static row held. */
+        const reachesPastSingles = (r: AbRun): string | null => {
+          const rows = r.report.candidates[0]?.geometry?.rows ?? [];
+          const failing = rows.filter((x) => x.state === 'fail').map((x) => `${x.code} ${x.value}`);
+          if (r.mesh === null || strict.mesh === null) return 'no mesh';
+          if (!opsOf(r).some((a) => a.kind === 'boundary-run')) return 'no boundary run was taken';
+          if (!(r.mesh.hull < strict.mesh.hull)) return `it keeps ${r.mesh.hull} boundary vertices against the singles-only run's ${strict.mesh.hull}`;
+          if (!r.report.candidates[0].accepted || r.report.candidates[0].geometry?.verdict !== 'pass') return `accepted ${r.report.candidates[0].accepted}, failing ${failing.join(', ') || 'none'}`;
           return null;
-        } catch (err) {
-          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
-          return `(not a MeshReductionError) ${(err as Error).message}`;
-        }
-      };
-      const cheap = (runsField: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), boundaryRuns: runsField as MeshReductionInput['boundaryRuns'] });
-      const wrongs: Array<[string, unknown]> = [
-        ['null', null],
-        ['8', 8],
-        ['"8"', '8'],
-        ['[]', []],
-        ['{}', {}],
-        ['{ maxVertices: 1 }', { maxVertices: 1 }],
-        ['{ maxVertices: 2.5 }', { maxVertices: 2.5 }],
-        ['{ maxVertices: null }', { maxVertices: null }],
-        ['{ maxVertices: NaN }', { maxVertices: Number.NaN }],
-        ['{ maxVertices: "8" }', { maxVertices: '8' }],
-      ];
-      for (const [label, wrong] of wrongs) {
-        const said = refusalOf(cheap(wrong));
-        if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('boundaryRuns is')) probes.push(`boundaryRuns ${label}: ${said ?? 'accepted'}`);
-        else seen.push(label);
-      }
-      for (const right of [undefined, { maxVertices: 2 }]) {
-        const said = refusalOf(cheap(right));
-        if (said !== null) probes.push(`boundaryRuns ${JSON.stringify(right)} was refused: ${said}`);
-      }
-      const held = probes.length === 0;
-      say(
-        'MQ95_A_BOUNDARY_RUNS_THAT_IS_NOT_A_MAX_VERTICES_OF_2_OR_MORE_IS_REFUSED_NAMING_THE_FIELD',
-        held,
-        probeDetail(held, probes, `${seen.join(', ')} refused REDUCE_INPUT_MISSING naming boundaryRuns; the field left out and { maxVertices: 2 } admitted`),
-        'issue #1279: the longest run is the caller\'s and has no default — a run of one is a single removal, and null, a fraction or a string names no length',
-      );
-    });
-    mcGuard('MQ96', () => {
-      const probes: string[] = [];
-      let floored = 0;
-      const subjects: Array<[string, () => AbRun, (p: ReductionPlant) => AbRun]> = [
-        ['the traced boundary, singles only', () => strict, (p) => abReduce({}, p)],
-        ['the traced boundary, boundary runs', () => runs, (p) => abReduce({ boundaryRuns: abRuns }, p)],
-        [
-          "MQ79's ramp, singles only",
-          () => reduceMesh(mvReduceInput(mvSrc)),
-          (p) => {
-            const r = artRastersOf(mvReduceInput(mvSrc).art);
-            return reduceMeshWith(mvReduceInput(mvSrc), r, stepRastersOf(r), p);
-          },
-        ],
-      ];
-      const caught: string[] = [];
-      for (const [label, ownRun, planted] of subjects) {
-        const own = bytesOf(ownRun());
-        if (own !== bytesOf(planted('measure-every-candidate'))) probes.push(`${label}: the run with the floor differs from the one that measures every candidate`);
-        try {
-          const loose = bytesOf(planted('floor-half-a-pixel-short'));
-          caught.push(`${label}: ${loose === own ? 'the same bytes' : 'bytes differ'}`);
-        } catch (err) {
-          caught.push(`${label}: threw — ${(err as Error).message.slice(0, 80)}`);
-        }
-      }
-      // The plant moves only steps whose floor lies within half a pixel under the bound, which a subject need not have
-      // (the ramp's hull vertices sit within 0.08 px of their chords), so it has to fire on one subject, not on each.
-      if (caught.every((c) => c.endsWith('the same bytes'))) probes.push(`the plant — the floor half a pixel short of the bound — wrote the same bytes on every subject (${caught.join('; ')})`);
-      abReduce({ boundaryRuns: abRuns }, null, (a) => {
-        if (a.decidedByFloor) floored++;
+        };
+        const said = reachesPastSingles(runs);
+        if (said !== null) probes.push(`boundary runs: ${said}`);
+        if (reachesPastSingles(strict) === null) probes.push('the plant — the singles-only run itself — reads as reaching past it');
+        const skipped = abReduce({ boundaryRuns: abRuns }, 'run-skips-rows');
+        const skippedSaid = reachesPastSingles(skipped);
+        if (skippedSaid === null) probes.push(`the plant — runs taken without their rows — reads as holding every static row (${counts(skipped.mesh)})`);
+        const deviation = runs.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
+        const held = probes.length === 0;
+        say(
+          'MQ92_ON_THE_TRACED_BOUNDARY_A_BOUNDARY_RUN_TAKES_THE_RESULT_PAST_WHAT_SINGLE_REMOVALS_REACH_WITH_EVERY_STATIC_ROW_HELD',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `source ${counts(ab.mesh)}; singles only: ${counts(strict.mesh)}; boundary runs: ${counts(runs.mesh)}, accepted, MQ_BOUNDARY_DEVIATION ${deviation?.value} against <= 1, every art bound as declared; plants: the singles-only run (${counts(strict.mesh)}) and runs taken without their rows (${counts(skipped.mesh)}: ${skippedSaid}) are each refused by the same predicate`,
+          ),
+          'issue #1271 / #1279: on an outline simplified at the deviation bound every single removal is refused, and one chord over a run of vertices is the move that is not (§8, option (iv)) — under every bound as declared',
+        );
       });
-      if (floored === 0) probes.push('the floor decided no attempt, so the identity compared nothing it changed');
-      const held = probes.length === 0;
-      say(
-        'MQ96_CONTROL_THE_DEVIATION_FLOOR_REFUSES_WITHOUT_MEASURING_AND_CHANGES_NO_BYTE_OF_ANY_RESULT',
-        held,
-        probeDetail(held, probes, `${subjects.length} runs byte-identical with the floor and with every candidate measured; on the traced boundary with runs the floor decided ${runTried > 0 ? `${floored} of ${runTried}` : floored} attempts; the plant (the floor half a pixel short): ${caught.join('; ')}`),
-        'issue #1279: most boundary attempts on a traced outline cannot pass the deviation row, and a lower bound on that row decides them without the measurement — a cost change only if no result reads differently',
-      );
+      mcGuard('MQ93', () => {
+        const { strict } = abStrict();
+        const probes: string[] = [...shapeFaults(strict)];
+        const strictOps = opsOf(strict);
+        const k = strict.report.candidates[0]?.changes;
+        /** The shape a call without the field writes: every entry one vertex, no run, no echo. */
+        const optOutFaults = (r: AbRun): string[] => {
+          const out: string[] = [];
+          const ops = opsOf(r);
+          const c = r.report.candidates[0]?.changes;
+          const text = writeMeshQualityReport(r.report);
+          if (ops.some((a) => a.kind === 'boundary-run' || a.count !== 1)) out.push(`an entry ${JSON.stringify(ops.find((a) => a.kind === 'boundary-run' || a.count !== 1))} removes more than one vertex`);
+          if (c === undefined || ops.length !== c.removedVertices + c.insertedVertices) out.push(`acceptedAt has ${ops.length} entries; removed ${c?.removedVertices} + inserted ${c?.insertedVertices}`);
+          if (text.includes('boundaryRuns') || text.includes('boundary-run')) out.push('the report writes boundaryRuns or a boundary-run entry');
+          return out;
+        };
+        probes.push(...optOutFaults(strict));
+        const keys = Object.keys(JSON.parse(writeMeshQualityReport(strict.report)).candidates[0]?.changes ?? {}).join(',');
+        if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') probes.push(`changes keys ${keys}`);
+        const planted = optOutFaults(abReduce({}, 'runs-without-opt-in'));
+        if (planted.length === 0) probes.push('the plant — boundary runs tried by a call that did not opt in — writes the opt-out shape');
+        const held = probes.length === 0;
+        say(
+          'MQ93_A_CALL_WITHOUT_BOUNDARY_RUNS_TRIES_NONE_AND_WRITES_ONE_SINGLE_VERTEX_ENTRY_PER_STEP',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `without the field: ${strictOps.length} entries = removed ${k?.removedVertices} + inserted ${k?.insertedVertices}, each { step, kind: ${[...new Set(strictOps.map((a) => a.kind))].join(' | ')}, count 1, sourceVertices [v] }, no boundaryRuns echo, changes keys as before; the plant (runs without the opt-in): ${planted[0]}`,
+          ),
+          "issue #1279: a call that does not opt in is the call it was before the field, acceptedAt's new shape aside — byte for byte, which the tree has no older copy to compare against here, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected",
+        );
+      });
+      mcGuard('MQ94', () => {
+        const { runs } = abRunsOf();
+        const probes: string[] = [];
+        // Every refused run is counted; the first few are named by a full measurement, which is what the floor skips.
+        const named: Array<{ attempt: AttemptRecord; said: string }> = [];
+        let refusedRuns = 0;
+        let flooredRuns = 0;
+        const observed = abReduce({ boundaryRuns: abRuns }, null, (a) => {
+          if (a.kind !== 'boundary-run' || a.refusedBy === null) return;
+          refusedRuns++;
+          if (a.decidedByFloor) flooredRuns++;
+          if (named.length < 8) named.push({ attempt: a, said: a.refusedBy() });
+        });
+        const refused = named.filter((n) => n.said.startsWith('MQ_BOUNDARY_DEVIATION:'));
+        if (refused.length === 0) probes.push(`none of the first ${named.length} refused boundary runs names MQ_BOUNDARY_DEVIATION (${named.map((n) => n.said.slice(0, 40)).join('; ')}), so the refusal was never exercised`);
+        if (bytesOf(observed) !== bytesOf(runs)) probes.push('observing the attempts changed the result');
+        /** The claim: the result of a run with boundary runs holds the deviation bound as declared. */
+        const deviationOf = (r: AbRun): MeasureRow | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
+        const ownRow = deviationOf(runs);
+        if (ownRow?.state !== 'pass') probes.push(`the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} ${ownRow?.state}`);
+        const skippedRow = deviationOf(abReduce({ boundaryRuns: abRuns }, 'run-skips-rows'));
+        if (skippedRow?.state !== 'fail') probes.push(`the plant — runs taken without their rows — reads MQ_BOUNDARY_DEVIATION ${skippedRow?.value} ${skippedRow?.state}; required a fail`);
+        const held = probes.length === 0;
+        say(
+          'MQ94_A_BOUNDARY_RUN_THAT_WOULD_BREACH_THE_DEVIATION_BOUND_IS_REFUSED_NAMING_THE_ROW',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `${refusedRuns} boundary runs refused (${flooredRuns} by the deviation floor); of the first ${named.length}, measured in full, ${refused.length} name the row, e.g. attempt ${refused[0]?.attempt.step} over ${JSON.stringify(refused[0]?.attempt.sourceVertices)}: ${refused[0]?.said}; the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} — pass; the plant (runs taken without their rows) reads ${skippedRow?.value} — fail`,
+          ),
+          'issue #1279: a run is held to every declared row exactly as a single removal is — a chord too far from the source hull is refused, by name, and never loosens the bound to fit',
+        );
+      });
+      mcGuard('MQ95', () => {
+        const probes: string[] = [];
+        const seen: string[] = [];
+        const refusalOf = (input: MeshReductionInput): string | null => {
+          try {
+            reduceMesh(input);
+            return null;
+          } catch (err) {
+            if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+            return `(not a MeshReductionError) ${(err as Error).message}`;
+          }
+        };
+        const cheap = (runsField: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), boundaryRuns: runsField as MeshReductionInput['boundaryRuns'] });
+        const wrongs: Array<[string, unknown]> = [
+          ['null', null],
+          ['8', 8],
+          ['"8"', '8'],
+          ['[]', []],
+          ['{}', {}],
+          ['{ maxVertices: 1 }', { maxVertices: 1 }],
+          ['{ maxVertices: 2.5 }', { maxVertices: 2.5 }],
+          ['{ maxVertices: null }', { maxVertices: null }],
+          ['{ maxVertices: NaN }', { maxVertices: Number.NaN }],
+          ['{ maxVertices: "8" }', { maxVertices: '8' }],
+        ];
+        for (const [label, wrong] of wrongs) {
+          const said = refusalOf(cheap(wrong));
+          if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('boundaryRuns is')) probes.push(`boundaryRuns ${label}: ${said ?? 'accepted'}`);
+          else seen.push(label);
+        }
+        for (const right of [undefined, { maxVertices: 2 }]) {
+          const said = refusalOf(cheap(right));
+          if (said !== null) probes.push(`boundaryRuns ${JSON.stringify(right)} was refused: ${said}`);
+        }
+        const held = probes.length === 0;
+        say(
+          'MQ95_A_BOUNDARY_RUNS_THAT_IS_NOT_A_MAX_VERTICES_OF_2_OR_MORE_IS_REFUSED_NAMING_THE_FIELD',
+          held,
+          probeDetail(held, probes, `${seen.join(', ')} refused REDUCE_INPUT_MISSING naming boundaryRuns; the field left out and { maxVertices: 2 } admitted`),
+          'issue #1279: the longest run is the caller\'s and has no default — a run of one is a single removal, and null, a fraction or a string names no length',
+        );
+      });
+    });
+    unit('MQ96', () => {
+      mcGuard('MQ96', () => {
+        const { runTried, runs } = abRunsOf();
+        const { strict } = abStrict();
+        const probes: string[] = [];
+        let floored = 0;
+        const subjects: Array<[string, () => AbRun, (p: ReductionPlant) => AbRun]> = [
+          ['the traced boundary, singles only', () => strict, (p) => abReduce({}, p)],
+          ['the traced boundary, boundary runs', () => runs, (p) => abReduce({ boundaryRuns: abRuns }, p)],
+          [
+            "MQ79's ramp, singles only",
+            () => memoReduceMesh(mvReduceInput(mvSrc)),
+            (p) => {
+              const r = artRastersOf(mvReduceInput(mvSrc).art);
+              return reduceMeshWith(mvReduceInput(mvSrc), r, stepRastersOf(r), p);
+            },
+          ],
+        ];
+        const caught: string[] = [];
+        for (const [label, ownRun, planted] of subjects) {
+          const own = bytesOf(ownRun());
+          if (own !== bytesOf(planted('measure-every-candidate'))) probes.push(`${label}: the run with the floor differs from the one that measures every candidate`);
+          try {
+            const loose = bytesOf(planted('floor-half-a-pixel-short'));
+            caught.push(`${label}: ${loose === own ? 'the same bytes' : 'bytes differ'}`);
+          } catch (err) {
+            caught.push(`${label}: threw — ${(err as Error).message.slice(0, 80)}`);
+          }
+        }
+        // The plant moves only steps whose floor lies within half a pixel under the bound, which a subject need not have
+        // (the ramp's hull vertices sit within 0.08 px of their chords), so it has to fire on one subject, not on each.
+        if (caught.every((c) => c.endsWith('the same bytes'))) probes.push(`the plant — the floor half a pixel short of the bound — wrote the same bytes on every subject (${caught.join('; ')})`);
+        abReduce({ boundaryRuns: abRuns }, null, (a) => {
+          if (a.decidedByFloor) floored++;
+        });
+        if (floored === 0) probes.push('the floor decided no attempt, so the identity compared nothing it changed');
+        const held = probes.length === 0;
+        say(
+          'MQ96_CONTROL_THE_DEVIATION_FLOOR_REFUSES_WITHOUT_MEASURING_AND_CHANGES_NO_BYTE_OF_ANY_RESULT',
+          held,
+          probeDetail(held, probes, `${subjects.length} runs byte-identical with the floor and with every candidate measured; on the traced boundary with runs the floor decided ${runTried > 0 ? `${floored} of ${runTried}` : floored} attempts; the plant (the floor half a pixel short): ${caught.join('; ')}`),
+          'issue #1279: most boundary attempts on a traced outline cannot pass the deviation row, and a lower bound on that row decides them without the measurement — a cost change only if no result reads differently',
+        );
+      });
     });
 
     // --- MQ97–MQ105 (#1283): the triangulation post-pass and the deformation-load order, both opt-in --------------
@@ -50587,9 +50934,6 @@ function runMeshCompareSuite(): number {
     // the loads ranked descending.
     const delaunay = { retriangulate: 'delaunay' as const };
     const byLoad = { removalOrder: 'deformation-load' as const };
-    const mvRasters = artRastersOf(mvReduceInput(mvSrc).art);
-    const mvReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
-      reduceMeshWith(mvReduceInput(mvSrc, over), mvRasters, stepRastersOf(mvRasters), plant, observe);
     const retriOf = (r: AbRun): Retriangulation | undefined => r.report.candidates[0]?.changes?.retriangulation;
     /** Everything of a mesh but its triangles and edges: the vertex set, its attributes and the maps a consumer carries. */
     const vertexSet = (m: ReducedMesh | null): string => (m === null ? 'no mesh' : JSON.stringify([m.points, m.uvs, m.hull, m.weights, m.indexMap, m.inserted, m.deform]));
@@ -50599,6 +50943,7 @@ function runMeshCompareSuite(): number {
       JSON.stringify(opsOf(p)) === JSON.stringify(opsOf(q)) && JSON.stringify(p.report.termination) === JSON.stringify(q.report.termination);
     /** Bisect `stopAfterAccepted` over `count` accepted steps of the traced boundary, choosing on the grid frames as MQ88 does. */
     const bisect = (over: Partial<MeshReductionInput>, count: number, tag: string): { lo: number; hi: number; chosen: AbRun | null; report: MeshQualityReport | null; replays: number } => {
+      const { grid } = abStrictMotion();
       let lo = 0;
       let hi = count;
       const seen = new Map<number, { run: AbRun; report: MeshQualityReport | null }>();
@@ -50613,376 +50958,392 @@ function runMeshCompareSuite(): number {
       const got = seen.get(lo);
       return { lo, hi, chosen: got?.run ?? null, report: got?.report ?? null, replays: seen.size };
     };
-    const strictOn = abReduce(delaunay);
+    const abStrictOn = lazily(() => abReduce(delaunay));
 
-    mcGuard('MQ97', () => {
-      const probes: string[] = [];
-      const off = mvReduce();
-      const on = mvReduce(delaunay);
-      const t = retriOf(on);
-      if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed a vertex, a UV, a weight, the hull, indexMap or the deform keys');
-      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
-      if (off.mesh !== null && on.mesh !== null && JSON.stringify(off.mesh.triangles) === JSON.stringify(on.mesh.triangles)) probes.push('the returned triangles are the removals\'');
-      if (!staticHeld(on)) probes.push(`the post-pass result: accepted ${on.report.candidates[0].accepted}, failing ${failing(on)}; required every static row held`);
-      if (!sameLoop(off, on)) probes.push('the removal sequence or the termination moved under the opt-in');
-      const report = off.mesh !== null && on.mesh !== null
-        ? mvCompare(mvBuild(dir, 'mv-source-97', mvSrc), [{ id: 'removals', model: mvBuild(dir, 'mv-removals-97', off.mesh) }, { id: 'delaunay', model: mvBuild(dir, 'mv-delaunay-97', on.mesh) }], 1)
-        : null;
-      const passes = (i: number): boolean => report !== null && report.candidates[i].accepted && mvLocal(report, i)?.state === 'pass';
-      const [e, d] = [0, 1].map((i) => (report === null ? undefined : mvLocal(report, i)));
-      if (!passes(1)) probes.push(`the post-pass result in motion: ${mvSaid(d)}, accepted ${report?.candidates[1].accepted}; required within 1 and accepted`);
-      if (passes(0)) probes.push(`the plant — the same vertices as the removals triangulated them, the call without the field — passes the same predicate (${mvSaid(e)}), so it cannot fire`);
-      const held = probes.length === 0;
-      say(
-        'MQ97_THE_POST_PASS_RE_TRIANGULATES_THE_RAMPS_STRICT_RESULT_ON_ITS_OWN_VERTICES_AND_IT_PASSES_THE_MOTION_ROW_THE_REMOVALS_TRIANGLES_FAIL',
-        held,
-        probeDetail(
+    unit('MQ97-MQ98', () => {
+      mcGuard('MQ97', () => {
+        const probes: string[] = [];
+        const off = mvReduce();
+        const on = mvReduce(delaunay);
+        const t = retriOf(on);
+        if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed a vertex, a UV, a weight, the hull, indexMap or the deform keys');
+        if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+        if (off.mesh !== null && on.mesh !== null && JSON.stringify(off.mesh.triangles) === JSON.stringify(on.mesh.triangles)) probes.push('the returned triangles are the removals\'');
+        if (!staticHeld(on)) probes.push(`the post-pass result: accepted ${on.report.candidates[0].accepted}, failing ${failing(on)}; required every static row held`);
+        if (!sameLoop(off, on)) probes.push('the removal sequence or the termination moved under the opt-in');
+        const report = off.mesh !== null && on.mesh !== null
+          ? mvCompare(mvBuild(dir, 'mv-source-97', mvSrc), [{ id: 'removals', model: mvBuild(dir, 'mv-removals-97', off.mesh) }, { id: 'delaunay', model: mvBuild(dir, 'mv-delaunay-97', on.mesh) }], 1)
+          : null;
+        const passes = (i: number): boolean => report !== null && report.candidates[i].accepted && mvLocal(report, i)?.state === 'pass';
+        const [e, d] = [0, 1].map((i) => (report === null ? undefined : mvLocal(report, i)));
+        if (!passes(1)) probes.push(`the post-pass result in motion: ${mvSaid(d)}, accepted ${report?.candidates[1].accepted}; required within 1 and accepted`);
+        if (passes(0)) probes.push(`the plant — the same vertices as the removals triangulated them, the call without the field — passes the same predicate (${mvSaid(e)}), so it cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ97_THE_POST_PASS_RE_TRIANGULATES_THE_RAMPS_STRICT_RESULT_ON_ITS_OWN_VERTICES_AND_IT_PASSES_THE_MOTION_ROW_THE_REMOVALS_TRIANGLES_FAIL',
           held,
-          probes,
-          `MQ79's strict policy: ${mvCounts(on.report.candidates[0])} either way, the same vertices, UVs, weights, indexMap and acceptedAt; ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; motion — the removals' triangles ${mvSaid(e)}, refused (the plant), the post-pass's ${mvSaid(d)}, accepted; every frame held out`,
-        ),
-        'issue #1283 (§8 Q3/Q9): on the ramp the vertex set the strict reduction keeps is not what fails the bend, its triangulation is — so the post-pass keeps every vertex and changes only the triangles, and the motion row is where that shows',
-      );
-    });
+          probeDetail(
+            held,
+            probes,
+            `MQ79's strict policy: ${mvCounts(on.report.candidates[0])} either way, the same vertices, UVs, weights, indexMap and acceptedAt; ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; motion — the removals' triangles ${mvSaid(e)}, refused (the plant), the post-pass's ${mvSaid(d)}, accepted; every frame held out`,
+          ),
+          'issue #1283 (§8 Q3/Q9): on the ramp the vertex set the strict reduction keeps is not what fails the bend, its triangulation is — so the post-pass keeps every vertex and changes only the triangles, and the motion row is where that shows',
+        );
+      });
 
-    mcGuard('MQ98', () => {
-      const probes: string[] = [];
-      const bisectOn = bisect(delaunay, opsOf(strictOn).length, 'd');
-      const t = retriOf(strictOn);
-      if (vertexSet(strict.mesh) !== vertexSet(strictOn.mesh)) probes.push('the post-pass changed the strict result\'s vertex set');
-      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
-      if (!staticHeld(strictOn)) probes.push(`the post-pass result: accepted ${strictOn.report.candidates[0].accepted}, failing ${failing(strictOn)}; required every static row held`);
-      if (!sameLoop(strict, strictOn)) probes.push('the removal sequence or the termination moved under the opt-in');
-      const chosenOn = bisectOn.chosen;
-      const local = bisectOn.report === null ? undefined : row(bisectOn.report, 'MQ_LOCAL_DEFORMATION');
-      const heldOut = local?.motion?.byRole.heldOut ?? null;
-      /** The claim: a bisected replay with fewer vertices than the removals' own bisected replay (MQ88), passing on its held-out frames. */
-      const fewerAndPasses = (m: ReducedMesh | null | undefined, report: MeshQualityReport | null, out: { state: string } | null): string | null => {
-        if (m === null || m === undefined || report === null) return 'no replay was chosen';
-        if (!(m.points.length < replayVertices)) return `it keeps ${m.points.length} vertices against the removals' replay's ${replayVertices}`;
-        if (!report.candidates[0].accepted || out === null || out.state !== 'pass') return `held out ${JSON.stringify(out)}, accepted ${report.candidates[0].accepted}`;
-        return null;
-      };
-      const said = fewerAndPasses(chosenOn?.mesh, bisectOn.report, heldOut);
-      if (said !== null) probes.push(`the post-pass replay bisected on grid: ${said}`);
-      // The plant: the pass skipped on every replay leaves the bisection reading the removals' replays — MQ88's, chosen there.
-      if (fewerAndPasses(chosen?.mesh ?? null, chosen?.report ?? null, chosenLocal?.motion?.byRole.heldOut ?? null) === null) probes.push('the plant — the removals\' own bisected replay (MQ88) — reads as fewer than itself');
-      const held = probes.length === 0;
-      say(
-        'MQ98_ON_THE_TRACED_BOUNDARY_THE_POST_PASS_KEEPS_EVERY_VERTEX_AND_ITS_BISECTED_REPLAY_KEEPS_FEWER_THAN_THE_REMOVALS_AND_PASSES_HELD_OUT',
-        held,
-        probeDetail(
+      mcGuard('MQ98', () => {
+        const { chosen, chosenLocal, lo, replayVertices } = abBisected();
+        const { strict } = abStrict();
+        const strictOn = abStrictOn();
+        const probes: string[] = [];
+        const bisectOn = bisect(delaunay, opsOf(strictOn).length, 'd');
+        const t = retriOf(strictOn);
+        if (vertexSet(strict.mesh) !== vertexSet(strictOn.mesh)) probes.push('the post-pass changed the strict result\'s vertex set');
+        if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+        if (!staticHeld(strictOn)) probes.push(`the post-pass result: accepted ${strictOn.report.candidates[0].accepted}, failing ${failing(strictOn)}; required every static row held`);
+        if (!sameLoop(strict, strictOn)) probes.push('the removal sequence or the termination moved under the opt-in');
+        const chosenOn = bisectOn.chosen;
+        const local = bisectOn.report === null ? undefined : row(bisectOn.report, 'MQ_LOCAL_DEFORMATION');
+        const heldOut = local?.motion?.byRole.heldOut ?? null;
+        /** The claim: a bisected replay with fewer vertices than the removals' own bisected replay (MQ88), passing on its held-out frames. */
+        const fewerAndPasses = (m: ReducedMesh | null | undefined, report: MeshQualityReport | null, out: { state: string } | null): string | null => {
+          if (m === null || m === undefined || report === null) return 'no replay was chosen';
+          if (!(m.points.length < replayVertices)) return `it keeps ${m.points.length} vertices against the removals' replay's ${replayVertices}`;
+          if (!report.candidates[0].accepted || out === null || out.state !== 'pass') return `held out ${JSON.stringify(out)}, accepted ${report.candidates[0].accepted}`;
+          return null;
+        };
+        const said = fewerAndPasses(chosenOn?.mesh, bisectOn.report, heldOut);
+        if (said !== null) probes.push(`the post-pass replay bisected on grid: ${said}`);
+        // The plant: the pass skipped on every replay leaves the bisection reading the removals' replays — MQ88's, chosen there.
+        if (fewerAndPasses(chosen?.mesh ?? null, chosen?.report ?? null, chosenLocal?.motion?.byRole.heldOut ?? null) === null) probes.push('the plant — the removals\' own bisected replay (MQ88) — reads as fewer than itself');
+        const held = probes.length === 0;
+        say(
+          'MQ98_ON_THE_TRACED_BOUNDARY_THE_POST_PASS_KEEPS_EVERY_VERTEX_AND_ITS_BISECTED_REPLAY_KEEPS_FEWER_THAN_THE_REMOVALS_AND_PASSES_HELD_OUT',
           held,
-          probes,
-          `strict with the post-pass: ${counts(strictOn.mesh)}, the vertex set and acceptedAt of the call without it, ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; bisected on grid in ${bisectOn.replays} replays over ${opsOf(strictOn).length} steps: step ${bisectOn.lo}, ${counts(chosenOn?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the removals' ${replayVertices} at step ${lo} (MQ88, the plant); the operation promises no monotone validity along the steps (§8 Q4), so the step found is a passing one, not necessarily the last`,
-        ),
-        'issue #1283 (§8 Q3/Q9): the stage-A record measured the replay going 191 → 135 vertices under the pass on this fixture at a lower motion error — the interior the removals keep is the triangulation\'s cost, not the motion\'s',
-      );
+          probeDetail(
+            held,
+            probes,
+            `strict with the post-pass: ${counts(strictOn.mesh)}, the vertex set and acceptedAt of the call without it, ${t?.flips} flips in ${t?.sweeps} sweeps, every static row held; bisected on grid in ${bisectOn.replays} replays over ${opsOf(strictOn).length} steps: step ${bisectOn.lo}, ${counts(chosenOn?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the removals' ${replayVertices} at step ${lo} (MQ88, the plant); the operation promises no monotone validity along the steps (§8 Q4), so the step found is a passing one, not necessarily the last`,
+          ),
+          'issue #1283 (§8 Q3/Q9): the stage-A record measured the replay going 191 → 135 vertices under the pass on this fixture at a lower motion error — the interior the removals keep is the triangulation\'s cost, not the motion\'s',
+        );
+      });
     });
 
-    mcGuard('MQ99', () => {
-      const probes: string[] = [];
-      const ops = opsOf(strictOn);
-      const sample = [...new Set([1, Math.ceil(ops.length / 2), ops.length - 1, ops.length])].filter((k) => k >= 1 && k <= ops.length).sort((a, b) => a - b);
-      const dumps = new Map(sample.map((k) => [k, abReduce({ ...delaunay, budget: { maxCandidates: ops[k - 1].step } }).mesh]));
-      const removalsAt = new Map(sample.map((k) => [k, abReduce({ stopAfterAccepted: k }).mesh]));
-      /** The first sampled step whose replay under the opt-in is not the budget cut's mesh, the removals' vertex set, or its termination. */
-      const parted = (plant: ReductionPlant | null): string | null => {
-        for (const k of sample) {
-          const r = abReduce({ ...delaunay, stopAfterAccepted: k }, plant);
-          const at = `step ${k} (attempt ${ops[k - 1].step})`;
-          if (JSON.stringify(r.mesh) !== JSON.stringify(dumps.get(k) ?? null)) return `${at}: the replayed mesh is not the budget cut's under the opt-in`;
-          if (vertexSet(r.mesh) !== vertexSet(removalsAt.get(k) ?? null)) return `${at}: the replayed vertex set is not the replay's without the field`;
-          const t = r.report.termination;
-          if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== ops[k - 1].step) return `${at}: termination ${JSON.stringify(t)}`;
-          if (retriOf(r)?.taken !== true) return `${at}: retriangulation ${JSON.stringify(retriOf(r))}`;
-        }
-        return null;
-      };
-      const own = parted(null);
-      if (own !== null) probes.push(own);
-      const skipped = parted('flips-not-on-replay');
-      if (skipped === null) probes.push('the plant — the pass skipped when a replay stops the run — replayed the budget cut at every sampled step');
-      // The removal loop does not read the pass: acceptedAt and the termination are the call's without it. The plant
-      // that must move them is any change to the loop under the opt-in — the load order without its opt-in.
-      const moved = abReduce(delaunay, 'order-without-opt-in');
-      const loopMoved = !sameLoop(strict, moved);
-      if (!sameLoop(strict, strictOn)) probes.push('acceptedAt or the termination under the opt-in is not the call\'s without it');
-      if (!loopMoved) probes.push('the plant — the loop reordered under the opt-in — left acceptedAt and the termination as they were, so their equality cannot fire');
-      const held = probes.length === 0;
-      say(
-        'MQ99_CONTROL_UNDER_THE_POST_PASS_STOP_AFTER_ACCEPTED_IS_THE_BUDGET_CUT_BYTE_FOR_BYTE_AND_THE_REMOVALS_VERTEX_SET',
-        held,
-        probeDetail(
+    unit('MQ99-MQ102', () => {
+      mcGuard('MQ99', () => {
+        const { strict } = abStrict();
+        const strictOn = abStrictOn();
+        const probes: string[] = [];
+        const ops = opsOf(strictOn);
+        const sample = [...new Set([1, Math.ceil(ops.length / 2), ops.length - 1, ops.length])].filter((k) => k >= 1 && k <= ops.length).sort((a, b) => a - b);
+        const dumps = new Map(sample.map((k) => [k, abReduce({ ...delaunay, budget: { maxCandidates: ops[k - 1].step } }).mesh]));
+        const removalsAt = new Map(sample.map((k) => [k, abReduce({ stopAfterAccepted: k }).mesh]));
+        /** The first sampled step whose replay under the opt-in is not the budget cut's mesh, the removals' vertex set, or its termination. */
+        const parted = (plant: ReductionPlant | null): string | null => {
+          for (const k of sample) {
+            const r = abReduce({ ...delaunay, stopAfterAccepted: k }, plant);
+            const at = `step ${k} (attempt ${ops[k - 1].step})`;
+            if (JSON.stringify(r.mesh) !== JSON.stringify(dumps.get(k) ?? null)) return `${at}: the replayed mesh is not the budget cut's under the opt-in`;
+            if (vertexSet(r.mesh) !== vertexSet(removalsAt.get(k) ?? null)) return `${at}: the replayed vertex set is not the replay's without the field`;
+            const t = r.report.termination;
+            if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== ops[k - 1].step) return `${at}: termination ${JSON.stringify(t)}`;
+            if (retriOf(r)?.taken !== true) return `${at}: retriangulation ${JSON.stringify(retriOf(r))}`;
+          }
+          return null;
+        };
+        const own = parted(null);
+        if (own !== null) probes.push(own);
+        const skipped = parted('flips-not-on-replay');
+        if (skipped === null) probes.push('the plant — the pass skipped when a replay stops the run — replayed the budget cut at every sampled step');
+        // The removal loop does not read the pass: acceptedAt and the termination are the call's without it. The plant
+        // that must move them is any change to the loop under the opt-in — the load order without its opt-in.
+        const moved = abReduce(delaunay, 'order-without-opt-in');
+        const loopMoved = !sameLoop(strict, moved);
+        if (!sameLoop(strict, strictOn)) probes.push('acceptedAt or the termination under the opt-in is not the call\'s without it');
+        if (!loopMoved) probes.push('the plant — the loop reordered under the opt-in — left acceptedAt and the termination as they were, so their equality cannot fire');
+        const held = probes.length === 0;
+        say(
+          'MQ99_CONTROL_UNDER_THE_POST_PASS_STOP_AFTER_ACCEPTED_IS_THE_BUDGET_CUT_BYTE_FOR_BYTE_AND_THE_REMOVALS_VERTEX_SET',
           held,
-          probes,
-          `${ops.length} accepted steps, acceptedAt and the termination those of the call without the field; at k = ${sample.join(', ')} stopAfterAccepted k under the opt-in returned the budget cut at acceptedAt[k - 1].step under the opt-in, byte for byte, with the vertex set of the replay without it and the pass taken; plants: the pass skipped on a replay — ${skipped}; the loop reordered under the opt-in — acceptedAt ${loopMoved ? 'moved' : 'unmoved'} (${opsOf(moved).length} steps)`,
-        ),
-        'issue #1283 (§8 Q9): the replay parts bisects stands on stopAfterAccepted k being the state the run held after k operations — the pass is a function of that state run once at the end, never inside the loop, so the replay stays byte-exact under it',
-      );
-    });
+          probeDetail(
+            held,
+            probes,
+            `${ops.length} accepted steps, acceptedAt and the termination those of the call without the field; at k = ${sample.join(', ')} stopAfterAccepted k under the opt-in returned the budget cut at acceptedAt[k - 1].step under the opt-in, byte for byte, with the vertex set of the replay without it and the pass taken; plants: the pass skipped on a replay — ${skipped}; the loop reordered under the opt-in — acceptedAt ${loopMoved ? 'moved' : 'unmoved'} (${opsOf(moved).length} steps)`,
+          ),
+          'issue #1283 (§8 Q9): the replay parts bisects stands on stopAfterAccepted k being the state the run held after k operations — the pass is a function of that state run once at the end, never inside the loop, so the replay stays byte-exact under it',
+        );
+      });
 
-    mcGuard('MQ100', () => {
-      const probes: string[] = [];
-      /** What is wrong with a call that set neither field: a key it did not write before, or singles out of source order. */
-      const optOutFaults = (r: AbRun, attempts: AttemptRecord[]): string[] => {
-        const out: string[] = [];
-        const text = writeMeshQualityReport(r.report);
-        if (/retriangulat|removalOrder/.test(text)) out.push('the report writes retriangulate, retriangulation or removalOrder');
-        const keys = Object.keys(JSON.parse(text).candidates[0]?.changes ?? {}).join(',');
-        if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') out.push(`changes keys ${keys}`);
-        const singles = attempts.filter((a) => a.kind === 'removal');
-        const bent = singles.findIndex((a, i) => a.predictedLoad !== null || (i > 0 && singles[i - 1].pass === a.pass && a.sourceVertices[0] <= singles[i - 1].sourceVertices[0]));
-        if (bent !== -1) out.push(`single removal ${bent} (vertex ${singles[bent].sourceVertices[0]}, pass ${singles[bent].pass}, load ${singles[bent].predictedLoad}) is out of ascending source order`);
-        return out;
-      };
-      const watched = (go: (o: AttemptObserver) => AbRun): { r: AbRun; attempts: AttemptRecord[] } => {
-        const attempts: AttemptRecord[] = [];
-        const r = go((a) => attempts.push(a));
-        return { r, attempts };
-      };
-      const subjects: Array<[string, AbRun, (p: ReductionPlant | null, o: AttemptObserver) => AbRun]> = [
-        ['the ramp', mvReduce(), (p, o) => mvReduce({}, p, o)],
-        ['the traced boundary, singles only', strict, (p, o) => abReduce({}, p, o)],
-        ['the traced boundary, boundary runs', runs, (p, o) => abReduce({ boundaryRuns: abRuns }, p, o)],
-      ];
-      const planted: string[] = [];
-      for (const [label, own, go] of subjects) {
-        const w = watched((o) => go(null, o));
-        if (bytesOf(w.r) !== bytesOf(own)) probes.push(`${label}: observing changed the result`);
-        probes.push(...optOutFaults(w.r, w.attempts).map((f) => `${label}: ${f}`));
-        for (const plant of ['flips-without-opt-in', 'order-without-opt-in'] as const) {
-          const p = watched((o) => go(plant, o));
-          const said = optOutFaults(p.r, p.attempts);
-          if (said.length === 0) probes.push(`${label}: the plant ${plant} writes the shape a call without the fields writes`);
-          else if (label === 'the ramp') planted.push(`${plant}: ${said[0]}`);
-        }
-      }
-      const held = probes.length === 0;
-      say(
-        'MQ100_A_CALL_WITHOUT_RETRIANGULATE_OR_REMOVAL_ORDER_WRITES_NO_NEW_KEY_AND_ATTEMPTS_ITS_SINGLES_IN_SOURCE_ORDER',
-        held,
-        probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: no retriangulate, retriangulation or removalOrder key, changes keys as before, every pass's single removals in ascending source index with no load read; the plants on the ramp: ${planted.join('; ')}`),
-        'issue #1283: a call that opts into neither is the call it was before the fields existed — byte for byte, which the tree keeps no older copy to compare with in-suite, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected',
-      );
-    });
-
-    mcGuard('MQ101', () => {
-      const probes: string[] = [];
-      // The traced boundary's source with every vertex protected, so the removals take nothing and the pass is handed a
-      // Delaunay mesh — and a declared minimum angle at the source's own smallest (floored onto the r6 grid), which the
-      // source meets and the Delaunay pass cannot lower, while a flip to the other diagonal of a quad lowers its pair's.
-      const own = abMeasure('source', ab.mesh).candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value ?? 0;
-      const minAngle = Math.floor(own * 1e6) / 1e6;
-      const pinned = {
-        protect: { ...mvNoProtect, vertices: [...Array(ab.mesh.points.length).keys()] },
-        targets: { artFit: mvStrict, maxBoundaryDeviation: 1, minAngle, regions: [] },
-      };
-      const off = abReduce(pinned);
-      const on = abReduce({ ...pinned, ...delaunay });
-      const against = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay');
-      const unmeasured = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay-unmeasured');
-      const brief = (t: Retriangulation | undefined): string => JSON.stringify(t === undefined ? t : { ...t, monotonicity: '…' });
-      const ta = retriOf(against);
-      // The claim is staticHeld: a mesh the reduction returns under the post-pass holds every required row, whatever the flips proposed.
-      if (!staticHeld(off)) probes.push(`the call without the field: failing ${failing(off)}; the plant needs a result that holds every row`);
-      if (!staticHeld(against)) probes.push(`the inverted flips: accepted ${against.report.candidates[0].accepted}, failing ${failing(against)}; required every row held`);
-      if (ta?.taken !== false || !(ta.refusedBy ?? '').startsWith('MQ_MIN_ANGLE') || !(ta.flips > 0)) probes.push(`the inverted flips: retriangulation ${brief(ta)}; required refused naming MQ_MIN_ANGLE, after at least one flip`);
-      if (JSON.stringify(against.mesh) !== JSON.stringify(off.mesh)) probes.push('the refused pass returned another mesh than the call without the field');
-      const strip = (r: AbRun): string => {
-        const doc = JSON.parse(writeMeshQualityReport(r.report));
-        delete doc.effective.retriangulate;
-        if (doc.candidates[0].changes !== undefined) delete doc.candidates[0].changes.retriangulation;
-        return JSON.stringify(doc);
-      };
-      if (strip(against) !== strip(off)) probes.push('the refused pass\'s report differs from the call without the field in more than the echo and retriangulation');
-      if (retriOf(on)?.taken !== true || !staticHeld(on)) probes.push(`the Delaunay pass under the same minimum angle: ${brief(retriOf(on))}, failing ${failing(on)}; required taken and every row held`);
-      if (staticHeld(unmeasured)) probes.push(`the plant — the inverted flips taken without the measurement — reads as holding every row (${brief(retriOf(unmeasured))})`);
-      const angle = (r: AbRun): number | null | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value;
-      const held = probes.length === 0;
-      say(
-        'MQ101_A_POST_PASS_WHOSE_FLIPS_WOULD_BREACH_A_DECLARED_ROW_IS_NOT_TAKEN_AND_NAMES_THE_ROW',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `the traced boundary's source, every vertex protected, minAngle ${minAngle} (its own smallest): the call without the field ${angle(off)}°; the Delaunay pass ${retriOf(on)?.flips} flips, ${angle(on)}° — taken; the inverted flips (${ta?.flips} in one sweep) refused: ${ta?.refusedBy} — the mesh and the report those of the call without the field but for the echo; the plant (the inverted flips unmeasured) returns ${angle(unmeasured)}°, failing ${failing(unmeasured)}`,
-        ),
-        'issue #1283: the pass is taken whole and refused whole, measured like any result — a re-triangulation that would breach a declared row leaves the mesh as the removals left it and says which row, rather than returning a mesh the contract refuses',
-      );
-    });
-
-    mcGuard('MQ102', () => {
-      const probes: string[] = [];
-      // A region across the ramp's middle, its density bound twice the source's grid step and a band of one step.
-      const region: RefinementRegion = {
-        name: 'middle',
-        polygon: [[(MV_W * 3) / 8, MV_H / 4], [(MV_W * 5) / 8, MV_H / 4], [(MV_W * 5) / 8, (MV_H * 3) / 4], [(MV_W * 3) / 8, (MV_H * 3) / 4]],
-        maxEdgeLength: 2 * MV_STEP,
-        grade: 0.5,
-        transition: MV_STEP,
-        approximation: null,
-      };
-      const regioned = { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [region] }, regionArtSamples: [{ region: region.name, minArtSamples: 1 }] };
-      const off = mvReduce(regioned);
-      const on = mvReduce({ ...regioned, ...delaunay });
-      const ignoring = mvReduce({ ...regioned, ...delaunay }, 'flips-ignore-regions');
-      /** The edges of a mesh the region holds, by their ends' positions. */
-      const heldEdges = (m: ReducedMesh | null): string => {
-        if (m === null) return 'no mesh';
-        const out = new Set<string>();
-        for (let t = 0; t < m.triangles.length; t += 3) {
-          for (let k = 0; k < 3; k++) {
-            const a = m.points[m.triangles[t + k]];
-            const b = m.points[m.triangles[t + ((k + 1) % 3)]];
-            if (!edgeIsHeldByRegion(a, b, region)) continue;
-            const [p, q] = [JSON.stringify(a), JSON.stringify(b)].sort();
-            out.add(`${p}-${q}`);
+      mcGuard('MQ100', () => {
+        const { runs } = abRunsOf();
+        const { strict } = abStrict();
+        const probes: string[] = [];
+        /** What is wrong with a call that set neither field: a key it did not write before, or singles out of source order. */
+        const optOutFaults = (r: AbRun, attempts: AttemptRecord[]): string[] => {
+          const out: string[] = [];
+          const text = writeMeshQualityReport(r.report);
+          if (/retriangulat|removalOrder/.test(text)) out.push('the report writes retriangulate, retriangulation or removalOrder');
+          const keys = Object.keys(JSON.parse(text).candidates[0]?.changes ?? {}).join(',');
+          if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') out.push(`changes keys ${keys}`);
+          const singles = attempts.filter((a) => a.kind === 'removal');
+          const bent = singles.findIndex((a, i) => a.predictedLoad !== null || (i > 0 && singles[i - 1].pass === a.pass && a.sourceVertices[0] <= singles[i - 1].sourceVertices[0]));
+          if (bent !== -1) out.push(`single removal ${bent} (vertex ${singles[bent].sourceVertices[0]}, pass ${singles[bent].pass}, load ${singles[bent].predictedLoad}) is out of ascending source order`);
+          return out;
+        };
+        const watched = (go: (o: AttemptObserver) => AbRun): { r: AbRun; attempts: AttemptRecord[] } => {
+          const attempts: AttemptRecord[] = [];
+          const r = go((a) => attempts.push(a));
+          return { r, attempts };
+        };
+        const subjects: Array<[string, AbRun, (p: ReductionPlant | null, o: AttemptObserver) => AbRun]> = [
+          ['the ramp', mvReduce(), (p, o) => mvReduce({}, p, o)],
+          ['the traced boundary, singles only', strict, (p, o) => abReduce({}, p, o)],
+          ['the traced boundary, boundary runs', runs, (p, o) => abReduce({ boundaryRuns: abRuns }, p, o)],
+        ];
+        const planted: string[] = [];
+        for (const [label, own, go] of subjects) {
+          const w = watched((o) => go(null, o));
+          if (bytesOf(w.r) !== bytesOf(own)) probes.push(`${label}: observing changed the result`);
+          probes.push(...optOutFaults(w.r, w.attempts).map((f) => `${label}: ${f}`));
+          for (const plant of ['flips-without-opt-in', 'order-without-opt-in'] as const) {
+            const p = watched((o) => go(plant, o));
+            const said = optOutFaults(p.r, p.attempts);
+            if (said.length === 0) probes.push(`${label}: the plant ${plant} writes the shape a call without the fields writes`);
+            else if (label === 'the ramp') planted.push(`${plant}: ${said[0]}`);
           }
         }
-        return [...out].sort().join(';');
-      };
-      const regionRows = (r: AbRun): string => JSON.stringify((r.report.candidates[0]?.geometry?.rows ?? []).filter((x) => x.object.region === region.name && x.code !== 'MQ_FILL_DISTANCE'));
-      const t = retriOf(on);
-      if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
-      if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed the vertex set');
-      if (heldEdges(on.mesh) !== heldEdges(off.mesh)) probes.push('the post-pass flipped or made an edge the region holds');
-      if (regionRows(on) !== regionRows(off)) probes.push(`the region's rows moved: ${regionRows(on)} against ${regionRows(off)}`);
-      if (heldEdges(ignoring.mesh) === heldEdges(off.mesh)) probes.push(`the plant — flips that ignore the region — left every held edge as it was (${JSON.stringify(retriOf(ignoring))}), so the predicate cannot fire`);
-      const inserted = off.report.candidates[0]?.changes?.insertedVertices;
-      const maxEdge = (r: AbRun): string => {
-        const x = r.report.candidates[0]?.geometry?.rows.find((y) => y.code === 'MQ_MAX_EDGE' && y.object.region === region.name);
-        return `${x?.value} ${x?.state}`;
-      };
-      const held = probes.length === 0;
-      say(
-        'MQ102_THE_POST_PASS_NEITHER_FLIPS_NOR_MAKES_AN_EDGE_A_REGION_HOLDS_SO_EVERY_REGION_ROW_READS_AS_THE_REMOVALS_LEFT_IT',
-        held,
-        probeDetail(
+        const held = probes.length === 0;
+        say(
+          'MQ100_A_CALL_WITHOUT_RETRIANGULATE_OR_REMOVAL_ORDER_WRITES_NO_NEW_KEY_AND_ATTEMPTS_ITS_SINGLES_IN_SOURCE_ORDER',
           held,
-          probes,
-          `the ramp with region "${region.name}" (L0 ${region.maxEdgeLength}, band ${region.transition}): ${inserted} inserted, ${mvCounts(off.report.candidates[0])}; the pass ${t?.flips} flips, the held edges and MQ_MAX_EDGE (${maxEdge(on)}) / MQ_TRANSITION as the removals left them; the plant (flips that ignore the region, ${retriOf(ignoring)?.flips} flips): the held edges change, MQ_MAX_EDGE ${maxEdge(ignoring)}, ${retriOf(ignoring)?.taken ? 'taken' : `refused — ${retriOf(ignoring)?.refusedBy}`}`,
-        ),
-        'issue #1283: a region\'s density is the refinement\'s and its rows read exactly the edges edgeIsHeldByRegion names — so the pass leaves those edges alone rather than re-deciding what the refinement met',
-      );
+          probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: no retriangulate, retriangulation or removalOrder key, changes keys as before, every pass's single removals in ascending source index with no load read; the plants on the ramp: ${planted.join('; ')}`),
+          'issue #1283: a call that opts into neither is the call it was before the fields existed — byte for byte, which the tree keeps no older copy to compare with in-suite, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected',
+        );
+      });
+
+      mcGuard('MQ101', () => {
+        const probes: string[] = [];
+        // The traced boundary's source with every vertex protected, so the removals take nothing and the pass is handed a
+        // Delaunay mesh — and a declared minimum angle at the source's own smallest (floored onto the r6 grid), which the
+        // source meets and the Delaunay pass cannot lower, while a flip to the other diagonal of a quad lowers its pair's.
+        const own = abMeasure('source', ab.mesh).candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value ?? 0;
+        const minAngle = Math.floor(own * 1e6) / 1e6;
+        const pinned = {
+          protect: { ...mvNoProtect, vertices: [...Array(ab.mesh.points.length).keys()] },
+          targets: { artFit: mvStrict, maxBoundaryDeviation: 1, minAngle, regions: [] },
+        };
+        const off = abReduce(pinned);
+        const on = abReduce({ ...pinned, ...delaunay });
+        const against = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay');
+        const unmeasured = abReduce({ ...pinned, ...delaunay }, 'flips-against-delaunay-unmeasured');
+        const brief = (t: Retriangulation | undefined): string => JSON.stringify(t === undefined ? t : { ...t, monotonicity: '…' });
+        const ta = retriOf(against);
+        // The claim is staticHeld: a mesh the reduction returns under the post-pass holds every required row, whatever the flips proposed.
+        if (!staticHeld(off)) probes.push(`the call without the field: failing ${failing(off)}; the plant needs a result that holds every row`);
+        if (!staticHeld(against)) probes.push(`the inverted flips: accepted ${against.report.candidates[0].accepted}, failing ${failing(against)}; required every row held`);
+        if (ta?.taken !== false || !(ta.refusedBy ?? '').startsWith('MQ_MIN_ANGLE') || !(ta.flips > 0)) probes.push(`the inverted flips: retriangulation ${brief(ta)}; required refused naming MQ_MIN_ANGLE, after at least one flip`);
+        if (JSON.stringify(against.mesh) !== JSON.stringify(off.mesh)) probes.push('the refused pass returned another mesh than the call without the field');
+        const strip = (r: AbRun): string => {
+          const doc = JSON.parse(writeMeshQualityReport(r.report));
+          delete doc.effective.retriangulate;
+          if (doc.candidates[0].changes !== undefined) delete doc.candidates[0].changes.retriangulation;
+          return JSON.stringify(doc);
+        };
+        if (strip(against) !== strip(off)) probes.push('the refused pass\'s report differs from the call without the field in more than the echo and retriangulation');
+        if (retriOf(on)?.taken !== true || !staticHeld(on)) probes.push(`the Delaunay pass under the same minimum angle: ${brief(retriOf(on))}, failing ${failing(on)}; required taken and every row held`);
+        if (staticHeld(unmeasured)) probes.push(`the plant — the inverted flips taken without the measurement — reads as holding every row (${brief(retriOf(unmeasured))})`);
+        const angle = (r: AbRun): number | null | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_MIN_ANGLE')?.value;
+        const held = probes.length === 0;
+        say(
+          'MQ101_A_POST_PASS_WHOSE_FLIPS_WOULD_BREACH_A_DECLARED_ROW_IS_NOT_TAKEN_AND_NAMES_THE_ROW',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the traced boundary's source, every vertex protected, minAngle ${minAngle} (its own smallest): the call without the field ${angle(off)}°; the Delaunay pass ${retriOf(on)?.flips} flips, ${angle(on)}° — taken; the inverted flips (${ta?.flips} in one sweep) refused: ${ta?.refusedBy} — the mesh and the report those of the call without the field but for the echo; the plant (the inverted flips unmeasured) returns ${angle(unmeasured)}°, failing ${failing(unmeasured)}`,
+          ),
+          'issue #1283: the pass is taken whole and refused whole, measured like any result — a re-triangulation that would breach a declared row leaves the mesh as the removals left it and says which row, rather than returning a mesh the contract refuses',
+        );
+      });
+
+      mcGuard('MQ102', () => {
+        const probes: string[] = [];
+        // A region across the ramp's middle, its density bound twice the source's grid step and a band of one step.
+        const region: RefinementRegion = {
+          name: 'middle',
+          polygon: [[(MV_W * 3) / 8, MV_H / 4], [(MV_W * 5) / 8, MV_H / 4], [(MV_W * 5) / 8, (MV_H * 3) / 4], [(MV_W * 3) / 8, (MV_H * 3) / 4]],
+          maxEdgeLength: 2 * MV_STEP,
+          grade: 0.5,
+          transition: MV_STEP,
+          approximation: null,
+        };
+        const regioned = { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [region] }, regionArtSamples: [{ region: region.name, minArtSamples: 1 }] };
+        const off = mvReduce(regioned);
+        const on = mvReduce({ ...regioned, ...delaunay });
+        const ignoring = mvReduce({ ...regioned, ...delaunay }, 'flips-ignore-regions');
+        /** The edges of a mesh the region holds, by their ends' positions. */
+        const heldEdges = (m: ReducedMesh | null): string => {
+          if (m === null) return 'no mesh';
+          const out = new Set<string>();
+          for (let t = 0; t < m.triangles.length; t += 3) {
+            for (let k = 0; k < 3; k++) {
+              const a = m.points[m.triangles[t + k]];
+              const b = m.points[m.triangles[t + ((k + 1) % 3)]];
+              if (!edgeIsHeldByRegion(a, b, region)) continue;
+              const [p, q] = [JSON.stringify(a), JSON.stringify(b)].sort();
+              out.add(`${p}-${q}`);
+            }
+          }
+          return [...out].sort().join(';');
+        };
+        const regionRows = (r: AbRun): string => JSON.stringify((r.report.candidates[0]?.geometry?.rows ?? []).filter((x) => x.object.region === region.name && x.code !== 'MQ_FILL_DISTANCE'));
+        const t = retriOf(on);
+        if (t?.taken !== true || !(t.flips > 0)) probes.push(`retriangulation ${JSON.stringify(t)}; required taken, with at least one flip`);
+        if (vertexSet(off.mesh) !== vertexSet(on.mesh)) probes.push('the post-pass changed the vertex set');
+        if (heldEdges(on.mesh) !== heldEdges(off.mesh)) probes.push('the post-pass flipped or made an edge the region holds');
+        if (regionRows(on) !== regionRows(off)) probes.push(`the region's rows moved: ${regionRows(on)} against ${regionRows(off)}`);
+        if (heldEdges(ignoring.mesh) === heldEdges(off.mesh)) probes.push(`the plant — flips that ignore the region — left every held edge as it was (${JSON.stringify(retriOf(ignoring))}), so the predicate cannot fire`);
+        const inserted = off.report.candidates[0]?.changes?.insertedVertices;
+        const maxEdge = (r: AbRun): string => {
+          const x = r.report.candidates[0]?.geometry?.rows.find((y) => y.code === 'MQ_MAX_EDGE' && y.object.region === region.name);
+          return `${x?.value} ${x?.state}`;
+        };
+        const held = probes.length === 0;
+        say(
+          'MQ102_THE_POST_PASS_NEITHER_FLIPS_NOR_MAKES_AN_EDGE_A_REGION_HOLDS_SO_EVERY_REGION_ROW_READS_AS_THE_REMOVALS_LEFT_IT',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the ramp with region "${region.name}" (L0 ${region.maxEdgeLength}, band ${region.transition}): ${inserted} inserted, ${mvCounts(off.report.candidates[0])}; the pass ${t?.flips} flips, the held edges and MQ_MAX_EDGE (${maxEdge(on)}) / MQ_TRANSITION as the removals left them; the plant (flips that ignore the region, ${retriOf(ignoring)?.flips} flips): the held edges change, MQ_MAX_EDGE ${maxEdge(ignoring)}, ${retriOf(ignoring)?.taken ? 'taken' : `refused — ${retriOf(ignoring)?.refusedBy}`}`,
+          ),
+          'issue #1283: a region\'s density is the refinement\'s and its rows read exactly the edges edgeIsHeldByRegion names — so the pass leaves those edges alone rather than re-deciding what the refinement met',
+        );
+      });
     });
 
-    mcGuard('MQ103', () => {
-      const probes: string[] = [];
-      const loadAttempts: AttemptRecord[] = [];
-      const ordered = abReduce(byLoad, null, (a) => loadAttempts.push(a));
-      const bisectLoad = bisect(byLoad, opsOf(ordered).length, 'l');
-      /** The first single removal out of the order: ascending load within its pass, ties by source index. */
-      const outOfOrder = (attempts: AttemptRecord[]): string | null => {
-        const singles = attempts.filter((a) => a.kind === 'removal');
-        for (let i = 0; i < singles.length; i++) {
-          const a = singles[i];
-          if (a.predictedLoad === null) return `vertex ${a.sourceVertices[0]} was attempted with no load`;
-          const p = singles[i - 1];
-          if (p === undefined || p.pass !== a.pass) continue;
-          const pl = p.predictedLoad ?? -Infinity;
-          if (a.predictedLoad < pl || (a.predictedLoad === pl && a.sourceVertices[0] <= p.sourceVertices[0])) return `pass ${a.pass}: vertex ${a.sourceVertices[0]} (load ${a.predictedLoad}) after vertex ${p.sourceVertices[0]} (load ${pl})`;
-        }
-        return null;
-      };
-      const own = outOfOrder(loadAttempts);
-      if (own !== null) probes.push(own);
-      const descending: AttemptRecord[] = [];
-      abReduce(byLoad, 'order-descending', (a) => descending.push(a));
-      const caught = outOfOrder(descending);
-      if (caught === null) probes.push('the plant — the loads ranked descending — reads as ascending');
-      if (!(new Set(loadAttempts.filter((a) => a.kind === 'removal').map((a) => a.predictedLoad)).size > 1)) probes.push('every load ranked is the same, so the order was the default\'s');
-      if (!staticHeld(ordered)) probes.push(`the load-ordered result: failing ${failing(ordered)}`);
-      // The effect, measured as the stage-A record did: the replay bisected on grid frames.
-      const chosenL = bisectLoad.chosen;
-      const local = bisectLoad.report === null ? undefined : row(bisectLoad.report, 'MQ_LOCAL_DEFORMATION');
-      const heldOut = local?.motion?.byRole.heldOut ?? null;
-      if (chosenL?.mesh === null || chosenL === null || !(chosenL.mesh.points.length < replayVertices) || heldOut?.state !== 'pass') probes.push(`the load-ordered replay bisected on grid: ${counts(chosenL?.mesh ?? null)}, held out ${JSON.stringify(heldOut)}; required fewer than the source order's ${replayVertices}, passing held out`);
-      const passes = new Set(loadAttempts.map((a) => a.pass)).size;
-      const held = probes.length === 0;
-      say(
-        'MQ103_THE_DEFORMATION_LOAD_ORDER_ATTEMPTS_EACH_PASSS_SINGLES_IN_ASCENDING_PREDICTED_LOAD_AND_ITS_REPLAY_KEEPS_FEWER_VERTICES',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `the traced boundary, removalOrder deformation-load: ${loadAttempts.filter((a) => a.kind === 'removal').length} single attempts over ${passes} passes, each pass ascending in load then source index; strict ${counts(ordered.mesh)} after ${ordered.report.termination !== null && 'candidatesTried' in ordered.report.termination ? ordered.report.termination.candidatesTried : '?'} candidates; bisected on grid in ${bisectLoad.replays} replays: step ${bisectLoad.lo}, ${counts(chosenL?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the source order's ${replayVertices}; the plant (loads descending): ${caught}`,
-        ),
-        'issue #1283 (§8 Q11): removals that add little deformation load go first, so a prefix of the steps keeps the vertices a bend needs — the stage-A record measured the replay at 140 against 191 on this fixture',
-      );
-    });
-
-    mcGuard('MQ104', () => {
-      const probes: string[] = [];
-      const seen: string[] = [];
-      const refusalOf = (input: MeshReductionInput): string | null => {
-        try {
-          reduceMesh(input);
+    unit('MQ103', () => {
+      mcGuard('MQ103', () => {
+        const { replayVertices } = abBisected();
+        const probes: string[] = [];
+        const loadAttempts: AttemptRecord[] = [];
+        const ordered = abReduce(byLoad, null, (a) => loadAttempts.push(a));
+        const bisectLoad = bisect(byLoad, opsOf(ordered).length, 'l');
+        /** The first single removal out of the order: ascending load within its pass, ties by source index. */
+        const outOfOrder = (attempts: AttemptRecord[]): string | null => {
+          const singles = attempts.filter((a) => a.kind === 'removal');
+          for (let i = 0; i < singles.length; i++) {
+            const a = singles[i];
+            if (a.predictedLoad === null) return `vertex ${a.sourceVertices[0]} was attempted with no load`;
+            const p = singles[i - 1];
+            if (p === undefined || p.pass !== a.pass) continue;
+            const pl = p.predictedLoad ?? -Infinity;
+            if (a.predictedLoad < pl || (a.predictedLoad === pl && a.sourceVertices[0] <= p.sourceVertices[0])) return `pass ${a.pass}: vertex ${a.sourceVertices[0]} (load ${a.predictedLoad}) after vertex ${p.sourceVertices[0]} (load ${pl})`;
+          }
           return null;
-        } catch (err) {
-          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
-          return `(not a MeshReductionError) ${(err as Error).message}`;
-        }
-      };
-      const cheap = (over: Record<string, unknown>): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), ...over }) as MeshReductionInput;
-      const wrongs: unknown[] = [null, 'Delaunay', 'delaunay ', '', 1, true, [], {}, { method: 'delaunay' }];
-      for (const field of ['retriangulate', 'removalOrder'] as const) {
-        for (const wrong of field === 'removalOrder' ? [...wrongs, 'source-index', 'deformation_load'] : wrongs) {
-          const said = refusalOf(cheap({ [field]: wrong }));
-          if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes(`${field} is`)) probes.push(`${field} ${JSON.stringify(wrong)}: ${said ?? 'accepted'}`);
-          else seen.push(`${field} ${JSON.stringify(wrong)}`);
-        }
-      }
-      for (const right of [{}, { retriangulate: undefined, removalOrder: undefined }, delaunay, byLoad, { ...delaunay, ...byLoad }]) {
-        const said = refusalOf(cheap(right));
-        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
-      }
-      const held = probes.length === 0;
-      say(
-        'MQ104_A_RETRIANGULATE_OR_REMOVAL_ORDER_THAT_IS_NOT_ITS_ONE_VALUE_IS_REFUSED_NAMING_THE_FIELD',
-        held,
-        probeDetail(held, probes, `${seen.length} values refused REDUCE_INPUT_MISSING naming the field (${seen.slice(0, 4).join(', ')}, …); each field left out, set undefined or set to its one value admitted`),
-        'issue #1283: undefined is the field left out and means the call before the field; null names no method and no order, and is refused like any other value — as stopAfterAccepted and boundaryRuns are',
-      );
+        };
+        const own = outOfOrder(loadAttempts);
+        if (own !== null) probes.push(own);
+        const descending: AttemptRecord[] = [];
+        abReduce(byLoad, 'order-descending', (a) => descending.push(a));
+        const caught = outOfOrder(descending);
+        if (caught === null) probes.push('the plant — the loads ranked descending — reads as ascending');
+        if (!(new Set(loadAttempts.filter((a) => a.kind === 'removal').map((a) => a.predictedLoad)).size > 1)) probes.push('every load ranked is the same, so the order was the default\'s');
+        if (!staticHeld(ordered)) probes.push(`the load-ordered result: failing ${failing(ordered)}`);
+        // The effect, measured as the stage-A record did: the replay bisected on grid frames.
+        const chosenL = bisectLoad.chosen;
+        const local = bisectLoad.report === null ? undefined : row(bisectLoad.report, 'MQ_LOCAL_DEFORMATION');
+        const heldOut = local?.motion?.byRole.heldOut ?? null;
+        if (chosenL?.mesh === null || chosenL === null || !(chosenL.mesh.points.length < replayVertices) || heldOut?.state !== 'pass') probes.push(`the load-ordered replay bisected on grid: ${counts(chosenL?.mesh ?? null)}, held out ${JSON.stringify(heldOut)}; required fewer than the source order's ${replayVertices}, passing held out`);
+        const passes = new Set(loadAttempts.map((a) => a.pass)).size;
+        const held = probes.length === 0;
+        say(
+          'MQ103_THE_DEFORMATION_LOAD_ORDER_ATTEMPTS_EACH_PASSS_SINGLES_IN_ASCENDING_PREDICTED_LOAD_AND_ITS_REPLAY_KEEPS_FEWER_VERTICES',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the traced boundary, removalOrder deformation-load: ${loadAttempts.filter((a) => a.kind === 'removal').length} single attempts over ${passes} passes, each pass ascending in load then source index; strict ${counts(ordered.mesh)} after ${ordered.report.termination !== null && 'candidatesTried' in ordered.report.termination ? ordered.report.termination.candidatesTried : '?'} candidates; bisected on grid in ${bisectLoad.replays} replays: step ${bisectLoad.lo}, ${counts(chosenL?.mesh ?? null)}, grid ${local?.motion?.byRole.selection?.value}, held-out irr ${heldOut?.value} — against the source order's ${replayVertices}; the plant (loads descending): ${caught}`,
+          ),
+          'issue #1283 (§8 Q11): removals that add little deformation load go first, so a prefix of the steps keeps the vertices a bend needs — the stage-A record measured the replay at 140 against 191 on this fixture',
+        );
+      });
     });
 
-    mcGuard('MQ105', () => {
-      const probes: string[] = [];
-      /** What is wrong with the echo: each field echoed in effective exactly when set, retriangulation written last in changes exactly when retriangulate is set. */
-      const echoFaults = (r: AbRun, input: Partial<MeshReductionInput>): string[] => {
-        const out: string[] = [];
-        const doc = JSON.parse(writeMeshQualityReport(r.report));
-        const e = doc.effective;
-        if (e.retriangulate !== input.retriangulate) out.push(`effective.retriangulate is ${JSON.stringify(e.retriangulate)} for ${JSON.stringify(input.retriangulate)}`);
-        if (e.removalOrder !== input.removalOrder) out.push(`effective.removalOrder is ${JSON.stringify(e.removalOrder)} for ${JSON.stringify(input.removalOrder)}`);
-        const keys = Object.keys(doc.candidates[0]?.changes ?? {});
-        const has = keys.includes('retriangulation');
-        if (has !== (input.retriangulate !== undefined)) out.push(`changes ${has ? 'carries' : 'lacks'} retriangulation for retriangulate ${JSON.stringify(input.retriangulate)}`);
-        if (has) {
-          if (keys[keys.length - 1] !== 'retriangulation') out.push(`retriangulation is not the last key of changes (${keys.join(',')})`);
-          const x = doc.candidates[0].changes.retriangulation;
-          if (Object.keys(x).join(',') !== 'method,taken,flips,sweeps,refusedBy,monotonicity') out.push(`retriangulation keys ${Object.keys(x).join(',')}`);
-          if (x.method !== input.retriangulate || typeof x.monotonicity !== 'string' || !x.monotonicity.startsWith('not promised') || !x.monotonicity.includes('not necessarily the last')) out.push(`retriangulation ${JSON.stringify(x)} does not state the method or what is not promised`);
+    unit('MQ104-MQ105', () => {
+      mcGuard('MQ104', () => {
+        const probes: string[] = [];
+        const seen: string[] = [];
+        const refusalOf = (input: MeshReductionInput): string | null => {
+          try {
+            reduceMesh(input);
+            return null;
+          } catch (err) {
+            if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+            return `(not a MeshReductionError) ${(err as Error).message}`;
+          }
+        };
+        const cheap = (over: Record<string, unknown>): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), ...over }) as MeshReductionInput;
+        const wrongs: unknown[] = [null, 'Delaunay', 'delaunay ', '', 1, true, [], {}, { method: 'delaunay' }];
+        for (const field of ['retriangulate', 'removalOrder'] as const) {
+          for (const wrong of field === 'removalOrder' ? [...wrongs, 'source-index', 'deformation_load'] : wrongs) {
+            const said = refusalOf(cheap({ [field]: wrong }));
+            if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes(`${field} is`)) probes.push(`${field} ${JSON.stringify(wrong)}: ${said ?? 'accepted'}`);
+            else seen.push(`${field} ${JSON.stringify(wrong)}`);
+          }
         }
-        return out;
-      };
-      const cases: Array<[Partial<MeshReductionInput>, AbRun]> = [
-        [{}, mvReduce()],
-        [delaunay, mvReduce(delaunay)],
-        [byLoad, mvReduce(byLoad)],
-        [{ ...delaunay, ...byLoad }, mvReduce({ ...delaunay, ...byLoad })],
-      ];
-      for (const [input, r] of cases) probes.push(...echoFaults(r, input).map((f) => `${JSON.stringify(input)}: ${f}`));
-      const planted = echoFaults(mvReduce({}, 'flips-without-opt-in'), {});
-      if (planted.length === 0) probes.push('the plant — the pass run without the opt-in — writes the echo of a call without it');
-      const both = cases[3][1];
-      const held = probes.length === 0;
-      say(
-        'MQ105_THE_REPORT_ECHOES_EACH_FIELD_ONLY_WHEN_SET_AND_SAYS_WHICH_TRIANGULATION_THE_MESH_CARRIES_AND_WHAT_IS_NOT_PROMISED',
-        held,
-        probeDetail(held, probes, `neither, each and both set on the ramp: effective echoes exactly what was set; with retriangulate, changes ends in retriangulation ${JSON.stringify({ ...retriOf(both), monotonicity: '…' })}; the plant (the pass without the opt-in): ${planted[0]}`),
-        'issue #1283 (§8 Q4): a reader of the report has to know which triangulation it is holding and that a bisection over its steps finds a passing step, not the last — the report is where the consumer reads both',
-      );
+        for (const right of [{}, { retriangulate: undefined, removalOrder: undefined }, delaunay, byLoad, { ...delaunay, ...byLoad }]) {
+          const said = refusalOf(cheap(right));
+          if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+        }
+        const held = probes.length === 0;
+        say(
+          'MQ104_A_RETRIANGULATE_OR_REMOVAL_ORDER_THAT_IS_NOT_ITS_ONE_VALUE_IS_REFUSED_NAMING_THE_FIELD',
+          held,
+          probeDetail(held, probes, `${seen.length} values refused REDUCE_INPUT_MISSING naming the field (${seen.slice(0, 4).join(', ')}, …); each field left out, set undefined or set to its one value admitted`),
+          'issue #1283: undefined is the field left out and means the call before the field; null names no method and no order, and is refused like any other value — as stopAfterAccepted and boundaryRuns are',
+        );
+      });
+
+      mcGuard('MQ105', () => {
+        const probes: string[] = [];
+        /** What is wrong with the echo: each field echoed in effective exactly when set, retriangulation written last in changes exactly when retriangulate is set. */
+        const echoFaults = (r: AbRun, input: Partial<MeshReductionInput>): string[] => {
+          const out: string[] = [];
+          const doc = JSON.parse(writeMeshQualityReport(r.report));
+          const e = doc.effective;
+          if (e.retriangulate !== input.retriangulate) out.push(`effective.retriangulate is ${JSON.stringify(e.retriangulate)} for ${JSON.stringify(input.retriangulate)}`);
+          if (e.removalOrder !== input.removalOrder) out.push(`effective.removalOrder is ${JSON.stringify(e.removalOrder)} for ${JSON.stringify(input.removalOrder)}`);
+          const keys = Object.keys(doc.candidates[0]?.changes ?? {});
+          const has = keys.includes('retriangulation');
+          if (has !== (input.retriangulate !== undefined)) out.push(`changes ${has ? 'carries' : 'lacks'} retriangulation for retriangulate ${JSON.stringify(input.retriangulate)}`);
+          if (has) {
+            if (keys[keys.length - 1] !== 'retriangulation') out.push(`retriangulation is not the last key of changes (${keys.join(',')})`);
+            const x = doc.candidates[0].changes.retriangulation;
+            if (Object.keys(x).join(',') !== 'method,taken,flips,sweeps,refusedBy,monotonicity') out.push(`retriangulation keys ${Object.keys(x).join(',')}`);
+            if (x.method !== input.retriangulate || typeof x.monotonicity !== 'string' || !x.monotonicity.startsWith('not promised') || !x.monotonicity.includes('not necessarily the last')) out.push(`retriangulation ${JSON.stringify(x)} does not state the method or what is not promised`);
+          }
+          return out;
+        };
+        const cases: Array<[Partial<MeshReductionInput>, AbRun]> = [
+          [{}, mvReduce()],
+          [delaunay, mvReduce(delaunay)],
+          [byLoad, mvReduce(byLoad)],
+          [{ ...delaunay, ...byLoad }, mvReduce({ ...delaunay, ...byLoad })],
+        ];
+        for (const [input, r] of cases) probes.push(...echoFaults(r, input).map((f) => `${JSON.stringify(input)}: ${f}`));
+        const planted = echoFaults(mvReduce({}, 'flips-without-opt-in'), {});
+        if (planted.length === 0) probes.push('the plant — the pass run without the opt-in — writes the echo of a call without it');
+        const both = cases[3][1];
+        const held = probes.length === 0;
+        say(
+          'MQ105_THE_REPORT_ECHOES_EACH_FIELD_ONLY_WHEN_SET_AND_SAYS_WHICH_TRIANGULATION_THE_MESH_CARRIES_AND_WHAT_IS_NOT_PROMISED',
+          held,
+          probeDetail(held, probes, `neither, each and both set on the ramp: effective echoes exactly what was set; with retriangulate, changes ends in retriangulation ${JSON.stringify({ ...retriOf(both), monotonicity: '…' })}; the plant (the pass without the opt-in): ${planted[0]}`),
+          'issue #1283 (§8 Q4): a reader of the report has to know which triangulation it is holding and that a bisection over its steps finds a passing step, not the last — the report is where the consumer reads both',
+        );
+      });
     });
 
     // --- MQ106–MQ110 (#1287): the reduction carries motionAmplitude into the result's own measurement ---------------
@@ -51014,220 +51375,224 @@ function runMeshCompareSuite(): number {
       return JSON.stringify(doc) + JSON.stringify(r.mesh);
     };
 
-    mcGuard('MQ106', () => {
-      const probes: string[] = [];
-      const on = mvReduce({ motionAmplitude: mvAmp });
-      const twice = mvReduce({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
-      const load = resultRow(on, 'MQ_DEFORM_LOAD');
-      const load2 = resultRow(twice, 'MQ_DEFORM_LOAD');
-      const contrast = resultRow(on, 'MQ_ALLOCATION_CONTRAST');
-      if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
-      if (contrast === undefined || (contrast.state !== 'undeclared' && (contrast.reason ?? '').includes('motionAmplitude'))) probes.push(`MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required measured, or not-measurable for a reason other than the amplitude`);
-      // The load is L · Δshare · θ / 4 per edge, so doubling every θ doubles it — to the r6 grid each side is read on.
-      if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6 || load2.value === load.value) probes.push(`MQ_DEFORM_LOAD at θ ${r6(mvTheta)} is ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
-      // What a caller reads on the report is what measuring the returned mesh a second time with the amplitude reads.
-      const m = on.mesh;
-      if (m === null) probes.push(`no mesh returned (${JSON.stringify(on.report.termination)})`);
-      else {
-        const base = mvReduceInput(mvSrc);
-        const again = measureMeshQuality({
-          id: 'result',
-          attachment: base.attachment,
-          art: base.art,
-          source: { points: m.points, uvs: m.uvs, triangles: m.triangles, hull: m.hull, weights: m.weights },
-          targets: { artFit: base.targets.artFit, maxBoundaryDeviation: base.targets.maxBoundaryDeviation, regions: base.targets.regions },
-          referenceHull: mvSrc.points.slice(0, mvSrc.hull),
-          minArtSamples: base.minArtSamples,
-          regionArtSamples: base.regionArtSamples,
-          protect: base.protect,
-          influences: base.influences,
-          boneOrder: base.boneOrder,
-          preset: base.preset,
-          motionAmplitude: mvAmp,
-        });
-        for (const code of TWO_ROWS) {
-          const mine = JSON.stringify(resultRow(on, code));
-          const its = JSON.stringify(again.candidates[0]?.geometry?.rows.find((x) => x.code === code));
-          if (mine !== its) probes.push(`${code} on the report is ${mine}; measuring the returned mesh with the amplitude reads ${its}`);
+    unit('MQ106-MQ108', () => {
+      mcGuard('MQ106', () => {
+        const probes: string[] = [];
+        const on = mvReduce({ motionAmplitude: mvAmp });
+        const twice = mvReduce({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
+        const load = resultRow(on, 'MQ_DEFORM_LOAD');
+        const load2 = resultRow(twice, 'MQ_DEFORM_LOAD');
+        const contrast = resultRow(on, 'MQ_ALLOCATION_CONTRAST');
+        if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
+        if (contrast === undefined || (contrast.state !== 'undeclared' && (contrast.reason ?? '').includes('motionAmplitude'))) probes.push(`MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required measured, or not-measurable for a reason other than the amplitude`);
+        // The load is L · Δshare · θ / 4 per edge, so doubling every θ doubles it — to the r6 grid each side is read on.
+        if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6 || load2.value === load.value) probes.push(`MQ_DEFORM_LOAD at θ ${r6(mvTheta)} is ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
+        // What a caller reads on the report is what measuring the returned mesh a second time with the amplitude reads.
+        const m = on.mesh;
+        if (m === null) probes.push(`no mesh returned (${JSON.stringify(on.report.termination)})`);
+        else {
+          const base = mvReduceInput(mvSrc);
+          const again = measureMeshQuality({
+            id: 'result',
+            attachment: base.attachment,
+            art: base.art,
+            source: { points: m.points, uvs: m.uvs, triangles: m.triangles, hull: m.hull, weights: m.weights },
+            targets: { artFit: base.targets.artFit, maxBoundaryDeviation: base.targets.maxBoundaryDeviation, regions: base.targets.regions },
+            referenceHull: mvSrc.points.slice(0, mvSrc.hull),
+            minArtSamples: base.minArtSamples,
+            regionArtSamples: base.regionArtSamples,
+            protect: base.protect,
+            influences: base.influences,
+            boneOrder: base.boneOrder,
+            preset: base.preset,
+            motionAmplitude: mvAmp,
+          });
+          for (const code of TWO_ROWS) {
+            const mine = JSON.stringify(resultRow(on, code));
+            const its = JSON.stringify(again.candidates[0]?.geometry?.rows.find((x) => x.code === code));
+            if (mine !== its) probes.push(`${code} on the report is ${mine}; measuring the returned mesh with the amplitude reads ${its}`);
+          }
         }
-      }
-      // A18: one input, one text — again, and with the amplitude's keys built in another order.
-      const reordered: MotionAmplitude = { gradation: mvAmp.gradation, tracks: mvAmp.tracks.map((t) => ({ epsilon: t.epsilon, pairs: t.pairs.map((p) => ({ theta: p.theta, bones: p.bones })), track: t.track })) };
-      if (bytesOf(mvReduce({ motionAmplitude: mvAmp })) !== bytesOf(on)) probes.push('a second call with the same amplitude wrote other bytes');
-      if (bytesOf(mvReduce({ motionAmplitude: reordered })) !== bytesOf(on)) probes.push('the amplitude with its keys in another order wrote other bytes');
-      const planted = resultRow(mvReduce({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'MQ_DEFORM_LOAD');
-      if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried to the result's measurement — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
-      const held = probes.length === 0;
-      say(
-        'MQ106_WITH_MOTION_AMPLITUDE_THE_REDUCTIONS_REPORT_MEASURES_THE_DEFORM_LOAD_AS_THE_RETURNED_MESH_MEASURES_AND_IT_SCALES_WITH_THETA',
-        held,
-        probeDetail(
+        // A18: one input, one text — again, and with the amplitude's keys built in another order.
+        const reordered: MotionAmplitude = { gradation: mvAmp.gradation, tracks: mvAmp.tracks.map((t) => ({ epsilon: t.epsilon, pairs: t.pairs.map((p) => ({ theta: p.theta, bones: p.bones })), track: t.track })) };
+        if (bytesOf(mvFresh({ motionAmplitude: mvAmp })) !== bytesOf(on)) probes.push('a second call with the same amplitude wrote other bytes');
+        if (bytesOf(mvFresh({ motionAmplitude: reordered })) !== bytesOf(on)) probes.push('the amplitude with its keys in another order wrote other bytes');
+        const planted = resultRow(mvReduce({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'MQ_DEFORM_LOAD');
+        if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried to the result's measurement — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
+        const held = probes.length === 0;
+        say(
+          'MQ106_WITH_MOTION_AMPLITUDE_THE_REDUCTIONS_REPORT_MEASURES_THE_DEFORM_LOAD_AS_THE_RETURNED_MESH_MEASURES_AND_IT_SCALES_WITH_THETA',
           held,
-          probes,
-          `the ramp under θ ${r6(mvTheta)} (MV_BEND ${MV_BEND}°): MQ_DEFORM_LOAD ${rowSaid(load)}, at 2θ ${load2?.value}; MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; both rows equal to measuring the returned mesh with the amplitude; one text for one input in any key order; the plant (not carried): MQ_DEFORM_LOAD ${planted?.state}`,
-        ),
-        'issue #1287: the card exists so a caller reads the two weight-aware rows on the reduction\'s own report instead of measuring the returned mesh a second time — so the report has to read what that second measurement reads, and read the amplitude it was given',
-      );
-    });
+          probeDetail(
+            held,
+            probes,
+            `the ramp under θ ${r6(mvTheta)} (MV_BEND ${MV_BEND}°): MQ_DEFORM_LOAD ${rowSaid(load)}, at 2θ ${load2?.value}; MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; both rows equal to measuring the returned mesh with the amplitude; one text for one input in any key order; the plant (not carried): MQ_DEFORM_LOAD ${planted?.state}`,
+          ),
+          'issue #1287: the card exists so a caller reads the two weight-aware rows on the reduction\'s own report instead of measuring the returned mesh a second time — so the report has to read what that second measurement reads, and read the amplitude it was given',
+        );
+      });
 
-    mcGuard('MQ107', () => {
-      const probes: string[] = [];
-      const off = mvReduce();
-      const nul = mvReduce({ motionAmplitude: null });
-      const leftOut = 'motionAmplitude is not declared (the field is left out)';
-      const absent = 'motionAmplitude is declared absent (null)';
-      for (const code of TWO_ROWS) {
-        const a = resultRow(off, code);
-        const b = resultRow(nul, code);
-        if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
-        if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
-      }
-      const invented = resultRow(mvReduce({}, 'amplitude-invented'), 'MQ_DEFORM_LOAD');
-      if (invented?.state === 'not-measurable') probes.push('the plant — an amplitude invented for a field left out — still reads not-measurable');
-      const nulled = resultRow(mvReduce({ motionAmplitude: null }, 'null-read-as-left-out'), 'MQ_DEFORM_LOAD');
-      if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null passed on as the field left out — still says declared absent');
-      const held = probes.length === 0;
-      say(
-        'MQ107_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_TWO_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
-        held,
-        probeDetail(held, probes, `the ramp, left out: ${rowSaid(resultRow(off, 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(resultRow(nul, 'MQ_DEFORM_LOAD'))}; plants: invented — ${rowSaid(invented)}; null read as left out — ${rowSaid(nulled)}`),
-        'issue #1287 (as #1280 for a measurement): no amplitude is assumed, and undefined is not null — a caller reading the report has to see which of the two it sent',
-      );
-    });
-
-    mcGuard('MQ108', () => {
-      const probes: string[] = [];
-      const seen: string[] = [];
-      const refusalOf = (input: MeshReductionInput, plant: ReductionPlant | null = null): string | null => {
-        try {
-          const rasters = artRastersOf(input.art);
-          reduceMeshWith(input, rasters, stepRastersOf(rasters), plant);
-          return null;
-        } catch (err) {
-          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
-          return `(not a MeshReductionError) ${(err as Error).message}`;
+      mcGuard('MQ107', () => {
+        const probes: string[] = [];
+        const off = mvReduce();
+        const nul = mvReduce({ motionAmplitude: null });
+        const leftOut = 'motionAmplitude is not declared (the field is left out)';
+        const absent = 'motionAmplitude is declared absent (null)';
+        for (const code of TWO_ROWS) {
+          const a = resultRow(off, code);
+          const b = resultRow(nul, code);
+          if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
+          if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
         }
-      };
-      const measuredRefusal = (amplitude: unknown): string | null => {
-        const base = mvReduceInput(mvSrc);
-        try {
-          measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
-          return null;
-        } catch (err) {
-          return err instanceof MeshReductionError ? `${err.code} ${err.message}` : (err as Error).message;
+        const invented = resultRow(mvReduce({}, 'amplitude-invented'), 'MQ_DEFORM_LOAD');
+        if (invented?.state === 'not-measurable') probes.push('the plant — an amplitude invented for a field left out — still reads not-measurable');
+        const nulled = resultRow(mvReduce({ motionAmplitude: null }, 'null-read-as-left-out'), 'MQ_DEFORM_LOAD');
+        if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null passed on as the field left out — still says declared absent');
+        const held = probes.length === 0;
+        say(
+          'MQ107_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_TWO_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
+          held,
+          probeDetail(held, probes, `the ramp, left out: ${rowSaid(resultRow(off, 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(resultRow(nul, 'MQ_DEFORM_LOAD'))}; plants: invented — ${rowSaid(invented)}; null read as left out — ${rowSaid(nulled)}`),
+          'issue #1287 (as #1280 for a measurement): no amplitude is assumed, and undefined is not null — a caller reading the report has to see which of the two it sent',
+        );
+      });
+
+      mcGuard('MQ108', () => {
+        const probes: string[] = [];
+        const seen: string[] = [];
+        const refusalOf = (input: MeshReductionInput, plant: ReductionPlant | null = null): string | null => {
+          try {
+            const rasters = artRastersOf(input.art);
+            reduceMeshWith(input, rasters, stepRastersOf(rasters), plant);
+            return null;
+          } catch (err) {
+            if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+            return `(not a MeshReductionError) ${(err as Error).message}`;
+          }
+        };
+        const measuredRefusal = (amplitude: unknown): string | null => {
+          const base = mvReduceInput(mvSrc);
+          try {
+            measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
+            return null;
+          } catch (err) {
+            return err instanceof MeshReductionError ? `${err.code} ${err.message}` : (err as Error).message;
+          }
+        };
+        // Budget 0, so the work is one admission; and a source the admission refuses, so no measurement after it reads the field.
+        const cheap = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), motionAmplitude: amplitude }) as MeshReductionInput;
+        const refusedSource = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput({ ...mvSrc, hull: mvSrc.hull - 1 }), motionAmplitude: amplitude }) as MeshReductionInput;
+        const track = (over: Record<string, unknown>): unknown => ({ tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: 0.1 }], epsilon: 1, ...over }], gradation: 0.75 });
+        const wrongs: unknown[] = [
+          'idle',
+          1,
+          [],
+          {},
+          { gradation: 0.75 },
+          { tracks: 'idle', gradation: 0.75 },
+          { tracks: [], gradation: -1 },
+          { tracks: [], gradation: Infinity },
+          track({ track: '' }),
+          track({ epsilon: 0 }),
+          track({ pairs: [{ bones: ['a', 'a'], theta: 0.1 }] }),
+          track({ pairs: [{ bones: ['a'], theta: 0.1 }] }),
+          track({ pairs: [{ bones: ['a', 'b'], theta: -0.1 }] }),
+          track({ pairs: [{ bones: ['a', 'b'] }] }),
+        ];
+        for (const wrong of wrongs) {
+          const said = refusalOf(cheap(wrong));
+          const early = refusalOf(refusedSource(wrong));
+          const its = measuredRefusal(wrong);
+          if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required REDUCE_INPUT_MISSING naming motionAmplitude`);
+          else if (said !== its) probes.push(`${JSON.stringify(wrong)}: the reduction says "${said}", the measurement "${its}"; required the same words`);
+          else if (early !== said) probes.push(`${JSON.stringify(wrong)} on a source the admission refuses: ${early ?? 'accepted'}; required the same refusal, before any work`);
+          else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
         }
-      };
-      // Budget 0, so the work is one admission; and a source the admission refuses, so no measurement after it reads the field.
-      const cheap = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), motionAmplitude: amplitude }) as MeshReductionInput;
-      const refusedSource = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput({ ...mvSrc, hull: mvSrc.hull - 1 }), motionAmplitude: amplitude }) as MeshReductionInput;
-      const track = (over: Record<string, unknown>): unknown => ({ tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: 0.1 }], epsilon: 1, ...over }], gradation: 0.75 });
-      const wrongs: unknown[] = [
-        'idle',
-        1,
-        [],
-        {},
-        { gradation: 0.75 },
-        { tracks: 'idle', gradation: 0.75 },
-        { tracks: [], gradation: -1 },
-        { tracks: [], gradation: Infinity },
-        track({ track: '' }),
-        track({ epsilon: 0 }),
-        track({ pairs: [{ bones: ['a', 'a'], theta: 0.1 }] }),
-        track({ pairs: [{ bones: ['a'], theta: 0.1 }] }),
-        track({ pairs: [{ bones: ['a', 'b'], theta: -0.1 }] }),
-        track({ pairs: [{ bones: ['a', 'b'] }] }),
-      ];
-      for (const wrong of wrongs) {
-        const said = refusalOf(cheap(wrong));
-        const early = refusalOf(refusedSource(wrong));
-        const its = measuredRefusal(wrong);
-        if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required REDUCE_INPUT_MISSING naming motionAmplitude`);
-        else if (said !== its) probes.push(`${JSON.stringify(wrong)}: the reduction says "${said}", the measurement "${its}"; required the same words`);
-        else if (early !== said) probes.push(`${JSON.stringify(wrong)} on a source the admission refuses: ${early ?? 'accepted'}; required the same refusal, before any work`);
-        else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
-      }
-      for (const right of [undefined, null, mvAmp, { tracks: [], gradation: 0 }, { tracks: [] }, { tracks: [], gradation: null }]) {
-        const said = refusalOf(cheap(right));
-        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
-      }
-      const planted = refusalOf(refusedSource('idle'), 'amplitude-unvalidated');
-      if (planted !== null) probes.push(`the plant — the field not validated by the reduction — still refused "idle" on a source the admission refuses: ${planted}`);
-      const held = probes.length === 0;
-      say(
-        'MQ108_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_REDUCTION_BEFORE_ANY_WORK_NAMING_ITS_PATH_IN_THE_MEASUREMENTS_WORDS',
-        held,
-        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused REDUCE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} — the measurement's words, also on a source the admission refuses; left out, null, the ramp's amplitude and an empty one — with gradation 0, left out or null (#1291) — admitted; the plant (not validated): ${planted ?? 'accepted'}`),
-        'issue #1287: a malformed amplitude is refused as every other input is, by name — and before the admission, because a call whose source is refused never reaches the one measurement that reads the field, so a check left to that measurement would accept it',
-      );
+        for (const right of [undefined, null, mvAmp, { tracks: [], gradation: 0 }, { tracks: [] }, { tracks: [], gradation: null }]) {
+          const said = refusalOf(cheap(right));
+          if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+        }
+        const planted = refusalOf(refusedSource('idle'), 'amplitude-unvalidated');
+        if (planted !== null) probes.push(`the plant — the field not validated by the reduction — still refused "idle" on a source the admission refuses: ${planted}`);
+        const held = probes.length === 0;
+        say(
+          'MQ108_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_REDUCTION_BEFORE_ANY_WORK_NAMING_ITS_PATH_IN_THE_MEASUREMENTS_WORDS',
+          held,
+          probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused REDUCE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} — the measurement's words, also on a source the admission refuses; left out, null, the ramp's amplitude and an empty one — with gradation 0, left out or null (#1291) — admitted; the plant (not validated): ${planted ?? 'accepted'}`),
+          'issue #1287: a malformed amplitude is refused as every other input is, by name — and before the admission, because a call whose source is refused never reaches the one measurement that reads the field, so a check left to that measurement would accept it',
+        );
+      });
     });
 
-    mcGuard('MQ109', () => {
-      const probes: string[] = [];
-      const abAmp = amplitudeOver(['root', 'a', 'b', 'c'], mvTheta);
-      const subjects: Array<[string, Partial<MeshReductionInput>, (over: Partial<MeshReductionInput>, plant?: ReductionPlant | null) => AbRun, MotionAmplitude]> = [
-        ['the ramp', {}, (o, p = null) => mvReduce(o, p), mvAmp],
-        ['the ramp, retriangulate', delaunay, (o, p = null) => mvReduce(o, p), mvAmp],
-        ['the ramp, removalOrder', byLoad, (o, p = null) => mvReduce(o, p), mvAmp],
-        ['the traced boundary, boundary runs', { boundaryRuns: abRuns }, (o, p = null) => abReduce(o, p), abAmp],
-      ];
-      const steps = (r: AbRun): string => JSON.stringify([r.report.termination, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.accepted, r.report.candidates[0]?.geometry?.verdict]);
-      for (const [label, over, go, amp] of subjects) {
-        const off = go(over);
-        const on = go({ ...over, motionAmplitude: amp });
-        const nul = go({ ...over, motionAmplitude: null });
-        if (JSON.stringify(on.mesh) !== JSON.stringify(off.mesh)) probes.push(`${label}: the mesh moved under the field`);
-        if (steps(on) !== steps(off)) probes.push(`${label}: the termination, acceptedAt, acceptance or verdict moved under the field`);
-        if (beyondTheRows(on) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under the field`);
-        if (beyondTheRows(nul) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under null`);
-        if (/"motionAmplitude"/.test(writeMeshQualityReport(off.report))) probes.push(`${label}: the call without the field writes a motionAmplitude key`);
-      }
-      // The decision measured out of suite: carrying the amplitude into every measurement of the call — the admission,
-      // each step, the post-pass — writes the same bytes as carrying it into the result's own only.
-      for (const over of [{}, delaunay]) {
-        const final = mvReduce({ ...over, motionAmplitude: mvAmp });
-        if (bytesOf(mvReduce({ ...over, motionAmplitude: mvAmp }, 'amplitude-every-measurement')) !== bytesOf(final)) probes.push(`${JSON.stringify(over)}: the amplitude in every measurement wrote other bytes than in the result's alone`);
-      }
-      const gated = mvReduce({ motionAmplitude: mvAmp }, 'amplitude-gates-steps');
-      const plain = mvReduce();
-      const plantSaid = JSON.stringify(gated.mesh) === JSON.stringify(plain.mesh) ? null : `kept ${gated.mesh?.points.length ?? 'no mesh'} vertices against ${plain.mesh?.points.length}, ${JSON.stringify(gated.report.termination)}`;
-      if (plantSaid === null) probes.push('the plant — a measured row read as blocking a step — returns the mesh of the call without the field');
-      const held = probes.length === 0;
-      say(
-        'MQ109_THE_FIELD_MOVES_NO_STEP_NO_MESH_AND_NO_BYTE_BEYOND_THE_TWO_ROWS_AND_ITS_ECHO_AND_EVERY_MEASUREMENT_CARRYING_IT_WRITES_THE_SAME',
-        held,
-        probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: with the field and with null, the mesh, termination, acceptedAt, acceptance and every byte but the two rows, the echo and the summaries those of the call without it, which writes no motionAmplitude key; the amplitude in every measurement wrote the bytes of the result's alone, with and without retriangulate; the plant (a measured row blocking a step): ${plantSaid}`),
-        'issue #1287: both rows are undeclared, so the field may change what the report reads and nothing the reduction does — the bytes of a call without it against the tree before it are measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8), as for MQ93 and MQ100, and this holds the shape that comparison projected',
-      );
-    });
+    unit('MQ109-MQ110', () => {
+      mcGuard('MQ109', () => {
+        const probes: string[] = [];
+        const abAmp = amplitudeOver(['root', 'a', 'b', 'c'], mvTheta);
+        const subjects: Array<[string, Partial<MeshReductionInput>, (over: Partial<MeshReductionInput>, plant?: ReductionPlant | null) => AbRun, MotionAmplitude]> = [
+          ['the ramp', {}, (o, p = null) => mvReduce(o, p), mvAmp],
+          ['the ramp, retriangulate', delaunay, (o, p = null) => mvReduce(o, p), mvAmp],
+          ['the ramp, removalOrder', byLoad, (o, p = null) => mvReduce(o, p), mvAmp],
+          ['the traced boundary, boundary runs', { boundaryRuns: abRuns }, (o, p = null) => abReduce(o, p), abAmp],
+        ];
+        const steps = (r: AbRun): string => JSON.stringify([r.report.termination, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.accepted, r.report.candidates[0]?.geometry?.verdict]);
+        for (const [label, over, go, amp] of subjects) {
+          const off = go(over);
+          const on = go({ ...over, motionAmplitude: amp });
+          const nul = go({ ...over, motionAmplitude: null });
+          if (JSON.stringify(on.mesh) !== JSON.stringify(off.mesh)) probes.push(`${label}: the mesh moved under the field`);
+          if (steps(on) !== steps(off)) probes.push(`${label}: the termination, acceptedAt, acceptance or verdict moved under the field`);
+          if (beyondTheRows(on) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under the field`);
+          if (beyondTheRows(nul) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under null`);
+          if (/"motionAmplitude"/.test(writeMeshQualityReport(off.report))) probes.push(`${label}: the call without the field writes a motionAmplitude key`);
+        }
+        // The decision measured out of suite: carrying the amplitude into every measurement of the call — the admission,
+        // each step, the post-pass — writes the same bytes as carrying it into the result's own only.
+        for (const over of [{}, delaunay]) {
+          const final = mvReduce({ ...over, motionAmplitude: mvAmp });
+          if (bytesOf(mvReduce({ ...over, motionAmplitude: mvAmp }, 'amplitude-every-measurement')) !== bytesOf(final)) probes.push(`${JSON.stringify(over)}: the amplitude in every measurement wrote other bytes than in the result's alone`);
+        }
+        const gated = mvReduce({ motionAmplitude: mvAmp }, 'amplitude-gates-steps');
+        const plain = mvReduce();
+        const plantSaid = JSON.stringify(gated.mesh) === JSON.stringify(plain.mesh) ? null : `kept ${gated.mesh?.points.length ?? 'no mesh'} vertices against ${plain.mesh?.points.length}, ${JSON.stringify(gated.report.termination)}`;
+        if (plantSaid === null) probes.push('the plant — a measured row read as blocking a step — returns the mesh of the call without the field');
+        const held = probes.length === 0;
+        say(
+          'MQ109_THE_FIELD_MOVES_NO_STEP_NO_MESH_AND_NO_BYTE_BEYOND_THE_TWO_ROWS_AND_ITS_ECHO_AND_EVERY_MEASUREMENT_CARRYING_IT_WRITES_THE_SAME',
+          held,
+          probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: with the field and with null, the mesh, termination, acceptedAt, acceptance and every byte but the two rows, the echo and the summaries those of the call without it, which writes no motionAmplitude key; the amplitude in every measurement wrote the bytes of the result's alone, with and without retriangulate; the plant (a measured row blocking a step): ${plantSaid}`),
+          'issue #1287: both rows are undeclared, so the field may change what the report reads and nothing the reduction does — the bytes of a call without it against the tree before it are measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8), as for MQ93 and MQ100, and this holds the shape that comparison projected',
+        );
+      });
 
-    mcGuard('MQ110', () => {
-      const probes: string[] = [];
-      const echoOf = (r: AbRun): { has: boolean; value: unknown; keys: string[] } => {
-        const e = JSON.parse(writeMeshQualityReport(r.report)).effective;
-        return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude, keys: Object.keys(e) };
-      };
-      const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
-      const off = echoOf(mvReduce());
-      const nul = echoOf(mvReduce({ motionAmplitude: null }));
-      const set = echoOf(mvReduce({ motionAmplitude: mvAmp }));
-      const noMesh = mvReduce({ source: { ...mvSrc, hull: mvSrc.hull - 1 }, motionAmplitude: mvAmp });
-      const refused = echoOf(noMesh);
-      const all = echoOf(mvReduce({ stopAfterAccepted: 3, boundaryRuns: { maxVertices: 2 }, motionAmplitude: mvAmp, ...delaunay, ...byLoad }));
-      if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
-      if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
-      if (!set.has || JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
-      if (noMesh.mesh !== null || JSON.stringify(refused.value) !== canonical) probes.push(`a call that returns no mesh: effective.motionAmplitude ${JSON.stringify(refused.value)}; required the amplitude echoed`);
-      const order = all.keys.filter((k) => ['stopAfterAccepted', 'boundaryRuns', 'motionAmplitude', 'retriangulate', 'removalOrder'].includes(k)).join(',');
-      if (order !== 'stopAfterAccepted,boundaryRuns,motionAmplitude,retriangulate,removalOrder') probes.push(`every optional echo set: they are written as ${order}`);
-      const planted = echoOf(mvReduce({}, 'echo-when-unset'));
-      if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
-      const held = probes.length === 0;
-      say(
-        'MQ110_THE_REDUCTION_ECHOES_MOTION_AMPLITUDE_ONCE_EXACTLY_WHEN_SET_NULL_INCLUDED_AND_ALSO_WHEN_NO_MESH_IS_RETURNED',
-        held,
-        probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, also on a call the admission refuses (${noMesh.report.termination?.reason}); with every optional field set: ${order}; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
-        'issue #1287 (correction 1): every input is echoed with its structure, and a field left out is not a field set to null — the echo is how a report says which amplitude its two rows were read under',
-      );
+      mcGuard('MQ110', () => {
+        const probes: string[] = [];
+        const echoOf = (r: AbRun): { has: boolean; value: unknown; keys: string[] } => {
+          const e = JSON.parse(writeMeshQualityReport(r.report)).effective;
+          return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude, keys: Object.keys(e) };
+        };
+        const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
+        const off = echoOf(mvReduce());
+        const nul = echoOf(mvReduce({ motionAmplitude: null }));
+        const set = echoOf(mvReduce({ motionAmplitude: mvAmp }));
+        const noMesh = mvReduce({ source: { ...mvSrc, hull: mvSrc.hull - 1 }, motionAmplitude: mvAmp });
+        const refused = echoOf(noMesh);
+        const all = echoOf(mvReduce({ stopAfterAccepted: 3, boundaryRuns: { maxVertices: 2 }, motionAmplitude: mvAmp, ...delaunay, ...byLoad }));
+        if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
+        if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
+        if (!set.has || JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
+        if (noMesh.mesh !== null || JSON.stringify(refused.value) !== canonical) probes.push(`a call that returns no mesh: effective.motionAmplitude ${JSON.stringify(refused.value)}; required the amplitude echoed`);
+        const order = all.keys.filter((k) => ['stopAfterAccepted', 'boundaryRuns', 'motionAmplitude', 'retriangulate', 'removalOrder'].includes(k)).join(',');
+        if (order !== 'stopAfterAccepted,boundaryRuns,motionAmplitude,retriangulate,removalOrder') probes.push(`every optional echo set: they are written as ${order}`);
+        const planted = echoOf(mvReduce({}, 'echo-when-unset'));
+        if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
+        const held = probes.length === 0;
+        say(
+          'MQ110_THE_REDUCTION_ECHOES_MOTION_AMPLITUDE_ONCE_EXACTLY_WHEN_SET_NULL_INCLUDED_AND_ALSO_WHEN_NO_MESH_IS_RETURNED',
+          held,
+          probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, also on a call the admission refuses (${noMesh.report.termination?.reason}); with every optional field set: ${order}; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
+          'issue #1287 (correction 1): every input is echoed with its structure, and a field left out is not a field set to null — the echo is how a report says which amplitude its two rows were read under',
+        );
+      });
     });
 
     // --- MQ111–MQ115 (#1291): the comparison hands motionAmplitude to its setup measurement --------------------------
@@ -51237,11 +51602,13 @@ function runMeshCompareSuite(): number {
     // the load counted towards the setup verdict. Most calls pose nothing (schedule null, motion not required); MQ115
     // poses the ramp's `idle`, because what it holds is that the motion section does not move.
     const cmpSource = mvBuild(dir, 'mv-source-111', mvSrc);
-    const cmpStrict = mvReduce().mesh;
-    const cmpCandidate = cmpStrict === null ? null : mvBuild(dir, 'mv-strict-111', cmpStrict);
+    const cmpCandidate = lazily(() => {
+      const cmpStrict = mvReduce().mesh;
+      return cmpStrict === null ? null : mvBuild(dir, 'mv-strict-111', cmpStrict);
+    });
     const cmpInput = (over: Partial<MotionComparisonInput> = {}, posed = false): MotionComparisonInput => ({
       reference: { id: 'source', model: cmpSource },
-      candidates: [{ id: 'strict', model: cmpCandidate ?? cmpSource }],
+      candidates: [{ id: 'strict', model: cmpCandidate() ?? cmpSource }],
       attachments: [{ attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, art: { mask: mvMask, threshold: 1, frame: mvFrame }, finalThreshold: 1, minArtSamples: 1, regions: [] }],
       referenceArtFit: mvStrict,
       candidateArtFit: mvStrict,
@@ -51265,156 +51632,158 @@ function runMeshCompareSuite(): number {
       }
     };
 
-    mcGuard('MQ111', () => {
-      const probes: string[] = [];
-      const on = cmp({ motionAmplitude: mvAmp });
-      const twice = cmp({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
-      const noG = cmp({ motionAmplitude: { tracks: mvAmp.tracks } });
-      const said: string[] = [];
-      for (const who of ['reference', 'strict'] as const) {
-        const load = setupRow(on, who, 'MQ_DEFORM_LOAD');
-        const load2 = setupRow(twice, who, 'MQ_DEFORM_LOAD');
-        if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`${who}: MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
-        if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6) probes.push(`${who}: MQ_DEFORM_LOAD at θ ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
-        if (JSON.stringify(setupRow(noG, who, 'MQ_DEFORM_LOAD')) !== JSON.stringify(load)) probes.push(`${who}: the amplitude without gradation reads MQ_DEFORM_LOAD ${rowSaid(setupRow(noG, who, 'MQ_DEFORM_LOAD'))}; required ${rowSaid(load)} — the load does not read G`);
-        const contrast = setupRow(on, who, 'MQ_ALLOCATION_CONTRAST');
-        if (contrast?.state !== 'not-measurable' || !(contrast.reason ?? '').includes('targets.maxBoundaryDeviation is null')) probes.push(`${who}: MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required not-measurable naming the deviation bound the comparison does not declare`);
-        said.push(`${who} ${load?.value} px (2θ: ${load2?.value})`);
-      }
-      const planted = setupRow(cmp({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'reference', 'MQ_DEFORM_LOAD');
-      if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
-      const held = probes.length === 0;
-      say(
-        'MQ111_WITH_MOTION_AMPLITUDE_THE_COMPARISONS_SETUP_SECTIONS_MEASURE_THE_DEFORM_LOAD_AND_THE_CONTRAST_NAMES_THE_DEVIATION_BOUND_IT_LACKS',
-        held,
-        probeDetail(held, probes, `MQ_DEFORM_LOAD on the setup sections: ${said.join(', ')}, and the same without gradation; MQ_ALLOCATION_CONTRAST not-measurable naming targets.maxBoundaryDeviation on both; the plant (not carried): ${rowSaid(planted)}`),
-        'issue #1291 (rig-parts#126): the comparison\'s setup section is a measurement, and a caller that declares the amplitude reads its load there as on a reduction — and Δ says the one thing the comparison does not declare, rather than reading a number from nothing',
-      );
-    });
-
-    mcGuard('MQ112', () => {
-      const probes: string[] = [];
-      const off = cmp();
-      const nul = cmp({ motionAmplitude: null });
-      const leftOut = 'motionAmplitude is not declared (the field is left out)';
-      const absent = 'motionAmplitude is declared absent (null)';
-      for (const who of ['reference', 'strict'] as const) {
-        for (const code of TWO_ROWS) {
-          const a = setupRow(off, who, code);
-          const b = setupRow(nul, who, code);
-          if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${who} ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
-          if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${who} ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
+    unit('MQ111-MQ115', () => {
+      mcGuard('MQ111', () => {
+        const probes: string[] = [];
+        const on = cmp({ motionAmplitude: mvAmp });
+        const twice = cmp({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
+        const noG = cmp({ motionAmplitude: { tracks: mvAmp.tracks } });
+        const said: string[] = [];
+        for (const who of ['reference', 'strict'] as const) {
+          const load = setupRow(on, who, 'MQ_DEFORM_LOAD');
+          const load2 = setupRow(twice, who, 'MQ_DEFORM_LOAD');
+          if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`${who}: MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
+          if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6) probes.push(`${who}: MQ_DEFORM_LOAD at θ ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
+          if (JSON.stringify(setupRow(noG, who, 'MQ_DEFORM_LOAD')) !== JSON.stringify(load)) probes.push(`${who}: the amplitude without gradation reads MQ_DEFORM_LOAD ${rowSaid(setupRow(noG, who, 'MQ_DEFORM_LOAD'))}; required ${rowSaid(load)} — the load does not read G`);
+          const contrast = setupRow(on, who, 'MQ_ALLOCATION_CONTRAST');
+          if (contrast?.state !== 'not-measurable' || !(contrast.reason ?? '').includes('targets.maxBoundaryDeviation is null')) probes.push(`${who}: MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required not-measurable naming the deviation bound the comparison does not declare`);
+          said.push(`${who} ${load?.value} px (2θ: ${load2?.value})`);
         }
-      }
-      const nulled = setupRow(cmp({ motionAmplitude: null }, 'null-read-as-left-out'), 'reference', 'MQ_DEFORM_LOAD');
-      if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null carried as the field left out — still says declared absent');
-      const held = probes.length === 0;
-      say(
-        'MQ112_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_COMPARISONS_SETUP_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
-        held,
-        probeDetail(held, probes, `left out: ${rowSaid(setupRow(off, 'reference', 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(setupRow(nul, 'reference', 'MQ_DEFORM_LOAD'))}; on the reference's and the candidate's setup sections, both rows; the plant (null read as left out): ${rowSaid(nulled)}`),
-        'issue #1291, as #1280 for a measurement and #1287 for a reduction: no amplitude is assumed, and undefined is not null',
-      );
-    });
+        const planted = setupRow(cmp({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'reference', 'MQ_DEFORM_LOAD');
+        if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
+        const held = probes.length === 0;
+        say(
+          'MQ111_WITH_MOTION_AMPLITUDE_THE_COMPARISONS_SETUP_SECTIONS_MEASURE_THE_DEFORM_LOAD_AND_THE_CONTRAST_NAMES_THE_DEVIATION_BOUND_IT_LACKS',
+          held,
+          probeDetail(held, probes, `MQ_DEFORM_LOAD on the setup sections: ${said.join(', ')}, and the same without gradation; MQ_ALLOCATION_CONTRAST not-measurable naming targets.maxBoundaryDeviation on both; the plant (not carried): ${rowSaid(planted)}`),
+          'issue #1291 (rig-parts#126): the comparison\'s setup section is a measurement, and a caller that declares the amplitude reads its load there as on a reduction — and Δ says the one thing the comparison does not declare, rather than reading a number from nothing',
+        );
+      });
 
-    mcGuard('MQ113', () => {
-      const probes: string[] = [];
-      const seen: string[] = [];
-      const measuredWords = (amplitude: unknown): string | null => {
-        const base = mvReduceInput(mvSrc);
-        try {
-          measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
-          return null;
-        } catch (err) {
-          return err instanceof MeshReductionError ? err.message : (err as Error).message;
+      mcGuard('MQ112', () => {
+        const probes: string[] = [];
+        const off = cmp();
+        const nul = cmp({ motionAmplitude: null });
+        const leftOut = 'motionAmplitude is not declared (the field is left out)';
+        const absent = 'motionAmplitude is declared absent (null)';
+        for (const who of ['reference', 'strict'] as const) {
+          for (const code of TWO_ROWS) {
+            const a = setupRow(off, who, code);
+            const b = setupRow(nul, who, code);
+            if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${who} ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
+            if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${who} ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
+          }
         }
-      };
-      const fromField = (s: string | null): string => (s === null ? '(accepted)' : s.slice(s.indexOf('motionAmplitude')));
-      const unreadable = { reference: { id: 'source', model: 'not a model document' } };
-      const wrongs: unknown[] = ['idle', { gradation: 0.75 }, { tracks: [], gradation: -1 }, { tracks: [], gradation: 'G' }, { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'a'], theta: 0.1 }], epsilon: 1 }] }];
-      for (const wrong of wrongs) {
-        const said = cmpRefusal({ motionAmplitude: wrong as MotionAmplitude });
-        const early = cmpRefusal({ ...unreadable, motionAmplitude: wrong as MotionAmplitude });
-        if (said === null || !said.startsWith('COMPARE_INPUT_MISSING: the comparison: motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required COMPARE_INPUT_MISSING naming motionAmplitude`);
-        else if (fromField(said) !== fromField(measuredWords(wrong))) probes.push(`${JSON.stringify(wrong)}: the comparison says "${fromField(said)}", the measurement "${fromField(measuredWords(wrong))}"; required the same words`);
-        else if (early !== said) probes.push(`${JSON.stringify(wrong)} beside an unreadable reference: ${early ?? 'accepted'}; required the same refusal, before any build is read`);
-        else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
-      }
-      for (const right of [undefined, null, mvAmp, { tracks: mvAmp.tracks }, { tracks: mvAmp.tracks, gradation: null }]) {
-        const said = cmpRefusal({ motionAmplitude: right as MotionAmplitude | null | undefined });
-        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
-      }
-      const planted = cmpRefusal({ ...unreadable, motionAmplitude: 'idle' as unknown as MotionAmplitude }, 'amplitude-unvalidated');
-      if (planted !== null && planted.includes('motionAmplitude')) probes.push(`the plant — the field not validated before the builds are read — still refused naming the amplitude: ${planted}`);
-      const held = probes.length === 0;
-      say(
-        'MQ113_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_COMPARISON_BEFORE_ANY_BUILD_IS_READ_IN_THE_MEASUREMENTS_WORDS',
-        held,
-        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused COMPARE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} in the measurement's words, also beside an unreadable reference; left out, null, the ramp's amplitude and it without gradation or with gradation null admitted; the plant (not validated): ${planted?.slice(0, 80) ?? 'accepted'}`),
-        'issue #1291: a malformed amplitude is refused by name under the comparison\'s own code, before a build is read — left to the setup measurement it would be refused under the measurement\'s code, and only once two builds had been parsed',
-      );
-    });
+        const nulled = setupRow(cmp({ motionAmplitude: null }, 'null-read-as-left-out'), 'reference', 'MQ_DEFORM_LOAD');
+        if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null carried as the field left out — still says declared absent');
+        const held = probes.length === 0;
+        say(
+          'MQ112_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_COMPARISONS_SETUP_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
+          held,
+          probeDetail(held, probes, `left out: ${rowSaid(setupRow(off, 'reference', 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(setupRow(nul, 'reference', 'MQ_DEFORM_LOAD'))}; on the reference's and the candidate's setup sections, both rows; the plant (null read as left out): ${rowSaid(nulled)}`),
+          'issue #1291, as #1280 for a measurement and #1287 for a reduction: no amplitude is assumed, and undefined is not null',
+        );
+      });
 
-    mcGuard('MQ114', () => {
-      const probes: string[] = [];
-      const echoOf = (r: MeshQualityReport): { has: boolean; value: unknown } => {
-        const e = JSON.parse(writeMeshQualityReport(r)).effective;
-        return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude };
-      };
-      const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
-      const withoutG = canonical.replace(/,"gradation":[^}]*\}$/, '}');
-      const off = echoOf(cmp());
-      const nul = echoOf(cmp({ motionAmplitude: null }));
-      const set = echoOf(cmp({ motionAmplitude: mvAmp }));
-      const noG = echoOf(cmp({ motionAmplitude: { tracks: mvAmp.tracks } }));
-      if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
-      if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
-      if (JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
-      if (JSON.stringify(noG.value) !== withoutG) probes.push(`set without gradation: ${JSON.stringify(noG.value)}; required ${withoutG}`);
-      const planted = echoOf(cmp({}, 'echo-when-unset'));
-      if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
-      const held = probes.length === 0;
-      say(
-        'MQ114_THE_COMPARISON_ECHOES_MOTION_AMPLITUDE_EXACTLY_WHEN_SET_NULL_INCLUDED',
-        held,
-        probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, without a gradation key when the caller left it out; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
-        'issue #1291 (correction 1): the echo is how a comparison report says which amplitude its setup rows were read under, and a field left out is not a field set to null',
-      );
-    });
-
-    mcGuard('MQ115', () => {
-      const probes: string[] = [];
-      /** The text with the echo, the two amplitude rows and the setup summaries taken out: what the field may not move. */
-      const beyond = (r: MeshQualityReport): string => {
-        const doc = JSON.parse(writeMeshQualityReport(r));
-        delete doc.effective.motionAmplitude;
-        for (const c of [doc.reference, ...doc.candidates]) {
-          if (c.geometry === null) continue;
-          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => !TWO_ROWS.includes(x.code));
-          delete c.geometry.summary;
+      mcGuard('MQ113', () => {
+        const probes: string[] = [];
+        const seen: string[] = [];
+        const measuredWords = (amplitude: unknown): string | null => {
+          const base = mvReduceInput(mvSrc);
+          try {
+            measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
+            return null;
+          } catch (err) {
+            return err instanceof MeshReductionError ? err.message : (err as Error).message;
+          }
+        };
+        const fromField = (s: string | null): string => (s === null ? '(accepted)' : s.slice(s.indexOf('motionAmplitude')));
+        const unreadable = { reference: { id: 'source', model: 'not a model document' } };
+        const wrongs: unknown[] = ['idle', { gradation: 0.75 }, { tracks: [], gradation: -1 }, { tracks: [], gradation: 'G' }, { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'a'], theta: 0.1 }], epsilon: 1 }] }];
+        for (const wrong of wrongs) {
+          const said = cmpRefusal({ motionAmplitude: wrong as MotionAmplitude });
+          const early = cmpRefusal({ ...unreadable, motionAmplitude: wrong as MotionAmplitude });
+          if (said === null || !said.startsWith('COMPARE_INPUT_MISSING: the comparison: motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required COMPARE_INPUT_MISSING naming motionAmplitude`);
+          else if (fromField(said) !== fromField(measuredWords(wrong))) probes.push(`${JSON.stringify(wrong)}: the comparison says "${fromField(said)}", the measurement "${fromField(measuredWords(wrong))}"; required the same words`);
+          else if (early !== said) probes.push(`${JSON.stringify(wrong)} beside an unreadable reference: ${early ?? 'accepted'}; required the same refusal, before any build is read`);
+          else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
         }
-        return JSON.stringify(doc);
-      };
-      const off = cmp({}, null, true);
-      const offText = writeMeshQualityReport(off);
-      const on = cmp({ motionAmplitude: mvAmp }, null, true);
-      const nul = cmp({ motionAmplitude: null }, null, true);
-      if (writeMeshQualityReport(cmp({}, null, true)) !== offText) probes.push('two comparisons without the field wrote other bytes');
-      if (/"motionAmplitude"/.test(offText)) probes.push('the comparison without the field writes a motionAmplitude key');
-      if (beyond(on) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under the field');
-      if (beyond(nul) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under null');
-      const motionOf = (r: MeshQualityReport): string => JSON.stringify([r.reference?.motion, r.candidates.map((c) => [c.motion, c.accepted])]);
-      if (motionOf(on) !== motionOf(off)) probes.push('the motion sections or an acceptance moved under the field');
-      const gated = cmp({ motionAmplitude: mvAmp }, 'amplitude-gates-acceptance', true);
-      const plantSaid = beyond(gated) === beyond(off) ? null : `the candidate accepted ${gated.candidates[0]?.accepted} against ${off.candidates[0]?.accepted}, setup verdict ${gated.candidates[0]?.geometry?.verdict}`;
-      if (plantSaid === null) probes.push('the plant — the load counted towards the setup verdict — moved no byte beyond the rows');
-      const held = probes.length === 0;
-      say(
-        'MQ115_THE_FIELD_MOVES_NO_BYTE_OF_A_COMPARISON_BEYOND_THE_TWO_SETUP_ROWS_ITS_ECHO_AND_THE_SETUP_SUMMARIES',
-        held,
-        probeDetail(held, probes, `the ramp posed on idle, the source against its strict reduction (candidate accepted: ${off.candidates[0]?.accepted}): without the field, one text twice and no motionAmplitude key; with the field and with null, every byte but the two rows, the echo and the setup summaries that text's, the motion sections and the acceptances included; the plant (the load gating the setup verdict): ${plantSaid}`),
-        'issue #1291: both rows are undeclared, so the amplitude may change what the setup section reads and nothing the comparison decides — the bytes of a comparison without it against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §8), and this holds the shape that comparison projected',
-      );
+        for (const right of [undefined, null, mvAmp, { tracks: mvAmp.tracks }, { tracks: mvAmp.tracks, gradation: null }]) {
+          const said = cmpRefusal({ motionAmplitude: right as MotionAmplitude | null | undefined });
+          if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+        }
+        const planted = cmpRefusal({ ...unreadable, motionAmplitude: 'idle' as unknown as MotionAmplitude }, 'amplitude-unvalidated');
+        if (planted !== null && planted.includes('motionAmplitude')) probes.push(`the plant — the field not validated before the builds are read — still refused naming the amplitude: ${planted}`);
+        const held = probes.length === 0;
+        say(
+          'MQ113_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_COMPARISON_BEFORE_ANY_BUILD_IS_READ_IN_THE_MEASUREMENTS_WORDS',
+          held,
+          probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused COMPARE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} in the measurement's words, also beside an unreadable reference; left out, null, the ramp's amplitude and it without gradation or with gradation null admitted; the plant (not validated): ${planted?.slice(0, 80) ?? 'accepted'}`),
+          'issue #1291: a malformed amplitude is refused by name under the comparison\'s own code, before a build is read — left to the setup measurement it would be refused under the measurement\'s code, and only once two builds had been parsed',
+        );
+      });
+
+      mcGuard('MQ114', () => {
+        const probes: string[] = [];
+        const echoOf = (r: MeshQualityReport): { has: boolean; value: unknown } => {
+          const e = JSON.parse(writeMeshQualityReport(r)).effective;
+          return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude };
+        };
+        const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
+        const withoutG = canonical.replace(/,"gradation":[^}]*\}$/, '}');
+        const off = echoOf(cmp());
+        const nul = echoOf(cmp({ motionAmplitude: null }));
+        const set = echoOf(cmp({ motionAmplitude: mvAmp }));
+        const noG = echoOf(cmp({ motionAmplitude: { tracks: mvAmp.tracks } }));
+        if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
+        if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
+        if (JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
+        if (JSON.stringify(noG.value) !== withoutG) probes.push(`set without gradation: ${JSON.stringify(noG.value)}; required ${withoutG}`);
+        const planted = echoOf(cmp({}, 'echo-when-unset'));
+        if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
+        const held = probes.length === 0;
+        say(
+          'MQ114_THE_COMPARISON_ECHOES_MOTION_AMPLITUDE_EXACTLY_WHEN_SET_NULL_INCLUDED',
+          held,
+          probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, without a gradation key when the caller left it out; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
+          'issue #1291 (correction 1): the echo is how a comparison report says which amplitude its setup rows were read under, and a field left out is not a field set to null',
+        );
+      });
+
+      mcGuard('MQ115', () => {
+        const probes: string[] = [];
+        /** The text with the echo, the two amplitude rows and the setup summaries taken out: what the field may not move. */
+        const beyond = (r: MeshQualityReport): string => {
+          const doc = JSON.parse(writeMeshQualityReport(r));
+          delete doc.effective.motionAmplitude;
+          for (const c of [doc.reference, ...doc.candidates]) {
+            if (c.geometry === null) continue;
+            c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => !TWO_ROWS.includes(x.code));
+            delete c.geometry.summary;
+          }
+          return JSON.stringify(doc);
+        };
+        const off = cmp({}, null, true);
+        const offText = writeMeshQualityReport(off);
+        const on = cmp({ motionAmplitude: mvAmp }, null, true);
+        const nul = cmp({ motionAmplitude: null }, null, true);
+        if (writeMeshQualityReport(cmp({}, null, true)) !== offText) probes.push('two comparisons without the field wrote other bytes');
+        if (/"motionAmplitude"/.test(offText)) probes.push('the comparison without the field writes a motionAmplitude key');
+        if (beyond(on) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under the field');
+        if (beyond(nul) !== beyond(off)) probes.push('a byte beyond the two rows, the echo and the setup summaries moved under null');
+        const motionOf = (r: MeshQualityReport): string => JSON.stringify([r.reference?.motion, r.candidates.map((c) => [c.motion, c.accepted])]);
+        if (motionOf(on) !== motionOf(off)) probes.push('the motion sections or an acceptance moved under the field');
+        const gated = cmp({ motionAmplitude: mvAmp }, 'amplitude-gates-acceptance', true);
+        const plantSaid = beyond(gated) === beyond(off) ? null : `the candidate accepted ${gated.candidates[0]?.accepted} against ${off.candidates[0]?.accepted}, setup verdict ${gated.candidates[0]?.geometry?.verdict}`;
+        if (plantSaid === null) probes.push('the plant — the load counted towards the setup verdict — moved no byte beyond the rows');
+        const held = probes.length === 0;
+        say(
+          'MQ115_THE_FIELD_MOVES_NO_BYTE_OF_A_COMPARISON_BEYOND_THE_TWO_SETUP_ROWS_ITS_ECHO_AND_THE_SETUP_SUMMARIES',
+          held,
+          probeDetail(held, probes, `the ramp posed on idle, the source against its strict reduction (candidate accepted: ${off.candidates[0]?.accepted}): without the field, one text twice and no motionAmplitude key; with the field and with null, every byte but the two rows, the echo and the setup summaries that text's, the motion sections and the acceptances included; the plant (the load gating the setup verdict): ${plantSaid}`),
+          'issue #1291: both rows are undeclared, so the amplitude may change what the setup section reads and nothing the comparison decides — the bytes of a comparison without it against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §8), and this holds the shape that comparison projected',
+        );
+      });
     });
   });
 
@@ -51635,494 +52004,504 @@ function runMeshCompareSuite(): number {
     perFrame: Map<string, number | null>;
     sourceModel: string;
   }
-  const skCases: SkCase[] = [];
-  let skBuildError: string | null = null;
-  try {
-    skVariants.forEach((v, vi) => {
-      const source = skSource(v.field);
-      const envelope = skEnvelope(v.bones);
-      const strict = reduceMesh(mvReduceInput(source, { boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)] }));
-      const candidates: Array<[string, SourceMesh]> = [];
-      if (strict.mesh !== null) candidates.push([`${v.name}, strict`, strict.mesh]);
-      if (v.bones.length > 1) candidates.push([`${v.name}, pruned to two`, skPruned(source)]);
-      const sourceModel = skBuild(dir, `sk-${vi}-source`, source, v.bones);
-      const report = skCompare(
-        sourceModel,
-        candidates.map(([label, m], ci) => ({ id: label, model: skBuild(dir, `sk-${vi}-${ci}`, m, v.bones) })),
-      );
-      candidates.forEach(([label, candidate], ci) => {
-        const c = report.candidates[ci];
-        skCases.push({
-          label,
-          variant: v,
-          source,
-          candidate,
-          envelope,
-          row: skRow(skMeasure(candidate, skDeclared(source, envelope))),
-          oracle: c?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null),
-          perFrame: new Map((c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION').map((p) => [p.frame, p.value])),
+  // Made on first read (issue #1300): only the process whose unit reads the population builds it.
+  const skPopulation = lazily(() => {
+    const skCases: SkCase[] = [];
+    let skBuildError: string | null = null;
+    try {
+      skVariants.forEach((v, vi) => {
+        const source = skSource(v.field);
+        const envelope = skEnvelope(v.bones);
+        const strict = memoReduceMesh(mvReduceInput(source, { boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)] }));
+        const candidates: Array<[string, SourceMesh]> = [];
+        if (strict.mesh !== null) candidates.push([`${v.name}, strict`, strict.mesh]);
+        if (v.bones.length > 1) candidates.push([`${v.name}, pruned to two`, skPruned(source)]);
+        const sourceModel = skBuild(dir, `sk-${vi}-source`, source, v.bones);
+        const report = skCompare(
           sourceModel,
+          candidates.map(([label, m], ci) => ({ id: label, model: skBuild(dir, `sk-${vi}-${ci}`, m, v.bones) })),
+        );
+        candidates.forEach(([label, candidate], ci) => {
+          const c = report.candidates[ci];
+          skCases.push({
+            label,
+            variant: v,
+            source,
+            candidate,
+            envelope,
+            row: skRow(skMeasure(candidate, skDeclared(source, envelope))),
+            oracle: c?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null),
+            perFrame: new Map((c?.perFrame ?? []).filter((p) => p.code === 'MQ_LOCAL_DEFORMATION').map((p) => [p.frame, p.value])),
+            sourceModel,
+          });
         });
       });
-    });
-  } catch (err) {
-    skBuildError = `${(err as Error).name}: ${(err as Error).message}`;
-  }
-  const skCase = (label: string): SkCase | undefined => skCases.find((c) => c.label === label);
+    } catch (err) {
+      skBuildError = `${(err as Error).name}: ${(err as Error).message}`;
+    }
+    return { skCases, skBuildError };
+  });
+  const skCase = (label: string): SkCase | undefined => skPopulation().skCases.find((c) => c.label === label);
   /** The term outside the value — ‖A₀ + Σ w̄ₖ (Aₖ − A₀)‖ |Δp|, ‖A₀‖ 1 here since `a` never moves — plus the identity's measured band. */
   const SK_IDENTITY_TOLERANCE = 1e-5;
   const skTolerance = (c: SkCase): number => (1 + Math.max(0, ...c.envelope.bones.map((b) => b.linear))) * (c.row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
 
-  mcGuard('MQ116', () => {
-    const probes: string[] = [];
-    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
-    const ramp = skCase('ramp, strict');
-    const row = ramp?.row;
-    const oracle = ramp?.oracle?.value ?? null;
-    if (row?.state !== 'fail' || row.skinning === undefined) probes.push(`the ramp's strict reduction: ${skSaid(row)}; required measured above maxResidual 1`);
-    const wf = row?.skinning?.weightField;
-    if (wf === undefined || wf.l1 !== 0 || wf.lInf !== 0) probes.push(`the weight-field difference reads ${JSON.stringify(wf)}; required 0 in L1 and L∞ — the ramp is linear and both meshes interpolate it exactly`);
-    if (!(row?.value !== null && (row?.value ?? 0) > 0)) probes.push(`the residual reads ${row?.value}; required above 0 where the field difference is 0`);
-    if (oracle === null || ramp === undefined || Math.abs((row?.value ?? 0) - oracle) > skTolerance(ramp)) probes.push(`the residual ${row?.value} against the poser's ${oracle}: required within ${ramp === undefined ? '-' : skTolerance(ramp)} — on a pure rotation the bound loses nothing (§7, M2)`);
-    const self = ramp === undefined ? undefined : skRow(skMeasure(ramp.source, skDeclared(ramp.source, ramp.envelope)));
-    if (self?.state !== 'pass' || self.value !== 0 || JSON.stringify(self.worst) !== '{"at":{}}') probes.push(`the source against itself: ${skSaid(self)}, worst ${JSON.stringify(self?.worst)}; required 0, pass, nothing worse than ideal`);
-    const planted = ramp === undefined ? undefined : skRow(skMeasure(ramp.candidate, skDeclared(ramp.source, ramp.envelope), 'drop-covariance'));
-    if (planted?.value !== 0) probes.push(`the plant (the covariance term dropped — the field-only bound) reads ${planted?.value}; required 0, which is what makes the term necessary`);
-    const held = probes.length === 0;
-    say(
-      'MQ116_A_ZERO_WEIGHT_FIELD_DIFFERENCE_IS_NOT_A_ZERO_MOTION_ERROR_AND_THE_RESIDUAL_SEES_THE_COVARIANCE_IT_COMES_FROM',
-      held,
-      probeDetail(
+  unit('MQ116-MQ133', () => {
+    mcGuard('MQ116', () => {
+      const { skBuildError } = skPopulation();
+      const probes: string[] = [];
+      if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+      const ramp = skCase('ramp, strict');
+      const row = ramp?.row;
+      const oracle = ramp?.oracle?.value ?? null;
+      if (row?.state !== 'fail' || row.skinning === undefined) probes.push(`the ramp's strict reduction: ${skSaid(row)}; required measured above maxResidual 1`);
+      const wf = row?.skinning?.weightField;
+      if (wf === undefined || wf.l1 !== 0 || wf.lInf !== 0) probes.push(`the weight-field difference reads ${JSON.stringify(wf)}; required 0 in L1 and L∞ — the ramp is linear and both meshes interpolate it exactly`);
+      if (!(row?.value !== null && (row?.value ?? 0) > 0)) probes.push(`the residual reads ${row?.value}; required above 0 where the field difference is 0`);
+      if (oracle === null || ramp === undefined || Math.abs((row?.value ?? 0) - oracle) > skTolerance(ramp)) probes.push(`the residual ${row?.value} against the poser's ${oracle}: required within ${ramp === undefined ? '-' : skTolerance(ramp)} — on a pure rotation the bound loses nothing (§7, M2)`);
+      const self = ramp === undefined ? undefined : skRow(skMeasure(ramp.source, skDeclared(ramp.source, ramp.envelope)));
+      if (self?.state !== 'pass' || self.value !== 0 || JSON.stringify(self.worst) !== '{"at":{}}') probes.push(`the source against itself: ${skSaid(self)}, worst ${JSON.stringify(self?.worst)}; required 0, pass, nothing worse than ideal`);
+      const planted = ramp === undefined ? undefined : skRow(skMeasure(ramp.candidate, skDeclared(ramp.source, ramp.envelope), 'drop-covariance'));
+      if (planted?.value !== 0) probes.push(`the plant (the covariance term dropped — the field-only bound) reads ${planted?.value}; required 0, which is what makes the term necessary`);
+      const held = probes.length === 0;
+      say(
+        'MQ116_A_ZERO_WEIGHT_FIELD_DIFFERENCE_IS_NOT_A_ZERO_MOTION_ERROR_AND_THE_RESIDUAL_SEES_THE_COVARIANCE_IT_COMES_FROM',
         held,
-        probes,
-        `MQ79's ramp, the source against its strict reduction: weight field L1 ${wf?.l1}, L∞ ${wf?.lInf}; MQ_SKINNING_RESIDUAL ${row?.value} (covariance ${row?.skinning?.worst?.covariance}, lever ${row?.skinning?.worst?.lever}) against the poser's MQ_LOCAL_DEFORMATION ${oracle}; the source against itself ${self?.value}; the plant without the covariance term ${planted?.value}`,
-      ),
-      'issue #1294 acceptance 1: the field-only proxy reads 0 on the very fixture that fails at 1.8 px (§7, M2), so a residual made of it alone would pass it — the covariance within each carrying triangle is the error',
-    );
-  });
+        probeDetail(
+          held,
+          probes,
+          `MQ79's ramp, the source against its strict reduction: weight field L1 ${wf?.l1}, L∞ ${wf?.lInf}; MQ_SKINNING_RESIDUAL ${row?.value} (covariance ${row?.skinning?.worst?.covariance}, lever ${row?.skinning?.worst?.lever}) against the poser's MQ_LOCAL_DEFORMATION ${oracle}; the source against itself ${self?.value}; the plant without the covariance term ${planted?.value}`,
+        ),
+        'issue #1294 acceptance 1: the field-only proxy reads 0 on the very fixture that fails at 1.8 px (§7, M2), so a residual made of it alone would pass it — the covariance within each carrying triangle is the error',
+      );
+    });
 
-  mcGuard('MQ117', () => {
-    const probes: string[] = [];
-    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
-    let compared = 0;
-    let worst = 0;
-    let plantWorst = 0;
-    for (const c of skCases) {
-      const bones = ['a', ...c.variant.bones.map((b) => b.name)];
-      const poses = skDeformations(c.sourceModel, [0.5, 1.0]).slice(1);
-      ['idle@grid@0.5', 'idle@grid@1.5'].forEach((id, i) => {
-        const oracle = c.perFrame.get(id);
-        if (oracle === undefined || oracle === null) {
-          probes.push(`${c.label}: the poser has no value at ${id}`);
+    mcGuard('MQ117', () => {
+      const { skBuildError, skCases } = skPopulation();
+      const probes: string[] = [];
+      if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+      let compared = 0;
+      let worst = 0;
+      let plantWorst = 0;
+      for (const c of skCases) {
+        const bones = ['a', ...c.variant.bones.map((b) => b.name)];
+        const poses = skDeformations(c.sourceModel, [0.5, 1.0]).slice(1);
+        ['idle@grid@0.5', 'idle@grid@1.5'].forEach((id, i) => {
+          const oracle = c.perFrame.get(id);
+          if (oracle === undefined || oracle === null) {
+            probes.push(`${c.label}: the poser has no value at ${id}`);
+            return;
+          }
+          const identity = skIdentity(c.source, c.candidate, bones, poses[i], false);
+          const planted = skIdentity(c.source, c.candidate, bones, poses[i], true);
+          compared++;
+          worst = Math.max(worst, Math.abs(identity - oracle));
+          plantWorst = Math.max(plantWorst, Math.abs(planted - oracle));
+          if (Math.abs(identity - oracle) > SK_IDENTITY_TOLERANCE) probes.push(`${c.label} at ${id}: the identity reads ${identity}, the poser ${oracle}; required within ${SK_IDENTITY_TOLERANCE}`);
+        });
+      }
+      if (compared === 0) probes.push('nothing was compared');
+      if (!(plantWorst > SK_IDENTITY_TOLERANCE)) probes.push(`the plant (the covariance term dropped from the identity) differs from the poser by at most ${plantWorst}; required beyond ${SK_IDENTITY_TOLERANCE}`);
+      const held = probes.length === 0;
+      say(
+        'MQ117_THE_COVARIANCE_IDENTITY_REPRODUCES_THE_POSERS_LOCAL_DEFORMATION_AT_EVERY_KEY_POSE_OF_TWO_AND_THREE_BONES',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${compared} (candidate, key pose) pairs — ${skCases.length} candidates of ${skVariants.length} variants, two and three bones, a far pivot, nonuniform scale, pruning to two influences, at 0.5 s and 1.5 s: the identity Σk (Ak − A0) Δsk + Σk Δw̄k (Dk − D0) p + (A0 + Σk w̄k (Ak − A0)) Δp, its D read off the core poser, against the poser's MQ_LOCAL_DEFORMATION within ${SK_IDENTITY_TOLERANCE} px, worst ${worst.toExponential(2)}; without the covariance term, up to ${r6(plantWorst)} px off`,
+        ),
+        'issue #1294 acceptance 2: the bound is only as good as the identity under it, and the identity is only established against the oracle it predicts, on more than the two-bone ramp it was derived on',
+      );
+    });
+
+    mcGuard('MQ118', () => {
+      const { skBuildError, skCases } = skPopulation();
+      const probes: string[] = [];
+      if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
+      let worstUnder = -Infinity;
+      let worstLabel = '';
+      const ratios: string[] = [];
+      const planted: Record<string, string[]> = { 'drop-covariance': [], 'drop-lever': [] };
+      for (const c of skCases) {
+        const value = c.row?.value ?? null;
+        const oracle = c.oracle?.value ?? null;
+        if (c.row?.state === undefined || value === null || oracle === null) {
+          probes.push(`${c.label}: residual ${skSaid(c.row)}, poser ${oracle}`);
+          continue;
+        }
+        const under = oracle - value;
+        if (under > worstUnder) {
+          worstUnder = under;
+          worstLabel = c.label;
+        }
+        ratios.push(`${c.label} ${oracle}/${value}`);
+        if (under > skTolerance(c)) probes.push(`${c.label}: the poser measures ${oracle} and the residual bounds it by ${value}; required no understatement beyond ${skTolerance(c)}`);
+        for (const plant of Object.keys(planted) as SkinningPlant[]) {
+          const p = skRow(skMeasure(c.candidate, skDeclared(c.source, c.envelope), plant))?.value ?? null;
+          if (p !== null && oracle - p > skTolerance(c)) planted[plant].push(c.label);
+        }
+      }
+      for (const [plant, caught] of Object.entries(planted)) if (caught.length === 0) probes.push(`the plant ${plant} understates no candidate of the population`);
+      const held = probes.length === 0;
+      say(
+        'MQ118_UNDER_ITS_ENVELOPE_THE_RESIDUAL_NEVER_UNDERSTATES_THE_POSERS_ERROR_AND_EACH_TERM_DROPPED_DOES',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${skCases.length} candidates, idle at 12 fps grid + irr, every frame; the poser's MQ_LOCAL_DEFORMATION over the residual: ${ratios.join('; ')}; worst understatement ${r6(worstUnder)} (${worstLabel}) against a tolerance of (1 + max εk) × sampleGap + ${SK_IDENTITY_TOLERANCE}; understated by the plants — covariance dropped: ${planted['drop-covariance'].join(', ')}; lever dropped: ${planted['drop-lever'].join(', ')}`,
+        ),
+        'issue #1294 acceptance 2: a bound that a valid envelope lets the poser exceed is not a bound; and a term none of the controls needs is a term nobody has shown to be load-bearing',
+      );
+    });
+
+    mcGuard('MQ119', () => {
+      const probes: string[] = [];
+      // The ramp bent ±15°, and a candidate that is the source but for the two triangles at the top middle vertex,
+      // re-triangulated as a sliver along the rim (its height the rim's 0.08 px sag) and the triangle under it. No art
+      // pixel centre lies in the sliver, so no sample is carried differently there; the bend flips it.
+      const bend = 3 * MV_BEND;
+      const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [bend, -bend], scale: null }];
+      const source = skSource((x) => ({ a: 1 - x / MV_W, b: x / MV_W }));
+      const at = (x: number, top: boolean): number => source.points.findIndex((p, i) => p[0] === x && (top ? i < source.hull && p[1] < MV_STEP / 2 : i >= source.hull && Math.abs(p[1] - MV_STEP) < MV_STEP / 2));
+      const [left, mid, right, below] = [at(MV_W / 2 - MV_STEP, true), at(MV_W / 2, true), at(MV_W / 2 + MV_STEP, true), at(MV_W / 2, false)];
+      const triangles: number[] = [];
+      for (let t = 0; t < source.triangles.length; t += 3) if (!source.triangles.slice(t, t + 3).includes(mid)) triangles.push(...source.triangles.slice(t, t + 3));
+      for (const tri of [[left, mid, right], [left, below, right]]) {
+        const [p, q, r] = tri.map((v) => source.points[v]);
+        const twice = (q[0] - p[0]) * (cropToSpineY(r[1], MV_H) - cropToSpineY(p[1], MV_H)) - (r[0] - p[0]) * (cropToSpineY(q[1], MV_H) - cropToSpineY(p[1], MV_H));
+        triangles.push(...(twice < 0 ? [tri[0], tri[2], tri[1]] : tri));
+      }
+      const sliver: SourceMesh = { ...source, triangles };
+      const envelope = skEnvelope(bones);
+      const measured = skMeasure(sliver, skDeclared(source, envelope));
+      const row = skRow(measured);
+      const report = skCompare(skBuild(dir, 'sk-sliver-source', source, bones), [
+        { id: 'sliver', model: skBuild(dir, 'sk-sliver', sliver, bones) },
+        { id: 'itself', model: skBuild(dir, 'sk-sliver-itself', source, bones) },
+      ]);
+      const inv = (i: number): MeasureRow | undefined => report.candidates[i]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION');
+      const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+      if ([left, mid, right, below].some((v) => v < 0)) probes.push(`the sliver's vertices were not found: ${[left, mid, right, below].join(', ')}`);
+      if (row?.state !== 'pass') probes.push(`the residual reads ${skSaid(row)}; required pass at maxResidual 1`);
+      if (measured.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the sliver's static geometry is ${measured.candidates[0]?.geometry?.verdict}; required pass, so only motion can tell`);
+      if (local?.state !== 'pass') probes.push(`the poser's local deformation reads ${local?.value} ${local?.state}; required within 1 — the positions are right`);
+      if (inv(0)?.state !== 'fail' || !((inv(0)?.value ?? 0) >= 1)) probes.push(`MQ_INVERSION of the sliver reads ${inv(0)?.value} ${inv(0)?.state}; required a reversed triangle, failing`);
+      // The negative half: the source as its own candidate passes the same residual with no reversal, so the fold is the sliver's.
+      if (inv(1)?.value !== 0) probes.push(`MQ_INVERSION of the source as a candidate reads ${inv(1)?.value}; required 0`);
+      const held = probes.length === 0;
+      say(
+        'MQ119_A_CANDIDATE_THE_RESIDUAL_PASSES_STILL_FAILS_MQ_INVERSION_SO_THE_RESIDUAL_NEVER_REPLACES_THE_COMPARISON',
+        held,
+        probeDetail(held, probes, `the ramp bent ±${bend}°, a rim sliver in place of the two triangles at the top middle vertex: MQ_SKINNING_RESIDUAL ${row?.value} pass, static geometry ${measured.candidates[0]?.geometry?.verdict}, MQ_LOCAL_DEFORMATION ${local?.value} pass, MQ_INVERSION ${inv(0)?.value} ${inv(0)?.state} at ${inv(0)?.worst?.frame?.id ?? '-'}; the source as its own candidate: MQ_INVERSION ${inv(1)?.value}`),
+        'issue #1294 acceptance 3: the residual bounds positions at samples, and a triangle no sample lies in can reverse within a bound of positions — it certifies no orientation, stretch or squash, and the comparison stays the acceptance',
+      );
+    });
+
+    mcGuard('MQ130', () => {
+      const { skCases } = skPopulation();
+      const probes: string[] = [];
+      // Rigid relative motion: two rigid halves, `a` left of the middle column and `b` from it, a hard seam. The seam
+      // kept (`protect.weightJump` under its jump, so every seam edge is protected) is the positive; the strict
+      // reduction smears it. Every vertex on `b` — rigid with the moving bone — is the third.
+      const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }];
+      const envelope = skEnvelope(bones);
+      const seam = skSource((x): Record<string, number> => (x < MV_W / 2 ? { a: 1 } : { b: 1 }));
+      const rigid = skSource(() => ({ b: 1 }));
+      const kept = reduceMesh(mvReduceInput(seam, { protect: { ...mvNoProtect, weightJump: 1 } })).mesh;
+      const smeared = reduceMesh(mvReduceInput(seam)).mesh;
+      const rigidStrict = reduceMesh(mvReduceInput(rigid)).mesh;
+      const subjects: Array<{ label: string; source: SourceMesh; candidate: SourceMesh | null }> = [
+        { label: 'seam kept', source: seam, candidate: kept },
+        { label: 'seam smeared', source: seam, candidate: smeared },
+        { label: 'rigid on the moving bone', source: rigid, candidate: rigidStrict },
+      ];
+      const lines: string[] = [];
+      const verdicts: Array<{ label: string; residual: string | undefined; oracle: string | undefined; plantUnder: number }> = [];
+      subjects.forEach((s, i) => {
+        if (s.candidate === null) {
+          probes.push(`${s.label}: the reduction returned no mesh`);
           return;
         }
-        const identity = skIdentity(c.source, c.candidate, bones, poses[i], false);
-        const planted = skIdentity(c.source, c.candidate, bones, poses[i], true);
-        compared++;
-        worst = Math.max(worst, Math.abs(identity - oracle));
-        plantWorst = Math.max(plantWorst, Math.abs(planted - oracle));
-        if (Math.abs(identity - oracle) > SK_IDENTITY_TOLERANCE) probes.push(`${c.label} at ${id}: the identity reads ${identity}, the poser ${oracle}; required within ${SK_IDENTITY_TOLERANCE}`);
+        const row = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope)));
+        const planted = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope), 'drop-covariance'));
+        const report = skCompare(skBuild(dir, `sk-rigid-${i}-source`, s.source, bones), [{ id: s.label, model: skBuild(dir, `sk-rigid-${i}`, s.candidate, bones) }]);
+        const oracle = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+        const tol = (1 + envelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
+        verdicts.push({ label: s.label, residual: row?.state, oracle: oracle?.state, plantUnder: (oracle?.value ?? 0) - (planted?.value ?? 0) - tol });
+        lines.push(`${s.label}: ${s.candidate.points.length} vertices, residual ${row?.value} ${row?.state}, poser ${oracle?.value} ${oracle?.state}, covariance dropped ${planted?.value}`);
+        if (row?.value === null || oracle?.value === null || row === undefined || oracle === undefined || (oracle.value ?? 0) - (row.value ?? 0) > tol) probes.push(`${s.label}: the poser's ${oracle?.value} exceeds the residual ${row?.value} by more than ${tol}`);
       });
-    }
-    if (compared === 0) probes.push('nothing was compared');
-    if (!(plantWorst > SK_IDENTITY_TOLERANCE)) probes.push(`the plant (the covariance term dropped from the identity) differs from the poser by at most ${plantWorst}; required beyond ${SK_IDENTITY_TOLERANCE}`);
-    const held = probes.length === 0;
-    say(
-      'MQ117_THE_COVARIANCE_IDENTITY_REPRODUCES_THE_POSERS_LOCAL_DEFORMATION_AT_EVERY_KEY_POSE_OF_TWO_AND_THREE_BONES',
-      held,
-      probeDetail(
+      const v = (label: string) => verdicts.find((x) => x.label === label);
+      if (v('seam kept')?.residual !== 'pass' || v('seam kept')?.oracle !== 'pass') probes.push(`the seam kept: residual ${v('seam kept')?.residual}, poser ${v('seam kept')?.oracle}; required both pass`);
+      if (v('seam smeared')?.residual !== 'fail' || v('seam smeared')?.oracle !== 'fail') probes.push(`the seam smeared: residual ${v('seam smeared')?.residual}, poser ${v('seam smeared')?.oracle}; required both fail`);
+      if (v('rigid on the moving bone')?.residual !== 'pass') probes.push(`rigid on the moving bone: residual ${v('rigid on the moving bone')?.residual}; required pass`);
+      // The varying fields of the population: a residual that passes is never a poser that fails.
+      for (const c of skCases) {
+        if (c.row?.state === 'pass' && c.oracle?.state !== 'pass') probes.push(`${c.label}: the residual passes at 1 and the poser reads ${c.oracle?.value}`);
+      }
+      const passing = skCases.filter((c) => c.row?.state === 'pass').map((c) => c.label);
+      const failing = skCases.filter((c) => c.row?.state === 'fail').map((c) => c.label);
+      if (passing.length === 0 || failing.length === 0) probes.push(`the varying fields give ${passing.length} passing and ${failing.length} failing residuals; required both`);
+      // The plant: the covariance term dropped understates the smeared seam — the term a hard seam smeared needs.
+      if (!((v('seam smeared')?.plantUnder ?? 0) > 0)) probes.push(`the plant (covariance dropped) on the smeared seam understates the poser by ${v('seam smeared')?.plantUnder} beyond the tolerance; required above 0`);
+      const held = probes.length === 0;
+      say(
+        'MQ130_RIGID_RELATIVE_MOTION_AND_VARYING_FIELDS_PASS_AND_FAIL_THE_RESIDUAL_AS_THE_POSER_DOES_AND_A_DROPPED_COVARIANCE_UNDERSTATES_A_SMEARED_SEAM',
         held,
-        probes,
-        `${compared} (candidate, key pose) pairs — ${skCases.length} candidates of ${skVariants.length} variants, two and three bones, a far pivot, nonuniform scale, pruning to two influences, at 0.5 s and 1.5 s: the identity Σk (Ak − A0) Δsk + Σk Δw̄k (Dk − D0) p + (A0 + Σk w̄k (Ak − A0)) Δp, its D read off the core poser, against the poser's MQ_LOCAL_DEFORMATION within ${SK_IDENTITY_TOLERANCE} px, worst ${worst.toExponential(2)}; without the covariance term, up to ${r6(plantWorst)} px off`,
-      ),
-      'issue #1294 acceptance 2: the bound is only as good as the identity under it, and the identity is only established against the oracle it predicts, on more than the two-bone ramp it was derived on',
-    );
-  });
+        probeDetail(held, probes, `${lines.join('; ')}; the population at maxResidual 1 — passing: ${passing.join(', ')}; failing: ${failing.join(', ')}`),
+        'issue #1294 acceptance 1: rigid relative motion is the seam the field-only reading does see and the lever carries, a varying field is the covariance the M2 measurement found — each needs a pass and a fail it is right about',
+      );
+    });
 
-  mcGuard('MQ118', () => {
-    const probes: string[] = [];
-    if (skBuildError !== null) probes.push(`the population was not built: ${skBuildError}`);
-    let worstUnder = -Infinity;
-    let worstLabel = '';
-    const ratios: string[] = [];
-    const planted: Record<string, string[]> = { 'drop-covariance': [], 'drop-lever': [] };
-    for (const c of skCases) {
-      const value = c.row?.value ?? null;
-      const oracle = c.oracle?.value ?? null;
-      if (c.row?.state === undefined || value === null || oracle === null) {
-        probes.push(`${c.label}: residual ${skSaid(c.row)}, poser ${oracle}`);
-        continue;
-      }
-      const under = oracle - value;
-      if (under > worstUnder) {
-        worstUnder = under;
-        worstLabel = c.label;
-      }
-      ratios.push(`${c.label} ${oracle}/${value}`);
-      if (under > skTolerance(c)) probes.push(`${c.label}: the poser measures ${oracle} and the residual bounds it by ${value}; required no understatement beyond ${skTolerance(c)}`);
-      for (const plant of Object.keys(planted) as SkinningPlant[]) {
-        const p = skRow(skMeasure(c.candidate, skDeclared(c.source, c.envelope), plant))?.value ?? null;
-        if (p !== null && oracle - p > skTolerance(c)) planted[plant].push(c.label);
-      }
-    }
-    for (const [plant, caught] of Object.entries(planted)) if (caught.length === 0) probes.push(`the plant ${plant} understates no candidate of the population`);
-    const held = probes.length === 0;
-    say(
-      'MQ118_UNDER_ITS_ENVELOPE_THE_RESIDUAL_NEVER_UNDERSTATES_THE_POSERS_ERROR_AND_EACH_TERM_DROPPED_DOES',
-      held,
-      probeDetail(
-        held,
-        probes,
-        `${skCases.length} candidates, idle at 12 fps grid + irr, every frame; the poser's MQ_LOCAL_DEFORMATION over the residual: ${ratios.join('; ')}; worst understatement ${r6(worstUnder)} (${worstLabel}) against a tolerance of (1 + max εk) × sampleGap + ${SK_IDENTITY_TOLERANCE}; understated by the plants — covariance dropped: ${planted['drop-covariance'].join(', ')}; lever dropped: ${planted['drop-lever'].join(', ')}`,
-      ),
-      'issue #1294 acceptance 2: a bound that a valid envelope lets the poser exceed is not a bound; and a term none of the controls needs is a term nobody has shown to be load-bearing',
-    );
-  });
-
-  mcGuard('MQ119', () => {
-    const probes: string[] = [];
-    // The ramp bent ±15°, and a candidate that is the source but for the two triangles at the top middle vertex,
-    // re-triangulated as a sliver along the rim (its height the rim's 0.08 px sag) and the triangle under it. No art
-    // pixel centre lies in the sliver, so no sample is carried differently there; the bend flips it.
-    const bend = 3 * MV_BEND;
-    const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [bend, -bend], scale: null }];
-    const source = skSource((x) => ({ a: 1 - x / MV_W, b: x / MV_W }));
-    const at = (x: number, top: boolean): number => source.points.findIndex((p, i) => p[0] === x && (top ? i < source.hull && p[1] < MV_STEP / 2 : i >= source.hull && Math.abs(p[1] - MV_STEP) < MV_STEP / 2));
-    const [left, mid, right, below] = [at(MV_W / 2 - MV_STEP, true), at(MV_W / 2, true), at(MV_W / 2 + MV_STEP, true), at(MV_W / 2, false)];
-    const triangles: number[] = [];
-    for (let t = 0; t < source.triangles.length; t += 3) if (!source.triangles.slice(t, t + 3).includes(mid)) triangles.push(...source.triangles.slice(t, t + 3));
-    for (const tri of [[left, mid, right], [left, below, right]]) {
-      const [p, q, r] = tri.map((v) => source.points[v]);
-      const twice = (q[0] - p[0]) * (cropToSpineY(r[1], MV_H) - cropToSpineY(p[1], MV_H)) - (r[0] - p[0]) * (cropToSpineY(q[1], MV_H) - cropToSpineY(p[1], MV_H));
-      triangles.push(...(twice < 0 ? [tri[0], tri[2], tri[1]] : tri));
-    }
-    const sliver: SourceMesh = { ...source, triangles };
-    const envelope = skEnvelope(bones);
-    const measured = skMeasure(sliver, skDeclared(source, envelope));
-    const row = skRow(measured);
-    const report = skCompare(skBuild(dir, 'sk-sliver-source', source, bones), [
-      { id: 'sliver', model: skBuild(dir, 'sk-sliver', sliver, bones) },
-      { id: 'itself', model: skBuild(dir, 'sk-sliver-itself', source, bones) },
-    ]);
-    const inv = (i: number): MeasureRow | undefined => report.candidates[i]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION');
-    const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
-    if ([left, mid, right, below].some((v) => v < 0)) probes.push(`the sliver's vertices were not found: ${[left, mid, right, below].join(', ')}`);
-    if (row?.state !== 'pass') probes.push(`the residual reads ${skSaid(row)}; required pass at maxResidual 1`);
-    if (measured.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`the sliver's static geometry is ${measured.candidates[0]?.geometry?.verdict}; required pass, so only motion can tell`);
-    if (local?.state !== 'pass') probes.push(`the poser's local deformation reads ${local?.value} ${local?.state}; required within 1 — the positions are right`);
-    if (inv(0)?.state !== 'fail' || !((inv(0)?.value ?? 0) >= 1)) probes.push(`MQ_INVERSION of the sliver reads ${inv(0)?.value} ${inv(0)?.state}; required a reversed triangle, failing`);
-    // The negative half: the source as its own candidate passes the same residual with no reversal, so the fold is the sliver's.
-    if (inv(1)?.value !== 0) probes.push(`MQ_INVERSION of the source as a candidate reads ${inv(1)?.value}; required 0`);
-    const held = probes.length === 0;
-    say(
-      'MQ119_A_CANDIDATE_THE_RESIDUAL_PASSES_STILL_FAILS_MQ_INVERSION_SO_THE_RESIDUAL_NEVER_REPLACES_THE_COMPARISON',
-      held,
-      probeDetail(held, probes, `the ramp bent ±${bend}°, a rim sliver in place of the two triangles at the top middle vertex: MQ_SKINNING_RESIDUAL ${row?.value} pass, static geometry ${measured.candidates[0]?.geometry?.verdict}, MQ_LOCAL_DEFORMATION ${local?.value} pass, MQ_INVERSION ${inv(0)?.value} ${inv(0)?.state} at ${inv(0)?.worst?.frame?.id ?? '-'}; the source as its own candidate: MQ_INVERSION ${inv(1)?.value}`),
-      'issue #1294 acceptance 3: the residual bounds positions at samples, and a triangle no sample lies in can reverse within a bound of positions — it certifies no orientation, stretch or squash, and the comparison stays the acceptance',
-    );
-  });
-
-  mcGuard('MQ130', () => {
-    const probes: string[] = [];
-    // Rigid relative motion: two rigid halves, `a` left of the middle column and `b` from it, a hard seam. The seam
-    // kept (`protect.weightJump` under its jump, so every seam edge is protected) is the positive; the strict
-    // reduction smears it. Every vertex on `b` — rigid with the moving bone — is the third.
-    const bones: SkBone[] = [{ name: 'b', parent: 'a', joint: [MV_W / 2, MV_H / 2], rotate: [MV_BEND, -MV_BEND], scale: null }];
-    const envelope = skEnvelope(bones);
-    const seam = skSource((x): Record<string, number> => (x < MV_W / 2 ? { a: 1 } : { b: 1 }));
-    const rigid = skSource(() => ({ b: 1 }));
-    const kept = reduceMesh(mvReduceInput(seam, { protect: { ...mvNoProtect, weightJump: 1 } })).mesh;
-    const smeared = reduceMesh(mvReduceInput(seam)).mesh;
-    const rigidStrict = reduceMesh(mvReduceInput(rigid)).mesh;
-    const subjects: Array<{ label: string; source: SourceMesh; candidate: SourceMesh | null }> = [
-      { label: 'seam kept', source: seam, candidate: kept },
-      { label: 'seam smeared', source: seam, candidate: smeared },
-      { label: 'rigid on the moving bone', source: rigid, candidate: rigidStrict },
-    ];
-    const lines: string[] = [];
-    const verdicts: Array<{ label: string; residual: string | undefined; oracle: string | undefined; plantUnder: number }> = [];
-    subjects.forEach((s, i) => {
-      if (s.candidate === null) {
-        probes.push(`${s.label}: the reduction returned no mesh`);
+    mcGuard('MQ131', () => {
+      const probes: string[] = [];
+      const ramp = skCase('ramp, strict');
+      if (ramp === undefined) {
+        probes.push('the ramp case was not built');
+      } else {
+        const { source, candidate, envelope } = ramp;
+        const declared = skDeclared(source, envelope);
+        const thrown = (skinning: unknown): string | null => {
+          try {
+            measureMeshQuality(skInput(candidate, skinning as SkinningResidualInput));
+            return null;
+          } catch (err) {
+            return err instanceof MeshReductionError ? `${err.code}: ${err.message}` : `(not a MeshReductionError) ${(err as Error).message}`;
+          }
+        };
+        const bone0 = envelope.bones[0];
+        const malformed: Array<[string, unknown, string]> = [
+          ['a number', 5, 'skinning is 5'],
+          ['an empty source id', { ...declared, source: { id: '', mesh: source } }, 'skinning.source.id'],
+          ['a source point', { ...declared, source: { id: 'source', mesh: { ...source, points: [[0, Number.NaN], ...source.points.slice(1)] } } }, 'skinning.source.mesh.points[0]'],
+          ['an empty reference', { ...declared, envelope: { ...envelope, reference: '' } }, 'skinning.envelope.reference'],
+          ['a negative linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: -1 }] } }, 'skinning.envelope.bones[0].linear'],
+          ['a NaN linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: Number.NaN }] } }, 'skinning.envelope.bones[0].linear is NaN'],
+          ['a pivot', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, pivot: [0] }] } }, 'skinning.envelope.bones[0].pivot'],
+          ['a negative translation', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, translation: -1 }] } }, 'skinning.envelope.bones[0].translation'],
+          ['a bone twice', { ...declared, envelope: { ...envelope, bones: [bone0, bone0] } }, 'declared twice'],
+          ['the reference among the bones', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, bone: 'a' }] } }, "the envelope's reference"],
+          ['maxResidual left out', { source: declared.source, envelope, deform: [] }, 'skinning.maxResidual is missing'],
+          ['a negative maxResidual', { ...declared, maxResidual: -1 }, 'skinning.maxResidual is -1'],
+          ['deform not a list', { ...declared, deform: null }, 'skinning.deform'],
+        ];
+        const caught: string[] = [];
+        for (const [label, value, path] of malformed) {
+          const m = thrown(value);
+          if (m === null || !m.startsWith('REDUCE_INPUT_MISSING') || !m.includes(path)) probes.push(`${label}: ${m ?? 'measured'}; required REDUCE_INPUT_MISSING naming ${path}`);
+          else caught.push(label);
+        }
+        // Refused rows: what the measurement cannot read, by code — and required, so the verdict is not a pass.
+        const moved: SourceMesh = { ...candidate, points: candidate.points.map((p, i) => (i === 3 ? [p[0] + 0.5, p[1]] : p)) };
+        const short: SourceMesh = { ...candidate, weights: candidate.weights!.map((ws, i) => (i === 3 ? ws.map((w) => ({ ...w, weight: w.weight * 0.99 })) : ws)) };
+        const overlapping: SourceMesh = { ...source, triangles: [...source.triangles, 0, source.hull - 1, source.hull] };
+        const keyed = (kind: 'vertices' | 'transform'): SkinningResidualInput['deform'] => [
+          { animation: 'idle', attachment: skAttachment, keys: [{ time: 0, kind: 'setup' }, kind === 'vertices' ? { time: 1, kind, offset: 0, vertices: [1, 1] } : { time: 1, kind }] },
+        ];
+        const refusals: Array<[string, MeshQualityReport, string, SkinningPlant]> = [
+          ['an undeclared bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [] })), 'SKINNING_BONE_NOT_DECLARED', 'undeclared-bone-ignored'],
+          ['an unknown bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] })), 'SKINNING_BONE_UNKNOWN', 'unknown-bone-accepted'],
+          ['a vertex off its UV', skMeasure(moved, declared), 'SKINNING_SETUP_MISMATCH', 'setup-unchecked'],
+          ['a vertices deform key', skMeasure(candidate, { ...declared, deform: keyed('vertices') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
+          ['a transform deform key', skMeasure(candidate, { ...declared, deform: keyed('transform') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
+        ];
+        const refusedLines: string[] = [];
+        for (const [label, report, code, plant] of refusals) {
+          const row = skRow(report);
+          if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
+          else refusedLines.push(`${label} ${code}`);
+          if (report.candidates[0]?.geometry?.verdict === 'pass' || report.candidates[0]?.accepted) probes.push(`${label}: the refused row, required by its bound, left the verdict ${report.candidates[0]?.geometry?.verdict}`);
+          const inputOf = (): MeshMeasureInput => {
+            if (label === 'an undeclared bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [] }));
+            if (label === 'an unknown bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] }));
+            if (label === 'a vertex off its UV') return skInput(moved, declared);
+            return skInput(candidate, { ...declared, deform: keyed(label === 'a vertices deform key' ? 'vertices' : 'transform') });
+          };
+          const plantedRow = skRow(measureMeshQualitySkinningPlanted(inputOf(), plant));
+          if (plantedRow?.state === 'refused') probes.push(`the plant ${plant} still refused ${label}`);
+        }
+        for (const [label, mesh, which, code] of [
+          ['a share sum off the grid', short, 'candidate', 'SKINNING_WEIGHT_SUM'],
+          ['an unweighted candidate', { ...candidate, weights: null }, 'candidate', 'SKINNING_UNWEIGHTED'],
+          ['overlapping source UV triangles', overlapping, 'source', 'SKINNING_UV_CARRIER_NOT_UNIQUE'],
+        ] as const) {
+          const row = skRow(which === 'candidate' ? skMeasure(mesh, declared) : skMeasure(candidate, skDeclared(mesh, envelope)));
+          if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
+          else refusedLines.push(`${label} ${code}`);
+        }
+        // Not measurable — never a value: under the art floor, both unweighted, no sample carried by both.
+        const floor = skRow(skMeasure(candidate, declared, null, { minArtSamples: 10 ** 7 }));
+        const bothBare = skRow(skMeasure({ ...candidate, weights: null }, skDeclared({ ...source, weights: null }, envelope)));
+        const corner: SourceMesh = { points: [[0, 0], [4, 0], [0, 4]], uvs: [0, 0, 4 / MV_W, 0, 0, 4 / MV_H], triangles: [0, 2, 1], hull: 3, weights: [[{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }]] };
+        const cornerOk = (() => {
+          const t = corner.triangles;
+          const p = corner.points;
+          const twice = (p[t[1]][0] - p[t[0]][0]) * (cropToSpineY(p[t[2]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H)) - (p[t[2]][0] - p[t[0]][0]) * (cropToSpineY(p[t[1]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H));
+          return twice > 0 ? corner : { ...corner, triangles: [0, 1, 2] };
+        })();
+        const none = skRow(skMeasure(cornerOk, declared));
+        const nonePlanted = skRow(skMeasure(cornerOk, declared, 'uncarried-read-as-zero'));
+        for (const [label, row] of [['a floor above the art', floor], ['both unweighted', bothBare], ['no sample carried by both', none]] as const) {
+          if (row?.state !== 'not-measurable' || row.value !== null || row.reason === null) probes.push(`${label}: ${skSaid(row)}; required not-measurable, no value, a reason`);
+        }
+        if (nonePlanted?.state === 'not-measurable') probes.push('the plant (no carried sample read as 0) still read not-measurable');
+        const held = probes.length === 0;
+        say(
+          'MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `thrown before any work, REDUCE_INPUT_MISSING naming the path: ${caught.join(', ')}; refused rows: ${refusedLines.join(', ')}; not measurable: a floor above the art (${floor?.reason?.slice(0, 40)}…), both unweighted, no sample carried by both; each refusal's plant measured instead, and the uncarried plant read ${nonePlanted?.state} ${nonePlanted?.value}`,
+          ),
+          'issue #1294 acceptance 4: malformed declarations, unknown bones, incompatible setup and UV maps and unsupported deform data name the failing input, and a reading over nothing is not a reading',
+        );
         return;
       }
-      const row = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope)));
-      const planted = skRow(skMeasure(s.candidate, skDeclared(s.source, envelope), 'drop-covariance'));
-      const report = skCompare(skBuild(dir, `sk-rigid-${i}-source`, s.source, bones), [{ id: s.label, model: skBuild(dir, `sk-rigid-${i}`, s.candidate, bones) }]);
-      const oracle = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
-      const tol = (1 + envelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
-      verdicts.push({ label: s.label, residual: row?.state, oracle: oracle?.state, plantUnder: (oracle?.value ?? 0) - (planted?.value ?? 0) - tol });
-      lines.push(`${s.label}: ${s.candidate.points.length} vertices, residual ${row?.value} ${row?.state}, poser ${oracle?.value} ${oracle?.state}, covariance dropped ${planted?.value}`);
-      if (row?.value === null || oracle?.value === null || row === undefined || oracle === undefined || (oracle.value ?? 0) - (row.value ?? 0) > tol) probes.push(`${s.label}: the poser's ${oracle?.value} exceeds the residual ${row?.value} by more than ${tol}`);
+      say('MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE', false, probes.join('; '), 'issue #1294 acceptance 4');
     });
-    const v = (label: string) => verdicts.find((x) => x.label === label);
-    if (v('seam kept')?.residual !== 'pass' || v('seam kept')?.oracle !== 'pass') probes.push(`the seam kept: residual ${v('seam kept')?.residual}, poser ${v('seam kept')?.oracle}; required both pass`);
-    if (v('seam smeared')?.residual !== 'fail' || v('seam smeared')?.oracle !== 'fail') probes.push(`the seam smeared: residual ${v('seam smeared')?.residual}, poser ${v('seam smeared')?.oracle}; required both fail`);
-    if (v('rigid on the moving bone')?.residual !== 'pass') probes.push(`rigid on the moving bone: residual ${v('rigid on the moving bone')?.residual}; required pass`);
-    // The varying fields of the population: a residual that passes is never a poser that fails.
-    for (const c of skCases) {
-      if (c.row?.state === 'pass' && c.oracle?.state !== 'pass') probes.push(`${c.label}: the residual passes at 1 and the poser reads ${c.oracle?.value}`);
-    }
-    const passing = skCases.filter((c) => c.row?.state === 'pass').map((c) => c.label);
-    const failing = skCases.filter((c) => c.row?.state === 'fail').map((c) => c.label);
-    if (passing.length === 0 || failing.length === 0) probes.push(`the varying fields give ${passing.length} passing and ${failing.length} failing residuals; required both`);
-    // The plant: the covariance term dropped understates the smeared seam — the term a hard seam smeared needs.
-    if (!((v('seam smeared')?.plantUnder ?? 0) > 0)) probes.push(`the plant (covariance dropped) on the smeared seam understates the poser by ${v('seam smeared')?.plantUnder} beyond the tolerance; required above 0`);
-    const held = probes.length === 0;
-    say(
-      'MQ130_RIGID_RELATIVE_MOTION_AND_VARYING_FIELDS_PASS_AND_FAIL_THE_RESIDUAL_AS_THE_POSER_DOES_AND_A_DROPPED_COVARIANCE_UNDERSTATES_A_SMEARED_SEAM',
-      held,
-      probeDetail(held, probes, `${lines.join('; ')}; the population at maxResidual 1 — passing: ${passing.join(', ')}; failing: ${failing.join(', ')}`),
-      'issue #1294 acceptance 1: rigid relative motion is the seam the field-only reading does see and the lever carries, a varying field is the covariance the M2 measurement found — each needs a pass and a fail it is right about',
-    );
-  });
 
-  mcGuard('MQ131', () => {
-    const probes: string[] = [];
-    const ramp = skCase('ramp, strict');
-    if (ramp === undefined) {
-      probes.push('the ramp case was not built');
-    } else {
-      const { source, candidate, envelope } = ramp;
-      const declared = skDeclared(source, envelope);
-      const thrown = (skinning: unknown): string | null => {
+    mcGuard('MQ132', () => {
+      const probes: string[] = [];
+      const ramp = skCase('ramp, strict');
+      if (ramp === undefined) {
+        probes.push('the ramp case was not built');
+      } else {
+        const { source, candidate, envelope } = ramp;
+        const offText = writeMeshQualityReport(skMeasure(candidate, undefined));
+        if (writeMeshQualityReport(skMeasure(candidate, undefined)) !== offText) probes.push('two measurements without the field wrote other bytes');
+        if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push('the measurement without the field writes a skinning key or row');
+        /** The text with the residual's row, its echo and the summary taken out: what the field may not move. */
+        const beyond = (r: MeshQualityReport): string => {
+          const doc = JSON.parse(writeMeshQualityReport(r));
+          delete doc.effective.skinning;
+          for (const c of doc.candidates) {
+            if (c.geometry === null) continue;
+            c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
+            delete c.geometry.summary;
+          }
+          return JSON.stringify(doc);
+        };
+        const undeclared = skMeasure(candidate, skDeclared(source, envelope, null));
+        if (beyond(undeclared) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under the field with no bound');
+        if (skRow(undeclared)?.state !== 'undeclared' || undeclared.candidates[0]?.geometry?.summary.undeclared !== (skMeasure(candidate, undefined).candidates[0]?.geometry?.summary.undeclared ?? 0) + 1) probes.push(`maxResidual null: ${skSaid(skRow(undeclared))}; required one more undeclared row and nothing else counted`);
+        const nul = skMeasure(candidate, null);
+        const nulDoc = JSON.parse(writeMeshQualityReport(nul));
+        if (nulDoc.effective.skinning !== null || skRow(nul)?.state !== 'not-measurable' || !(skRow(nul)?.reason ?? '').includes('declared absent')) probes.push(`null: echo ${JSON.stringify(nulDoc.effective.skinning)}, row ${skSaid(skRow(nul))}; required the echo null and the row not-measurable saying declared absent`);
+        if (beyond(nul) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under null');
+        // Determinism, and the key order of the declaration.
+        const on = writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope)));
+        const reversed: SkinningResidualInput = {
+          deform: [],
+          maxResidual: 1,
+          envelope: { bones: envelope.bones.map((b) => ({ translation: b.translation, pivot: b.pivot, linear: b.linear, bone: b.bone })), reference: envelope.reference },
+          source: { mesh: { weights: source.weights, hull: source.hull, triangles: source.triangles, uvs: source.uvs, points: source.points }, id: 'source' },
+        };
+        if (writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope))) !== on) probes.push('two measurements with the field wrote other bytes');
+        if (writeMeshQualityReport(skMeasure(candidate, reversed)) !== on) probes.push('the declaration built in reverse key order wrote other bytes');
+        const digest = JSON.parse(on).effective.skinning?.source?.digest as string | undefined;
+        if (digest === undefined || !/^sha256:[0-9a-f]{64}$/.test(digest)) probes.push(`the source's digest is ${digest}`);
+        const otherDigest = JSON.parse(writeMeshQualityReport(skMeasure(candidate, skDeclared(candidate, envelope)))).effective.skinning?.source?.digest;
+        if (otherDigest === digest) probes.push('another source mesh wrote the same digest');
+        // The plants: the echo, or the row, written for a call that did not set the field.
+        const echoPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'echo-when-unset'));
+        const rowPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'row-when-unset'));
+        if (echoPlant === offText) probes.push('the plant (the echo written when unset) wrote the bytes of the call without the field');
+        if (rowPlant === offText) probes.push('the plant (the row written when unset) wrote the bytes of the call without the field');
+        const held = probes.length === 0;
+        say(
+          'MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `without the field: one text (${offText.length} bytes) twice, no skinning key or row; maxResidual null: every byte but the row, its echo and the summary that text's, one more undeclared row; null: echo null, row not-measurable; with the field: one text twice and in reverse key order, the source named by ${digest?.slice(0, 15)}…; the plants (echo, row written when unset) moved the bytes`,
+          ),
+          'issue #1294 acceptance 4: calls without the feature keep their output bytes — measured out of suite on the 18 recorded inputs (docs/MESH_REDUCTION.md §7) — and repeated reports are deterministic',
+        );
+        return;
+      }
+      say('MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT', false, probes.join('; '), 'issue #1294 acceptance 4');
+    });
+
+    mcGuard('MQ133', () => {
+      const probes: string[] = [];
+      // The helper against the poser: each fixture bone's envelope entry against the largest ‖Ak − A0‖ and
+      // |(Dk − D0) ck| the core poses over idle at 48 steps a second. The poser's own matrices carry rounding the exact
+      // rotation does not — measured up to 5.4e-9 in the linear part, which a joint 400 px from the origin turns into
+      // 1.7e-6 px — so the linear part is held to 1e-8 and the lever to 1e-8 × |ck| + 1e-6.
+      const LINEAR_TOLERANCE = 1e-8;
+      const leverTolerance = (c: readonly [number, number]): number => 1e-8 * Math.hypot(c[0], c[1]) + 1e-6;
+      const norm2 = (a: number, b: number, c: number, d: number): number => {
+        const s = a * a + b * b + c * c + d * d;
+        const det = a * d - b * c;
+        return Math.sqrt((s + Math.sqrt(Math.max(0, s * s - 4 * det * det))) / 2);
+      };
+      const lines: string[] = [];
+      const caught: Record<string, string[]> = { 'scale-ignored': [], 'translation-ignored': [] };
+      skVariants.forEach((v, vi) => {
+        const model = skBuild(dir, `sk-helper-${vi}`, skSource(v.field), v.bones);
+        const poses = skDeformations(model, Array.from({ length: 96 }, () => 2 / 96));
+        for (const b of v.bones) {
+          const ranges = { referenceChain: skReferenceChain, chain: skChainOf(v.bones, b).map(skRange) };
+          const entry = skinningEnvelopeBone(ranges);
+          const c: [number, number] = [SK_A_WORLD + b.joint[0], SK_A_WORLD + MV_H / 2 - b.joint[1]];
+          let linear = 0;
+          let lever = 0;
+          for (const D of poses) {
+            const Dk = D.get(b.name)!;
+            const D0 = D.get('a')!;
+            const E = Dk.map((x, i) => x - D0[i]);
+            linear = Math.max(linear, norm2(E[0], E[1], E[2], E[3]));
+            lever = Math.max(lever, Math.hypot(E[0] * c[0] + E[1] * c[1] + E[4], E[2] * c[0] + E[3] * c[1] + E[5]));
+          }
+          lines.push(`${v.name} ${b.name}: ε ${r6(entry.linear)} ≥ ${r6(linear)}, τ ${r6(entry.translation)} ≥ ${r6(lever)}`);
+          if (linear - entry.linear > LINEAR_TOLERANCE || lever - entry.translation > leverTolerance(c)) probes.push(`${v.name}, bone ${b.name}: the poser reaches ‖Ak − A0‖ ${linear} and lever ${lever}; the helper declares ${entry.linear} and ${entry.translation}`);
+          for (const plant of Object.keys(caught) as EnvelopePlant[]) {
+            const p = skinningEnvelopeBonePlanted(ranges, plant);
+            if (linear - p.linear > LINEAR_TOLERANCE || lever - p.translation > leverTolerance(c)) caught[plant].push(`${v.name} ${b.name}`);
+          }
+        }
+      });
+      for (const [plant, where] of Object.entries(caught)) if (where.length === 0) probes.push(`the plant ${plant} understates no bone of the fixtures`);
+      // Refusals: what the helper cannot certify, by name; what is malformed, by path.
+      const base = { referenceChain: skReferenceChain, chain: [skRange(skVariants[0].bones[0])] };
+      const refusedBy = (ranges: unknown): string | null => {
         try {
-          measureMeshQuality(skInput(candidate, skinning as SkinningResidualInput));
+          skinningEnvelopeBone(ranges as Parameters<typeof skinningEnvelopeBone>[0]);
           return null;
         } catch (err) {
           return err instanceof MeshReductionError ? `${err.code}: ${err.message}` : `(not a MeshReductionError) ${(err as Error).message}`;
         }
       };
-      const bone0 = envelope.bones[0];
-      const malformed: Array<[string, unknown, string]> = [
-        ['a number', 5, 'skinning is 5'],
-        ['an empty source id', { ...declared, source: { id: '', mesh: source } }, 'skinning.source.id'],
-        ['a source point', { ...declared, source: { id: 'source', mesh: { ...source, points: [[0, Number.NaN], ...source.points.slice(1)] } } }, 'skinning.source.mesh.points[0]'],
-        ['an empty reference', { ...declared, envelope: { ...envelope, reference: '' } }, 'skinning.envelope.reference'],
-        ['a negative linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: -1 }] } }, 'skinning.envelope.bones[0].linear'],
-        ['a NaN linear', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, linear: Number.NaN }] } }, 'skinning.envelope.bones[0].linear is NaN'],
-        ['a pivot', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, pivot: [0] }] } }, 'skinning.envelope.bones[0].pivot'],
-        ['a negative translation', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, translation: -1 }] } }, 'skinning.envelope.bones[0].translation'],
-        ['a bone twice', { ...declared, envelope: { ...envelope, bones: [bone0, bone0] } }, 'declared twice'],
-        ['the reference among the bones', { ...declared, envelope: { ...envelope, bones: [{ ...bone0, bone: 'a' }] } }, "the envelope's reference"],
-        ['maxResidual left out', { source: declared.source, envelope, deform: [] }, 'skinning.maxResidual is missing'],
-        ['a negative maxResidual', { ...declared, maxResidual: -1 }, 'skinning.maxResidual is -1'],
-        ['deform not a list', { ...declared, deform: null }, 'skinning.deform'],
+      const one = base.chain[0];
+      const cases: Array<[string, unknown, string, string]> = [
+        ['a physics range', { ...base, chain: [{ ...one, source: 'physics' }] }, 'SKINNING_RANGE_UNSUPPORTED', 'chain[0] (bone "b").source'],
+        ['a nonuniform setup scale', { ...base, chain: [{ ...one, setup: { ...one.setup, scaleY: 2 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup scale'],
+        ['a setup shear', { ...base, chain: [{ ...one, setup: { ...one.setup, shearX: 10 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup shear'],
+        ['another inherit', { ...base, chain: [{ ...one, setup: { ...one.setup, inherit: 'noScale' } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup.inherit'],
+        ['a nonuniform reference setup', { ...base, referenceChain: [skReferenceChain[0], { ...skReferenceChain[1], setup: { ...skReferenceChain[1].setup, scaleX: 3 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'referenceChain[1]'],
+        ['an empty chain', { ...base, chain: [] }, 'REDUCE_INPUT_MISSING', 'chain is empty'],
+        ['a rotation range backwards', { ...base, chain: [{ ...one, rotate: [5, -5] }] }, 'REDUCE_INPUT_MISSING', '.rotate'],
+        ['a scale of 0', { ...base, chain: [{ ...one, scaleX: [0, 1] }] }, 'REDUCE_INPUT_MISSING', '.scaleX'],
+        ['a negative translate', { ...base, chain: [{ ...one, translate: -1 }] }, 'REDUCE_INPUT_MISSING', '.translate'],
       ];
-      const caught: string[] = [];
-      for (const [label, value, path] of malformed) {
-        const m = thrown(value);
-        if (m === null || !m.startsWith('REDUCE_INPUT_MISSING') || !m.includes(path)) probes.push(`${label}: ${m ?? 'measured'}; required REDUCE_INPUT_MISSING naming ${path}`);
-        else caught.push(label);
+      const refused: string[] = [];
+      for (const [label, input, code, path] of cases) {
+        const m = refusedBy(input);
+        if (m === null || !m.startsWith(code) || !m.includes(path)) probes.push(`${label}: ${m ?? 'derived'}; required ${code} naming ${path}`);
+        else refused.push(label);
       }
-      // Refused rows: what the measurement cannot read, by code — and required, so the verdict is not a pass.
-      const moved: SourceMesh = { ...candidate, points: candidate.points.map((p, i) => (i === 3 ? [p[0] + 0.5, p[1]] : p)) };
-      const short: SourceMesh = { ...candidate, weights: candidate.weights!.map((ws, i) => (i === 3 ? ws.map((w) => ({ ...w, weight: w.weight * 0.99 })) : ws)) };
-      const overlapping: SourceMesh = { ...source, triangles: [...source.triangles, 0, source.hull - 1, source.hull] };
-      const keyed = (kind: 'vertices' | 'transform'): SkinningResidualInput['deform'] => [
-        { animation: 'idle', attachment: skAttachment, keys: [{ time: 0, kind: 'setup' }, kind === 'vertices' ? { time: 1, kind, offset: 0, vertices: [1, 1] } : { time: 1, kind }] },
-      ];
-      const refusals: Array<[string, MeshQualityReport, string, SkinningPlant]> = [
-        ['an undeclared bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [] })), 'SKINNING_BONE_NOT_DECLARED', 'undeclared-bone-ignored'],
-        ['an unknown bone', skMeasure(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] })), 'SKINNING_BONE_UNKNOWN', 'unknown-bone-accepted'],
-        ['a vertex off its UV', skMeasure(moved, declared), 'SKINNING_SETUP_MISMATCH', 'setup-unchecked'],
-        ['a vertices deform key', skMeasure(candidate, { ...declared, deform: keyed('vertices') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
-        ['a transform deform key', skMeasure(candidate, { ...declared, deform: keyed('transform') }), 'SKINNING_DEFORM_UNSUPPORTED', 'deform-unchecked'],
-      ];
-      const refusedLines: string[] = [];
-      for (const [label, report, code, plant] of refusals) {
-        const row = skRow(report);
-        if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
-        else refusedLines.push(`${label} ${code}`);
-        if (report.candidates[0]?.geometry?.verdict === 'pass' || report.candidates[0]?.accepted) probes.push(`${label}: the refused row, required by its bound, left the verdict ${report.candidates[0]?.geometry?.verdict}`);
-        const inputOf = (): MeshMeasureInput => {
-          if (label === 'an undeclared bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [] }));
-          if (label === 'an unknown bone') return skInput(candidate, skDeclared(source, { reference: 'a', bones: [...envelope.bones, { ...bone0, bone: 'z' }] }));
-          if (label === 'a vertex off its UV') return skInput(moved, declared);
-          return skInput(candidate, { ...declared, deform: keyed(label === 'a vertices deform key' ? 'vertices' : 'transform') });
-        };
-        const plantedRow = skRow(measureMeshQualitySkinningPlanted(inputOf(), plant));
-        if (plantedRow?.state === 'refused') probes.push(`the plant ${plant} still refused ${label}`);
-      }
-      for (const [label, mesh, which, code] of [
-        ['a share sum off the grid', short, 'candidate', 'SKINNING_WEIGHT_SUM'],
-        ['an unweighted candidate', { ...candidate, weights: null }, 'candidate', 'SKINNING_UNWEIGHTED'],
-        ['overlapping source UV triangles', overlapping, 'source', 'SKINNING_UV_CARRIER_NOT_UNIQUE'],
-      ] as const) {
-        const row = skRow(which === 'candidate' ? skMeasure(mesh, declared) : skMeasure(candidate, skDeclared(mesh, envelope)));
-        if (row?.state !== 'refused' || !(row.reason ?? '').startsWith(code)) probes.push(`${label}: ${skSaid(row)}; required refused, ${code}`);
-        else refusedLines.push(`${label} ${code}`);
-      }
-      // Not measurable — never a value: under the art floor, both unweighted, no sample carried by both.
-      const floor = skRow(skMeasure(candidate, declared, null, { minArtSamples: 10 ** 7 }));
-      const bothBare = skRow(skMeasure({ ...candidate, weights: null }, skDeclared({ ...source, weights: null }, envelope)));
-      const corner: SourceMesh = { points: [[0, 0], [4, 0], [0, 4]], uvs: [0, 0, 4 / MV_W, 0, 0, 4 / MV_H], triangles: [0, 2, 1], hull: 3, weights: [[{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }], [{ bone: 'a', weight: 1 }]] };
-      const cornerOk = (() => {
-        const t = corner.triangles;
-        const p = corner.points;
-        const twice = (p[t[1]][0] - p[t[0]][0]) * (cropToSpineY(p[t[2]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H)) - (p[t[2]][0] - p[t[0]][0]) * (cropToSpineY(p[t[1]][1], MV_H) - cropToSpineY(p[t[0]][1], MV_H));
-        return twice > 0 ? corner : { ...corner, triangles: [0, 1, 2] };
-      })();
-      const none = skRow(skMeasure(cornerOk, declared));
-      const nonePlanted = skRow(skMeasure(cornerOk, declared, 'uncarried-read-as-zero'));
-      for (const [label, row] of [['a floor above the art', floor], ['both unweighted', bothBare], ['no sample carried by both', none]] as const) {
-        if (row?.state !== 'not-measurable' || row.value !== null || row.reason === null) probes.push(`${label}: ${skSaid(row)}; required not-measurable, no value, a reason`);
-      }
-      if (nonePlanted?.state === 'not-measurable') probes.push('the plant (no carried sample read as 0) still read not-measurable');
       const held = probes.length === 0;
       say(
-        'MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE',
+        'MQ133_THE_HELPERS_LINEAR_AND_TRANSLATION_BOUND_THE_POSERS_BONE_MOTION_AND_WHAT_IT_CANNOT_CERTIFY_IS_REFUSED_BY_NAME',
         held,
-        probeDetail(
-          held,
-          probes,
-          `thrown before any work, REDUCE_INPUT_MISSING naming the path: ${caught.join(', ')}; refused rows: ${refusedLines.join(', ')}; not measurable: a floor above the art (${floor?.reason?.slice(0, 40)}…), both unweighted, no sample carried by both; each refusal's plant measured instead, and the uncarried plant read ${nonePlanted?.state} ${nonePlanted?.value}`,
-        ),
-        'issue #1294 acceptance 4: malformed declarations, unknown bones, incompatible setup and UV maps and unsupported deform data name the failing input, and a reading over nothing is not a reading',
+        probeDetail(held, probes, `${lines.join('; ')} (within ${LINEAR_TOLERANCE} and 1e-8 × |ck| + 1e-6 px); understated by the plants — scale ignored: ${caught['scale-ignored'].join(', ')}; joint motion ignored: ${caught['translation-ignored'].join(', ')}; refused: ${refused.join(', ')}`),
+        'issue #1294 work 3 (rig-parts#126 Q3): one definition of linear, rig-c\'s, held to the poser it stands in for, and an input outside its assumptions refused rather than turned into a number',
       );
-      return;
-    }
-    say('MQ131_A_DECLARATION_THE_RESIDUAL_CANNOT_READ_IS_REFUSED_BY_NAME_AND_ONE_IT_CANNOT_MEASURE_IS_NEVER_A_VALUE', false, probes.join('; '), 'issue #1294 acceptance 4');
-  });
-
-  mcGuard('MQ132', () => {
-    const probes: string[] = [];
-    const ramp = skCase('ramp, strict');
-    if (ramp === undefined) {
-      probes.push('the ramp case was not built');
-    } else {
-      const { source, candidate, envelope } = ramp;
-      const offText = writeMeshQualityReport(skMeasure(candidate, undefined));
-      if (writeMeshQualityReport(skMeasure(candidate, undefined)) !== offText) probes.push('two measurements without the field wrote other bytes');
-      if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push('the measurement without the field writes a skinning key or row');
-      /** The text with the residual's row, its echo and the summary taken out: what the field may not move. */
-      const beyond = (r: MeshQualityReport): string => {
-        const doc = JSON.parse(writeMeshQualityReport(r));
-        delete doc.effective.skinning;
-        for (const c of doc.candidates) {
-          if (c.geometry === null) continue;
-          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
-          delete c.geometry.summary;
-        }
-        return JSON.stringify(doc);
-      };
-      const undeclared = skMeasure(candidate, skDeclared(source, envelope, null));
-      if (beyond(undeclared) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under the field with no bound');
-      if (skRow(undeclared)?.state !== 'undeclared' || undeclared.candidates[0]?.geometry?.summary.undeclared !== (skMeasure(candidate, undefined).candidates[0]?.geometry?.summary.undeclared ?? 0) + 1) probes.push(`maxResidual null: ${skSaid(skRow(undeclared))}; required one more undeclared row and nothing else counted`);
-      const nul = skMeasure(candidate, null);
-      const nulDoc = JSON.parse(writeMeshQualityReport(nul));
-      if (nulDoc.effective.skinning !== null || skRow(nul)?.state !== 'not-measurable' || !(skRow(nul)?.reason ?? '').includes('declared absent')) probes.push(`null: echo ${JSON.stringify(nulDoc.effective.skinning)}, row ${skSaid(skRow(nul))}; required the echo null and the row not-measurable saying declared absent`);
-      if (beyond(nul) !== beyond(skMeasure(candidate, undefined))) probes.push('a byte beyond the row, the echo and the summary moved under null');
-      // Determinism, and the key order of the declaration.
-      const on = writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope)));
-      const reversed: SkinningResidualInput = {
-        deform: [],
-        maxResidual: 1,
-        envelope: { bones: envelope.bones.map((b) => ({ translation: b.translation, pivot: b.pivot, linear: b.linear, bone: b.bone })), reference: envelope.reference },
-        source: { mesh: { weights: source.weights, hull: source.hull, triangles: source.triangles, uvs: source.uvs, points: source.points }, id: 'source' },
-      };
-      if (writeMeshQualityReport(skMeasure(candidate, skDeclared(source, envelope))) !== on) probes.push('two measurements with the field wrote other bytes');
-      if (writeMeshQualityReport(skMeasure(candidate, reversed)) !== on) probes.push('the declaration built in reverse key order wrote other bytes');
-      const digest = JSON.parse(on).effective.skinning?.source?.digest as string | undefined;
-      if (digest === undefined || !/^sha256:[0-9a-f]{64}$/.test(digest)) probes.push(`the source's digest is ${digest}`);
-      const otherDigest = JSON.parse(writeMeshQualityReport(skMeasure(candidate, skDeclared(candidate, envelope)))).effective.skinning?.source?.digest;
-      if (otherDigest === digest) probes.push('another source mesh wrote the same digest');
-      // The plants: the echo, or the row, written for a call that did not set the field.
-      const echoPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'echo-when-unset'));
-      const rowPlant = writeMeshQualityReport(skMeasure(candidate, undefined, 'row-when-unset'));
-      if (echoPlant === offText) probes.push('the plant (the echo written when unset) wrote the bytes of the call without the field');
-      if (rowPlant === offText) probes.push('the plant (the row written when unset) wrote the bytes of the call without the field');
-      const held = probes.length === 0;
-      say(
-        'MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT',
-        held,
-        probeDetail(
-          held,
-          probes,
-          `without the field: one text (${offText.length} bytes) twice, no skinning key or row; maxResidual null: every byte but the row, its echo and the summary that text's, one more undeclared row; null: echo null, row not-measurable; with the field: one text twice and in reverse key order, the source named by ${digest?.slice(0, 15)}…; the plants (echo, row written when unset) moved the bytes`,
-        ),
-        'issue #1294 acceptance 4: calls without the feature keep their output bytes — measured out of suite on the 18 recorded inputs (docs/MESH_REDUCTION.md §7) — and repeated reports are deterministic',
-      );
-      return;
-    }
-    say('MQ132_A_MEASUREMENT_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_ONE_WITH_IT_ONE_ROW_ONE_ECHO_AND_ONE_TEXT', false, probes.join('; '), 'issue #1294 acceptance 4');
-  });
-
-  mcGuard('MQ133', () => {
-    const probes: string[] = [];
-    // The helper against the poser: each fixture bone's envelope entry against the largest ‖Ak − A0‖ and
-    // |(Dk − D0) ck| the core poses over idle at 48 steps a second. The poser's own matrices carry rounding the exact
-    // rotation does not — measured up to 5.4e-9 in the linear part, which a joint 400 px from the origin turns into
-    // 1.7e-6 px — so the linear part is held to 1e-8 and the lever to 1e-8 × |ck| + 1e-6.
-    const LINEAR_TOLERANCE = 1e-8;
-    const leverTolerance = (c: readonly [number, number]): number => 1e-8 * Math.hypot(c[0], c[1]) + 1e-6;
-    const norm2 = (a: number, b: number, c: number, d: number): number => {
-      const s = a * a + b * b + c * c + d * d;
-      const det = a * d - b * c;
-      return Math.sqrt((s + Math.sqrt(Math.max(0, s * s - 4 * det * det))) / 2);
-    };
-    const lines: string[] = [];
-    const caught: Record<string, string[]> = { 'scale-ignored': [], 'translation-ignored': [] };
-    skVariants.forEach((v, vi) => {
-      const model = skBuild(dir, `sk-helper-${vi}`, skSource(v.field), v.bones);
-      const poses = skDeformations(model, Array.from({ length: 96 }, () => 2 / 96));
-      for (const b of v.bones) {
-        const ranges = { referenceChain: skReferenceChain, chain: skChainOf(v.bones, b).map(skRange) };
-        const entry = skinningEnvelopeBone(ranges);
-        const c: [number, number] = [SK_A_WORLD + b.joint[0], SK_A_WORLD + MV_H / 2 - b.joint[1]];
-        let linear = 0;
-        let lever = 0;
-        for (const D of poses) {
-          const Dk = D.get(b.name)!;
-          const D0 = D.get('a')!;
-          const E = Dk.map((x, i) => x - D0[i]);
-          linear = Math.max(linear, norm2(E[0], E[1], E[2], E[3]));
-          lever = Math.max(lever, Math.hypot(E[0] * c[0] + E[1] * c[1] + E[4], E[2] * c[0] + E[3] * c[1] + E[5]));
-        }
-        lines.push(`${v.name} ${b.name}: ε ${r6(entry.linear)} ≥ ${r6(linear)}, τ ${r6(entry.translation)} ≥ ${r6(lever)}`);
-        if (linear - entry.linear > LINEAR_TOLERANCE || lever - entry.translation > leverTolerance(c)) probes.push(`${v.name}, bone ${b.name}: the poser reaches ‖Ak − A0‖ ${linear} and lever ${lever}; the helper declares ${entry.linear} and ${entry.translation}`);
-        for (const plant of Object.keys(caught) as EnvelopePlant[]) {
-          const p = skinningEnvelopeBonePlanted(ranges, plant);
-          if (linear - p.linear > LINEAR_TOLERANCE || lever - p.translation > leverTolerance(c)) caught[plant].push(`${v.name} ${b.name}`);
-        }
-      }
     });
-    for (const [plant, where] of Object.entries(caught)) if (where.length === 0) probes.push(`the plant ${plant} understates no bone of the fixtures`);
-    // Refusals: what the helper cannot certify, by name; what is malformed, by path.
-    const base = { referenceChain: skReferenceChain, chain: [skRange(skVariants[0].bones[0])] };
-    const refusedBy = (ranges: unknown): string | null => {
-      try {
-        skinningEnvelopeBone(ranges as Parameters<typeof skinningEnvelopeBone>[0]);
-        return null;
-      } catch (err) {
-        return err instanceof MeshReductionError ? `${err.code}: ${err.message}` : `(not a MeshReductionError) ${(err as Error).message}`;
-      }
-    };
-    const one = base.chain[0];
-    const cases: Array<[string, unknown, string, string]> = [
-      ['a physics range', { ...base, chain: [{ ...one, source: 'physics' }] }, 'SKINNING_RANGE_UNSUPPORTED', 'chain[0] (bone "b").source'],
-      ['a nonuniform setup scale', { ...base, chain: [{ ...one, setup: { ...one.setup, scaleY: 2 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup scale'],
-      ['a setup shear', { ...base, chain: [{ ...one, setup: { ...one.setup, shearX: 10 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup shear'],
-      ['another inherit', { ...base, chain: [{ ...one, setup: { ...one.setup, inherit: 'noScale' } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'setup.inherit'],
-      ['a nonuniform reference setup', { ...base, referenceChain: [skReferenceChain[0], { ...skReferenceChain[1], setup: { ...skReferenceChain[1].setup, scaleX: 3 } }] }, 'SKINNING_RANGE_UNSUPPORTED', 'referenceChain[1]'],
-      ['an empty chain', { ...base, chain: [] }, 'REDUCE_INPUT_MISSING', 'chain is empty'],
-      ['a rotation range backwards', { ...base, chain: [{ ...one, rotate: [5, -5] }] }, 'REDUCE_INPUT_MISSING', '.rotate'],
-      ['a scale of 0', { ...base, chain: [{ ...one, scaleX: [0, 1] }] }, 'REDUCE_INPUT_MISSING', '.scaleX'],
-      ['a negative translate', { ...base, chain: [{ ...one, translate: -1 }] }, 'REDUCE_INPUT_MISSING', '.translate'],
-    ];
-    const refused: string[] = [];
-    for (const [label, input, code, path] of cases) {
-      const m = refusedBy(input);
-      if (m === null || !m.startsWith(code) || !m.includes(path)) probes.push(`${label}: ${m ?? 'derived'}; required ${code} naming ${path}`);
-      else refused.push(label);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ133_THE_HELPERS_LINEAR_AND_TRANSLATION_BOUND_THE_POSERS_BONE_MOTION_AND_WHAT_IT_CANNOT_CERTIFY_IS_REFUSED_BY_NAME',
-      held,
-      probeDetail(held, probes, `${lines.join('; ')} (within ${LINEAR_TOLERANCE} and 1e-8 × |ck| + 1e-6 px); understated by the plants — scale ignored: ${caught['scale-ignored'].join(', ')}; joint motion ignored: ${caught['translation-ignored'].join(', ')}; refused: ${refused.join(', ')}`),
-      'issue #1294 work 3 (rig-parts#126 Q3): one definition of linear, rig-c\'s, held to the poser it stands in for, and an input outside its assumptions refused rather than turned into a number',
-    );
   });
 
   // --- MQ134–MQ141 (#1295): the residual as a step condition of the reduction ----------------------------------------
@@ -52179,308 +52558,413 @@ function runMeshCompareSuite(): number {
   };
   const vxRegion: RefinementRegion = { name: 'dense', polygon: [[60, 16], [100, 16], [100, 32], [60, 32]], maxEdgeLength: 5, transition: 4, grade: 0.5, approximation: null };
 
-  mcGuard('MQ134', () => {
-    const probes: string[] = [];
-    // The ramp at maxResidual 1: the strict policy alone reaches 1.807703 in motion (MQ79), so some geometry-valid
-    // removal must be over the residual — the observer finds the first one refused by it and a later one taken.
-    const attempts: Array<{ step: number; vertices: number[]; refusedBy: string | null }> = [];
-    const observe: AttemptObserver = (a) => attempts.push({ step: a.step, vertices: [...a.sourceVertices], refusedBy: a.refusedBy === null ? null : a.refusedBy() });
-    const veto = vxRun(vxInput(mvSrc, 1), null, null, observe);
-    const vetoed = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: '));
-    const later = vetoed === undefined ? undefined : attempts.find((a) => a.step > vetoed.step && a.refusedBy === null);
-    if (vetoed === undefined) probes.push('no attempt was refused by MQ_SKINNING_RESIDUAL — the fixture shows no veto');
-    else if (!/^MQ_SKINNING_RESIDUAL: [0-9.]+ against <= 1$/.test(vetoed.refusedBy ?? '')) probes.push(`the veto reads "${vetoed.refusedBy}"; required the row, its value and its bound`);
-    if (later === undefined) probes.push('no operation was taken after the first veto — the search did not continue');
-    const row = vxRow(veto);
-    const c = veto.report.candidates[0];
-    if (veto.mesh === null || !c.accepted) probes.push(`the vetoed reduction: mesh ${veto.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every required row passing on the result`);
-    if (row?.state !== 'pass' || (row.value ?? Infinity) > 1) probes.push(`the result's MQ_SKINNING_RESIDUAL: ${skSaid(row)}; required within 1`);
-    if ((c.changes?.removedVertices ?? 0) === 0) probes.push('the vetoed reduction removed nothing');
-    // The plant: a residual refusal read as the end of the search — the run stops at the first veto.
-    const stopped = vxRun(vxInput(mvSrc, 1), { plant: 'veto-ends-search' });
-    const stoppedRemoved = stopped.report.candidates[0]?.changes?.removedVertices ?? 0;
-    if (stoppedRemoved >= (c.changes?.removedVertices ?? 0)) probes.push(`the plant (a veto ends the search) removed ${stoppedRemoved}, not fewer than the call's ${c.changes?.removedVertices}`);
-    // Recorded separately: the result in motion — the residual is a bound on the poser's positional error under the
-    // envelope (MQ118), so the poser's local deformation may not exceed it; inversion is the comparison's to read.
-    let motion = 'not compared';
-    if (veto.mesh !== null) {
-      const report = skCompare(skBuild(dir, 'vx-source', mvSrc, skVariants[0].bones), [{ id: 'vetoed', model: skBuild(dir, 'vx-vetoed', veto.mesh, skVariants[0].bones) }]);
-      const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
-      const inversion = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION' && r.object.region === null);
-      const slack = (1 + vxEnvelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
-      if (local?.value === null || local === undefined || local.value > (row?.value ?? 0) + slack) probes.push(`the poser reads ${local?.value} against the residual ${row?.value}; the bound may not understate it`);
-      motion = `poser MQ_LOCAL_DEFORMATION ${local?.value} ${local?.state}, MQ_INVERSION ${inversion?.value} ${inversion?.state}, accepted in motion ${report.candidates[0]?.accepted}`;
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ134_A_GEOMETRY_VALID_REMOVAL_OVER_THE_RESIDUAL_IS_REFUSED_BY_NAME_AND_THE_REDUCTION_GOES_ON_TO_A_FEASIBLE_ONE',
-      held,
-      probeDetail(
-        held,
-        probes,
-        `MQ79's ramp, the strict policy, targets.skinning at maxResidual 1 (the helper's envelope): first veto at attempt ${vetoed?.step} (removing ${vetoed?.vertices.join(', ')}: ${vetoed?.refusedBy}), next taken at ${later?.step} (removing ${later?.vertices.join(', ')}); result ${mvCounts(c)}, ${vxTerm(veto)}, MQ_SKINNING_RESIDUAL ${row?.value} pass, accepted; the plant (a veto ends the search) removed ${stoppedRemoved} against ${c.changes?.removedVertices}; in motion, recorded apart: ${motion}`,
-      ),
-      'issue #1295 acceptance 1: a harmful early operation is skipped and the search goes on, holding the unchanged geometry bounds and the residual — not "fewer vertices", which is not acceptance; the motion comparison stays the acceptance and is read separately',
-    );
-  });
-
-  mcGuard('MQ135', () => {
-    const probes: string[] = [];
-    // The carried state against the full recompute after every decision, over three calls that between them make
-    // every kind: refinement insertions over a density region with runs and singles (maxResidual 0.05); boundary runs,
-    // the load order and the post-pass at 0.1, where runs and singles pass every static row and are vetoed and the
-    // post-pass is refused by the residual; and the post-pass at 1, where it is taken.
-    const input = vxInput(mvSrc, 0.05, { boundaryRuns: { maxVertices: 4 }, retriangulate: 'delaunay', regionArtSamples: [{ region: 'dense', minArtSamples: 1 }] }, { regions: [vxRegion] });
-    const allInput = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' });
-    const real = vxChecked(input);
-    const refused = vxChecked(allInput);
-    const taken = vxChecked(vxInput(mvSrc, 1, { retriangulate: 'delaunay' }));
-    const by = { ...real.t.by };
-    for (const t of [refused.t, taken.t]) for (const [k, v] of Object.entries(t.by)) by[k] = { n: (by[k]?.n ?? 0) + v.n, unequal: (by[k]?.unequal ?? 0) + v.unequal };
-    for (const k of ['insertion+', 'removal+', 'removal-', 'boundary-run+', 'boundary-run-', 'delaunay+', 'delaunay-']) if ((by[k]?.n ?? 0) === 0) probes.push(`no ${k} decision was read — the population does not cover it`);
-    const unequal = vxUnequal(real.t) + vxUnequal(refused.t) + vxUnequal(taken.t);
-    if (unequal > 0) probes.push(`${unequal} decision(s) left the carried state off the full recompute: ${real.t.first ?? refused.t.first ?? taken.t.first}`);
-    const worst = Math.max(real.t.worstDiff, refused.t.worstDiff, taken.t.worstDiff);
-    if (worst > CARRY_TOLERANCE) probes.push(`the largest sample difference ${worst} is over CARRY_TOLERANCE ${CARRY_TOLERANCE}`);
-    // The carried run and the run that measures the residual whole on every trial end on one text and one mesh.
-    for (const [label, inp, carried] of [['the region call', input, real.result], ['the 0.1 call', allInput, refused.result]] as const) {
-      const full = vxRun(inp, { plant: 'full-recompute' });
-      if (writeMeshQualityReport(full.report) !== writeMeshQualityReport(carried.report) || JSON.stringify(full.mesh) !== JSON.stringify(carried.mesh)) probes.push(`${label}: the full-recompute run wrote another report or mesh than the carried one`);
-    }
-    // The plants: each must leave the state off the recompute at some decision.
-    const fired: string[] = [];
-    for (const plant of ['stale-carrier', 'lost-maximum', 'no-rollback'] as const) {
-      const p = vxChecked(allInput, plant);
-      if (p.t.first === null) probes.push(`the plant ${plant} left the carried state equal to the full recompute at every decision`);
-      else fired.push(`${plant} at ${p.t.first.slice(0, p.t.first.indexOf(':'))}`);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ135_THE_CARRIED_RESIDUAL_EQUALS_THE_FULL_RECOMPUTE_AFTER_ACCEPTED_AND_REFUSED_TRIALS_OF_EVERY_OPERATION_KIND',
-      held,
-      probeDetail(
-        held,
-        probes,
-        `the ramp with a 40x16 px density region (L0 5, band 4), boundary runs up to 4 and the post-pass at maxResidual 0.05; runs, the load order and the post-pass at 0.1; the post-pass at 1: ${Object.entries(by).map(([k, v]) => `${k} ${v.n}`).join(', ')} — every one equal to the full recompute, largest sample difference ${worst.toExponential(2)} px (tolerance ${CARRY_TOLERANCE}); the full-recompute runs' reports and meshes identical to the carried ones; the plants, on the 0.1 call, caught: ${fired.join('; ')}`,
-      ),
-      'issue #1295 work 2 and acceptance 2: the carried state is only worth its speed if it is the measurement — held sample by sample to the measurement\'s own path after every kind of trial, and each way it can go stale has a plant that this catches',
-    );
-  });
-
-  mcGuard('MQ136', () => {
-    const probes: string[] = [];
-    // Error accumulates against the fixed source, never against the previous step: every reading the reduction took
-    // is within the bound, and so is the result. The plant measures each step against the previous accepted candidate.
-    const real = vxChecked(vxInput(mvSrc, 1));
-    const over = real.t.readings.filter((r) => r.accepted && r.value !== null && r.value > 1);
-    if (over.length > 0) probes.push(`${over.length} accepted step(s) read over 1`);
-    const realRow = vxRow(real.result);
-    if (realRow?.state !== 'pass') probes.push(`the result reads ${skSaid(realRow)}`);
-    const drift = vxRun(vxInput(mvSrc, 1), { plant: 'previous-candidate' });
-    const driftRow = vxRow(drift);
-    if (driftRow?.state !== 'fail') probes.push(`the plant (each step against the previous accepted candidate) ends on ${skSaid(driftRow)}; required over 1 — small steps adding up past the bound`);
-    const held = probes.length === 0;
-    say(
-      'MQ136_ERROR_ACCUMULATED_OVER_ACCEPTED_STEPS_IS_MEASURED_AGAINST_THE_ORIGINAL_SOURCE_AND_CANNOT_DRIFT_PAST_THE_BOUND',
-      held,
-      probeDetail(held, probes, `the ramp at maxResidual 1: ${real.t.readings.filter((r) => r.accepted).length} accepted step(s), the largest reading ${Math.max(...real.t.readings.filter((r) => r.accepted).map((r) => r.value ?? 0))}, result ${realRow?.value} (${mvCounts(real.result.report.candidates[0])}); the plant measured against the previous candidate ends at ${driftRow?.value} (${mvCounts(drift.report.candidates[0])}) — every step within 1 of the one before`),
-      'issue #1295 work 2: the original source stays fixed across accepted operations, so individually small errors cannot accumulate outside maxResidual unnoticed',
-    );
-  });
-
-  mcGuard('MQ137', () => {
-    const probes: string[] = [];
-    // The #1294 population's hard cases, each with protected edges, a density region, boundary runs and the post-pass:
-    // three bones; three bones with a far pivot and nonuniform scale; each also with its bindings pruned to two
-    // influences on the six-decimal grid as the source. The last case prunes the refinement's insertions to two
-    // influences as well: the refined source then reads over the bound, so the refinement's outcome is refused before
-    // any removal, naming the residual.
-    const lines: string[] = [];
-    for (const [vi, pruned, cap] of [[5, false, 4], [5, true, 4], [6, false, 4], [6, true, 4], [5, false, 2]] as const) {
-      const v = skVariants[vi];
-      const envelope = skEnvelope(v.bones);
-      {
-        const source = pruned ? skPruned(skSource(v.field)) : skSource(v.field);
-        const edge: [number, number] = [source.triangles[0], source.triangles[1]];
-        const input: MeshReductionInput = {
-          ...mvReduceInput(source, {
-            boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)],
-            influences: { maxInfluences: cap, minWeight: 0 },
-            protect: { ...mvNoProtect, edges: [edge] },
-            boundaryRuns: { maxVertices: 4 },
-            retriangulate: 'delaunay',
-            regionArtSamples: [{ region: 'dense', minArtSamples: 1 }],
-          }),
-          targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [vxRegion], skinning: { envelope, maxResidual: 1 } },
-        };
-        const { result, t } = vxChecked(input);
-        const c = result.report.candidates[0];
-        const row = vxRow(result);
-        const label = `${v.name}${pruned ? ', pruned to two' : ''}${cap === 2 ? ', insertions pruned to two' : ''}`;
-        if (cap === 2) {
-          const term = result.report.termination;
-          const before = term?.reason === 'no-further-valid-reduction' && term.blockingConstraint.startsWith('MQ_SKINNING_RESIDUAL: ') && term.blockingConstraint.includes('before any removal');
-          if (!before || (c.changes?.removedVertices ?? -1) !== 0 || (c.changes?.sharesPruned ?? 0) === 0 || row?.state !== 'fail' || c.accepted) probes.push(`${label}: ${vxTerm(result)}, removed ${c.changes?.removedVertices}, pruned ${c.changes?.sharesPruned}, residual ${skSaid(row)}, accepted ${c.accepted}; required the refined source refused before any removal by the residual`);
-        } else {
-          if (result.mesh === null || !c.accepted || row?.state !== 'pass') probes.push(`${label}: mesh ${result.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}, residual ${skSaid(row)}`);
-          if ((c.changes?.removedVertices ?? 0) === 0) probes.push(`${label}: nothing removed`);
-        }
-        if (vxUnequal(t) > 0) probes.push(`${label}: ${t.first}`);
-        if (result.mesh !== null) {
-          const kept = result.mesh.indexMap[edge[0]];
-          const other = result.mesh.indexMap[edge[1]];
-          const edges = new Set<string>();
-          for (let i = 0; i < result.mesh.triangles.length; i += 3) for (let k = 0; k < 3; k++) edges.add([result.mesh.triangles[i + k], result.mesh.triangles[i + ((k + 1) % 3)]].sort((p, q) => p - q).join(','));
-          if (kept === null || other === null || !edges.has([kept, other].sort((p, q) => p - q).join(','))) probes.push(`${label}: the protected edge ${edge.join('–')} is not an edge of the result`);
-        }
-        lines.push(`${label}: ${mvCounts(c)}, inserted ${c.changes?.insertedVertices}, shares pruned ${c.changes?.sharesPruned}, residual ${row?.value}, ${vxTerm(result)}, ${vxPhases(t)}`);
+  unit('MQ134-MQ135', () => {
+    mcGuard('MQ134', () => {
+      const probes: string[] = [];
+      // The ramp at maxResidual 1: the strict policy alone reaches 1.807703 in motion (MQ79), so some geometry-valid
+      // removal must be over the residual — the observer finds the first one refused by it and a later one taken.
+      const attempts: Array<{ step: number; vertices: number[]; refusedBy: string | null }> = [];
+      const observe: AttemptObserver = (a) => attempts.push({ step: a.step, vertices: [...a.sourceVertices], refusedBy: a.refusedBy === null ? null : a.refusedBy() });
+      const veto = vxRun(vxInput(mvSrc, 1), null, null, observe);
+      const vetoed = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: '));
+      const later = vetoed === undefined ? undefined : attempts.find((a) => a.step > vetoed.step && a.refusedBy === null);
+      if (vetoed === undefined) probes.push('no attempt was refused by MQ_SKINNING_RESIDUAL — the fixture shows no veto');
+      else if (!/^MQ_SKINNING_RESIDUAL: [0-9.]+ against <= 1$/.test(vetoed.refusedBy ?? '')) probes.push(`the veto reads "${vetoed.refusedBy}"; required the row, its value and its bound`);
+      if (later === undefined) probes.push('no operation was taken after the first veto — the search did not continue');
+      const row = vxRow(veto);
+      const c = veto.report.candidates[0];
+      if (veto.mesh === null || !c.accepted) probes.push(`the vetoed reduction: mesh ${veto.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every required row passing on the result`);
+      if (row?.state !== 'pass' || (row.value ?? Infinity) > 1) probes.push(`the result's MQ_SKINNING_RESIDUAL: ${skSaid(row)}; required within 1`);
+      if ((c.changes?.removedVertices ?? 0) === 0) probes.push('the vetoed reduction removed nothing');
+      // The plant: a residual refusal read as the end of the search — the run stops at the first veto.
+      const stopped = vxRun(vxInput(mvSrc, 1), { plant: 'veto-ends-search' });
+      const stoppedRemoved = stopped.report.candidates[0]?.changes?.removedVertices ?? 0;
+      if (stoppedRemoved >= (c.changes?.removedVertices ?? 0)) probes.push(`the plant (a veto ends the search) removed ${stoppedRemoved}, not fewer than the call's ${c.changes?.removedVertices}`);
+      // Recorded separately: the result in motion — the residual is a bound on the poser's positional error under the
+      // envelope (MQ118), so the poser's local deformation may not exceed it; inversion is the comparison's to read.
+      let motion = 'not compared';
+      if (veto.mesh !== null) {
+        const report = skCompare(skBuild(dir, 'vx-source', mvSrc, skVariants[0].bones), [{ id: 'vetoed', model: skBuild(dir, 'vx-vetoed', veto.mesh, skVariants[0].bones) }]);
+        const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+        const inversion = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION' && r.object.region === null);
+        const slack = (1 + vxEnvelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
+        if (local?.value === null || local === undefined || local.value > (row?.value ?? 0) + slack) probes.push(`the poser reads ${local?.value} against the residual ${row?.value}; the bound may not understate it`);
+        motion = `poser MQ_LOCAL_DEFORMATION ${local?.value} ${local?.state}, MQ_INVERSION ${inversion?.value} ${inversion?.state}, accepted in motion ${report.candidates[0]?.accepted}`;
       }
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ137_THREE_BONES_A_FAR_PIVOT_NONUNIFORM_SCALE_PRUNED_WEIGHTS_PROTECTED_EDGES_AND_A_DENSITY_REGION_HOLD_UNDER_THE_VETO',
-      held,
-      probeDetail(held, probes, `${lines.join('; ')} — every decision equal to the full recompute`),
-      'issue #1295 acceptance 3: the veto, its carried state and the result hold on the population #1294 measured the residual on, with every other constraint of the reduction live beside it',
-    );
-  });
+      const held = probes.length === 0;
+      say(
+        'MQ134_A_GEOMETRY_VALID_REMOVAL_OVER_THE_RESIDUAL_IS_REFUSED_BY_NAME_AND_THE_REDUCTION_GOES_ON_TO_A_FEASIBLE_ONE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `MQ79's ramp, the strict policy, targets.skinning at maxResidual 1 (the helper's envelope): first veto at attempt ${vetoed?.step} (removing ${vetoed?.vertices.join(', ')}: ${vetoed?.refusedBy}), next taken at ${later?.step} (removing ${later?.vertices.join(', ')}); result ${mvCounts(c)}, ${vxTerm(veto)}, MQ_SKINNING_RESIDUAL ${row?.value} pass, accepted; the plant (a veto ends the search) removed ${stoppedRemoved} against ${c.changes?.removedVertices}; in motion, recorded apart: ${motion}`,
+        ),
+        'issue #1295 acceptance 1: a harmful early operation is skipped and the search goes on, holding the unchanged geometry bounds and the residual — not "fewer vertices", which is not acceptance; the motion comparison stays the acceptance and is read separately',
+      );
+    });
 
-  mcGuard('MQ138', () => {
-    const probes: string[] = [];
-    const termOf = (input: unknown): string => {
-      try {
-        return vxTerm(reduceMesh(input as MeshReductionInput));
-      } catch (err) {
-        return err instanceof MeshReductionError ? `threw ${err.code}: ${err.message}` : `threw ${(err as Error).message}`;
+    mcGuard('MQ135', () => {
+      const probes: string[] = [];
+      // The carried state against the full recompute after every decision, over three calls that between them make
+      // every kind: refinement insertions over a density region with runs and singles (maxResidual 0.05); boundary runs,
+      // the load order and the post-pass at 0.1, where runs and singles pass every static row and are vetoed and the
+      // post-pass is refused by the residual; and the post-pass at 1, where it is taken.
+      const input = vxInput(mvSrc, 0.05, { boundaryRuns: { maxVertices: 4 }, retriangulate: 'delaunay', regionArtSamples: [{ region: 'dense', minArtSamples: 1 }] }, { regions: [vxRegion] });
+      const allInput = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' });
+      const real = vxChecked(input);
+      const refused = vxChecked(allInput);
+      const taken = vxChecked(vxInput(mvSrc, 1, { retriangulate: 'delaunay' }));
+      const by = { ...real.t.by };
+      for (const t of [refused.t, taken.t]) for (const [k, v] of Object.entries(t.by)) by[k] = { n: (by[k]?.n ?? 0) + v.n, unequal: (by[k]?.unequal ?? 0) + v.unequal };
+      for (const k of ['insertion+', 'removal+', 'removal-', 'boundary-run+', 'boundary-run-', 'delaunay+', 'delaunay-']) if ((by[k]?.n ?? 0) === 0) probes.push(`no ${k} decision was read — the population does not cover it`);
+      const unequal = vxUnequal(real.t) + vxUnequal(refused.t) + vxUnequal(taken.t);
+      if (unequal > 0) probes.push(`${unequal} decision(s) left the carried state off the full recompute: ${real.t.first ?? refused.t.first ?? taken.t.first}`);
+      const worst = Math.max(real.t.worstDiff, refused.t.worstDiff, taken.t.worstDiff);
+      if (worst > CARRY_TOLERANCE) probes.push(`the largest sample difference ${worst} is over CARRY_TOLERANCE ${CARRY_TOLERANCE}`);
+      // The carried run and the run that measures the residual whole on every trial end on one text and one mesh.
+      for (const [label, inp, carried] of [['the region call', input, real.result], ['the 0.1 call', allInput, refused.result]] as const) {
+        const full = vxRun(inp, { plant: 'full-recompute' });
+        if (writeMeshQualityReport(full.report) !== writeMeshQualityReport(carried.report) || JSON.stringify(full.mesh) !== JSON.stringify(carried.mesh)) probes.push(`${label}: the full-recompute run wrote another report or mesh than the carried one`);
       }
-    };
-    const all = [...Array(mvSrc.points.length).keys()];
-    const outcomes: Array<[string, string, (s: string) => boolean]> = [
-      ['every vertex protected', termOf(vxInput(mvSrc, 1, { protect: { ...mvNoProtect, vertices: all } })), (s) => s.startsWith('no-further-valid-reduction') && s.includes('protect:')],
-      ['budget 3', termOf(vxInput(mvSrc, 1, { budget: { maxCandidates: 3 } })), (s) => s === 'budget-exhausted after 3'],
-      ['a vertices deform key', termOf(vxInput(mvSrc, 1, { deform: [{ animation: 'idle', attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, keys: [{ time: 0, kind: 'vertices', offset: 0, vertices: [0, 0] }] }] })), (s) => s === 'invalid-input SKINNING_DEFORM_UNSUPPORTED'],
-      ['an undeclared bone', termOf(mvReduceInput(mvSrc, { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: { envelope: { reference: 'a', bones: [] }, maxResidual: 1 } } })), (s) => s === 'invalid-input SKINNING_BONE_NOT_DECLARED'],
-      ['an unweighted source', termOf({ ...vxInput({ ...mvSrc, weights: null }, 1), influences: null, boneOrder: null }), (s) => s.startsWith('no-further-valid-reduction') && s.includes('MQ_SKINNING_RESIDUAL: not-measurable')],
-      ['linear -1', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: { reference: 'a', bones: [{ ...vxEnvelope.bones[0], linear: -1 }] }, maxResidual: 1 } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.envelope.bones[0].linear is -1')],
-      ['maxResidual left out', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: vxEnvelope } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.maxResidual is missing')],
-      ['skinning a number', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: 5 } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning is 5')],
-    ];
-    for (const [label, said, ok] of outcomes) if (!ok(said)) probes.push(`${label}: ${said}`);
-    const distinct = new Set(outcomes.slice(0, 5).map(([, s]) => (s.startsWith('invalid-input') ? s : s.split(' ')[0] + (s.includes('protect:') ? ' protect' : s.includes('not-measurable') ? ' unmeasured' : ''))));
-    if (distinct.size !== 5) probes.push(`the no-op, the budget, the two refusals and the unmeasured source read ${distinct.size} distinct outcomes, not 5`);
-    // maxResidual 0: only removals that change nothing the residual reads are taken; the result reads 0.
-    const zero = reduceMesh(vxInput(mvSrc, 0));
-    const zeroRow = vxRow(zero);
-    if (zeroRow?.state !== 'pass' || zeroRow.value !== 0) probes.push(`maxResidual 0: the result reads ${skSaid(zeroRow)}; required 0`);
-    const held = probes.length === 0;
-    say(
-      'MQ138_A_NO_OP_AN_UNSUPPORTED_INPUT_A_MALFORMED_ONE_AND_AN_EXHAUSTED_BUDGET_ARE_DISTINCT_OUTCOMES_UNDER_THE_VETO',
-      held,
-      probeDetail(held, probes, `${outcomes.map(([l, s]) => `${l}: ${s.slice(0, 110)}`).join('; ')}; maxResidual 0: ${mvCounts(zero.report.candidates[0])}, ${vxTerm(zero)}, residual ${zeroRow?.value}`),
-      'issue #1295 acceptance 3: source or no-op, unsupported input and budget exhaustion stay distinct outcomes; an unsupported input is refused in the measurement\'s words, never turned into a pass, and a malformed one before any work',
-    );
+      // The plants: each must leave the state off the recompute at some decision.
+      const fired: string[] = [];
+      for (const plant of ['stale-carrier', 'lost-maximum', 'no-rollback'] as const) {
+        const p = vxChecked(allInput, plant);
+        if (p.t.first === null) probes.push(`the plant ${plant} left the carried state equal to the full recompute at every decision`);
+        else fired.push(`${plant} at ${p.t.first.slice(0, p.t.first.indexOf(':'))}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ135_THE_CARRIED_RESIDUAL_EQUALS_THE_FULL_RECOMPUTE_AFTER_ACCEPTED_AND_REFUSED_TRIALS_OF_EVERY_OPERATION_KIND',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the ramp with a 40x16 px density region (L0 5, band 4), boundary runs up to 4 and the post-pass at maxResidual 0.05; runs, the load order and the post-pass at 0.1; the post-pass at 1: ${Object.entries(by).map(([k, v]) => `${k} ${v.n}`).join(', ')} — every one equal to the full recompute, largest sample difference ${worst.toExponential(2)} px (tolerance ${CARRY_TOLERANCE}); the full-recompute runs' reports and meshes identical to the carried ones; the plants, on the 0.1 call, caught: ${fired.join('; ')}`,
+        ),
+        'issue #1295 work 2 and acceptance 2: the carried state is only worth its speed if it is the measurement — held sample by sample to the measurement\'s own path after every kind of trial, and each way it can go stale has a plant that this catches',
+      );
+    });
   });
 
-  mcGuard('MQ139', () => {
-    const probes: string[] = [];
-    // Replay with every opt-in: boundary runs, the load order, the post-pass, the amplitude and the residual. At probed
-    // steps — the first, one straight after a veto, the middle and the last — the replay is the budget cut at the same
-    // attempt, mesh and acceptedAt byte for byte; the replay plant (one step early) is caught.
-    const amp: MotionAmplitude = { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: (MV_BEND * Math.PI) / 180 }], epsilon: 1 }], gradation: 1 };
-    const input = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay', motionAmplitude: amp });
-    const attempts: Array<{ step: number; refusedBy: string | null }> = [];
-    const whole = vxRun(input, null, null, (a) => attempts.push({ step: a.step, refusedBy: a.refusedBy === null ? null : a.refusedBy() }));
-    const acc = whole.report.candidates[0]?.changes?.acceptedAt ?? [];
-    const vetoStep = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL'))?.step;
-    const afterVeto = vetoStep === undefined ? -1 : acc.findIndex((a) => a.step > vetoStep) + 1;
-    const ks = [...new Set([1, afterVeto, Math.ceil(acc.length / 2), acc.length].filter((k) => k >= 1 && k <= acc.length))].sort((p, q) => p - q);
-    if (vetoStep === undefined) probes.push('no veto in the run, so no replay crosses one');
-    const pick = (r: ReturnType<typeof reduceMesh>): string => JSON.stringify([r.mesh, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.changes?.retriangulation]);
-    for (const k of ks) {
-      const replay = reduceMesh({ ...input, stopAfterAccepted: k });
-      const cut = reduceMesh({ ...input, budget: { maxCandidates: acc[k - 1].step } });
-      if (pick(replay) !== pick(cut)) probes.push(`replay ${k} is not the budget cut at ${acc[k - 1].step}`);
-      if (JSON.stringify(replay.report.candidates[0]?.changes?.acceptedAt) !== JSON.stringify(acc.slice(0, k))) probes.push(`replay ${k}'s acceptedAt is not the run's first ${k}`);
-      if (replay.report.termination?.reason !== 'replayed-to-accepted-step') probes.push(`replay ${k} ended ${replay.report.termination?.reason}`);
-    }
-    const planted = ks.length === 0 ? null : vxRun({ ...input, stopAfterAccepted: ks[ks.length - 1] }, null, 'stop-one-early');
-    const lastCut = ks.length === 0 ? null : reduceMesh({ ...input, budget: { maxCandidates: acc[ks[ks.length - 1] - 1].step } });
-    if (planted !== null && lastCut !== null && pick(planted) === pick(lastCut)) probes.push('the plant (the replay stopped one step early) wrote the budget cut\'s bytes');
-    const held = probes.length === 0;
-    say(
-      'MQ139_A_REPLAY_UNDER_EVERY_OPT_IN_IS_THE_RUN_S_PREFIX_BYTE_FOR_BYTE_ACROSS_A_VETO',
-      held,
-      probeDetail(held, probes, `boundary runs 4, deformation-load, the post-pass, the amplitude and maxResidual 0.1 on the ramp (the post-pass ${whole.report.candidates[0]?.changes?.retriangulation?.taken ? 'taken' : 'refused by the residual'}): ${acc.length} accepted operation(s), first veto at attempt ${vetoStep}; replays at ${ks.join(', ')} equal to the budget cuts at ${ks.map((k) => acc[k - 1].step).join(', ')} — mesh, acceptedAt and the post-pass — and the one-step-early plant caught`),
-      'issue #1295 work 3: refused residual candidates consume attempts and acceptedAt records accepted operations only, so a replay with the same opt-ins reproduces the same prefix',
-    );
-  });
+  unit('MQ136-MQ137', () => {
+    mcGuard('MQ136', () => {
+      const probes: string[] = [];
+      // Error accumulates against the fixed source, never against the previous step: every reading the reduction took
+      // is within the bound, and so is the result. The plant measures each step against the previous accepted candidate.
+      const real = vxChecked(vxInput(mvSrc, 1));
+      const over = real.t.readings.filter((r) => r.accepted && r.value !== null && r.value > 1);
+      if (over.length > 0) probes.push(`${over.length} accepted step(s) read over 1`);
+      const realRow = vxRow(real.result);
+      if (realRow?.state !== 'pass') probes.push(`the result reads ${skSaid(realRow)}`);
+      const drift = vxRun(vxInput(mvSrc, 1), { plant: 'previous-candidate' });
+      const driftRow = vxRow(drift);
+      if (driftRow?.state !== 'fail') probes.push(`the plant (each step against the previous accepted candidate) ends on ${skSaid(driftRow)}; required over 1 — small steps adding up past the bound`);
+      const held = probes.length === 0;
+      say(
+        'MQ136_ERROR_ACCUMULATED_OVER_ACCEPTED_STEPS_IS_MEASURED_AGAINST_THE_ORIGINAL_SOURCE_AND_CANNOT_DRIFT_PAST_THE_BOUND',
+        held,
+        probeDetail(held, probes, `the ramp at maxResidual 1: ${real.t.readings.filter((r) => r.accepted).length} accepted step(s), the largest reading ${Math.max(...real.t.readings.filter((r) => r.accepted).map((r) => r.value ?? 0))}, result ${realRow?.value} (${mvCounts(real.result.report.candidates[0])}); the plant measured against the previous candidate ends at ${driftRow?.value} (${mvCounts(drift.report.candidates[0])}) — every step within 1 of the one before`),
+        'issue #1295 work 2: the original source stays fixed across accepted operations, so individually small errors cannot accumulate outside maxResidual unnoticed',
+      );
+    });
 
-  mcGuard('MQ140', () => {
-    const probes: string[] = [];
-    // Without the field: no key, no row, one text — with and without the other opt-ins. `null` and a bound declared
-    // absent take every step the call without the field takes; only the echo, the result's row and the summary move.
-    const sets: Array<[string, Partial<MeshReductionInput>]> = [['plain', {}], ['runs, load and the post-pass', { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' }]];
-    const lines: string[] = [];
-    for (const [label, over] of sets) {
-      const off = reduceMesh(mvReduceInput(mvSrc, over));
-      const offText = writeMeshQualityReport(off.report);
-      if (writeMeshQualityReport(reduceMesh(mvReduceInput(mvSrc, over)).report) !== offText) probes.push(`${label}: two calls without the field wrote other bytes`);
-      if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push(`${label}: a call without the field writes a skinning key or row`);
-      const strip = (r: ReturnType<typeof reduceMesh>): string => {
-        const doc = JSON.parse(writeMeshQualityReport(r.report));
-        delete doc.effective.targets.skinning;
-        for (const c of doc.candidates) {
-          if (c.geometry === null) continue;
-          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
-          delete c.geometry.summary;
+    mcGuard('MQ137', () => {
+      const probes: string[] = [];
+      // The #1294 population's hard cases, each with protected edges, a density region, boundary runs and the post-pass:
+      // three bones; three bones with a far pivot and nonuniform scale; each also with its bindings pruned to two
+      // influences on the six-decimal grid as the source. The last case prunes the refinement's insertions to two
+      // influences as well: the refined source then reads over the bound, so the refinement's outcome is refused before
+      // any removal, naming the residual.
+      const lines: string[] = [];
+      for (const [vi, pruned, cap] of [[5, false, 4], [5, true, 4], [6, false, 4], [6, true, 4], [5, false, 2]] as const) {
+        const v = skVariants[vi];
+        const envelope = skEnvelope(v.bones);
+        {
+          const source = pruned ? skPruned(skSource(v.field)) : skSource(v.field);
+          const edge: [number, number] = [source.triangles[0], source.triangles[1]];
+          const input: MeshReductionInput = {
+            ...mvReduceInput(source, {
+              boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)],
+              influences: { maxInfluences: cap, minWeight: 0 },
+              protect: { ...mvNoProtect, edges: [edge] },
+              boundaryRuns: { maxVertices: 4 },
+              retriangulate: 'delaunay',
+              regionArtSamples: [{ region: 'dense', minArtSamples: 1 }],
+            }),
+            targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [vxRegion], skinning: { envelope, maxResidual: 1 } },
+          };
+          const { result, t } = vxChecked(input);
+          const c = result.report.candidates[0];
+          const row = vxRow(result);
+          const label = `${v.name}${pruned ? ', pruned to two' : ''}${cap === 2 ? ', insertions pruned to two' : ''}`;
+          if (cap === 2) {
+            const term = result.report.termination;
+            const before = term?.reason === 'no-further-valid-reduction' && term.blockingConstraint.startsWith('MQ_SKINNING_RESIDUAL: ') && term.blockingConstraint.includes('before any removal');
+            if (!before || (c.changes?.removedVertices ?? -1) !== 0 || (c.changes?.sharesPruned ?? 0) === 0 || row?.state !== 'fail' || c.accepted) probes.push(`${label}: ${vxTerm(result)}, removed ${c.changes?.removedVertices}, pruned ${c.changes?.sharesPruned}, residual ${skSaid(row)}, accepted ${c.accepted}; required the refined source refused before any removal by the residual`);
+          } else {
+            if (result.mesh === null || !c.accepted || row?.state !== 'pass') probes.push(`${label}: mesh ${result.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}, residual ${skSaid(row)}`);
+            if ((c.changes?.removedVertices ?? 0) === 0) probes.push(`${label}: nothing removed`);
+          }
+          if (vxUnequal(t) > 0) probes.push(`${label}: ${t.first}`);
+          if (result.mesh !== null) {
+            const kept = result.mesh.indexMap[edge[0]];
+            const other = result.mesh.indexMap[edge[1]];
+            const edges = new Set<string>();
+            for (let i = 0; i < result.mesh.triangles.length; i += 3) for (let k = 0; k < 3; k++) edges.add([result.mesh.triangles[i + k], result.mesh.triangles[i + ((k + 1) % 3)]].sort((p, q) => p - q).join(','));
+            if (kept === null || other === null || !edges.has([kept, other].sort((p, q) => p - q).join(','))) probes.push(`${label}: the protected edge ${edge.join('–')} is not an edge of the result`);
+          }
+          lines.push(`${label}: ${mvCounts(c)}, inserted ${c.changes?.insertedVertices}, shares pruned ${c.changes?.sharesPruned}, residual ${row?.value}, ${vxTerm(result)}, ${vxPhases(t)}`);
         }
-        return JSON.stringify([doc, r.mesh]);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ137_THREE_BONES_A_FAR_PIVOT_NONUNIFORM_SCALE_PRUNED_WEIGHTS_PROTECTED_EDGES_AND_A_DENSITY_REGION_HOLD_UNDER_THE_VETO',
+        held,
+        probeDetail(held, probes, `${lines.join('; ')} — every decision equal to the full recompute`),
+        'issue #1295 acceptance 3: the veto, its carried state and the result hold on the population #1294 measured the residual on, with every other constraint of the reduction live beside it',
+      );
+    });
+  });
+
+  unit('MQ138-MQ142', () => {
+    mcGuard('MQ138', () => {
+      const probes: string[] = [];
+      const termOf = (input: unknown): string => {
+        try {
+          return vxTerm(reduceMesh(input as MeshReductionInput));
+        } catch (err) {
+          return err instanceof MeshReductionError ? `threw ${err.code}: ${err.message}` : `threw ${(err as Error).message}`;
+        }
       };
-      const nul = reduceMesh(mvReduceInput(mvSrc, { ...over, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: null } }));
-      const absent = reduceMesh(vxInput(mvSrc, null, over));
-      if (strip(nul) !== strip(off)) probes.push(`${label}: null moved a byte beyond the echo, the row and the summary`);
-      if (strip(absent) !== strip(off)) probes.push(`${label}: maxResidual null moved a byte beyond the echo, the row and the summary`);
-      const nulDoc = JSON.parse(writeMeshQualityReport(nul.report));
-      if (nulDoc.effective.targets.skinning !== null || vxRow(nul)?.state !== 'not-measurable') probes.push(`${label}: null echoes ${JSON.stringify(nulDoc.effective.targets.skinning)}, row ${skSaid(vxRow(nul))}`);
-      if (vxRow(absent)?.state !== 'undeclared') probes.push(`${label}: maxResidual null reads ${skSaid(vxRow(absent))}; required undeclared`);
-      const echoed = vxRun(mvReduceInput(mvSrc, over), { plant: 'echo-when-unset' });
-      if (writeMeshQualityReport(echoed.report) === offText) probes.push(`${label}: the plant (the echo written when unset) wrote the bytes of the call without the field`);
-      lines.push(`${label}: ${offText.length} bytes twice, no key or row; null and maxResidual null equal beyond the echo, the row and the summary (${skSaid(vxRow(nul)).slice(0, 14)}, ${vxRow(absent)?.state} ${vxRow(absent)?.value})`);
-    }
-    const held = probes.length === 0;
-    say(
-      'MQ140_A_REDUCTION_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_NULL_OR_AN_ABSENT_BOUND_TAKES_ITS_EVERY_STEP',
-      held,
-      probeDetail(held, probes, `${lines.join('; ')}; the echo plant caught`),
-      'issue #1295 acceptance 4: calls without targets.skinning keep their bytes — measured out of suite against the release on the recorded inputs (docs/MESH_REDUCTION.md §7) — and this holds the shape that comparison projected',
-    );
+      const all = [...Array(mvSrc.points.length).keys()];
+      const outcomes: Array<[string, string, (s: string) => boolean]> = [
+        ['every vertex protected', termOf(vxInput(mvSrc, 1, { protect: { ...mvNoProtect, vertices: all } })), (s) => s.startsWith('no-further-valid-reduction') && s.includes('protect:')],
+        ['budget 3', termOf(vxInput(mvSrc, 1, { budget: { maxCandidates: 3 } })), (s) => s === 'budget-exhausted after 3'],
+        ['a vertices deform key', termOf(vxInput(mvSrc, 1, { deform: [{ animation: 'idle', attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, keys: [{ time: 0, kind: 'vertices', offset: 0, vertices: [0, 0] }] }] })), (s) => s === 'invalid-input SKINNING_DEFORM_UNSUPPORTED'],
+        ['an undeclared bone', termOf(mvReduceInput(mvSrc, { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: { envelope: { reference: 'a', bones: [] }, maxResidual: 1 } } })), (s) => s === 'invalid-input SKINNING_BONE_NOT_DECLARED'],
+        ['an unweighted source', termOf({ ...vxInput({ ...mvSrc, weights: null }, 1), influences: null, boneOrder: null }), (s) => s.startsWith('no-further-valid-reduction') && s.includes('MQ_SKINNING_RESIDUAL: not-measurable')],
+        ['linear -1', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: { reference: 'a', bones: [{ ...vxEnvelope.bones[0], linear: -1 }] }, maxResidual: 1 } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.envelope.bones[0].linear is -1')],
+        ['maxResidual left out', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: vxEnvelope } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.maxResidual is missing')],
+        ['skinning a number', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: 5 } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning is 5')],
+      ];
+      for (const [label, said, ok] of outcomes) if (!ok(said)) probes.push(`${label}: ${said}`);
+      const distinct = new Set(outcomes.slice(0, 5).map(([, s]) => (s.startsWith('invalid-input') ? s : s.split(' ')[0] + (s.includes('protect:') ? ' protect' : s.includes('not-measurable') ? ' unmeasured' : ''))));
+      if (distinct.size !== 5) probes.push(`the no-op, the budget, the two refusals and the unmeasured source read ${distinct.size} distinct outcomes, not 5`);
+      // maxResidual 0: only removals that change nothing the residual reads are taken; the result reads 0.
+      const zero = reduceMesh(vxInput(mvSrc, 0));
+      const zeroRow = vxRow(zero);
+      if (zeroRow?.state !== 'pass' || zeroRow.value !== 0) probes.push(`maxResidual 0: the result reads ${skSaid(zeroRow)}; required 0`);
+      const held = probes.length === 0;
+      say(
+        'MQ138_A_NO_OP_AN_UNSUPPORTED_INPUT_A_MALFORMED_ONE_AND_AN_EXHAUSTED_BUDGET_ARE_DISTINCT_OUTCOMES_UNDER_THE_VETO',
+        held,
+        probeDetail(held, probes, `${outcomes.map(([l, s]) => `${l}: ${s.slice(0, 110)}`).join('; ')}; maxResidual 0: ${mvCounts(zero.report.candidates[0])}, ${vxTerm(zero)}, residual ${zeroRow?.value}`),
+        'issue #1295 acceptance 3: source or no-op, unsupported input and budget exhaustion stay distinct outcomes; an unsupported input is refused in the measurement\'s words, never turned into a pass, and a malformed one before any work',
+      );
+    });
+
+    mcGuard('MQ139', () => {
+      const probes: string[] = [];
+      // Replay with every opt-in: boundary runs, the load order, the post-pass, the amplitude and the residual. At probed
+      // steps — the first, one straight after a veto, the middle and the last — the replay is the budget cut at the same
+      // attempt, mesh and acceptedAt byte for byte; the replay plant (one step early) is caught.
+      const amp: MotionAmplitude = { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: (MV_BEND * Math.PI) / 180 }], epsilon: 1 }], gradation: 1 };
+      const input = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay', motionAmplitude: amp });
+      const attempts: Array<{ step: number; refusedBy: string | null }> = [];
+      const whole = vxRun(input, null, null, (a) => attempts.push({ step: a.step, refusedBy: a.refusedBy === null ? null : a.refusedBy() }));
+      const acc = whole.report.candidates[0]?.changes?.acceptedAt ?? [];
+      const vetoStep = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL'))?.step;
+      const afterVeto = vetoStep === undefined ? -1 : acc.findIndex((a) => a.step > vetoStep) + 1;
+      const ks = [...new Set([1, afterVeto, Math.ceil(acc.length / 2), acc.length].filter((k) => k >= 1 && k <= acc.length))].sort((p, q) => p - q);
+      if (vetoStep === undefined) probes.push('no veto in the run, so no replay crosses one');
+      const pick = (r: ReturnType<typeof reduceMesh>): string => JSON.stringify([r.mesh, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.changes?.retriangulation]);
+      for (const k of ks) {
+        const replay = reduceMesh({ ...input, stopAfterAccepted: k });
+        const cut = memoReduceMesh({ ...input, budget: { maxCandidates: acc[k - 1].step } });
+        if (pick(replay) !== pick(cut)) probes.push(`replay ${k} is not the budget cut at ${acc[k - 1].step}`);
+        if (JSON.stringify(replay.report.candidates[0]?.changes?.acceptedAt) !== JSON.stringify(acc.slice(0, k))) probes.push(`replay ${k}'s acceptedAt is not the run's first ${k}`);
+        if (replay.report.termination?.reason !== 'replayed-to-accepted-step') probes.push(`replay ${k} ended ${replay.report.termination?.reason}`);
+      }
+      const planted = ks.length === 0 ? null : vxRun({ ...input, stopAfterAccepted: ks[ks.length - 1] }, null, 'stop-one-early');
+      const lastCut = ks.length === 0 ? null : memoReduceMesh({ ...input, budget: { maxCandidates: acc[ks[ks.length - 1] - 1].step } });
+      if (planted !== null && lastCut !== null && pick(planted) === pick(lastCut)) probes.push('the plant (the replay stopped one step early) wrote the budget cut\'s bytes');
+      const held = probes.length === 0;
+      say(
+        'MQ139_A_REPLAY_UNDER_EVERY_OPT_IN_IS_THE_RUN_S_PREFIX_BYTE_FOR_BYTE_ACROSS_A_VETO',
+        held,
+        probeDetail(held, probes, `boundary runs 4, deformation-load, the post-pass, the amplitude and maxResidual 0.1 on the ramp (the post-pass ${whole.report.candidates[0]?.changes?.retriangulation?.taken ? 'taken' : 'refused by the residual'}): ${acc.length} accepted operation(s), first veto at attempt ${vetoStep}; replays at ${ks.join(', ')} equal to the budget cuts at ${ks.map((k) => acc[k - 1].step).join(', ')} — mesh, acceptedAt and the post-pass — and the one-step-early plant caught`),
+        'issue #1295 work 3: refused residual candidates consume attempts and acceptedAt records accepted operations only, so a replay with the same opt-ins reproduces the same prefix',
+      );
+    });
+
+    mcGuard('MQ140', () => {
+      const probes: string[] = [];
+      // Without the field: no key, no row, one text — with and without the other opt-ins. `null` and a bound declared
+      // absent take every step the call without the field takes; only the echo, the result's row and the summary move.
+      const sets: Array<[string, Partial<MeshReductionInput>]> = [['plain', {}], ['runs, load and the post-pass', { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' }]];
+      const lines: string[] = [];
+      for (const [label, over] of sets) {
+        const off = memoReduceMesh(mvReduceInput(mvSrc, over));
+        const offText = writeMeshQualityReport(off.report);
+        if (writeMeshQualityReport(reduceMesh(mvReduceInput(mvSrc, over)).report) !== offText) probes.push(`${label}: two calls without the field wrote other bytes`);
+        if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push(`${label}: a call without the field writes a skinning key or row`);
+        const strip = (r: ReturnType<typeof reduceMesh>): string => {
+          const doc = JSON.parse(writeMeshQualityReport(r.report));
+          delete doc.effective.targets.skinning;
+          for (const c of doc.candidates) {
+            if (c.geometry === null) continue;
+            c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
+            delete c.geometry.summary;
+          }
+          return JSON.stringify([doc, r.mesh]);
+        };
+        const nul = reduceMesh(mvReduceInput(mvSrc, { ...over, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: null } }));
+        const absent = reduceMesh(vxInput(mvSrc, null, over));
+        if (strip(nul) !== strip(off)) probes.push(`${label}: null moved a byte beyond the echo, the row and the summary`);
+        if (strip(absent) !== strip(off)) probes.push(`${label}: maxResidual null moved a byte beyond the echo, the row and the summary`);
+        const nulDoc = JSON.parse(writeMeshQualityReport(nul.report));
+        if (nulDoc.effective.targets.skinning !== null || vxRow(nul)?.state !== 'not-measurable') probes.push(`${label}: null echoes ${JSON.stringify(nulDoc.effective.targets.skinning)}, row ${skSaid(vxRow(nul))}`);
+        if (vxRow(absent)?.state !== 'undeclared') probes.push(`${label}: maxResidual null reads ${skSaid(vxRow(absent))}; required undeclared`);
+        const echoed = vxRun(mvReduceInput(mvSrc, over), { plant: 'echo-when-unset' });
+        if (writeMeshQualityReport(echoed.report) === offText) probes.push(`${label}: the plant (the echo written when unset) wrote the bytes of the call without the field`);
+        lines.push(`${label}: ${offText.length} bytes twice, no key or row; null and maxResidual null equal beyond the echo, the row and the summary (${skSaid(vxRow(nul)).slice(0, 14)}, ${vxRow(absent)?.state} ${vxRow(absent)?.value})`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ140_A_REDUCTION_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_NULL_OR_AN_ABSENT_BOUND_TAKES_ITS_EVERY_STEP',
+        held,
+        probeDetail(held, probes, `${lines.join('; ')}; the echo plant caught`),
+        'issue #1295 acceptance 4: calls without targets.skinning keep their bytes — measured out of suite against the release on the recorded inputs (docs/MESH_REDUCTION.md §7) — and this holds the shape that comparison projected',
+      );
+    });
+
+    mcGuard('MQ141', () => {
+      const probes: string[] = [];
+      // The post-pass rechecked on the returned triangulation: with the inverted flip criterion planted (#1283's plant —
+      // flips the residual reads), the pass is refused whole naming the residual; with the recheck planted away as well,
+      // the pass is taken and the result's own row fails — the escape the recheck closes.
+      const input = vxInput(mvSrc, 1, { retriangulate: 'delaunay' });
+      const guarded = vxRun(input, null, 'flips-against-delaunay');
+      const rt = guarded.report.candidates[0]?.changes?.retriangulation;
+      if (rt?.taken !== false || !(rt.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: ')) probes.push(`the post-pass under the inverted criterion: ${JSON.stringify(rt)}; required refused, naming MQ_SKINNING_RESIDUAL`);
+      if (vxRow(guarded)?.state !== 'pass') probes.push(`the guarded result reads ${skSaid(vxRow(guarded))}`);
+      const escaped = vxRun(input, { plant: 'post-pass-unchecked' }, 'flips-against-delaunay');
+      const ert = escaped.report.candidates[0]?.changes?.retriangulation;
+      if (ert?.taken !== true || vxRow(escaped)?.state !== 'fail') probes.push(`the plant (no recheck): pass ${JSON.stringify(ert?.taken)}, the result ${skSaid(vxRow(escaped))}; required taken and failing — else the recheck is not what holds it`);
+      const plain = reduceMesh(input);
+      const prt = plain.report.candidates[0]?.changes?.retriangulation;
+      if (vxRow(plain)?.state !== 'pass') probes.push(`the real post-pass leaves the result at ${skSaid(vxRow(plain))}`);
+      const held = probes.length === 0;
+      say(
+        'MQ141_THE_POST_PASS_IS_HELD_TO_THE_RESIDUAL_ON_THE_TRIANGULATION_IT_RETURNS_AND_REFUSED_WHOLE_BY_NAME',
+        held,
+        probeDetail(held, probes, `the ramp at maxResidual 1 with the post-pass: real pass ${prt?.taken ? 'taken' : 'refused'} (${prt?.flips} flips, residual ${vxRow(plain)?.value}); under the inverted criterion refused by "${rt?.refusedBy}" (${rt?.flips} flips), result ${vxRow(guarded)?.value}; without the recheck taken, result ${vxRow(escaped)?.value} — over the bound`),
+        'issue #1295 work 4: the post-pass is outside acceptedAt, and that is no reason for it to escape the bound — rechecked on the returned triangulation and refused as a whole',
+      );
+    });
+
+    // --- MQ142 (#1300): a memo hit is the bytes a fresh computation of its input writes, and a planted entry is caught ---
+    // The suite's memo hands one run to every control that reads its input, so the memo is itself a claim: that what it
+    // hands back is what computing that input again writes. Held on the ramp's strict reduction (MQ79's input), the key
+    // the most controls read, against `reduceMesh` called directly; and on the two ways a memo goes wrong, each planted in
+    // a memo of its own: another run stored under the key, and the stored run edited in place by a reader.
+    mcGuard('MQ142', () => {
+      const probes: string[] = [];
+      const input = mvReduceInput(mvSrc);
+      const key = meshCompareMemoKey('reduceMesh', input);
+      const fresh = (): ReturnType<typeof reduceMesh> => reduceMesh(input);
+      memoReduceMesh(input);
+      const hitsBefore = memo.hits;
+      const hit = memoReduceMesh(input);
+      if (memo.hits !== hitsBefore + 1) probes.push(`a second read of the key counted ${memo.hits - hitsBefore} hit(s); required 1, so the comparison below would not be of a hit`);
+      const freshBytes = reductionBytes(fresh());
+      if (reductionBytes(hit) !== freshBytes) probes.push(`the hit writes ${reductionBytes(hit).length} bytes that a fresh computation of the same input (${freshBytes.length} bytes) does not`);
+      // A planted run reaches no entry: the ramp's reduction with a plant, then its unplanted input read again.
+      const misses = memo.misses;
+      mvReduce({}, 'flips-without-opt-in');
+      if (memo.misses !== misses) probes.push('a planted run was stored');
+      const unplanted = mvReduce();
+      if (reductionBytes(unplanted) !== reductionBytes(mvFresh())) probes.push('after a planted run, the unplanted key reads other bytes than a fresh computation');
+      // Plant 1: another run — the same input cut at three candidates — stored under the key.
+      const swapped = new MeshCompareMemo();
+      swapped.plantEntry(key, reduceMesh(mvReduceInput(mvSrc, { budget: { maxCandidates: 3 } })), reductionBytes);
+      const swappedBytes = reductionBytes(swapped.run(key, reductionBytes, fresh));
+      const swapCaught = swappedBytes !== freshBytes;
+      if (!swapCaught) probes.push('the plant — another run stored under the key — reads as the fresh computation');
+      // Plant 2: the stored run's first vertex moved one px by a reader; the next read of the key must refuse it by name.
+      const edited = new MeshCompareMemo();
+      const stored = edited.run(key, reductionBytes, fresh);
+      if (stored.mesh !== null) stored.mesh.points[0] = [stored.mesh.points[0][0] + 1, stored.mesh.points[0][1]];
+      let refusal: string | null = null;
+      try {
+        edited.run(key, reductionBytes, fresh);
+      } catch (err) {
+        refusal = (err as Error).message;
+      }
+      if (refusal === null || !refusal.includes(key)) probes.push(`the plant — the stored run edited in place — was read back ${refusal === null ? 'without a refusal' : `with a refusal that does not name the key: ${refusal}`}`);
+      const held = probes.length === 0;
+      say(
+        'MQ142_CONTROL_A_MEMO_HIT_IS_BYTE_IDENTICAL_TO_A_FRESH_COMPUTATION_AND_A_PLANTED_OR_EDITED_ENTRY_IS_CAUGHT',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the ramp's strict reduction (MQ79's input): a hit writes the ${freshBytes.length} bytes reduceMesh writes on the same input called directly; a planted run stored nothing and the unplanted key still reads as a fresh run; ` +
+            `plants: the run cut at three candidates stored under the key — ${swapCaught ? `${swappedBytes.length} bytes, not the fresh computation's` : 'not caught'}; the stored mesh's first vertex moved 1 px — the next read refused, naming the key`,
+        ),
+        'issue #1300: the memo hands one run to every control that reads its input, so a wrong or edited entry would reach each of them with a green gate — a hit is held to a fresh computation, and each way an entry can be wrong has a plant here',
+      );
+    });
   });
 
-  mcGuard('MQ141', () => {
-    const probes: string[] = [];
-    // The post-pass rechecked on the returned triangulation: with the inverted flip criterion planted (#1283's plant —
-    // flips the residual reads), the pass is refused whole naming the residual; with the recheck planted away as well,
-    // the pass is taken and the result's own row fails — the escape the recheck closes.
-    const input = vxInput(mvSrc, 1, { retriangulate: 'delaunay' });
-    const guarded = vxRun(input, null, 'flips-against-delaunay');
-    const rt = guarded.report.candidates[0]?.changes?.retriangulation;
-    if (rt?.taken !== false || !(rt.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: ')) probes.push(`the post-pass under the inverted criterion: ${JSON.stringify(rt)}; required refused, naming MQ_SKINNING_RESIDUAL`);
-    if (vxRow(guarded)?.state !== 'pass') probes.push(`the guarded result reads ${skSaid(vxRow(guarded))}`);
-    const escaped = vxRun(input, { plant: 'post-pass-unchecked' }, 'flips-against-delaunay');
-    const ert = escaped.report.candidates[0]?.changes?.retriangulation;
-    if (ert?.taken !== true || vxRow(escaped)?.state !== 'fail') probes.push(`the plant (no recheck): pass ${JSON.stringify(ert?.taken)}, the result ${skSaid(vxRow(escaped))}; required taken and failing — else the recheck is not what holds it`);
-    const plain = reduceMesh(input);
-    const prt = plain.report.candidates[0]?.changes?.retriangulation;
-    if (vxRow(plain)?.state !== 'pass') probes.push(`the real post-pass leaves the result at ${skSaid(vxRow(plain))}`);
-    const held = probes.length === 0;
-    say(
-      'MQ141_THE_POST_PASS_IS_HELD_TO_THE_RESIDUAL_ON_THE_TRIANGULATION_IT_RETURNS_AND_REFUSED_WHOLE_BY_NAME',
-      held,
-      probeDetail(held, probes, `the ramp at maxResidual 1 with the post-pass: real pass ${prt?.taken ? 'taken' : 'refused'} (${prt?.flips} flips, residual ${vxRow(plain)?.value}); under the inverted criterion refused by "${rt?.refusedBy}" (${rt?.flips} flips), result ${vxRow(guarded)?.value}; without the recheck taken, result ${vxRow(escaped)?.value} — over the bound`),
-      'issue #1295 work 4: the post-pass is outside acceptedAt, and that is no reason for it to escape the bound — rechecked on the returned triangulation and refused as a whole',
-    );
-  });
-
+  // --- MQ143 (#1300): a unit run in its own process hands back what it prints in this one -----------------------------
+  // The units' claim is that `--jobs` decides where a unit runs and never what the suite prints. Held on one unit whose
+  // lines carry no clock and whose controls leave no share of the run state (MQ104–MQ105): its controls run again here,
+  // their lines taken rather than printed and their FAIL count taken back out, against what a `--unit` process ran for
+  // it — the batch's at `--jobs` above 1, one more process at `--jobs 1`. Each plant is a process's result as a fault
+  // in the hand-back would leave it: a line lost, the lines out of order, one FAIL more than it printed.
+  if (child === null) {
+    mcGuard('MQ143', () => {
+      const name: MeshCompareUnitName = 'MQ104-MQ105';
+      const probes: string[] = [];
+      const body = bodies.get(name);
+      if (body === undefined) throw new Error(`the suite never reached unit ${name}`);
+      const viaProcess = batch?.get(name) ?? (unitValues([{ kind: 'mesh-compare', unit: name }], 1)[0] as MeshCompareUnitResult);
+      const here = taken(name, body);
+      bad -= here.bad;
+      const sameAs = (r: MeshCompareUnitResult): string | null => {
+        if (JSON.stringify(r.lines) !== JSON.stringify(here.lines)) return `${r.lines.length} line(s) against the ${here.lines.length} it prints here${r.lines.length === here.lines.length ? ', in another order or spelling' : ''}`;
+        if (r.bad !== here.bad) return `${r.bad} FAIL(s) against the ${here.bad} it prints here`;
+        if (JSON.stringify(r.states) !== JSON.stringify(here.states)) return 'shares of the run state it does not leave here';
+        return null;
+      };
+      const own = sameAs(viaProcess);
+      if (own !== null) probes.push(`the ${batch === null ? '--unit process' : 'batch'} handed back ${own}`);
+      const nothing = runStates().map((st) => st.since(st.mark()));
+      if (JSON.stringify(here.states) !== JSON.stringify(nothing)) probes.push(`running ${name} again here left shares of the run state, so this control would have added them twice`);
+      const cases = here.lines.filter((l) => /^ {2}(PASS|FAIL) /.test(l)).length;
+      if (cases === 0) probes.push(`${name} printed no case line here, so there is nothing to compare`);
+      const plants: Array<[string, MeshCompareUnitResult]> = [
+        ['a line lost', { ...viaProcess, lines: viaProcess.lines.slice(0, -1) }],
+        ['the lines out of order', { ...viaProcess, lines: [...viaProcess.lines.slice(1), viaProcess.lines[0]] }],
+        ['one FAIL more', { ...viaProcess, bad: viaProcess.bad + 1 }],
+      ];
+      const caught = plants.map(([label, r]): string => `${label} — ${sameAs(r) ?? 'not caught'}`);
+      for (const [label, r] of plants) if (sameAs(r) === null) probes.push(`the plant — ${label} — reads as what the unit prints here`);
+      const held = probes.length === 0;
+      say(
+        'MQ143_CONTROL_A_UNIT_RUN_IN_ITS_OWN_PROCESS_HANDS_BACK_THE_LINES_FAIL_COUNT_AND_SHARES_IT_PRINTS_IN_THIS_ONE',
+        held,
+        probeDetail(held, probes, `unit ${name}: ${here.lines.length} line(s), ${cases} case(s), ${here.bad} FAIL(s) and no share of the run state, the same from a --unit process as run here; plants: ${caught.join('; ')}`),
+        'issue #1300: the units are only a cost change if where a unit ran decides nothing the suite prints, so one unit is run both ways on every run and the hand-back is held to it, line for line',
+      );
+    });
+    // Every unit was reached in the order `MESH_COMPARE_UNITS` lists, and each batch result printed once.
+    if (JSON.stringify(reached) !== JSON.stringify(MESH_COMPARE_UNITS)) throw new Error(`mesh-compare: the suite reached its units as [${reached.join(', ')}]; MESH_COMPARE_UNITS lists [${MESH_COMPARE_UNITS.join(', ')}]`);
+    if (batch !== null && replayed.length !== MESH_COMPARE_UNITS.length) throw new Error(`mesh-compare: ${replayed.length} of ${MESH_COMPARE_UNITS.length} unit results were printed`);
+  }
   rmSync(dir, { recursive: true, force: true });
   return bad;
 }
@@ -54219,7 +54703,8 @@ type SelftestUnitSpec =
   | AnchorUnitSpec
   | AllocateUnitSpec
   | { kind: 'core'; input: CoreUnitInput }
-  | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] };
+  | { kind: 'core-worker'; dir: string; shared: CoreUnitInput; units: CoreUnitName[] }
+  | { kind: 'mesh-compare'; unit: MeshCompareUnitName };
 
 /**
  * What `TY40`'s scratch unit hands back: how many MiB it held and the first
@@ -54344,6 +54829,7 @@ function unitSpecLabel(spec: SelftestUnitSpec, k: number, of: number): string {
   if (spec.kind === 'anchor-row') return `anchor row ${spec.set.name}/${spec.pageEdges}`;
   if (spec.kind === 'core') return `core unit ${spec.input.unit}`;
   if (spec.kind === 'core-worker') return `core worker ${k + 1} of ${of}`;
+  if (spec.kind === 'mesh-compare') return `mesh-compare unit ${spec.unit}`;
   return spec.label;
 }
 
@@ -124446,9 +124932,11 @@ function main(): void {
           ? coreUnitWork(spec.input)
           : spec.kind === 'core-worker'
             ? coreUnitWorker(spec)
-            : spec.kind === 'ty40-allocate'
-              ? allocateUnitWork(spec)
-              : selftestUnitWork(spec),
+            : spec.kind === 'mesh-compare'
+              ? meshCompareUnitWork(spec.unit)
+              : spec.kind === 'ty40-allocate'
+                ? allocateUnitWork(spec)
+                : selftestUnitWork(spec),
       ),
     );
     return;
@@ -124533,7 +125021,7 @@ function main(): void {
   tally.of('mesh-rasteriser', runMeshSuite);
   tally.of('mesh-outline', runMeshOutlineSuite);
   tally.of('mesh-quality', runMeshQualitySuite);
-  tally.of('mesh-compare', runMeshCompareSuite);
+  tally.of('mesh-compare', () => runMeshCompareSuite());
   // The corpus-dependent suites hand back `null` when their fixtures are absent,
   // which is how they tell the tally they did not run: the floor then requires
   // that they said so out loud instead of requiring cases they could not take.
