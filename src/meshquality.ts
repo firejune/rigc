@@ -71,7 +71,7 @@ import {
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
 import { allocationContrast, boundaryNecessityOnce, deformLoad, gradeMax, minAngleP10, type AllocationArt, type AllocationPlant } from './meshallocation.ts';
-import { skinningEchoOf, skinningResidual, validateSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
+import { skinningEchoOf, skinningResidual, validateSkinning, type ReductionSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
 import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
@@ -147,6 +147,16 @@ export interface ReductionTargets {
   minAngle?: number;
   /** Local density requirements — §5. */
   regions: RefinementRegion[];
+  /**
+   * Issue #1295 (§7 mechanism 1, the reducer half) — opt-in. Left out = no step reads a residual and the call is the
+   * one it was before the field existed, byte for byte. Set, every removal, boundary run and triangulation post-pass is
+   * taken only when `MQ_SKINNING_RESIDUAL` of its result against the call's own `source` — the original, never a
+   * previous step — is within `maxResidual` and every other required row passes; refinement insertions are not vetoed
+   * one by one, and the refined mesh is held to it before any removal. The result's measurement carries the row.
+   * `null` declares it absent (no row read by a step, the result's row `not-measurable` saying so); anything else that
+   * is not `{ envelope, maxResidual }` in full is refused `REDUCE_INPUT_MISSING` naming its path, before any work.
+   */
+  skinning?: ReductionSkinning | null;
 }
 
 /** P16/P17: a local density requirement over a closed polygon. */
@@ -2359,6 +2369,11 @@ function targetsJson(t: ReductionTargets | MeasureTargets | null): Json {
   const out: { [key: string]: Json } = { artFit: fitJson(t.artFit), maxBoundaryDeviation: t.maxBoundaryDeviation };
   if (t.minAngle !== undefined) out.minAngle = t.minAngle;
   out.regions = t.regions.map(regionJson);
+  // Issue #1295: a reduction's `targets.skinning`, echoed when the input set it — `null` included — and never otherwise.
+  if ('skinning' in t && t.skinning !== undefined) {
+    const k = t.skinning;
+    out.skinning = k === null ? null : { envelope: { reference: k.envelope.reference, bones: k.envelope.bones.map((b) => ({ bone: b.bone, linear: b.linear, pivot: pair(b.pivot), translation: b.translation })) }, maxResidual: k.maxResidual };
+  }
   return out;
 }
 
