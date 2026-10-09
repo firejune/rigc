@@ -50771,6 +50771,251 @@ function runMeshCompareSuite(): number {
         'issue #1283 (§8 Q4): a reader of the report has to know which triangulation it is holding and that a bisection over its steps finds a passing step, not the last — the report is where the consumer reads both',
       );
     });
+
+    // --- MQ106–MQ110 (#1287): the reduction carries motionAmplitude into the result's own measurement ---------------
+    // On MQ79's ramp (bones a and b, `idle` bending b by MV_BEND°, so θ = 2 sin(MV_BEND° / 2) is the fixture's own
+    // amplitude) and this section's traced boundary. Each claim is read off runs made here, and each predicate is also
+    // read on a plant that must make it fire (`AmplitudePlant`, a member of `ReductionPlant`): the amplitude not carried,
+    // an amplitude invented for a field left out or null, null passed on as left out, the field not validated, a
+    // measured row read as blocking a step, and a null echoed for a field left out.
+    const mvTheta = 2 * Math.sin((MV_BEND * Math.PI) / 360);
+    /** Every unordered pair of `bones` at θ, one track, ε 1 px, gradation 0.75 — no figure here is chosen by a result. */
+    const amplitudeOver = (bones: string[], theta: number): MotionAmplitude => {
+      const pairs: MotionAmplitude['tracks'][number]['pairs'] = [];
+      for (let i = 0; i < bones.length; i++) for (let j = i + 1; j < bones.length; j++) pairs.push({ bones: [bones[i], bones[j]], theta });
+      return { tracks: [{ track: 'idle', pairs, epsilon: 1 }], gradation: 0.75 };
+    };
+    const mvAmp = amplitudeOver(['a', 'b'], mvTheta);
+    const TWO_ROWS = ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'];
+    const resultRow = (r: AbRun, code: string): MeasureRow | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === code);
+    const rowSaid = (x: MeasureRow | undefined): string => (x === undefined ? 'absent' : x.state === 'not-measurable' ? `not-measurable (${x.reason})` : `${x.state} ${x.value}`);
+    /** The report's text with the echo, the two amplitude rows and the section summaries taken out: what the field may not move. */
+    const beyondTheRows = (r: AbRun): string => {
+      const doc = JSON.parse(writeMeshQualityReport(r.report));
+      delete doc.effective.motionAmplitude;
+      for (const c of doc.candidates) {
+        if (c.geometry === null || c.geometry === undefined) continue;
+        c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => !TWO_ROWS.includes(x.code));
+        delete c.geometry.summary;
+      }
+      return JSON.stringify(doc) + JSON.stringify(r.mesh);
+    };
+
+    mcGuard('MQ106', () => {
+      const probes: string[] = [];
+      const on = mvReduce({ motionAmplitude: mvAmp });
+      const twice = mvReduce({ motionAmplitude: amplitudeOver(['a', 'b'], 2 * mvTheta) });
+      const load = resultRow(on, 'MQ_DEFORM_LOAD');
+      const load2 = resultRow(twice, 'MQ_DEFORM_LOAD');
+      const contrast = resultRow(on, 'MQ_ALLOCATION_CONTRAST');
+      if (load?.state !== 'undeclared' || load.bound !== null || !((load.value ?? 0) > 0)) probes.push(`MQ_DEFORM_LOAD ${rowSaid(load)}; required undeclared, no bound, above 0`);
+      if (contrast === undefined || (contrast.state !== 'undeclared' && (contrast.reason ?? '').includes('motionAmplitude'))) probes.push(`MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; required measured, or not-measurable for a reason other than the amplitude`);
+      // The load is L · Δshare · θ / 4 per edge, so doubling every θ doubles it — to the r6 grid each side is read on.
+      if (load?.value == null || load2?.value == null || Math.abs(load2.value - 2 * load.value) > 2e-6 || load2.value === load.value) probes.push(`MQ_DEFORM_LOAD at θ ${r6(mvTheta)} is ${load?.value} and at 2θ ${load2?.value}; required twice the first, to 2e-6`);
+      // What a caller reads on the report is what measuring the returned mesh a second time with the amplitude reads.
+      const m = on.mesh;
+      if (m === null) probes.push(`no mesh returned (${JSON.stringify(on.report.termination)})`);
+      else {
+        const base = mvReduceInput(mvSrc);
+        const again = measureMeshQuality({
+          id: 'result',
+          attachment: base.attachment,
+          art: base.art,
+          source: { points: m.points, uvs: m.uvs, triangles: m.triangles, hull: m.hull, weights: m.weights },
+          targets: { artFit: base.targets.artFit, maxBoundaryDeviation: base.targets.maxBoundaryDeviation, regions: base.targets.regions },
+          referenceHull: mvSrc.points.slice(0, mvSrc.hull),
+          minArtSamples: base.minArtSamples,
+          regionArtSamples: base.regionArtSamples,
+          protect: base.protect,
+          influences: base.influences,
+          boneOrder: base.boneOrder,
+          preset: base.preset,
+          motionAmplitude: mvAmp,
+        });
+        for (const code of TWO_ROWS) {
+          const mine = JSON.stringify(resultRow(on, code));
+          const its = JSON.stringify(again.candidates[0]?.geometry?.rows.find((x) => x.code === code));
+          if (mine !== its) probes.push(`${code} on the report is ${mine}; measuring the returned mesh with the amplitude reads ${its}`);
+        }
+      }
+      // A18: one input, one text — again, and with the amplitude's keys built in another order.
+      const reordered: MotionAmplitude = { gradation: mvAmp.gradation, tracks: mvAmp.tracks.map((t) => ({ epsilon: t.epsilon, pairs: t.pairs.map((p) => ({ theta: p.theta, bones: p.bones })), track: t.track })) };
+      if (bytesOf(mvReduce({ motionAmplitude: mvAmp })) !== bytesOf(on)) probes.push('a second call with the same amplitude wrote other bytes');
+      if (bytesOf(mvReduce({ motionAmplitude: reordered })) !== bytesOf(on)) probes.push('the amplitude with its keys in another order wrote other bytes');
+      const planted = resultRow(mvReduce({ motionAmplitude: mvAmp }, 'amplitude-not-carried'), 'MQ_DEFORM_LOAD');
+      if (planted?.state !== 'not-measurable') probes.push(`the plant — the amplitude not carried to the result's measurement — reads MQ_DEFORM_LOAD ${rowSaid(planted)}`);
+      const held = probes.length === 0;
+      say(
+        'MQ106_WITH_MOTION_AMPLITUDE_THE_REDUCTIONS_REPORT_MEASURES_THE_DEFORM_LOAD_AS_THE_RETURNED_MESH_MEASURES_AND_IT_SCALES_WITH_THETA',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the ramp under θ ${r6(mvTheta)} (MV_BEND ${MV_BEND}°): MQ_DEFORM_LOAD ${rowSaid(load)}, at 2θ ${load2?.value}; MQ_ALLOCATION_CONTRAST ${rowSaid(contrast)}; both rows equal to measuring the returned mesh with the amplitude; one text for one input in any key order; the plant (not carried): MQ_DEFORM_LOAD ${planted?.state}`,
+        ),
+        'issue #1287: the card exists so a caller reads the two weight-aware rows on the reduction\'s own report instead of measuring the returned mesh a second time — so the report has to read what that second measurement reads, and read the amplitude it was given',
+      );
+    });
+
+    mcGuard('MQ107', () => {
+      const probes: string[] = [];
+      const off = mvReduce();
+      const nul = mvReduce({ motionAmplitude: null });
+      const leftOut = 'motionAmplitude is not declared (the field is left out)';
+      const absent = 'motionAmplitude is declared absent (null)';
+      for (const code of TWO_ROWS) {
+        const a = resultRow(off, code);
+        const b = resultRow(nul, code);
+        if (a?.state !== 'not-measurable' || !(a.reason ?? '').includes(leftOut)) probes.push(`left out: ${code} ${rowSaid(a)}; required not-measurable naming the field left out`);
+        if (b?.state !== 'not-measurable' || !(b.reason ?? '').includes(absent)) probes.push(`null: ${code} ${rowSaid(b)}; required not-measurable saying it is declared absent`);
+      }
+      const invented = resultRow(mvReduce({}, 'amplitude-invented'), 'MQ_DEFORM_LOAD');
+      if (invented?.state === 'not-measurable') probes.push('the plant — an amplitude invented for a field left out — still reads not-measurable');
+      const nulled = resultRow(mvReduce({ motionAmplitude: null }, 'null-read-as-left-out'), 'MQ_DEFORM_LOAD');
+      if ((nulled?.reason ?? '').includes(absent)) probes.push('the plant — null passed on as the field left out — still says declared absent');
+      const held = probes.length === 0;
+      say(
+        'MQ107_WITHOUT_MOTION_AMPLITUDE_OR_WITH_IT_NULL_THE_TWO_ROWS_ARE_NOT_MEASURABLE_NAMING_WHICH',
+        held,
+        probeDetail(held, probes, `the ramp, left out: ${rowSaid(resultRow(off, 'MQ_DEFORM_LOAD'))}; null: ${rowSaid(resultRow(nul, 'MQ_DEFORM_LOAD'))}; plants: invented — ${rowSaid(invented)}; null read as left out — ${rowSaid(nulled)}`),
+        'issue #1287 (as #1280 for a measurement): no amplitude is assumed, and undefined is not null — a caller reading the report has to see which of the two it sent',
+      );
+    });
+
+    mcGuard('MQ108', () => {
+      const probes: string[] = [];
+      const seen: string[] = [];
+      const refusalOf = (input: MeshReductionInput, plant: ReductionPlant | null = null): string | null => {
+        try {
+          const rasters = artRastersOf(input.art);
+          reduceMeshWith(input, rasters, stepRastersOf(rasters), plant);
+          return null;
+        } catch (err) {
+          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+          return `(not a MeshReductionError) ${(err as Error).message}`;
+        }
+      };
+      const measuredRefusal = (amplitude: unknown): string | null => {
+        const base = mvReduceInput(mvSrc);
+        try {
+          measureMeshQuality({ id: 'source', attachment: base.attachment, art: base.art, source: mvSrc, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] }, referenceHull: null, minArtSamples: 1, regionArtSamples: [], protect: null, influences: base.influences, boneOrder: base.boneOrder, preset: null, motionAmplitude: amplitude as MotionAmplitude });
+          return null;
+        } catch (err) {
+          return err instanceof MeshReductionError ? `${err.code} ${err.message}` : (err as Error).message;
+        }
+      };
+      // Budget 0, so the work is one admission; and a source the admission refuses, so no measurement after it reads the field.
+      const cheap = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), motionAmplitude: amplitude }) as MeshReductionInput;
+      const refusedSource = (amplitude: unknown): MeshReductionInput => ({ ...mvReduceInput({ ...mvSrc, hull: mvSrc.hull - 1 }), motionAmplitude: amplitude }) as MeshReductionInput;
+      const track = (over: Record<string, unknown>): unknown => ({ tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: 0.1 }], epsilon: 1, ...over }], gradation: 0.75 });
+      const wrongs: unknown[] = [
+        'idle',
+        1,
+        [],
+        {},
+        { gradation: 0.75 },
+        { tracks: 'idle', gradation: 0.75 },
+        { tracks: [], gradation: -1 },
+        { tracks: [], gradation: Infinity },
+        track({ track: '' }),
+        track({ epsilon: 0 }),
+        track({ pairs: [{ bones: ['a', 'a'], theta: 0.1 }] }),
+        track({ pairs: [{ bones: ['a'], theta: 0.1 }] }),
+        track({ pairs: [{ bones: ['a', 'b'], theta: -0.1 }] }),
+        track({ pairs: [{ bones: ['a', 'b'] }] }),
+      ];
+      for (const wrong of wrongs) {
+        const said = refusalOf(cheap(wrong));
+        const early = refusalOf(refusedSource(wrong));
+        const its = measuredRefusal(wrong);
+        if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('motionAmplitude')) probes.push(`${JSON.stringify(wrong)}: ${said ?? 'accepted'}; required REDUCE_INPUT_MISSING naming motionAmplitude`);
+        else if (said !== its) probes.push(`${JSON.stringify(wrong)}: the reduction says "${said}", the measurement "${its}"; required the same words`);
+        else if (early !== said) probes.push(`${JSON.stringify(wrong)} on a source the admission refuses: ${early ?? 'accepted'}; required the same refusal, before any work`);
+        else seen.push(said.slice(said.indexOf('motionAmplitude'), said.indexOf(' is ', said.indexOf('motionAmplitude'))));
+      }
+      for (const right of [undefined, null, mvAmp, { tracks: [], gradation: 0 }]) {
+        const said = refusalOf(cheap(right));
+        if (said !== null) probes.push(`${JSON.stringify(right)} was refused: ${said}`);
+      }
+      const planted = refusalOf(refusedSource('idle'), 'amplitude-unvalidated');
+      if (planted !== null) probes.push(`the plant — the field not validated by the reduction — still refused "idle" on a source the admission refuses: ${planted}`);
+      const held = probes.length === 0;
+      say(
+        'MQ108_A_MOTION_AMPLITUDE_THAT_IS_NOT_ONE_IS_REFUSED_BY_THE_REDUCTION_BEFORE_ANY_WORK_NAMING_ITS_PATH_IN_THE_MEASUREMENTS_WORDS',
+        held,
+        probeDetail(held, probes, `${seen.length} of ${wrongs.length} values refused REDUCE_INPUT_MISSING naming ${[...new Set(seen)].join(', ')} — the measurement's words, also on a source the admission refuses; left out, null, the ramp's amplitude and an empty one admitted; the plant (not validated): ${planted ?? 'accepted'}`),
+        'issue #1287: a malformed amplitude is refused as every other input is, by name — and before the admission, because a call whose source is refused never reaches the one measurement that reads the field, so a check left to that measurement would accept it',
+      );
+    });
+
+    mcGuard('MQ109', () => {
+      const probes: string[] = [];
+      const abAmp = amplitudeOver(['root', 'a', 'b', 'c'], mvTheta);
+      const subjects: Array<[string, Partial<MeshReductionInput>, (over: Partial<MeshReductionInput>, plant?: ReductionPlant | null) => AbRun, MotionAmplitude]> = [
+        ['the ramp', {}, (o, p = null) => mvReduce(o, p), mvAmp],
+        ['the ramp, retriangulate', delaunay, (o, p = null) => mvReduce(o, p), mvAmp],
+        ['the ramp, removalOrder', byLoad, (o, p = null) => mvReduce(o, p), mvAmp],
+        ['the traced boundary, boundary runs', { boundaryRuns: abRuns }, (o, p = null) => abReduce(o, p), abAmp],
+      ];
+      const steps = (r: AbRun): string => JSON.stringify([r.report.termination, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.accepted, r.report.candidates[0]?.geometry?.verdict]);
+      for (const [label, over, go, amp] of subjects) {
+        const off = go(over);
+        const on = go({ ...over, motionAmplitude: amp });
+        const nul = go({ ...over, motionAmplitude: null });
+        if (JSON.stringify(on.mesh) !== JSON.stringify(off.mesh)) probes.push(`${label}: the mesh moved under the field`);
+        if (steps(on) !== steps(off)) probes.push(`${label}: the termination, acceptedAt, acceptance or verdict moved under the field`);
+        if (beyondTheRows(on) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under the field`);
+        if (beyondTheRows(nul) !== beyondTheRows(off)) probes.push(`${label}: a byte beyond the two rows, the echo and the summaries moved under null`);
+        if (/"motionAmplitude"/.test(writeMeshQualityReport(off.report))) probes.push(`${label}: the call without the field writes a motionAmplitude key`);
+      }
+      // The decision measured out of suite: carrying the amplitude into every measurement of the call — the admission,
+      // each step, the post-pass — writes the same bytes as carrying it into the result's own only.
+      for (const over of [{}, delaunay]) {
+        const final = mvReduce({ ...over, motionAmplitude: mvAmp });
+        if (bytesOf(mvReduce({ ...over, motionAmplitude: mvAmp }, 'amplitude-every-measurement')) !== bytesOf(final)) probes.push(`${JSON.stringify(over)}: the amplitude in every measurement wrote other bytes than in the result's alone`);
+      }
+      const gated = mvReduce({ motionAmplitude: mvAmp }, 'amplitude-gates-steps');
+      const plain = mvReduce();
+      const plantSaid = JSON.stringify(gated.mesh) === JSON.stringify(plain.mesh) ? null : `kept ${gated.mesh?.points.length ?? 'no mesh'} vertices against ${plain.mesh?.points.length}, ${JSON.stringify(gated.report.termination)}`;
+      if (plantSaid === null) probes.push('the plant — a measured row read as blocking a step — returns the mesh of the call without the field');
+      const held = probes.length === 0;
+      say(
+        'MQ109_THE_FIELD_MOVES_NO_STEP_NO_MESH_AND_NO_BYTE_BEYOND_THE_TWO_ROWS_AND_ITS_ECHO_AND_EVERY_MEASUREMENT_CARRYING_IT_WRITES_THE_SAME',
+        held,
+        probeDetail(held, probes, `${subjects.map(([l]) => l).join('; ')}: with the field and with null, the mesh, termination, acceptedAt, acceptance and every byte but the two rows, the echo and the summaries those of the call without it, which writes no motionAmplitude key; the amplitude in every measurement wrote the bytes of the result's alone, with and without retriangulate; the plant (a measured row blocking a step): ${plantSaid}`),
+        'issue #1287: both rows are undeclared, so the field may change what the report reads and nothing the reduction does — the bytes of a call without it against the tree before it are measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8), as for MQ93 and MQ100, and this holds the shape that comparison projected',
+      );
+    });
+
+    mcGuard('MQ110', () => {
+      const probes: string[] = [];
+      const echoOf = (r: AbRun): { has: boolean; value: unknown; keys: string[] } => {
+        const e = JSON.parse(writeMeshQualityReport(r.report)).effective;
+        return { has: Object.prototype.hasOwnProperty.call(e, 'motionAmplitude'), value: e.motionAmplitude, keys: Object.keys(e) };
+      };
+      const canonical = JSON.stringify({ tracks: mvAmp.tracks.map((t) => ({ track: t.track, pairs: t.pairs.map((p) => ({ bones: p.bones, theta: p.theta })), epsilon: t.epsilon })), gradation: mvAmp.gradation });
+      const off = echoOf(mvReduce());
+      const nul = echoOf(mvReduce({ motionAmplitude: null }));
+      const set = echoOf(mvReduce({ motionAmplitude: mvAmp }));
+      const noMesh = mvReduce({ source: { ...mvSrc, hull: mvSrc.hull - 1 }, motionAmplitude: mvAmp });
+      const refused = echoOf(noMesh);
+      const all = echoOf(mvReduce({ stopAfterAccepted: 3, boundaryRuns: { maxVertices: 2 }, motionAmplitude: mvAmp, ...delaunay, ...byLoad }));
+      if (off.has) probes.push(`left out: effective.motionAmplitude is ${JSON.stringify(off.value)}; required no key`);
+      if (!nul.has || nul.value !== null) probes.push(`null: effective.motionAmplitude ${nul.has ? JSON.stringify(nul.value) : 'absent'}; required null`);
+      if (!set.has || JSON.stringify(set.value) !== canonical) probes.push(`set: effective.motionAmplitude ${JSON.stringify(set.value)}; required ${canonical}`);
+      if (noMesh.mesh !== null || JSON.stringify(refused.value) !== canonical) probes.push(`a call that returns no mesh: effective.motionAmplitude ${JSON.stringify(refused.value)}; required the amplitude echoed`);
+      const order = all.keys.filter((k) => ['stopAfterAccepted', 'boundaryRuns', 'motionAmplitude', 'retriangulate', 'removalOrder'].includes(k)).join(',');
+      if (order !== 'stopAfterAccepted,boundaryRuns,motionAmplitude,retriangulate,removalOrder') probes.push(`every optional echo set: they are written as ${order}`);
+      const planted = echoOf(mvReduce({}, 'echo-when-unset'));
+      if (!planted.has) probes.push('the plant — null echoed for a field left out — writes no key');
+      const held = probes.length === 0;
+      say(
+        'MQ110_THE_REDUCTION_ECHOES_MOTION_AMPLITUDE_ONCE_EXACTLY_WHEN_SET_NULL_INCLUDED_AND_ALSO_WHEN_NO_MESH_IS_RETURNED',
+        held,
+        probeDetail(held, probes, `left out: no key; null: null; set: the amplitude in its own key order, also on a call the admission refuses (${noMesh.report.termination?.reason}); with every optional field set: ${order}; the plant (null echoed when left out): ${JSON.stringify(planted.value)}`),
+        'issue #1287 (correction 1): every input is echoed with its structure, and a field left out is not a field set to null — the echo is how a report says which amplitude its two rows were read under',
+      );
+    });
   });
 
   rmSync(dir, { recursive: true, force: true });

@@ -273,6 +273,16 @@ export interface MeshReductionInput {
    * refused.
    */
   removalOrder?: 'deformation-load';
+  /**
+   * The motion amplitude the two weight-aware allocation rows read (issue #1287) — `MeshMeasureInput.motionAmplitude`,
+   * the same shape and the same handling: left out, it is not declared; `null` declares it absent; anything else that
+   * is not a `MotionAmplitude` in full is refused `REDUCE_INPUT_MISSING` naming its path, before any work. Set, the
+   * result's measurement reads it, so `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD` are measured on the report rather
+   * than `not-measurable`; it is echoed in `effective` (`null` included). It declares no bound — both rows stay
+   * `undeclared` — and no step reads it: the admission, every step and the post-pass are measured without it, so the
+   * mesh, `acceptedAt`, the termination and every other row are the call's without it (docs/MESH_REDUCTION.md §8).
+   */
+  motionAmplitude?: MotionAmplitude | null;
 }
 
 /**
@@ -584,7 +594,7 @@ export interface EffectiveSettings {
   stopAfterAccepted?: number;
   /** A reduction's `boundaryRuns`, echoed when the input set it (issue #1279); absent otherwise. */
   boundaryRuns?: BoundaryRuns;
-  /** A measurement's `motionAmplitude`, echoed when the input set it — `null` included (issue #1280); absent otherwise. */
+  /** A measurement's or a reduction's `motionAmplitude`, echoed when the input set it — `null` included (issues #1280, #1287); absent otherwise. */
   motionAmplitude?: MotionAmplitude | null;
   /** A reduction's `retriangulate`, echoed when the input set it (issue #1283); absent otherwise. */
   retriangulate?: 'delaunay';
@@ -842,11 +852,16 @@ function validateInput(input: MeshMeasureInput): void {
   if (input.preset !== null && (!isObject(input.preset) || typeof input.preset.name !== 'string' || typeof input.preset.version !== 'string')) {
     refuse('REDUCE_INPUT_MISSING', `${who}: preset is not { name, version }; required that, or null`);
   }
-  validateAmplitude(who, input.motionAmplitude);
+  validateMotionAmplitude(who, input.motionAmplitude);
 }
 
-/** Issue #1280: `motionAmplitude` left out or `null` is accepted as it stands; anything else is a `MotionAmplitude` in full. */
-function validateAmplitude(who: string, amplitude: unknown): void {
+/**
+ * Issue #1280: `motionAmplitude` left out or `null` is accepted as it stands; anything else is a `MotionAmplitude` in
+ * full, else refused `REDUCE_INPUT_MISSING` naming the path. `reduceMesh` refuses its own field with it before any work
+ * (issue #1287), so a reduction and a measurement refuse one value in the same words. Internal, as
+ * `measureMeshQualityWith` is: on `rig-c/mesh` only through `export *`.
+ */
+export function validateMotionAmplitude(who: string, amplitude: unknown): void {
   if (amplitude === undefined || amplitude === null) return;
   const shape = '{ tracks: [{ track, pairs: [{ bones: [a, b], theta }], epsilon }], gradation }';
   if (!isObject(amplitude) || !Array.isArray(amplitude.tracks)) refuse('REDUCE_INPUT_MISSING', `${who}: motionAmplitude is ${JSON.stringify(amplitude)}; required ${shape}, null, or the field left out`);
