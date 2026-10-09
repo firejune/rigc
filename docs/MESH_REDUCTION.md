@@ -1,7 +1,11 @@
 # Mesh reduction and topology-independent measurement — the shared contract
 
+> The dependant is **rig-parts** (named spine-parts until 2026-10-09; its GitHub
+> URLs redirect, its issue numbers are unchanged, and the versions this page
+> cites were released under the old name).
+>
 > **Revision 2.** Agreed against
-> [spine-parts#126, comment 6041707537](https://github.com/firejune/spine-parts/issues/126#issuecomment-6041707537),
+> [rig-parts#126, comment 6041707537](https://github.com/firejune/rig-parts/issues/126#issuecomment-6041707537),
 > which answers P1–P20 and lists five contract corrections, read at parts
 > `836ffb1` and rigc `2af8693`. Revision 1 (PR #1222) asked the questions; this
 > revision records the answers, folds each into the interface it changes, and
@@ -10,7 +14,7 @@
 > repository has implemented it, and neither does this page.
 
 Stage A of [#1221](https://github.com/firejune/rigc/issues/1221), the upstream
-half of [spine-parts#126](https://github.com/firejune/spine-parts/issues/126).
+half of [rig-parts#126](https://github.com/firejune/rig-parts/issues/126).
 It is the contract both repositories agree on *before* any of stages B–D is
 written. **Stage B1 ([#1224](https://github.com/firejune/rigc/issues/1224))
 implements the geometry measurement** — `measureMeshQuality` and the
@@ -34,8 +38,8 @@ not in the conversation that produced it can tell five things apart:
   line number, because line numbers move with nothing going red. Every
   existing number below was read off the source at v2.17.1, not restated from
   memory or from the issue. Facts about parts are cited the same way, as
-  `spine-parts src/<file>` plus a symbol, and were read at parts `836ffb1`.
-- **[agreed, spine-parts#126]** — decided by parts in the comment above. Each
+  `rig-parts src/<file>` plus a symbol, and were read at parts `836ffb1`.
+- **[agreed, rig-parts#126]** — decided by parts in the comment above. Each
   decision keeps its question number (**P1 … P20**) so the trail from question
   to answer survives.
 - **[proposal]** — rigc's answer to something parts did not decide. Still
@@ -116,7 +120,7 @@ policy from a name.
   `src/meshquality.ts`, `src/meshreduce.ts` and — since stage C1 —
   `src/meshcompare.ts` names any of the three operations, so
   nothing a build reaches calls them.
-- [agreed, spine-parts#126] **P1 — `rig-c/meshcompare` is accepted.**
+- [agreed, rig-parts#126] **P1 — `rig-c/meshcompare` is accepted.**
   Geometry-only operations (`reduceMesh`, `measureMeshQuality`) are exported
   from `rig-c/mesh`, which stays geometry-only; the motion comparison
   (`compareMeshesInMotion`) is exported from the new named entry
@@ -133,7 +137,7 @@ policy from a name.
   with the runtime taken away (`MQ45`, *Stage A controls*). The
   `drop-meshcompare-entry` plant takes the key out of the packed map and has
   to go red at those steps alone, naming the entry.
-- [agreed, spine-parts#126] **P2 — the core poser is sufficient for the
+- [agreed, rig-parts#126] **P2 — the core poser is sufficient for the
   initial production interface.** `compareMeshesInMotion` poses through rigc's
   core over the model document; no parts consumer gains a spine-core
   dependency, and a second poser backend is not a prerequisite. The report
@@ -183,12 +187,12 @@ not disturb them).
 
 | Fact | Where |
 | --- | --- |
-| Parts's art is alpha **above** `ART_ALPHA = 8` — the same pixel set as rigc's `>= 9` | spine-parts `src/mesh.ts`, `ART_ALPHA`; its `artMask` in spine-parts `src/contour.ts` tests `alpha > threshold` |
-| The contour fit hands rigc `threshold + 1` so rigc's `>=` reads parts's `>` | spine-parts `src/contour.ts`, `contourFit` calling `measureAuthoredMeshFit`, reached from `contourMesh` (the answer names the caller `assertContourFit`; no symbol of that name exists at `836ffb1`, and `contourFit` is the one that makes the call) |
-| Rig-space regions are translated to part-local coordinates before the contour mesh is built | spine-parts `src/rig.ts`, the `contourAttachment` closure, mapping each region by the part origin before `contourMesh` |
-| The minimum weight is applied inside the segment shares and **not** again to a region's scaled shares, so the declared ramp has no step | spine-parts `src/localweights.ts`, `localInfluences` and its header *The vertex's weights* ("The floor") |
+| Parts's art is alpha **above** `ART_ALPHA = 8` — the same pixel set as rigc's `>= 9` | rig-parts `src/mesh.ts`, `ART_ALPHA`; its `artMask` in rig-parts `src/contour.ts` tests `alpha > threshold` |
+| The contour fit hands rigc `threshold + 1` so rigc's `>=` reads parts's `>` | rig-parts `src/contour.ts`, `contourFit` calling `measureAuthoredMeshFit`, reached from `contourMesh` (the answer names the caller `assertContourFit`; no symbol of that name exists at `836ffb1`, and `contourFit` is the one that makes the call) |
+| Rig-space regions are translated to part-local coordinates before the contour mesh is built | rig-parts `src/rig.ts`, the `contourAttachment` closure, mapping each region by the part origin before `contourMesh` |
+| The minimum weight is applied inside the segment shares and **not** again to a region's scaled shares, so the declared ramp has no step | rig-parts `src/localweights.ts`, `localInfluences` and its header *The vertex's weights* ("The floor") |
 
-**Thresholds — the agreed rule.** [agreed, spine-parts#126]
+**Thresholds — the agreed rule.** [agreed, rig-parts#126]
 
 - **The existing parts path is alpha `> 8`, rigc `>= 9`, and stays
   byte-identical.** Nothing in this contract changes it.
@@ -233,7 +237,7 @@ export interface ArtInput {
   frame: SourceFrame;
 }
 
-/** [agreed, spine-parts#126] P3: the caller authors in drawing pixels, part-local, y down. */
+/** [agreed, rig-parts#126] P3: the caller authors in drawing pixels, part-local, y down. */
 export interface SourceFrame {
   space: 'part-local-drawing-px-y-down';
   /** The part window in drawing pixels. */
@@ -304,7 +308,7 @@ export interface ReductionTargets {
 }
 ```
 
-- [agreed, spine-parts#126 items 4–5; #1254] **A distance bound may be
+- [agreed, rig-parts#126 items 4–5; #1254] **A distance bound may be
   declared absent.** `ArtFitBounds.maxOvershoot` and `maxUndercut` accept
   `null` wherever an `ArtFitBounds` is read — `reduceMesh`'s `sourceBounds`
   and `targets.artFit`, `measureMeshQuality`'s `targets.artFit`, and
@@ -330,7 +334,7 @@ export interface ReductionTargets {
   caller saying "measure this, do not bound it" — so only it is accepted. The
   widening is additive: an input that declares numbers is read exactly as
   before (the replay below).
-- [agreed, spine-parts#126] **P3 — inputs are authored in drawing pixels.**
+- [agreed, rig-parts#126] **P3 — inputs are authored in drawing pixels.**
   Parts resolves every input to part-local drawing pixels, y down, before the
   call. Packing scale never changes the authored quality requirement: a bound
   stated in drawing pixels means the same art on any page. The report echoes
@@ -345,7 +349,7 @@ export interface ReductionTargets {
   a step is held to is read by `measureMeshQuality`, which carries a point to
   the mask's grid as above, so the reduction and the measurement cannot
   disagree about a unit.
-- [agreed, spine-parts#126] **P5 — presets are parts's.** A preset is
+- [agreed, rig-parts#126] **P5 — presets are parts's.** A preset is
   explicitly selected, versioned and expanded into numbers before the call;
   the report echoes its name, version and every expanded number. rigc
   publishes no preset table and derives no tolerance from an image. Existing
@@ -522,7 +526,7 @@ export interface WorstSample {
   frame?: FrameRef;
 }
 
-/** [agreed, spine-parts#126] P7/P11: a frame is named by a stable id that carries animation, phase and time. */
+/** [agreed, rig-parts#126] P7/P11: a frame is named by a stable id that carries animation, phase and time. */
 export interface FrameRef {
   /** `setup`, or `<animation>@<phase>@<time on the r6 grid>`; the same frame has the same id in every report. */
   id: string;
@@ -620,7 +624,7 @@ export interface MeshCounts {
 - [implemented, #1224] **Bounds are inclusive**, and a value exactly at its
   bound passes and carries `nearBound: 'at-bound'` (correction 2: boundary
   equality is handled explicitly, not left to a float comparison's mood).
-- [agreed, spine-parts#126] **P6 — `accepted` stays, defined narrowly as
+- [agreed, rig-parts#126] **P6 — `accepted` stays, defined narrowly as
   declared-contract acceptance.** A candidate is `accepted` when its geometry
   section's verdict is `pass`, every required measurement is available (no
   required row `not-measurable` or `refused`), and — when `motionRequired` —
@@ -631,7 +635,7 @@ export interface MeshCounts {
   motion verdict of anything but `pass` — including `not-measured` —
   `accepted` is false. Choosing among candidates and production acceptance
   remain parts's.
-- [agreed, spine-parts#126] **P7 — each row carries its worst value and
+- [agreed, rig-parts#126] **P7 — each row carries its worst value and
   location, plus counts and the effective settings**; a per-frame table is
   opt-in (`CandidateReport.perFrame`) for diagnostics. Every worst motion
   sample names its frame by `FrameRef.id`, which carries the phase and a
@@ -749,7 +753,7 @@ export interface MotionSchedule {
   containing triangle has the same corners at nonzero weight, one or two of
   them — so two triangles that meet at one place through duplicated vertices are
   refused, not excused; the band is `areaBand` over the UVs.
-- [agreed, spine-parts#126] **P9 — `minArtSamples` is an explicit positive
+- [agreed, rig-parts#126] **P9 — `minArtSamples` is an explicit positive
   integer input with no hidden rigc constant.** [proposal] It is stated **per
   attachment** (required) and **per region** (required for every region whose
   rows are required); the report states the observed count separately for each
@@ -806,7 +810,7 @@ export interface MotionSchedule {
   map is claimed for it. Where no single
   declared map exists for an attachment, the conversion is reported as
   `refused` with a reason and the world-space row stands alone.
-- [agreed, spine-parts#126] **P10 — no warm-up in v1.** Physics resets and
+- [agreed, rig-parts#126] **P10 — no warm-up in v1.** Physics resets and
   steps from time 0, consistently for every candidate, with core-gate and
   render semantics as the baseline. `mode` and `dt` are required whenever any
   physics constraint is active. `warmupSteps: 0` is supported; any other value
@@ -815,7 +819,7 @@ export interface MotionSchedule {
   [implemented, #1230] `warmupSteps` other than 0 is refused before any
   document is read (`MQ41`); `mode: 'none'` on a reference that declares a
   physics constraint is `COMPARE_INPUT_MISSING`.
-- [agreed, spine-parts#126] **P11 — parts supplies the schedule and the
+- [agreed, rig-parts#126] **P11 — parts supplies the schedule and the
   selection membership; rigc invents no split.** Frames are named by
   `FrameRef.id` (animation, phase and time). The report keeps
   selection-only and held-out results apart, and a frame used for candidate
@@ -828,7 +832,7 @@ export interface MotionSchedule {
   walk is refused by name rather than read as held out; each motion row carries
   its reading per role, `heldOut` null with no held-out frame, and the
   schedule's `heldOutClaim` is false then (`MQ42`).
-- [agreed, spine-parts#126] **P8 — the reference is the unreduced,
+- [agreed, rig-parts#126] **P8 — the reference is the unreduced,
   independently gated source mesh.** It may be generated by the automatic
   pipeline; a reference game's mesh or vertex count is not an input. A
   candidate-to-candidate comparison may be reported as a diagnostic and never
@@ -957,7 +961,7 @@ defined here, with these readings of what the table leaves open:
 | `MQ_INVERSION` | triangles whose sign changes setup to posed frame, A39's rule; slots in `invariants.deformMayFold` (`src/rig.ts`) not counted and **listed** (§3) | count | no |
 | `MQ_TRANSITION` | §5's edge bound across a region's transition band | px | no |
 
-- [agreed, spine-parts#126; implemented, #1224] **P12 — the new measurements use the tracer's
+- [agreed, rig-parts#126; implemented, #1224] **P12 — the new measurements use the tracer's
   8-connected background flood**, filled over **all** art (several islands, as
   the authored-mesh fit does). `measureAuthoredMeshFit` keeps its 4-connected
   behaviour unchanged for every existing caller, and no old report is
@@ -979,7 +983,7 @@ defined here, with these readings of what the table leaves open:
   should read the fit with `8`, or call `measureMeshQuality` directly** —
   with the default it is on the legacy ruler, and the two part exactly where a
   background pocket meets the outside only at a corner. On the recorded
-  sources that is spine-parts's `sample/hair_back`: 2 px with the default and
+  sources that is rig-parts's `sample/hair_back`: 2 px with the default and
   5.09902 px with `8`, which is `MQ_OVERSHOOT`'s figure for the same source; on
   the other 18 the three readings are one number. `MQ75` holds the default
   equal to an explicit 4 and to the labelled 4-connected row, `8` equal to
@@ -1006,7 +1010,7 @@ defined here, with these readings of what the table leaves open:
   no verdict, and neither increment bounds what shifting or resampling a
   whole boundary would do to the value — so it is not an error guarantee and
   the report never calls it one.
-- [agreed, spine-parts#126] **P14 — grid metadata plus that correctly typed
+- [agreed, rig-parts#126] **P14 — grid metadata plus that correctly typed
   flag is sufficient for the initial contract.** No second-resolution pass is
   mandatory for Stage B. The flag is not a resolution-invariance proof and
   does not close parts#123; optional finer-grid or phase diagnostics may
@@ -1060,7 +1064,7 @@ small `h` admits long sliver edges along a boundary, so it does not bound `L`;
 and `L` bounds `h` only loosely (`h <= L`, since any point of a triangle is
 within the triangle's diameter of every vertex; nothing sharper is claimed).
 
-- [agreed, spine-parts#126] **P15 — the guaranteed quantity is `L(R)`**: exact
+- [agreed, rig-parts#126] **P15 — the guaranteed quantity is `L(R)`**: exact
   on the emitted triangles, resolution-free and deterministic. It guarantees a
   **geometric density condition, not a numerical deformation-error bound by
   itself** — the motion measurement of §3 stays separate and is the only
@@ -1070,7 +1074,7 @@ within the triangle's diameter of every vertex; nothing sharper is claimed).
   and holds with no motion at all.
 
 ```ts
-/** [agreed, spine-parts#126] P16/P17. */
+/** [agreed, rig-parts#126] P16/P17. */
 export interface RefinementRegion {
   /** Caller's name, echoed in the report; rigc reads nothing into it. */
   name: string;
@@ -1087,7 +1091,7 @@ export interface RefinementRegion {
 }
 ```
 
-- [agreed, spine-parts#126] **P16 — linear grade.** In a region's band,
+- [agreed, rig-parts#126] **P16 — linear grade.** In a region's band,
   `L(d) = L0 + grade·d` for `0 <= d <= transition`, with `grade` and
   `transition` finite and nonnegative. An edge that crosses several regions or
   bands is held to the **smallest** bound applicable anywhere on its
@@ -1108,16 +1112,16 @@ export interface RefinementRegion {
   under P16 without retriangulating or inserting outside the band; the
   refinement stops there by name rather than spending the budget (*The
   reduction as implemented*).
-  [corrected, spine-parts#126 / #1229] That consequence held only because the
+  [corrected, rig-parts#126 / #1229] That consequence held only because the
   piece from the band to the far vertex stayed held however it was split. With
   the exemption below, a split where the edge leaves the band leaves that
   piece touching the band at one point, so it is no longer held, and the
   stated source is refinable inside the band; the stop now covers only what
   stays infeasible (*Changed since v2.19.0*).
-- [agreed, spine-parts#126] **P17 — parts resolves coordinates and names.**
+- [agreed, rig-parts#126] **P17 — parts resolves coordinates and names.**
   rigc receives only part-local numeric polygons and offers no bone-relative
   region API — parts already translates rig-space regions to part-local
-  coordinates before building a contour mesh (spine-parts `src/rig.ts`,
+  coordinates before building a contour mesh (rig-parts `src/rig.ts`,
   `contourAttachment`). A circle or other shape turned into a polygon carries
   its approximation policy and error in `approximation`, which the report
   echoes. Density regions and control-bone influence regions are different
@@ -1151,7 +1155,7 @@ export interface RefinementRegion {
   length most exceeds its own bound, with that edge and that bound, so the row
   fails exactly when an edge it holds is over. A region no edge meets — one
   inside a single triangle — is `not-measurable`, never a pass over no edge.
-- [agreed, spine-parts#126] **Which edges a region holds — the exemption.**
+- [agreed, rig-parts#126] **Which edges a region holds — the exemption.**
   A region's active domain is its closed polygon and, when `transition > 0`,
   the band of that width outside it. An edge is held by the region when it
   meets the domain, **except** when its intersection with the domain is a
@@ -1214,7 +1218,7 @@ export interface RefinementRegion {
 
 **Agreed and proposed.**
 
-- [agreed, spine-parts#126] **Removal keeps attributes bit-for-bit** (P19:
+- [agreed, rig-parts#126] **Removal keeps attributes bit-for-bit** (P19:
   "surviving vertices keep their attributes unchanged"). A vertex that
   survives keeps its position, UV and bindings exactly; nothing is resampled.
 - [proposal] **Insertion interpolates, then binds.** A vertex the operation
@@ -1234,11 +1238,11 @@ export interface RefinementRegion {
   is the largest (a point on a shared edge takes the lower-numbered triangle;
   the two agree there). Interpolation can name no bone the triangle's corners
   do not carry, so that refusal has no input that reaches it.
-- [agreed, spine-parts#126] **P19 — parts passes explicit influence limits on
+- [agreed, rig-parts#126] **P19 — parts passes explicit influence limits on
   every weighted call.** A preset may supply them only after expansion; rigc's
   `segments` defaults are never inherited, and in particular the ordinary
   `0.03` floor is never applied to interpolated shares — parts deliberately
-  keeps smaller positive shares so its ramp stays continuous (spine-parts
+  keeps smaller positive shares so its ramp stays continuous (rig-parts
   `src/localweights.ts`, `localInfluences`). `minWeight: 0` is admissible on
   the new path: it drops exact-zero entries and keeps every positive one.
   [proposal] "Exact zero" is read **on the 6-decimal weight grid** the
@@ -1254,7 +1258,7 @@ export interface RefinementRegion {
   dropped, shares that are 0 on the 6-decimal grid dropped, the rest closed at
   `1 − others`; the drops are counted in `ReductionChanges.sharesDroppedOnGrid`
   and `sharesPruned` (`MQ43`). A protected share that is 0 on the grid cannot
-  be written as a positive binding, and spine-parts#126's acknowledgement
+  be written as a positive binding, and rig-parts#126's acknowledgement
   (comment 6042150608, item 1) asks for a named refusal there: it is
   `REDUCE_PROTECTED_INFLUENCE_BELOW_GRID`, a code B2 adds. Both are
   `invalid-input` terminations. A surviving source vertex is not pruned — it
@@ -1286,7 +1290,7 @@ export interface RefinementRegion {
   on a ramp its endpoints differ by several steps, so (b) refuses it at any
   value under that span — up to the largest L1 difference between **any** two
   source vertices, which is 2 whenever two vertices share no bone. Measured at
-  exactly *J* on §7's reproducer and on three of spine-parts's recorded
+  exactly *J* on §7's reproducer and on three of rig-parts's recorded
   inputs: (a) protected 0 edges every time; (b) refused 76, 93, 5 and 67
   candidates, and with (b) switched off in a scratch copy the result was the
   run without `weightJump` byte for byte, while with (a) switched off it was
@@ -1317,7 +1321,7 @@ export interface ProtectedFeatures {
   influences: string[];
 }
 
-/** [agreed, spine-parts#126] P19: stated on every weighted call, never inherited. */
+/** [agreed, rig-parts#126] P19: stated on every weighted call, never inherited. */
 export interface InfluenceLimits {
   /** The cap on bindings per vertex. */
   maxInfluences: number;
@@ -1326,7 +1330,7 @@ export interface InfluenceLimits {
 }
 ```
 
-- [agreed, spine-parts#126] **P20 — the default automatic policy is
+- [agreed, rig-parts#126] **P20 — the default automatic policy is
   `hull: false`.** Boundary reduction is the consumer's goal; shape is kept by
   the declared boundary and art bounds (`targets.maxBoundaryDeviation`,
   `targets.artFit`), not by locking every boundary sample. `hull: true` stays
@@ -1334,7 +1338,7 @@ export interface InfluenceLimits {
   individual protected vertices and edges. This is a default of parts's new
   opt-in policy; rigc's operation has no default for it (§1), and no existing
   generator changes.
-- [agreed, spine-parts#126] **P18 — the first automatic path reduces only
+- [agreed, rig-parts#126] **P18 — the first automatic path reduces only
   parts-generated source meshes, before any authored vertex-indexed deform
   key exists on them.** Imported keyed meshes are not a v1 consumer
   requirement. The generic safeguards stay and are controlled:
@@ -1452,7 +1456,7 @@ and the result is then `accepted: false` with the blocking constraint or a
 budget termination (`MQ54`).
 
 **Changed since v2.19.0** ([#1229](https://github.com/firejune/rigc/issues/1229),
-spine-parts#126 comment 6045645512, option 1). Which edges `MQ_MAX_EDGE` and
+rig-parts#126 comment 6045645512, option 1). Which edges `MQ_MAX_EDGE` and
 `MQ_TRANSITION` hold is the only row semantics that moved; no emitted byte
 moves, and no edge that 2.19.0 left free is held now. An edge held in 2.19.0
 and exempt now is one that does not meet a region's polygon, whose nearest
@@ -1569,7 +1573,7 @@ changes the agreed signature; moving the measurement's body into a module
 `src/mesh.ts` does not re-export, which moves a thousand lines to keep two
 internal names off the entry.
 
-**Cost of the cache, measured.** Spine-parts's `demo/bottomwear` (a 661 × 693
+**Cost of the cache, measured.** Rig-parts's `demo/bottomwear` (a 661 × 693
 plate, 350,983 art pixels, 536 source vertices, budget 5000), its recorded
 `reduceMesh` input replayed on one Apple M4 (darwin 25.6.0, Bun 1.4.2) in the
 order before, after, after, before, each in its own process, with another
@@ -1585,7 +1589,7 @@ samples still in the measurement and 0.16 % in functions of the art alone
 own coverage raster (`rasteriseTriangles`, 45.3 %), its distance transform
 (`squaredDistanceToSet`, 22.4 % with the silhouette's no longer in it) and the
 two Hausdorff readings (18.0 %). The byte identity is measured over the 18
-`reduceMesh` inputs spine-parts made at 2.20.0 (report, mesh and the
+`reduceMesh` inputs rig-parts made at 2.20.0 (report, mesh and the
 admission-shaped measurement: 54 of 54 files identical to the tree before the
 change and to the installed 2.20.0's) and over every `measureMeshQuality` and
 `reduceMesh` call the `mesh-quality` and `mesh-compare` suites make (152
@@ -1649,7 +1653,7 @@ carried, over the step rasters made by the caller and in full, byte-identical;
 row, an outline reused on its vertex count alone and an edge distance copied
 from the wrong edge, each caught by the pixel or the row it changed.
 
-**Cost of carrying, measured.** The 18 `reduceMesh` inputs spine-parts made at
+**Cost of carrying, measured.** The 18 `reduceMesh` inputs rig-parts made at
 2.20.0, replayed one process per call through the tree before the change and
 after it: report, mesh and `accepted` identical, 54 of 54; every
 `measureMeshQuality`, `measureMeshQualityWith`, `reduceMesh` and
@@ -1669,7 +1673,7 @@ reading, not a claim about another; no wall-time threshold is set here.
 **A region's rows, carried from the last step too**
 ([#1253](https://github.com/firejune/rigc/issues/1253)). After #1246 a step
 over a mesh with no region cost about 2.6 ms; with one region it cost about
-1.8 s. The subject is spine-parts's `demo/bottomwear` (536 source vertices, a
+1.8 s. The subject is rig-parts's `demo/bottomwear` (536 source vertices, a
 661 × 693 plate with 350,983 art pixels) with one declared region `hem`: a
 circle of radius 65 handed over as a circumscribed 287-gon, `maxEdgeLength`
 18, `transition` 65, one art sample — 1443 candidates, 262 inserted and 214
@@ -2057,12 +2061,12 @@ What C2 rejected, and the reason:
   `readModel` refuses a page with fields it does not know before the
   comparison runs; the control doubles each page and moves its regions instead.
 
-## Stage D1 — the installed package over spine-parts's inputs
+## Stage D1 — the installed package over rig-parts's inputs
 
-[measured, #1238] What spine-parts's public inputs show when its automatic
+[measured, #1238] What rig-parts's public inputs show when its automatic
 mode runs against the **registry artifacts** `spine-rigc@2.20.0` and `@2.19.0`,
 each installed into an empty directory with no spine-core beside it. The
-caller is spine-parts at the commit that added the mode (spine-parts PR #131),
+caller is rig-parts at the commit that added the mode (rig-parts PR #131),
 unmodified: its `buildRig` with each mesh part of the three public examples
 (`demo`, `sample`, `scarf`) switched alone to `auto` under `examplePolicy`
 (`fixtures/automesh.ts`, the procedure of `tools/auto_survey.ts`), and its ten
@@ -2070,7 +2074,7 @@ unmodified: its `buildRig` with each mesh part of the three public examples
 replayed one process per call. One darwin machine (Apple M4, 10 cores), Bun
 1.4.2, load average 4.3–7.2 throughout — never idle, so no unloaded figure
 appears below. Population: 30 parts, of which 18 reach `reduceMesh` (9
-example parts, 9 synthetic) and 12 are refused by spine-parts before the call
+example parts, 9 synthetic) and 12 are refused by rig-parts before the call
 (`CONTOUR_ONE_ISLAND`). The 18 recorded inputs are byte-identical between the
 two versions.
 
@@ -2080,13 +2084,13 @@ weights by bone name, `deform` and `linkedMeshes` empty, `preset` null. 18 of
 18 calls return at both versions. Every value the automatic mode imports is
 held by a row of `OBSERVED_SYMBOLS` (`scripts/install_smoke.ts`) on
 `rig-c/mesh`; two types it uses, `SourceMesh` and `RefinementRegion`, are
-in no row (types are recorded, not held). spine-parts's other imports go
+in no row (types are recorded, not held). rig-parts's other imports go
 through `./*.ts` courtesy keys rather than the named entries holding the same
-symbols. `compareMeshesInMotion` from the install over spine-parts's own demo
+symbols. `compareMeshesInMotion` from the install over rig-parts's own demo
 builds (`neck` and `bottomwear`, `idle` at 12 fps, 50 frames): the tracked
 build against the automatic one is `accepted`; the tracked build against
 itself is **not** — `MQ_ORIENTATION` fails on every triangle (210 of 210, 620
-of 620), because spine-parts's lattice and contour emitters write clockwise in
+of 620), because rig-parts's lattice and contour emitters write clockwise in
 Spine world (all 20 tracked meshes measured on the compiled skeletons through
 spine-core's setup pose).
 
@@ -2101,7 +2105,7 @@ identical; the two that differ are the synthetic cases with a region, as
 of the four; `candidatesTried <= budget.maxCandidates` in all 54;
 `none-met-the-targets` with no mesh, no geometry and nothing accepted, 3 of 3;
 no report says minimal. `unsupported-topology` is not reached on these inputs —
-spine-parts refuses every multi-island source first. Each accepted
+rig-parts refuses every multi-island source first. Each accepted
 `no-further-valid-reduction` was re-checked from outside the call: every
 surviving source vertex removed by the rule in *The reduction as implemented*
 (its fan, the link polygon tested with `findSelfIntersection` and clipped with
@@ -2111,7 +2115,7 @@ vertex; the named vertex reads back the named row at the named value in 13 of
 13. The same re-check finds 6 valid steps on the result of a budget-1 stop,
 its positive control.
 
-**4. Cost — two verdicts.** The case spine-parts observed at 81–141 s (PR #131's
+**4. Cost — two verdicts.** The case rig-parts observed at 81–141 s (PR #131's
 evidence table, `demo / bottomwear`) is a 661 × 693 plate (350,983 art pixels
 at alpha ≥ 1), a source of 536 vertices and 777 triangles, budget 5000.
 
@@ -2119,7 +2123,7 @@ at alpha ≥ 1), a source of 536 vertices and 777 triangles, budget 5000.
   run of either version, ending `no-further-valid-reduction`.
 - (b) **The wall time is not short.** 87–184 s over seven runs of the same
   input, same 1101 candidates and byte-identical results, at load 4.8–7.2 —
-  where the same processes ran spine-parts's whole tracked rig stage for the
+  where the same processes ran rig-parts's whole tracked rig stage for the
   example in 53–106 ms. One machine's reading at the loads stated; no bound is
   claimed from it.
 
@@ -2141,23 +2145,23 @@ inputs (the synthetic cases agree):
 
 | hand-off | every triangle |
 | --- | --- |
-| spine-parts's contour source as `src/contour.ts` builds it | clockwise |
+| rig-parts's contour source as `src/contour.ts` builds it | clockwise |
 | the same source as handed to `reduceMesh`, after `spineWinding()` swaps two corners | counter-clockwise |
 | the mesh `reduceMesh` returns (8 accepted, 1 refused by admission) | counter-clockwise |
-| the compiled skeleton of a real `spine-parts build`, posed by spine-core | counter-clockwise |
+| the compiled skeleton of a real `rig-parts build`, posed by spine-core | counter-clockwise |
 
 Identical at 2.19.0 and 2.20.0 in every row: #1236 moved the `contour` and
-`ring` generators, and spine-parts hands rigc authored meshes, so the three
+`ring` generators, and rig-parts hands rigc authored meshes, so the three
 builds' `skeleton.json` are byte-identical across versions. With
 `spineWinding()` undone, 18 of 18 recorded inputs are refused at admission
 (`REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS`, `MQ_ORIENTATION` on every triangle). The
-source's winding is fixed by spine-parts's own tiling check (a triangle wound
+source's winding is fixed by rig-parts's own tiling check (a triangle wound
 against the outline is refused), not by `earClip`, so the recommendation
-recorded on spine-parts#126 is to keep the swap unconditionally; a conditional
+recorded on rig-parts#126 is to keep the swap unconditionally; a conditional
 would add a branch that check makes unreachable.
 
-**What was rejected.** Rebuilding spine-parts's call by hand from
-`autoReductionInput` — the example calls carry weights over spine-parts's
+**What was rejected.** Rebuilding rig-parts's call by hand from
+`autoReductionInput` — the example calls carry weights over rig-parts's
 internal segments and bone transforms, so the input was recorded as made
 instead. Reading phases off the report — wall time is never in it. Quoting one
 wall time — the seven readings and their loads are the claim.
@@ -2169,7 +2173,7 @@ wall time — the seven readings and their loads are the claim.
 > rest is Stage A of
 > [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
 > (`MQ79`, `MQ80`, `mesh-compare`), the measurements made on it, and a proposal
-> settled with parts (spine-parts#126, comment 6072801422). #1268 adds one
+> settled with parts (rig-parts#126, comment 6072801422). #1268 adds one
 > report key and one optional input; `compareMeshesInMotion`, every row, bound,
 > the reduction's order and budget, and the emitted bytes are unchanged. Marks: **Existing** cites the tree by path and symbol;
 > **[measured, #1266]** is a figure taken for this section, with the machine
@@ -2328,7 +2332,7 @@ is the 0.11 row's mesh byte for byte (105 removed, 42/0, 189 candidates, motion
 
 ### Measured — `weightJump` at exactly J [measured, #1268]
 
-spine-parts reported (spine-parts#126, comment 6072801422, observation (a))
+rig-parts reported (rig-parts#126, comment 6072801422, observation (a))
 that at `weightJump` = *J* — the largest source edge jump, so condition (a)
 protects nothing — the result still differs from the run without the field.
 Measured with a scratch copy of `src/meshreduce.ts` that counts, per
@@ -2485,7 +2489,7 @@ every step applies to it as written.
 
 ### Mechanism 2 — implemented [implemented, #1268]
 
-Agreed with parts (spine-parts#126, comment 6072801422): Q1 — the list and the
+Agreed with parts (rig-parts#126, comment 6072801422): Q1 — the list and the
 replay promise are enough, parts keeps no intermediate mesh and asks for no
 step or byte limit beyond `budget.maxCandidates`; Q2 — a replay is its own
 input with its own termination, accepted by parts on the same footing as
@@ -2701,7 +2705,7 @@ parts can run privately now, recording the frames it chose by as `selection`
 
 ### Open with parts
 
-Answered on spine-parts#126 (comment 6072801422); Q1, Q2 and Q9 are folded
+Answered on rig-parts#126 (comment 6072801422); Q1, Q2 and Q9 are folded
 into *Mechanism 2 — implemented*, observation (a) of Q7 into *`weightJump` at
 exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 
@@ -2754,7 +2758,7 @@ region's floor), `MQ23`, `MQ25`, `MQ26` (its call half), `MQ27`, `MQ28` (its mas
 duplicate candidate id has no input before stage C), `MQ29`, `MQ30`, `MQ34`
 and `MQ44`; and since stage B2, `MQ14`, `MQ17`, `MQ18`, `MQ24`, `MQ32`, `MQ33`,
 `MQ40`, `MQ43`, with `MQ23` and `MQ25` extended to `reduceMesh`, plus the two
-controls the consumer asked for in its acknowledgement (spine-parts#126,
+controls the consumer asked for in its acknowledgement (rig-parts#126,
 comment 6042150608) — each composed operation passing with the other idle,
 `MQ46` and `MQ47` below. `MQ26` is split: its control holds that no module
 under `src/` but the three that define the operations names them, so an
@@ -2765,7 +2769,7 @@ re-checked by a second gate over the same base.
 [implemented, #1230] Built and passing, in the `mesh-compare` suite of
 `selftest.ts`: `MQ55` (`MQ00`'s motion half — the `MQ` prefix is opened at 00 by
 the `mesh-quality` suite and continued here, `TY18`), `MQ10`, `MQ15`, `MQ20`, `MQ22`, `MQ35`,
-`MQ36`, `MQ37`, `MQ39`, `MQ41` and `MQ42` — the controls spine-parts#126
+`MQ36`, `MQ37`, `MQ39`, `MQ41` and `MQ42` — the controls rig-parts#126
 (comment 6045645512) asked C1 to carry for UV carrier mapping, schedule
 identity and held-out separation, and report states. `MQ26` names the fourth
 defining module. Since stage C2, in the same suite, the rest of the
@@ -2877,14 +2881,14 @@ The five corrections, one positive control and one planted failure each:
   `MQ39_A_CHANGED_PHYSICS_SETTING_WITH_IDENTICAL_BONES_IS_REFUSED_NAMING_THE_INPUT_AND_BOTH_VALUES`
 
 The two composed operations of stage B2, each with the other idle
-([implemented, #1224]; asked for in spine-parts#126, comment 6042150608):
+([implemented, #1224]; asked for in rig-parts#126, comment 6042150608):
 
 - Reduction, positive and planted:
   `MQ46_CONTROL_REDUCTION_ALONE_REMOVES_VERTICES_HOLDING_EVERY_BOUND_AND_A_BOUND_THAT_BLOCKS_EVERY_STEP_IS_NAMED`
 - Refinement, positive and planted:
   `MQ47_CONTROL_REFINEMENT_ALONE_INSERTS_ONLY_INSIDE_THE_REGION_AND_ITS_BAND_UNTIL_L_OF_R_HOLDS_AND_A_BOUND_UNDER_ONE_TEXEL_IS_REFUSED`
 
-The exemption agreed on spine-parts#126 (comment 6045645512) and built in
+The exemption agreed on rig-parts#126 (comment 6045645512) and built in
 [#1229](https://github.com/firejune/rigc/issues/1229), [implemented]:
 
 - `MQ48_THE_COARSE_QUAD_THAT_2_19_0_STOPPED_ON_CONVERGES_AND_IS_ACCEPTED`
@@ -2931,7 +2935,7 @@ reasons exist only when the input sets `stopAfterAccepted` (§7, *Mechanism 2
   violates a declared constraint; the report names the constraint that blocked
   the last step. It is a local stop, **not** a minimum: the report never says
   "minimal".
-- **budget-exhausted** — `maxCandidates` reached. [agreed, spine-parts#126,
+- **budget-exhausted** — `maxCandidates` reached. [agreed, rig-parts#126,
   P6 and correction 3] With `best-meeting-every-bound`, the result is the best
   candidate found that meets **every** required bound — it may be accepted,
   and nothing implies more reduction was impossible or that it is optimal.
@@ -2956,7 +2960,7 @@ never in the document (it would break byte identity); the work figure is
 
 ## Stage B scope
 
-[agreed, spine-parts#126] None of the following is a prerequisite for the
+[agreed, rig-parts#126] None of the following is a prerequisite for the
 first static reduction, and Stage B does not wait for them:
 
 - nonzero physics warm-up (P10 — refused by name until it exists);

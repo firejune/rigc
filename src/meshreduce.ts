@@ -17,7 +17,7 @@
  *
  * Each is its own function with its own entry and exit, so a control can run
  * one with the other idle — regions empty, or every source vertex protected —
- * which is the shape the consumer asked for (spine-parts#126, comment
+ * which is the shape the consumer asked for (rig-parts#126, comment
  * 6042150608: "separate composed operations … with independently passing
  * controls for each").
  *
@@ -53,7 +53,7 @@
  * the edge lies outside the region and its band, the split is where the edge
  * leaves the band, so the piece to that end only touches the band's outer
  * boundary and `edgeIsHeldByRegion` — the one definition the rows read —
- * exempts it (spine-parts#126). Otherwise the split is at the midpoint when
+ * exempts it (rig-parts#126). Otherwise the split is at the midpoint when
  * the midpoint lies in the region or its band, else at the point of the edge
  * inside them nearest the midpoint. A region no edge meets — one
  * inside a single triangle — gets the first vertex of its polygon inserted into
@@ -883,7 +883,7 @@ function offsetExit(inner: Pt, outer: Pt, poly: readonly Pt[], level: number): n
 }
 
 /**
- * [agreed, spine-parts#126] A split of `inner`–`outer` where it leaves
+ * [agreed, rig-parts#126] A split of `inner`–`outer` where it leaves
  * `region`'s band, so that the piece to `outer` only touches the band's outer
  * boundary and is exempt by `edgeIsHeldByRegion` — the one definition the
  * measurement reads. The split is put half of `BAND_CONTACT_TOLERANCE` inside
@@ -1018,7 +1018,7 @@ function refineRegions(run: Run): PhaseEnd {
     const a = canon.order[ra];
     const b = canon.order[rb];
     // An end outside the region and its band: split where the edge leaves the band, so the piece to that
-    // end only touches the band's outer boundary and is exempt (spine-parts#126) — the same predicate the
+    // end only touches the band's outer boundary and is exempt (rig-parts#126) — the same predicate the
     // measurement reads decides it, so the next measurement agrees.
     let exited = false;
     for (const [inner, outer] of [[b, a], [a, b]] as const) {
@@ -1045,7 +1045,7 @@ function refineRegions(run: Run): PhaseEnd {
         const why =
           region.transition > 0
             ? 'no point of the edge on the band\'s outer boundary leaves the piece to it exempt, so an edge from inside the region and its band to it stays over the bound'
-            : 'with no band, an edge from the region to it touches the authored boundary and stays held (spine-parts#126), so it stays over the bound';
+            : 'with no band, an edge from the region to it touches the authored boundary and stays held (rig-parts#126), so it stays over the bound';
         return {
           kind: 'stuck',
           constraint: `${rowName(target)} (vertex ${end} of edge ${ra}–${rb} lies ${r6(beyond)} px beyond region "${region.name}"'s ${region.transition} px band, further than the edge's bound ${target.bound!.value}: ${why}, and the refinement inserts only inside them — P16)`,
