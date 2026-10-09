@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.24.1](https://github.com/firejune/rigc/compare/v2.24.0...v2.24.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* **docs:** the dependant is rig-parts — every mention of spine-parts in the tree follows its rename, with one note stating the old name ([#1272](https://github.com/firejune/rigc/issues/1272)) ([656c7e8](https://github.com/firejune/rigc/commit/656c7e842fb678a827f268d4bd8cb9787a08c7c7))
+
 ## [2.24.0](https://github.com/firejune/rigc/compare/v2.23.0...v2.24.0) (2026-10-09)
 
 
