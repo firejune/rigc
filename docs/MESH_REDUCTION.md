@@ -678,6 +678,17 @@ export interface MeshCounts {
   row before the labelled 4-connected one; every object is rebuilt in the key
   order its type states, so the bytes do not depend on the order an input was
   built in (`MQ25`).
+- [implemented, #1280] **Three additive fields**, each written only when
+  present, for §8's allocation rows: `MeshMeasureInput.motionAmplitude` (the
+  declared amplitude, optional; `null` declares it absent), echoed as
+  `EffectiveSettings.motionAmplitude` when the input set it; and
+  `MeasureRow.allocation` (`AllocationDetail`: `reading`, and `contrast` or
+  `search` on the row that has one), written on the five allocation rows and
+  no other. The five rows are geometry rows like any other: sorted by code
+  with the rest, counted in the section's `summary`, never required. A report
+  of an input that declares nothing new is the report it was before but for
+  those five rows and the summary counts they add (§8, *Implemented — the
+  allocation rows*; `MQ124`, `MQ126`).
 
 ## 3. Comparing different triangulations on a common domain
 
@@ -969,6 +980,10 @@ defined here, with these readings of what the table leaves open:
 - `MQ_HOLES`, `MQ_ISLANDS`, `MQ_TRACE_DEVIATION` and `MQ_FILL_DISTANCE` take no
   bound, so they are always `undeclared` when measured; `MQ_MIN_ANGLE` is
   gated only when `minAngle` is declared.
+- [implemented, #1280] The five allocation rows at the end of the table take
+  no bound either, and are `not-measurable`, naming the field, when an input
+  they read is missing — §8, *Implemented — the allocation rows*, gives each
+  definition, what each needs and the reading of the amplitude.
 
 | Code | Definition | Unit | Raster? |
 | --- | --- | --- | --- |
@@ -988,6 +1003,11 @@ defined here, with these readings of what the table leaves open:
 | `MQ_STRETCH` / `MQ_SQUASH` | `stretchSingularValues` of each candidate triangle, setup to posed frame; worst max and worst min | ratio | no |
 | `MQ_INVERSION` | triangles whose sign changes setup to posed frame, A39's rule; slots in `invariants.deformMayFold` (`src/rig.ts`) not counted and **listed** (§3) | count | no |
 | `MQ_TRANSITION` | §5's edge bound across a region's transition band | px | no |
+| `MQ_GRADE` | [agreed, rig-parts#126; implemented, #1280] grade max, max \|h_u − h_v\| / L over edges, h the mean incident edge length — always `undeclared` when measured | ratio | no |
+| `MQ_MIN_ANGLE_P10` | [agreed, rig-parts#126; implemented, #1280] the tenth percentile of the triangles' smallest angles, nearest rank — always `undeclared` | degrees | no |
+| `MQ_ALLOCATION_CONTRAST` | [agreed, rig-parts#126; implemented, #1280] Δ, with economy E beside it; reads `motionAmplitude` — always `undeclared` when measured | fraction | no (the art is read for the silhouette need) |
+| `MQ_DEFORM_LOAD` | [agreed, rig-parts#126; implemented, #1280] max L · Δshare · θ / 4 under `motionAmplitude` — a location reading, **not** predicted motion; always `undeclared` when measured | px | no |
+| `MQ_BOUNDARY_NECESSARY` | [agreed, rig-parts#126; implemented, #1280] B\*, over `referenceHull` — always `undeclared` when measured | count | no (the art is read for the cut-off test) |
 
 - [agreed, rig-parts#126; implemented, #1224] **P12 — the new measurements use the tracer's
   8-connected background flood**, filled over **all** art (several islands, as
@@ -2781,12 +2801,15 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 
 ## 8. Vertex allocation under contour and motion bounds (#1271)
 
-> **Nothing in this section is implemented.** It is Stage A of
-> [#1271](https://github.com/firejune/rigc/issues/1271): a public reproducer
-> (`MQ85`–`MQ90`, `mesh-compare`), the measurements made on it and on the
-> inputs recorded for stage D1, and the questions for parts at the end. The
-> reproducer holds today's behaviour; no row, bound, order, termination or
-> emitted byte changes. Marks as in §7: **Existing** cites the tree by path and
+> **One part of this section is implemented**: the five spatial measurements
+> of allocation, as `undeclared` rows, and the amplitude declaration two of
+> them read — [agreed, rig-parts#126] by parts's answers to Q2 and Q7,
+> [implemented, #1280] in *Implemented — the allocation rows* below. The rest
+> is Stage A of [#1271](https://github.com/firejune/rigc/issues/1271): a
+> public reproducer (`MQ85`–`MQ90`, `mesh-compare`), the measurements made on
+> it and on the inputs recorded for stage D1, and the questions for parts at
+> the end. The reproducer holds today's behaviour; no bound, order,
+> termination or emitted byte changes. Marks as in §7: **Existing** cites the tree by path and
 > symbol; **[measured, #1271]** is a figure taken for this section — from the
 > stage-A record for #1271 (scratch scripts that import the tree at `5614f63`,
 > v2.24.0, and write nothing into it) or printed by the controls — with the
@@ -3042,6 +3065,175 @@ field; the comparison measures the difference to the source, which includes
 which is why it agrees there. D stays a location reading; it is not a motion
 predictor, and no question below offers it as one.
 
+### Implemented — the allocation rows [agreed, rig-parts#126; implemented, #1280]
+
+parts answered Q2 and Q7 on rig-parts#126: all five measurements above are
+reported, as `undeclared` rows, with no bound declared on any of them today;
+the amplitude the two weight-aware ones read is an optional field of
+`MeshMeasureInput` that parts fills from the motion it already declares. The
+measurements are `src/meshallocation.ts`; `measureMeshQuality`
+(`src/meshquality.ts`) turns them into rows of the geometry section of every
+report it writes — and so of every `reduceMesh` result and every
+`compareMeshesInMotion` setup section, which are its reports.
+
+| Code | Value | Unit | `worst` | `not-measurable` when |
+| --- | --- | --- | --- | --- |
+| `MQ_GRADE` | grade max: the largest \|h_u − h_v\| / L over the mesh's unique edges, h a vertex's mean incident edge length | ratio | the edge (the first in sorted order on a tie) | an edge has zero length |
+| `MQ_MIN_ANGLE_P10` | the tenth percentile of the triangles' smallest angles, nearest rank at round((n − 1) · 0.1), ties by triangle index; the angle is `MQ_MIN_ANGLE`'s formula | degrees | the triangle at that rank | never on a mesh `traceOutline` accepts |
+| `MQ_ALLOCATION_CONTRAST` | Δ, as defined above; economy E and the counts both are taken from in `allocation.contrast` | fraction | the dense vertex with the lowest ν | `motionAmplitude` left out or `null`, `source.weights` null, `targets.maxBoundaryDeviation` null, fewer art samples than `minArtSamples`, a refused region, a pair of bones no track declares, or an empty dense or rest class |
+| `MQ_DEFORM_LOAD` | the largest L · Δshare · θ / 4 over the edges, px: the chord-error bound of the mesh's own weight field under the declared amplitude | px | the edge; `{ at: {} }` when no edge moves a share | `motionAmplitude` left out or `null`, `source.weights` null, or a pair of bones no track declares |
+| `MQ_BOUNDARY_NECESSARY` | B\*, over the **reference hull**; the search's work in `allocation.search` | count | the first vertex of this mesh's hull, in walk order, that is not on the B\* outline; `{ at: {} }` when every one is | no `referenceHull`, `targets.maxBoundaryDeviation` null, or fewer art samples than `minArtSamples` |
+
+Every row carries `allocation.reading`, one fixed sentence saying what the
+value is a reading of; `MQ_DEFORM_LOAD`'s says it is **not predicted motion**
+and no difference to any reference — §8's correction above. None has a field
+to declare a bound in, so each is `undeclared` when measured: out of the pass
+count, never required, never the constraint a step is refused on, never a
+pass. The section's `summary` counts them like every other row.
+
+**The amplitude.** `MeshMeasureInput.motionAmplitude?: MotionAmplitude | null`:
+
+```ts
+interface MotionAmplitude {
+  tracks: Array<{
+    track: string;                                         // echoed, never read
+    pairs: Array<{ bones: [string, string]; theta: number }>; // θ = ‖M − I‖ of the pair's relative linear part
+    epsilon: number;                                       // ε, drawing px, above 0
+  }>;
+  gradation: number;                                       // G, px per px, 0 or more — Δ only
+}
+```
+
+Left out, it is not declared; `null` declares it absent (as a `null` art
+bound is, #1257) — both leave `MQ_ALLOCATION_CONTRAST` and `MQ_DEFORM_LOAD`
+`not-measurable` with a reason naming the field, and differ only in the
+reason's words and in the echo: `EffectiveSettings.motionAmplitude` is written
+when the input set the field, `null` included, and absent otherwise. Anything
+else that is not a `MotionAmplitude` in full is refused
+(`REDUCE_INPUT_MISSING`, naming the field's path). θ is dimensionless: 2 sin(α
+/ 2) for a rotation by α (≈ α in radians for a small one), |s − 1| for a
+uniform scale by s. A pair is unordered; declared twice, in one track or
+several, the larger θ and the larger θ / ε are read. Across an edge the share
+moves from the bones that lose it to the bones that gain it; every such pair
+has to be declared — a pair no track declares makes both rows
+`not-measurable`, naming the two bones and the edge, because no amplitude is
+assumed (a bone that does not move is declared with θ 0). The edge's θ is the
+largest over those pairs, which bounds |Σ Δw_b R_b| ≤ Δshare · max θ, so on a
+two-bone field the reading is exactly §8's and on a many-bone field it is an
+upper bound. The field declares no bound; it changes no other row.
+
+⚠️ **One field more than the card named, and why.** Δ's need field relaxes at
+a gradation G (the table above: "needs … gradation G"), and the stage-A
+record left who declares G open. No default is invented, so G is
+`motionAmplitude.gradation`, declared beside the amplitude it is read with;
+only `MQ_ALLOCATION_CONTRAST` reads it.
+
+**Readings the tree fixes that the stage-A record left open** — each measured:
+
+- **B\* is read against `referenceHull`** — the source hull a `reduceMesh`
+  result is held to — so a reduction's report reads the source's B\* beside
+  the result's `counts.boundaryVertices`, the comparison this section makes.
+  `reduceMesh` measures every step against the same source hull, so B\* is
+  computed **once per call** (memoised on the call's art rasters, keyed by the
+  hull's coordinates and δ). The chord-to-run half of a skip is exact (the
+  branch and bound `directedHausdorff` uses, to `1e-9` px) where the
+  prototype sampled every 0.25 px; and the outline is at least three
+  vertices. The search tests every forward skip of two or more from every
+  hull vertex once: **at most n × (n − 2) shortcut tests** for an n-vertex
+  hull, which `allocation.search` reports beside the count (`MQ125` holds
+  tests ≤ bound). On the recorded inputs B\* is the prototype's on all 7
+  (217, 14, 95, 162, 21, 166, 59).
+- **Δ's dense class reads local size on the `r6` grid**, so which vertices are
+  "below the median" is not decided by a summation order. ⚠️ **Correction
+  [measured, #1280]** to the stage-A record's consumer readings of Δ (not to
+  this section's fixtures, which read identically): those were taken on
+  points rebuilt from UVs, up to 4·10⁻⁵ px from `points`, and on a lattice
+  source that is enough to move vertices across the median. On `points`
+  [assumed amplitude: θ = 5° between every pair, ε = 1, G = 0.75, as the
+  record assumed]: sample/neck **−0.214** (UV-rebuilt 0.354), sample/topwear
+  −0.514 (−0.090), sample/bottomwear −0.047 (−0.008), demo/bottomwear −0.351
+  (−0.383; the record printed −0.378); E is the same number both ways on all
+  four. So on lattice-sampled sources Δ is decided by ties at the median and
+  moves with a sub-pixel perturbation of the points — read it there as the
+  location of the removable vertices (its `worst`) and E, not as a signed
+  figure.
+- **`MQ_DEFORM_LOAD` reports D · θ / 4 in px**, not D: the card makes the row
+  `not-measurable` without an amplitude, and with one the per-pair θ is part
+  of which edge is worst.
+
+**On a reduction.** `MeshReductionInput` has no `motionAmplitude` and this
+change adds none, so on every `reduceMesh` report Δ and the load are
+`not-measurable`, naming the field; B\*, grade and P10 are measured. A caller
+that wants them measures the returned mesh with `measureMeshQuality` and its
+amplitude.
+
+**Fixtures [implemented, #1280].** `MQ120` rebuilds the six fixtures above in
+the suite and reads every figure of their table to the printed precision —
+grade 0.998 → 2.694, P10 17.10° → 3.53°, Δ 0.000 → 0.510, at gradation 0.5,
+1.0 and 1.64 (accept ≤ 0.124) — and B\* reads 4 on the four rectangle
+outlines and 57 of 72 on the two wavy ones (`MQ125`). The reproducer's strict
+run keeps exactly B\* = 28 boundary vertices, read off its own report.
+
+**The opt-out [measured, #1280].** Every report a caller already writes is
+the same bytes but for the five rows: with them taken out and each summary
+recounted, the text is identical. On the inputs recorded for stage D1 —
+demo/* and sample/*, 7 inputs (`demo__bottomwear`, `demo__neck`,
+`sample__bottomwear`, `sample__hair_back`, `sample__neck`, `sample__sleeves`,
+`sample__topwear`), each reduced and measured admission-shaped and
+final-shaped on the source and the result — **34 of 34 texts identical**,
+every returned mesh identical; darwin, Apple M4, against the tree this
+change starts from (`6dcda87`). In suite, `MQ124` holds it on ten public subjects.
+
+**Cost [measured, #1280].** Each row on its own, Nova pool (WSL2, Bun 1.4.2,
+load 2.7), best of 5 (B\* and Δ best of 1), Δ and the load under the assumed
+amplitude above:
+
+| input | V / hull | grade | P10 | load | B\* (tests) | Δ |
+| --- | --- | --- | --- | --- | --- | --- |
+| demo/bottomwear source | 536 / 293 | 0.59 ms | 0.12 ms | 2.56 ms | 92.4 ms (85,263) | 244.2 ms |
+| demo/bottomwear result | 282 / 282 | 0.14 ms | 0.06 ms | 0.50 ms | 53.6 ms | 20.5 ms |
+| sample/sleeves source | 231 / 198 | 0.07 ms | 0.02 ms | 0.40 ms | 15.5 ms (38,808) | 31.0 ms |
+| sample/bottomwear source | 230 / 107 | 0.10 ms | 0.02 ms | 0.52 ms | 2.9 ms (11,235) | 60.2 ms |
+| sample/topwear source | 142 / 66 | 0.05 ms | 0.02 ms | 0.16 ms | 1.6 ms (4,224) | 22.4 ms |
+| sample/neck source | 107 / 26 | 0.04 ms | 0.01 ms | 0.14 ms | 0.1 ms (624) | 16.0 ms |
+| demo/neck source | 89 / 14 | 0.04 ms | 0.01 ms | 0.12 ms | 0.0 ms (168) | 12.9 ms |
+
+`reduceMesh` reads grade and P10 at every measurement and B\* once:
+`reduceMesh` before and after, in one process, alternating, best of 5, same
+pool job (load 3.9–4.7) — demo/bottomwear 3,038 → 3,180 ms (+4.7 %),
+sample/sleeves 2,282 → 2,340 (+2.6 %), sample/bottomwear 725 → 742 (+2.3 %),
+sample/topwear 239 → 259 (+8.1 %), sample/neck 58 → 66 (+14 %), demo/neck
+29 → 39 ms (+10 ms).
+
+**Controls [implemented, #1280]**, in `mesh-quality`, numbered from `MQ120`
+to stay clear of codes another change was opening in `mesh-compare`:
+`MQ120` (the fixtures' separations; plant: the deformation need dropped),
+`MQ121` (grade, P10 and the load against the suite's own derivation; plants:
+grade undivided by L, P10 read as the minimum, θ dropped), `MQ122`
+(`not-measurable` without the amplitude, the weights, the deviation bound, the
+reference hull, or for an undeclared pair, each naming it; plants: the
+rejected reading measured without an amplitude, an undeclared pair read as
+rigid), `MQ123` (no row required: verdict, acceptance and pass/fail counts
+those of the report without the rows, on eight subjects and the reduction;
+plant: the rows required), `MQ124` (the opt-out identity; plant: a
+measurement that rewrites its input's triangles), `MQ125` (B\*'s outline
+holds coverage, undercut and deviation, the search under its bound, the
+reproducer keeps B\*; plant: B\* without the art test), `MQ126` (one input,
+one text, in any key order of the amplitude) and `MQ127` (refusals). Each
+plant is an `AllocationPlant` passed through the internal
+`measureMeshQualityPlanted`; `measureMeshQuality` plants none. `MQ126`'s
+claim was seen to fail by hand with an echo that passed the input object
+through.
+
+**What the brief or the card said that the tree does not.** There is no
+`residuals` section in `mesh-quality-report/1`: the rows are geometry rows,
+as every other `undeclared` row is. AUTHORING.md has no row table — §4 is
+the row table — so it does not change. "Region-normalised where §8 says so":
+§8 normalises none of the five by a region's density (the stage-A record kept
+that ratio as a diagnostic, not a row); regions enter Δ as declared needs, L0
+inside and L0 + grade · d in the band, through `regionEdgeBound` — the bound
+`MQ_MAX_EDGE` and `MQ_TRANSITION` read.
+
 ### Measured — bounded alternatives [measured, #1271]
 
 Each alternative was a switch in a scratch copy of `src/meshreduce.ts` (the
@@ -3169,7 +3361,10 @@ comes from a measurement above; none is settled by this page.
   pair of bones a share moves between, and ε. Who declares it — parts from the
   motion it already declares, or the consumer per attachment — and does it
   belong in `MeshMeasureInput` as an optional field? Without it those rows
-  report `not-measurable`.
+  report `not-measurable`. [agreed, rig-parts#126] parts, from the motion it
+  already declares, in an optional field of `MeshMeasureInput`;
+  [implemented, #1280] as `motionAmplitude` (*Implemented — the allocation
+  rows*).
 - **Q3.** On `MQ79` and on this fixture a different triangulation of the same
   vertex set is what passes motion. Is a post-pass that keeps the vertex set and
   re-triangulates acceptable, given that it changes the bytes of every result
@@ -3204,6 +3399,8 @@ comes from a measurement above; none is settled by this page.
   B\* — which does parts want reported, and does it want to declare a bound on
   any of them, given the bars above come from one synthetic domain? D would be
   reported as a location reading only, never as predicted motion.
+  [agreed, rig-parts#126] all five, `undeclared`, and no bound on any of them
+  today; [implemented, #1280].
 - **Q8.** On the two private attachments, in aggregate figures only: the
   sagitta distribution of the source hull (P10/P50/P90 and the count ≤ the
   declared deviation), and B\* against the kept boundary — whether the boundary
@@ -3451,6 +3648,22 @@ and
 `acceptedAt`'s entries by their `step`, and `MQ67` counts a removal the floor
 decides beside the measurements, which it would otherwise read as a step
 measured without the rasters.
+
+[implemented, #1280] §8's allocation rows, in the `mesh-quality` suite, from
+`MQ120` (clear of codes another change was opening from `MQ91` in
+`mesh-compare` at the time):
+`MQ120_THE_ALLOCATION_ROWS_SEPARATE_SECTION_8S_FIXTURES_AT_THE_FIGURES_IT_PRINTS_AND_EVERY_ROW_IS_UNDECLARED`,
+`MQ121_GRADE_MIN_ANGLE_P10_AND_DEFORM_LOAD_EQUAL_THE_SUITES_OWN_DERIVATION_ON_EVERY_FIXTURE`,
+`MQ122_CONTRAST_AND_LOAD_ARE_NOT_MEASURABLE_WITHOUT_A_DECLARED_AMPLITUDE_OR_WEIGHTS_OR_FOR_AN_UNDECLARED_PAIR_NAMING_THE_FIELD`,
+`MQ123_NO_ALLOCATION_ROW_IS_REQUIRED_SO_NONE_BLOCKS_A_STEP_PASSES_OR_MOVES_A_VERDICT`,
+`MQ124_EVERY_REPORT_WITHOUT_ITS_FIVE_ALLOCATION_ROWS_IS_THE_REPORT_WITHOUT_THEM_BYTE_FOR_BYTE`,
+`MQ125_AN_OUTLINE_OF_B_STAR_REFERENCE_HULL_VERTICES_HOLDS_COVERAGE_UNDERCUT_AND_DEVIATION_AND_THE_SEARCH_STAYS_UNDER_ITS_BOUND`,
+`MQ126_THE_ALLOCATION_ROWS_AND_THE_AMPLITUDE_ECHO_ARE_BYTE_IDENTICAL_FOR_ONE_INPUT_IN_ANY_KEY_ORDER`
+and
+`MQ127_A_MOTION_AMPLITUDE_THAT_IS_NOT_A_MOTION_AMPLITUDE_IS_REFUSED_NAMING_THE_FIELD`
+— each plant named in §8's paragraph on them. `MQ00` reads the allocation
+rows aside: on its unweighted mesh with no amplitude, two of them are
+`not-measurable` by design, and `MQ122` holds those states.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.

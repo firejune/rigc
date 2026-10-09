@@ -387,6 +387,7 @@ import {
   inClosedPolygon,
   measureAuthoredMeshFit,
   measureMeshQuality,
+  measureMeshQualityPlanted,
   measureMeshQualityStep,
   measureMeshQualityWith,
   MeshError,
@@ -406,6 +407,7 @@ import {
   type MeshMeasureInput,
   type MeshQualityReport,
   type MeshReductionInput,
+  type MotionAmplitude,
   type ProtectedFeatures,
   type ReducedMesh,
   type RefinementRegion,
@@ -421,6 +423,7 @@ import {
 } from './src/mesh.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasterPlant, type StepRasterTally } from './src/meshrasters.ts';
+import { boundaryNecessity, type AllocationPlant } from './src/meshallocation.ts';
 import {
   boneDistance,
   BONE_QUANTITIES,
@@ -45382,6 +45385,232 @@ function mqSayEnd(t: Termination | null): string {
   return `${t.reason} ${t.code}: ${t.detail}`;
 }
 
+// ---------------------------------------------------------------------------
+// allocation fixtures — §8's six, rebuilt for the allocation rows (issue #1280)
+// ---------------------------------------------------------------------------
+//
+// docs/MESH_REDUCTION.md §8, *Measured — spatial measurements of allocation*:
+// one 160 × 52 px strip, two bones `a` → `b`, art the pixels whose centre the
+// hull holds, δ = 1, a declared amplitude θ = 5° in radians and ε = 0.035 px
+// (chosen by the fixtures, so the deformation need on the uniform ramp, slope
+// 1/160, is √(4ε / (θ · slope)) = 16 px, the positive control's spacing), and
+// gradation 0.75 (the one `grade` any fixture declares, the region's). Each is
+// built to be accepted or flagged by a row, and every figure the controls
+// compare is read off the build — the separations §8 prints are then checked
+// to be what this build reads. The construction is the stage-A record's for
+// #1271, re-derived: boundary walks, a row-major greedy interior placement under
+// a size field, Bowyer–Watson Delaunay in insertion order, triangles kept by
+// centroid, turned counter-clockwise in Spine world through `cropToSpineY`.
+
+const AL_W = 160;
+const AL_H = 52;
+/** θ, the declared amplitude: a 5° bend, as its small-angle reading in radians. */
+const AL_THETA = (5 * Math.PI) / 180;
+const AL_EPSILON = 0.035;
+const AL_GRADATION = 0.75;
+
+/** The declared amplitude of the fixtures: one track bending `a` against `b` by θ, tolerating ε, need relaxing at `gradation`. */
+const alAmplitude = (gradation = AL_GRADATION): MotionAmplitude => ({
+  tracks: [{ track: 'bend', pairs: [{ bones: ['a', 'b'], theta: AL_THETA }], epsilon: AL_EPSILON }],
+  gradation,
+});
+
+/**
+ * Bowyer–Watson Delaunay with the stage-A record's super-triangle and in-circle
+ * test (orientation-signed determinant, 1e-9 slack). Not `abDelaunay`: on a
+ * lattice cocircular quads are ties the in-circle test resolves, so another
+ * Delaunay builds another, equally Delaunay, mesh — and §8's figures were read
+ * on this one. Fixture construction only.
+ */
+function alDelaunay(pts: readonly MqPt[]): number[] {
+  const big = 1e5;
+  const all: MqPt[] = [...pts, [-big, -big], [big, -big], [0, big]];
+  const n = pts.length;
+  let tris: Array<[number, number, number]> = [[n, n + 1, n + 2]];
+  const inCircle = (t: [number, number, number], p: MqPt): boolean => {
+    const [a, b, c] = t.map((i) => all[i]);
+    const [ax, ay, bx, by, cx, cy] = [a[0] - p[0], a[1] - p[1], b[0] - p[0], b[1] - p[1], c[0] - p[0], c[1] - p[1]];
+    const det = (ax * ax + ay * ay) * (bx * cy - cx * by) - (bx * bx + by * by) * (ax * cy - cx * ay) + (cx * cx + cy * cy) * (ax * by - bx * ay);
+    const orient = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    return orient > 0 ? det > 1e-9 : det < -1e-9;
+  };
+  for (let i = 0; i < n; i++) {
+    const bad = tris.filter((t) => inCircle(t, all[i]));
+    const edges = new Map<string, [number, number]>();
+    for (const t of bad) {
+      for (let k = 0; k < 3; k++) {
+        const a = t[k];
+        const b = t[(k + 1) % 3];
+        const key = a < b ? `${a},${b}` : `${b},${a}`;
+        if (edges.has(key)) edges.delete(key);
+        else edges.set(key, [a, b]);
+      }
+    }
+    tris = tris.filter((t) => !bad.includes(t));
+    for (const [a, b] of edges.values()) tris.push([a, b, i]);
+  }
+  return tris.filter((t) => t.every((i) => i < n)).flat();
+}
+
+const alDistance = (a: MqPt, b: MqPt): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const alToPolygon = (p: MqPt, poly: readonly MqPt[]): number => poly.reduce((d, a, i) => Math.min(d, mqPointSegment(p, a, poly[(i + 1) % poly.length])), Infinity);
+
+/** A closed outline walked corner to corner, the next sample `step(p)` along it; every corner kept, and none repeated. */
+function alWalk(corners: readonly MqPt[], step: (p: MqPt) => number): MqPt[] {
+  const out: MqPt[] = [];
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i];
+    const b = corners[(i + 1) % corners.length];
+    const L = alDistance(a, b);
+    out.push(a);
+    for (let t = 0; ; ) {
+      const here: MqPt = [a[0] + ((b[0] - a[0]) * t) / L, a[1] + ((b[1] - a[1]) * t) / L];
+      const s = step(here);
+      if (t + s > L - 0.5 * step(b)) break;
+      t += s;
+      out.push([r6(a[0] + ((b[0] - a[0]) * t) / L), r6(a[1] + ((b[1] - a[1]) * t) / L)]);
+    }
+  }
+  return out.filter((p, i) => i === 0 || alDistance(p, out[i - 1]) > 1e-6);
+}
+
+/** Row-major greedy interior placement: a pixel centre at least 0.85·h from every point placed and 0.5·h inside the outline. */
+function alFill(hull: readonly MqPt[], size: (p: MqPt) => number): MqPt[] {
+  const placed: MqPt[] = [...hull];
+  const inner: MqPt[] = [];
+  for (let y = 0.5; y < AL_H; y += 1) {
+    for (let x = 0.5; x < AL_W; x += 1) {
+      const p: MqPt = [x, y];
+      const h = size(p);
+      if (!inClosedPolygon(p, hull) || alToPolygon(p, hull) < 0.5 * h) continue;
+      if (placed.some((q) => alDistance(p, q) < 0.85 * Math.min(h, size(q)))) continue;
+      placed.push(p);
+      inner.push(p);
+    }
+  }
+  return inner;
+}
+
+/** The mesh over `hull` (walk order, first) and `interior`, weighted by `b`'s share at each point. */
+function alMesh(hull: readonly MqPt[], interior: readonly MqPt[], share: (p: MqPt) => number): SourceMesh {
+  const points: MqPt[] = [...hull, ...interior];
+  const raw = alDelaunay(points);
+  const triangles: number[] = [];
+  for (let t = 0; t < raw.length; t += 3) {
+    const [a, b, c] = [points[raw[t]], points[raw[t + 1]], points[raw[t + 2]]];
+    const area = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
+    if (!inClosedPolygon([(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3], hull) || !(area > 1e-6)) continue;
+    const ay = cropToSpineY(a[1], AL_H);
+    const twice = (b[0] - a[0]) * (cropToSpineY(c[1], AL_H) - ay) - (c[0] - a[0]) * (cropToSpineY(b[1], AL_H) - ay);
+    if (twice < 0) triangles.push(raw[t], raw[t + 2], raw[t + 1]);
+    else triangles.push(raw[t], raw[t + 1], raw[t + 2]);
+  }
+  const weights = points.map((p) => {
+    const s = r6(Math.max(0, Math.min(1, share(p))));
+    const out: Array<{ bone: string; weight: number }> = [];
+    if (s < 1) out.push({ bone: 'a', weight: r6(1 - s) });
+    if (s > 0) out.push({ bone: 'b', weight: s });
+    return out;
+  });
+  return { points, uvs: points.flatMap(([x, y]) => [x / AL_W, y / AL_H]), triangles, hull: hull.length, weights };
+}
+
+/** One §8 fixture: its mesh, its regions, and the role §8 gives it. */
+interface AlFixture {
+  id: 'F+' | 'N1' | 'N2' | 'N2a' | 'N3' | 'N4';
+  role: string;
+  mesh: SourceMesh;
+  regions: RefinementRegion[];
+}
+
+/** §8's six fixtures, in its table's order. */
+function alFixtures(): AlFixture[] {
+  const rect: MqPt[] = [
+    [0, 0],
+    [AL_W, 0],
+    [AL_W, AL_H],
+    [0, AL_H],
+  ];
+  const ramp = (p: MqPt): number => p[0] / AL_W;
+  const out: AlFixture[] = [];
+  {
+    const hull = alWalk(rect, () => 16);
+    out.push({ id: 'F+', role: 'even, 16 px everywhere, uniform ramp — every row accepts', mesh: alMesh(hull, alFill(hull, () => 16), ramp), regions: [] });
+  }
+  {
+    const hull = alWalk(rect, () => 2);
+    const inner: MqPt[] = [
+      [32, 26],
+      [64, 18],
+      [64, 34],
+      [96, 26],
+      [128, 18],
+      [128, 34],
+    ];
+    out.push({ id: 'N1', role: 'a straight boundary at 2 px beside 6 interior vertices — every row flags', mesh: alMesh(hull, inner, ramp), regions: [] });
+  }
+  const region: RefinementRegion = {
+    name: 'dense',
+    polygon: [
+      [64, 22],
+      [96, 22],
+      [96, 36],
+      [64, 36],
+    ],
+    maxEdgeLength: 4,
+    transition: 16,
+    grade: 0.75,
+    approximation: null,
+  };
+  const top: MqPt[] = [];
+  for (let x = 0; x <= AL_W; x += 3) top.push([x, r6(4 + 1.5 * Math.cos((Math.PI * x) / 3))]);
+  if (top[top.length - 1][0] !== AL_W) top.push([AL_W, r6(4 + 1.5 * Math.cos((Math.PI * AL_W) / 3))]);
+  const wavy: MqPt[] = [...top, [AL_W, AL_H], [0, AL_H]];
+  const toTop = (p: MqPt): number => {
+    let d = Infinity;
+    for (let i = 0; i + 1 < top.length; i++) d = Math.min(d, mqPointSegment(p, top[i], top[i + 1]));
+    return d;
+  };
+  const toRegion = (p: MqPt): number => (inClosedPolygon(p, region.polygon) ? 0 : alToPolygon(p, region.polygon));
+  {
+    const size = (p: MqPt): number => Math.min(16, 3 + 0.75 * toTop(p), 4 + 0.75 * toRegion(p));
+    const hull = alWalk(wavy, size);
+    out.push({ id: 'N2', role: 'a wavy top every 3 px and a declared region, graded at 0.75 — no row flags', mesh: alMesh(hull, alFill(hull, size), ramp), regions: [region] });
+    const hullA = alWalk(wavy, (p) => (p[1] < 8 ? 3 : 16));
+    const sizeA = (p: MqPt): number => (toRegion(p) === 0 ? 4 : 16);
+    out.push({ id: 'N2a', role: "N2's outline and region with no transition — grade flags, the contrast does not", mesh: alMesh(hullA, alFill(hullA, sizeA), ramp), regions: [region] });
+  }
+  {
+    const cols: number[] = [];
+    for (let x = 72; x <= 88; x += 4) cols.push(x);
+    for (let x = 72, s = 4; ; ) {
+      s = Math.min(16, 4 + 0.75 * (72 - x + s));
+      x -= s;
+      if (x <= 4) break;
+      cols.push(r6(x));
+    }
+    for (let x = 88, s = 4; ; ) {
+      s = Math.min(16, 4 + 0.75 * (x - 88 + s));
+      x += s;
+      if (x >= AL_W - 4) break;
+      cols.push(r6(x));
+    }
+    cols.push(0, AL_W);
+    cols.sort((a, b) => a - b);
+    const rows = [0, 13, 26, 39, AL_H];
+    const hull: MqPt[] = [];
+    for (const x of cols) hull.push([x, 0]);
+    for (const y of rows.slice(1, -1)) hull.push([AL_W, y]);
+    for (const x of cols.slice().reverse()) hull.push([x, AL_H]);
+    for (const y of rows.slice(1, -1).reverse()) hull.push([0, y]);
+    const inner: MqPt[] = [];
+    for (const x of cols.slice(1, -1)) for (const y of rows.slice(1, -1)) inner.push([x, y]);
+    out.push({ id: 'N3', role: 'columns every 4 px over x 72–88 where the share ramps 0 → 1 — dense and justified, the contrast does not flag', mesh: alMesh(hull, inner, (p) => (p[0] - 72) / 16), regions: [] });
+    out.push({ id: 'N4', role: "N3's mesh exactly, the uniform ramp — dense for no reason, the contrast flags", mesh: alMesh(hull, inner, ramp), regions: [] });
+  }
+  return out;
+}
+
 function runMeshQualitySuite(): number {
   console.log('\n── mesh quality: the geometry rows, states and refusals of mesh-quality-report/1 (issue #1224) ──');
   let bad = 0;
@@ -45512,7 +45741,8 @@ function runMeshQualitySuite(): number {
       if (coverage?.value !== legacy.coverage) probes.push(`${label}: coverage ${coverage?.value}, measureAuthoredMeshFit ${legacy.coverage}`);
       if (mqRows(rep).filter((r) => r.code === 'MQ_OVERSHOOT').length !== 1) probes.push(`${label}: the fills disagree on a plain rectangle`);
       if (overshoot?.value !== legacy.overshoot) probes.push(`${label}: overshoot ${overshoot?.value}, measureAuthoredMeshFit ${legacy.overshoot}`);
-      for (const r of mqRows(rep)) if (r.state === 'refused' || r.state === 'not-measurable') probes.push(`${label}: ${mqSay(r)} — ${r.reason}`);
+      // The allocation rows (issue #1280) read weights and a declared amplitude this unweighted mesh has neither of; MQ122 holds theirs.
+      for (const r of mqRows(rep)) if (r.allocation === undefined && (r.state === 'refused' || r.state === 'not-measurable')) probes.push(`${label}: ${mqSay(r)} — ${r.reason}`);
       readings.push(`${label}: deviation ${boundary?.value}, coverage ${coverage?.value} = ${legacy.coverage}, overshoot ${overshoot?.value} = ${legacy.overshoot}`);
     }
     if (!readings.some((r) => !r.includes('overshoot 0 '))) probes.push('every mesh measured overshoot 0, so the legacy comparison of overshoot compared nothing');
@@ -45520,7 +45750,7 @@ function runMeshQualitySuite(): number {
     say(
       'MQ00_CONTROL_A_MESH_MEASURED_AGAINST_ITS_OWN_HULL_DEVIATES_ZERO_AND_ITS_RASTER_ROWS_ARE_THE_LEGACY_FIT',
       held,
-      probeDetail(held, probes, `${readings.join('; ')} — every row measured, none refused or unmeasurable`),
+      probeDetail(held, probes, `${readings.join('; ')} — every row measured, none refused or unmeasurable, but for the allocation rows that need weights or an amplitude (MQ122)`),
       'the geometry half of the contract\'s MQ00: a mesh against itself is the identity every other row is read against, and coverage and overshoot are measureAuthoredMeshFit\'s wherever the 8- and 4-connected fills agree (P12)',
     );
   }
@@ -47875,6 +48105,447 @@ function runMeshQualitySuite(): number {
       held,
       probeDetail(held, probes, `${seen.join(', ')} refused REDUCE_INPUT_MISSING naming stopAfterAccepted; undefined admitted as the field left out`),
       'issue #1268: the field is a count of steps and the operation never guesses one — a fraction, a negative, NaN, null or a string names no step to stop at',
+    );
+  }
+
+  // --- MQ120–MQ127 (#1280): the five allocation rows and the amplitude they read ------------------------------------
+  // Numbered from MQ120, not from the next free code: `mesh-quality` and `mesh-compare` share the MQ prefix, and another
+  // change was opening codes from MQ91 in `mesh-compare` while this one was written — so this one starts clear of it
+  // (TY17: a code names one control). The subjects are §8's six fixtures (`alFixtures`, rebuilt here — every figure
+  // compared is read off this build), the suite's own fixtures above, and #1266's reproducer (`rpFull`, the strict run
+  // MQ81 takes). Every plant is an `AllocationPlant` passed through `measureMeshQualityPlanted`; `measureMeshQuality`
+  // plants none.
+  const ALLOCATION_CODES = ['MQ_ALLOCATION_CONTRAST', 'MQ_BOUNDARY_NECESSARY', 'MQ_DEFORM_LOAD', 'MQ_GRADE', 'MQ_MIN_ANGLE_P10'];
+  const alFx = alFixtures();
+  const alFrame = mqFrame(AL_W, AL_H);
+  const alMasks = new Map(alFx.map((f) => [f.id, mqMask(dir, `allocation-${f.id}`, AL_W, AL_H, (x, y) => (inClosedPolygon([x + 0.5, y + 0.5], f.mesh.points.slice(0, f.mesh.hull)) ? 1 : 0))]));
+  const alHull = (f: AlFixture): MqPt[] => f.mesh.points.slice(0, f.mesh.hull);
+  const alInput = (f: AlFixture, over: Partial<MeshMeasureInput> = {}): MeshMeasureInput =>
+    mqInput(alMasks.get(f.id)!, alFrame, f.mesh, { artFit: null, maxBoundaryDeviation: 1, regions: f.regions }, { referenceHull: alHull(f), motionAmplitude: alAmplitude(), ...over });
+  const alRows = (report: MeshQualityReport): MeasureRow[] => mqRows(report).filter((r) => ALLOCATION_CODES.includes(r.code));
+  const alValue = (report: MeshQualityReport, code: string): number | null => mqRow(report, code)?.value ?? null;
+  const byId = (id: AlFixture['id']): AlFixture => alFx.find((f) => f.id === id)!;
+  const alReports = new Map(alFx.map((f) => [f.id, measureMeshQuality(alInput(f))]));
+  /** A row's value on each named fixture, under `read`, as `id value` phrases and as numbers. */
+  const readOn = (ids: Array<AlFixture['id']>, code: string, read: (f: AlFixture) => MeshQualityReport = (f) => alReports.get(f.id)!): number[] => ids.map((id) => alValue(read(byId(id)), code) ?? NaN);
+  /** The report's text with the five allocation rows taken out and every summary recounted from the rows left. */
+  const withoutAllocation = (text: string): string => {
+    const doc = JSON.parse(text) as { candidates: Array<{ geometry: { rows: Array<{ code: string; state: string }>; summary: Record<string, number> } | null }> };
+    for (const c of doc.candidates) {
+      if (c.geometry === null) continue;
+      c.geometry.rows = c.geometry.rows.filter((r) => !ALLOCATION_CODES.includes(r.code));
+      const s = c.geometry.summary;
+      for (const k of Object.keys(s)) s[k] = 0;
+      for (const r of c.geometry.rows) {
+        if (r.state === 'pass') s.pass++;
+        else if (r.state === 'fail') s.fail++;
+        else if (r.state === 'undeclared') s.undeclared++;
+        else if (r.state === 'refused') s.refused++;
+        else s.notMeasurable++;
+      }
+      s.measured = s.pass + s.fail;
+    }
+    return `${JSON.stringify(doc, null, 2)}\n`;
+  };
+  const fmt = (v: number, places: number): string => v.toFixed(places);
+
+  // --- MQ120: §8's separations, read off the six fixtures ------------------------------------------------------------
+  {
+    const probes: string[] = [];
+    const lines: string[] = [];
+    for (const f of alFx) {
+      const rep = alReports.get(f.id)!;
+      const rows = alRows(rep);
+      if (rows.length !== 5 || rows.some((r) => r.state !== 'undeclared' || r.bound !== null || r.allocation?.reading === undefined)) {
+        probes.push(`${f.id}: ${rows.map(mqSay).join('; ')} — not five undeclared rows with a reading and no bound`);
+      }
+      lines.push(`${f.id} ${ALLOCATION_CODES.map((c) => `${c.slice(3)} ${alValue(rep, c)}`).join(' ')}`);
+    }
+    /** One row's separation: every must-accept on one side of every must-flag, and the two extremes §8 prints. */
+    const separates = (code: string, accept: Array<AlFixture['id']>, flag: Array<AlFixture['id']>, flagIsHigh: boolean, printed: [string, string], places: number, read?: (f: AlFixture) => MeshQualityReport): string | null => {
+      const a = readOn(accept, code, read);
+      const g = readOn(flag, code, read);
+      const worstAccept = flagIsHigh ? Math.max(...a) : Math.min(...a);
+      const bestFlag = flagIsHigh ? Math.min(...g) : Math.max(...g);
+      const apart = flagIsHigh ? worstAccept < bestFlag : worstAccept > bestFlag;
+      const said = `${code}: must-accept [${accept.join(', ')}] worst ${worstAccept}, must-flag [${flag.join(', ')}] best ${bestFlag}`;
+      if (!apart) return `${said} — not separated`;
+      if (fmt(worstAccept, places) !== printed[0] || fmt(bestFlag, places) !== printed[1]) return `${said} — §8 prints ${printed[0]} → ${printed[1]}`;
+      return null;
+    };
+    const checks = (read?: (f: AlFixture) => MeshQualityReport, gradation?: number): string[] =>
+      [
+        separates('MQ_GRADE', ['F+', 'N2', 'N3', 'N4'], ['N1', 'N2a'], true, ['0.998', '2.694'], 3, read),
+        separates('MQ_MIN_ANGLE_P10', ['F+', 'N2', 'N2a', 'N3', 'N4'], ['N1'], false, ['17.10', '3.53'], 2, read),
+        separates('MQ_ALLOCATION_CONTRAST', ['F+', 'N2', 'N2a', 'N3'], ['N1', 'N4'], true, [gradation === 1.64 ? '0.124' : '0.000', '0.510'], 3, read),
+      ].filter((p): p is string => p !== null);
+    probes.push(...checks());
+    // §8: "holds for gradation G 0.5–1.64 (accept ≤ 0.124)".
+    for (const gradation of [0.5, 1.0, 1.64]) {
+      const at = new Map(alFx.map((f) => [f.id, measureMeshQuality(alInput(f, { motionAmplitude: alAmplitude(gradation) }))]));
+      const sep = separates('MQ_ALLOCATION_CONTRAST', ['F+', 'N2', 'N2a', 'N3'], ['N1', 'N4'], true, [gradation === 1.64 ? '0.124' : fmt(Math.max(...readOn(['F+', 'N2', 'N2a', 'N3'], 'MQ_ALLOCATION_CONTRAST', (f) => at.get(f.id)!)), 3), '0.510'], 3, (f) => at.get(f.id)!);
+      if (sep !== null) probes.push(`gradation ${gradation}: ${sep}`);
+    }
+    // N3 and N4 are one mesh: the geometry rows read alike, and only the contrast tells them apart.
+    const [n3, n4] = [alReports.get('N3')!, alReports.get('N4')!];
+    for (const code of ['MQ_GRADE', 'MQ_MIN_ANGLE_P10']) if (alValue(n3, code) !== alValue(n4, code)) probes.push(`${code} reads N3 ${alValue(n3, code)} and N4 ${alValue(n4, code)} on one mesh`);
+    // The plant: the deformation need dropped — the reading §8 rejected — has to lose a separation.
+    const planted = new Map(alFx.map((f) => [f.id, measureMeshQualityPlanted(alInput(f), 'contrast-without-amplitude')]));
+    const plantedSaid = checks((f) => planted.get(f.id)!);
+    if (plantedSaid.length === 0) probes.push('planted contrast-without-amplitude: every separation still held, so the separations do not read the amplitude');
+    const held = probes.length === 0;
+    say(
+      'MQ120_THE_ALLOCATION_ROWS_SEPARATE_SECTION_8S_FIXTURES_AT_THE_FIGURES_IT_PRINTS_AND_EVERY_ROW_IS_UNDECLARED',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')} — grade 0.998 → 2.694, P10 17.10° → 3.53°, Δ 0.000 → 0.510 (0.124 → 0.510 at gradation 1.64), N3 and N4 alike but for Δ; planted contrast-without-amplitude: ${plantedSaid.join('; ')}`),
+      'issue #1280 and §8: each row is reported because it separates fixtures built to be accepted from fixtures built to be flagged — read off this build, not restated — and the dense-share reading separates nothing without a declared amplitude',
+    );
+  }
+
+  // --- MQ121: grade, P10 and the load equal the suite's own derivation ------------------------------------------------
+  {
+    const probes: string[] = [];
+    /** The suite's own readings — not the module's code read twice. */
+    const own = (mesh: SourceMesh): { grade: number; gradeEdge: string; p10: number; load: number } => {
+      const edges = new Map<string, [number, number]>();
+      for (let t = 0; t < mesh.triangles.length; t += 3) {
+        for (const [a, b] of [
+          [mesh.triangles[t], mesh.triangles[t + 1]],
+          [mesh.triangles[t + 1], mesh.triangles[t + 2]],
+          [mesh.triangles[t + 2], mesh.triangles[t]],
+        ]) {
+          const k: [number, number] = a < b ? [a, b] : [b, a];
+          edges.set(`${k[0]},${k[1]}`, k);
+        }
+      }
+      const sorted = [...edges.values()].sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+      const lens = new Map<number, number[]>();
+      for (const [a, b] of sorted) {
+        const L = alDistance(mesh.points[a], mesh.points[b]);
+        lens.set(a, [...(lens.get(a) ?? []), L]);
+        lens.set(b, [...(lens.get(b) ?? []), L]);
+      }
+      const h = (v: number): number => lens.get(v)!.reduce((s, x) => s + x, 0) / lens.get(v)!.length;
+      let grade = -1;
+      let gradeEdge = '';
+      let load = 0;
+      for (const [a, b] of sorted) {
+        const L = alDistance(mesh.points[a], mesh.points[b]);
+        const g = Math.abs(h(a) - h(b)) / L;
+        if (g > grade) {
+          grade = g;
+          gradeEdge = `${a},${b}`;
+        }
+        const share = (v: number): number => mesh.weights![v].find((x) => x.bone === 'b')?.weight ?? 0;
+        load = Math.max(load, (L * Math.abs(share(a) - share(b)) * AL_THETA) / 4);
+      }
+      const angles: number[] = [];
+      for (let t = 0; t < mesh.triangles.length; t += 3) {
+        const [A, B, C] = [mesh.points[mesh.triangles[t]], mesh.points[mesh.triangles[t + 1]], mesh.points[mesh.triangles[t + 2]]];
+        const [a, b, c] = [alDistance(B, C), alDistance(A, C), alDistance(A, B)];
+        const at = (o: number, p: number, q: number): number => (Math.acos(Math.max(-1, Math.min(1, (p * p + q * q - o * o) / (2 * p * q)))) * 180) / Math.PI;
+        angles.push(Math.min(at(a, b, c), at(b, a, c), at(c, a, b)));
+      }
+      const ranked = angles.slice().sort((x, y) => x - y);
+      return { grade, gradeEdge, p10: ranked[Math.round((ranked.length - 1) * 0.1)], load };
+    };
+    const lines: string[] = [];
+    const disagree = (read: (f: AlFixture) => MeshQualityReport): string[] => {
+      const out: string[] = [];
+      for (const f of alFx) {
+        const o = own(f.mesh);
+        const rep = read(f);
+        const gradeRow = mqRow(rep, 'MQ_GRADE');
+        if (Math.abs((gradeRow?.value ?? NaN) - o.grade) > 1e-6 || JSON.stringify(gradeRow?.worst?.at.edge) !== `[${o.gradeEdge}]`) out.push(`${f.id}: ${mqSay(gradeRow)}, the suite reads ${r6(o.grade)} at [${o.gradeEdge}]`);
+        if (Math.abs((alValue(rep, 'MQ_MIN_ANGLE_P10') ?? NaN) - o.p10) > 1e-6) out.push(`${f.id}: MQ_MIN_ANGLE_P10 ${alValue(rep, 'MQ_MIN_ANGLE_P10')}, the suite reads ${r6(o.p10)}`);
+        if (Math.abs((alValue(rep, 'MQ_DEFORM_LOAD') ?? NaN) - o.load) > 1e-6) out.push(`${f.id}: MQ_DEFORM_LOAD ${alValue(rep, 'MQ_DEFORM_LOAD')}, the suite reads ${r6(o.load)}`);
+      }
+      return out;
+    };
+    probes.push(...disagree((f) => alReports.get(f.id)!));
+    for (const f of alFx) {
+      const o = own(f.mesh);
+      lines.push(`${f.id} grade ${r6(o.grade)} P10 ${r6(o.p10)} load ${r6(o.load)}`);
+    }
+    const caught: string[] = [];
+    for (const plant of ['grade-undivided', 'p10-is-min', 'load-without-theta'] as AllocationPlant[]) {
+      const said = disagree((f) => measureMeshQualityPlanted(alInput(f), plant));
+      if (said.length === 0) probes.push(`planted ${plant}: every reading still agreed with the suite's`);
+      else caught.push(`${plant} (${said[0]})`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ121_GRADE_MIN_ANGLE_P10_AND_DEFORM_LOAD_EQUAL_THE_SUITES_OWN_DERIVATION_ON_EVERY_FIXTURE',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')}, each equal to its row and the grade at the same edge; planted: ${caught.join('; ')}`),
+      'issue #1280: a row is its definition — max |h_u − h_v| / L with h the mean incident edge, the nearest-rank tenth percentile of the smallest angles, the largest L · Δshare · θ / 4 — read by a second implementation (the law of cosines, a string-keyed edge set), so a wrong reading is not compared with itself',
+    );
+  }
+
+  // --- MQ122: what each row needs, and the sentence it says when the input does not give it ------------------------
+  {
+    const probes: string[] = [];
+    const n4 = byId('N4');
+    const stateOf = (rep: MeshQualityReport): string => alRows(rep).map((r) => `${r.code.slice(3)} ${r.state}`).join(', ');
+    const missingSaid = (label: string, rep: MeshQualityReport, codes: string[], words: string): string[] => {
+      const out: string[] = [];
+      for (const code of ALLOCATION_CODES) {
+        const row = mqRow(rep, code);
+        const missing = codes.includes(code);
+        if (missing && (row?.state !== 'not-measurable' || !(row.reason ?? '').includes(words) || row.value !== null)) out.push(`${label}: ${mqSay(row)} — not not-measurable naming "${words}": ${row?.reason}`);
+        if (!missing && row?.state !== 'undeclared') out.push(`${label}: ${mqSay(row)} — ${row?.reason ?? ''}, not undeclared`);
+      }
+      return out;
+    };
+    const expectMissing = (label: string, rep: MeshQualityReport, codes: string[], words: string): void => {
+      probes.push(...missingSaid(label, rep, codes, words));
+    };
+    const leftOut = measureMeshQuality(alInput(n4, { motionAmplitude: undefined }));
+    expectMissing('motionAmplitude left out', leftOut, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'motionAmplitude is not declared');
+    if ('motionAmplitude' in leftOut.effective) probes.push('motionAmplitude left out is echoed in effective');
+    const declaredNull = measureMeshQuality(alInput(n4, { motionAmplitude: null }));
+    expectMissing('motionAmplitude null', declaredNull, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'declared absent (null)');
+    if (declaredNull.effective.motionAmplitude !== null) probes.push('motionAmplitude null is not echoed as null');
+    expectMissing('motionAmplitude given', alReports.get('N4')!, [], '');
+    const unweighted = measureMeshQuality(alInput(n4, { source: { ...n4.mesh, weights: null } }));
+    expectMissing('source.weights null', unweighted, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'source.weights is null');
+    const noDelta = measureMeshQuality(alInput(n4, { targets: { artFit: null, maxBoundaryDeviation: null, regions: [] } }));
+    expectMissing('maxBoundaryDeviation null', noDelta, ['MQ_ALLOCATION_CONTRAST', 'MQ_BOUNDARY_NECESSARY'], 'targets.maxBoundaryDeviation is null');
+    const noReference = measureMeshQuality(alInput(n4, { referenceHull: null }));
+    expectMissing('referenceHull null', noReference, ['MQ_BOUNDARY_NECESSARY'], 'no referenceHull was given');
+    // A third bone the track does not move: `b`'s share is `c`'s at x >= 128, so the edges across x = 128 move a share
+    // between `c` and both of the others — pairs no track declares.
+    const threeBone: SourceMesh = { ...n4.mesh, weights: n4.mesh.weights!.map((v, i) => (n4.mesh.points[i][0] >= 128 ? v.map((x) => (x.bone === 'b' ? { bone: 'c', weight: x.weight } : x)) : v)) };
+    const undeclaredPair = measureMeshQuality(alInput(n4, { source: threeBone }));
+    expectMissing('a pair no track declares', undeclaredPair, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'and "c", and a share moves between them across');
+    const declaredToo = measureMeshQuality(
+      alInput(n4, {
+        source: threeBone,
+        motionAmplitude: {
+          ...alAmplitude(),
+          tracks: [
+            ...alAmplitude().tracks,
+            {
+              track: 'still',
+              pairs: [
+                { bones: ['c', 'b'], theta: 0 },
+                { bones: ['a', 'c'], theta: 0 },
+              ],
+              epsilon: 1,
+            },
+          ],
+        },
+      }),
+    );
+    expectMissing('the same pair declared with θ 0', declaredToo, [], '');
+    // The plants: the rejected reading measured without an amplitude, and an undeclared pair read as rigid.
+    const plantedAbsent = measureMeshQualityPlanted(alInput(n4, { motionAmplitude: undefined }), 'contrast-without-amplitude');
+    if (missingSaid('planted', plantedAbsent, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'motionAmplitude is not declared').length === 0) probes.push('planted contrast-without-amplitude: the left-out check still held');
+    const plantedRigid = measureMeshQualityPlanted(alInput(n4, { source: threeBone }), 'undeclared-pair-is-rigid');
+    if (missingSaid('planted', plantedRigid, ['MQ_ALLOCATION_CONTRAST', 'MQ_DEFORM_LOAD'], 'and "c", and a share moves between them across').length === 0) probes.push('planted undeclared-pair-is-rigid: the undeclared-pair check still held');
+    const held = probes.length === 0;
+    say(
+      'MQ122_CONTRAST_AND_LOAD_ARE_NOT_MEASURABLE_WITHOUT_A_DECLARED_AMPLITUDE_OR_WEIGHTS_OR_FOR_AN_UNDECLARED_PAIR_NAMING_THE_FIELD',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `left out: ${stateOf(leftOut)}; null: ${stateOf(declaredNull)}, echoed null; given: ${stateOf(alReports.get('N4')!)}; unweighted, no deviation bound, no reference hull and a share moving to a bone \`c\` no track declares each leave exactly the rows that read them not-measurable with the reason naming the field or the pair; those pairs declared at θ 0 are measured (${mqRow(declaredToo, 'MQ_DEFORM_LOAD')?.value} px); planted, the rejected reading reads ${mqRow(plantedAbsent, 'MQ_ALLOCATION_CONTRAST')?.value} without an amplitude and the undeclared pair ${mqRow(plantedRigid, 'MQ_DEFORM_LOAD')?.value} as if rigid — each caught as not the tree's not-measurable`,
+      ),
+      '§8 and rig-parts#126 (Q2): without {θ, ε} no reading of justification separates anything (the dense share reads 0.920 on the even fixture and 0.981 on the worst), so such a row is not-measurable, never a pass; and no amplitude is assumed for a pair the caller did not declare',
+    );
+  }
+
+  // --- MQ123: the rows never block, never pass, never count towards acceptance -------------------------------------
+  {
+    const probes: string[] = [];
+    const strictFit: ArtFitBounds = { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 };
+    const subjects: Array<[string, MeshMeasureInput]> = [
+      ...alFx.map((f): [string, MeshMeasureInput] => [f.id, alInput(f, { targets: { artFit: strictFit, maxBoundaryDeviation: 1, minAngle: 0, regions: f.regions } })]),
+      ['exact', mqInput(rectMask, frame, exact, { artFit: strict, maxBoundaryDeviation: 0, regions: [] }, { referenceHull: hull })],
+      ['lattice, a region', mqInput(rectMask, frame, twoBone, { artFit: strict, maxBoundaryDeviation: 0, regions: [dense] }, { referenceHull: hull, motionAmplitude: { tracks: [{ track: 't', pairs: [{ bones: ['a', 'b'], theta: 0.1 }], epsilon: 0.5 }], gradation: 1 } })],
+    ];
+    const verdicts: string[] = [];
+    const compareWith = (plant: AllocationPlant | null): string[] => {
+      const out: string[] = [];
+      for (const [label, input] of subjects) {
+        const rep = plant === null ? measureMeshQuality(input) : measureMeshQualityPlanted(input, plant);
+        const base = measureMeshQualityPlanted(input, 'omit-rows');
+        const c = rep.candidates[0];
+        const b = base.candidates[0];
+        if (c.accepted !== b.accepted || c.geometry?.verdict !== b.geometry?.verdict || c.geometry?.summary.pass !== b.geometry?.summary.pass || c.geometry?.summary.fail !== b.geometry?.summary.fail) {
+          out.push(`${label}: accepted ${c.accepted} verdict ${c.geometry?.verdict} pass ${c.geometry?.summary.pass} fail ${c.geometry?.summary.fail}, without the rows ${b.accepted} ${b.geometry?.verdict} ${b.geometry?.summary.pass} ${b.geometry?.summary.fail}`);
+        }
+        for (const r of alRows(rep)) if (r.bound !== null || (r.state !== 'undeclared' && r.state !== 'not-measurable')) out.push(`${label}: ${mqSay(r)}`);
+        if (plant === null) verdicts.push(`${label} ${c.geometry?.verdict}/${c.accepted ? 'accepted' : 'not accepted'}`);
+      }
+      return out;
+    };
+    probes.push(...compareWith(null));
+    // The reduction: its result report carries the rows, and no step stops on one.
+    const reduced = alRows(rpFull.report);
+    const end = rpFull.report.termination;
+    if (reduced.length !== 5) probes.push(`the reduction's report carries ${reduced.length} allocation rows, not 5`);
+    if (end === null || !('blockingConstraint' in end) || ALLOCATION_CODES.some((c) => end.blockingConstraint.includes(c))) probes.push(`the reduction ended ${mqSayEnd(end)}`);
+    if (!rpFull.report.candidates[0].accepted) probes.push('the reduction\'s result is not accepted');
+    const plantedSaid = compareWith('rows-required');
+    if (plantedSaid.length === 0) probes.push('planted rows-required: every verdict unchanged, so the comparison cannot see a required row');
+    const held = probes.length === 0;
+    say(
+      'MQ123_NO_ALLOCATION_ROW_IS_REQUIRED_SO_NONE_BLOCKS_A_STEP_PASSES_OR_MOVES_A_VERDICT',
+      held,
+      probeDetail(held, probes, `${verdicts.join(', ')} — each the verdict, acceptance and pass/fail counts of the same report without the rows; the reduction's result carries the five and ends ${mqSayEnd(end)}; planted rows-required: ${plantedSaid[0]}`),
+      'issue #1280 and rig-parts#126 (Q7): parts declares a bound on none of the five, so each is undeclared or not-measurable — out of the pass count, never required, never the constraint a step is refused on',
+    );
+  }
+
+  // --- MQ124: the opt-out — every report is today's but for the five rows ------------------------------------------
+  {
+    const probes: string[] = [];
+    const rpRef = rpSource.points.slice(0, rpSource.hull);
+    const subjects: Array<[string, MeshMeasureInput]> = [
+      ['exact', mqInput(rectMask, frame, exact, noTargets)],
+      ['pushed-out against its hull', mqInput(rectMask, frame, pushed, { artFit: strict, maxBoundaryDeviation: 0, regions: [] }, { referenceHull: hull })],
+      ['lattice, two bones, a region', mqInput(rectMask, frame, twoBone, { artFit: strict, maxBoundaryDeviation: 0, regions: [dense] })],
+      ['the reproducer, its own hull', mqInput(rpMask, mqFrame(MV_W, MV_H), rpSource, { artFit: rpStrict, maxBoundaryDeviation: 1, regions: [] }, { referenceHull: rpRef })],
+      ...alFx.map((f): [string, MeshMeasureInput] => [f.id, alInput(f, { motionAmplitude: undefined })]),
+    ];
+    const sizes: string[] = [];
+    const differing = (plant: AllocationPlant | null): string[] => {
+      const out: string[] = [];
+      for (const [label, input] of subjects) {
+        const copy: MeshMeasureInput = { ...input, source: { ...input.source, triangles: input.source.triangles.slice() } };
+        const full = writeMeshQualityReport(plant === null ? measureMeshQuality(copy) : measureMeshQualityPlanted(copy, plant));
+        const base = writeMeshQualityReport(measureMeshQualityPlanted(input, 'omit-rows'));
+        if (withoutAllocation(full) !== base) out.push(`${label}: the report without its allocation rows is not the report the tree writes without them`);
+        if (plant === null) sizes.push(`${label} ${base.length} + ${full.length - base.length}`);
+      }
+      return out;
+    };
+    probes.push(...differing(null));
+    const plantedSaid = differing('mutates-input');
+    if (plantedSaid.length === 0) probes.push('planted mutates-input: every report still matched, so the comparison cannot see a measurement that changes its input');
+    const held = probes.length === 0;
+    say(
+      'MQ124_EVERY_REPORT_WITHOUT_ITS_FIVE_ALLOCATION_ROWS_IS_THE_REPORT_WITHOUT_THEM_BYTE_FOR_BYTE',
+      held,
+      probeDetail(held, probes, `bytes without the rows + bytes they add: ${sizes.join(', ')} — each identical once the five rows are taken out and the summary recounted; planted mutates-input: ${plantedSaid.length} of ${subjects.length} caught, first ${plantedSaid[0]}`),
+      'issue #1280: the opt-out path — an existing caller declares nothing new and reads every row it read before, byte for byte; measured on the recorded consumer inputs out of suite (docs/MESH_REDUCTION.md §8, implemented)',
+    );
+  }
+
+  // --- MQ125: B* — an outline of that many reference hull vertices holds every static row ---------------------------
+  {
+    const probes: string[] = [];
+    const lines: string[] = [];
+    const fit: ArtFitBounds = { minCoverage: 1, maxOvershoot: null, maxUndercut: 0 };
+    const outlineFails = (f: AlFixture, plant: AllocationPlant | null): string | null => {
+      const ref = alHull(f);
+      const mask = alMasks.get(f.id)!;
+      const found = boundaryNecessity(ref, 1, { mask, bits: Uint8Array.from(mask.alpha, (a) => (a >= 1 ? 1 : 0)), scale: 1 }, plant);
+      const pts = found.path.map((i) => ref[i]);
+      const outline = mqMesh(pts, earClip(pts), pts.length, AL_H, AL_W);
+      const rep = measureMeshQuality(mqInput(mask, alFrame, outline, { artFit: fit, maxBoundaryDeviation: 1, regions: [] }, { referenceHull: ref }));
+      const bad = ['MQ_COVERAGE', 'MQ_UNDERCUT', 'MQ_BOUNDARY_DEVIATION', 'MQ_ORIENTATION', 'MQ_DEGENERATE'].map((c) => mqRow(rep, c)).filter((r) => r?.state !== 'pass');
+      if (plant === null) lines.push(`${f.id} B* ${found.count} of ${ref.length} (${found.tests} of at most ${found.bound} shortcuts tested)`);
+      if (plant === null && found.tests > found.bound) probes.push(`${f.id}: ${found.tests} shortcuts tested against a bound of ${found.bound}`);
+      return bad.length === 0 ? null : `${f.id}: B* ${found.count} outline ${bad.map(mqSay).join('; ')}`;
+    };
+    for (const f of alFx) {
+      const said = outlineFails(f, null);
+      if (said !== null) probes.push(said);
+      const row = mqRow(alReports.get(f.id)!, 'MQ_BOUNDARY_NECESSARY');
+      const search = row?.allocation?.search;
+      if (search === undefined || search.bound !== f.mesh.hull * (f.mesh.hull - 2)) probes.push(`${f.id}: the row's search is ${JSON.stringify(search)}, not tests against n × (n − 2) = ${f.mesh.hull * (f.mesh.hull - 2)}`);
+    }
+    // A rectangle sampled along its sides keeps its four corners and nothing else.
+    for (const id of ['F+', 'N1', 'N3', 'N4'] as const) {
+      const v = alValue(alReports.get(id)!, 'MQ_BOUNDARY_NECESSARY');
+      if (v !== 4) probes.push(`${id}: B* ${v} on a rectangle's outline, not its 4 corners`);
+    }
+    // The reproducer's strict run keeps exactly B* boundary vertices (§8) — read off the reduction's own report.
+    const kept = rpFull.report.candidates[0].counts?.boundaryVertices;
+    const necessary = mqRow(rpFull.report, 'MQ_BOUNDARY_NECESSARY');
+    if (necessary?.value !== kept) probes.push(`the strict run keeps ${kept} boundary vertices and its report reads ${mqSay(necessary)}`);
+    const planted = alFx.map((f) => outlineFails(f, 'bstar-ignores-art')).filter((p): p is string => p !== null);
+    if (planted.length === 0) probes.push('planted bstar-ignores-art: every outline still held its rows, so the art test is not what keeps them');
+    const held = probes.length === 0;
+    say(
+      'MQ125_AN_OUTLINE_OF_B_STAR_REFERENCE_HULL_VERTICES_HOLDS_COVERAGE_UNDERCUT_AND_DEVIATION_AND_THE_SEARCH_STAYS_UNDER_ITS_BOUND',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')} — each outline, ear-clipped, passes coverage, undercut, deviation, orientation and degeneracy against its reference; a rectangle's is its 4 corners; the reproducer's strict run keeps ${kept} = B* ${necessary?.value} (worst ${JSON.stringify(necessary?.worst?.at)}); planted bstar-ignores-art: ${planted[0]}`),
+      '§8: B* is the number that says boundary is kept beyond what the silhouette needs — so the outline it counts has to be one every static row holds, and its search has to be bounded (n × (n − 2) shortcut tests)',
+    );
+  }
+
+  // --- MQ126: one input, one text — and the amplitude echoed in the type's key order --------------------------------
+  {
+    const probes: string[] = [];
+    const n2 = byId('N2');
+    const text = writeMeshQualityReport(measureMeshQuality(alInput(n2)));
+    if (writeMeshQualityReport(measureMeshQuality(alInput(n2))) !== text) probes.push('two measurements of one input wrote different bytes');
+    const a = alAmplitude();
+    const reversed = {
+      gradation: a.gradation,
+      tracks: a.tracks.map((t) => ({ epsilon: t.epsilon, pairs: t.pairs.map((p) => ({ theta: p.theta, bones: p.bones })), track: t.track })),
+    } as MotionAmplitude;
+    if (writeMeshQualityReport(measureMeshQuality(alInput(n2, { motionAmplitude: reversed }))) !== text) probes.push('the amplitude built in reverse key order wrote different bytes');
+    const echo = /"motionAmplitude": \{\s*"tracks": \[\s*\{\s*"track": "bend",\s*"pairs": \[\s*\{\s*"bones": \[\s*"a",\s*"b"\s*\],\s*"theta": [0-9.e-]+\s*\}\s*\],\s*"epsilon": [0-9.e-]+\s*\}\s*\],\s*"gradation": [0-9.e-]+\s*\}/;
+    if (!echo.test(text)) probes.push('effective.motionAmplitude is not written tracks, track, pairs, bones, theta, epsilon, gradation');
+    const allocationKeys = (text.match(/"allocation": \{\s*"reading"/g) ?? []).length;
+    if (allocationKeys !== 5) probes.push(`"allocation" is written ${allocationKeys} times, reading first; required once on each of the five rows`);
+    const moved = writeMeshQualityReport(measureMeshQuality(alInput(n2, { motionAmplitude: { ...a, tracks: [{ ...a.tracks[0], pairs: [{ bones: ['a', 'b'], theta: AL_THETA * 2 }] }] } })));
+    if (moved === text) probes.push('doubling θ did not change the bytes, so the comparison above compared nothing');
+    const leftOut = writeMeshQualityReport(measureMeshQuality(alInput(n2, { motionAmplitude: undefined })));
+    if (leftOut.includes('"motionAmplitude"')) probes.push('motionAmplitude left out is written');
+    const held = probes.length === 0;
+    say(
+      'MQ126_THE_ALLOCATION_ROWS_AND_THE_AMPLITUDE_ECHO_ARE_BYTE_IDENTICAL_FOR_ONE_INPUT_IN_ANY_KEY_ORDER',
+      held,
+      probeDetail(held, probes, `${text.length} bytes twice, and again from the amplitude built in reverse key order; the echo in the type's order, "allocation" on the five rows only, reading first; θ doubled changes the bytes; left out, no echo`),
+      "A18's standard and MQ25's: the bytes depend on the values alone, never on the key order an input object was built in — the new field and the new row detail are rebuilt like every other object of the document",
+    );
+  }
+
+  // --- MQ127: a malformed amplitude is refused by name ---------------------------------------------------------------
+  {
+    const probes: string[] = [];
+    const n4 = byId('N4');
+    const a = alAmplitude();
+    const track = a.tracks[0];
+    const cases: Array<[string, unknown, string]> = [
+      ['not an object', 5, 'motionAmplitude is 5'],
+      ['tracks not a list', { gradation: 1, tracks: {} }, 'motionAmplitude is'],
+      ['gradation left out', { tracks: a.tracks }, 'motionAmplitude.gradation is undefined'],
+      ['gradation negative', { ...a, gradation: -1 }, 'motionAmplitude.gradation is -1'],
+      ['gradation NaN', { ...a, gradation: NaN }, 'motionAmplitude.gradation is null'],
+      ['a track unnamed', { ...a, tracks: [{ ...track, track: '' }] }, 'motionAmplitude.tracks[0] is'],
+      ['epsilon 0', { ...a, tracks: [{ ...track, epsilon: 0 }] }, 'motionAmplitude.tracks[0].epsilon is 0'],
+      ['epsilon left out', { ...a, tracks: [{ track: 'bend', pairs: track.pairs }] }, 'motionAmplitude.tracks[0].epsilon is undefined'],
+      ['theta negative', { ...a, tracks: [{ ...track, pairs: [{ bones: ['a', 'b'], theta: -0.1 }] }] }, 'motionAmplitude.tracks[0].pairs[0].theta is -0.1'],
+      ['one bone', { ...a, tracks: [{ ...track, pairs: [{ bones: ['a'], theta: 0.1 }] }] }, 'motionAmplitude.tracks[0].pairs[0].bones is ["a"]'],
+      ['a bone with itself', { ...a, tracks: [{ ...track, pairs: [{ bones: ['a', 'a'], theta: 0.1 }] }] }, 'motionAmplitude.tracks[0].pairs[0].bones is ["a","a"]'],
+    ];
+    const seen: string[] = [];
+    for (const [label, value, words] of cases) {
+      const refusal = refusalOf(alInput(n4, { motionAmplitude: value as MotionAmplitude }));
+      if (refusal === null || refusal.code !== 'REDUCE_INPUT_MISSING' || !refusal.message.includes(words) || !refusal.message.includes('probe-slot/probe')) probes.push(`${label}: ${refusal === null ? 'admitted' : `${refusal.code}: ${refusal.message}`} — not refused naming "${words}"`);
+      else seen.push(label);
+    }
+    for (const [label, value] of [
+      ['left out', undefined],
+      ['null', null],
+      ['no tracks', { tracks: [], gradation: 0 }],
+    ] as Array<[string, MotionAmplitude | null | undefined]>) {
+      const refusal = refusalOf(alInput(n4, { motionAmplitude: value }));
+      if (refusal !== null) probes.push(`${label}: refused ${refusal.code}: ${refusal.message}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ127_A_MOTION_AMPLITUDE_THAT_IS_NOT_A_MOTION_AMPLITUDE_IS_REFUSED_NAMING_THE_FIELD',
+      held,
+      probeDetail(held, probes, `${seen.join(', ')} — each refused REDUCE_INPUT_MISSING naming the field and the attachment; left out, null and a declaration of no track admitted`),
+      'issue #1280: the declaration has no default inside the operation — a field the rows would read is either a number they can use or a refusal by name, never a value filled in',
     );
   }
 
