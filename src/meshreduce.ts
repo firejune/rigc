@@ -48,6 +48,18 @@
  * blocked the last attempt). Inserted vertices are never candidates: they exist
  * to meet `L(R)`, and removing one is undoing the refinement.
  *
+ * With `boundaryRuns` (issue #1279, opt-in) each pass first sweeps boundary
+ * runs — 2 to `maxVertices` consecutive source-hull vertices of the outline
+ * replaced by one chord, as one step held to every row a single removal is —
+ * and then the single removals as above (`removeVertices` states the order).
+ * Every accepted operation is one `acceptedAt` entry and one unit of
+ * `stopAfterAccepted`.
+ *
+ * A removal whose deviation floor — the furthest removed source-hull vertex
+ * from the candidate's outline, which `MQ_BOUNDARY_DEVIATION` can only exceed —
+ * is over the bound is refused without the measurement; its name, when read,
+ * is the measurement's (`tryOperation`). No result reads differently.
+ *
  * The refinement measures, takes the first failing region row in report order
  * (code, then region name) and splits that row's worst edge. When an end of
  * the edge lies outside the region and its band, the split is where the edge
@@ -92,6 +104,7 @@ import {
   edgeIsHeldByRegion,
   measureMeshQualityStep,
   measureMeshQualityWith,
+  type AcceptedOperation,
   type AttachmentRef,
   type ArtFitBounds,
   type CandidateReport,
@@ -263,6 +276,12 @@ function validateReduction(input: MeshReductionInput): void {
   }
   if ('stopAfterAccepted' in input && input.stopAfterAccepted !== undefined && (!Number.isInteger(input.stopAfterAccepted) || input.stopAfterAccepted < 0)) {
     refuse('REDUCE_INPUT_MISSING', `${who}: stopAfterAccepted is ${JSON.stringify(input.stopAfterAccepted)}; required a whole number of accepted steps, 0 or more, or the field left out (issue #1268: replay to that step)`);
+  }
+  if ('boundaryRuns' in input && input.boundaryRuns !== undefined) {
+    const runs: unknown = input.boundaryRuns;
+    if (!isObject(runs) || !Number.isInteger(runs.maxVertices) || (runs.maxVertices as number) < 2) {
+      refuse('REDUCE_INPUT_MISSING', `${who}: boundaryRuns is ${JSON.stringify(runs)}; required { maxVertices: a whole number, 2 or more } — the longest run one chord may replace, which has no default — or the field left out (issue #1279: no run is tried)`);
+    }
   }
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
@@ -733,10 +752,12 @@ interface Run {
   sourceHull: Array<[number, number]>;
   /** Steps tried so far, refinement insertions and removal attempts alike. */
   steps: number;
-  /** Issue #1268: `steps` as it stood at each accepted step — every insertion made and every removal taken — in order. */
-  acceptedAt: number[];
-  /** The replay fault planted for a control, or null. */
-  plant: ReplayPlant | null;
+  /** Issue #1268, per operation since #1279: every insertion made, removal taken and boundary run taken, in order. */
+  acceptedAt: AcceptedOperation[];
+  /** The fault planted for a control, or null. */
+  plant: ReductionPlant | null;
+  /** What a control reads of every removal-phase attempt, or null. */
+  observe: AttemptObserver | null;
   tally: Tally;
   keyed: Map<number, { animation: string; ref: AttachmentRef; key: number; time: number }>;
   protectedVertices: Set<number>;
@@ -975,8 +996,12 @@ type PhaseEnd =
  * straight after the step, before the budget is read again, so the replay stops in exactly the state the
  * unreplayed run held after that step.
  */
-function accept(run: Run): boolean {
-  run.acceptedAt.push(run.steps);
+function accept(run: Run, kind: AcceptedOperation['kind'], sourceVertices: number[]): boolean {
+  if (kind === 'boundary-run' && run.plant === 'run-split-per-vertex') {
+    for (const v of sourceVertices) run.acceptedAt.push({ step: run.steps, kind: 'removal', count: 1, sourceVertices: [v] });
+  } else {
+    run.acceptedAt.push({ step: run.steps, kind, count: kind === 'insertion' ? 1 : sourceVertices.length, sourceVertices: [...sourceVertices] });
+  }
   const stop = run.input.stopAfterAccepted;
   if (stop === undefined) return false;
   const at = run.plant === 'stop-one-early' ? stop - 1 : run.plant === 'stop-one-late' ? stop + 1 : stop;
@@ -988,6 +1013,29 @@ function accept(run: Run): boolean {
  * one accepted step before or after the one asked for. `reduceMesh` plants none.
  */
 export type ReplayPlant = 'stop-one-early' | 'stop-one-late';
+
+/**
+ * Every fault a control plants in a reduction (`reduceMeshWith`'s `plant`); `reduceMesh` plants none. Beside the
+ * replay's two (issue #1268), issue #1279's: boundary runs tried by a call that did not opt in; a run recorded as one
+ * `removal` entry per vertex (the shape before #1279); a run taken without its rows measured; every candidate
+ * measured, with no deviation floor (the path the floor is held equal to); and the floor read half a pixel short
+ * of the bound, so it refuses steps the rows would take.
+ */
+export type ReductionPlant = ReplayPlant | 'runs-without-opt-in' | 'run-split-per-vertex' | 'run-skips-rows' | 'measure-every-candidate' | 'floor-half-a-pixel-short';
+
+/** One removal-phase attempt as a control reads it (issue #1279): what was tried, and what refused it or null when taken. */
+export interface AttemptRecord {
+  step: number;
+  kind: 'removal' | 'boundary-run';
+  sourceVertices: number[];
+  /** Null when taken; else reads the name of what refused it — measuring the attempt in full when the floor decided it. Read it only inside the observer, while the working mesh is the one the attempt was tried on. */
+  refusedBy: (() => string) | null;
+  /** Whether the deviation floor refused it without a measurement. */
+  decidedByFloor: boolean;
+}
+
+/** Called once per removal-phase attempt, after it. */
+export type AttemptObserver = (attempt: AttemptRecord) => void;
 
 /**
  * Refine the working mesh until every region's `MQ_MAX_EDGE` and
@@ -1011,7 +1059,7 @@ function refineRegions(run: Run): PhaseEnd {
     if (target.state === 'not-measurable') {
       const p: Pt = [r6(region.polygon[0][0]), r6(region.polygon[0][1])];
       if (!insertPoint(run, p)) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no triangle holding the region's first vertex)` };
-      if (accept(run)) return { kind: 'replayed' };
+      if (accept(run, 'insertion', [])) return { kind: 'replayed' };
       continue;
     }
     const [ra, rb] = target.worst!.at.edge!;
@@ -1030,7 +1078,7 @@ function refineRegions(run: Run): PhaseEnd {
       break;
     }
     if (exited) {
-      if (accept(run)) return { kind: 'replayed' };
+      if (accept(run, 'insertion', [])) return { kind: 'replayed' };
       continue;
     }
     // An end outside the region and its band further beyond it than the edge's own bound, with no split on
@@ -1055,7 +1103,7 @@ function refineRegions(run: Run): PhaseEnd {
     const p = splitPoint(run.work.pos[a], run.work.pos[b], region);
     if (p === null) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no point of edge ${ra}–${rb} strictly between its ends inside region "${region.name}" or its band)` };
     splitEdge(run, a, b, p);
-    if (accept(run)) return { kind: 'replayed' };
+    if (accept(run, 'insertion', [])) return { kind: 'replayed' };
   }
 }
 
@@ -1132,38 +1180,168 @@ function weightJump(work: Work, a: number, b: number): number {
 }
 
 /**
+ * Several boundary vertices removed one after another as one operation (issue #1279): the working triangles after
+ * the last and the edges they hold that the triangles before the first did not, in the order they appear — or the
+ * structural reason one of the removals cannot be made. The outline loses the run and gains the chord from the
+ * vertex before it to the vertex after it; nothing is measured in between.
+ */
+function runRemovalOf(work: Work, vertices: readonly number[]): { triangles: Array<[number, number, number]>; added: Array<[number, number]> } | { blocked: string } {
+  const was = work.triangles;
+  let after: Array<[number, number, number]>;
+  try {
+    for (const v of vertices) {
+      const step = removalOf(work, v);
+      if ('blocked' in step) return step;
+      work.triangles = step.triangles;
+    }
+    after = work.triangles;
+  } finally {
+    work.triangles = was;
+  }
+  const old = new Set<string>();
+  for (const t of was) for (let k = 0; k < 3; k++) old.add(edgeKey(t[k], t[(k + 1) % 3]));
+  const added: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  for (const t of after) {
+    for (let k = 0; k < 3; k++) {
+      const key = edgeKey(t[k], t[(k + 1) % 3]);
+      if (old.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      added.push([t[k], t[(k + 1) % 3]]);
+    }
+  }
+  return { triangles: after, added };
+}
+
+/**
+ * Why an attempt was refused: the constraint's name, or — when the deviation floor refused it without a
+ * measurement — a thunk that measures the attempt in full and returns the name the measurement gives, so whatever
+ * reads it reads what an unfloored run would have written.
+ */
+type Refusal = string | (() => string);
+
+function refusalText(refusal: Refusal): string {
+  return typeof refusal === 'string' ? refusal : refusal();
+}
+
+/**
+ * The surviving source vertices on the current outline, walked the way the source's own hull listing turns (the
+ * canonical order's hull) — the order a boundary run follows.
+ */
+function outlineWalk(run: Run): number[] {
+  const canon = canonicalise(run.work, run.sourceTurn, run.boneRank);
+  return canon.order.slice(0, canon.mesh.hull);
+}
+
+/**
  * Remove surviving source vertices in ascending source index, pass after pass,
  * taking a step only when every structural condition and every required row
  * holds after it. Ends when a pass takes no step, or when the budget is spent.
+ *
+ * With `boundaryRuns` (issue #1279) each pass first sweeps the boundary runs:
+ * for each surviving, unprotected source-hull vertex in ascending source index,
+ * the runs starting at it and following the outline the way the source hull is
+ * listed, longest first — `maxVertices` down to 2, never leaving fewer than three
+ * outline vertices, every member a surviving, unprotected source-hull vertex —
+ * each one candidate; the first taken ends that start's sweep, and the sweep
+ * goes on to the next index over the outline the run left. Then the pass's
+ * single removals, exactly as without the field.
  */
 function removeVertices(run: Run): PhaseEnd {
   const { work, input } = run;
-  let lastBlock = '';
+  const runs = run.plant === 'runs-without-opt-in' ? { maxVertices: 2 } : input.boundaryRuns;
+  const hull = input.source.hull;
+  let lastBlock: { refusal: Refusal; what: string } | null = null;
+  const lastName = (): string => (lastBlock === null ? '' : `${refusalText(lastBlock.refusal)}, ${lastBlock.what}`);
   for (;;) {
     let taken = 0;
     let tried = 0;
+    if (runs !== undefined) {
+      let walk: number[] | null = null;
+      for (let s = 0; s < hull; s++) {
+        if (!work.alive[s] || run.protectedVertices.has(s)) continue;
+        walk ??= outlineWalk(run);
+        const at = walk.indexOf(s);
+        if (at === -1) continue;
+        for (let r = Math.min(runs.maxVertices, walk.length - 3); r >= 2; r--) {
+          const members: number[] = [];
+          for (let i = 0; i < r; i++) {
+            const v = walk[(at + i) % walk.length];
+            if (v >= hull || !work.alive[v] || run.protectedVertices.has(v)) break;
+            members.push(v);
+          }
+          if (members.length < r) continue;
+          if (run.steps >= input.budget.maxCandidates) return { kind: 'budget' };
+          run.steps++;
+          tried++;
+          const block = tryOperation(run, members, false);
+          if (run.observe !== null) run.observe({ step: run.steps, kind: 'boundary-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' });
+          if (block === null) {
+            taken++;
+            walk = null;
+            if (accept(run, 'boundary-run', members)) return { kind: 'replayed' };
+            break;
+          }
+          lastBlock = { refusal: block, what: `removing source vertices ${members.join(', ')} as one boundary run` };
+        }
+      }
+    }
     for (let v = 0; v < work.nSource; v++) {
       if (!work.alive[v] || run.protectedVertices.has(v)) continue;
       if (run.steps >= input.budget.maxCandidates) return { kind: 'budget' };
       run.steps++;
       tried++;
-      const block = tryRemoval(run, v);
+      const block = tryOperation(run, [v], false);
+      if (run.observe !== null) run.observe({ step: run.steps, kind: 'removal', sourceVertices: [v], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' });
       if (block === null) {
         taken++;
-        if (accept(run)) return { kind: 'replayed' };
-      } else lastBlock = `${block}, removing source vertex ${v}`;
+        if (accept(run, 'removal', [v])) return { kind: 'replayed' };
+      } else lastBlock = { refusal: block, what: `removing source vertex ${v}` };
     }
     if (taken === 0) {
-      if (tried === 0) lastBlock = 'protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge)';
-      return { kind: 'stuck', constraint: lastBlock };
+      // A pass that took nothing left the working mesh as it found it, so a refusal the floor decided is measured
+      // now in the state it was decided in.
+      const constraint = tried === 0 ? 'protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge)' : lastName();
+      return { kind: 'stuck', constraint };
     }
   }
 }
 
-/** One removal: null when it was taken, else the constraint that blocked it. */
-function tryRemoval(run: Run, v: number): string | null {
+/**
+ * The deviation floor (issue #1279): the furthest any removed source-hull vertex lies from the candidate's outline.
+ * `MQ_BOUNDARY_DEVIATION` is the symmetric Hausdorff distance between that outline and the source hull, and its
+ * backward half evaluates every source-hull vertex's distance to the outline exactly, so the row's value is at least
+ * this — a step whose floor is over the bound fails that row whatever else it measures. The distance is
+ * `distanceToSegment` over the candidate's hull edges, the function and polygon the row reads.
+ */
+function deviationFloor(run: Run, mesh: SourceMesh, vertices: readonly number[]): number {
+  const poly = mesh.points.slice(0, mesh.hull);
+  let floor = 0;
+  for (const v of vertices) {
+    if (v >= run.input.source.hull) continue;
+    const p = run.work.pos[v];
+    let d = Infinity;
+    for (let i = 0; i < poly.length; i++) d = Math.min(d, distanceToSegment(p, poly[i], poly[(i + 1) % poly.length]));
+    floor = Math.max(floor, d);
+  }
+  return floor;
+}
+
+/**
+ * The margin the floor has to clear the bound by before it refuses without measuring: ten units of the `r6` grid
+ * the row's value is put on, far above any difference the order the row walks an edge in can make to a distance.
+ */
+const FLOOR_MARGIN = 1e-5;
+
+/**
+ * One operation — a single removal, or a boundary run of two or more — tried: null when it was taken (the working
+ * mesh then holds it), else what refused it (the working mesh as it was). `full` measures every candidate that
+ * reaches the rows; otherwise a candidate whose deviation floor is over the bound by `FLOOR_MARGIN` is refused
+ * without the measurement, by a thunk that measures it when its name is read.
+ */
+function tryOperation(run: Run, vertices: readonly number[], full: boolean): Refusal | null {
   const { work, input } = run;
-  const step = removalOf(work, v);
+  const step = vertices.length === 1 ? removalOf(work, vertices[0]) : runRemovalOf(work, vertices);
   if ('blocked' in step) return step.blocked;
   const jump = input.protect.weightJump;
   if (jump !== null) {
@@ -1175,10 +1353,10 @@ function tryRemoval(run: Run, v: number): string | null {
   }
   const was = { triangles: work.triangles };
   work.triangles = step.triangles;
-  work.alive[v] = false;
+  for (const v of vertices) work.alive[v] = false;
   const undo = (): void => {
     work.triangles = was.triangles;
-    work.alive[v] = true;
+    for (const v of vertices) work.alive[v] = true;
   };
   const edges = new Set<string>();
   for (const t of work.triangles) for (let k = 0; k < 3; k++) edges.add(edgeKey(t[k], t[(k + 1) % 3]));
@@ -1195,6 +1373,23 @@ function tryRemoval(run: Run, v: number): string | null {
     if (!(err instanceof MeshError)) throw err;
     undo();
     return `outline: ${err.message}`;
+  }
+  if (vertices.length > 1 && run.plant === 'run-skips-rows') return null;
+  if (!full && run.plant !== 'measure-every-candidate') {
+    const margin = run.plant === 'floor-half-a-pixel-short' ? -0.5 : FLOOR_MARGIN;
+    if (deviationFloor(run, canon.mesh, vertices) > input.targets.maxBoundaryDeviation + margin) {
+      undo();
+      const members = [...vertices];
+      return () => {
+        const measured = tryOperation(run, members, true);
+        if (measured === null) {
+          // Unreachable while the floor is a floor: the step was refused on a bound its own rows then pass. Loud,
+          // because the run already went on as if it had been refused.
+          throw new Error(`the deviation floor refused removing ${members.join(', ')}, which the rows accept`);
+        }
+        return refusalText(measured);
+      };
+    }
   }
   const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'candidate'), run.input.targets.artFit);
   if (blocking !== null) {
@@ -1255,19 +1450,25 @@ export function reduceMesh(input: MeshReductionInput): MeshReductionResult {
  * module with `export *`, and a symbol that is merely exported is not promised
  * (RELEASING.md, *The import surface*).
  */
-export function reduceMeshWith(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null = stepRastersOf(rasters), plant: ReplayPlant | null = null): MeshReductionResult {
+export function reduceMeshWith(
+  input: MeshReductionInput,
+  rasters: ArtRasters,
+  steps: StepRasters | null = stepRastersOf(rasters),
+  plant: ReductionPlant | null = null,
+  observe: AttemptObserver | null = null,
+): MeshReductionResult {
   validateReduction(input);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
-  return reduceValidated(input, rasters, steps, plant);
+  return reduceValidated(input, rasters, steps, plant, observe);
 }
 
 /**
  * The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in
  * `rasters`, and every refinement and removal step is measured through `steps` when it is given (issue #1246).
  */
-function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null, plant: ReplayPlant | null = null): MeshReductionResult {
+function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
@@ -1344,6 +1545,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
       steps: 0,
       acceptedAt: [],
       plant,
+      observe,
       tally: { sharesDroppedOnGrid: 0, sharesPruned: 0 },
       keyed: keyedSourceVertices(input),
       ...protectionOf(input, work, sourceEdges),
@@ -1453,7 +1655,7 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     deformRemapped: deform.remapped.map((d) => ({ animation: d.animation, attachment: d.attachment, key: d.key, droppedVertices: d.droppedVertices })),
     deformReevaluated: deform.reevaluated.map((d) => ({ animation: d.animation, attachment: d.attachment, key: d.key })),
     linkedMeshes: input.linkedMeshes,
-    acceptedAt: [...run.acceptedAt],
+    acceptedAt: run.acceptedAt.map((a) => ({ step: a.step, kind: a.kind, count: a.count, sourceVertices: [...a.sourceVertices] })),
   };
   const counts = candidate.counts!;
   const mesh: ReducedMesh = {
@@ -1492,5 +1694,6 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     referenceHull: sourceHull,
     budget: { maxCandidates: input.budget.maxCandidates },
     ...(input.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: input.stopAfterAccepted }),
+    ...(input.boundaryRuns === undefined ? {} : { boundaryRuns: { maxVertices: input.boundaryRuns.maxVertices } }),
   };
 }

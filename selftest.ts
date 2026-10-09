@@ -411,6 +411,10 @@ import {
   type RefinementRegion,
   type RemappedDeformKey,
   type ReplayPlant,
+  type ReductionPlant,
+  type AttemptObserver,
+  type AttemptRecord,
+  type AcceptedOperation,
   type SourceFrame,
   type SourceMesh,
   type Termination,
@@ -47091,12 +47095,16 @@ function runMeshQualitySuite(): number {
     const probes: string[] = [];
     const input = mqReduceInput(lattice, regionTargets(dense));
     const rasters = artRastersOf(input.art);
-    const out = reduceMeshWith(input, rasters);
+    // Issue #1279: a removal the deviation floor refuses is decided without a measurement, so it is counted beside them.
+    let floored = 0;
+    const out = reduceMeshWith(input, rasters, stepRastersOf(rasters), null, (a) => {
+      if (a.decidedByFloor) floored++;
+    });
     const t = out.report.termination;
     const tried = t !== null && 'candidatesTried' in t ? t.candidatesTried : 0;
     const { uses, ...computed } = rasters.tally;
     if (!(tried >= 2)) probes.push(`the fixture tried ${tried} candidate(s), so "once across the steps" is not exercised`);
-    if (!(uses >= tried)) probes.push(`${uses} measurement(s) read the rasters over ${tried} candidate(s) tried — a step measured without them`);
+    if (!(uses + floored >= tried)) probes.push(`${uses} measurement(s) read the rasters and the deviation floor decided ${floored} over ${tried} candidate(s) tried — a step measured without them`);
     for (const [field, n] of Object.entries(computed)) if (n > 1) probes.push(`${field} was computed ${n} times in one call`);
     for (const field of ['artBits', 'fills', 'toFilled8', 'islands', 'traced'] as const) if (computed[field] !== 1) probes.push(`${field} was computed ${computed[field]} time(s); the rows read it, so once was required`);
     // The source half: the module never measures through the public, uncached measurement, and makes rasters in one place.
@@ -47120,7 +47128,7 @@ function runMeshQualitySuite(): number {
       probeDetail(
         held,
         probes,
-        `the lattice with a region: ${tried} candidate(s) tried, ${uses} measurement(s) read one rasters object, computed ${JSON.stringify(computed)}; src/meshreduce.ts calls measureMeshQuality ${publicCalls} times and artRastersOf ${made}; the per-step plant computed the art bits ${perStep} times over ${uses} measurements`,
+        `the lattice with a region: ${tried} candidate(s) tried, ${uses} measurement(s) read one rasters object and the deviation floor decided ${floored} without one, computed ${JSON.stringify(computed)}; src/meshreduce.ts calls measureMeshQuality ${publicCalls} times and artRastersOf ${made}; the per-step plant computed the art bits ${perStep} times over ${uses} measurements`,
       ),
       'issue #1240: 98.98 % of a 1101-step reduction was the per-step measurement and at least 40 % of it functions of the art alone, recomputed every step; the count is what says they now are not',
     );
@@ -47712,7 +47720,8 @@ function runMeshQualitySuite(): number {
   const rpReduce = (input: MeshReductionInput, plant: ReplayPlant | null = null): { mesh: ReducedMesh | null; report: MeshQualityReport } =>
     reduceMeshWith(input, rpRasters, stepRastersOf(rpRasters), plant);
   const rpFull = rpReduce(rpInput());
-  const rpAt = rpFull.report.candidates[0]?.changes?.acceptedAt ?? [];
+  const rpOps = rpFull.report.candidates[0]?.changes?.acceptedAt ?? [];
+  const rpAt = rpOps.map((a) => a.step);
   const rpTried = rpFull.report.termination !== null && 'candidatesTried' in rpFull.report.termination ? rpFull.report.termination.candidatesTried : -1;
   /** The dump: each accepted step's mesh, by the budget cut that existed before the field. */
   const rpWidest = rpAt.reduce((best, at, i) => (i > 0 && at - rpAt[i - 1] > rpAt[best] - rpAt[best - 1] ? i : best), 1);
@@ -47733,7 +47742,7 @@ function runMeshQualitySuite(): number {
         parted.push(`step ${k} (attempt ${rpAt[k - 1]}): the replayed mesh is not the dump's — ${r.mesh?.points.length ?? 'no'} vertices against ${dumped?.points.length ?? 'no'}`);
       } else if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== rpAt[k - 1]) {
         parted.push(`step ${k} (attempt ${rpAt[k - 1]}): termination ${JSON.stringify(t)}`);
-      } else if (JSON.stringify(listed) !== JSON.stringify(rpAt.slice(0, k))) {
+      } else if (JSON.stringify(listed) !== JSON.stringify(rpOps.slice(0, k))) {
         parted.push(`step ${k} (attempt ${rpAt[k - 1]}): acceptedAt ${JSON.stringify(listed)} is not the full run's first ${k}`);
       }
     }
@@ -47756,7 +47765,7 @@ function runMeshQualitySuite(): number {
     const composedInput = (over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({ ...mqReduceInput(lattice, regionTargets(dense)), ...over });
     const composed = reduceMesh(composedInput());
     const ck = composed.report.candidates[0]?.changes;
-    const cAt = ck?.acceptedAt ?? [];
+    const cAt = (ck?.acceptedAt ?? []).map((a) => a.step);
     if (ck === undefined || ck.insertedVertices === 0 || ck.removedVertices === 0) probes.push(`the composed run: ${JSON.stringify(ck)}; required insertions and removals both`);
     else {
       if (cAt.length !== ck.removedVertices + ck.insertedVertices) probes.push(`the composed run's acceptedAt has ${cAt.length} entries; removed ${ck.removedVertices} + inserted ${ck.insertedVertices}`);
@@ -49431,6 +49440,259 @@ function runMeshCompareSuite(): number {
         'issue #1271 asks what actually prevents boundary removal: holding every art bound and moving only the deviation bound off the tolerance the outline was simplified at releases the boundary, so the two equal tolerances are the mechanism, not the art',
       );
     }
+
+    // --- MQ91–MQ96 (#1279): boundary runs taken as steps, and `acceptedAt` one entry per accepted operation ---------
+    // Stage B of #1271 on the same fixture and policy, opted in with `boundaryRuns: { maxVertices: 8 }` (the run
+    // length §8's bounded alternatives measured). Each claim is read off runs made here, and each predicate is also read
+    // on a plant that must make it fire: a run recorded per vertex (the shape before #1279), a run taken without its
+    // rows, runs tried by a call that did not opt in, and the deviation floor read half a pixel short of the bound.
+    const abRasters = artRastersOf(abArt);
+    const abRuns = { maxVertices: 8 };
+    type AbRun = ReturnType<typeof reduceMeshWith>;
+    const abReduce = (over: Partial<MeshReductionInput> = {}, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): AbRun =>
+      reduceMeshWith(abInput(over), abRasters, stepRastersOf(abRasters), plant, observe);
+    const opsOf = (r: AbRun): AcceptedOperation[] => r.report.candidates[0]?.changes?.acceptedAt ?? [];
+    const bytesOf = (r: AbRun): string => writeMeshQualityReport(r.report) + JSON.stringify(r.mesh);
+    /** What is wrong with a result's acceptedAt against its own mesh; empty when every entry fits its kind and the entries account for every vertex removed. */
+    const shapeFaults = (r: AbRun): string[] => {
+      const out: string[] = [];
+      const ops = opsOf(r);
+      const k = r.report.candidates[0]?.changes;
+      if (k === undefined || r.mesh === null) return [`no mesh (${JSON.stringify(r.report.termination)})`];
+      ops.forEach((a, i) => {
+        if (Object.keys(a).join(',') !== 'step,kind,count,sourceVertices') out.push(`acceptedAt[${i}] has keys ${Object.keys(a).join(',')}`);
+        if (!Number.isInteger(a.step) || a.step < 1 || (i > 0 && a.step <= ops[i - 1].step)) out.push(`acceptedAt[${i}].step is ${a.step} after ${ops[i - 1]?.step}; required whole, 1-based, strictly ascending`);
+        const fits = a.kind === 'insertion' ? a.count === 1 && a.sourceVertices.length === 0 : a.count === a.sourceVertices.length && (a.kind === 'removal' ? a.count === 1 : a.kind === 'boundary-run' && a.count >= 2 && a.sourceVertices.every((v) => v < sourceHull));
+        if (!fits) out.push(`acceptedAt[${i}] ${JSON.stringify(a)}: its count and vertices do not fit its kind`);
+      });
+      const listed = ops.flatMap((a) => a.sourceVertices).sort((p, q) => p - q);
+      const gone = r.mesh.indexMap.flatMap((to, v) => (to === null ? [v] : []));
+      if (JSON.stringify(listed) !== JSON.stringify(gone)) out.push(`the entries name ${listed.length} removed source vertices against indexMap's ${gone.length}`);
+      const sum = ops.reduce((s, a) => s + a.count, 0);
+      if (sum !== k.removedVertices + k.insertedVertices) out.push(`the counts sum to ${sum}; removed ${k.removedVertices} + inserted ${k.insertedVertices}`);
+      return out;
+    };
+    const runs = abReduce({ boundaryRuns: abRuns });
+    const runOps = opsOf(runs);
+    const runSteps = runOps.filter((a) => a.kind === 'boundary-run');
+    const firstRun = runOps.findIndex((a) => a.kind === 'boundary-run');
+    const runTerm = runs.report.termination;
+    const runTried = runTerm !== null && 'candidatesTried' in runTerm ? runTerm.candidatesTried : -1;
+    // The replay sample, derived from the run: the first and last operations, the middle one, and the first boundary
+    // run with the operation either side of it — where an off-by-one between operations and vertices would show.
+    const runSample = [...new Set([1, firstRun, firstRun + 1, firstRun + 2, Math.ceil(runOps.length / 2), runOps.length])].filter((k) => k >= 1 && k <= runOps.length).sort((a, b) => a - b);
+    const runDump = new Map(runSample.map((k) => [k, abReduce({ boundaryRuns: abRuns, budget: { maxCandidates: runOps[k - 1].step } }).mesh]));
+    /** Replay each sampled k, planted or not, and name the first operation whose mesh, termination or list is not the unplanted run's. */
+    const replayFaults = (plant: ReductionPlant | null): string[] => {
+      for (const k of runSample) {
+        const r = abReduce({ boundaryRuns: abRuns, stopAfterAccepted: k }, plant);
+        const t = r.report.termination;
+        const dumped = runDump.get(k) ?? null;
+        const at = `operation ${k} (${runOps[k - 1].kind}, attempt ${runOps[k - 1].step})`;
+        if (dumped === null || JSON.stringify(r.mesh) !== JSON.stringify(dumped)) return [`${at}: the replayed mesh is not the budget cut's — ${r.mesh?.points.length ?? 'no'} vertices against ${dumped?.points.length ?? 'no'}`];
+        if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== runOps[k - 1].step) return [`${at}: termination ${JSON.stringify(t)}`];
+        if (JSON.stringify(opsOf(r)) !== JSON.stringify(runOps.slice(0, k))) return [`${at}: acceptedAt ${JSON.stringify(opsOf(r).slice(-2))}… is not the full run's first ${k}`];
+      }
+      return [];
+    };
+    mcGuard('MQ91', () => {
+      const probes: string[] = [...shapeFaults(runs)];
+      if (runSteps.length === 0) probes.push('the run took no boundary run, so the new entry was never written');
+      if (!(runTried >= runOps[runOps.length - 1]?.step)) probes.push(`the last operation is at attempt ${runOps[runOps.length - 1]?.step}, past the run's ${runTried} candidates`);
+      probes.push(...replayFaults(null));
+      const split = replayFaults('run-split-per-vertex');
+      if (split.length === 0) probes.push('the plant — each run recorded as one removal per vertex, the shape before #1279 — replayed identically at every sampled operation');
+      const held = probes.length === 0;
+      say(
+        'MQ91_CONTROL_ACCEPTED_AT_IS_ONE_ENTRY_PER_ACCEPTED_OPERATION_AND_STOP_AFTER_ACCEPTED_REPLAYS_TO_IT_ACROSS_A_BOUNDARY_RUN',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `boundaryRuns { maxVertices ${abRuns.maxVertices} }: ${runOps.length} operations in ${runTried} candidates — ${runSteps.length} boundary runs removing ${runSteps.reduce((s, a) => s + a.count, 0)} vertices (first at operation ${firstRun + 1}, attempt ${runOps[firstRun]?.step}: ${JSON.stringify(runOps[firstRun]?.sourceVertices)}); every entry { step, kind, count, sourceVertices } fits its kind and the entries name exactly indexMap's removed vertices; stopAfterAccepted k returned the budget cut's mesh at acceptedAt[k - 1].step, its termination and the run's first k entries at k = ${runSample.join(', ')}; the plant (a run recorded per vertex) parts: ${split[0]}`,
+        ),
+        'issue #1279 (rig-parts#126, §8 Q10): a boundary run removes several vertices in one accepted step, so the list parts bisects and the replay it stands on count operations — held against a budget cut the new field did not produce, across the run itself',
+      );
+    });
+    mcGuard('MQ92', () => {
+      const probes: string[] = [];
+      /** The claim: a result that keeps fewer boundary vertices than the singles-only run, through a boundary run, with every static row held. */
+      const reachesPastSingles = (r: AbRun): string | null => {
+        const rows = r.report.candidates[0]?.geometry?.rows ?? [];
+        const failing = rows.filter((x) => x.state === 'fail').map((x) => `${x.code} ${x.value}`);
+        if (r.mesh === null || strict.mesh === null) return 'no mesh';
+        if (!opsOf(r).some((a) => a.kind === 'boundary-run')) return 'no boundary run was taken';
+        if (!(r.mesh.hull < strict.mesh.hull)) return `it keeps ${r.mesh.hull} boundary vertices against the singles-only run's ${strict.mesh.hull}`;
+        if (!r.report.candidates[0].accepted || r.report.candidates[0].geometry?.verdict !== 'pass') return `accepted ${r.report.candidates[0].accepted}, failing ${failing.join(', ') || 'none'}`;
+        return null;
+      };
+      const said = reachesPastSingles(runs);
+      if (said !== null) probes.push(`boundary runs: ${said}`);
+      if (reachesPastSingles(strict) === null) probes.push('the plant — the singles-only run itself — reads as reaching past it');
+      const skipped = abReduce({ boundaryRuns: abRuns }, 'run-skips-rows');
+      const skippedSaid = reachesPastSingles(skipped);
+      if (skippedSaid === null) probes.push(`the plant — runs taken without their rows — reads as holding every static row (${counts(skipped.mesh)})`);
+      const deviation = runs.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
+      const held = probes.length === 0;
+      say(
+        'MQ92_ON_THE_TRACED_BOUNDARY_A_BOUNDARY_RUN_TAKES_THE_RESULT_PAST_WHAT_SINGLE_REMOVALS_REACH_WITH_EVERY_STATIC_ROW_HELD',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `source ${counts(ab.mesh)}; singles only: ${counts(strict.mesh)}; boundary runs: ${counts(runs.mesh)}, accepted, MQ_BOUNDARY_DEVIATION ${deviation?.value} against <= 1, every art bound as declared; plants: the singles-only run (${counts(strict.mesh)}) and runs taken without their rows (${counts(skipped.mesh)}: ${skippedSaid}) are each refused by the same predicate`,
+        ),
+        'issue #1271 / #1279: on an outline simplified at the deviation bound every single removal is refused, and one chord over a run of vertices is the move that is not (§8, option (iv)) — under every bound as declared',
+      );
+    });
+    mcGuard('MQ93', () => {
+      const probes: string[] = [...shapeFaults(strict)];
+      const strictOps = opsOf(strict);
+      const k = strict.report.candidates[0]?.changes;
+      /** The shape a call without the field writes: every entry one vertex, no run, no echo. */
+      const optOutFaults = (r: AbRun): string[] => {
+        const out: string[] = [];
+        const ops = opsOf(r);
+        const c = r.report.candidates[0]?.changes;
+        const text = writeMeshQualityReport(r.report);
+        if (ops.some((a) => a.kind === 'boundary-run' || a.count !== 1)) out.push(`an entry ${JSON.stringify(ops.find((a) => a.kind === 'boundary-run' || a.count !== 1))} removes more than one vertex`);
+        if (c === undefined || ops.length !== c.removedVertices + c.insertedVertices) out.push(`acceptedAt has ${ops.length} entries; removed ${c?.removedVertices} + inserted ${c?.insertedVertices}`);
+        if (text.includes('boundaryRuns') || text.includes('boundary-run')) out.push('the report writes boundaryRuns or a boundary-run entry');
+        return out;
+      };
+      probes.push(...optOutFaults(strict));
+      const keys = Object.keys(JSON.parse(writeMeshQualityReport(strict.report)).candidates[0]?.changes ?? {}).join(',');
+      if (keys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') probes.push(`changes keys ${keys}`);
+      const planted = optOutFaults(abReduce({}, 'runs-without-opt-in'));
+      if (planted.length === 0) probes.push('the plant — boundary runs tried by a call that did not opt in — writes the opt-out shape');
+      const held = probes.length === 0;
+      say(
+        'MQ93_A_CALL_WITHOUT_BOUNDARY_RUNS_TRIES_NONE_AND_WRITES_ONE_SINGLE_VERTEX_ENTRY_PER_STEP',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `without the field: ${strictOps.length} entries = removed ${k?.removedVertices} + inserted ${k?.insertedVertices}, each { step, kind: ${[...new Set(strictOps.map((a) => a.kind))].join(' | ')}, count 1, sourceVertices [v] }, no boundaryRuns echo, changes keys as before; the plant (runs without the opt-in): ${planted[0]}`,
+        ),
+        "issue #1279: a call that does not opt in is the call it was before the field, acceptedAt's new shape aside — byte for byte, which the tree has no older copy to compare against here, so the bytes were measured out of suite on the recorded inputs (docs/MESH_REDUCTION.md §8) and this holds the shape that comparison projected",
+      );
+    });
+    mcGuard('MQ94', () => {
+      const probes: string[] = [];
+      // Every refused run is counted; the first few are named by a full measurement, which is what the floor skips.
+      const named: Array<{ attempt: AttemptRecord; said: string }> = [];
+      let refusedRuns = 0;
+      let flooredRuns = 0;
+      const observed = abReduce({ boundaryRuns: abRuns }, null, (a) => {
+        if (a.kind !== 'boundary-run' || a.refusedBy === null) return;
+        refusedRuns++;
+        if (a.decidedByFloor) flooredRuns++;
+        if (named.length < 8) named.push({ attempt: a, said: a.refusedBy() });
+      });
+      const refused = named.filter((n) => n.said.startsWith('MQ_BOUNDARY_DEVIATION:'));
+      if (refused.length === 0) probes.push(`none of the first ${named.length} refused boundary runs names MQ_BOUNDARY_DEVIATION (${named.map((n) => n.said.slice(0, 40)).join('; ')}), so the refusal was never exercised`);
+      if (bytesOf(observed) !== bytesOf(runs)) probes.push('observing the attempts changed the result');
+      /** The claim: the result of a run with boundary runs holds the deviation bound as declared. */
+      const deviationOf = (r: AbRun): MeasureRow | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_BOUNDARY_DEVIATION');
+      const ownRow = deviationOf(runs);
+      if (ownRow?.state !== 'pass') probes.push(`the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} ${ownRow?.state}`);
+      const skippedRow = deviationOf(abReduce({ boundaryRuns: abRuns }, 'run-skips-rows'));
+      if (skippedRow?.state !== 'fail') probes.push(`the plant — runs taken without their rows — reads MQ_BOUNDARY_DEVIATION ${skippedRow?.value} ${skippedRow?.state}; required a fail`);
+      const held = probes.length === 0;
+      say(
+        'MQ94_A_BOUNDARY_RUN_THAT_WOULD_BREACH_THE_DEVIATION_BOUND_IS_REFUSED_NAMING_THE_ROW',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${refusedRuns} boundary runs refused (${flooredRuns} by the deviation floor); of the first ${named.length}, measured in full, ${refused.length} name the row, e.g. attempt ${refused[0]?.attempt.step} over ${JSON.stringify(refused[0]?.attempt.sourceVertices)}: ${refused[0]?.said}; the result reads MQ_BOUNDARY_DEVIATION ${ownRow?.value} — pass; the plant (runs taken without their rows) reads ${skippedRow?.value} — fail`,
+        ),
+        'issue #1279: a run is held to every declared row exactly as a single removal is — a chord too far from the source hull is refused, by name, and never loosens the bound to fit',
+      );
+    });
+    mcGuard('MQ95', () => {
+      const probes: string[] = [];
+      const seen: string[] = [];
+      const refusalOf = (input: MeshReductionInput): string | null => {
+        try {
+          reduceMesh(input);
+          return null;
+        } catch (err) {
+          if (err instanceof MeshReductionError) return `${err.code} ${err.message}`;
+          return `(not a MeshReductionError) ${(err as Error).message}`;
+        }
+      };
+      const cheap = (runsField: unknown): MeshReductionInput => ({ ...mvReduceInput(mvSrc, { budget: { maxCandidates: 0 } }), boundaryRuns: runsField as MeshReductionInput['boundaryRuns'] });
+      const wrongs: Array<[string, unknown]> = [
+        ['null', null],
+        ['8', 8],
+        ['"8"', '8'],
+        ['[]', []],
+        ['{}', {}],
+        ['{ maxVertices: 1 }', { maxVertices: 1 }],
+        ['{ maxVertices: 2.5 }', { maxVertices: 2.5 }],
+        ['{ maxVertices: null }', { maxVertices: null }],
+        ['{ maxVertices: NaN }', { maxVertices: Number.NaN }],
+        ['{ maxVertices: "8" }', { maxVertices: '8' }],
+      ];
+      for (const [label, wrong] of wrongs) {
+        const said = refusalOf(cheap(wrong));
+        if (said === null || !said.startsWith('REDUCE_INPUT_MISSING') || !said.includes('boundaryRuns is')) probes.push(`boundaryRuns ${label}: ${said ?? 'accepted'}`);
+        else seen.push(label);
+      }
+      for (const right of [undefined, { maxVertices: 2 }]) {
+        const said = refusalOf(cheap(right));
+        if (said !== null) probes.push(`boundaryRuns ${JSON.stringify(right)} was refused: ${said}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ95_A_BOUNDARY_RUNS_THAT_IS_NOT_A_MAX_VERTICES_OF_2_OR_MORE_IS_REFUSED_NAMING_THE_FIELD',
+        held,
+        probeDetail(held, probes, `${seen.join(', ')} refused REDUCE_INPUT_MISSING naming boundaryRuns; the field left out and { maxVertices: 2 } admitted`),
+        'issue #1279: the longest run is the caller\'s and has no default — a run of one is a single removal, and null, a fraction or a string names no length',
+      );
+    });
+    mcGuard('MQ96', () => {
+      const probes: string[] = [];
+      let floored = 0;
+      const subjects: Array<[string, () => AbRun, (p: ReductionPlant) => AbRun]> = [
+        ['the traced boundary, singles only', () => strict, (p) => abReduce({}, p)],
+        ['the traced boundary, boundary runs', () => runs, (p) => abReduce({ boundaryRuns: abRuns }, p)],
+        [
+          "MQ79's ramp, singles only",
+          () => reduceMesh(mvReduceInput(mvSrc)),
+          (p) => {
+            const r = artRastersOf(mvReduceInput(mvSrc).art);
+            return reduceMeshWith(mvReduceInput(mvSrc), r, stepRastersOf(r), p);
+          },
+        ],
+      ];
+      const caught: string[] = [];
+      for (const [label, ownRun, planted] of subjects) {
+        const own = bytesOf(ownRun());
+        if (own !== bytesOf(planted('measure-every-candidate'))) probes.push(`${label}: the run with the floor differs from the one that measures every candidate`);
+        try {
+          const loose = bytesOf(planted('floor-half-a-pixel-short'));
+          caught.push(`${label}: ${loose === own ? 'the same bytes' : 'bytes differ'}`);
+        } catch (err) {
+          caught.push(`${label}: threw — ${(err as Error).message.slice(0, 80)}`);
+        }
+      }
+      // The plant moves only steps whose floor lies within half a pixel under the bound, which a subject need not have
+      // (the ramp's hull vertices sit within 0.08 px of their chords), so it has to fire on one subject, not on each.
+      if (caught.every((c) => c.endsWith('the same bytes'))) probes.push(`the plant — the floor half a pixel short of the bound — wrote the same bytes on every subject (${caught.join('; ')})`);
+      abReduce({ boundaryRuns: abRuns }, null, (a) => {
+        if (a.decidedByFloor) floored++;
+      });
+      if (floored === 0) probes.push('the floor decided no attempt, so the identity compared nothing it changed');
+      const held = probes.length === 0;
+      say(
+        'MQ96_CONTROL_THE_DEVIATION_FLOOR_REFUSES_WITHOUT_MEASURING_AND_CHANGES_NO_BYTE_OF_ANY_RESULT',
+        held,
+        probeDetail(held, probes, `${subjects.length} runs byte-identical with the floor and with every candidate measured; on the traced boundary with runs the floor decided ${runTried > 0 ? `${floored} of ${runTried}` : floored} attempts; the plant (the floor half a pixel short): ${caught.join('; ')}`),
+        'issue #1279: most boundary attempts on a traced outline cannot pass the deviation row, and a lower bound on that row decides them without the measurement — a cost change only if no result reads differently',
+      );
+    });
   });
 
   rmSync(dir, { recursive: true, force: true });

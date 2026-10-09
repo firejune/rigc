@@ -476,8 +476,36 @@ only when present: `CandidateReport.changes` (`ReductionChanges`), the figures
 §6 says are reported and no row carries — vertices removed and inserted, shares
 dropped on the weight grid and shares pruned by `InfluenceLimits`, the deform
 keys remapped (each with the source vertices whose offsets were dropped) and
-re-evaluated, and the linked meshes. It is absent on a `measure` and whenever no
-mesh is returned.
+re-evaluated, and the linked meshes — and, last, `acceptedAt` ([implemented,
+#1268]; one entry per accepted operation since [implemented, #1279]). It is
+absent on a `measure` and whenever no mesh is returned. `effective` also echoes
+a reduction's `stopAfterAccepted` and `boundaryRuns`, each only when the input
+set it.
+
+`acceptedAt` lists the accepted operations in the order taken, each written
+with its keys in this order:
+
+```ts
+/** src/meshquality.ts [implemented, #1279] */
+export interface AcceptedOperation {
+  /** The attempt number — `candidatesTried` as it stood when the operation was taken, 1-based; strictly ascending. */
+  step: number;
+  /** A refinement insertion, one source vertex removed, or a boundary run replaced by one chord (§8). */
+  kind: 'insertion' | 'removal' | 'boundary-run';
+  /** Vertices inserted (an insertion: 1) or removed (a removal: 1; a boundary run: 2 or more). */
+  count: number;
+  /** The source indices removed — each `null` in `indexMap` — in outline order for a run; `[]` for an insertion. */
+  sourceVertices: number[];
+}
+// ReductionChanges.acceptedAt: AcceptedOperation[] — the counts sum to insertedVertices + removedVertices.
+```
+
+The unit is the operation, so `stopAfterAccepted: k` replays to the operation
+at `acceptedAt[k − 1]` and `candidatesTried` of that replay is its `step`. A
+call that does not set `boundaryRuns` takes only insertions and single
+removals, so every count is 1 and the list's length is still
+`insertedVertices + removedVertices`; only the entries' shape differs from
+2.24.0, where each was the bare `step` number.
 
 ```ts
 /** [proposal] */
@@ -2531,7 +2559,11 @@ export interface MeshReductionInput {
 - **`acceptedAt`** lists every accepted step — each refinement insertion and
   each removal taken — so its length is `insertedVertices + removedVertices`,
   written last in `changes` (the only key a reader of the earlier report meets
-  that it did not know).
+  that it did not know). ⚠️ **Changed by [implemented, #1279]:** each entry is
+  now an `AcceptedOperation` (§2) rather than the bare attempt number, and a
+  boundary run (§8) is one entry that removes two or more vertices, so the
+  length is that sum only on a call without `boundaryRuns`. The promise below
+  reads "operation" for "step"; the attempt number is the entry's `step`.
 - **The contract:** `stopAfterAccepted: n` returns, byte for byte, the mesh the
   same call without the field held after its *n*-th accepted step, terminated
   `replayed-to-accepted-step` with `acceptedSteps: n` and `candidatesTried:
@@ -2759,6 +2791,13 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 > stage-A record for #1271 (scratch scripts that import the tree at `5614f63`,
 > v2.24.0, and write nothing into it) or printed by the controls — with the
 > machine beside it; **[proposal]** is unsettled until parts answers by number.
+>
+> **Stage B's first landing is implemented** — boundary runs taken as steps and
+> `acceptedAt` one entry per operation, [implemented, #1279], in *Stage B —
+> boundary runs as steps* at the end of this section, with the decisions it
+> rests on [agreed, rig-parts#126]. Everything above it is Stage A as recorded,
+> and the reproducer's figures (`MQ85`–`MQ90`) are unchanged by it: they are a
+> call without the opt-in.
 
 The consumer's problem, in its own aggregate figures: after #1266's replay
 (parts PR #141), two attachments reduce to motion-valid meshes — A from 109/145
@@ -3142,6 +3181,10 @@ comes from a measurement above; none is settled by this page.
   found the last pass on all three. If a triangulation pass ships, does
   rig-parts need monotonicity kept, or will it accept the disclosed
   non-monotone stretch and walk or search differently where it matters?
+  ⚠️ **Correction [agreed, rig-parts#126]:** the question's premise is wrong —
+  rig-parts's search reports a passing prefix found by bisection, not
+  necessarily the last, no monotonicity is promised by either side, and the
+  chosen step is re-compared on the whole schedule before anything is written.
 - **Q5.** Is relocation wanted at all? The fewest-vertex controls (C2, C3) need
   positions not in the source, which breaks the index correspondence a
   `vertices` deform key relies on (§6, P18), needs a weight-transfer rule (the
@@ -3178,6 +3221,124 @@ comes from a measurement above; none is settled by this page.
   default inside `rig-c/mesh`, behind an opt-in — or rig-parts's policy, passed
   in as an order? It reads weights only, and its ranking assumes every share
   change bends equally.
+
+### Stage B — boundary runs as steps, and `acceptedAt` per operation [implemented, #1279]
+
+**Decided** [agreed, rig-parts#126, its answers to the questions above]: Q1 —
+option (iv), boundary runs taken as steps inside `rig-c/mesh`, under the
+declared bounds and P13's reference meaning ((ii) is parts's own experiment;
+(i) and (iii) refused); Q6 — a run stays replayable and is held to parts's
+final motion comparison like every step, and no pre-step the replay cannot
+back out of; Q10 — `acceptedAt` counts operations, recording each one's kind
+and count, the prototype's cost accepted while it is brought down, absolute
+runtime and candidates reported; Q4 — nothing here promises that passing is
+monotone along the steps.
+
+```ts
+/** src/meshquality.ts — the input's one new field; AcceptedOperation is in §2. */
+export interface MeshReductionInput {
+  // …every existing field…
+  /** Opt-in. Left out = no run is tried. */
+  boundaryRuns?: { maxVertices: number }; // a whole number, 2 or more; no default
+}
+```
+
+- **What a run is.** A run is 2 to `maxVertices` consecutive outline vertices,
+  every one a surviving, unprotected *source-hull* vertex (inserted vertices and
+  interior vertices the outline has reached are never in one), removed one
+  after another by the same `removalOf` a single removal uses and replaced on
+  the outline by the chord from the vertex before it to the vertex after it;
+  nothing is measured in between. It never leaves fewer than three outline
+  vertices.
+- **Held exactly as a single removal is.** After the run: every structural
+  condition (each hole simple and ear-clipped, the outline one loop, every
+  protected edge still an edge, `weightJump` over the edges the run added),
+  then every required row of `measureMeshQuality` — the art rows,
+  `MQ_BOUNDARY_DEVIATION` against the source hull at the declared bound,
+  `minAngle` when declared, each region's rows. A refusal is named like any
+  other, `<row>, removing source vertices a, b, c as one boundary run`.
+- **Order, which is the determinism (A18).** Each removal pass, with the field
+  set, first sweeps the runs and then the single removals exactly as without
+  it. The runs: for each surviving, unprotected source-hull vertex in ascending
+  source index, the runs starting there and following the outline the way the
+  source hull is listed (the canonical walk), longest first — `maxVertices`
+  down to 2 — the first one taken ending that start, the sweep going on to the
+  next index over the outline the run left. A pass that takes nothing in either
+  sweep ends the reduction.
+- **Budget and replay.** Every run tried is one candidate. Each run taken is
+  one `acceptedAt` entry, `kind: 'boundary-run'`, `count` ≥ 2,
+  `sourceVertices` in outline order; `stopAfterAccepted` counts operations and
+  its termination and promise are §7's.
+- **Bounded work on the boundary path.** From the order above: a pass tries,
+  for each of its *h* surviving, unprotected source-hull vertices, at most
+  `min(maxVertices, W − 3) − 1` runs, where *W* is the outline's vertex count
+  at that start (one per length from that down to 2) — so at most
+  *h* · (`maxVertices` − 1) run candidates per pass, before its single
+  removals. A pass that continues has taken at least one operation, each of
+  which removes at least one source vertex, so there are at most one more
+  passes than removable vertices; and every candidate, run or single, counts
+  against `budget.maxCandidates`, which bounds the whole call. The absolute
+  runtimes and candidates measured on the recorded inputs are the table
+  below.
+- **Opt-out.** A call without the field tries no run, and its mesh and report
+  are 2.24.0's byte for byte with `acceptedAt`'s entries read as their `step`
+  (measured below).
+
+**A cost change that moves no byte: the deviation floor.** §8 *What holds the
+boundary* found 847 of demo/bottomwear's 1,101 candidates to be boundary
+removals the deviation row refuses, each paid in full. `MQ_BOUNDARY_DEVIATION`
+is the symmetric Hausdorff distance between the candidate's outline and the
+source hull, and its backward half evaluates every source-hull vertex's
+distance to that outline exactly, so the row is at least the distance of any
+removed source-hull vertex from the candidate's outline (`deviationFloor`,
+`src/meshreduce.ts`). A candidate whose floor is over the bound by more than
+`FLOOR_MARGIN` (ten units of the `r6` grid) is refused without the
+measurement, after every structural check. The refusal's name is never
+guessed: when it is read — the termination's last block, or a control's
+observer — the candidate is measured in full and named by the rows, in the
+same state (a pass that took nothing left the mesh unchanged). Singles and
+runs alike; it is not part of the opt-in.
+
+**Measured** [measured, #1279] — the tree at `6dcda87` (v2.24.1) against this
+one, the 18 inputs of the stage-D1 record at 2.20.0 (`reduceMeshWith` over the
+recorded input, one process per variant, darwin, Apple M4, 1-minute load
+3.8–4.7, one run each — the times are one machine's, the candidates are not):
+
+- **Opt-out bytes.** Mesh and report identical with `acceptedAt` read as its
+  `step` numbers, **18 of 18**; and identical with the floor and with every
+  candidate measured (`measure-every-candidate`), **18 of 18** opted out and
+  **18 of 18** with `boundaryRuns: { maxVertices: 8 }`.
+- **Replay across runs.** `stopAfterAccepted` at the first operations, the
+  first boundary runs and the operation after each, the middle and the last
+  equals the budget cut at that operation's `step`, with its termination and the
+  run's first *k* entries, **26 of 26** probes over sample/neck, sample/topwear,
+  sample/bottomwear, sample/sleeves and demo/bottomwear.
+
+| input | source hull | 2.24.1: kept / candidates / ms | opted out: kept / candidates / ms | `maxVertices: 8`: kept (runs / vertices) / candidates / ms | the same, every candidate measured: ms |
+| --- | --- | --- | --- | --- | --- |
+| demo/bottomwear | 293 | 282 / 1,101 / 2,417 | 282 / 1,101 / **862** | **223** (27 / 65) / 4,029 / 3,126 | 11,633 |
+| demo/neck | 14 | 14 / 103 / 22 | 14 / 103 / 17 | 14 (0) / 299 / 24 | 51 |
+| sample/bottomwear | 107 | 101 / 331 / 526 | 101 / 331 / 182 | **95** (3 / 8) / 1,694 / 550 | 3,638 |
+| sample/neck | 26 | 26 / 133 / 39 | 26 / 133 / 20 | **21** (2 / 5) / 430 / 41 | 135 |
+| sample/sleeves | 198 | 190 / 421 / 1,458 | 190 / 421 / 152 | **166** (12 / 27) / 2,810 / 930 | 12,262 |
+| sample/topwear | 66 | 63 / 205 / 218 | 63 / 205 / 59 | **59** (1 / 6) / 1,031 / 183 | 1,204 |
+
+(sample/hair_back is `invalid-input` at admission in every variant.) Kept is
+the result's boundary. Against *Measured — bounded alternatives*: the
+prototype kept 225 / 95 / 21 / 168 / 59 on the same five that reduce; this
+order keeps 223 / 95 / 21 / **166** / 59 — sample/sleeves at its B\* (166),
+demo/bottomwear 6 above its B\* (217). Its cost: candidates ×2.9–6.7 against
+2.24.1, time ×0.6–1.3 on these inputs (demo/bottomwear 2,417 → 3,126 ms,
+sample/sleeves 1,458 → 930; the prototype measured ×6–10), because the floor
+decides most run candidates without a measurement — without it the same runs
+cost ×2.3–8.4 against 2.24.1 (11,633 ms on demo/bottomwear). The inputs under
+50 ms are within the load's noise. On the public fixture the run keeps **100** of 107 against
+the singles' 102, the removal-only optimum C1 (`MQ92`).
+
+**Not done here.** A run is removal-only, so P19, the deform remap and the
+UV window hold as for any removal; nothing in this landing touches the
+triangulation (Q3/Q9) or the order of the single removals (Q11). Whether a run
+passes motion is parts's comparison to decide (Q6), on the replay.
 
 ## Stage A controls
 
@@ -3269,6 +3430,27 @@ the bound plus a pixel out, failing `MQ_BOUNDARY_DEVIATION`) and
 `MQ90_WITH_THE_DEVIATION_BOUND_AT_TWICE_THE_SOURCE_TOLERANCE_THE_BOUNDARY_REDUCES_AND_EVERY_ART_ROW_STILL_PASSES`
 (plant: the strict run). They hold today's behaviour on that fixture and
 implement nothing of §8; `MQ79` and `MQ80` are unchanged.
+
+[implemented, #1279] §8's Stage B first landing, on the same fixture in the
+`mesh-compare` suite, under the next free codes — each read beside a plant
+that must make it fire (`ReductionPlant`, passed through `reduceMeshWith`;
+`reduceMesh` plants none):
+`MQ91_CONTROL_ACCEPTED_AT_IS_ONE_ENTRY_PER_ACCEPTED_OPERATION_AND_STOP_AFTER_ACCEPTED_REPLAYS_TO_IT_ACROSS_A_BOUNDARY_RUN`
+(plant: a run recorded as one removal per vertex),
+`MQ92_ON_THE_TRACED_BOUNDARY_A_BOUNDARY_RUN_TAKES_THE_RESULT_PAST_WHAT_SINGLE_REMOVALS_REACH_WITH_EVERY_STATIC_ROW_HELD`
+(plants: the singles-only run; runs taken without their rows),
+`MQ93_A_CALL_WITHOUT_BOUNDARY_RUNS_TRIES_NONE_AND_WRITES_ONE_SINGLE_VERTEX_ENTRY_PER_STEP`
+(plant: runs tried without the opt-in — the bytes against 2.24.0 are measured
+out of suite, §8, because the tree keeps no older copy to compare with),
+`MQ94_A_BOUNDARY_RUN_THAT_WOULD_BREACH_THE_DEVIATION_BOUND_IS_REFUSED_NAMING_THE_ROW`
+(plant: runs taken without their rows),
+`MQ95_A_BOUNDARY_RUNS_THAT_IS_NOT_A_MAX_VERTICES_OF_2_OR_MORE_IS_REFUSED_NAMING_THE_FIELD`
+and
+`MQ96_CONTROL_THE_DEVIATION_FLOOR_REFUSES_WITHOUT_MEASURING_AND_CHANGES_NO_BYTE_OF_ANY_RESULT`
+(plant: the floor read half a pixel short of the bound). `MQ81`–`MQ84` read
+`acceptedAt`'s entries by their `step`, and `MQ67` counts a removal the floor
+decides beside the measurements, which it would otherwise read as a step
+measured without the rasters.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
@@ -3403,7 +3585,8 @@ reasons exist only when the input sets `stopAfterAccepted` (§7, *Mechanism 2
   the report keeps `sourceCounts` and carries no `geometry`.
 - **replayed-to-accepted-step** — the input's `stopAfterAccepted` was
   reached; the mesh is the one the call without it held after that many
-  accepted steps, byte for byte. It says nothing about the steps the run would
+  accepted operations (one per `acceptedAt` entry, a boundary run counting
+  one — #1279), byte for byte. It says nothing about the steps the run would
   have taken next.
 - **invalid-input** — a refusal from §1, §3, §5 or §6 by code; no mesh is
   returned.
