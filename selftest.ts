@@ -410,6 +410,7 @@ import {
   type ReducedMesh,
   type RefinementRegion,
   type RemappedDeformKey,
+  type ReplayPlant,
   type SourceFrame,
   type SourceMesh,
   type Termination,
@@ -45373,6 +45374,7 @@ function mqSayEnd(t: Termination | null): string {
   if (t === null) return 'no termination';
   if (t.reason === 'no-further-valid-reduction') return `${t.reason} after ${t.candidatesTried} candidate(s), blocked by ${t.blockingConstraint}`;
   if (t.reason === 'budget-exhausted') return `${t.reason} after ${t.candidatesTried} of ${t.budget}, ${t.result}`;
+  if (t.reason === 'replayed-to-accepted-step') return `${t.reason} at accepted step ${t.acceptedSteps} after ${t.candidatesTried} candidate(s)`;
   return `${t.reason} ${t.code}: ${t.detail}`;
 }
 
@@ -47670,6 +47672,200 @@ function runMeshQualitySuite(): number {
       held,
       probeDetail(held, probes, `${r.parted.length} of ${scanGrids.length} grids part from the predicate; first ${r.parted[0]}`),
       "issue #1263: the scanline's crossing rule is the predicate's to the bit, so a crossing moved by half a pixel must surface as a named centre",
+    );
+  }
+
+  // --- MQ81–MQ84 (#1268): replay to an accepted step — `acceptedAt` and `stopAfterAccepted` -----------------------
+  // The subject is #1266's reproducer, the strict run (`mvSource`, the policy MQ79 runs). The dump of every accepted
+  // step is taken by the path that existed before the field did — the budget cut at the attempt the step was taken
+  // (`budget.maxCandidates = acceptedAt[k - 1]`), which #1266's M3 held byte-identical to a scratch copy recording
+  // every accepted mesh, 119 of 119 — so the replay is compared with an answer it did not produce. A stated sample of
+  // k rather than every k, for cost: a dump and a replay are each as long as the prefix, so every k is quadratic —
+  // measured 4.3 s for the dump and 4.2 s for one replay of every k on this fixture (darwin, M4), against 0.12 s for
+  // the full run. The sample is derived from the run, never typed: the first three steps, every 8th, the last three,
+  // and the two steps either side of the widest gap in acceptedAt (the longest run of refused candidates between two
+  // steps taken, where a stop could most easily land on the wrong side). An off-by-one in the stop is a property of every k, so it shows at the
+  // first sampled one. Every k was measured once, out of tree, when the field landed: 119 of 119 identical to the
+  // budget cut, termination named (docs/MESH_REDUCTION.md §7, mechanism 2).
+  const rpSource = mvSource(false);
+  const rpHull = rpSource.points.slice(0, rpSource.hull);
+  const rpMask = mqMask(dir, 'ramp-replay', MV_W, MV_H, (x, y) => (inClosedPolygon([x + 0.5, y + 0.5], rpHull) ? 1 : 0));
+  const rpStrict: ArtFitBounds = { minCoverage: 1, maxOvershoot: 3, maxUndercut: 0 };
+  const rpInput = (over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({
+    attachment: { skin: null, slot: 'ramp', attachment: 'ramp' },
+    art: { mask: rpMask, threshold: 1, frame: mqFrame(MV_W, MV_H) },
+    source: rpSource,
+    sourceBounds: rpStrict,
+    targets: { artFit: rpStrict, maxBoundaryDeviation: 1, regions: [] },
+    protect: noProtection,
+    influences: { maxInfluences: 4, minWeight: 0 },
+    boneOrder: ['root', 'a', 'b'],
+    preset: null,
+    budget: { maxCandidates: 5000 },
+    minArtSamples: 1,
+    regionArtSamples: [],
+    deform: [],
+    linkedMeshes: [],
+    ...over,
+  });
+  const rpRasters = artRastersOf(rpInput().art);
+  const rpReduce = (input: MeshReductionInput, plant: ReplayPlant | null = null): { mesh: ReducedMesh | null; report: MeshQualityReport } =>
+    reduceMeshWith(input, rpRasters, stepRastersOf(rpRasters), plant);
+  const rpFull = rpReduce(rpInput());
+  const rpAt = rpFull.report.candidates[0]?.changes?.acceptedAt ?? [];
+  const rpTried = rpFull.report.termination !== null && 'candidatesTried' in rpFull.report.termination ? rpFull.report.termination.candidatesTried : -1;
+  /** The dump: each accepted step's mesh, by the budget cut that existed before the field. */
+  const rpWidest = rpAt.reduce((best, at, i) => (i > 0 && at - rpAt[i - 1] > rpAt[best] - rpAt[best - 1] ? i : best), 1);
+  const rpSample = [...new Set([1, 2, 3, ...rpAt.map((_, i) => i + 1).filter((k) => k % 8 === 0), rpWidest, rpWidest + 1, rpAt.length - 2, rpAt.length - 1, rpAt.length])]
+    .filter((k) => k >= 1 && k <= rpAt.length)
+    .sort((a, b) => a - b);
+  const rpDump = new Map(rpSample.map((k) => [k, rpReduce(rpInput({ budget: { maxCandidates: rpAt[k - 1] } })).mesh]));
+  /** Replay each sampled k through `stopAfterAccepted`, planted or not, and name the first step whose mesh, termination or list is not the dump's. */
+  const rpReplayAll = (plant: ReplayPlant | null): { parted: string[]; checked: number } => {
+    const parted: string[] = [];
+    for (const k of rpSample) {
+      if (parted.length > 0) break;
+      const r = rpReduce(rpInput({ stopAfterAccepted: k }), plant);
+      const t = r.report.termination;
+      const listed = r.report.candidates[0]?.changes?.acceptedAt;
+      const dumped = rpDump.get(k) ?? null;
+      if (dumped === null || JSON.stringify(r.mesh) !== JSON.stringify(dumped)) {
+        parted.push(`step ${k} (attempt ${rpAt[k - 1]}): the replayed mesh is not the dump's — ${r.mesh?.points.length ?? 'no'} vertices against ${dumped?.points.length ?? 'no'}`);
+      } else if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k || t.candidatesTried !== rpAt[k - 1]) {
+        parted.push(`step ${k} (attempt ${rpAt[k - 1]}): termination ${JSON.stringify(t)}`);
+      } else if (JSON.stringify(listed) !== JSON.stringify(rpAt.slice(0, k))) {
+        parted.push(`step ${k} (attempt ${rpAt[k - 1]}): acceptedAt ${JSON.stringify(listed)} is not the full run's first ${k}`);
+      }
+    }
+    return { parted, checked: rpSample.length };
+  };
+  {
+    const probes: string[] = [];
+    const k = rpFull.report.candidates[0]?.changes;
+    if (rpFull.mesh === null || k === undefined) probes.push('the strict run returned no mesh');
+    else {
+      if (rpAt.length !== k.removedVertices + k.insertedVertices) probes.push(`acceptedAt has ${rpAt.length} entries; removed ${k.removedVertices} + inserted ${k.insertedVertices}`);
+      const bent = rpAt.findIndex((at, i) => !Number.isInteger(at) || at < 1 || (i > 0 && at <= rpAt[i - 1]));
+      if (bent !== -1) probes.push(`acceptedAt[${bent}] is ${rpAt[bent]} after ${rpAt[bent - 1]}; required whole, 1-based, strictly ascending`);
+      if (rpAt.length > 0 && rpAt[rpAt.length - 1] > rpTried) probes.push(`the last accepted step is at attempt ${rpAt[rpAt.length - 1]}, past the run's ${rpTried} candidates`);
+      if (rpAt.length < 2) probes.push(`the strict run accepted ${rpAt.length} step(s); the replay needs some`);
+    }
+    const replay = rpReplayAll(null);
+    probes.push(...replay.parted);
+    // The same promise across a refinement: the lattice and the dense region, whose insertions are accepted steps too.
+    const composedInput = (over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({ ...mqReduceInput(lattice, regionTargets(dense)), ...over });
+    const composed = reduceMesh(composedInput());
+    const ck = composed.report.candidates[0]?.changes;
+    const cAt = ck?.acceptedAt ?? [];
+    if (ck === undefined || ck.insertedVertices === 0 || ck.removedVertices === 0) probes.push(`the composed run: ${JSON.stringify(ck)}; required insertions and removals both`);
+    else {
+      if (cAt.length !== ck.removedVertices + ck.insertedVertices) probes.push(`the composed run's acceptedAt has ${cAt.length} entries; removed ${ck.removedVertices} + inserted ${ck.insertedVertices}`);
+      // A refinement step has no budget-cut dump (a budget spent inside the refinement returns no mesh), so it is read
+      // by its own counts: after k insertions the replay holds k inserted vertices and has removed none.
+      const ins = ck.insertedVertices;
+      for (const kk of [1, ins]) {
+        const r = reduceMesh(composedInput({ stopAfterAccepted: kk }));
+        const rk = r.report.candidates[0]?.changes;
+        if (r.mesh?.inserted.length !== kk || rk?.removedVertices !== 0) probes.push(`composed replay to step ${kk} (an insertion): ${r.mesh?.inserted.length} inserted, ${rk?.removedVertices} removed`);
+      }
+      for (const kk of [ins + 1, cAt.length]) {
+        const r = reduceMesh(composedInput({ stopAfterAccepted: kk }));
+        const cut = reduceMesh(composedInput({ budget: { maxCandidates: cAt[kk - 1] } }));
+        if (cut.mesh === null || JSON.stringify(r.mesh) !== JSON.stringify(cut.mesh)) probes.push(`composed replay to step ${kk} (a removal, attempt ${cAt[kk - 1]}) is not the budget cut's mesh`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ81_CONTROL_STOP_AFTER_ACCEPTED_K_RETURNS_THE_MESH_OF_THE_KTH_ACCEPTED_STEP_ON_THE_REPRODUCERS_STRICT_RUN',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `strict run: ${rpAt.length} accepted steps in ${rpTried} candidates, acceptedAt ${rpAt[0]}..${rpAt[rpAt.length - 1]} strictly ascending; stopAfterAccepted k returned the budget cut's mesh at acceptedAt[k - 1], termination replayed-to-accepted-step { acceptedSteps k, candidatesTried acceptedAt[k - 1] } and the full run's first k entries, at ${replay.checked} of the ${rpAt.length} steps (k = ${rpSample.join(', ')}; the widest gap ends at k ${rpWidest + 1}); composed (lattice + dense region): ${ck?.insertedVertices} insertions and ${ck?.removedVertices} removals in ${cAt.length} accepted steps, replayed at its first and last insertion and its first and last removal`,
+      ),
+      "issue #1268: the replay promise is the contract parts's retry stands on — stopAfterAccepted n is the mesh the unreplayed run held after its n-th accepted step — so it is held against a dump the new field did not produce, at every step",
+    );
+  }
+  {
+    const probes: string[] = [];
+    const text = (r: { report: MeshQualityReport }): string => writeMeshQualityReport(r.report);
+    // n = 0: no step taken, named.
+    const none = rpReduce(rpInput({ stopAfterAccepted: 0 }));
+    const zero = rpReduce(rpInput({ budget: { maxCandidates: 0 } }));
+    const t0 = none.report.termination;
+    if (t0?.reason !== 'replayed-to-accepted-step' || t0.acceptedSteps !== 0 || t0.candidatesTried !== 0) probes.push(`stopAfterAccepted 0 ended ${JSON.stringify(t0)}; required replayed-to-accepted-step, acceptedSteps 0, candidatesTried 0`);
+    if (zero.mesh === null || JSON.stringify(none.mesh) !== JSON.stringify(zero.mesh) || none.mesh?.points.length !== rpSource.points.length) probes.push('stopAfterAccepted 0 is not the canonical source a budget of 0 returns');
+    if (JSON.stringify(none.report.candidates[0]?.changes?.acceptedAt) !== '[]') probes.push(`stopAfterAccepted 0 reports acceptedAt ${JSON.stringify(none.report.candidates[0]?.changes?.acceptedAt)}`);
+    // n beyond: the run ends as it would have, and its own termination says the stop was not reached.
+    const beyond: string[] = [];
+    for (const n of [rpAt.length + 1, 5000]) {
+      const r = rpReduce(rpInput({ stopAfterAccepted: n }));
+      const t = r.report.termination;
+      if (t?.reason !== 'no-further-valid-reduction' || t.stopAfterAccepted?.requested !== n || t.stopAfterAccepted.acceptedSteps !== rpAt.length) {
+        probes.push(`stopAfterAccepted ${n} ended ${JSON.stringify(t)}; required the run's own no-further-valid-reduction carrying stopAfterAccepted { requested ${n}, acceptedSteps ${rpAt.length} }`);
+      } else beyond.push(`${n} → ${t.reason} carrying { requested ${t.stopAfterAccepted.requested}, acceptedSteps ${t.stopAfterAccepted.acceptedSteps} }`);
+      if (JSON.stringify(r.mesh) !== JSON.stringify(rpFull.mesh)) probes.push(`stopAfterAccepted ${n} returned another mesh than the run without it`);
+      const doc = JSON.parse(text(r));
+      if (doc.effective.stopAfterAccepted !== n) probes.push(`stopAfterAccepted ${n} is echoed as ${JSON.stringify(doc.effective.stopAfterAccepted)} in effective`);
+      delete doc.effective.stopAfterAccepted;
+      delete doc.termination.stopAfterAccepted;
+      if (`${JSON.stringify(doc, null, 2)}\n` !== text(rpFull)) probes.push(`stopAfterAccepted ${n}'s report differs from the run without it in more than the echo and the termination's stopAfterAccepted`);
+    }
+    // A budget the replay outlives is still the budget: the stop is never read as the budget, nor the budget as the stop.
+    const cut = rpReduce(rpInput({ budget: { maxCandidates: rpAt[9] }, stopAfterAccepted: 20 }));
+    const tc = cut.report.termination;
+    if (tc?.reason !== 'budget-exhausted' || tc.stopAfterAccepted?.requested !== 20 || tc.stopAfterAccepted.acceptedSteps !== 10) probes.push(`budget ${rpAt[9]} with stopAfterAccepted 20 ended ${JSON.stringify(tc)}; required budget-exhausted carrying { requested 20, acceptedSteps 10 }`);
+    // Opt-out: with the field left out, the document has no stopAfterAccepted key and no replay termination, and
+    // `changes` is the seven keys it had plus acceptedAt, last — the one key a pre-#1268 reader meets that it did not know.
+    const outText = text(rpFull);
+    if (outText.includes('stopAfterAccepted') || outText.includes('replayed-to-accepted-step')) probes.push('the run without the field writes stopAfterAccepted or the replay termination');
+    const changeKeys = Object.keys(JSON.parse(outText).candidates[0]?.changes ?? {}).join(',');
+    if (changeKeys !== 'removedVertices,insertedVertices,sharesDroppedOnGrid,sharesPruned,deformRemapped,deformReevaluated,linkedMeshes,acceptedAt') probes.push(`changes keys ${changeKeys}`);
+    const held = probes.length === 0;
+    say(
+      'MQ82_CONTROL_A_REPLAY_TERMINATES_REPLAYED_TO_ACCEPTED_STEP_ZERO_TAKES_NO_STEP_AND_A_STOP_BEYOND_THE_RUN_KEEPS_ITS_OWN_TERMINATION_NAMING_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `0 → replayed-to-accepted-step { acceptedSteps 0, candidatesTried 0 }, the canonical source; ${beyond.join('; ')}, each the full run's mesh and report but for the echo and that field; budget ${rpAt[9]} with stop 20 → budget-exhausted carrying { requested 20, acceptedSteps 10 }; without the field: no stopAfterAccepted key, changes keys ${changeKeys}`,
+      ),
+      "issue #1268 (parts's Q2): parts accepts by termination name, so a replay must never read as an exhausted budget, a stop the run never reaches must say so rather than pass for one that was, and a call without the field must write what it wrote before but for acceptedAt",
+    );
+  }
+  {
+    const probes: string[] = [];
+    const caught: string[] = [];
+    for (const plant of ['stop-one-early', 'stop-one-late'] as const) {
+      const r = rpReplayAll(plant);
+      if (r.parted.length === 0) probes.push(`a replay planted ${plant} matched the dump at every step`);
+      else if (!/^step \d+ \(attempt \d+\)/.test(r.parted[0])) probes.push(`${plant} caught, naming no step: ${r.parted[0]}`);
+      else caught.push(`${plant}: ${r.parted[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ83_A_REPLAY_PLANTED_TO_STOP_ONE_ACCEPTED_STEP_EARLY_OR_LATE_IS_CAUGHT_NAMING_THE_STEP',
+      held,
+      probeDetail(held, probes, caught.join('; ')),
+      'issue #1268: an off-by-one in where the replay stops returns a valid, accepted mesh of the same source that is simply not the one asked for — nothing in its own report looks wrong, so only the dump can see it',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const seen: string[] = [];
+    for (const wrong of [-1, 1.5, Number.NaN, null, '3']) {
+      const r = reduceRefusalOf({ ...rpInput(), stopAfterAccepted: wrong as unknown as number });
+      if (r === null || r.code !== 'REDUCE_INPUT_MISSING' || !r.message.includes('stopAfterAccepted is')) probes.push(`stopAfterAccepted ${JSON.stringify(wrong)}: ${r === null ? 'accepted' : `${r.code} ${r.message}`}`);
+      else seen.push(typeof wrong === 'string' ? JSON.stringify(wrong) : String(wrong));
+    }
+    const left = reduceRefusalOf({ ...rpInput(), stopAfterAccepted: undefined });
+    if (left !== null) probes.push(`stopAfterAccepted undefined was refused: ${left.code}`);
+    const held = probes.length === 0;
+    say(
+      'MQ84_A_STOP_AFTER_ACCEPTED_THAT_IS_NOT_A_WHOLE_NUMBER_0_OR_MORE_IS_REFUSED_NAMING_THE_FIELD',
+      held,
+      probeDetail(held, probes, `${seen.join(', ')} refused REDUCE_INPUT_MISSING naming stopAfterAccepted; undefined admitted as the field left out`),
+      'issue #1268: the field is a count of steps and the operation never guesses one — a fraction, a negative, NaN, null or a string names no step to stop at',
     );
   }
 
