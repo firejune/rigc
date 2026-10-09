@@ -23,6 +23,7 @@
         "jobs": 4,
         "suites": {
           "core": 587,
+          "mesh-compare": 784,
           "packer": 389,
           "render-hashes": 174,
           "run-tally": 23
