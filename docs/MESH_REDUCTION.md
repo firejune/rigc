@@ -720,6 +720,17 @@ export interface MeshCounts {
   declares it, and echoed in `effective` as above. A call without it writes
   the bytes it wrote before (§8, *Stage B — the amplitude on a reduction*;
   `MQ109`, `MQ110`).
+- [implemented, #1294] **One more input, row and pair of keys**, each written
+  only when the input set the field: `MeshMeasureInput.skinning`
+  (`SkinningResidualInput | null`, `src/meshskinning.ts`) — the source the
+  measured mesh is a candidate of, the envelope, `maxResidual` and the deform
+  timelines; the geometry row `MQ_SKINNING_RESIDUAL` (drawing px, required when
+  `maxResidual` is a number, sorted by code with the rest); `MeasureRow.skinning`
+  (`SkinningDetail`), written on that row when it is measured and on no other;
+  and `EffectiveSettings.skinning` (`SkinningEcho | null`), the input with the
+  source as `{ id, digest }`, written last in `effective`. Left out, there is no
+  row and no key, and the report is the one written before (§7, *Mechanism 1 —
+  implemented, the measurement half*; `MQ132`).
 
 ## 3. Comparing different triangulations on a common domain
 
@@ -816,7 +827,9 @@ export interface MotionSchedule {
   contain it: there the carriers agree on the carried point by construction,
   and the hit is one hit. A UV triangle inside the A39 area band carries
   nothing and is never chosen as a carrier. [implemented, #1230]
-  `uvCarriers` (`src/meshcompare.ts`): containment is each barycentric
+  `uvCarriers` (`src/meshcompare.ts`; defined in `src/meshcarriers.ts` since
+  #1294, which the skinning residual shares, and re-exported where it is
+  promised): containment is each barycentric
   coordinate at least `−1e-9`, `pointInTriangle`'s epsilon (`src/mesh.ts`),
   applied to the coordinates rather than the cross products so it does not
   scale with the UV square; "shared" is read off vertex indices — every
@@ -2248,7 +2261,12 @@ wall time — the seven readings and their loads are the claim.
 ## 7. Motion-valid reduction (#1266)
 
 > **Mechanism 2 is implemented** ([#1268](https://github.com/firejune/rigc/issues/1268),
-> *Mechanism 2 — implemented* below); nothing else in this section is. The
+> *Mechanism 2 — implemented* below), and **mechanism 1's measurement half**
+> ([#1294](https://github.com/firejune/rigc/issues/1294), *Mechanism 1 —
+> implemented, the measurement half*): the residual as a row of
+> `measureMeshQuality` and the helper that derives an envelope entry — its use
+> inside `reduceMesh` is [#1295](https://github.com/firejune/rigc/issues/1295).
+> Nothing else in this section is. The
 > rest is Stage A of
 > [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
 > (`MQ79`, `MQ80`, `mesh-compare`), the measurements made on it, and a proposal
@@ -2650,6 +2668,277 @@ export interface MeshReductionInput {
   the stop outlives, the report without the field), `MQ83` (a replay planted to
   stop one step early or late is caught naming the step), `MQ84` (refusals).
 
+### Mechanism 1 — implemented, the measurement half [implemented, #1294]
+
+[#1294](https://github.com/firejune/rigc/issues/1294) lands the residual as a
+**measurement** and the helper that turns declared ranges into an envelope
+entry. Using it as a step condition of `reduceMesh` — the veto, carried
+per-step state, replay under it — is
+[#1295](https://github.com/firejune/rigc/issues/1295): `reduceMesh` neither
+reads nor echoes anything below, and its loop is unchanged. The proposal
+further down is kept as written; this subsection departs from it in the places
+it names, each with its reason.
+
+```ts
+/** src/meshskinning.ts — on rig-c/mesh through src/mesh.ts's `export *`. */
+export interface SkinningEnvelope {
+  reference: string;                  // D0: the slot's bone (Q4). Its own terms are 0, so it may not be listed in `bones`.
+  bones: SkinningEnvelopeBone[];      // every bone either mesh binds, other than `reference`, once each
+}
+export interface SkinningEnvelopeBone {
+  bone: string;
+  linear: number;                     // εk ≥ ‖Ak − A0‖₂ over the motion; dimensionless, finite, 0 or more
+  pivot: [number, number];            // ck, drawing px, y down
+  translation: number;                // τk, drawing px, 0 or more: |(Dk − D0) q| ≤ εk·|q − ck| + τk
+}
+export interface SkinningResidualInput {
+  source: { id: string; mesh: SourceMesh };  // the original supplied mesh — never a previous candidate
+  envelope: SkinningEnvelope;
+  maxResidual: number | null;         // drawing px, inclusive; null = declared absent (measured, undeclared)
+  deform: DeformTimelineInput[];      // every deform timeline on the attachment or its linked meshes; [] when none
+}
+/** src/meshquality.ts — additive. */
+export interface MeshMeasureInput {
+  // …every existing field…
+  skinning?: SkinningResidualInput | null;   // left out = not asked: no row, no echo, the report byte for byte as before
+}
+```
+
+**Where it lives — a measurement input, not a reduction target.** The
+proposal put `skinning` on `ReductionTargets`, read at every step. The step is
+#1295's; what this card needs is the reading, and `MeshMeasureInput` already
+holds what the reading is taken over — the art and its threshold, the frame,
+`minArtSamples` — so the setup contract, the sample set and the floor are the
+measurement's own and nothing is restated. The measured mesh
+(`MeshMeasureInput.source`) is the **candidate**; `skinning.source.mesh` is the
+**comparison reference**, named by the caller's id and echoed with its sha-256
+(the proposal's reduction had the source implicitly; a measurement does not).
+
+**The row.** `MQ_SKINNING_RESIDUAL`, geometry section, unit `px` (drawing),
+bound `<= maxResidual`, **required** exactly when `maxResidual` is a number. Its
+value is the largest over the samples carried by both meshes of
+
+  Σₖ εₖ |sₖᶜ − sₖʳ| + Σₖ |w̄ₖᶜ − w̄ₖʳ| (εₖ |pʳ − cₖ| + τₖ),
+
+pʳ the source's setup position of the sample, sₖ = Σᵢ βᵢ wᵢₖ (xᵢ − p) each
+mesh's weighted position moment and w̄ₖ its interpolated share, over the
+bindings **as written** — after `InfluenceLimits` pruning and the 6-decimal
+grid — so pruning and quantisation are inside the value. Samples: §3's set at
+`art.threshold` — every art pixel centre, then every **source** hull UV —
+carried by `uvCarriers` in each mesh; a sample one mesh does not carry is
+listed by UV and left out (`samples.uncarried`). `uvCarriers` moved to
+`src/meshcarriers.ts` for this, a module that links no poser, so `rig-c/mesh`
+stays geometry-only (§0, P1) and the residual and `MQ_LOCAL_DEFORMATION` read
+one definition of the carrying triangle; `rig-c/meshcompare` re-exports it
+unchanged. `MeasureRow.skinning` (`SkinningDetail`) is written on this row when
+it is measured and on no other: the reading sentence; `source: { id, digest }`;
+`reference`; `samples: { measured, uncarried: { source, candidate } }`; at the
+worst sample the two sums and each envelope bone's share of each (`worst`,
+null when the value is 0); `weightField: { l1, lInf }` — the card's field-only
+difference, a diagnostic computed in the same pass (its |Δw̄ₖ| are the lever
+term's own), never a guard (Q6); and `setup: { vertexGap, vertexSlack,
+sampleGap, weightSumGap }`, the contract's own figures. `effective.skinning`
+echoes the input with the source as `{ id, digest }` rather than in full,
+`null` included, only when the input set the field.
+
+**The contract, checked rather than assumed.** The identity holds when each
+vertex's shares sum to 1 and both meshes place one UV at one setup position.
+The proposal asked for the second as "one affine image of its points"; the tree
+already fixes which image — `compareMeshesInMotion` reconstructs a build's
+points as its UVs times the frame — so the check is that map, within two `r6`
+half-steps per axis (the point's and the UV's carried through the frame:
+`(1 + width) × 1e-6`, `(1 + height) × 1e-6` px). On the 18 inputs of the
+stage-D1 record every vertex is inside it; the largest gap is 3.46e-4 px against
+a slack of 6.94e-4 (demo/bottomwear, y), and the largest share-sum miss
+3.3e-16. What still passes — the setup positions of one UV in the two meshes
+differing by that rounding — is reported beside the value as
+`setup.sampleGap` and kept out of it: its term is
+‖A₀ + Σₖ w̄ₖ (Aₖ − A₀)‖ |Δp|, and ‖A₀‖, the reference bone's own motion, is not
+something the envelope declares. On the controls below it is 3.4e-5 px.
+
+**Refusals and unmeasured states.** Malformed declarations throw
+`REDUCE_INPUT_MISSING` naming the path (`skinning.source.id`,
+`skinning.envelope.bones[0].linear`, `skinning.maxResidual is missing`, …)
+before any work, as `motionAmplitude` does. What the measurement cannot read
+is a `refused` row whose reason opens with its code, in the order a fix has to
+happen in:
+
+| code | when |
+| --- | --- |
+| `SKINNING_DEFORM_UNSUPPORTED` | a `vertices` **or** `transform` key in `skinning.deform` (Q10; a `transform` key moves vertices outside skinning just as a run does) — names animation, attachment and key |
+| `SKINNING_UNWEIGHTED` | one mesh weighted and the other not |
+| `SKINNING_BONE_NOT_DECLARED` | a vertex of either mesh binds a bone that is neither the reference nor in `envelope.bones` — names mesh, vertex and bone |
+| `SKINNING_BONE_UNKNOWN` | an envelope bone no vertex of the source binds — names the entry and lists the source's bones |
+| `SKINNING_WEIGHT_SUM` | a vertex's shares miss 1 by more than half a weight-grid step (5e-7) |
+| `SKINNING_SETUP_MISMATCH` | a vertex off its UV carried through the frame by more than the slack above — names mesh, vertex, both positions |
+| `SKINNING_UV_CARRIER_NOT_UNIQUE` | either mesh's UV triangles overlap at a sample (correction 4's refusal, read as this row's) |
+
+`not-measurable`, never a value: both meshes unweighted; fewer art samples
+than `minArtSamples`; no sample carried by both meshes; and `skinning: null`,
+which also echoes `null`. A required row that is refused or not measurable
+leaves the geometry verdict `not-measured` and the candidate not accepted.
+
+**The helper.** `skinningEnvelopeBone(ranges): SkinningEnvelopeBone` on
+`rig-c/mesh` — rig-c's definition of `linear`, as parts asked (Q3). Input: the
+chain from the skeleton's root to the reference (`referenceChain`) and from the
+reference's child down to the bone (`chain`), each bone a `BoneMotionRange`:
+`source: 'keys'`, its setup joint in drawing px (`pivot`), its local rotation
+range minus setup (`rotate`, degrees), its local scale over setup per axis
+(`scaleX`, `scaleY`), the most its local translation moves its joint
+(`translate`, drawing px) and its setup as the rig declares it. With
+eⱼ = 2 sin(min(max |rotate|, 180°) / 2) + max |σ − 1| over the scale ranges'
+endpoints and S = Π max σ over `referenceChain`:
+
+- `linear` = S · (Πⱼ (1 + eⱼ) − 1) over `chain` — a product, since a chain's
+  changes compose by multiplication; each factor is a triangle inequality,
+  ‖R(θ) diag(σ) − I‖ ≤ ‖R(θ) − I‖ + ‖diag(σ) − I‖;
+- `pivot` = the bone's own setup joint c;
+- `translation` = S · δ₁ with δₘ = the bone's `translate` and
+  δⱼ = eⱼ |c − cⱼ| + (1 + eⱼ) δⱼ₊₁ + translateⱼ — how far the chain above the
+  bone carries its joint away from where the reference carries it.
+
+Assumptions, refused by name where the input can show them
+(`SKINNING_RANGE_UNSUPPORTED`): every range is declared by keys — `'physics'`
+or any other source is refused, never certified; every bone of both chains has
+a uniform setup scale, no setup shear and inherit `normal`, so every setup
+world map is a similarity and conjugating by it keeps each norm. Assumed, not
+checkable from the input: the drawing frame maps to world by a similarity, and
+the chains are the bone's real ancestry. A range declares the motion it
+covers; the entry claims nothing outside it.
+
+**Example**, MQ79's ramp:
+
+```ts
+import { measureMeshQuality, skinningEnvelopeBone, type BoneMotionRange } from 'rig-c/mesh';
+
+const still = (bone: string, pivot: [number, number]): BoneMotionRange => ({
+  bone, source: 'keys', pivot, rotate: [0, 0], scaleX: [1, 1], scaleY: [1, 1], translate: 0,
+  setup: { scaleX: 1, scaleY: 1, shearX: 0, shearY: 0, inherit: 'normal' },
+});
+const b = skinningEnvelopeBone({
+  referenceChain: [still('root', [-50, 74]), still('a', [0, 24])],
+  chain: [{ ...still('b', [80, 24]), rotate: [-5, 5] }],
+}); // { bone: 'b', linear: 0.0872388 (2 sin 2.5°), pivot: [80, 24], translation: 0 }
+const report = measureMeshQuality({
+  ...candidateMeasureInput, // the strict reduction, as any measurement of it
+  skinning: { source: { id: 'source', mesh: source }, envelope: { reference: 'a', bones: [b] }, maxResidual: 1, deform: [] },
+});
+// MQ_SKINNING_RESIDUAL: fail, 1.807701 px — covariance 1.807701, lever 0; weightField { l1: 0, lInf: 0 }
+```
+
+**Measured** [measured, #1294] — `MQ116`–`MQ119` and `MQ130`–`MQ133` in
+`mesh-compare` print every figure below on every run; these are one darwin run
+(Apple M4, Bun 1.4.2, 1-minute load 7–9, other sessions running). The
+population: MQ79's strip (6,880 samples: 6,828 art pixels and 52 hull UVs)
+under seven fields and skeletons — the ramp; its far pivot (`b` 400 px off the
+strip); its scale keys (1.15, 0.85) / (0.85, 1.15); kinked and diagonal ramps;
+three bones `a → b → c` with Bernstein shares; three bones with `c`'s pivot
+276 px below the strip's middle line and nonuniform scale keys — each source against its strict
+reduction (MQ79's policy), and each three-bone source against its own bindings
+pruned to two influences and closed on the grid: 9 candidates. Every envelope
+is the helper's over the keys the fixture writes.
+
+| candidate | residual | poser's `MQ_LOCAL_DEFORMATION` (`idle`, 12 fps, grid + irr) | poser / residual |
+| --- | --- | --- | --- |
+| ramp, strict | 1.807701 | 1.807703 | 1.000 |
+| far pivot, strict | 1.807701 | 1.807707 | 1.000 |
+| scale, strict | 4.915895 | 2.507863 | 0.510 |
+| kinked, strict | 3.366786 | 2.436222 | 0.724 |
+| diagonal, strict | 0.943159 | 0.943160 | 1.000 |
+| three bones, strict | 9.557054 | 2.558105 | 0.268 |
+| three bones, pruned to two | 4.645401 | 1.471431 | 0.317 |
+| three bones, far pivot, scale, strict | 12.450149 | 3.237168 | 0.260 |
+| three bones, far pivot, scale, pruned to two | 26.565787 | 6.830125 | 0.257 |
+
+- **The bound never understates (`MQ118`).** Tolerance (1 + max εₖ) ×
+  `sampleGap` + 1e-5 px — the term outside the value, ‖A₀‖ being 1 here because
+  `a` never moves, plus the identity's measured band; worst understatement over
+  the 9: 6e-6 px (far pivot), inside it. The ratio is 1.000 on a pure rotation
+  (Aₖ − A₀ is a scaled rotation, so the norm loses nothing) and 0.26–0.72 where
+  scale or a second moving bone makes the norm forget direction — as §7's M2
+  measured on two bones. Each term is load-bearing: without the covariance sum
+  the residual understates 6 of the 9 (every two-bone candidate and the
+  three-bone strict one); without the lever, the two pruned candidates, where
+  the field itself changes.
+- **The identity (`MQ117`).** At the two key poses of each candidate (18
+  pairs), Σₖ (Aₖ − A₀) Δsₖ + Σₖ Δw̄ₖ (Dₖ − D₀) pʳ + (A₀ + Σₖ w̄ₖᶜ (Aₖ − A₀)) Δp,
+  with each Dₖ read off the core poser, reproduces the poser's per-frame value
+  within 1e-5 px, worst 5.42e-6 — on three bones, a far pivot, nonuniform scale
+  and pruning, where §7's measurement had only two bones. Without its covariance
+  term it is up to 2.507831 px off.
+- **A zero field difference is not a zero error (`MQ116`).** On MQ79's ramp
+  the field-only difference is 0 in L1 and L∞ while the residual reads
+  1.807701, all of it covariance, against the poser's 1.807703; the source
+  against itself reads 0 with nothing worse than ideal.
+- **Positions only (`MQ119`).** The ramp bent ±15°, the source with the two
+  triangles at its top middle vertex re-triangulated as a rim sliver (height
+  the rim's 0.08 px sag, no art pixel centre inside it) and the triangle under
+  it: residual 0.092357, pass at 1; static geometry pass; the poser's local
+  deformation 0.092371, pass; `MQ_INVERSION` 1, **fail** (at `idle@grid@0.416667`).
+  The source as its own candidate: 0 reversed. The residual certifies no
+  orientation, and the comparison stays the acceptance.
+- **Rigid relative motion (`MQ130`).** Two rigid halves (`a` left of the middle
+  column, `b` from it): the seam kept by `protect.weightJump: 1` — 42 vertices,
+  residual 0, poser 3.4e-5, both pass; the strict reduction smearing it — 28
+  vertices, residual 3.435165 and poser 2.528356, both fail, and without the
+  covariance sum the residual reads 1.039742, an understatement. Every vertex on
+  the moving bone: residual 0, poser 3.4e-5. Over the population at 1 px, the
+  residual passed one candidate (diagonal) and the poser passed it too; it
+  passes no candidate the poser fails.
+- **The helper (`MQ133`)**, against the largest ‖Aₖ − A₀‖ and |(Dₖ − D₀) cₖ|
+  the core poses over `idle` at 48 steps a second: equal on every one-bone chain
+  (0.087239, 0.237239 with scale); on three bones `c`'s `linear` 0.258788
+  against 0.069799 posed (`b` and `c` turn opposite ways, which a norm bound
+  cannot know) and `translation` 5.861627 against 5.861627; with the far pivot
+  and scale 0.272973 against 0.152354 and 29.478108 against 29.478107. The
+  poser's own matrices carry rounding the exact rotation does not (5.4e-9 in the
+  linear part, 1.7e-6 px at a joint 468 px from the origin), so the claim is
+  held within 1e-8 and 1e-8 × |cₖ| + 1e-6 px. Ignoring scale understates the
+  scale bone; ignoring the joint's motion understates both three-bone `c`s.
+- **Calls without the field** write every byte as before: against `e948469` on
+  the 18 inputs of the stage-D1 record, 70 of 70 — 18 reduction reports, 18
+  meshes, 18 measurements of the source and 16 of the result (two inputs return
+  no mesh). In suite, `MQ132` holds the shape: no key and no row without it;
+  with `maxResidual: null` every byte but the row, its echo and the summary
+  unchanged; one text twice and in reverse key order.
+
+**Cost** [measured, #1294], standalone, one measurement with the field against
+the same measurement without it, median of five, same machine and load.
+Recorded inputs are named only; their envelope is a stand-in (every bound bone
+at `linear` 0.1 about the origin) because parts's ranges are parts's — the cost
+does not read the values.
+
+| subject | vertices, candidate / source | samples | measurement without, ms | with, ms | residual, ms | heap growth in the call, MiB |
+| --- | --- | --- | --- | --- | --- | --- |
+| MQ79 ramp, strict | 28 / 147 | 6,880 | 8.2 | 63.1 | 54.9 | 3.0 |
+| MQ79 ramp, source against itself | 147 / 147 | 6,880 | 7.6 | 84.3 | 76.7 | 3.0 |
+| demo/neck | 14 / 89 | 2,225 | 1.4 | 12.7 | 11.3 | 0.0 |
+| sample/neck | 26 / 107 | 3,375 | 3.2 | 16.7 | 13.5 | 0.0 |
+| scarf/hair_front | 53 / 123 | 5,461 | 3.3 | 35.0 | 31.7 | 2.4 |
+| scarf/handwear_l | 67 / 378 | 22,436 | 24.5 | 295.5 | 271.0 | 9.8 |
+| sample/topwear | 63 / 142 | 31,250 | 24.5 | 174.1 | 149.6 | 12.2 |
+| sample/sleeves | 190 / 231 | 44,410 | 119.7 | 588.8 | 469.1 | 23.3 |
+| sample/bottomwear | 101 / 230 | 111,411 | 62.0 | 1,110.3 | 1,048.2 | 48.8 |
+| demo/bottomwear | 282 / 536 | 351,276 | 159.1 | 5,718.4 | 5,559.3 | 153.8 |
+
+The work is one carrier search per sample in each mesh — `uvCarriers` tests
+every sample against every live triangle's box, so it grows with samples ×
+triangles (351,276 × 777 on the largest) — plus one pass over the carrying
+corners' bindings per sample. A per-step veto that recomputed it would cost
+that at every step; #1295's carried form re-reads only the samples in the
+triangles a step changed, and the carrier search is where it pays. No speed
+target is claimed here.
+
+**Rejected on the way.** (1) A plant reading the lever about the drawing's
+origin rather than each pivot: it understated no candidate of the population,
+so it was dropped rather than kept as a control that cannot fire. (2) Composing
+the chain by summing the eⱼ rather than multiplying: on the fixtures the sum
+was never measured below the posed norm, so the product is chosen for being
+provably conservative, not for a measured failure of the sum, and no plant of
+it is claimed. (3) A separate undeclared row for the field-only difference:
+its values are the lever term's own, so it is a field of the residual's detail
+— it costs nothing separately and adds no row to any summary.
+
 ### Proposed [proposal]
 
 **Mechanism 2 — intermediate candidates, by replay.** [implemented, #1268] —
@@ -2698,7 +2987,16 @@ export interface ReductionChanges {
   costs one call; it can be added later if a consumer measures replay as too
   slow.
 
-**Mechanism 1 — the weight-interpolation measurement, restated.** As the card
+**Mechanism 1 — the weight-interpolation measurement, restated.** [implemented,
+#1294, the measurement half] — see *Mechanism 1 — implemented, the measurement
+half* above; the proposal is kept as written, and the implementation departs
+from it where that subsection says: a measurement input
+(`MeshMeasureInput.skinning`, the source named in it) rather than a reduction
+target, the per-step use left to #1295; the setup refusal read as the tree's
+own UV-to-frame map; a share-sum and a coverage refusal added; `transform` deform
+keys refused beside `vertices` keys; the field-only diagnostic a field of the
+row rather than a row; and the envelope's entries derivable by
+`skinningEnvelopeBone`. As the card
 words it (the source and candidate weight fields over a common UV domain) it is
 measured above to read 0 where the motion error is 1.8 px, so it is proposed
 only as the second factor of a bound that also carries the first:

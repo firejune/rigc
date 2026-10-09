@@ -100,6 +100,7 @@ import {
   type WorstSample,
 } from './meshquality.ts';
 import { areaBand, stretchSingularValues, triangleAreas } from './areaband.ts';
+import { uvCarriers, type Carrier } from './meshcarriers.ts';
 import { CoreInputError, readModel, underNoSkin, underSkin, type CompiledDocument } from './core/index.ts';
 import { poseRawAnimationEach, poseRawSetup, type RawPose } from './core/raw.ts';
 import { sampleTime } from './core/animation.ts';
@@ -177,9 +178,6 @@ export type ComparePlant = 'amplitude-not-carried' | 'null-read-as-left-out' | '
 // ---------------------------------------------------------------------------
 // fixed tolerances — the tree's own
 // ---------------------------------------------------------------------------
-
-/** `pointInTriangle`'s epsilon in `src/mesh.ts`, applied to each barycentric coordinate. */
-const CONTAINS = 1e-9;
 
 /** §3 *Independent evidence* (a): the rows a reference is refused on — its art fit against its own mask, and only that. */
 const REFERENCE_ART_FIT: readonly string[] = ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT'];
@@ -585,6 +583,9 @@ function poseBuild(doc: CompiledDocument, refs: readonly AttachmentRef[], frames
 // §3 — the samples and their carriers
 // ---------------------------------------------------------------------------
 
+/** Promised on `rig-c/meshcompare` since issue #1230; defined in `src/meshcarriers.ts` since issue #1294, which the skinning residual shares. */
+export { uvCarriers };
+
 interface Sample {
   uv: [number, number];
   /** Part-local drawing px, y down — where a region's polygon is read. */
@@ -594,79 +595,11 @@ interface Sample {
   vertex: number | null;
 }
 
-interface Carrier {
-  triangle: number;
-  corners: [number, number, number];
-  bary: [number, number, number];
-}
-
 interface MeshOf {
   uvs: number[];
   triangles: number[];
   hull: number;
   weights: SourceMesh['weights'];
-}
-
-/**
- * Each sample's carrier in one mesh's UV triangulation — §3 and correction 4.
- * Throws `COMPARE_UV_CARRIER_NOT_UNIQUE` for a sample two triangles carry
- * other than across a vertex or edge they share.
- */
-export function uvCarriers(uvs: readonly number[], triangles: readonly number[], samples: ReadonlyArray<{ uv: [number, number] }>, who: string): Array<Carrier | null> {
-  const areas = triangleAreas(uvs, triangles);
-  const band = areaBand(areas, uvs);
-  const live: number[] = [];
-  const boxes: number[] = [];
-  for (let t = 0; t < areas.length; t++) {
-    if (Math.abs(areas[t]) <= band) continue;
-    live.push(t);
-    const xs = [uvs[triangles[t * 3] * 2], uvs[triangles[t * 3 + 1] * 2], uvs[triangles[t * 3 + 2] * 2]];
-    const ys = [uvs[triangles[t * 3] * 2 + 1], uvs[triangles[t * 3 + 1] * 2 + 1], uvs[triangles[t * 3 + 2] * 2 + 1]];
-    boxes.push(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys));
-  }
-  return samples.map((s) => {
-    const [px, py] = s.uv;
-    const hits: Carrier[] = [];
-    live.forEach((t, k) => {
-      const slack = 1e-9;
-      if (px < boxes[k * 4] - slack || py < boxes[k * 4 + 1] - slack || px > boxes[k * 4 + 2] + slack || py > boxes[k * 4 + 3] + slack) return;
-      const i0 = triangles[t * 3];
-      const i1 = triangles[t * 3 + 1];
-      const i2 = triangles[t * 3 + 2];
-      const ax = uvs[i0 * 2];
-      const ay = uvs[i0 * 2 + 1];
-      const bx = uvs[i1 * 2] - ax;
-      const by = uvs[i1 * 2 + 1] - ay;
-      const cx = uvs[i2 * 2] - ax;
-      const cy = uvs[i2 * 2 + 1] - ay;
-      const qx = px - ax;
-      const qy = py - ay;
-      const det = bx * cy - cx * by;
-      const l1 = (qx * cy - cx * qy) / det;
-      const l2 = (bx * qy - qx * by) / det;
-      const l0 = 1 - l1 - l2;
-      if (l0 < -CONTAINS || l1 < -CONTAINS || l2 < -CONTAINS) return;
-      hits.push({ triangle: t, corners: [i0, i1, i2], bary: [l0, l1, l2] });
-    });
-    if (hits.length === 0) return null;
-    if (hits.length === 1) return hits[0];
-    // Several carriers are one hit only across a vertex or an edge they all share: the sample's support — the corners
-    // it does not sit at zero weight on — is then the same vertex indices in each, and the carried point is theirs.
-    const support = (c: Carrier): string =>
-      c.corners
-        .filter((_v, k) => c.bary[k] > CONTAINS)
-        .sort((a, b) => a - b)
-        .join(',');
-    const first = support(hits[0]);
-    const shared = first.split(',').length <= 2 && hits.every((c) => support(c) === first);
-    if (!shared) {
-      refuse(
-        'COMPARE_UV_CARRIER_NOT_UNIQUE',
-        `${who}: the sample at uv (${px}, ${py}) lies in ${hits.length} UV triangles — ${hits.map((c) => `triangle ${c.triangle} (vertices ${c.corners.join(', ')})`).join(' and ')} — that do not meet there at a shared vertex or edge; required one carrier per sample (correction 4: overlapping or folded UV triangles would carry it by an arbitrary one)`,
-      );
-    }
-    return hits[0];
-  });
 }
 
 /** The point a carrier puts the sample at over one pose's world vertices. */
