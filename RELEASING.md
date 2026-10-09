@@ -688,6 +688,32 @@ row reads the same function. `skinningResidual`, `termsAt`,
 entries (`measureMeshQualitySkinningPlanted`, `skinningEnvelopeBonePlanted`)
 are merely exported, so by the rule above they are not promised.
 
+The residual as a step condition of the reduction
+([#1295](https://github.com/firejune/rigc/issues/1295)) is additive on the
+agreed row's types: `ReductionTargets.skinning` (`ReductionSkinning | null`,
+`{ envelope, maxResidual }`) is a new optional field, measured against the
+call's own `source`; set with a number, every removal, boundary run and
+post-pass is held to `MQ_SKINNING_RESIDUAL` as well as to every row it was
+held to before, the result's measurement carries that row, and
+`effective.targets.skinning` echoes the field — `null` included — only when
+the input set it. A call without it writes the mesh and every byte of the
+report as before — measured against `cbf4012` on the 18 inputs of the
+stage-D1 record, 128 of 128 reports and meshes across no opt-in, the three
+other opt-ins together and a replay to the middle accepted step of each, and 8
+of 8 measurements with #1294's field, whose carrier search now buckets the
+samples (docs/MESH_REDUCTION.md, §7 *Mechanism 1 — implemented, the reducer
+half*).
+The field's type, `ReductionSkinning`, is reached through the recorded
+`MeshReductionInput`; the smoke records no new name, because no dependant has
+named one. What the reducer half adds beside it on `rig-c/mesh` —
+`SkinningCarry`, `CarryPlant`, `CarryTally`, `CarryReading`, `CarryCheck`,
+`CARRY_TOLERANCE`, `TermsMesh`, `SkinningContract`, `skinningContract`,
+`sampleResidual`, `envelopeTerms`, `validateReductionSkinning`, and the
+`reduceMeshWith` hooks `SkinningHooks`, `SkinningInspection` and
+`SkinningVetoPlant` — is merely exported, so by the rule above it is not
+promised; `carrierIn`, `resolveCarriers` and `CONTAINS` in
+`src/meshcarriers.ts` are on no entry at all.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says

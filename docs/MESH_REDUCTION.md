@@ -731,6 +731,20 @@ export interface MeshCounts {
   source as `{ id, digest }`, written last in `effective`. Left out, there is no
   row and no key, and the report is the one written before (§7, *Mechanism 1 —
   implemented, the measurement half*; `MQ132`).
+- [implemented, #1295] **One more reduction input, and its echo**:
+  `ReductionTargets.skinning` (`ReductionSkinning | null`, `{ envelope,
+  maxResidual }`, `src/meshskinning.ts`), measured against the call's own
+  `source`. Set with a number, every removal, boundary run and post-pass is
+  also held to `MQ_SKINNING_RESIDUAL`, a refusal by it is named like any row's
+  (`MQ_SKINNING_RESIDUAL: <value> against <= <bound>`, in `refusedBy`,
+  `blockingConstraint` and `retriangulation.refusedBy`), and the result's
+  measurement carries the row as the measurement writes it. The echo is
+  `effective.targets.skinning`, after `regions`, written only when the input
+  set the field — `null` included. The report has no place for work, so the
+  carried state's work (samples recomputed, containment tests, triangles,
+  memory) is counted on its tally (`CarryTally`), read by the controls and
+  stated in §7, not reported. Left out, the call writes the bytes it wrote
+  before (§7, *Mechanism 1 — implemented, the reducer half*; `MQ140`).
 
 ## 3. Comparing different triangulations on a common domain
 
@@ -2264,8 +2278,10 @@ wall time — the seven readings and their loads are the claim.
 > *Mechanism 2 — implemented* below), and **mechanism 1's measurement half**
 > ([#1294](https://github.com/firejune/rigc/issues/1294), *Mechanism 1 —
 > implemented, the measurement half*): the residual as a row of
-> `measureMeshQuality` and the helper that derives an envelope entry — its use
-> inside `reduceMesh` is [#1295](https://github.com/firejune/rigc/issues/1295).
+> `measureMeshQuality` and the helper that derives an envelope entry — and its
+> **reducer half** ([#1295](https://github.com/firejune/rigc/issues/1295),
+> *Mechanism 1 — implemented, the reducer half*): `targets.skinning`, the
+> residual as a step condition of `reduceMesh`, carried per sample.
 > Nothing else in this section is. The
 > rest is Stage A of
 > [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
@@ -2921,6 +2937,18 @@ does not read the values.
 | sample/bottomwear | 101 / 230 | 111,411 | 62.0 | 1,110.3 | 1,048.2 | 48.8 |
 | demo/bottomwear | 282 / 536 | 351,276 | 159.1 | 5,718.4 | 5,559.3 | 153.8 |
 
+⚠️ **Changed by [implemented, #1295]:** `uvCarriers` now buckets the samples
+on a uniform grid and tests each live triangle only against the samples in
+the cells its box overlaps — the same `carrierIn` test, each sample's hits in
+the same ascending triangle order, so the same carriers (34 of 34 carrier
+lists identical on the recorded inputs' sources and reductions) — and the
+paragraph below describes the search as it was. Measured [measured, #1295] as the table below was — the measurement with the
+field against it without, median of five, the released search and this one
+in turn on one darwin machine at load 5.5–8.7: the residual's share on
+demo/bottomwear 3,448 → 954 ms, sample/bottomwear 660 → 437 ms, and within
+the noise on the six smaller subjects (5–117 ms either way). The rest of the
+residual's cost is `termsAt` and `sampleResidual` per sample.
+
 The work is one carrier search per sample in each mesh — `uvCarriers` tests
 every sample against every live triangle's box, so it grows with samples ×
 triangles (351,276 × 777 on the largest) — plus one pass over the carrying
@@ -2938,6 +2966,237 @@ provably conservative, not for a measured failure of the sum, and no plant of
 it is claimed. (3) A separate undeclared row for the field-only difference:
 its values are the lever term's own, so it is a field of the residual's detail
 — it costs nothing separately and adds no row to any summary.
+
+### Mechanism 1 — implemented, the reducer half [implemented, #1295]
+
+[#1295](https://github.com/firejune/rigc/issues/1295) makes the residual a
+step condition of `reduceMesh`, reading the measurement half above — the same
+envelope, the same samples, the same per-sample arithmetic
+(`sampleResidual`), the same contract and refusal codes — and carries it from
+step to step instead of recomputing it. The proposal further down is kept as
+written; this subsection departs from it where it says so.
+
+```ts
+/** src/meshskinning.ts — on rig-c/mesh through src/mesh.ts's `export *`. */
+export interface ReductionSkinning {
+  envelope: SkinningEnvelope;   // the measurement's own type
+  maxResidual: number | null;   // drawing px, inclusive; null = declared absent: no step reads it, the result's row undeclared
+}
+/** src/meshquality.ts — additive. */
+export interface ReductionTargets {
+  // …every existing field…
+  skinning?: ReductionSkinning | null;   // left out = no step reads a residual: the call as before, byte for byte
+}
+```
+
+**The opt-in.** The card's name and shape, `targets.skinning: { envelope,
+maxResidual }`. The comparison reference is the call's own `source` — the
+original supplied mesh, fixed for the whole call — so it is not restated,
+and the `deform` the measurement reads is the call's own `deform`. Left out,
+nothing reads it (`MQ140`). `null` is handled as the other optional inputs:
+no step reads it, the result's measurement is handed `skinning: null` so its
+row is `not-measurable` saying it was declared absent, and
+`effective.targets.skinning` is `null`. `maxResidual: null` declares the bound
+absent: no step reads it, and the result's row is measured and `undeclared`.
+Anything else that is not `{ envelope, maxResidual }` in full is refused
+`REDUCE_INPUT_MISSING` before any work, in the measurement's words under
+`targets.skinning` (`targets.skinning.envelope.bones[0].linear is -1`,
+`targets.skinning.maxResidual is missing`, `targets.skinning is 5` —
+`validateReductionSkinning` and the measurement's validator share one
+function). The echo is `effective.targets.skinning`, written after `regions`
+only when the input set the field.
+
+**What is held, and when.** With a number for `maxResidual`, every proposed
+single removal, boundary run and post-pass is taken only if every required
+row passes as before **and** the residual of its result against the original
+source is within the bound. The residual is read after the rows pass, so the
+candidate it reads has no reversed or degenerate triangle; a residual over
+the bound is a refusal like any other — named `MQ_SKINNING_RESIDUAL: <value>
+against <= <bound>`, the working mesh and the carried state as they were, the
+attempt counted, the search going on within the budget (`MQ134`), and
+`acceptedAt` recording accepted operations only. The order, the budget, every
+other row and bound, and the opt-out order are unchanged; no poser is
+linked. **Refinement insertions are not vetoed one by one**: an insertion is
+there to meet a region's `L(R)`, and a refinement step is not required to meet
+the targets, only the steps after it; so the **refinement's outcome** is held
+to the residual whole, at the start check that already holds it to every row
+before any removal. An insertion carries the state forward like any step.
+Inserted vertices interpolate their weights and are pruned by
+`InfluenceLimits`, and the residual reads that: on the three-bone strip with a
+density region, insertions pruned to two influences make the refined source
+read 4.107752 px, and at a bound of 1 the reduction stops before any removal
+naming the row (`MQ137`, last case) — with four influences it reads 0.052872
+and the reduction proceeds.
+
+**The post-pass.** `retriangulate: 'delaunay'` is held to the residual on the
+triangulation it returns, after every required row, and refused whole naming
+the row when it is over (`MQ141`; on the ramp at 0.1 the real pass is refused
+by it, `MQ135`). It is not in `acceptedAt`, and that is no reason for it to
+escape the bound: with the recheck planted away and the inverted flip
+criterion planted in, the pass is taken and the result reads 1.157474 against
+1. The replay semantics are #1283's: a replay and the budget cut at the same
+step end on the same state and both are followed by the pass (`MQ139`).
+
+**Admission and what cannot be measured.** Before any step the measurement's
+contract is checked on the source against itself (`skinningContract`, the
+checks `skinningResidual` makes before it carries a sample). A source the
+measurement refuses is refused here, `invalid-input` with the measurement's
+code and words — `SKINNING_DEFORM_UNSUPPORTED` for a `vertices` or
+`transform` key in the call's `deform`, `SKINNING_BONE_NOT_DECLARED`,
+`SKINNING_BONE_UNKNOWN`, `SKINNING_WEIGHT_SUM`, `SKINNING_SETUP_MISMATCH`,
+`SKINNING_UNWEIGHTED`, `SKINNING_UV_CARRIER_NOT_UNIQUE`. What it cannot
+measure — both meshes unweighted, fewer art samples than `minArtSamples` — is
+kept as the reading every step is blocked by, so the reduction ends
+`no-further-valid-reduction` before any removal naming
+`MQ_SKINNING_RESIDUAL: not-measurable — …`; it never becomes a pass. An
+inserted vertex is checked against the share-sum and setup contract when it
+first appears (the measurement checks every vertex of the candidate); a miss
+refuses every reading after it. The outcomes stay distinct (`MQ138`): no-op
+(every vertex protected, a stop naming `protect:`), budget exhaustion,
+refusal by code, not measurable, and a malformed declaration thrown.
+
+**The carried state** (`SkinningCarry`, `src/meshskinning.ts`):
+
+- **Fixed for the call:** the §3 samples, each one's carrier in the source
+  and the source's terms there — one `uvCarriers` over the source, whose
+  carriers are also the working mesh's at the start — and the envelope. The
+  baseline is the source supplied and is never moved.
+- **Carried:** per sample, the candidate's carrier (triangle, barycentric)
+  and its value; per triangle, the samples it carries; a max tree over the
+  values, so the row's value — the largest, lowest sample index on a tie, as
+  the measurement picks it — is re-derived in O(log n) when the sample that
+  held it is recomputed, never by a scan.
+- **A trial** diffs the working triangles against the carried ones by
+  identity (corners rotated to the smallest id, winding kept). The samples of
+  every removed triangle, and the samples no triangle carried that lie in an
+  added triangle's box (art pixels looked up on the mask grid, hull UVs
+  tested), are searched among the added triangles — and a sample a removal
+  leaves outside all of them among the unchanged triangles that share a
+  vertex with a removed one, where it can still lie on an edge. Everything
+  else is untouched. Containment and the several-carriers rule are
+  `uvCarriers`' own (`carrierIn`, `resolveCarriers` in
+  `src/meshcarriers.ts`, which `uvCarriers` now calls).
+- **Commit or rollback:** a refused trial restores every carrier, value,
+  per-triangle list, count, live flag and the maximum.
+- **Work per trial:** one pass over the working triangles (their keys and the
+  area band) plus, for each affected sample, the added triangles (and, when
+  needed, the neighbours) tested. **Memory:** per sample three doubles of
+  barycentric, an integer carrier, a value, two tree slots, and the source's
+  terms (2 + 3K doubles, K the envelope's bones plus the reference); per
+  triangle its corners, area, box and sample list.
+- **The one full rescan, bounded:** the live set — triangles whose UV area
+  clears `areaBand`, which reads the largest triangle — can move a triangle a
+  trial did not touch across the band. A trial that does re-carries every
+  sample against every live triangle and counts it (`CarryTally.fullRecarries`).
+  It is taken only then, at most once per trial, and was taken 0 times on every
+  call measured below.
+
+**Held to the full recompute** [measured, #1295] (`MQ135`). After every
+decision the residual took part in — accepted and refused, single removals,
+boundary runs, refinement insertions, and the post-pass taken and refused —
+the carried state is compared sample by sample with the measurement's own
+path over the canonical candidate (`uvCarriers`, `termsAt`, `sampleResidual`):
+the same samples measured, the same uncarried counts, every value within
+`CARRY_TOLERANCE` (1e-9 px), the same maximum. Over three calls on the ramp
+(a density region with runs and the post-pass at 0.05; runs, the load order
+and the post-pass at 0.1; the post-pass at 1): insertion 146, single removal
+291 accepted and 92 refused, boundary run 6 accepted and 8 refused, post-pass
+1 taken and 2 refused — every one equal, the largest sample difference
+5.44e-15 px. The tolerance is the order a triangle's corners are summed in
+(the working mesh's against the canonical mesh's) and, for a sample on a
+shared edge, which triangle carries it. The same calls run with the residual
+measured whole on every trial (the `full-recompute` control) write the same
+report and mesh byte for byte. Each plant leaves the state off the recompute:
+`stale-carrier` (a removed triangle's samples not re-carried) at the first
+accepted run, `lost-maximum` (when the sample holding the largest value is
+recomputed, the largest taken over the recomputed samples alone) at an
+accepted removal, `no-rollback` at the first refused run. `lost-maximum`
+fires only where the largest value falls at its own sample while another
+sample keeps a larger one — measured, it did not fire on the single-removal
+ramp at 0.05, 0.3 or 1, nor with the post-pass alone at 0.05, so the control
+plants it on the call where it does. Outside the suite, 27 calls (the ramp
+and the kinked ramp × seven option sets × bounds 0.5, 1, 2; the run was
+stopped there) were checked the same way with no difference (largest
+1.1e-14 px), each also equal to its full-recompute run byte for byte; the
+`MQ137` population is checked in the suite.
+
+**Accumulated error against the fixed source** (`MQ136`): on the ramp at 1,
+117 accepted steps, the largest reading 0.990321 — the result's. The plant
+that measures each step against the previous accepted candidate instead
+lets small steps add up to the strict result, 1.807701.
+
+**On the ramp** (`MQ134`): the first veto is attempt 123 (removing vertex 122,
+1.132489), the next attempt is taken, and the reduction ends at 28/2, 30
+triangles, residual 0.990321 — §7 M2's scratch step condition, now in the
+tree. Recorded apart, the poser on that result: `MQ_LOCAL_DEFORMATION`
+0.990322, `MQ_INVERSION` 0, accepted in motion; the bound did not understate
+it. The final motion comparison stays the acceptance — the residual certifies
+no orientation (`MQ119`) — and nothing here claims a minimum, the last valid
+prefix, or impossibility outside this search.
+
+**Work and cost** [measured, #1295]. One darwin run, Apple M4, Bun 1.4.2,
+load 4.0–4.6 (other sessions running); each reduction run alone in one process, medians of three (one on the
+two bottomwears). The recorded inputs' envelope is a stand-in — every bound
+bone at `linear` 0.1 about the origin, no reference bound, `maxResidual` 1 —
+because parts's ranges are parts's; it decides which steps are vetoed, so the
+counts below are this envelope's. "Full" is the `full-recompute` control —
+the measurement called on every trial — at a budget capped at 40 candidates
+on the recorded inputs (uncapped, it is hours on the largest), paired with
+the call without the field and the carried call at the same cap.
+
+| subject | samples | vertices / triangles | without the field, ms (candidates) | carried, ms (candidates, trials) | per trial: samples recomputed / containment tests (peak samples) | carried memory, MiB | full recompute, whole call, ms | at 40 candidates: without / carried / full, ms |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| MQ79 ramp (helper envelope) | 6,880 | 147 / 240 | 158 (175) | 222 (177, 121) | 401 / 1,641 (1,974) | 0.93 | 1,162 | — |
+| demo/neck | 2,225 | 89 / 162 | 23 (103) | 56 (127, 85) | 281 / 1,276 (972) | 0.37 | 188 | 13 / 22 / 82 |
+| sample/neck | 3,375 | 107 / 186 | 33 (133) | 71 (179, 101) | 287 / 1,216 (1,023) | 0.55 | 290 | 15 / 22 / 78 |
+| scarf/hair_front | 5,461 | 123 / 190 | 53 (176) | 163 (241, 135) | 195 / 793 (335) | 1.53 | 943 | 12 / 25 / 44 |
+| sample/topwear | 31,250 | 142 / 216 | 87 (205) | 394 (332, 143) | 1,760 / 7,263 (6,813) | 4.96 | 3,100 | 30 / 79 / 221 |
+| scarf/handwear_l | 22,436 | 378 / 683 | 445 (445) | 1,444 (1,036, 768) | 314 / 1,295 (1,123) | 4.71 | 27,673 | 57 / 109 / 247 |
+| sample/sleeves | 44,410 | 231 / 262 | 286 (421) | 740 (458, 79) | 1,856 / 9,665 (3,149) | 12.49 | 7,682 | 120 / 274 / 682 |
+| sample/bottomwear | 111,411 | 230 / 351 | 273 (331) | 1,573 (457, 255) | 2,290 / 9,783 (4,690) | 40.66 | 77,099 | 59 / 342 / 1,224 |
+| demo/bottomwear | 351,276 | 536 / 777 | 1,560 (1,101) | 5,151 (1,062, 496) | 3,810 / 17,208 (5,152) | 129.08 | 680,567 † | 197 / 1,235 / 2,196 |
+
+A trial is a candidate the rows let through, plus each insertion and
+post-pass; every other candidate costs the residual nothing. The carried
+call and the full-recompute control end on the same mesh on every subject
+above (byte for byte), and the carried state took no fallback rescan
+(`fullRecarries` 0 on every call). What the carried form brings the
+full-recompute cost to: on the ramp, the card's subject, the call is 1.4 times
+the reduction without the field (222 against 158 ms) where measuring the
+residual whole on every trial is 7.4 times (1,162 ms) — and was 23 times
+(3,635 ms, same machine, an hour earlier) before `uvCarriers`' search was
+bucketed (below); on the recorded inputs, the full recompute is 2.4 to 132 times
+the carried call, growing with samples × trials (†: 11 minutes, measured while another job raised the load to 19, so it is an order of magnitude, 132 times, not a pairing). What the carried call still
+pays at a fixed cost per call is its construction — the source's carriers and
+terms, 0.5 s on demo/bottomwear — and the result's own row, measured in full
+by the measurement (0.56 s there); at a cap of 40 candidates those two are
+most of the 1.2 s. Against the call without the field the carried call costs
+1.4 to 5.8 times: the vetoes change the trajectory (on demo/bottomwear this
+stand-in envelope lets 10 vertices go where the call without it removes 254,
+after a similar number of candidates), so the two are paired runs of
+different reductions, not of the same steps. Memory is the source's terms
+per sample: (2 + 3K) doubles, K the envelope's bones plus one — 129 MiB on
+demo/bottomwear (351,276 samples, 11 bones) — plus 8 doubles' worth per
+sample of carrier and value; it is held for the call and dropped with it. The
+load was 4.0–4.6 throughout (other sessions running), each call measured
+alone in its process; the population is the 9 weighted recorded inputs (one
+refused by the reduction's own admission before the residual is read,
+sample/hair_back, omitted) and the ramp.
+
+**Rejected on the way.** (1) Re-scanning every live triangle per affected
+sample, as `uvCarriers` does: it is the cost #1294 measured growing with
+samples × triangles, and a removed triangle's samples can only land in the
+triangles that replaced it or, on an edge, in a neighbour. (2) Vetoing each
+refinement insertion: a refused insertion leaves `L(R)` unmet, so the
+refinement could not finish, and a refinement step was never required to meet
+the targets — the outcome is what is held. (3) Reading the residual before the
+rows, to spare the measurement of vetoed candidates: a candidate the rows
+refuse may fold, and then the carried search could disagree with the
+measurement's refusal of overlapping carriers; reading it after keeps the two
+equal, and the rows' own order and names unchanged. (4) Keeping the carried
+state bit-equal to the measurement by summing in the canonical mesh's corner
+order: the canonical order of unchanged triangles moves when a hull vertex
+goes, so that would re-sum them; the difference is 1e-14 px and is declared.
 
 ### Proposed [proposal]
 
@@ -2988,7 +3247,10 @@ export interface ReductionChanges {
   slow.
 
 **Mechanism 1 — the weight-interpolation measurement, restated.** [implemented,
-#1294, the measurement half] — see *Mechanism 1 — implemented, the measurement
+#1294, the measurement half; #1295, the reducer half — *Mechanism 1 —
+implemented, the reducer half*, which departs from the last two bullets of the
+row's text below: the post-pass is held too, refinement insertions are held as
+an outcome rather than one by one, and the carried work is measured there] — see *Mechanism 1 — implemented, the measurement
 half* above; the proposal is kept as written, and the implementation departs
 from it where that subsection says: a measurement input
 (`MeshMeasureInput.skinning`, the source named in it) rather than a reduction

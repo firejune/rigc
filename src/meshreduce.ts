@@ -79,6 +79,17 @@
  * measurements' rows (`amplitudeOf`) — so the mesh and every step are the
  * call's without it.
  *
+ * ## The skinning residual (issue #1295, opt-in)
+ *
+ * With `targets.skinning` and a number for its `maxResidual`, every removal,
+ * boundary run and post-pass whose required rows all pass is also held to
+ * `MQ_SKINNING_RESIDUAL` against the call's own source — the original, never a
+ * previous step — and refused by name when it is over; the refinement's outcome
+ * is held to it before any removal. The value is carried per sample
+ * (`SkinningCarry`, `src/meshskinning.ts`), so a step recomputes only the samples
+ * of the triangles it changed; the result's own measurement reads the row in
+ * full. Left out, nothing here reads it and the call is the one it was.
+ *
  * A removal whose deviation floor — the furthest removed source-hull vertex
  * from the candidate's outline, which `MQ_BOUNDARY_DEVIATION` can only exceed —
  * is over the bound is refused without the measurement; its name, when read,
@@ -149,6 +160,18 @@ import {
   type Termination,
 } from './meshquality.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasters } from './meshrasters.ts';
+import {
+  skinningContract,
+  SkinningCarry,
+  validateReductionSkinning,
+  skinningResidual,
+  type CarryCheck,
+  type CarryPlant,
+  type CarryReading,
+  type CarryTally,
+  type SkinningMeasureArgs,
+  type SkinningResidualInput,
+} from './meshskinning.ts';
 
 // ---------------------------------------------------------------------------
 // the result
@@ -319,6 +342,8 @@ function validateReduction(input: MeshReductionInput, plant: ReductionPlant | nu
   // Issue #1287: refused here, before the admission measurement and any step, in the measurement's own words — the
   // admission does not carry the field, and a call whose source is refused never reaches the one measurement that does.
   if (plant !== 'amplitude-unvalidated') validateMotionAmplitude(who, input.motionAmplitude);
+  // Issue #1295: refused before any work in the measurement's own words, under `targets.skinning`.
+  validateReductionSkinning(who, t.skinning);
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
   const n = src.points.length;
@@ -803,6 +828,53 @@ interface Run {
   rasters: ArtRasters;
   /** The step state each removal and insertion is measured through, carried from the last measurement (issue #1246); null measures every step in full. */
   stepRasters: StepRasters | null;
+  /** Issue #1295: the residual every step is held to, or null when the call did not declare a bound for it. */
+  skinning: SkinningRun | null;
+  /** Issue #1295: the controls' faults and inspector, or null. */
+  hooks: SkinningHooks | null;
+}
+
+/**
+ * Issue #1295: the residual a reduction's steps are vetoed by — the bound, the measurement input the result's own row
+ * is read with, and either the carried state (`SkinningCarry`), a reading the admission could not measure (every step
+ * is then blocked by it), or neither, under the full-recompute control, which measures each candidate whole.
+ */
+interface SkinningRun {
+  bound: number;
+  input: SkinningResidualInput;
+  carry: SkinningCarry | null;
+  unmeasured: CarryReading | null;
+  args: Omit<SkinningMeasureArgs, 'candidate'>;
+}
+
+/**
+ * Issue #1295's faults, for the `mesh-compare` suite's controls: the carried state's own (`CarryPlant`); the residual
+ * measured whole on every trial — not a fault, the path the carried state is held equal to and the cost is measured
+ * against; the post-pass taken without the residual's recheck; `effective` echoing `targets.skinning: null` for a
+ * call that left it out; and a residual refusal read as the end of the search rather than one refusal among others.
+ */
+export type SkinningVetoPlant = CarryPlant | 'full-recompute' | 'post-pass-unchecked' | 'echo-when-unset' | 'veto-ends-search';
+
+/** One decision the residual took part in, as a control reads it (issue #1295). */
+export interface SkinningInspection {
+  phase: 'insertion' | 'removal' | 'boundary-run' | 'delaunay';
+  /** `candidatesTried` when it was decided. */
+  step: number;
+  /** Whether the working mesh now holds the trial (an insertion always does). */
+  accepted: boolean;
+  /** The residual's reading of the trial. */
+  reading: CarryReading;
+  /** The carried state's work so far; null under the full-recompute control. */
+  tally: CarryTally | null;
+  memoryBytes: () => number;
+  /** The carried state as it now stands held to the full recompute over the working mesh as it now stands; null under the full-recompute control. */
+  check: () => CarryCheck | null;
+}
+
+/** What a control hands `reduceMeshWith` for issue #1295: a fault, and a callback after every decision the residual took part in. */
+export interface SkinningHooks {
+  plant?: SkinningVetoPlant;
+  inspect?: (inspection: SkinningInspection) => void;
 }
 
 /**
@@ -826,8 +898,74 @@ function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string, final = f
     boneOrder: input.boneOrder,
     preset: input.preset,
     ...amplitudeOf(run.input, run.plant, final),
+    ...(final ? skinningOfResult(run) : {}),
   };
   return run.stepRasters === null ? measureMeshQualityWith(measureInput, run.rasters) : measureMeshQualityStep(measureInput, run.stepRasters);
+}
+
+/**
+ * Issue #1295: what the result's own measurement is handed as `skinning` — the input's envelope and bound against the
+ * call's own source, so the report's row is the measurement's, written as `measureMeshQuality` writes it; `null` as
+ * `null`; nothing when the field was left out. No other measurement of the call carries it: the steps read the
+ * carried state.
+ */
+function skinningOfResult(run: Run): { skinning?: SkinningResidualInput | null } {
+  const declared = run.input.targets.skinning;
+  if (declared === undefined) return {};
+  if (declared === null) return { skinning: null };
+  return { skinning: skinningInputOf(run.input) };
+}
+
+function skinningInputOf(input: MeshReductionInput): SkinningResidualInput {
+  const declared = input.targets.skinning!;
+  return { source: { id: 'source', mesh: input.source }, envelope: declared.envelope, maxResidual: declared.maxResidual, deform: input.deform };
+}
+
+/**
+ * Issue #1295: the residual of the working mesh as it now stands — a carried trial, left pending until `settleSkinning`;
+ * under the full-recompute control, the measurement over the canonical candidate; or the admission's reading when it
+ * could not measure.
+ */
+function skinningTrial(run: Run, canonical: () => SourceMesh): CarryReading {
+  const sk = run.skinning!;
+  if (sk.unmeasured !== null) return sk.unmeasured;
+  if (sk.carry === null) {
+    const reading = skinningResidual({ ...sk.args, candidate: canonical() });
+    return reading.state === 'measured' ? { state: 'measured', value: reading.value } : { state: reading.state, reason: reading.reason };
+  }
+  return sk.carry.trial(run.work.triangles);
+}
+
+/** Issue #1295: the residual's reading as the name a refusal carries — `rowName`'s form — or null when it is within the bound. */
+function skinningVeto(sk: SkinningRun, reading: CarryReading): string | null {
+  if (reading.state === 'measured') return reading.value <= sk.bound ? null : `MQ_SKINNING_RESIDUAL: ${reading.value} against <= ${sk.bound}`;
+  return `MQ_SKINNING_RESIDUAL: ${reading.state} — ${reading.reason}`;
+}
+
+/** Issue #1295: keep or undo a pending trial, then let a control read the decision. The working mesh is already the one decided on. */
+function settleSkinning(run: Run, keep: boolean, phase: SkinningInspection['phase'], reading: CarryReading): void {
+  const carry = run.skinning?.carry ?? null;
+  if (carry !== null && run.skinning!.unmeasured === null) {
+    if (keep) carry.commit();
+    else carry.rollback();
+  }
+  const inspect = run.hooks?.inspect;
+  if (inspect === undefined) return;
+  inspect({
+    phase,
+    step: run.steps,
+    accepted: keep,
+    reading,
+    tally: carry === null ? null : { ...carry.tally },
+    memoryBytes: () => (carry === null ? 0 : carry.memoryBytes()),
+    check: () => (carry === null ? null : carry.compareWithFull(canonicalise(run.work, run.sourceTurn, run.boneRank).mesh)),
+  });
+}
+
+/** Issue #1295: an operation the residual does not decide — a refinement insertion, or a step a plant takes unmeasured — carried so the state follows the working mesh. */
+function followSkinning(run: Run, phase: SkinningInspection['phase']): void {
+  if (run.skinning === null || run.skinning.carry === null || run.skinning.unmeasured !== null) return;
+  settleSkinning(run, true, phase, run.skinning.carry.trial(run.work.triangles));
 }
 
 /**
@@ -1163,6 +1301,7 @@ function refineRegions(run: Run): PhaseEnd {
     if (target.state === 'not-measurable') {
       const p: Pt = [r6(region.polygon[0][0]), r6(region.polygon[0][1])];
       if (!insertPoint(run, p)) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no triangle holding the region's first vertex)` };
+      followSkinning(run, 'insertion');
       if (accept(run, 'insertion', [])) return { kind: 'replayed' };
       continue;
     }
@@ -1178,6 +1317,7 @@ function refineRegions(run: Run): PhaseEnd {
       const q = outerSplit(run.work.pos[inner], run.work.pos[outer], region);
       if (q === null) continue;
       splitEdge(run, a, b, q);
+      followSkinning(run, 'insertion');
       exited = true;
       break;
     }
@@ -1207,6 +1347,7 @@ function refineRegions(run: Run): PhaseEnd {
     const p = splitPoint(run.work.pos[a], run.work.pos[b], region);
     if (p === null) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no point of edge ${ra}–${rb} strictly between its ends inside region "${region.name}" or its band)` };
     splitEdge(run, a, b, p);
+    followSkinning(run, 'insertion');
     if (accept(run, 'insertion', [])) return { kind: 'replayed' };
   }
 }
@@ -1448,7 +1589,10 @@ function removeVertices(run: Run): PhaseEnd {
       if (block === null) {
         taken++;
         if (accept(run, 'removal', [v])) return { kind: 'replayed' };
-      } else lastBlock = { refusal: block, what: `removing source vertex ${v}` };
+      } else {
+        lastBlock = { refusal: block, what: `removing source vertex ${v}` };
+        if (run.hooks?.plant === 'veto-ends-search' && typeof block === 'string' && block.startsWith('MQ_SKINNING_RESIDUAL')) return { kind: 'stuck', constraint: lastName() };
+      }
     }
     if (taken === 0) {
       // A pass that took nothing left the working mesh as it found it, so a refusal the floor decided is measured
@@ -1526,7 +1670,11 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
     undo();
     return `outline: ${err.message}`;
   }
-  if (vertices.length > 1 && run.plant === 'run-skips-rows') return null;
+  const phase: SkinningInspection['phase'] = vertices.length > 1 ? 'boundary-run' : 'removal';
+  if (vertices.length > 1 && run.plant === 'run-skips-rows') {
+    followSkinning(run, phase);
+    return null;
+  }
   if (!full && run.plant !== 'measure-every-candidate') {
     const margin = run.plant === 'floor-half-a-pixel-short' ? -0.5 : FLOOR_MARGIN;
     if (deviationFloor(run, canon.mesh, vertices) > input.targets.maxBoundaryDeviation + margin) {
@@ -1550,6 +1698,18 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
   if (blocking !== null) {
     undo();
     return rowName(blocking);
+  }
+  // Issue #1295: every required row passes, so the candidate has no reversed or degenerate triangle; now the residual
+  // against the original source. A veto is a refusal like any other: the mesh and the carried state as they were.
+  if (run.skinning !== null) {
+    const reading = skinningTrial(run, () => canon.mesh);
+    const veto = skinningVeto(run.skinning, reading);
+    if (veto !== null) {
+      undo();
+      settleSkinning(run, false, phase, reading);
+      return veto;
+    }
+    settleSkinning(run, true, phase, reading);
   }
   return null;
 }
@@ -1718,12 +1878,29 @@ function retriangulateResult(run: Run, termination: Termination): Retriangulatio
   if (result.flips === 0) return out(true, null);
   const was = run.work.triangles;
   run.work.triangles = result.triangles;
-  if (plant === 'flips-against-delaunay-unmeasured') return out(true, null);
+  if (plant === 'flips-against-delaunay-unmeasured') {
+    followSkinning(run, 'delaunay');
+    return out(true, null);
+  }
   const canon = canonicalise(run.work, run.sourceTurn, run.boneRank);
   const blocking = firstBlockingRow(measureAgainstTargets(run, canon.mesh, 'retriangulated'), run.input.targets.artFit);
-  if (blocking === null) return out(true, null);
-  run.work.triangles = was;
-  return out(false, rowName(blocking));
+  if (blocking !== null) {
+    run.work.triangles = was;
+    return out(false, rowName(blocking));
+  }
+  // Issue #1295: the returned triangulation is held to the residual as every step was — it is not in acceptedAt, and
+  // that is no reason for it to escape the bound. Refused whole, naming the row.
+  if (run.skinning !== null) {
+    const reading = skinningTrial(run, () => canon.mesh);
+    const veto = run.hooks?.plant === 'post-pass-unchecked' ? null : skinningVeto(run.skinning, reading);
+    if (veto !== null) {
+      run.work.triangles = was;
+      settleSkinning(run, false, 'delaunay', reading);
+      return out(false, veto);
+    }
+    settleSkinning(run, true, 'delaunay', reading);
+  }
+  return out(true, null);
 }
 
 // ---------------------------------------------------------------------------
@@ -1783,19 +1960,27 @@ export function reduceMeshWith(
   steps: StepRasters | null = stepRastersOf(rasters),
   plant: ReductionPlant | null = null,
   observe: AttemptObserver | null = null,
+  skinning: SkinningHooks | null = null,
 ): MeshReductionResult {
   validateReduction(input, plant);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
-  return reduceValidated(input, rasters, steps, plant, observe);
+  return reduceValidated(input, rasters, steps, plant, observe, skinning);
 }
 
 /**
  * The operation, over an input `validateReduction` accepted; the art's rasters are computed at most once, in
  * `rasters`, and every refinement and removal step is measured through `steps` when it is given (issue #1246).
  */
-function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: StepRasters | null, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): MeshReductionResult {
+function reduceValidated(
+  input: MeshReductionInput,
+  rasters: ArtRasters,
+  steps: StepRasters | null,
+  plant: ReductionPlant | null = null,
+  observe: AttemptObserver | null = null,
+  hooks: SkinningHooks | null = null,
+): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
   const sourceHull: Array<[number, number]> = src.points.slice(0, Math.max(0, src.hull)).map(([x, y]): [number, number] => [x, y]);
@@ -1819,7 +2004,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     ...amplitudeOf(input, plant, false),
   };
   const admit = steps === null ? measureMeshQualityWith(admitInput, rasters) : measureMeshQualityStep(admitInput, steps);
-  const effective = effectiveOf(input, admit.effective, sourceHull, plant);
+  const effective = effectiveOf(input, admit.effective, sourceHull, plant, hooks);
   const sourceCounts = admit.sourceCounts;
   const noMesh = (termination: Termination): MeshReductionResult => ({
     mesh: null,
@@ -1849,6 +2034,7 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     }
     checkIslands(input, who, rasters);
     checkDeformBeforeWork(input);
+    const skinningAdmitted = admitSkinning(input, rasters);
 
     const boneRank = new Map((input.boneOrder ?? []).map((b, i) => [b, i]));
     const work: Work = {
@@ -1880,7 +2066,10 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
       sourceEdges,
       rasters,
       stepRasters: steps,
+      skinning: null,
+      hooks,
     };
+    run.skinning = skinningRunOf(run, skinningAdmitted);
 
     // Issue #1268: a replay ends in its own termination, never as an exhausted budget; a stop the run never reaches
     // leaves the run's own termination, which then carries `stopAfterAccepted` saying so.
@@ -1892,10 +2081,13 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     if (refined.kind === 'replayed') return finish(run, effective, sourceCounts, replayed());
     if (refined.kind === 'budget') return noMesh({ reason: 'budget-exhausted', candidatesTried: run.steps, budget: input.budget.maxCandidates, result: 'none-met-the-targets', ...notReached() });
     const startCanon = canonicalise(work, run.sourceTurn, boneRank);
-    const startBlock = firstBlockingRow(measureAgainstTargets(run, startCanon.mesh, 'start'), input.targets.artFit);
+    const startRow = firstBlockingRow(measureAgainstTargets(run, startCanon.mesh, 'start'), input.targets.artFit);
+    // Issue #1295: the refined source — the refinement's outcome — held to the residual before any removal; with no
+    // region it is the source, which reads 0 against itself.
+    const startBlock = startRow !== null ? rowName(startRow) : run.skinning === null ? null : skinningStart(run, () => startCanon.mesh);
     let termination: Termination;
     if (startBlock !== null) {
-      const constraint = refined.kind === 'stuck' ? refined.constraint : rowName(startBlock);
+      const constraint = refined.kind === 'stuck' ? refined.constraint : startBlock;
       termination = { reason: 'no-further-valid-reduction', candidatesTried: run.steps, blockingConstraint: `${constraint} — before any removal: the refined source does not meet its targets, so no step from it can`, ...notReached() };
     } else {
       const reduced = removeVertices(run);
@@ -1910,6 +2102,87 @@ function reduceValidated(input: MeshReductionInput, rasters: ArtRasters, steps: 
     if (err instanceof Stop) return noMesh({ reason: err.reason, code: err.code, detail: err.detail });
     throw err;
   }
+}
+
+/**
+ * Issue #1295: the residual's admission — what the source itself reads under the declared envelope, before any step.
+ * Null when no step reads a residual (the field left out, `null`, or a bound declared absent). A source the
+ * measurement refuses — a deform key that moves vertices outside skinning, a bone the envelope does not declare, an
+ * envelope bone the source does not bind, shares that do not close, a vertex off its UV, one mesh weighted and not the
+ * other — is refused here, `invalid-input` with the measurement's code and words; what it cannot measure (both meshes
+ * unweighted, fewer art samples than the floor) is kept as the reading every step is then blocked by.
+ */
+function admitSkinning(input: MeshReductionInput, rasters: ArtRasters): { input: SkinningResidualInput; args: Omit<SkinningMeasureArgs, 'candidate'>; unmeasured: CarryReading | null } | null {
+  const declared = input.targets.skinning;
+  if (declared === undefined || declared === null || declared.maxResidual === null) return null;
+  const skinning = skinningInputOf(input);
+  const args: Omit<SkinningMeasureArgs, 'candidate'> = {
+    attachment: input.attachment,
+    frame: input.art.frame,
+    artBits: rasters.artBits(),
+    maskWidth: input.art.mask.width,
+    maskHeight: input.art.mask.height,
+    minArtSamples: input.minArtSamples,
+    threshold: input.art.threshold,
+    skinning,
+  };
+  const contract = skinningContract({ ...args, candidate: input.source });
+  if (!('state' in contract) || contract.state === 'measured') return { input: skinning, args, unmeasured: null };
+  if (contract.state === 'refused') {
+    const code = contract.reason.slice(0, contract.reason.indexOf(':'));
+    throw new Stop('invalid-input', code, contract.reason.slice(code.length + 2));
+  }
+  return { input: skinning, args, unmeasured: { state: 'not-measurable', reason: contract.reason } };
+}
+
+/** Issue #1295: the run's residual — the carried state over the working mesh as the reduction starts, or what stands in for it. */
+function skinningRunOf(run: Run, admitted: ReturnType<typeof admitSkinning>): SkinningRun | null {
+  if (admitted === null) return null;
+  const bound = admitted.input.maxResidual!;
+  const base = { bound, input: admitted.input, args: admitted.args };
+  if (admitted.unmeasured !== null) return { ...base, carry: null, unmeasured: admitted.unmeasured };
+  const plant = run.hooks?.plant;
+  if (plant === 'full-recompute') {
+    const reading = skinningResidual({ ...admitted.args, candidate: run.input.source });
+    if (reading.state === 'refused') {
+      const code = reading.reason.slice(0, reading.reason.indexOf(':'));
+      throw new Stop('invalid-input', code, reading.reason.slice(code.length + 2));
+    }
+    return { ...base, carry: null, unmeasured: null };
+  }
+  const carryPlant: CarryPlant | null = plant === 'stale-carrier' || plant === 'lost-maximum' || plant === 'no-rollback' || plant === 'previous-candidate' ? plant : null;
+  try {
+    const carry = new SkinningCarry(
+      run.who,
+      { pos: run.work.pos, uv: run.work.uv, weights: run.work.weights! },
+      run.work.nSource,
+      run.work.triangles,
+      run.input.source,
+      admitted.input.envelope,
+      admitted.args.artBits,
+      admitted.args.maskWidth,
+      admitted.args.maskHeight,
+      run.input.art.frame,
+      carryPlant,
+    );
+    return { ...base, carry, unmeasured: null };
+  } catch (err) {
+    if (err instanceof MeshReductionError && err.code === 'COMPARE_UV_CARRIER_NOT_UNIQUE') throw new Stop('invalid-input', 'SKINNING_UV_CARRIER_NOT_UNIQUE', err.message);
+    throw err;
+  }
+}
+
+/** Issue #1295: the residual's verdict on the mesh the removals start from — the refinement's outcome — as a refusal name, or null. */
+function skinningStart(run: Run, canonical: () => SourceMesh): string | null {
+  const sk = run.skinning!;
+  let reading: CarryReading;
+  if (sk.unmeasured !== null) reading = sk.unmeasured;
+  else if (sk.carry !== null) reading = sk.carry.reading();
+  else {
+    const r = skinningResidual({ ...sk.args, candidate: canonical() });
+    reading = r.state === 'measured' ? { state: 'measured', value: r.value } : { state: r.state, reason: r.reason };
+  }
+  return skinningVeto(sk, reading);
 }
 
 /** §4: full coverage asked of a source that touches no pixel of some art island is refused, never met by deleting art. */
@@ -2015,13 +2288,13 @@ function reportOf(effective: EffectiveSettings, sourceCounts: MeshCounts | null,
 }
 
 /** Correction 1: the reduction's inputs echoed with their structure — the measurement's echo, with what a reduction adds. */
-function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sourceHull: Array<[number, number]>, plant: ReductionPlant | null): EffectiveSettings {
+function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sourceHull: Array<[number, number]>, plant: ReductionPlant | null, hooks: SkinningHooks | null = null): EffectiveSettings {
   const amplitude = plant === 'echo-when-unset' && input.motionAmplitude === undefined ? null : input.motionAmplitude;
   const fit = (f: ArtFitBounds): ArtFitBounds => ({ minCoverage: f.minCoverage, maxOvershoot: f.maxOvershoot, maxUndercut: f.maxUndercut });
   return {
     ...measured,
     sourceBounds: fit(input.sourceBounds),
-    targets: input.targets,
+    targets: hooks?.plant === 'echo-when-unset' && input.targets.skinning === undefined ? { ...input.targets, skinning: null } : input.targets,
     referenceHull: sourceHull,
     budget: { maxCandidates: input.budget.maxCandidates },
     ...(input.stopAfterAccepted === undefined ? {} : { stopAfterAccepted: input.stopAfterAccepted }),

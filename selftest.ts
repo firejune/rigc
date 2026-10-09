@@ -410,6 +410,10 @@ import {
   type SkinningEnvelope,
   type SkinningPlant,
   type SkinningResidualInput,
+  type SkinningHooks,
+  type SkinningInspection,
+  type SkinningVetoPlant,
+  CARRY_TOLERANCE,
   type ArtFitBounds,
   type DeformTimelineInput,
   type MeasureRow,
@@ -52118,6 +52122,362 @@ function runMeshCompareSuite(): number {
       held,
       probeDetail(held, probes, `${lines.join('; ')} (within ${LINEAR_TOLERANCE} and 1e-8 × |ck| + 1e-6 px); understated by the plants — scale ignored: ${caught['scale-ignored'].join(', ')}; joint motion ignored: ${caught['translation-ignored'].join(', ')}; refused: ${refused.join(', ')}`),
       'issue #1294 work 3 (rig-parts#126 Q3): one definition of linear, rig-c\'s, held to the poser it stands in for, and an input outside its assumptions refused rather than turned into a number',
+    );
+  });
+
+  // --- MQ134–MQ141 (#1295): the residual as a step condition of the reduction ----------------------------------------
+  // `targets.skinning` on MQ79's strip and the #1294 population (`skSource` / `skBuild`, the helper's envelopes). Every
+  // decision the residual takes part in is read through the inspector, and the carried state is held to the full
+  // recompute — `uvCarriers`, `termsAt` and `sampleResidual` over the canonical candidate, the measurement's own path —
+  // after accepted and rejected trials alike. No bound below was tuned on a comparison: 1 px is MQ79's motion bound.
+  const vxEnvelope = skEnvelope(skVariants[0].bones);
+  const vxInput = (source: SourceMesh, bound: number | null, over: Partial<MeshReductionInput> = {}, targets: Partial<MeshReductionInput['targets']> = {}): MeshReductionInput =>
+    mvReduceInput(source, { ...over, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], ...targets, skinning: { envelope: vxEnvelope, maxResidual: bound } } });
+  const vxRun = (input: MeshReductionInput, hooks: SkinningHooks | null = null, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): ReturnType<typeof reduceMesh> => {
+    const rasters = artRastersOf(input.art);
+    return reduceMeshWith(input, rasters, stepRastersOf(rasters), plant, observe, hooks);
+  };
+  /** Each decision, by phase and outcome, and whether the carried state equalled the full recompute after it. */
+  interface VxTally {
+    by: Record<string, { n: number; unequal: number }>;
+    worstDiff: number;
+    first: string | null;
+    readings: Array<{ phase: string; accepted: boolean; value: number | null }>;
+    tally: SkinningInspection['tally'];
+    memory: number;
+  }
+  const vxChecked = (input: MeshReductionInput, plant: SkinningVetoPlant | null = null, reductionPlant: ReductionPlant | null = null, observe: AttemptObserver | null = null): { result: ReturnType<typeof reduceMesh>; t: VxTally } => {
+    const t: VxTally = { by: {}, worstDiff: 0, first: null, readings: [], tally: null, memory: 0 };
+    const inspect = (i: SkinningInspection): void => {
+      const key = `${i.phase}${i.accepted ? '+' : '-'}`;
+      const slot = (t.by[key] ??= { n: 0, unequal: 0 });
+      slot.n++;
+      t.readings.push({ phase: i.phase, accepted: i.accepted, value: i.reading.state === 'measured' ? i.reading.value : null });
+      t.tally = i.tally;
+      t.memory = i.memoryBytes();
+      // A plant run stops checking at its first difference: the control needs one, and each check is a full recompute.
+      if (plant !== null && t.first !== null) return;
+      const c = i.check();
+      if (c === null) return;
+      t.worstDiff = Math.max(t.worstDiff, c.sampleDiff);
+      if (!c.equal) {
+        slot.unequal++;
+        t.first ??= `${key} at step ${i.step}: carried max ${c.carried.max} measured ${c.carried.measured} uncarried ${c.carried.uncarried}, full max ${c.full.max} measured ${c.full.measured} uncarried ${c.full.uncarried}, sample diff ${c.sampleDiff}, measured mismatch ${c.measuredMismatch}`;
+      }
+    };
+    return { result: vxRun(input, { ...(plant === null ? {} : { plant }), inspect }, reductionPlant, observe), t };
+  };
+  const vxRow = (r: ReturnType<typeof reduceMesh>): MeasureRow | undefined => r.report.candidates[0]?.geometry?.rows.find((x) => x.code === 'MQ_SKINNING_RESIDUAL');
+  const vxPhases = (t: VxTally): string => Object.entries(t.by).map(([k, v]) => `${k} ${v.n}${v.unequal > 0 ? ` (${v.unequal} unequal)` : ''}`).join(', ');
+  const vxUnequal = (t: VxTally): number => Object.values(t.by).reduce((s, v) => s + v.unequal, 0);
+  const vxTerm = (r: ReturnType<typeof reduceMesh>): string => {
+    const term = r.report.termination;
+    if (term === null) return 'no termination';
+    if (term.reason === 'no-further-valid-reduction') return `${term.reason} after ${term.candidatesTried} (${term.blockingConstraint.slice(0, 80)})`;
+    if (term.reason === 'invalid-input' || term.reason === 'unsupported-topology') return `${term.reason} ${term.code}`;
+    return `${term.reason} after ${term.candidatesTried}`;
+  };
+  const vxRegion: RefinementRegion = { name: 'dense', polygon: [[60, 16], [100, 16], [100, 32], [60, 32]], maxEdgeLength: 5, transition: 4, grade: 0.5, approximation: null };
+
+  mcGuard('MQ134', () => {
+    const probes: string[] = [];
+    // The ramp at maxResidual 1: the strict policy alone reaches 1.807703 in motion (MQ79), so some geometry-valid
+    // removal must be over the residual — the observer finds the first one refused by it and a later one taken.
+    const attempts: Array<{ step: number; vertices: number[]; refusedBy: string | null }> = [];
+    const observe: AttemptObserver = (a) => attempts.push({ step: a.step, vertices: [...a.sourceVertices], refusedBy: a.refusedBy === null ? null : a.refusedBy() });
+    const veto = vxRun(vxInput(mvSrc, 1), null, null, observe);
+    const vetoed = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: '));
+    const later = vetoed === undefined ? undefined : attempts.find((a) => a.step > vetoed.step && a.refusedBy === null);
+    if (vetoed === undefined) probes.push('no attempt was refused by MQ_SKINNING_RESIDUAL — the fixture shows no veto');
+    else if (!/^MQ_SKINNING_RESIDUAL: [0-9.]+ against <= 1$/.test(vetoed.refusedBy ?? '')) probes.push(`the veto reads "${vetoed.refusedBy}"; required the row, its value and its bound`);
+    if (later === undefined) probes.push('no operation was taken after the first veto — the search did not continue');
+    const row = vxRow(veto);
+    const c = veto.report.candidates[0];
+    if (veto.mesh === null || !c.accepted) probes.push(`the vetoed reduction: mesh ${veto.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}; required every required row passing on the result`);
+    if (row?.state !== 'pass' || (row.value ?? Infinity) > 1) probes.push(`the result's MQ_SKINNING_RESIDUAL: ${skSaid(row)}; required within 1`);
+    if ((c.changes?.removedVertices ?? 0) === 0) probes.push('the vetoed reduction removed nothing');
+    // The plant: a residual refusal read as the end of the search — the run stops at the first veto.
+    const stopped = vxRun(vxInput(mvSrc, 1), { plant: 'veto-ends-search' });
+    const stoppedRemoved = stopped.report.candidates[0]?.changes?.removedVertices ?? 0;
+    if (stoppedRemoved >= (c.changes?.removedVertices ?? 0)) probes.push(`the plant (a veto ends the search) removed ${stoppedRemoved}, not fewer than the call's ${c.changes?.removedVertices}`);
+    // Recorded separately: the result in motion — the residual is a bound on the poser's positional error under the
+    // envelope (MQ118), so the poser's local deformation may not exceed it; inversion is the comparison's to read.
+    let motion = 'not compared';
+    if (veto.mesh !== null) {
+      const report = skCompare(skBuild(dir, 'vx-source', mvSrc, skVariants[0].bones), [{ id: 'vetoed', model: skBuild(dir, 'vx-vetoed', veto.mesh, skVariants[0].bones) }]);
+      const local = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_LOCAL_DEFORMATION' && r.object.region === null);
+      const inversion = report.candidates[0]?.motion?.rows.find((r) => r.code === 'MQ_INVERSION' && r.object.region === null);
+      const slack = (1 + vxEnvelope.bones[0].linear) * (row?.skinning?.setup.sampleGap ?? 0) + SK_IDENTITY_TOLERANCE;
+      if (local?.value === null || local === undefined || local.value > (row?.value ?? 0) + slack) probes.push(`the poser reads ${local?.value} against the residual ${row?.value}; the bound may not understate it`);
+      motion = `poser MQ_LOCAL_DEFORMATION ${local?.value} ${local?.state}, MQ_INVERSION ${inversion?.value} ${inversion?.state}, accepted in motion ${report.candidates[0]?.accepted}`;
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ134_A_GEOMETRY_VALID_REMOVAL_OVER_THE_RESIDUAL_IS_REFUSED_BY_NAME_AND_THE_REDUCTION_GOES_ON_TO_A_FEASIBLE_ONE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `MQ79's ramp, the strict policy, targets.skinning at maxResidual 1 (the helper's envelope): first veto at attempt ${vetoed?.step} (removing ${vetoed?.vertices.join(', ')}: ${vetoed?.refusedBy}), next taken at ${later?.step} (removing ${later?.vertices.join(', ')}); result ${mvCounts(c)}, ${vxTerm(veto)}, MQ_SKINNING_RESIDUAL ${row?.value} pass, accepted; the plant (a veto ends the search) removed ${stoppedRemoved} against ${c.changes?.removedVertices}; in motion, recorded apart: ${motion}`,
+      ),
+      'issue #1295 acceptance 1: a harmful early operation is skipped and the search goes on, holding the unchanged geometry bounds and the residual — not "fewer vertices", which is not acceptance; the motion comparison stays the acceptance and is read separately',
+    );
+  });
+
+  mcGuard('MQ135', () => {
+    const probes: string[] = [];
+    // The carried state against the full recompute after every decision, over three calls that between them make
+    // every kind: refinement insertions over a density region with runs and singles (maxResidual 0.05); boundary runs,
+    // the load order and the post-pass at 0.1, where runs and singles pass every static row and are vetoed and the
+    // post-pass is refused by the residual; and the post-pass at 1, where it is taken.
+    const input = vxInput(mvSrc, 0.05, { boundaryRuns: { maxVertices: 4 }, retriangulate: 'delaunay', regionArtSamples: [{ region: 'dense', minArtSamples: 1 }] }, { regions: [vxRegion] });
+    const allInput = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' });
+    const real = vxChecked(input);
+    const refused = vxChecked(allInput);
+    const taken = vxChecked(vxInput(mvSrc, 1, { retriangulate: 'delaunay' }));
+    const by = { ...real.t.by };
+    for (const t of [refused.t, taken.t]) for (const [k, v] of Object.entries(t.by)) by[k] = { n: (by[k]?.n ?? 0) + v.n, unequal: (by[k]?.unequal ?? 0) + v.unequal };
+    for (const k of ['insertion+', 'removal+', 'removal-', 'boundary-run+', 'boundary-run-', 'delaunay+', 'delaunay-']) if ((by[k]?.n ?? 0) === 0) probes.push(`no ${k} decision was read — the population does not cover it`);
+    const unequal = vxUnequal(real.t) + vxUnequal(refused.t) + vxUnequal(taken.t);
+    if (unequal > 0) probes.push(`${unequal} decision(s) left the carried state off the full recompute: ${real.t.first ?? refused.t.first ?? taken.t.first}`);
+    const worst = Math.max(real.t.worstDiff, refused.t.worstDiff, taken.t.worstDiff);
+    if (worst > CARRY_TOLERANCE) probes.push(`the largest sample difference ${worst} is over CARRY_TOLERANCE ${CARRY_TOLERANCE}`);
+    // The carried run and the run that measures the residual whole on every trial end on one text and one mesh.
+    for (const [label, inp, carried] of [['the region call', input, real.result], ['the 0.1 call', allInput, refused.result]] as const) {
+      const full = vxRun(inp, { plant: 'full-recompute' });
+      if (writeMeshQualityReport(full.report) !== writeMeshQualityReport(carried.report) || JSON.stringify(full.mesh) !== JSON.stringify(carried.mesh)) probes.push(`${label}: the full-recompute run wrote another report or mesh than the carried one`);
+    }
+    // The plants: each must leave the state off the recompute at some decision.
+    const fired: string[] = [];
+    for (const plant of ['stale-carrier', 'lost-maximum', 'no-rollback'] as const) {
+      const p = vxChecked(allInput, plant);
+      if (p.t.first === null) probes.push(`the plant ${plant} left the carried state equal to the full recompute at every decision`);
+      else fired.push(`${plant} at ${p.t.first.slice(0, p.t.first.indexOf(':'))}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ135_THE_CARRIED_RESIDUAL_EQUALS_THE_FULL_RECOMPUTE_AFTER_ACCEPTED_AND_REFUSED_TRIALS_OF_EVERY_OPERATION_KIND',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the ramp with a 40x16 px density region (L0 5, band 4), boundary runs up to 4 and the post-pass at maxResidual 0.05; runs, the load order and the post-pass at 0.1; the post-pass at 1: ${Object.entries(by).map(([k, v]) => `${k} ${v.n}`).join(', ')} — every one equal to the full recompute, largest sample difference ${worst.toExponential(2)} px (tolerance ${CARRY_TOLERANCE}); the full-recompute runs' reports and meshes identical to the carried ones; the plants, on the 0.1 call, caught: ${fired.join('; ')}`,
+      ),
+      'issue #1295 work 2 and acceptance 2: the carried state is only worth its speed if it is the measurement — held sample by sample to the measurement\'s own path after every kind of trial, and each way it can go stale has a plant that this catches',
+    );
+  });
+
+  mcGuard('MQ136', () => {
+    const probes: string[] = [];
+    // Error accumulates against the fixed source, never against the previous step: every reading the reduction took
+    // is within the bound, and so is the result. The plant measures each step against the previous accepted candidate.
+    const real = vxChecked(vxInput(mvSrc, 1));
+    const over = real.t.readings.filter((r) => r.accepted && r.value !== null && r.value > 1);
+    if (over.length > 0) probes.push(`${over.length} accepted step(s) read over 1`);
+    const realRow = vxRow(real.result);
+    if (realRow?.state !== 'pass') probes.push(`the result reads ${skSaid(realRow)}`);
+    const drift = vxRun(vxInput(mvSrc, 1), { plant: 'previous-candidate' });
+    const driftRow = vxRow(drift);
+    if (driftRow?.state !== 'fail') probes.push(`the plant (each step against the previous accepted candidate) ends on ${skSaid(driftRow)}; required over 1 — small steps adding up past the bound`);
+    const held = probes.length === 0;
+    say(
+      'MQ136_ERROR_ACCUMULATED_OVER_ACCEPTED_STEPS_IS_MEASURED_AGAINST_THE_ORIGINAL_SOURCE_AND_CANNOT_DRIFT_PAST_THE_BOUND',
+      held,
+      probeDetail(held, probes, `the ramp at maxResidual 1: ${real.t.readings.filter((r) => r.accepted).length} accepted step(s), the largest reading ${Math.max(...real.t.readings.filter((r) => r.accepted).map((r) => r.value ?? 0))}, result ${realRow?.value} (${mvCounts(real.result.report.candidates[0])}); the plant measured against the previous candidate ends at ${driftRow?.value} (${mvCounts(drift.report.candidates[0])}) — every step within 1 of the one before`),
+      'issue #1295 work 2: the original source stays fixed across accepted operations, so individually small errors cannot accumulate outside maxResidual unnoticed',
+    );
+  });
+
+  mcGuard('MQ137', () => {
+    const probes: string[] = [];
+    // The #1294 population's hard cases, each with protected edges, a density region, boundary runs and the post-pass:
+    // three bones; three bones with a far pivot and nonuniform scale; each also with its bindings pruned to two
+    // influences on the six-decimal grid as the source. The last case prunes the refinement's insertions to two
+    // influences as well: the refined source then reads over the bound, so the refinement's outcome is refused before
+    // any removal, naming the residual.
+    const lines: string[] = [];
+    for (const [vi, pruned, cap] of [[5, false, 4], [5, true, 4], [6, false, 4], [6, true, 4], [5, false, 2]] as const) {
+      const v = skVariants[vi];
+      const envelope = skEnvelope(v.bones);
+      {
+        const source = pruned ? skPruned(skSource(v.field)) : skSource(v.field);
+        const edge: [number, number] = [source.triangles[0], source.triangles[1]];
+        const input: MeshReductionInput = {
+          ...mvReduceInput(source, {
+            boneOrder: ['root', 'a', ...v.bones.map((b) => b.name)],
+            influences: { maxInfluences: cap, minWeight: 0 },
+            protect: { ...mvNoProtect, edges: [edge] },
+            boundaryRuns: { maxVertices: 4 },
+            retriangulate: 'delaunay',
+            regionArtSamples: [{ region: 'dense', minArtSamples: 1 }],
+          }),
+          targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [vxRegion], skinning: { envelope, maxResidual: 1 } },
+        };
+        const { result, t } = vxChecked(input);
+        const c = result.report.candidates[0];
+        const row = vxRow(result);
+        const label = `${v.name}${pruned ? ', pruned to two' : ''}${cap === 2 ? ', insertions pruned to two' : ''}`;
+        if (cap === 2) {
+          const term = result.report.termination;
+          const before = term?.reason === 'no-further-valid-reduction' && term.blockingConstraint.startsWith('MQ_SKINNING_RESIDUAL: ') && term.blockingConstraint.includes('before any removal');
+          if (!before || (c.changes?.removedVertices ?? -1) !== 0 || (c.changes?.sharesPruned ?? 0) === 0 || row?.state !== 'fail' || c.accepted) probes.push(`${label}: ${vxTerm(result)}, removed ${c.changes?.removedVertices}, pruned ${c.changes?.sharesPruned}, residual ${skSaid(row)}, accepted ${c.accepted}; required the refined source refused before any removal by the residual`);
+        } else {
+          if (result.mesh === null || !c.accepted || row?.state !== 'pass') probes.push(`${label}: mesh ${result.mesh === null ? 'none' : 'returned'}, accepted ${c.accepted}, residual ${skSaid(row)}`);
+          if ((c.changes?.removedVertices ?? 0) === 0) probes.push(`${label}: nothing removed`);
+        }
+        if (vxUnequal(t) > 0) probes.push(`${label}: ${t.first}`);
+        if (result.mesh !== null) {
+          const kept = result.mesh.indexMap[edge[0]];
+          const other = result.mesh.indexMap[edge[1]];
+          const edges = new Set<string>();
+          for (let i = 0; i < result.mesh.triangles.length; i += 3) for (let k = 0; k < 3; k++) edges.add([result.mesh.triangles[i + k], result.mesh.triangles[i + ((k + 1) % 3)]].sort((p, q) => p - q).join(','));
+          if (kept === null || other === null || !edges.has([kept, other].sort((p, q) => p - q).join(','))) probes.push(`${label}: the protected edge ${edge.join('–')} is not an edge of the result`);
+        }
+        lines.push(`${label}: ${mvCounts(c)}, inserted ${c.changes?.insertedVertices}, shares pruned ${c.changes?.sharesPruned}, residual ${row?.value}, ${vxTerm(result)}, ${vxPhases(t)}`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ137_THREE_BONES_A_FAR_PIVOT_NONUNIFORM_SCALE_PRUNED_WEIGHTS_PROTECTED_EDGES_AND_A_DENSITY_REGION_HOLD_UNDER_THE_VETO',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')} — every decision equal to the full recompute`),
+      'issue #1295 acceptance 3: the veto, its carried state and the result hold on the population #1294 measured the residual on, with every other constraint of the reduction live beside it',
+    );
+  });
+
+  mcGuard('MQ138', () => {
+    const probes: string[] = [];
+    const termOf = (input: unknown): string => {
+      try {
+        return vxTerm(reduceMesh(input as MeshReductionInput));
+      } catch (err) {
+        return err instanceof MeshReductionError ? `threw ${err.code}: ${err.message}` : `threw ${(err as Error).message}`;
+      }
+    };
+    const all = [...Array(mvSrc.points.length).keys()];
+    const outcomes: Array<[string, string, (s: string) => boolean]> = [
+      ['every vertex protected', termOf(vxInput(mvSrc, 1, { protect: { ...mvNoProtect, vertices: all } })), (s) => s.startsWith('no-further-valid-reduction') && s.includes('protect:')],
+      ['budget 3', termOf(vxInput(mvSrc, 1, { budget: { maxCandidates: 3 } })), (s) => s === 'budget-exhausted after 3'],
+      ['a vertices deform key', termOf(vxInput(mvSrc, 1, { deform: [{ animation: 'idle', attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, keys: [{ time: 0, kind: 'vertices', offset: 0, vertices: [0, 0] }] }] })), (s) => s === 'invalid-input SKINNING_DEFORM_UNSUPPORTED'],
+      ['an undeclared bone', termOf(mvReduceInput(mvSrc, { targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: { envelope: { reference: 'a', bones: [] }, maxResidual: 1 } } })), (s) => s === 'invalid-input SKINNING_BONE_NOT_DECLARED'],
+      ['an unweighted source', termOf({ ...vxInput({ ...mvSrc, weights: null }, 1), influences: null, boneOrder: null }), (s) => s.startsWith('no-further-valid-reduction') && s.includes('MQ_SKINNING_RESIDUAL: not-measurable')],
+      ['linear -1', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: { reference: 'a', bones: [{ ...vxEnvelope.bones[0], linear: -1 }] }, maxResidual: 1 } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.envelope.bones[0].linear is -1')],
+      ['maxResidual left out', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: { envelope: vxEnvelope } } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning.maxResidual is missing')],
+      ['skinning a number', termOf({ ...vxInput(mvSrc, 1), targets: { ...vxInput(mvSrc, 1).targets, skinning: 5 } }), (s) => s.startsWith('threw REDUCE_INPUT_MISSING') && s.includes('targets.skinning is 5')],
+    ];
+    for (const [label, said, ok] of outcomes) if (!ok(said)) probes.push(`${label}: ${said}`);
+    const distinct = new Set(outcomes.slice(0, 5).map(([, s]) => (s.startsWith('invalid-input') ? s : s.split(' ')[0] + (s.includes('protect:') ? ' protect' : s.includes('not-measurable') ? ' unmeasured' : ''))));
+    if (distinct.size !== 5) probes.push(`the no-op, the budget, the two refusals and the unmeasured source read ${distinct.size} distinct outcomes, not 5`);
+    // maxResidual 0: only removals that change nothing the residual reads are taken; the result reads 0.
+    const zero = reduceMesh(vxInput(mvSrc, 0));
+    const zeroRow = vxRow(zero);
+    if (zeroRow?.state !== 'pass' || zeroRow.value !== 0) probes.push(`maxResidual 0: the result reads ${skSaid(zeroRow)}; required 0`);
+    const held = probes.length === 0;
+    say(
+      'MQ138_A_NO_OP_AN_UNSUPPORTED_INPUT_A_MALFORMED_ONE_AND_AN_EXHAUSTED_BUDGET_ARE_DISTINCT_OUTCOMES_UNDER_THE_VETO',
+      held,
+      probeDetail(held, probes, `${outcomes.map(([l, s]) => `${l}: ${s.slice(0, 110)}`).join('; ')}; maxResidual 0: ${mvCounts(zero.report.candidates[0])}, ${vxTerm(zero)}, residual ${zeroRow?.value}`),
+      'issue #1295 acceptance 3: source or no-op, unsupported input and budget exhaustion stay distinct outcomes; an unsupported input is refused in the measurement\'s words, never turned into a pass, and a malformed one before any work',
+    );
+  });
+
+  mcGuard('MQ139', () => {
+    const probes: string[] = [];
+    // Replay with every opt-in: boundary runs, the load order, the post-pass, the amplitude and the residual. At probed
+    // steps — the first, one straight after a veto, the middle and the last — the replay is the budget cut at the same
+    // attempt, mesh and acceptedAt byte for byte; the replay plant (one step early) is caught.
+    const amp: MotionAmplitude = { tracks: [{ track: 'idle', pairs: [{ bones: ['a', 'b'], theta: (MV_BEND * Math.PI) / 180 }], epsilon: 1 }], gradation: 1 };
+    const input = vxInput(mvSrc, 0.1, { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay', motionAmplitude: amp });
+    const attempts: Array<{ step: number; refusedBy: string | null }> = [];
+    const whole = vxRun(input, null, null, (a) => attempts.push({ step: a.step, refusedBy: a.refusedBy === null ? null : a.refusedBy() }));
+    const acc = whole.report.candidates[0]?.changes?.acceptedAt ?? [];
+    const vetoStep = attempts.find((a) => (a.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL'))?.step;
+    const afterVeto = vetoStep === undefined ? -1 : acc.findIndex((a) => a.step > vetoStep) + 1;
+    const ks = [...new Set([1, afterVeto, Math.ceil(acc.length / 2), acc.length].filter((k) => k >= 1 && k <= acc.length))].sort((p, q) => p - q);
+    if (vetoStep === undefined) probes.push('no veto in the run, so no replay crosses one');
+    const pick = (r: ReturnType<typeof reduceMesh>): string => JSON.stringify([r.mesh, r.report.candidates[0]?.changes?.acceptedAt, r.report.candidates[0]?.changes?.retriangulation]);
+    for (const k of ks) {
+      const replay = reduceMesh({ ...input, stopAfterAccepted: k });
+      const cut = reduceMesh({ ...input, budget: { maxCandidates: acc[k - 1].step } });
+      if (pick(replay) !== pick(cut)) probes.push(`replay ${k} is not the budget cut at ${acc[k - 1].step}`);
+      if (JSON.stringify(replay.report.candidates[0]?.changes?.acceptedAt) !== JSON.stringify(acc.slice(0, k))) probes.push(`replay ${k}'s acceptedAt is not the run's first ${k}`);
+      if (replay.report.termination?.reason !== 'replayed-to-accepted-step') probes.push(`replay ${k} ended ${replay.report.termination?.reason}`);
+    }
+    const planted = ks.length === 0 ? null : vxRun({ ...input, stopAfterAccepted: ks[ks.length - 1] }, null, 'stop-one-early');
+    const lastCut = ks.length === 0 ? null : reduceMesh({ ...input, budget: { maxCandidates: acc[ks[ks.length - 1] - 1].step } });
+    if (planted !== null && lastCut !== null && pick(planted) === pick(lastCut)) probes.push('the plant (the replay stopped one step early) wrote the budget cut\'s bytes');
+    const held = probes.length === 0;
+    say(
+      'MQ139_A_REPLAY_UNDER_EVERY_OPT_IN_IS_THE_RUN_S_PREFIX_BYTE_FOR_BYTE_ACROSS_A_VETO',
+      held,
+      probeDetail(held, probes, `boundary runs 4, deformation-load, the post-pass, the amplitude and maxResidual 0.1 on the ramp (the post-pass ${whole.report.candidates[0]?.changes?.retriangulation?.taken ? 'taken' : 'refused by the residual'}): ${acc.length} accepted operation(s), first veto at attempt ${vetoStep}; replays at ${ks.join(', ')} equal to the budget cuts at ${ks.map((k) => acc[k - 1].step).join(', ')} — mesh, acceptedAt and the post-pass — and the one-step-early plant caught`),
+      'issue #1295 work 3: refused residual candidates consume attempts and acceptedAt records accepted operations only, so a replay with the same opt-ins reproduces the same prefix',
+    );
+  });
+
+  mcGuard('MQ140', () => {
+    const probes: string[] = [];
+    // Without the field: no key, no row, one text — with and without the other opt-ins. `null` and a bound declared
+    // absent take every step the call without the field takes; only the echo, the result's row and the summary move.
+    const sets: Array<[string, Partial<MeshReductionInput>]> = [['plain', {}], ['runs, load and the post-pass', { boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' }]];
+    const lines: string[] = [];
+    for (const [label, over] of sets) {
+      const off = reduceMesh(mvReduceInput(mvSrc, over));
+      const offText = writeMeshQualityReport(off.report);
+      if (writeMeshQualityReport(reduceMesh(mvReduceInput(mvSrc, over)).report) !== offText) probes.push(`${label}: two calls without the field wrote other bytes`);
+      if (/"skinning"|MQ_SKINNING_RESIDUAL/.test(offText)) probes.push(`${label}: a call without the field writes a skinning key or row`);
+      const strip = (r: ReturnType<typeof reduceMesh>): string => {
+        const doc = JSON.parse(writeMeshQualityReport(r.report));
+        delete doc.effective.targets.skinning;
+        for (const c of doc.candidates) {
+          if (c.geometry === null) continue;
+          c.geometry.rows = c.geometry.rows.filter((x: MeasureRow) => x.code !== 'MQ_SKINNING_RESIDUAL');
+          delete c.geometry.summary;
+        }
+        return JSON.stringify([doc, r.mesh]);
+      };
+      const nul = reduceMesh(mvReduceInput(mvSrc, { ...over, targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [], skinning: null } }));
+      const absent = reduceMesh(vxInput(mvSrc, null, over));
+      if (strip(nul) !== strip(off)) probes.push(`${label}: null moved a byte beyond the echo, the row and the summary`);
+      if (strip(absent) !== strip(off)) probes.push(`${label}: maxResidual null moved a byte beyond the echo, the row and the summary`);
+      const nulDoc = JSON.parse(writeMeshQualityReport(nul.report));
+      if (nulDoc.effective.targets.skinning !== null || vxRow(nul)?.state !== 'not-measurable') probes.push(`${label}: null echoes ${JSON.stringify(nulDoc.effective.targets.skinning)}, row ${skSaid(vxRow(nul))}`);
+      if (vxRow(absent)?.state !== 'undeclared') probes.push(`${label}: maxResidual null reads ${skSaid(vxRow(absent))}; required undeclared`);
+      const echoed = vxRun(mvReduceInput(mvSrc, over), { plant: 'echo-when-unset' });
+      if (writeMeshQualityReport(echoed.report) === offText) probes.push(`${label}: the plant (the echo written when unset) wrote the bytes of the call without the field`);
+      lines.push(`${label}: ${offText.length} bytes twice, no key or row; null and maxResidual null equal beyond the echo, the row and the summary (${skSaid(vxRow(nul)).slice(0, 14)}, ${vxRow(absent)?.state} ${vxRow(absent)?.value})`);
+    }
+    const held = probes.length === 0;
+    say(
+      'MQ140_A_REDUCTION_WITHOUT_THE_FIELD_IS_UNCHANGED_AND_NULL_OR_AN_ABSENT_BOUND_TAKES_ITS_EVERY_STEP',
+      held,
+      probeDetail(held, probes, `${lines.join('; ')}; the echo plant caught`),
+      'issue #1295 acceptance 4: calls without targets.skinning keep their bytes — measured out of suite against the release on the recorded inputs (docs/MESH_REDUCTION.md §7) — and this holds the shape that comparison projected',
+    );
+  });
+
+  mcGuard('MQ141', () => {
+    const probes: string[] = [];
+    // The post-pass rechecked on the returned triangulation: with the inverted flip criterion planted (#1283's plant —
+    // flips the residual reads), the pass is refused whole naming the residual; with the recheck planted away as well,
+    // the pass is taken and the result's own row fails — the escape the recheck closes.
+    const input = vxInput(mvSrc, 1, { retriangulate: 'delaunay' });
+    const guarded = vxRun(input, null, 'flips-against-delaunay');
+    const rt = guarded.report.candidates[0]?.changes?.retriangulation;
+    if (rt?.taken !== false || !(rt.refusedBy ?? '').startsWith('MQ_SKINNING_RESIDUAL: ')) probes.push(`the post-pass under the inverted criterion: ${JSON.stringify(rt)}; required refused, naming MQ_SKINNING_RESIDUAL`);
+    if (vxRow(guarded)?.state !== 'pass') probes.push(`the guarded result reads ${skSaid(vxRow(guarded))}`);
+    const escaped = vxRun(input, { plant: 'post-pass-unchecked' }, 'flips-against-delaunay');
+    const ert = escaped.report.candidates[0]?.changes?.retriangulation;
+    if (ert?.taken !== true || vxRow(escaped)?.state !== 'fail') probes.push(`the plant (no recheck): pass ${JSON.stringify(ert?.taken)}, the result ${skSaid(vxRow(escaped))}; required taken and failing — else the recheck is not what holds it`);
+    const plain = reduceMesh(input);
+    const prt = plain.report.candidates[0]?.changes?.retriangulation;
+    if (vxRow(plain)?.state !== 'pass') probes.push(`the real post-pass leaves the result at ${skSaid(vxRow(plain))}`);
+    const held = probes.length === 0;
+    say(
+      'MQ141_THE_POST_PASS_IS_HELD_TO_THE_RESIDUAL_ON_THE_TRIANGULATION_IT_RETURNS_AND_REFUSED_WHOLE_BY_NAME',
+      held,
+      probeDetail(held, probes, `the ramp at maxResidual 1 with the post-pass: real pass ${prt?.taken ? 'taken' : 'refused'} (${prt?.flips} flips, residual ${vxRow(plain)?.value}); under the inverted criterion refused by "${rt?.refusedBy}" (${rt?.flips} flips), result ${vxRow(guarded)?.value}; without the recheck taken, result ${vxRow(escaped)?.value} — over the bound`),
+      'issue #1295 work 4: the post-pass is outside acceptedAt, and that is no reason for it to escape the bound — rechecked on the returned triangulation and refused as a whole',
     );
   });
 
