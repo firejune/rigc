@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.25.0](https://github.com/firejune/rigc/compare/v2.24.1...v2.25.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** acceptedAt is one entry per accepted operation, and reduceMesh takes an opt-in boundaryRuns that replaces a run of hull vertices with one chord as a single step held to every declared row — and a deviation floor that refuses no candidate the rows would accept, measured ([#1279](https://github.com/firejune/rigc/issues/1279)) ([#1281](https://github.com/firejune/rigc/issues/1281)) ([b2503e4](https://github.com/firejune/rigc/commit/b2503e475fd94bcb9d1ee6eee143e13735b542b1))
+
 ## [2.24.1](https://github.com/firejune/rigc/compare/v2.24.0...v2.24.1) (2026-10-09)
 
 
