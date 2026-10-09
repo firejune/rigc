@@ -48110,6 +48110,197 @@ function mvBuild(dir: string, name: string, mesh: SourceMesh): string {
   return modelDocument(built.model, built.skeletonText, built.atlasText);
 }
 
+/*
+ * The #1271 reproducer: a boundary the static reduction keeps beside an
+ * interior it empties. docs/MESH_REDUCTION.md §8 carries the measurements made
+ * on it, and this is the fixture they were made on, at the same scale.
+ *
+ * A superellipse "bean" (exponent 2.5, half-axes 148 × 56 px times AB_SCALE)
+ * whose centre line arches toward its ends, its radius in each direction
+ * perturbed by AB_RIPPLE × (0.6 sin 37θ + 0.4 sin(61θ + 1.3)) — an organic
+ * edge whose amplitude is the order of the tolerance. The boundary is the
+ * tree's own `buildContourMesh` at tolerance 1 and margin 1: the alpha traced
+ * on the pixel-corner lattice, simplified at 1 px, pushed out 1 px — so the
+ * outline is sampled at the same 1 px the reduction then allows it to deviate
+ * by, which is the mechanism §8 measures. The interior is a grid every
+ * AB_SPACING px kept AB_CLEARANCE px clear of the boundary, triangulated with
+ * it by `abDelaunay` (fixture construction only: the tree has no Delaunay and
+ * the reduction never calls one). Three bones a → b → c along the long axis;
+ * `b`'s and `c`'s shares ramp by smoothstep over two bands, rigid outside them.
+ * Two animations, each an isolated ±AB_BEND° bend of one joint over 2 s.
+ *
+ * ⏱ Scale 1.3 is the record's primary, kept rather than shrunk: the control's
+ * printed figures are then §8's figures, and the whole of MQ85–MQ90 measured
+ * about 9–12 s on darwin under load (the bisection's seven replays and
+ * comparisons are most of it). Scale 1 reproduces the boundary half too (§8)
+ * and was measured at about the same cost, so shrinking would buy little.
+ */
+const AB_SCALE = 1.3;
+const AB_RIPPLE = 1.5;
+const AB_W = Math.round(320 * AB_SCALE);
+const AB_H = Math.round(150 * AB_SCALE);
+const AB_SPACING = 18;
+const AB_CLEARANCE = 6;
+const AB_BEND = 5;
+const AB_JOINT_B = r6(120 * AB_SCALE);
+const AB_JOINT_C = r6(210 * AB_SCALE);
+const AB_RAMP_B: [number, number] = [r6(90 * AB_SCALE), r6(150 * AB_SCALE)];
+const AB_RAMP_C: [number, number] = [r6(180 * AB_SCALE), r6(240 * AB_SCALE)];
+
+/** Whether a part-local point lies inside the bean. */
+function abInside(x: number, y: number): boolean {
+  const u = (x - AB_W / 2) / (148 * AB_SCALE);
+  const yc = AB_H / 2 - 10 * AB_SCALE + 12 * AB_SCALE * Math.min(1, u * u);
+  const qx = x - AB_W / 2;
+  const qy = y - yc;
+  const r = Math.hypot(qx, qy);
+  if (r === 0) return true;
+  const c = Math.abs(qx / r);
+  const s = Math.abs(qy / r);
+  const R = ((c / (148 * AB_SCALE)) ** 2.5 + (s / (56 * AB_SCALE)) ** 2.5) ** (-1 / 2.5);
+  const th = Math.atan2(qy, qx);
+  return r <= R + AB_RIPPLE * (0.6 * Math.sin(37 * th) + 0.4 * Math.sin(61 * th + 1.3));
+}
+
+/** The weight field at part-local x: `b` ramps in over AB_RAMP_B, `c` over AB_RAMP_C, by smoothstep; zero shares omitted. */
+function abWeightAt(x: number): Array<{ bone: string; weight: number }> {
+  const step = (v: number, [a, b]: [number, number]): number => {
+    const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const wa = r6(1 - step(x, AB_RAMP_B));
+  const wc = r6(step(x, AB_RAMP_C));
+  const wb = r6(1 - wa - wc);
+  return [
+    { bone: 'a', weight: wa },
+    { bone: 'b', weight: wb },
+    { bone: 'c', weight: wc },
+  ].filter((s) => s.weight > 0);
+}
+
+/** Bowyer–Watson Delaunay over the points, deterministic in input order; index triples. Fixture construction only. */
+function abDelaunay(pts: readonly MqPt[]): number[] {
+  const n = pts.length;
+  const big = 1e5;
+  const all: MqPt[] = [...pts, [-big, -big], [big * 2, -big], [-big, big * 2]];
+  let tris: Array<[number, number, number]> = [[n, n + 1, n + 2]];
+  const circle = (t: [number, number, number]): [number, number, number] => {
+    const [a, b, c] = t.map((i) => all[i]);
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    const ux = ((a[0] ** 2 + a[1] ** 2) * (b[1] - c[1]) + (b[0] ** 2 + b[1] ** 2) * (c[1] - a[1]) + (c[0] ** 2 + c[1] ** 2) * (a[1] - b[1])) / d;
+    const uy = ((a[0] ** 2 + a[1] ** 2) * (c[0] - b[0]) + (b[0] ** 2 + b[1] ** 2) * (a[0] - c[0]) + (c[0] ** 2 + c[1] ** 2) * (b[0] - a[0])) / d;
+    return [ux, uy, (a[0] - ux) ** 2 + (a[1] - uy) ** 2];
+  };
+  for (let i = 0; i < n; i++) {
+    const p = all[i];
+    const bad: Array<[number, number, number]> = [];
+    const keep: Array<[number, number, number]> = [];
+    for (const t of tris) {
+      const [ux, uy, r2] = circle(t);
+      if ((p[0] - ux) ** 2 + (p[1] - uy) ** 2 < r2 * (1 - 1e-12)) bad.push(t);
+      else keep.push(t);
+    }
+    const edges = new Map<string, [number, number]>();
+    for (const t of bad) {
+      for (const [u, v] of [[t[0], t[1]], [t[1], t[2]], [t[2], t[0]]] as Array<[number, number]>) {
+        const k = u < v ? `${u},${v}` : `${v},${u}`;
+        if (edges.has(k)) edges.delete(k);
+        else edges.set(k, [u, v]);
+      }
+    }
+    tris = keep;
+    for (const [u, v] of edges.values()) tris.push([u, v, i]);
+  }
+  const out: number[] = [];
+  for (const t of tris) if (t.every((i) => i < n)) out.push(...t);
+  return out;
+}
+
+/**
+ * A mesh over `boundary` (walk order, first) and `interior`: Delaunay, triangles
+ * kept by centroid inside the boundary, each turned counter-clockwise in Spine
+ * world through `cropToSpineY`; its traced outline must be the boundary walk.
+ */
+function abMeshOver(boundary: readonly MqPt[], interior: readonly MqPt[], weigh: (i: number) => Array<{ bone: string; weight: number }>): SourceMesh {
+  const points: MqPt[] = [...boundary, ...interior].map(([x, y]) => [r6(x), r6(y)]);
+  const raw = abDelaunay(points);
+  const triangles: number[] = [];
+  for (let t = 0; t < raw.length; t += 3) {
+    const [a, b, c] = [points[raw[t]], points[raw[t + 1]], points[raw[t + 2]]];
+    if (!inClosedPolygon([(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3], boundary)) continue;
+    const ay = cropToSpineY(a[1], AB_H);
+    const twice = (b[0] - a[0]) * (cropToSpineY(c[1], AB_H) - ay) - (c[0] - a[0]) * (cropToSpineY(b[1], AB_H) - ay);
+    if (twice < 0) triangles.push(raw[t], raw[t + 2], raw[t + 1]);
+    else triangles.push(raw[t], raw[t + 1], raw[t + 2]);
+  }
+  const outline = traceOutline(points.length, triangles);
+  if (outline.hull !== boundary.length || outline.walk.some((v) => v >= boundary.length)) {
+    throw new Error(`abMeshOver: the triangulation's outline holds ${outline.hull} vertices against a boundary of ${boundary.length}`);
+  }
+  return { points, uvs: points.flatMap(([x, y]) => [r6(x / AB_W), r6(y / AB_H)]), triangles, hull: boundary.length, weights: points.map((_, i) => weigh(i)) };
+}
+
+/** The source: boundary by `buildContourMesh` (tolerance 1, margin 1), interior grid with each point's grid column and row. */
+function abSource(mask: AlphaMask): { mesh: SourceMesh; boundary: MqPt[]; interior: MqPt[]; cell: Array<[number, number]> } {
+  const contour = buildContourMesh({ mask, threshold: 1, tolerance: 1, margin: 1, maxVertices: 4000 });
+  const boundary = contour.points.map(([x, y]) => [x, y] as MqPt);
+  const toBoundary = (p: MqPt): number => {
+    let d = Infinity;
+    for (let i = 0; i < boundary.length; i++) {
+      const [a, b] = [boundary[i], boundary[(i + 1) % boundary.length]];
+      const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+      const l2 = dx * dx + dy * dy;
+      const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+      d = Math.min(d, Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
+    }
+    return d;
+  };
+  const interior: MqPt[] = [];
+  const cell: Array<[number, number]> = [];
+  for (let y = AB_SPACING / 2, row = 0; y < AB_H; y += AB_SPACING, row++) {
+    for (let x = AB_SPACING / 2 + 1, col = 0; x < AB_W; x += AB_SPACING, col++) {
+      if (inClosedPolygon([x, y], boundary) && toBoundary([x, y]) >= AB_CLEARANCE) {
+        interior.push([x, y]);
+        cell.push([col, row]);
+      }
+    }
+  }
+  const points = [...boundary, ...interior];
+  return { mesh: abMeshOver(boundary, interior, (i) => abWeightAt(points[i][0])), boundary, interior, cell };
+}
+
+/** Compile the three-bone rig around one mesh with the tree's own compiler; the model document. */
+function abBuild(dir: string, name: string, mesh: SourceMesh): string {
+  const at = join(dir, name);
+  mkdirSync(at, { recursive: true });
+  const boneX: Record<string, number> = { a: 0, b: AB_JOINT_B, c: AB_JOINT_C };
+  const weights = mesh.points.map(([x, y], v) => (mesh.weights ?? [])[v].map((bnd) => ({ bone: bnd.bone, x: r6(x - boneX[bnd.bone]), y: r6(AB_H / 2 - y), weight: bnd.weight })));
+  const bend = (bone: string): Record<string, unknown> => ({
+    duration: 2,
+    tracks: [{ bone, property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 0.5, v: [AB_BEND] }, { t: 1.5, v: [-AB_BEND] }, { t: 2, v: [0] }] }],
+  });
+  writeFileSync(
+    join(at, 'rig.json'),
+    JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'bean',
+      images: '../plates',
+      skeleton: { x: 0, y: 0, width: 600, height: 300 },
+      bones: [
+        { name: 'root' },
+        { name: 'a', parent: 'root', x: 50, y: 100 },
+        { name: 'b', parent: 'a', x: AB_JOINT_B, y: 0 },
+        { name: 'c', parent: 'b', x: AB_JOINT_C - AB_JOINT_B, y: 0 },
+      ],
+      slots: [{ name: 'bean', bone: 'a', attachment: 'bean' }],
+      skins: { default: { bean: { bean: { type: 'mesh', image: 'bean.png', uvs: mesh.uvs, triangles: mesh.triangles, weights } } } },
+    }),
+  );
+  writeFileSync(join(at, 'motion.json'), JSON.stringify({ spec: 'rigc-motion/1', archetype: 'bean', cut: 'bean', easings: {}, animations: { bend_b: bend('b'), bend_c: bend('c') } }));
+  const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
+  return modelDocument(built.model, built.skeletonText, built.atlasText);
+}
+
 function runMeshCompareSuite(): number {
   console.log('\n── mesh compare: the motion section of mesh-quality-report/1 — compareMeshesInMotion through the core poser (issue #1230) ──');
   let bad = 0;
@@ -49035,6 +49226,211 @@ function runMeshCompareSuite(): number {
       probeDetail(held, probes, lines.join('; ')),
       'issue #1266 asks the fixture to show rigid motion, an unachievable constraint, no reduction and budget exhaustion as distinct outcomes; the measurement says "unachievable" is a property of a search, so the control holds that apart from the mesh',
     );
+  });
+
+  // --- MQ85–MQ90 (#1271): a traced boundary the reduction keeps beside an interior it empties ---------------------
+  // The fixture is `abSource` / `abBuild` above; docs/MESH_REDUCTION.md §8 carries what was measured on it. One fact
+  // per code, every one read off runs made here: the strict reduction (MQ85–MQ87), the replay parts runs — a bisection
+  // over `stopAfterAccepted` choosing on the `grid` frames, `irr` held out (MQ88) — a hand-built mesh over the same
+  // boundary with fewer vertices than that replay (MQ89), and the deviation bound moved off the source's own sampling
+  // tolerance (MQ90). Each predicate is also read on a run or a plant that must make it fire, named in its line: the
+  // strict run's own counts against MQ90's, the art row that stops a run with the deviation bound out of reach, the
+  // step after the bisection's, the source as a mesh with "fewer" vertices, a hull vertex pushed past the bound.
+  mcGuard('MQ85 / MQ90', () => {
+    const abPlates = join(dir, 'plates');
+    const abMask = mqMask(abPlates, 'bean', AB_W, AB_H, (x, y) => (abInside(x + 0.5, y + 0.5) ? 1 : 0));
+    const abFrame = mqFrame(AB_W, AB_H);
+    const ab = abSource(abMask);
+    const abAttachment = { skin: null, slot: 'bean', attachment: 'bean' };
+    const abArt = { mask: abMask, threshold: 1, frame: abFrame };
+    const abInput = (over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({ ...mvReduceInput(ab.mesh, over), attachment: abAttachment, art: abArt, boneOrder: ['root', 'a', 'b', 'c'] });
+    const abMeasure = (id: string, mesh: SourceMesh): MeshQualityReport =>
+      measureMeshQuality({
+        id,
+        attachment: abAttachment,
+        art: abArt,
+        source: mesh,
+        targets: { artFit: mvStrict, maxBoundaryDeviation: 1, regions: [] },
+        referenceHull: ab.boundary,
+        minArtSamples: 1,
+        regionArtSamples: [],
+        protect: null,
+        influences: { maxInfluences: 4, minWeight: 0 },
+        boneOrder: ['root', 'a', 'b', 'c'],
+        preset: null,
+      });
+    const reference = abBuild(dir, 'ab-source', ab.mesh);
+    const abCompare = (candidates: Array<{ id: string; model: string }>, selection: string[]): MeshQualityReport =>
+      compareMeshesInMotion({
+        reference: { id: 'source', model: reference },
+        candidates,
+        attachments: [{ attachment: abAttachment, art: abArt, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+        referenceArtFit: mvStrict,
+        candidateArtFit: mvStrict,
+        schedule: { frames: ['setup', { animation: 'bend_b', fps: 12 }, { animation: 'bend_c', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection },
+        bounds: { maxLocalDeformation: 1 },
+        motionRequired: true,
+        perFrame: false,
+      });
+    const row = (report: MeshQualityReport, code: string): MeasureRow | undefined => report.candidates[0]?.motion?.rows.find((r) => r.code === code && r.object.region === null);
+    /** Source boundary / interior vertices a reduction removed, by its own indexMap. */
+    const removed = (mesh: ReturnType<typeof reduceMesh>['mesh']): { boundary: number; interior: number } => ({
+      boundary: mesh === null ? -1 : mesh.indexMap.slice(0, ab.mesh.hull).filter((to) => to === null).length,
+      interior: mesh === null ? -1 : mesh.indexMap.slice(ab.mesh.hull).filter((to) => to === null).length,
+    });
+    const counts = (m: SourceMesh | null): string => (m === null ? 'no mesh' : `${m.hull}/${m.points.length - m.hull} (${m.points.length})`);
+    const sourceHull = ab.mesh.hull;
+    const sourceInterior = ab.mesh.points.length - ab.mesh.hull;
+    // The boundary half's claim: every interior vertex gone, at most a tenth of the boundary.
+    const keepsTheBoundary = (r: { boundary: number; interior: number }): boolean => r.interior === sourceInterior && r.boundary >= 0 && r.boundary * 10 <= sourceHull;
+    const stopsOnDeviation = (t: ReturnType<typeof reduceMesh>['report']['termination']): boolean => t?.reason === 'no-further-valid-reduction' && t.blockingConstraint.startsWith('MQ_BOUNDARY_DEVIATION:');
+
+    // The strict run, the policy of §8: coverage 1, overshoot <= 3, undercut 0, boundary deviation <= 1, influences {4, 0}.
+    const strict = reduceMesh(abInput());
+    const strictRemoved = removed(strict.mesh);
+    const strictTerm = strict.report.termination;
+    const steps = strict.report.candidates[0].changes?.acceptedAt.length ?? 0;
+    // The deviation bound at twice the source's tolerance, and out of reach (the frame's width) — every art bound kept.
+    const loose = reduceMesh(abInput({ targets: { artFit: mvStrict, maxBoundaryDeviation: 2, regions: [] } }));
+    const looseRemoved = removed(loose.mesh);
+    const free = reduceMesh(abInput({ targets: { artFit: mvStrict, maxBoundaryDeviation: AB_W, regions: [] } }));
+    const freeTerm = free.report.termination;
+
+    {
+      const probes: string[] = [];
+      if (!keepsTheBoundary(strictRemoved)) probes.push(`the strict reduction removed ${strictRemoved.boundary} of ${sourceHull} boundary and ${strictRemoved.interior} of ${sourceInterior} interior vertices; required every interior vertex and at most a tenth of the boundary`);
+      if (keepsTheBoundary(looseRemoved)) probes.push(`the plant — deviation bound 2 — removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices and still reads as keeping the boundary, so the predicate cannot fire`);
+      const held = probes.length === 0;
+      say(
+        'MQ85_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_REMOVES_EVERY_INTERIOR_VERTEX_AND_AT_MOST_A_TENTH_OF_THE_BOUNDARY',
+        held,
+        probeDetail(held, probes, `source ${counts(ab.mesh)} (boundary by buildContourMesh at tolerance 1, margin 1); strict: ${counts(strict.mesh)}, removed ${strictRemoved.boundary} boundary / ${strictRemoved.interior} interior; the plant (deviation bound 2) removed ${looseRemoved.boundary} boundary, which the same predicate refuses`),
+        'issue #1271: the consumer saw a dense boundary kept beside an emptied interior; this is the public fixture where the static reduction does exactly that',
+      );
+    }
+    {
+      const probes: string[] = [];
+      if (!stopsOnDeviation(strictTerm)) probes.push(`the strict reduction ended ${JSON.stringify(strictTerm)}; required no-further-valid-reduction naming MQ_BOUNDARY_DEVIATION`);
+      if (stopsOnDeviation(freeTerm)) probes.push(`the plant — deviation bound ${AB_W}, out of reach — still stops on ${JSON.stringify(freeTerm)}, so the predicate cannot fire`);
+      const held = probes.length === 0;
+      say(
+        'MQ86_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_STOPS_ON_MQ_BOUNDARY_DEVIATION',
+        held,
+        probeDetail(held, probes, `strict: ${strictTerm !== null && 'blockingConstraint' in strictTerm ? strictTerm.blockingConstraint : JSON.stringify(strictTerm)}; with the deviation bound at ${AB_W} the run keeps ${counts(free.mesh)} and stops on ${freeTerm !== null && 'blockingConstraint' in freeTerm ? freeTerm.blockingConstraint : JSON.stringify(freeTerm)}`),
+        'issue #1271 asks what prevents boundary removal; on a traced outline simplified at 1 px the 1 px deviation bound, measured against that same outline, is the row that stops the run',
+      );
+    }
+
+    // The strict result in motion, every frame held out; its walk also yields the grid frame ids the bisection chooses on.
+    const strictReport = strict.mesh === null ? null : abCompare([{ id: 'strict', model: abBuild(dir, 'ab-strict', strict.mesh) }], []);
+    const strictLocal = strictReport === null ? undefined : row(strictReport, 'MQ_LOCAL_DEFORMATION');
+    const strictInversion = strictReport === null ? undefined : row(strictReport, 'MQ_INVERSION');
+    const motionFails = (r: MeshQualityReport | null): boolean => r !== null && r.candidates[0].geometry?.verdict === 'pass' && !r.candidates[0].accepted && row(r, 'MQ_LOCAL_DEFORMATION')?.state === 'fail';
+    {
+      const probes: string[] = [];
+      if (strict.mesh === null || !strict.report.candidates[0].accepted) probes.push(`the strict reduction: mesh ${strict.mesh === null ? 'none' : 'returned'}, accepted ${strict.report.candidates[0].accepted}; required every static bound held`);
+      if (!motionFails(strictReport)) probes.push(`the strict result in motion: setup ${strictReport?.candidates[0].geometry?.verdict}, ${mvSaid(strictLocal)}, accepted ${strictReport?.candidates[0].accepted}; required the setup fit passing and MQ_LOCAL_DEFORMATION failing`);
+      const held = probes.length === 0;
+      say(
+        'MQ87_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_HOLDS_EVERY_STATIC_BOUND_AND_FAILS_MOTION',
+        held,
+        probeDetail(held, probes, `strict ${counts(strict.mesh)}: static accepted; motion ${mvSaid(strictLocal)}, MQ_INVERSION ${strictInversion?.value} — refused; ${AB_BEND}° bend of each of two joints, 12 fps grid + irr, bound 1, every frame held out (MQ88 and MQ89 read the passing side of the same predicate)`),
+        'issue #1271 keeps the final motion comparison as the acceptance: the fixture is only a reproducer if its fully reduced mesh is refused there',
+      );
+    }
+
+    // parts's replay: bisection over the accepted steps, lo = 0 (the source) and hi = the full run, choosing on grid frames.
+    const grid = (strictReport?.candidates[0].motion?.schedule.walked ?? []).filter((f) => f.phase === 'grid').map((f) => f.id);
+    type AbReduced = ReturnType<typeof reduceMesh>['mesh'];
+    const tried = new Map<number, { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean }>();
+    const selectionPasses = (r: MeshQualityReport): boolean => {
+      const local = row(r, 'MQ_LOCAL_DEFORMATION')?.motion?.byRole.selection ?? null;
+      const inversion = row(r, 'MQ_INVERSION')?.motion?.byRole.selection ?? null;
+      return r.candidates[0].geometry?.verdict === 'pass' && local !== null && local.state === 'pass' && (inversion === null || inversion.value === 0);
+    };
+    let lo = 0;
+    let hi = steps;
+    while (grid.length > 0 && hi - lo > 1) {
+      const mid = Math.floor((lo + hi) / 2);
+      const replay = reduceMesh(abInput({ stopAfterAccepted: mid }));
+      const report = replay.mesh === null ? null : abCompare([{ id: `k${mid}`, model: abBuild(dir, `ab-k${mid}`, replay.mesh) }], grid);
+      const pass = report !== null && selectionPasses(report);
+      tried.set(mid, { mesh: replay.mesh, report, pass });
+      if (pass) lo = mid;
+      else hi = mid;
+    }
+    const chosen = tried.get(lo);
+    const next: { mesh: AbReduced; report: MeshQualityReport | null; pass: boolean } | undefined = hi === steps ? { mesh: strict.mesh, report: null, pass: false } : tried.get(hi);
+    const chosenLocal = chosen?.report ? row(chosen.report, 'MQ_LOCAL_DEFORMATION') : undefined;
+    const nextLocal = next?.report ? row(next.report, 'MQ_LOCAL_DEFORMATION') : strictLocal;
+    {
+      const probes: string[] = [];
+      if (grid.length === 0) probes.push('the strict comparison walked no grid frame, so there is nothing to choose on');
+      if (chosen === undefined || chosen.report === null || lo === 0) probes.push(`the bisection chose step ${lo} of ${steps}; required a reduced step whose replay was compared`);
+      else {
+        const heldOut = chosenLocal?.motion?.byRole.heldOut ?? null;
+        if (!chosen.pass || !chosen.report.candidates[0].accepted || heldOut === null || heldOut.state !== 'pass' || chosen.report.candidates[0].motion?.schedule.heldOutClaim !== true) {
+          probes.push(`step ${lo}: selection ${chosen.pass ? 'pass' : 'fail'}, held out ${JSON.stringify(heldOut)}, accepted ${chosen.report.candidates[0].accepted}, heldOutClaim ${chosen.report.candidates[0].motion?.schedule.heldOutClaim}; required a pass on grid, on the held-out irr frames and over all`);
+        }
+      }
+      if (next === undefined || next.pass) probes.push(`the step after the chosen one (${hi}) ${next === undefined ? 'was never compared' : 'passes'}; required it to fail, or the bisection did not find an edge`);
+      const held = probes.length === 0;
+      say(
+        'MQ88_A_REPLAY_BISECTED_ON_GRID_FRAMES_PASSES_ON_ITS_HELD_OUT_IRR_FRAMES_AND_THE_NEXT_STEP_FAILS',
+        held,
+        probeDetail(held, probes, `${tried.size} replays over ${steps} accepted steps chose ${lo}: ${counts(chosen?.mesh ?? null)}, removed ${removed(chosen?.mesh ?? null).boundary} boundary; grid ${chosenLocal?.motion?.byRole.selection?.value}, held-out irr ${chosenLocal?.motion?.byRole.heldOut?.value}; step ${hi}: ${nextLocal?.motion?.byRole.selection?.value ?? nextLocal?.value} — fails`),
+        'issue #1271 starts from the replay parts runs after #1266: it recovers a motion-valid mesh, and that mesh still carries the strict run\'s boundary beside a partly emptied interior',
+      );
+    }
+
+    // A hand-built control over the SAME boundary: the source's own outline and every other grid column and row, Delaunay.
+    const even = ab.interior.map((_, k) => k).filter((k) => ab.cell[k][0] % 2 === 0 && ab.cell[k][1] % 2 === 0);
+    const weighOf = (keep: number[]) => (i: number): Array<{ bone: string; weight: number }> => ab.mesh.weights![i < sourceHull ? i : sourceHull + keep[i - sourceHull]];
+    const control = abMeshOver(ab.boundary, even.map((k) => ab.interior[k]), weighOf(even));
+    const controlStatic = abMeasure('even', control);
+    const controlMotion = abCompare([{ id: 'even', model: abBuild(dir, 'ab-even', control) }], []);
+    const controlLocal = row(controlMotion, 'MQ_LOCAL_DEFORMATION');
+    const replayVertices = chosen?.mesh?.points.length ?? 0;
+    const fewer = (m: SourceMesh): boolean => replayVertices > 0 && m.points.length < replayVertices;
+    // Plant 1: the control with its interior restored — the source — is not fewer. Plant 2: the hull vertex furthest
+    // along x pushed out by the bound plus one pixel fails the deviation row, by name.
+    let far = 0;
+    for (let i = 1; i < sourceHull; i++) if (ab.boundary[i][0] > ab.boundary[far][0]) far = i;
+    const push = 1 + 1;
+    const pushedPoints = control.points.map(([x, y], i): MqPt => (i === far ? [r6(x + push), y] : [x, y]));
+    const pushed: SourceMesh = { ...control, points: pushedPoints, uvs: pushedPoints.flatMap(([x, y]) => [r6(x / AB_W), r6(y / AB_H)]) };
+    const pushedRows = abMeasure('pushed', pushed).candidates[0].geometry?.rows ?? [];
+    const pushedDeviation = pushedRows.find((r) => r.code === 'MQ_BOUNDARY_DEVIATION');
+    {
+      const probes: string[] = [];
+      if (!fewer(control)) probes.push(`the control keeps ${control.points.length} vertices against the replay's ${replayVertices}; required fewer`);
+      if (fewer(ab.mesh)) probes.push(`the plant — the control with its interior restored, ${ab.mesh.points.length} vertices — reads as fewer than the replay's ${replayVertices}`);
+      if (controlStatic.candidates[0].geometry?.verdict !== 'pass' || !controlStatic.candidates[0].accepted) probes.push(`the control's static rows: ${controlStatic.candidates[0].geometry?.verdict}, failing ${(controlStatic.candidates[0].geometry?.rows ?? []).filter((r) => r.state === 'fail').map((r) => `${r.code} ${r.value}`).join(', ')}; required every row passing`);
+      if (pushedDeviation?.state !== 'fail') probes.push(`the plant — hull vertex ${far} pushed ${push} px out — reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} ${pushedDeviation?.state}; required a fail`);
+      if (controlLocal?.state !== 'pass' || !controlMotion.candidates[0].accepted || (row(controlMotion, 'MQ_INVERSION')?.value ?? 1) !== 0) probes.push(`the control in motion: ${mvSaid(controlLocal)}, MQ_INVERSION ${row(controlMotion, 'MQ_INVERSION')?.value}, accepted ${controlMotion.candidates[0].accepted}; required within 1 with no inversion`);
+      if (!motionFails(strictReport)) probes.push('the same motion predicate does not refuse the strict result (MQ87), so a pass here proves nothing');
+      const held = probes.length === 0;
+      say(
+        'MQ89_A_HAND_BUILT_MESH_OVER_THE_SAME_BOUNDARY_WITH_FEWER_VERTICES_THAN_THE_REPLAY_PASSES_EVERY_STATIC_ROW_AND_MOTION',
+        held,
+        probeDetail(held, probes, `the source's outline + every other grid column and row: ${counts(control)} against the replay's ${replayVertices}, static ${controlStatic.candidates[0].geometry?.verdict}, motion ${mvSaid(controlLocal)}, every frame held out; plants: the source (${ab.mesh.points.length}) is not fewer, hull vertex ${far} pushed ${push} px reads MQ_BOUNDARY_DEVIATION ${pushedDeviation?.value} — fail`),
+        'issue #1271 asks for a feasible better control under the SAME silhouette and motion limits; this one keeps the source\'s boundary untouched, so what it saves over the replay is interior allocation alone',
+      );
+    }
+    {
+      const probes: string[] = [];
+      const artRows = (loose.report.candidates[0].geometry?.rows ?? []).filter((r) => ['MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT'].includes(r.code) && r.object.region === null);
+      if (loose.mesh === null || !loose.report.candidates[0].accepted || artRows.length === 0 || artRows.some((r) => r.state !== 'pass')) probes.push(`deviation bound 2: mesh ${loose.mesh === null ? 'none' : 'returned'}, accepted ${loose.report.candidates[0].accepted}, art rows ${artRows.map((r) => `${r.code} ${r.value} ${r.state}`).join(', ') || 'none'}; required accepted with every art row passing`);
+      if (!(looseRemoved.boundary * 10 > sourceHull)) probes.push(`deviation bound 2 removed ${looseRemoved.boundary} of ${sourceHull} boundary vertices; required more than a tenth`);
+      if (strictRemoved.boundary * 10 > sourceHull) probes.push(`the plant — the strict run, bound 1 — removed ${strictRemoved.boundary} of ${sourceHull}, which the same predicate reads as reducing the boundary`);
+      const held = probes.length === 0;
+      say(
+        'MQ90_WITH_THE_DEVIATION_BOUND_AT_TWICE_THE_SOURCE_TOLERANCE_THE_BOUNDARY_REDUCES_AND_EVERY_ART_ROW_STILL_PASSES',
+        held,
+        probeDetail(held, probes, `deviation bound 2, coverage 1, overshoot <= 3, undercut 0 unchanged: ${counts(loose.mesh)}, removed ${looseRemoved.boundary} of ${sourceHull} boundary, ${artRows.map((r) => `${r.code} ${r.value}`).join(', ')}; at bound 1 (the plant): removed ${strictRemoved.boundary}`),
+        'issue #1271 asks what actually prevents boundary removal: holding every art bound and moving only the deviation bound off the tolerance the outline was simplified at releases the boundary, so the two equal tolerances are the mechanism, not the art',
+      );
+    }
   });
 
   rmSync(dir, { recursive: true, force: true });

@@ -2187,6 +2187,16 @@ motion by keeping every vertex. Ownership stays as the head of this page puts
 it — rigc owns geometry and measurement, parts owns policy and candidate
 selection, the consumer declares the motion and the bounds.
 
+⚠️ **Correction [measured, #1271].** The first clause holds as an observation
+and misleads as a cause. The strict result's 28 vertices, triangulated
+otherwise and with no vertex added, moved or removed, pass the same motion row:
+0.244563 px when the same reduction runs interior-first and ends on the same
+vertex set, 0.245 px for a left-to-right zipper over the strict result's own
+28 (§8, *Triangulation decides motion*). So the reproducer's refusal comes from
+the long edges the ear-clipping sequence left across `b`'s ramp (longest
+118.8 px), not from the absence of interior vertices — and a 28-vertex mesh
+passes where this section's best measured candidates kept 30–53.
+
 ### Existing
 
 - **`protect.weightJump`** (`ProtectedFeatures`, `src/meshquality.ts`) is an
@@ -2737,6 +2747,438 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 - **Q10.** `targets.skinning` with a `vertices` deform key on the attachment:
   refuse by name, as P18's first path has no such keys anyway?
 
+## 8. Vertex allocation under contour and motion bounds (#1271)
+
+> **Nothing in this section is implemented.** It is Stage A of
+> [#1271](https://github.com/firejune/rigc/issues/1271): a public reproducer
+> (`MQ85`–`MQ90`, `mesh-compare`), the measurements made on it and on the
+> inputs recorded for stage D1, and the questions for parts at the end. The
+> reproducer holds today's behaviour; no row, bound, order, termination or
+> emitted byte changes. Marks as in §7: **Existing** cites the tree by path and
+> symbol; **[measured, #1271]** is a figure taken for this section — from the
+> stage-A record for #1271 (scratch scripts that import the tree at `5614f63`,
+> v2.24.0, and write nothing into it) or printed by the controls — with the
+> machine beside it; **[proposal]** is unsettled until parts answers by number.
+
+The consumer's problem, in its own aggregate figures: after #1266's replay
+(parts PR #141), two attachments reduce to motion-valid meshes — A from 109/145
+boundary/interior to 108/71 (step 75 of 146), B from 104/152 to 102/106 (step 48
+of 155), each in 7 replays — while removing only 1 and 2 boundary vertices; the
+triangle-area P90 of A's replay is 513 px² against the source's 162. Its
+policy is the one §7 used: coverage 1, overshoot ≤ 3, undercut 0, boundary
+deviation ≤ 1, influences `{ 4, 0 }`, budget 5000, an isolated ±5° bend at
+12 fps, selection on `grid` and `irr` held out, local deformation ≤ 1 with no
+inversion. The card is explicit that density is not a defect in itself — a
+curved contour and a bend legitimately need samples — and asks which of four
+things keeps the boundary dense beside a thinned interior: the boundary
+constraints, the initial sampling, the removal order and replay cut, or the
+triangulation. The ownership line is §7's: geometry in `rig-c/mesh`, the
+motion selection loop in parts.
+
+### Existing
+
+- **The deviation reference is the source's own hull.** `reduceValidated`
+  (`src/meshreduce.ts`) takes `sourceHull` as the first `source.hull` points of
+  the input and measures every step's `MQ_BOUNDARY_DEVIATION` against it —
+  [agreed, P13]: the traced outline is the diagnostic `MQ_TRACE_DEVIATION`,
+  never required (*Stage B scope*).
+- **The order is already boundary-first.** Hull vertices are source indices
+  `0 … hull − 1` and `removeVertices` sweeps surviving vertices in ascending
+  source index, so every pass offers the boundary first.
+- **A removal's hole is ear-clipped.** `removalOf` (`src/meshreduce.ts`)
+  re-triangulates the ring a removed vertex leaves with `earClip`
+  (`src/mesh.ts`): the triangulation is a function of the removal sequence, and
+  no step changes an edge outside that ring.
+- **`buildContourMesh`** (`src/mesh.ts`) traces the alpha on the pixel-corner
+  lattice, simplifies it by Douglas–Peucker at `tolerance` and offsets it by
+  `margin` — the outline a consumer typically hands `reduceMesh` as its hull.
+
+### The fixture
+
+`abSource` and `abBuild` in `selftest.ts` (beside the `mesh-compare` suite): a
+superellipse "bean" (exponent 2.5, half-axes 148 × 56 px, times 1.3) in a
+416 × 195 window, its centre line arched toward the ends, its radius perturbed
+by 1.5 × (0.6 sin 37θ + 0.4 sin(61θ + 1.3)) px — an organic edge whose
+amplitude is the tolerance's order (47,364 art pixels). The boundary is
+`buildContourMesh` at **tolerance 1, margin 1** (107 vertices); the interior a
+grid every 18 px kept 6 px clear of it (129 vertices), Delaunay-triangulated
+with it (363 triangles). Bones `a → b → c` along the long axis, `b`'s share
+ramping in by smoothstep over x 117–195 and `c`'s over 234–312, rigid outside;
+two animations, each an isolated ±5° bend of one joint over 2 s. The policy and
+the comparison are the card's (above), physics `none`. The interior placement
+is the fixture's, not parts's (parts's is not public); the boundary half of the
+symptom does not depend on it (below).
+
+### Measured — the reproducer [measured, #1271]
+
+Printed by `MQ85`–`MQ89` on every run, and equal to the record's figures;
+darwin, Apple M4 (10 cores), Bun 1.4.2, 1-minute load 4–10 with other sessions
+running. Motion in px, worst frame.
+
+| mesh | step | boundary / interior (total) | removed boundary / interior | triangles | selection (`grid`) | held out (`irr`) | inversions | accepted |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| source | 0 | 107 / 129 (236) | — | 363 | — | — | — | — |
+| strict, fully reduced | 134 of 134 | 102 / 0 (102) | 5 / 129 | 100 | 4.248476 | 3.978170 | 1 | no |
+| replay, bisected | 45 of 134 | 102 / 89 (191) | 5 / 40 | 278 | 0.972042 | 0.910200 | 0 | yes |
+
+The strict run ends `no-further-valid-reduction` after 338 candidates naming
+`MQ_BOUNDARY_DEVIATION: 2.034193 against <= 1, removing source vertex 106`. The
+bisection — lo 0, hi 134, choosing on `grid` — tries 67 (fail 1.933933), 33
+(pass), 50 (fail), 41 (pass), 45 (pass 0.972042), 47 (fail), 46 (fail 1.220845)
+and takes **45 in 7 replays**, the card's count. A walk of all 134 steps in one
+comparison agrees: last pass 45, first fail 46, nothing passing after it, so
+validity is monotone along the order here at bound 1. All five boundary
+removals fall inside the first 45 steps. Boundary reduction 5 of 107, total
+236 → 191 (−19.1 %), against the card's 1–2 and −29.5 % / −18.8 %.
+
+**Controls under the same bounds** (every static row of `measureMeshQuality`
+against the source hull, and the comparison above):
+
+| control | boundary / interior (total) | selection / held out | min angle, min / P10 | how |
+| --- | --- | --- | --- | --- |
+| C0 | 107 / 3 (110) | 0.875000 / 0.819337 | 1.19° / 4.15° | the source's boundary, interior thinned greedily with motion in the loop (selection frames only) |
+| C1 | 100 / 3 (103) | 0.867748 / 0.812549 | 1.49° / 4.69° | the fewest-vertex *subset* of the source hull holding every static row, same thinning |
+| C2 | **74 / 3 (77)** | 0.875202 / 0.819531 | 3.55° / 5.28° | each hull vertex allowed 0, 0.5 or 0.9 px outward, fewest-vertex outline, same thinning |
+| C3 | 74 / 28 (102) | 0.660991 / 0.618940 | 5.80° / 10.98° | C2's outline and every other grid column and row, no search |
+| `MQ89`'s control | 107 / 28 (135) | 0.660991, every frame held out | — | the source's outline and every other grid column and row, no search |
+
+Against the replay's 191, C2 holds 114 fewer vertices and C3 89 fewer, each
+with a lower motion error, and **C0 keeps the source's boundary untouched and
+drops 81**: on this fixture the interior is the larger part of what the
+reduction leaves on the table. C0–C2 are existence proofs — the thinning poses
+every trial, which `rig-c/mesh` never does (§0) — not proposed mechanisms.
+There is no single winner: C2 is fewest and has the worst triangles (minimum
+angle 3.5°, area P90 1,566 px², fans from three interior points to the rim); C3
+has 25 more vertices and the best shape of any reduced mesh measured, minimum
+angle above the source's own 5.0°. No static row sees the difference, because
+the card declares no `minAngle`. `MQ89` holds the cheapest of these to build
+— no boundary search — and reads the same motion error as C3: the worst frame
+is set by the interior.
+
+**Scale and smoothness.** At scale 1 and ripples 0, 0.8, 1.5 and 2.5 px, and at
+scale 1.3 with ripple 0, the boundary survives every strict run (0–8 of 29–120
+removed), each stop naming `MQ_BOUNDARY_DEVIATION`; the ripple sets *how many*
+boundary vertices there are, not what pins them. The smooth variant at scale
+1.3 is worse: 43 / 129, nothing removed from the boundary, and the bisection
+takes step 2 of 129 (a 1.2 % reduction).
+
+**A negative control.** On the smooth variant, a relocated outline thinned to
+22 vertices passes every static row (deviation 0.990201, overshoot 2.828427)
+and **fails motion at 1.917724 px with every interior vertex kept**: an outline
+thinned to its silhouette minimum can break deformation, and the silhouette
+bounds cannot see it. Which edge carries the error was not localised. The same
+variant's removal-only subset (43 → 33) and 33 / 6 control pass.
+
+### Measured — what holds the boundary [measured, #1271]
+
+The four suspects the card names were separated with an instrumented copy of
+`src/meshreduce.ts` that records, for every attempt, every required row and
+not only the first named — its results byte-identical to `reduceMesh`'s on the
+19 inputs recorded for stage D1 (on Nova) and on `MQ79`'s fixture (darwin).
+Subjects: `MQ79`'s fixture, and demo/bottomwear with the other 8 public
+example inputs of that record; none is private art.
+
+| rank | what binds | `MQ79` (strict) | demo/bottomwear (strict, no region) |
+| --- | --- | --- | --- |
+| 1 | `MQ_BOUNDARY_DEVIATION ≤ 1`, measured against a hull that was itself simplified at 1 px | never alone; fails in 8 of 56 refusals (the corners); bound 2, 4 or ∞ alone: 28 → 28 kept | fails in **847 of 847** boundary refusals, alone in 602; bound 2: 282 → **91** kept; 4 or ∞: **82** |
+| 2 | coverage 1 ⇔ undercut 0, overshoot ≤ 3 | **56 of 56** refusals; coverage 0 + undercut 1: 28 → **8** | beside rank 1 in 245, never alone; bind only once rank 1 is relaxed; relaxed alone: 282 → 282 |
+| 3 | the replay cut | 0 boundary removals cut at the motion-accepted step 94 | at most 1 (the pass-2 removal at step 254) for any step in 10–253 |
+| 4 | removal order | interior-first: the same 28, the same vertex set | interior-first: 282 |
+| 5 | re-triangulation | 0 refusals under the strict policy | 0 refusals |
+
+**The mechanism is two equal tolerances.** For one removal from the source,
+the measured deviation equals the removed vertex's sagitta over its
+neighbours' chord, to six decimals, in 293 of 293 hull vertices of
+demo/bottomwear. That hull is a traced staircase simplified at about the same
+1 px: sagitta P10 1.109, **P50 1.414** (the pixel diagonal), P90 2.157 px;
+only **9 of 293** read ≤ 1, and 9 are what removes alone. Across the 9 example
+inputs `MQ_BOUNDARY_DEVIATION` fails in every boundary refusal, relaxing the art
+bounds alone moves no boundary count, interior-first order moves none, and
+bound 2 removes 21–69 % of the hull with every art bound still holding on the
+result. The synthetic inputs of the same record, whose hulls have sagittas
+≤ 1, reduce their boundaries normally under the same bound. The order costs
+work, not vertices: 847 of demo/bottomwear's 1,101 candidates (77 %) are
+boundary retries that cannot pass, because neither the bound nor the
+reference moves between passes.
+
+On the reproducer, `MQ90` holds the counterfactual: the deviation bound at 2,
+every art bound unchanged, leaves **52 of 107** boundary vertices (55 removed,
+coverage 1, overshoot 3, undercut 0, accepted); `MQ86`'s plant with the bound
+out of reach keeps 36 and stops on `MQ_OVERSHOOT`. A removal-only outline,
+however ordered, can go from 107 only to 100 at bound 1 (C1); it is a
+*joint* choice — on the smooth variant 43 → 33, where every single removal is
+refused, because one chord replaces a run of staircase vertices — and
+`reduceMesh` removes one vertex at a time.
+
+**`MQ79` does not reproduce the boundary half.** It removes 24 of its 52
+boundary vertices (46 %), and what keeps the rest is coverage 1 / undercut 0
+over art that is exactly the hull's pixel centres — 48 of its hull vertices
+have a sagitta ≤ 0.08 px. A public positive control for #1271 needs a traced
+boundary simplified at the deviation bound's own tolerance; that is why §8 has
+its own fixture.
+
+**Triangulation decides motion.** `MQ79`'s strict result and the same
+reduction run interior-first end on **the same 28 vertices** (source indices
+listed in the record) and 26 triangles each, triangulated differently:
+
+| triangulation of the 28 | edges | `MQ_LOCAL_DEFORMATION` (bound 1) |
+| --- | --- | --- |
+| the tree's order (ascending source index) | longest 118.8 px, a 112 px horizontal span across `b`'s pivot; P90 88.0 | **1.807703 — refused** (§7) |
+| the same reduction run interior-first | longest 57.2 px | **0.244563 — accepted**, and every replay step 0–119 passes |
+| a left-to-right zipper over the strict result's 28 (built in scratch) | P90 47.4 px | **0.245 — accepted**, every static row passing |
+
+On this section's fixture the same holds for the replay: its 191 vertices
+Delaunay-triangulated read **0.574257 / 0.537722** against the ear-clipped
+0.972042 / 0.910200, and the fully reduced 102 / 0 drops from 4.248476 (one
+inversion) to 1.647442 (none) — still refused. A walk of every accepted step,
+each Delaunay-triangulated, passes as far as step 101 (102 / 33, 0.912243)
+against 45 ear-clipped — but **is not monotone**: the first failure is step 60
+and 36 steps between 62 and 101 pass after it, so a bisection over it would not
+find 101.
+
+⚠️ **Correction [measured, #1271].** The last clause is wrong: the bisection
+rig-parts runs, read off the same walk, probed 67, 100, 117, 108, 104, 102, 101
+and **found 101** (and 81 on the smooth variant), because its probes fell above
+the non-monotone stretch. What holds is that it is **not guaranteed** to find
+the last pass (*Measured — bounded alternatives*).
+
+### Measured — spatial measurements of allocation [measured, #1271]
+
+Each measured on six synthetic fixtures built to be accepted or flagged (one
+domain, 160 × 52 px, two bones, art the hull's pixel centres, deviation
+bound 1), on `MQ79` at every accepted step, and on the 8 public example inputs
+that reduce. The bars are separations measured on those fixtures — the
+geometric midpoint between the worst must-accept and the best must-flag
+reading — not defaults rigc would set; each is proposed as an `undeclared`
+diagnostic row first.
+
+| measurement | what it reads | must-accept worst → bar → must-flag best | needs |
+| --- | --- | --- | --- |
+| **grade max** — max over edges of \|h_u − h_v\| / L, h = mean incident edge length | an uncontrolled transition, dense beside sparse, justified or not | 0.998 → **1.64** → 2.694 (×1.64 each side) | geometry |
+| **minimum angle P10** | sliver fans off a dense boundary | 17.10° → **7.77°** → 3.53° (×2.2) | geometry |
+| **allocation contrast Δ** — the share of the *dense* vertices removable alone, by a half-edge collapse judged against declared needs only, minus that share among the rest; economy **E** = the share of all | density no declared need explains, located | 0 → **0.25** → 0.510; holds for gradation G 0.5–1.64 (accept ≤ 0.124) | δ, mask, weights, gradation G, **a declared motion amplitude {θ, ε}** |
+| **deformation load D** — max over edges of L · Δshare, px; D·θ/4 bounds the chord error of the mesh's own field | an edge too long for the weight change it spans | on `MQ79`, predicted / posed **1.002–1.091 over all 119 accepted steps**, Pearson 0.99999 — **and on `MQ79` only** (below) | weights; θ to read it in px |
+| **B\*** — the fewest source-hull vertices a closed outline can keep with every static row held | boundary beyond what the silhouette needs | ear-clipped B\* outlines pass `measureMeshQuality` with the input's own targets on **9 of 9** inputs that reduce | δ, mask |
+
+What they read: `MQ79`'s replay at step 94 flags on all three bars (grade
+4.52, minimum angle P10 4.49°, Δ 0.357 — its 25 interior vertices are the
+source's whole 8-px grid at x 120–152 and none at x < 120, the ascending-index
+prefix); its source reads Δ 0.020, E 0.524 — uniformly over-dense, economy and
+not allocation. `MQ79`'s strict result keeps exactly B\* = 28 boundary
+vertices; the public example inputs keep **0–65 above B\*** (282 against 217
+on demo/bottomwear). D·θ/4 reads 1.814 on the strict result (1.808 posed) and
+0.249 on the zipper (0.245 posed). And the dense-boundary-beside-sparse-interior
+pattern is already in every example **source**: boundary nearest-neighbour P50
+3.2–5.1 px against interior 5–36 px, grade max above 1.64 on 7 of 8.
+
+**Rejected, and why:** raw uniformity (the coefficient of variation of local
+size) reads highest on a fixture that must *not* be flagged (0.609, against
+0.416 on one that must) — it is the global uniformity the card rules out;
+boundary-transition and longest/shortest-edge ratios read justified anisotropy
+3.40 against an abrupt transition's 3.86; the minimum angle itself (rather
+than P10) reads 10.49° against 10.43° across the pair it must separate;
+deformation-load equidistribution reads the justified fixture 0 and the
+unjustified 0.68 — backwards; an isotropic need-field ratio is undefined on
+even meshes and backwards where defined; a collapse test whose transition
+term is built from the mesh's own sizes justifies its own abruptness.
+
+⚠️ **Nothing that reads justification separates without a declared
+amplitude.** With no {θ, ε}, the dense-share reading is 0.920 on the even
+positive control and 0.981 on the worst negative: such a row has to report
+`not-measurable`, never a pass. Two fixtures with **identical** area and edge
+percentiles (26 / 94.25 / 120.25 px², 4 / 13.60 / 20.62 px) and identical grade
+(0.543) read Δ −0.941 and 0.510 — their density is justified on one weight
+field and not on the other, and only the weights and the amplitude tell them
+apart. The predictor D is validated on one fixture (two bones, one rotation, a
+linear ramp); read under an assumed single θ on many-bone fields it is a
+reading to compare against, not a motion row.
+
+⚠️ **Correction [measured, #1271]: the predictor does not generalise.** On the
+smooth fixture with flips, D·θ/4 against the posed row reads Pearson
+0.00–0.69 and agrees on pass or fail at 24–55 of 130 steps; on sample/topwear's
+fully reduced mesh it predicts 0.780 where the linear-blend stand-in reads
+3.039 [assumed motion]. D bounds the chord error of the mesh's own weight
+field; the comparison measures the difference to the source, which includes
+§7 M2's lever term, invisible to D. `MQ79`'s source reads 0.012 against itself,
+which is why it agrees there. D stays a location reading; it is not a motion
+predictor, and no question below offers it as one.
+
+### Measured — bounded alternatives [measured, #1271]
+
+Each alternative was a switch in a scratch copy of `src/meshreduce.ts` (the
+instrumented copy above plus the switches); with every switch off it returned
+the tree's result byte for byte on all 9 subjects. Subjects: this section's
+fixture (primary, and its smooth variant), `MQ79`'s, and six public example
+inputs recorded for stage D1 (demo/neck, demo/bottomwear, sample/neck,
+sample/topwear, sample/bottomwear, sample/sleeves). The two fixtures and
+`MQ79` were posed by `compareMeshesInMotion` (`grid` selection, `irr` held
+out, bound 1, no inversion). The example inputs have no public rig, so they
+were read through a scratch linear-blend stand-in **[assumed]**: every bone
+pivots at the share-weighted centroid of the vertices it carries, with no
+hierarchy, and turns ±5° alone. Where pivots and hierarchy are known it
+matched the posed comparison to 1.0000 on `MQ79` and on the primary fixture.
+Its figures are a common yardstick between variants, not a verdict on any
+rig-parts attachment; D2 is where those are posed. Runs: darwin (Apple M4,
+load 5.2–14.1) and three Nova pool jobs (WSL2, load 1.2–4.4).
+
+| rank | mechanism | primary fixture, replayed (posed): total (b/i), selection / held out | demo/bottomwear, replayed [assumed motion] | cost | contract change |
+| --- | --- | --- | --- | --- | --- |
+| baseline | the tree | 191 (102/89), 0.972 / 0.910 | 526 (283/243), 0.450 / 0.488 | — | — |
+| 1 | **Delaunay flip post-pass** on every returned mesh, vertex set kept | **135 (102/33), 0.912 / 0.854** | 526 — no change | +0–5 % time, no extra candidates | the triangulation becomes the operation's own, so output bytes differ: opt-in only |
+| 2 | **boundary runs as steps**: up to 8 consecutive outline vertices removed as one accepted step, before the interior, every bound as declared | 189 (100/89); with rank 1, 133 (100/33) | **488 (245/243)**, 0.700 / 0.670; with rank 1, **470 (227/243)** | ×6–10 time, candidates 1,101 → 4,804 on demo/bottomwear | one accepted step removes 2 or more vertices, so `acceptedAt.length = insertedVertices + removedVertices` no longer holds |
+| 3 | **error-priority order** (`dprio`: each pass sorts candidates by the smallest L·½‖Δw‖₁ over the edges the removal adds) | 140 (102/38), 0.655 / 0.614; with rank 1, **110 (102/8)** | 525 (284/241) | +0–15 % time | none in the format; a different step sequence |
+| 4 | **relocation plus weight transfer** (a relocated outline as step 0, then the tree's passes) | 163 (74/89); with rank 1, 107 (74/33) | **refused at step 0**, 3.477 / 2.865 | +0.05–1.6 s search | P19, a deform refusal, the UV window, the meaning of step 0 |
+
+What each did:
+
+- **The flip post-pass decides the interior.** On `MQ79` it turns the fully
+  reduced 28/0 from refused at 1.807703 into accepted at **0.2446 / 0.2290**,
+  28 vertices where the replay keeps 53; on the smooth fixture the replay goes
+  170 → 91; under the stand-in sample/neck 57 → 26 and sample/topwear
+  121 → 80. It does nothing on demo/bottomwear (526): a 282-vertex outline over
+  an eleven-bone field needs long diagonals whatever the triangulation, so the
+  interior has to stay and the replay has to choose it. Whether the flips run
+  once on the returned mesh or after every removal is moot for Delaunay: the
+  two gave identical figures on 8 of 9 subjects (`MQ79` differs by a
+  cocircular tie), the in-loop form costing up to 35 % more.
+- **Boundary runs are the only mechanism that moved the consumer-like boundary
+  at the 1 px bound as declared.** Fully reduced: demo/bottomwear 282 → **225**
+  against B\* 217, sample/sleeves 190 → **168** (B\* 166), sample/bottomwear
+  101 → 95, sample/topwear 63 → 59, sample/neck 26 → 21; on the two fixtures
+  102 → 100 and 43 → 33, each the removal-only optimum. Because the runs are
+  steps before the interior, a replay keeps them.
+- **A boundary simplified as one pre-step is refused by motion.** The same
+  outline taken whole at step 0 (the B\* subset) reads **3.081 / 2.865 px** on
+  demo/bottomwear and 1.813 / 1.815 on sample/bottomwear [assumed motion],
+  refused, where the runs replay to 245 and 96 within 1 px. A replay cannot step
+  back into a pre-step, so boundary simplification has to be steps, and the
+  replay decides how far it goes.
+- **Error-priority order** helps the two fixtures and sample/topwear
+  (121 → 86) and is monotone wherever it was posed, does nothing on
+  demo/bottomwear (526 → 525) and costs vertices on sample/sleeves (209 → 223,
+  at lower error). Interior-first and sagitta orders gain nothing outside
+  `MQ79`.
+- **Relocation** reaches A1's C2 and C3 under a defined weight transfer —
+  barycentric inside a source triangle, from the nearest point of the source
+  hull outside it, then §6's insertion rule: 0.876213 / 0.820477 and
+  0.660991 / 0.618940 — and the largest savings where it holds (`MQ79` 12
+  vertices with flips). But it is **refused by motion at step 0 on 4 of 9
+  subjects** (the smooth fixture 1.927 px, demo/bottomwear, sample/bottomwear,
+  sample/sleeves), and its first `MQ79` run was refused at admission with
+  `REDUCE_UV_RANGE` — an outward move left the texture window, which no
+  silhouette row reads. Not recommended for Stage B on this evidence.
+- **Rejected:** flips by the deformation-load criterion in global form, which
+  rewrite the source's own triangles (step 0 reads up to 2.709 px on
+  demo/bottomwear); a hole-local form was not built.
+
+**What needs which contract change.** None of ranks 1–3 needs the deviation
+bound redefined or a motion amplitude declared; each needs a byte-identical
+opt-out.
+
+| contract item | flip post-pass | boundary runs | error-priority order | relocation |
+| --- | --- | --- | --- | --- |
+| the returned triangulation is the operation's (§1, §3) | **yes, opt-in** | — | — | with flips |
+| `acceptedAt` counts operations, not vertices | — | **yes** | — | step 0 |
+| P19 attributes kept; a deform refusal for a moved vertex | — | — | — | **yes** |
+| the UV window bounds the search | — | — | — | **yes** |
+| `stopAfterAccepted: 0` is the source | yes (the source, flipped) | yes | yes | **no — the relocated source** |
+
+**Replay and monotonicity.** Every probed `stopAfterAccepted: k` returned the
+walk's snapshot byte for byte under every variant (9 of 9 probes per variant on
+the fixtures and `MQ79`, 1–8 per example input); a second run was identical,
+and the primary fixture's hashes were equal on darwin arm64 and WSL x86_64.
+The post-pass keeps replay byte-exact by construction too: the removal loop is
+unchanged, so the state at step k is the tree's, and the flip is a
+deterministic function of that state. **Monotonicity is not guaranteed under
+it**: the Delaunay walk's first failure / last pass / passes after the first
+failure read 60 / 101 / 36 on the primary fixture, 25 / 81 / 50 on the smooth
+one and 57 / 62 / 5 on sample/topwear. The bisection rig-parts runs found the
+last pass on all three (101, 81, 62) because no probe fell in the stretch —
+which is luck of placement, not a property.
+
+**Trade-off, not a universal minimum.** Fewest vertices and triangle shape
+conflict on the two fixtures: on the primary one every reduction below 110
+vertices has minimum-angle P10 2.2–3.1°, against 4.8° at 110, 7.2° at 135 and
+10.8° at 191 — and the bar above (P10 ≥ 7.77°) flags 135 at 7.16°. On `MQ79`
+and demo/bottomwear the fewest-vertex result found is also the best-shaped. No
+mechanism here is claimed as the minimum.
+
+### Questions for parts
+
+Numbered afresh for #1271; cited as "§8 Q1" and so on where §7's could be meant. Each
+comes from a measurement above; none is settled by this page.
+
+- **Q1.** The boundary is held by two equal tolerances: an outline simplified
+  at 1 px and a deviation bound of 1 px measured against that outline. Which of
+  these, if any, does parts want — each loosens something different:
+  (i) parts declares `maxBoundaryDeviation` as its sampling tolerance plus an
+  allowance (on the reproducer bound 2 keeps 52 of 107 with every art bound
+  held; on demo/bottomwear 91 of 293) — loosens the declared silhouette limit,
+  which the card lists among the limits not to loosen; (ii) parts samples the
+  hull finer than the bound it declares — loosens nothing declared, and moves
+  the reference with the sampling, so it buys removability only where the art
+  allows; (iii) P13 is reopened so the bound reads against the traced art
+  outline rather than the source hull — loosens the agreed meaning of a
+  required row, and every recorded result's verdict would have to be re-taken;
+  (iv) a boundary simplification step in `rig-c/mesh` that chooses an outline
+  jointly (one chord for a run of vertices) held to the art bounds and the
+  declared deviation — loosens no bound, adds an operation whose removals are
+  not one vertex at a time. Option (iv) as boundary runs taken as steps moved
+  demo/bottomwear's fully reduced boundary 282 → 225 at the 1 px bound as
+  declared (*Measured — bounded alternatives*; its contract change is Q10).
+- **Q2.** The allocation and load readings need a declared amplitude: θ per
+  pair of bones a share moves between, and ε. Who declares it — parts from the
+  motion it already declares, or the consumer per attachment — and does it
+  belong in `MeshMeasureInput` as an optional field? Without it those rows
+  report `not-measurable`.
+- **Q3.** On `MQ79` and on this fixture a different triangulation of the same
+  vertex set is what passes motion. Is a post-pass that keeps the vertex set and
+  re-triangulates acceptable, given that it changes the bytes of every result
+  it touches — and if so, opt-in only, so today's calls stay byte-identical?
+- **Q4.** The bisection rig-parts runs over `acceptedAt` assumes passing is
+  monotone in the step. Ear-clipped it was on both fixtures at bound 1; with the
+  Delaunay post-pass it is not guaranteed (first failure / last pass / passes
+  after it: 60 / 101 / 36, 25 / 81 / 50, 57 / 62 / 5), though the bisection
+  found the last pass on all three. If a triangulation pass ships, does
+  rig-parts need monotonicity kept, or will it accept the disclosed
+  non-monotone stretch and walk or search differently where it matters?
+- **Q5.** Is relocation wanted at all? The fewest-vertex controls (C2, C3) need
+  positions not in the source, which breaks the index correspondence a
+  `vertices` deform key relies on (§6, P18), needs a weight-transfer rule (the
+  controls carried the source vertex's weights over a move of at most 0.9 px,
+  exact only because the field there depends on x alone), and moves UVs off
+  the source's.
+- **Q6.** The smooth negative control shows an outline thinned to its
+  silhouette minimum failing motion (1.92 px) with every interior vertex kept.
+  Should a boundary operation (Q1 iv) be held to the motion comparison by
+  rig-parts before acceptance, as every reduction is today, rather than
+  guarded inside the operation? The measurements favour the comparison: the
+  boundary runs leave the motion to the replay, a pre-step the replay cannot
+  undo was refused, and the deformation load D is not a validated motion guard
+  beyond `MQ79` (*Measured — spatial measurements of allocation*, correction).
+- **Q7.** Of the measurements proposed as `undeclared` rows — grade max,
+  minimum angle P10, allocation contrast Δ with economy E, deformation load D,
+  B\* — which does parts want reported, and does it want to declare a bound on
+  any of them, given the bars above come from one synthetic domain? D would be
+  reported as a location reading only, never as predicted motion.
+- **Q8.** On the two private attachments, in aggregate figures only: the
+  sagitta distribution of the source hull (P10/P50/P90 and the count ≤ the
+  declared deviation), and B\* against the kept boundary — whether the boundary
+  half there is the same two-tolerance mechanism.
+- **Q9.** Does rig-parts accept that the returned triangulation becomes the
+  operation's own — the Delaunay post-pass, opt-in, the opt-out path
+  byte-identical, replay byte-exact — with the non-monotone interval of Q4
+  disclosed rather than prevented?
+- **Q10.** May `acceptedAt` become one entry per accepted operation rather than
+  per vertex, so that one step can remove a run of boundary vertices? What does
+  rig-parts's reader of `acceptedAt` and `stopAfterAccepted` need for that —
+  the vertices each step removed, or only the count per step — and is the
+  prototype's ×6–10 cost acceptable while it is brought down?
+- **Q11.** Is a weight-aware removal order such as `dprio` rig-c's — a pose-free
+  default inside `rig-c/mesh`, behind an opt-in — or rig-parts's policy, passed
+  in as an order? It reads weights only, and its ranking assumes every share
+  change bends equally.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -2809,6 +3251,24 @@ next free codes:
 (the plant is `ReplayPlant`, passed through `reduceMeshWith`; `reduceMesh`
 plants none) and
 `MQ84_A_STOP_AFTER_ACCEPTED_THAT_IS_NOT_A_WHOLE_NUMBER_0_OR_MORE_IS_REFUSED_NAMING_THE_FIELD`.
+
+[measured, #1271] §8's public reproducer, in the `mesh-compare` suite, under
+the next free codes — one fact each, every one read beside a run or a plant
+that makes its predicate fire (named in its line):
+`MQ85_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_REMOVES_EVERY_INTERIOR_VERTEX_AND_AT_MOST_A_TENTH_OF_THE_BOUNDARY`
+(plant: the run at deviation bound 2),
+`MQ86_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_STOPS_ON_MQ_BOUNDARY_DEVIATION`
+(plant: the bound out of reach, which stops on `MQ_OVERSHOOT`),
+`MQ87_THE_STRICT_REDUCTION_OF_A_TRACED_BOUNDARY_HOLDS_EVERY_STATIC_BOUND_AND_FAILS_MOTION`
+(its predicate's passing side is read by `MQ89`),
+`MQ88_A_REPLAY_BISECTED_ON_GRID_FRAMES_PASSES_ON_ITS_HELD_OUT_IRR_FRAMES_AND_THE_NEXT_STEP_FAILS`
+(the step after the chosen one),
+`MQ89_A_HAND_BUILT_MESH_OVER_THE_SAME_BOUNDARY_WITH_FEWER_VERTICES_THAN_THE_REPLAY_PASSES_EVERY_STATIC_ROW_AND_MOTION`
+(plants: the source as the mesh with "fewer" vertices; one hull vertex pushed
+the bound plus a pixel out, failing `MQ_BOUNDARY_DEVIATION`) and
+`MQ90_WITH_THE_DEVIATION_BOUND_AT_TWICE_THE_SOURCE_TOLERANCE_THE_BOUNDARY_REDUCES_AND_EVERY_ART_ROW_STILL_PASSES`
+(plant: the strict run). They hold today's behaviour on that fixture and
+implement nothing of §8; `MQ79` and `MQ80` are unchanged.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
