@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.30.0](https://github.com/firejune/rigc/compare/v2.29.0...v2.30.0) (2026-10-09)
+
+
+### Features
+
+* **mesh:** MQ_SKINNING_RESIDUAL — a pose-free, source-relative bound in drawing px on how far a candidate draws each UV from where its source draws it under a declared skinning envelope, held against the poser on nine candidates and never understating it; and skinningEnvelopeBone, the helper that turns declared rotation, scale and translation ranges into an envelope entry ([#1294](https://github.com/firejune/rigc/issues/1294)) ([#1296](https://github.com/firejune/rigc/issues/1296)) ([cbf4012](https://github.com/firejune/rigc/commit/cbf4012bea6c49290c976b511cb0ef56b041d63f))
+
 ## [2.29.0](https://github.com/firejune/rigc/compare/v2.28.0...v2.29.0) (2026-10-09)
 
 
