@@ -433,6 +433,7 @@ import {
   type AttemptObserver,
   type AttemptRecord,
   type EdgeSetAudit,
+  type FloorAudit,
   type AcceptedOperation,
   type Retriangulation,
   type SourceFrame,
@@ -49252,6 +49253,7 @@ const MESH_COMPARE_UNITS = [
   'MQ136-MQ137',
   'MQ138-MQ142',
   'MQ150',
+  'MQ151',
 ] as const;
 type MeshCompareUnitName = (typeof MESH_COMPARE_UNITS)[number];
 
@@ -49275,6 +49277,7 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ91-MQ95',
   'MQ138-MQ142',
   'MQ150',
+  'MQ151',
   'MQ116-MQ133',
   'MQ106-MQ108',
   'MQ79-MQ80',
@@ -53009,6 +53012,86 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
         held,
         probeDetail(held, probes, `${lines.join('; ')}; the audited calls wrote the unaudited calls' bytes; plants: ${caught.join('; ')}`),
         'issue #1307: the edge sets on the removal and boundary-run paths changed representation for cost alone, so they are held to the construction they replaced on every attempt of two subjects that read them, and each way the new one could differ — an edge lost, the order (b) reads changed — has a plant here',
+      );
+    });
+  });
+
+  // --- MQ151 (#1309): the deviation floor read before the candidate's structure, held to the floor read after it ------
+  // Since #1309 the floor is read off the current outline walk less the removed vertices, turned as `canonicalise` turns
+  // it, before the removal, condition (b), the protected edges or the canonical candidate are built — so an attempt it
+  // refuses costs its floor. `FloorAudit` runs the path before beside it on every attempt the floor is read on: every
+  // structural check, then the floor off the canonical candidate, decided at FLOOR_MARGIN. Where the structure passes the
+  // two floors are held equal bit for bit and their decisions equal; where the early floor refuses an attempt the
+  // structure would have refused first, the name a reader is shown is held to the structure's and the observer's
+  // decidedByFloor to false. Two subjects under the dependant's trial policy (boundary runs 8, the load order, the
+  // post-pass): MQ85's traced bean and MQ79's ramp. The audited, observed call must write the plain call's bytes. The
+  // plants: the floor read half a pixel short (MQ96's) must change bytes on a subject, and an early refusal named off
+  // the floor — never reaching the structural check that would have refused first — must be found by the audit.
+  unit('MQ151', () => {
+    mcGuard('MQ151', () => {
+      const probes: string[] = [];
+      const plates151 = join(dir, 'plates-mq151');
+      mkdirSync(plates151, { recursive: true });
+      const beanMask = mqMask(plates151, 'bean', AB_W, AB_H, (x, y) => (abInside(x + 0.5, y + 0.5) ? 1 : 0));
+      const bean = abSource(beanMask).mesh;
+      const trial = { boundaryRuns: { maxVertices: 8 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' } as const;
+      const subjects: Array<{ label: string; input: MeshReductionInput }> = [
+        { label: "MQ85's bean under T", input: { ...mvReduceInput(bean, trial), attachment: { skin: null, slot: 'bean', attachment: 'bean' }, art: { mask: beanMask, threshold: 1, frame: mqFrame(AB_W, AB_H) }, boneOrder: ['root', 'a', 'b', 'c'] } },
+        { label: "MQ79's ramp under T", input: mvReduceInput(mvSrc, trial) },
+      ];
+      const fresh = (plant?: FloorAudit['plant']): FloorAudit => ({ ...(plant === undefined ? {} : { plant }), attempts: 0, compared: 0, turned: 0, refused: 0, refusedStructurally: 0, differences: [] });
+      const lines: string[] = [];
+      const caught: string[] = [];
+      let shortChanged = 0;
+      for (const subject of subjects) {
+        const rasters = artRastersOf(subject.input.art);
+        const run = (plant: ReductionPlant | null, observe: AttemptObserver | null, audit: FloorAudit | null): ReturnType<typeof reduceMeshWith> =>
+          reduceMeshWith(subject.input, rasters, stepRastersOf(rasters), plant, observe, null, null, audit);
+        const plain = reductionBytes(run(null, null, null));
+        const audit = fresh();
+        let floored = 0;
+        const audited = reductionBytes(
+          run(null, (a) => {
+            if (a.decidedByFloor) floored++;
+          }, audit),
+        );
+        if (audited !== plain) probes.push(`${subject.label}: the audited, observed call wrote other bytes than the plain call`);
+        for (const d of audit.differences.slice(0, 2)) probes.push(`${subject.label}: ${d}`);
+        if (audit.differences.length > 2) probes.push(`${subject.label}: ${audit.differences.length - 2} difference(s) more`);
+        if (audit.compared === 0) probes.push(`${subject.label}: no attempt's structure passed, so no early floor was compared with the late one`);
+        if (audit.refused - audit.refusedStructurally === 0) probes.push(`${subject.label}: the early floor refused no attempt whose structure passes, so no refusing decision was compared`);
+        if (audit.refusedStructurally === 0) probes.push(`${subject.label}: the early floor refused no attempt the structure refuses first, so the name a reader is shown there was never held`);
+        if (floored !== audit.refused - audit.refusedStructurally) probes.push(`${subject.label}: the observer read decidedByFloor on ${floored} attempt(s); the floor refused ${audit.refused - audit.refusedStructurally} whose structure passes`);
+        lines.push(
+          `${subject.label}: the floor read on ${audit.attempts} attempt(s), ${audit.compared} with a passing structure equal bit for bit to the floor off the canonical candidate (${audit.turned} walked the other way) and decided alike; ${audit.refused} refused early, ${audit.refusedStructurally} of them refused by the structure first and named by it, decidedByFloor on the other ${floored}`,
+        );
+        // Plant 1: the floor read half a pixel short of the bound (MQ96's) — it refuses steps the rows take, so it has to
+        // move the bytes, or throw when such a refusal's name is read, on a subject.
+        let short: string;
+        try {
+          short = reductionBytes(run('floor-half-a-pixel-short', null, null)) === plain ? 'the same bytes' : 'bytes differ';
+        } catch (err) {
+          short = `threw — ${(err as Error).message.slice(0, 80)}`;
+        }
+        if (short !== 'the same bytes') shortChanged++;
+        caught.push(`half a pixel short on ${subject.label.split(' under ')[0]}: ${short}`);
+        // Plant 2: the early refusal named off the floor, skipping the structural check that would have refused first.
+        const named = fresh('refusal-named-by-the-floor');
+        try {
+          run(null, null, named);
+        } catch {
+          // A name read off the floor can make no step pass, so nothing here should throw; the count below is the reading.
+        }
+        if (named.differences.length === 0) probes.push(`${subject.label}: the plant — an early refusal named off the floor — was not found by the audit`);
+        caught.push(`named off the floor on ${subject.label.split(' under ')[0]}: ${named.differences.length} difference(s)`);
+      }
+      if (shortChanged === 0) probes.push(`the plant — the floor half a pixel short of the bound — wrote the same bytes on every subject (${caught.filter((c) => c.startsWith('half')).join('; ')})`);
+      const held = probes.length === 0;
+      say(
+        'MQ151_THE_DEVIATION_FLOOR_READ_BEFORE_THE_STRUCTURE_EQUALS_THE_FLOOR_READ_AFTER_IT_IN_VALUE_AND_DECISION_AND_A_REFUSAL_IT_MAKES_EARLY_NAMES_THE_STRUCTURE',
+        held,
+        probeDetail(held, probes, `${lines.join('; ')}; the audited, observed calls wrote the plain calls' bytes; plants: ${caught.join('; ')}`),
+        'issue #1309: the floor is read before the structure is built, so an attempt it refuses costs its floor — held to the floor the path before read after every structural check, on every attempt of two subjects, and each way the early one could differ — a floor that refuses steps the rows take, a refusal named before the structure that would have refused first — has a plant here',
       );
     });
   });

@@ -559,18 +559,7 @@ interface Canonical {
  * 5. bindings strongest first, ties by the bone's position in `boneOrder`.
  */
 function canonicalise(work: Work, sourceTurn: number, boneRank: Map<string, number>): Canonical {
-  const ids: number[] = [];
-  for (let id = 0; id < work.alive.length; id++) if (work.alive[id]) ids.push(id);
-  const compact = new Map<number, number>();
-  ids.forEach((id, i) => compact.set(id, i));
-  const flat: number[] = [];
-  for (const tri of work.triangles) for (const id of tri) flat.push(compact.get(id)!);
-  const outline = traceOutline(ids.length, flat);
-  let walk = outline.walk.map((i) => ids[i]);
-  const start = walk.indexOf(Math.min(...walk));
-  walk = [...walk.slice(start), ...walk.slice(0, start)];
-  const turn = Math.sign(signedArea(walk.map((id) => [work.pos[id][0], work.pos[id][1]])));
-  if (turn !== sourceTurn) walk = [walk[0], ...walk.slice(1).reverse()];
+  const { ids, walk } = canonicalWalk(work, sourceTurn);
   const onHull = new Set(walk);
   const interiorSource = ids.filter((id) => !onHull.has(id) && id < work.nSource);
   const interiorInserted = ids
@@ -594,6 +583,34 @@ function canonicalise(work: Work, sourceTurn: number, boneRank: Map<string, numb
   };
   checkHullOrder({ hull: mesh.hull, walk: [...Array(mesh.hull).keys()] }, order.length);
   return { mesh, order, indexOf };
+}
+
+/**
+ * Step 1 of the canonical order alone: the surviving ids, and the outline walked from its smallest id the way the
+ * source's own hull listing turns — `canonicalise`'s hull, and the walk the early deviation floor (issue #1309) reads
+ * the current outline as. A `MeshError` when the triangles are not one closed outline.
+ */
+function canonicalWalk(work: Work, sourceTurn: number): { ids: number[]; walk: number[] } {
+  const ids: number[] = [];
+  for (let id = 0; id < work.alive.length; id++) if (work.alive[id]) ids.push(id);
+  const compact = new Map<number, number>();
+  ids.forEach((id, i) => compact.set(id, i));
+  const flat: number[] = [];
+  for (const tri of work.triangles) for (const id of tri) flat.push(compact.get(id)!);
+  const outline = traceOutline(ids.length, flat);
+  return { ids, walk: turnedFromSmallest(work, outline.walk.map((i) => ids[i]), sourceTurn) };
+}
+
+/**
+ * A closed walk of working ids rotated to start at its smallest id and, when its signed area does not turn the way
+ * `sourceTurn` does, walked the other way from that id — the one rule `canonicalise` orders its hull by, and the one
+ * the early deviation floor turns its predicted outline by (issue #1309), so the two read one polygon.
+ */
+function turnedFromSmallest(work: Work, loop: readonly number[], sourceTurn: number): number[] {
+  const start = loop.indexOf(Math.min(...loop));
+  const walk = [...loop.slice(start), ...loop.slice(0, start)];
+  const turn = Math.sign(signedArea(walk.map((id) => [work.pos[id][0], work.pos[id][1]])));
+  return turn !== sourceTurn ? [walk[0], ...walk.slice(1).reverse()] : walk;
 }
 
 /** Strongest first, ties by the bone's place in `boneOrder` — the values themselves untouched. */
@@ -919,6 +936,10 @@ interface Run {
   sourceEdges: Set<number>;
   /** Issue #1307's audit of the edge sets, or null. */
   edgeAudit: EdgeSetAudit | null;
+  /** Issue #1309's audit of the early deviation floor against the late one, or null. */
+  floorAudit: FloorAudit | null;
+  /** The current outline's canonical walk, for the working triangles it was read off (issue #1309); null until read. */
+  walk: { triangles: Array<[number, number, number]>; walk: number[] } | null;
   /** The art's rasters, taken once for the call and read by every measurement in it (issue #1240). */
   rasters: ArtRasters;
   /** The step state each removal and insertion is measured through, carried from the last measurement (issue #1246); null measures every step in full. */
@@ -1599,7 +1620,20 @@ function runRemovalOf(work: Work, vertices: readonly number[], audit: EdgeSetAud
  * measurement — a thunk that measures the attempt in full and returns the name the measurement gives, so whatever
  * reads it reads what an unfloored run would have written.
  */
-type Refusal = string | (() => string);
+type Refusal = string | FloorRefusal;
+
+/**
+ * A refusal the deviation floor decided (issue #1279), read since issue #1309 before any structure is built for the
+ * attempt. Reading it names the attempt as the full path does — its structural reason when the structure refuses
+ * it, else the rows' — in the state it was tried in. `decidedByFloor` is what the observer reads: whether the path
+ * before #1309, which read the floor after every structural check, would have been decided by it — so an attempt
+ * the structure refuses reads false, as it did. It is computed only when an observer or the floor audit is attached;
+ * with neither it reads true and nothing reads it.
+ */
+interface FloorRefusal {
+  (): string;
+  decidedByFloor: boolean;
+}
 
 function refusalText(refusal: Refusal): string {
   return typeof refusal === 'string' ? refusal : refusal();
@@ -1659,7 +1693,7 @@ function removeVertices(run: Run): PhaseEnd {
           run.steps++;
           tried++;
           const block = tryOperation(run, members, false);
-          if (run.observe !== null) run.observe({ step: run.steps, kind: 'boundary-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function', pass, predictedLoad: null });
+          if (run.observe !== null) run.observe({ step: run.steps, kind: 'boundary-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' && block.decidedByFloor, pass, predictedLoad: null });
           if (block === null) {
             taken++;
             walk = null;
@@ -1681,7 +1715,7 @@ function removeVertices(run: Run): PhaseEnd {
       run.steps++;
       tried++;
       const block = tryOperation(run, [v], false);
-      if (run.observe !== null) run.observe({ step: run.steps, kind: 'removal', sourceVertices: [v], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function', pass, predictedLoad: ranked === null ? null : ranked.load.get(v)! });
+      if (run.observe !== null) run.observe({ step: run.steps, kind: 'removal', sourceVertices: [v], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' && block.decidedByFloor, pass, predictedLoad: ranked === null ? null : ranked.load.get(v)! });
       if (block === null) {
         taken++;
         if (accept(run, 'removal', [v])) return { kind: 'replayed' };
@@ -1700,6 +1734,34 @@ function removeVertices(run: Run): PhaseEnd {
 }
 
 /**
+ * Issue #1309: the current outline's canonical walk (`canonicalWalk`), read once per working mesh — the triangles are
+ * replaced, never edited in place, whenever the mesh changes, so the array read off is what the cache is keyed by.
+ */
+function currentWalk(run: Run): number[] {
+  if (run.walk === null || run.walk.triangles !== run.work.triangles) run.walk = { triangles: run.work.triangles, walk: canonicalWalk(run.work, run.sourceTurn).walk };
+  return run.walk.walk;
+}
+
+/**
+ * The deviation floor read before any structure is built for the attempt (issue #1309): `deviationFloor` over the
+ * outline the candidate would have — the current walk less the removed vertices, turned as `canonicalise` turns it
+ * (`turnedFromSmallest`) — rather than over the canonical candidate. Whenever the structure passes, the candidate's
+ * outline is that walk, so the two are the same polygon in the same order and the same number; when it does not, the
+ * attempt is refused whatever the floor reads, and the reader is shown the structure's reason (`floorRefusal`). 0, the
+ * floor of nothing, when no removed vertex is a source-hull vertex (the walk is then not read) or when fewer than three
+ * would remain, which no passing structure leaves. `turned` reports whether the walk was walked the other way.
+ */
+function earlyFloor(run: Run, vertices: readonly number[]): { floor: number; turned: boolean } {
+  const hull = run.input.source.hull;
+  if (!vertices.some((v) => v < hull)) return { floor: 0, turned: false };
+  const rest = currentWalk(run).filter((id) => !vertices.includes(id));
+  if (rest.length < 3) return { floor: 0, turned: false };
+  const outline = turnedFromSmallest(run.work, rest, run.sourceTurn);
+  const turned = outline.length > 2 && outline[1] !== rest[(rest.indexOf(outline[0]) + 1) % rest.length];
+  return { floor: floorOver(run, outline.map((id) => run.work.pos[id]), vertices), turned };
+}
+
+/**
  * The deviation floor (issue #1279): the furthest any removed source-hull vertex lies from the candidate's outline.
  * `MQ_BOUNDARY_DEVIATION` is the symmetric Hausdorff distance between that outline and the source hull, and its
  * backward half evaluates every source-hull vertex's distance to the outline exactly, so the row's value is at least
@@ -1707,7 +1769,11 @@ function removeVertices(run: Run): PhaseEnd {
  * `distanceToSegment` over the candidate's hull edges, the function and polygon the row reads.
  */
 function deviationFloor(run: Run, mesh: SourceMesh, vertices: readonly number[]): number {
-  const poly = mesh.points.slice(0, mesh.hull);
+  return floorOver(run, mesh.points.slice(0, mesh.hull), vertices);
+}
+
+/** `deviationFloor` over an outline given as its points in walk order — the one loop both floors read. */
+function floorOver(run: Run, poly: readonly Pt[], vertices: readonly number[]): number {
   let floor = 0;
   for (const v of vertices) {
     if (v >= run.input.source.hull) continue;
@@ -1748,12 +1814,37 @@ function auditEdgeSet(audit: EdgeSetAudit, edges: Set<number>, triangles: Readon
 }
 
 /**
- * One operation — a single removal, or a boundary run of two or more — tried: null when it was taken (the working
- * mesh then holds it), else what refused it (the working mesh as it was). `full` measures every candidate that
- * reaches the rows; otherwise a candidate whose deviation floor is over the bound by `FLOOR_MARGIN` is refused
- * without the measurement, by a thunk that measures it when its name is read.
+ * Issue #1309's audit, for the `mesh-compare` suite's control and the population run: on every attempt the floor is
+ * read on, the path before the issue is run beside the early floor — every structural check, then the floor read off
+ * the canonical candidate, decided at `FLOOR_MARGIN` — and compared. Where the structure passes, the two floors are
+ * held equal bit for bit and their decisions equal; where the early floor refuses and the structure would have refused
+ * first, the name a reader of the refusal is shown is held to the structure's, and the observer's `decidedByFloor` to
+ * false. A difference is recorded, not thrown. `plant` is the fault applied to the early refusal: its name read off
+ * the floor (`MQ_BOUNDARY_DEVIATION`), never reaching the structural check that would have refused first. With the
+ * audit and no plant, the call's result is the call's without it.
  */
-function tryOperation(run: Run, vertices: readonly number[], full: boolean): Refusal | null {
+export interface FloorAudit {
+  plant?: 'refusal-named-by-the-floor';
+  /** Attempts the floor was read on. */
+  attempts: number;
+  /** Among them, those whose structure passes — where the early floor and the late one are compared. */
+  compared: number;
+  /** Among those, the ones whose predicted outline `canonicalise` walks the other way from the current walk. */
+  turned: number;
+  /** Attempts the early floor refused, and among them those whose structure refuses them first. */
+  refused: number;
+  refusedStructurally: number;
+  /** Each difference found, named. */
+  differences: string[];
+}
+
+/**
+ * The structure of one operation, as every attempt builds it: the removal or run made (or its structural reason),
+ * condition (b) over the edges it adds, the working mesh set to it, the protected edges looked up, and the canonical
+ * candidate. Null-free: either the reason the structure refuses the operation — the working mesh as it was — or the
+ * canonical candidate with the working mesh holding it and the `undo` that restores it.
+ */
+function structureOf(run: Run, vertices: readonly number[]): string | { canon: Canonical; undo: () => void } {
   const { work, input } = run;
   const step = vertices.length === 1 ? removalOf(work, vertices[0], run.edgeAudit) : runRemovalOf(work, vertices, run.edgeAudit);
   if ('blocked' in step) return step.blocked;
@@ -1785,34 +1876,102 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
       }
     }
   }
-  let canon: Canonical;
   try {
-    canon = canonicalise(work, run.sourceTurn, run.boneRank);
+    return { canon: canonicalise(work, run.sourceTurn, run.boneRank), undo };
   } catch (err) {
     if (!(err instanceof MeshError)) throw err;
     undo();
     return `outline: ${err.message}`;
   }
+}
+
+/**
+ * The refusal the early floor makes (issue #1309), through #1279's thunk: read, it measures the attempt in full in the
+ * state it was tried in and returns that path's name — the structure's reason when the structure refuses it, else the
+ * rows'. `late`, when an observer or the floor audit asked for it, is what the structure and the floor read off the
+ * canonical candidate gave: it decides `decidedByFloor` as the path before the issue decided it, and — with an
+ * observer and no floor audit — its structural reason is the name returned, built once rather than twice (the edge
+ * audit counts every list it builds). Under the floor audit the thunk always runs the full path, which is what the
+ * audit holds equal to the structure's reason.
+ */
+function floorRefusal(run: Run, vertices: readonly number[], floor: number, limit: number, late: { structural: string } | { floor: number } | null): FloorRefusal {
+  const members = [...vertices];
+  const said = late !== null && 'structural' in late && run.floorAudit === null ? late.structural : null;
+  const refusal = (() => {
+    if (run.floorAudit?.plant === 'refusal-named-by-the-floor') return `MQ_BOUNDARY_DEVIATION: the deviation floor ${r6(floor)} is over ${run.input.targets.maxBoundaryDeviation}`;
+    if (said !== null) return said;
+    const measured = tryOperation(run, members, true);
+    if (measured === null) {
+      // Unreachable while the floor is a floor: the step was refused on a bound its own rows then pass. Loud,
+      // because the run already went on as if it had been refused.
+      throw new Error(`the deviation floor refused removing ${members.join(', ')}, which the rows accept`);
+    }
+    return refusalText(measured);
+  }) as FloorRefusal;
+  refusal.decidedByFloor = late === null || ('floor' in late && late.floor > limit);
+  return refusal;
+}
+
+/** The path before issue #1309 for one attempt, read beside the early floor: the structure's reason, or the floor read off the canonical candidate. The working mesh is left as it was. */
+function lateOf(run: Run, vertices: readonly number[]): { structural: string } | { floor: number } {
+  const built = structureOf(run, vertices);
+  if (typeof built === 'string') return { structural: built };
+  const floor = deviationFloor(run, built.canon.mesh, vertices);
+  built.undo();
+  return { floor };
+}
+
+/** The floor audit's comparison where the structure passes: the two floors bit for bit, and the decision at `FLOOR_MARGIN`. */
+function auditFloors(audit: FloorAudit, run: Run, vertices: readonly number[], early: { floor: number; turned: boolean }, late: number, refusedEarly: boolean): void {
+  audit.compared++;
+  if (early.turned) audit.turned++;
+  const lateRefuses = late > run.input.targets.maxBoundaryDeviation + FLOOR_MARGIN;
+  if (!Object.is(early.floor, late)) audit.differences.push(`removing ${vertices.join(', ')}: the early floor reads ${early.floor} and the floor off the canonical candidate ${late}`);
+  else if (refusedEarly !== lateRefuses) audit.differences.push(`removing ${vertices.join(', ')}: the early floor ${refusedEarly ? 'refused' : 'passed'} at ${early.floor}, which the floor off the canonical candidate ${lateRefuses ? 'refuses' : 'passes'} at the bound ${run.input.targets.maxBoundaryDeviation} + FLOOR_MARGIN`);
+}
+
+/**
+ * One operation — a single removal, or a boundary run of two or more — tried: null when it was taken (the working
+ * mesh then holds it), else what refused it (the working mesh as it was). `full` measures every candidate that
+ * reaches the rows; otherwise a candidate whose deviation floor is over the bound by `FLOOR_MARGIN` is refused
+ * without the measurement, by a thunk that measures it when its name is read. Since issue #1309 the floor is read
+ * before the structure is built (`earlyFloor`); an attempt it refuses is not built at all unless an observer or the
+ * floor audit asks what the path before would have decided.
+ */
+function tryOperation(run: Run, vertices: readonly number[], full: boolean): Refusal | null {
+  const { input } = run;
+  const floored = !full && run.plant !== 'measure-every-candidate' && !(vertices.length > 1 && run.plant === 'run-skips-rows');
+  const audit = run.floorAudit;
+  let early: { floor: number; turned: boolean } | null = null;
+  if (floored) {
+    const limit = input.targets.maxBoundaryDeviation + (run.plant === 'floor-half-a-pixel-short' ? -0.5 : FLOOR_MARGIN);
+    early = earlyFloor(run, vertices);
+    if (audit !== null) audit.attempts++;
+    if (early.floor > limit) {
+      const late = run.observe !== null || audit !== null ? lateOf(run, vertices) : null;
+      const refusal = floorRefusal(run, vertices, early.floor, limit, late);
+      if (audit !== null && late !== null) {
+        audit.refused++;
+        if ('structural' in late) {
+          audit.refusedStructurally++;
+          const said = refusal();
+          if (said !== late.structural) audit.differences.push(`removing ${vertices.join(', ')}: the early refusal reads "${said.slice(0, 80)}" where the structure refuses first with "${late.structural.slice(0, 80)}"`);
+          if (refusal.decidedByFloor) audit.differences.push(`removing ${vertices.join(', ')}: refused by the structure first, yet the observer would read decidedByFloor`);
+        } else {
+          auditFloors(audit, run, vertices, early, late.floor, true);
+        }
+      }
+      return refusal;
+    }
+  }
+  const built = structureOf(run, vertices);
+  if (typeof built === 'string') return built;
+  const { canon, undo } = built;
+  if (audit !== null && early !== null) auditFloors(audit, run, vertices, early, deviationFloor(run, canon.mesh, vertices), false);
   const phase: SkinningInspection['phase'] = vertices.length > 1 ? 'boundary-run' : 'removal';
   if (vertices.length > 1 && run.plant === 'run-skips-rows') {
     followSkinning(run, phase);
     return null;
-  }
-  if (!full && run.plant !== 'measure-every-candidate') {
-    const margin = run.plant === 'floor-half-a-pixel-short' ? -0.5 : FLOOR_MARGIN;
-    if (deviationFloor(run, canon.mesh, vertices) > input.targets.maxBoundaryDeviation + margin) {
-      undo();
-      const members = [...vertices];
-      return () => {
-        const measured = tryOperation(run, members, true);
-        if (measured === null) {
-          // Unreachable while the floor is a floor: the step was refused on a bound its own rows then pass. Loud,
-          // because the run already went on as if it had been refused.
-          throw new Error(`the deviation floor refused removing ${members.join(', ')}, which the rows accept`);
-        }
-        return refusalText(measured);
-      };
-    }
   }
   const measured = measureAgainstTargets(run, canon.mesh, 'candidate');
   const blocking =
@@ -2085,12 +2244,13 @@ export function reduceMeshWith(
   observe: AttemptObserver | null = null,
   skinning: SkinningHooks | null = null,
   edgeAudit: EdgeSetAudit | null = null,
+  floorAudit: FloorAudit | null = null,
 ): MeshReductionResult {
   validateReduction(input, plant);
   if (steps !== null && steps.rasters !== rasters) {
     refuse('REDUCE_ART_RASTERS_MISMATCH', `attachment ${nameOf(input.attachment)}: the step rasters were made over another rasters object; required step rasters made over the rasters passed beside them (stepRastersOf(rasters))`);
   }
-  return reduceValidated(input, rasters, steps, plant, observe, skinning, edgeAudit);
+  return reduceValidated(input, rasters, steps, plant, observe, skinning, edgeAudit, floorAudit);
 }
 
 /**
@@ -2105,6 +2265,7 @@ function reduceValidated(
   observe: AttemptObserver | null = null,
   hooks: SkinningHooks | null = null,
   edgeAudit: EdgeSetAudit | null = null,
+  floorAudit: FloorAudit | null = null,
 ): MeshReductionResult {
   const who = `attachment ${nameOf(input.attachment)}`;
   const src = input.source;
@@ -2194,6 +2355,8 @@ function reduceValidated(
       ...protectionOf(input, work, sourceEdgeNames),
       sourceEdges,
       edgeAudit,
+      floorAudit,
+      walk: null,
       rasters,
       stepRasters: steps,
       skinning: null,
