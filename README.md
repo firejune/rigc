@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/banner.svg" alt="rigc — AI-authored Spine 2D rigging and animation, verified before it is written" width="100%" />
+  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/banner.svg" alt="rigc — AI-authored 2D rigging and animation, verified before it is written" width="100%" />
 </p>
 
 <p align="center">
@@ -8,8 +8,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-38BDF8.svg?style=flat-square" alt="license" /></a>
 </p>
 
-**AI-authored Spine 2D rigging and animation, verified before it is written.** rigc is
-a rig compiler for Spine: a rig spec and a motion spec in, Spine 4.3 skeleton data out,
+**AI-authored 2D rigging and animation, verified before it is written.** rigc is
+a rig compiler: a rig spec and a motion spec in, skeleton data out — in the Spine 4.3
+format, with rigc's own compiled model beside it —
 gated by a list of named assertions before a byte is written — rigc's own validator in
 the published package, held to a `spine-core` round trip's verdicts in this
 repository's CI. Built so AI agents can author rigs and check their own work; it ships
