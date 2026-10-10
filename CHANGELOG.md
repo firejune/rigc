@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.31.2](https://github.com/firejune/rigc/compare/v2.31.1...v2.31.2) (2026-10-10)
+
+
+### Performance Improvements
+
+* **mesh:** the deviation floor is read from the outline walk before any structure is built for the candidate — byte-identical on 87 of 87 recorded calls and 12 of 12 under weightJump, every refusal named as before, 49 % off the trial call on the largest public input after C1 ([#1309](https://github.com/firejune/rigc/issues/1309), §9's C2) ([#1312](https://github.com/firejune/rigc/issues/1312)) ([31f27e6](https://github.com/firejune/rigc/commit/31f27e6044a3a9d3905c7859f7ab967ad3c1399f))
+
 ## [2.31.1](https://github.com/firejune/rigc/compare/v2.31.0...v2.31.1) (2026-10-09)
 
 
