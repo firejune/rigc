@@ -160,6 +160,8 @@ import {
   type Termination,
 } from './meshquality.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasters } from './meshrasters.ts';
+import { areaBand, triangleAreas } from './areaband.ts';
+import { cropToSpineY } from './transform.ts';
 import {
   skinningContract,
   SkinningCarry,
@@ -1262,43 +1264,154 @@ function addVertex(run: Run, p: Pt): number {
   return id;
 }
 
+/**
+ * The two triangles a split of the edge a–b at the new vertex `m` makes of `tri`, winding kept, or null when `tri`
+ * does not have that edge — the one rule `splitEdge` writes and `degenerateInsertion` reads (issue #1311).
+ */
+function splitPieces(tri: readonly [number, number, number], a: number, b: number, m: number): [[number, number, number], [number, number, number]] | null {
+  const i = tri.indexOf(a);
+  const j = tri.indexOf(b);
+  if (i === -1 || j === -1) return null;
+  // Rotate so the edge is the triangle's first two corners, in its own winding.
+  const r = (j - i + 3) % 3 === 1 ? i : j;
+  const x = tri[r];
+  const y = tri[(r + 1) % 3];
+  const c = tri[(r + 2) % 3];
+  return [[x, m, c], [m, y, c]];
+}
+
 /** Split the edge between working ids a and b at `p`: each triangle on it becomes two, winding kept. */
 function splitEdge(run: Run, a: number, b: number, p: Pt): void {
   const m = addVertex(run, p);
   const next: Array<[number, number, number]> = [];
   for (const tri of run.work.triangles) {
-    const i = tri.indexOf(a);
-    const j = tri.indexOf(b);
-    if (i === -1 || j === -1) {
-      next.push(tri);
-      continue;
-    }
-    // Rotate so the edge is the triangle's first two corners, in its own winding.
-    const r = (j - i + 3) % 3 === 1 ? i : j;
-    const x = tri[r];
-    const y = tri[(r + 1) % 3];
-    const c = tri[(r + 2) % 3];
-    next.push([x, m, c], [m, y, c]);
+    const pieces = splitPieces(tri, a, b, m);
+    if (pieces === null) next.push(tri);
+    else next.push(...pieces);
   }
   run.work.triangles = next;
 }
 
-/** Insert `p` into the working triangle that holds it: on an edge, that edge is split; inside, the triangle becomes three. */
-function insertPoint(run: Run, p: Pt): boolean {
+/** Where `insertPoint` puts `p`: on an edge of the working triangle that holds it, inside that triangle, or nowhere. */
+type Placement = { kind: 'edge'; a: number; b: number } | { kind: 'inside'; tri: [number, number, number] } | null;
+
+function placementOf(run: Run, p: Pt): Placement {
   const { work } = run;
   for (const tri of work.triangles) {
     const l = barycentric(p, work.pos[tri[0]], work.pos[tri[1]], work.pos[tri[2]]);
     if (l === null || Math.min(...l) < -1e-9) continue;
     const onEdge = l.findIndex((v) => Math.abs(v) <= 1e-9);
-    if (onEdge !== -1) {
-      splitEdge(run, tri[(onEdge + 1) % 3], tri[(onEdge + 2) % 3], p);
-      return true;
-    }
-    const m = addVertex(run, p);
-    work.triangles = work.triangles.flatMap((t): Array<[number, number, number]> => (t === tri ? [[tri[0], tri[1], m], [tri[1], tri[2], m], [tri[2], tri[0], m]] : [t]));
-    return true;
+    if (onEdge !== -1) return { kind: 'edge', a: tri[(onEdge + 1) % 3], b: tri[(onEdge + 2) % 3] };
+    return { kind: 'inside', tri };
   }
-  return false;
+  return null;
+}
+
+/** The three triangles an insertion of the new vertex `m` inside `tri` makes of it — `insertPoint`'s rule. */
+function fanPieces(tri: readonly [number, number, number], m: number): Array<[number, number, number]> {
+  return [[tri[0], tri[1], m], [tri[1], tri[2], m], [tri[2], tri[0], m]];
+}
+
+/** Insert `p` where `placementOf` put it: on an edge, that edge is split; inside, the triangle becomes three. */
+function insertPoint(run: Run, p: Pt, at: Exclude<Placement, null>): void {
+  const { work } = run;
+  if (at.kind === 'edge') {
+    splitEdge(run, at.a, at.b, p);
+    return;
+  }
+  const m = addVertex(run, p);
+  work.triangles = work.triangles.flatMap((t): Array<[number, number, number]> => (t === at.tri ? fanPieces(at.tri, m) : [t]));
+}
+
+/** The vertex id the degenerate check reads for the vertex an insertion would add, before it exists. */
+const NEW_VERTEX = -1;
+
+/** A triangle an insertion would write that `MQ_DEGENERATE` reads as degenerate (issue #1311). */
+interface DegenerateWrite {
+  /** Working ids, `NEW_VERTEX` for the inserted one, in the triangle's own winding. */
+  corners: [number, number, number];
+  /** The smallest magnitude of its area over the three corners it can be read from, px². */
+  area: number;
+  /** `areaBand` of the mesh the insertion would leave, px². */
+  band: number;
+}
+
+/**
+ * Issue #1311: the first triangle an insertion of `p` would write whose area `MQ_DEGENERATE` reads as degenerate, or
+ * null. Read as the row reads it, over the mesh the insertion would leave: every point in the art frame's world (y up,
+ * `cropToSpineY` on the frame's height), every triangle's area by `triangleAreas`, and the band by `areaBand` over all of
+ * them — the larger of 1e-6 of the largest triangle and the float32 noise bound of the coordinates. The row reads a
+ * triangle from its smallest canonical index, which is not known before the mesh is canonicalised, so a fresh triangle
+ * is read from each of its three corners and the smallest magnitude is the one compared: a triangle that any reading
+ * puts within the band is refused. `fresh` uses `NEW_VERTEX` for the inserted vertex; `replaced` are the triangles it
+ * takes the place of.
+ */
+function degenerateInsertion(run: Run, p: Pt, replaced: ReadonlySet<readonly number[]>, fresh: ReadonlyArray<[number, number, number]>): DegenerateWrite | null {
+  const { work } = run;
+  const height = run.input.art.frame.height;
+  const slot = new Map<number, number>();
+  const world: number[] = [];
+  for (let id = 0; id < work.pos.length; id++) {
+    if (!work.alive[id]) continue;
+    slot.set(id, world.length / 2);
+    world.push(work.pos[id][0], cropToSpineY(work.pos[id][1], height));
+  }
+  slot.set(NEW_VERTEX, world.length / 2);
+  world.push(p[0], cropToSpineY(p[1], height));
+  const flat: number[] = [];
+  for (const tri of work.triangles) if (!replaced.has(tri)) for (const id of tri) flat.push(slot.get(id)!);
+  for (const tri of fresh) for (const id of tri) flat.push(slot.get(id)!);
+  const band = areaBand(triangleAreas(world, flat), world) * (run.plant === 'degenerate-band-widened' ? 1000 : 1);
+  for (const tri of fresh) {
+    const [i, j, k] = tri.map((id) => slot.get(id)!);
+    const area = Math.min(...triangleAreas(world, [i, j, k, j, k, i, k, i, j]).map(Math.abs));
+    if (area <= band) return { corners: tri, area, band };
+  }
+  return null;
+}
+
+/**
+ * Issue #1311: the refinement's stop when the insertion its rule chose would write a triangle `MQ_DEGENERATE` refuses —
+ * by name: the target row, the region, the insertion, the triangle's corners with their distance from the region's
+ * polygon, its area and the band required. The refinement writes no triangle the row refuses: a refined source that
+ * failed that row could take no step at all, and the failure would name a triangle rather than the insertion that made
+ * it.
+ */
+function degenerateStop(run: Run, canon: Canonical, target: MeasureRow, region: RefinementRegion, what: string, p: Pt, found: DegenerateWrite): PhaseEnd {
+  const corner = (id: number): string => {
+    const at = id === NEW_VERTEX ? p : run.work.pos[id];
+    const name = id === NEW_VERTEX ? 'the inserted vertex' : `vertex ${canon.indexOf.get(id)!}`;
+    const where = inClosedPolygon(at, region.polygon) ? 'in the polygon' : `${r6(distanceToBoundary(at, region.polygon))} px from the polygon`;
+    return `${name} (${at[0]}, ${at[1]}), ${where}`;
+  };
+  return {
+    kind: 'stuck',
+    constraint:
+      `${rowName(target)} (${what} at (${p[0]}, ${p[1]}) would write the triangle of ${found.corners.map(corner).join('; ')} — ` +
+      `area ${r6(found.area)} px², which MQ_DEGENERATE reads as degenerate: required an area above the row's band ${r6(found.band)} px² ` +
+      `(the larger of the float32 noise bound of the mesh's coordinates and 1e-6 of its largest triangle); ` +
+      `region "${region.name}" has a ${region.transition} px band, and the refinement writes no triangle the row refuses)`,
+  };
+}
+
+/** The triangles a split of a–b replaces, and what it writes in their place with `NEW_VERTEX` inserted. */
+function splitPlan(run: Run, a: number, b: number): { replaced: Set<readonly number[]>; fresh: Array<[number, number, number]> } {
+  const replaced = new Set<readonly number[]>();
+  const fresh: Array<[number, number, number]> = [];
+  for (const tri of run.work.triangles) {
+    const pieces = splitPieces(tri, a, b, NEW_VERTEX);
+    if (pieces === null) continue;
+    replaced.add(tri);
+    fresh.push(...pieces);
+  }
+  return { replaced, fresh };
+}
+
+/** Issue #1311: what a split of a–b at `p` would write that the row refuses, or null — always null under the control's plant. */
+function degenerateSplit(run: Run, a: number, b: number, p: Pt): DegenerateWrite | null {
+  if (run.plant === 'refinement-writes-degenerate') return null;
+  const { replaced, fresh } = splitPlan(run, a, b);
+  return degenerateInsertion(run, p, replaced, fresh);
 }
 
 type PhaseEnd =
@@ -1346,7 +1459,15 @@ export type ReductionPlant =
   | 'floor-half-a-pixel-short'
   | RetriangulationPlant
   | OrderPlant
-  | AmplitudePlant;
+  | AmplitudePlant
+  | RefinementPlant;
+
+/**
+ * Issue #1311's faults in the refinement: the insertion its rule chose written without asking whether it writes a
+ * triangle `MQ_DEGENERATE` refuses — the refinement as it was before the check; and the check reading the row's band
+ * a thousand times as wide, so it refuses insertions the row would pass.
+ */
+export type RefinementPlant = 'refinement-writes-degenerate' | 'degenerate-band-widened';
 
 /**
  * Issue #1283's faults in the triangulation post-pass: the pass run on a call that did not opt in; the pass skipped
@@ -1400,7 +1521,9 @@ export type AttemptObserver = (attempt: AttemptRecord) => void;
  * `MQ_TRANSITION` that the refinement can act on passes. One insertion per
  * measurement: the first failing region row in report order has its worst edge
  * split. A band no edge lies in leaves `MQ_TRANSITION` not-measurable (B1's
- * definition) and is not something an insertion is aimed at.
+ * definition) and is not something an insertion is aimed at. An insertion that
+ * would write a triangle `MQ_DEGENERATE` refuses is not made: the refinement
+ * stops there by name (issue #1311, `degenerateStop`).
  */
 function refineRegions(run: Run): PhaseEnd {
   const regions = new Map(run.input.targets.regions.map((r) => [r.name, r]));
@@ -1416,7 +1539,16 @@ function refineRegions(run: Run): PhaseEnd {
     const region = regions.get(target.object.region!)!;
     if (target.state === 'not-measurable') {
       const p: Pt = [r6(region.polygon[0][0]), r6(region.polygon[0][1])];
-      if (!insertPoint(run, p)) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no triangle holding the region's first vertex)` };
+      const at = placementOf(run, p);
+      if (at === null) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no triangle holding the region's first vertex)` };
+      const found =
+        run.plant === 'refinement-writes-degenerate'
+          ? null
+          : at.kind === 'edge'
+            ? degenerateSplit(run, at.a, at.b, p)
+            : degenerateInsertion(run, p, new Set([at.tri]), fanPieces(at.tri, NEW_VERTEX));
+      if (found !== null) return degenerateStop(run, canon, target, region, `inserting region "${region.name}"'s first vertex`, p, found);
+      insertPoint(run, p, at);
       followSkinning(run, 'insertion');
       if (accept(run, 'insertion', [])) return { kind: 'replayed' };
       continue;
@@ -1432,6 +1564,8 @@ function refineRegions(run: Run): PhaseEnd {
       if (inRegionOrBand(run.work.pos[outer], region)) continue;
       const q = outerSplit(run.work.pos[inner], run.work.pos[outer], region);
       if (q === null) continue;
+      const found = degenerateSplit(run, a, b, q);
+      if (found !== null) return degenerateStop(run, canon, target, region, `splitting edge ${ra}–${rb} where it leaves region "${region.name}"'s band`, q, found);
       splitEdge(run, a, b, q);
       followSkinning(run, 'insertion');
       exited = true;
@@ -1462,6 +1596,8 @@ function refineRegions(run: Run): PhaseEnd {
     }
     const p = splitPoint(run.work.pos[a], run.work.pos[b], region);
     if (p === null) return { kind: 'stuck', constraint: `${rowName(target)} (the refinement found no point of edge ${ra}–${rb} strictly between its ends inside region "${region.name}" or its band)` };
+    const found = degenerateSplit(run, a, b, p);
+    if (found !== null) return degenerateStop(run, canon, target, region, `splitting edge ${ra}–${rb} inside region "${region.name}" or its band`, p, found);
     splitEdge(run, a, b, p);
     followSkinning(run, 'insertion');
     if (accept(run, 'insertion', [])) return { kind: 'replayed' };

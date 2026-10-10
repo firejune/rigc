@@ -1592,6 +1592,47 @@ art bounds, the coordinate grid or the budget can each leave a target unmet,
 and the result is then `accepted: false` with the blocking constraint or a
 budget termination (`MQ54`).
 
+[implemented, #1311] **The refinement writes no triangle `MQ_DEGENERATE`
+refuses.** Before each insertion — the split where an edge leaves the band,
+the split nearest the midpoint, and a region's first vertex — the refinement
+reads the triangles it would write as the row reads them: over the mesh the
+insertion would leave, in the frame's world (`cropToSpineY`), by
+`triangleAreas` and `areaBand` (`src/areaband.ts`), each fresh triangle from
+all three of its corners since the canonical rotation is not known yet, the
+smallest magnitude compared. When one is within the band the insertion is not
+made and the refinement stops by name: the target row, the insertion and its
+kind, the triangle's three corners each with its distance from the region's
+polygon, its area and the band required. The rule it replaces wrote the
+insertion and left the row to fail on the refined source — a refined source
+over `MQ_DEGENERATE` can take no step, and its termination named a triangle,
+or, behind another stop, nothing at all. No bound, tolerance or band moved;
+P15, P16 and the convergence clause above stand as they were (a target the
+stop leaves unmet is `accepted: false`, never a pass).
+[measured, #1311] The cause, on the issue's public input (demo/bottomwear at
+the trial's policy, region `density` as an axis-aligned square of half side
+45.9609375 px, `L0` 18, band 65, grade 0.2769): the three triangles were
+`(216, 468)`, `(216.460932, 467.539068)`, `(216, 467.539068)` and the two
+like it at `(252, 468)` and `(288, 468)` — source vertex 450 lies 0.460932 px
+inside the band's outer boundary (64.539063 px from the square), two of its
+edges leave the band, and steps 109 and 219 split each where it leaves, the
+second writing a right triangle of 0.106229 px² against a band of 0.113511
+px² (the float32 noise bound of a mesh reaching 690 px; 1e-6 of its largest
+triangle is 0.001). The issue's reading — the square's side coincident with
+lattice edges at 1/256 px — is refuted: the side lies 64.54 px from that row,
+and the same square shifted 1/256 px, turned 1°, 3° or 7° writes 3, 3, 2 and 1
+such triangles. The circle (the regular 287-gon) passed on margin, not by
+construction: its thinnest triangle reads 0.140 px² against the same 0.1135.
+On that instance no other placement exists: every point of the two edges P16
+allows lies within 0.460932 px of the vertex, so no pair of splits gives the
+triangle more than 0.5 × 0.460932² = 0.106 px² — which is why the rule
+refuses and names rather than moving the split. The square now stops at step
+219 naming that triangle, `MQ_DEGENERATE` 0 on the returned, unaccepted mesh.
+The recorded synthetic "tiny region, coarse source" call was the second
+instance: its refinement wrote 26 degenerate triangles (a split nearest the
+midpoint landing on the line of an existing edge) while its termination named
+a later P16 stop; it now stops at the first, by name. Every other call of §9's
+population was unchanged byte for byte (*Stage controls*: `MQ156`–`MQ158`).
+
 **Changed since v2.19.0** ([#1229](https://github.com/firejune/rigc/issues/1229),
 rig-parts#126 comment 6045645512, option 1). Which edges `MQ_MAX_EDGE` and
 `MQ_TRANSITION` hold is the only row semantics that moved; no emitted byte
@@ -5874,6 +5915,24 @@ The exemption agreed on rig-parts#126 (comment 6045645512) and built in
 - `MQ52_OVERLAPPING_BANDS_ARE_READ_INDEPENDENTLY_AN_EDGE_EXEMPT_FROM_ONE_REGION_IS_STILL_HELD_BY_THE_OTHER`
 - `MQ53_WITH_TRANSITION_ZERO_A_BOUNDARY_CONTACT_IS_HELD_AND_AN_INFEASIBLE_REFINEMENT_IS_NAMED_NOT_LOOPED`
 - `MQ54_A_REFINEMENT_LIMITED_BY_ITS_BUDGET_OR_A_MINIMUM_ANGLE_IS_NOT_ACCEPTED_AND_NAMES_WHICH`
+
+No degenerate triangle written by the refinement
+([#1311](https://github.com/firejune/rigc/issues/1311), [implemented]) — an
+8 × 8 lattice under a square whose band passes 1/64 px beyond a lattice row,
+the same shifted 1/256 px and turned 2°, and the coarse 12 px lattice under a
+4 px square:
+
+- `MQ156_CONTROL_THE_REFINEMENT_AS_IT_WAS_WRITES_DEGENERATE_TRIANGLES_ON_A_SQUARE_WHOSE_BAND_PASSES_A_HAIR_BEYOND_A_LATTICE_ROW_SHIFTED_OR_TURNED`
+  (the plant `refinement-writes-degenerate`, the rule before the check: 4, 4,
+  2 and 26 degenerate triangles)
+- `MQ157_THE_REFINEMENT_WRITES_NO_TRIANGLE_MQ_DEGENERATE_REFUSES_AND_ITS_STOP_NAMES_THE_INSERTION_THE_TRIANGLE_AND_THE_BAND`
+  (the named corners re-read by the test's own area, the refused insertion
+  found in the plant's mesh inside a triangle under the named band; the plant
+  fails the same reading on all four)
+- `MQ158_WHERE_NO_INSERTION_WRITES_A_DEGENERATE_TRIANGLE_THE_REFINEMENT_IS_THE_ONE_BEFORE_THE_CHECK_BYTE_FOR_BYTE`
+  (the band 1/16 px beyond the row, the square turned 5°, a regular 16-gon:
+  refined, reduced and accepted, identical to the plant; the plant
+  `degenerate-band-widened` changes all three)
 
 The decisions that change behaviour rather than an interface:
 
