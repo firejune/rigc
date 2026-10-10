@@ -716,6 +716,25 @@ named one. What the reducer half adds beside it on `rig-c/mesh` —
 promised; `carrierIn`, `resolveCarriers` and `CONTAINS` in
 `src/meshcarriers.ts` are on no entry at all.
 
+The over-bound report on a comparison
+([#1315](https://github.com/firejune/rigc/issues/1315)) is additive on the
+agreed rows' types: `MotionComparisonInput.overBound`
+(`OverBoundRequest`, `{ maxSamples, triangles }`) is a new optional input;
+set, each candidate's report gains `CandidateReport.overBound`
+(`OverBoundReport | null`) — the samples over each declared local-deformation
+bound with the candidate triangle that carries them, and each triangle's
+worst value of every declared motion row over the selection frames — and
+`effective.overBound`, the echo. `null` is refused, as is any partial
+request. A call without the field writes every byte as before — measured
+against `5896cc7` on every call the `mesh-compare` suite makes without it, 165 of
+165 (123 posed, 19 with no schedule, 23 refusals)
+(docs/MESH_REDUCTION.md, §10 *Implemented — the over-bound report*).
+`OverBoundRequest`, `OverBoundReport`, `OverBoundRow`, `OverBoundSample` and
+`TriangleMaxima` are reached through the recorded `MotionComparisonInput` and
+`CandidateReport`; the smoke records no new name, because no dependant has
+named one. `OverBoundPlant`, a member of `ComparePlant`, is the suite's plant,
+merely exported, so by the rule above not promised.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says

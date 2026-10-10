@@ -547,8 +547,67 @@ export interface CandidateReport {
   accepted: boolean;
   /** Opt-in (P7): every row's value at every frame. Absent unless asked for. */
   perFrame?: Array<{ code: string; frame: string; value: number | null }>;
+  /**
+   * Issue #1315, a comparison's candidate only: present exactly when the input set `overBound` — the samples over each
+   * declared motion bound with the candidate triangle that carries them, and each triangle's worst value of each motion
+   * row over the selection frames. Null when no motion section was measured (no schedule). Absent otherwise.
+   */
+  overBound?: OverBoundReport | null;
   /** A `reduce` whose result exists: what the operation changed. Absent on a `measure` and when no mesh is returned. */
   changes?: ReductionChanges;
+}
+
+/**
+ * Issue #1315: what `MotionComparisonInput.overBound` asks for — how many over-bound samples each row lists at most,
+ * worst first (a whole number, 1 or more; no default), and which triangles the per-triangle table lists: those over
+ * the row's bound, or every triangle that has a reading. Echoed in `effective` when set.
+ */
+export interface OverBoundRequest {
+  maxSamples: number;
+  triangles: 'over-bound' | 'all';
+}
+
+/**
+ * One sample over a motion bound (issue #1315): the sample by §3's id — an art pixel of the mask grid, or a reference
+ * hull vertex — with its UV; the frame its worst value over every frame walked was taken at (the first such frame in
+ * walk order), whose `role` says selection, held out or baseline; that value; and the candidate's UV triangle that
+ * carries the sample, by index and by its three vertex indices.
+ */
+export interface OverBoundSample {
+  at: { pixel?: [number, number]; vertex?: number; uv: [number, number] };
+  frame: FrameRef;
+  value: number;
+  triangle: number;
+  corners: [number, number, number];
+}
+
+/** One sample-taken motion row with a declared bound (issue #1315): every sample over it counted, the worst listed. */
+export interface OverBoundRow {
+  code: string;
+  attachment: AttachmentRef;
+  region: string | null;
+  bound: { op: '<=' | '>='; value: number };
+  /** Samples whose worst value over every frame walked fails the bound — all of them, whether or not they are listed. */
+  total: number;
+  /** At most `maxSamples` of them: worst first, then in §3's domain order (art pixels row by row, then hull vertices). */
+  samples: OverBoundSample[];
+}
+
+/** Each candidate triangle's worst value of one motion row over the selection frames (issue #1315). */
+export interface TriangleMaxima {
+  code: string;
+  attachment: AttachmentRef;
+  bound: { op: '<=' | '>='; value: number };
+  /** Worst first, then triangle index; over-bound triangles only, or every triangle with a reading, as asked. */
+  values: Array<{ triangle: number; value: number }>;
+}
+
+/** Issue #1315's report block on a compared candidate. */
+export interface OverBoundReport {
+  /** How many frames the selection named and the schedule walked — the frames `triangles` reads; 0 leaves every table empty. */
+  selectionFrames: number;
+  rows: OverBoundRow[];
+  triangles: TriangleMaxima[];
 }
 
 /**
@@ -635,6 +694,8 @@ export interface EffectiveSettings {
   removalOrder?: 'deformation-load';
   /** A measurement's `skinning`, echoed when the input set it — `null` included (issue #1294): the source by id and digest. Absent otherwise. */
   skinning?: SkinningEcho | null;
+  /** A comparison's `overBound`, echoed when the input set it (issue #1315); absent otherwise. */
+  overBound?: OverBoundRequest;
 }
 
 export interface MeshCounts {
@@ -2436,6 +2497,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     ...(e.retriangulate === undefined ? {} : { retriangulate: e.retriangulate }),
     ...(e.removalOrder === undefined ? {} : { removalOrder: e.removalOrder }),
     ...(e.skinning === undefined ? {} : { skinning: skinningEchoJson(e.skinning) }),
+    ...(e.overBound === undefined ? {} : { overBound: { maxSamples: e.overBound.maxSamples, triangles: e.overBound.triangles } }),
   };
 }
 
@@ -2557,6 +2619,7 @@ function candidateJson(c: CandidateReport): Json {
     accepted: c.accepted,
   };
   if (c.perFrame !== undefined) out.perFrame = c.perFrame.map((p) => ({ code: p.code, frame: p.frame, value: p.value }));
+  if (c.overBound !== undefined) out.overBound = overBoundJson(c.overBound);
   if (c.changes !== undefined) {
     const k = c.changes;
     out.changes = {
@@ -2583,6 +2646,29 @@ function candidateJson(c: CandidateReport): Json {
     };
   }
   return out;
+}
+
+function overBoundJson(o: OverBoundReport | null): Json {
+  if (o === null) return null;
+  const boundJson = (b: { op: '<=' | '>='; value: number }): Json => ({ op: b.op, value: b.value });
+  return {
+    selectionFrames: o.selectionFrames,
+    rows: o.rows.map((r) => ({
+      code: r.code,
+      attachment: attachmentJson(r.attachment),
+      region: r.region,
+      bound: boundJson(r.bound),
+      total: r.total,
+      samples: r.samples.map((x) => {
+        const at: { [key: string]: Json } = {};
+        if (x.at.pixel !== undefined) at.pixel = pair(x.at.pixel);
+        if (x.at.vertex !== undefined) at.vertex = x.at.vertex;
+        at.uv = pair(x.at.uv);
+        return { at, frame: frameRefJson(x.frame), value: x.value, triangle: x.triangle, corners: [x.corners[0], x.corners[1], x.corners[2]] };
+      }),
+    })),
+    triangles: o.triangles.map((t) => ({ code: t.code, attachment: attachmentJson(t.attachment), bound: boundJson(t.bound), values: t.values.map((v) => ({ triangle: v.triangle, value: v.value })) })),
+  };
 }
 
 const notReachedJson = (s: StopNotReached | undefined): { [key: string]: Json } =>

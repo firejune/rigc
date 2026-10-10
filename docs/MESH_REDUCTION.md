@@ -609,6 +609,35 @@ export interface CandidateReport {
   accepted: boolean;
   /** Opt-in (P7): every row's value at every frame. Absent unless asked for. */
   perFrame?: Array<{ code: string; frame: string; value: number | null }>;
+  /** [implemented, #1315] A comparison's candidate, opt-in (`MotionComparisonInput.overBound`): where its motion rows
+   *  broke. Absent unless asked for; null when no motion section was measured; never on `reference`. */
+  overBound?: OverBoundReport | null;
+}
+
+/** [implemented, #1315] The request: the most samples listed per row (a whole number >= 1, no default) and which
+ *  triangles the per-triangle table lists. `null` and anything partial are refused (`COMPARE_INPUT_MISSING`, naming
+ *  `overBound`, `overBound.maxSamples` or `overBound.triangles`) before any build is read. */
+export interface OverBoundRequest { maxSamples: number; triangles: 'over-bound' | 'all' }
+
+export interface OverBoundReport {
+  /** Frames the selection named and the schedule walked — the frames `triangles` reads; 0 leaves every table empty. */
+  selectionFrames: number;
+  /** `MQ_LOCAL_DEFORMATION`'s attachment row, then each measured region's (by name), per attachment in skeleton order. */
+  rows: Array<{ code: string; attachment: AttachmentRef; region: string | null; bound: { op: '<=' | '>='; value: number };
+    /** Samples whose worst value over every frame walked fails the bound — all of them, listed or not. */
+    total: number;
+    /** At most `maxSamples`: worst first, then §3's domain order (art pixels row by row, then hull vertices). */
+    samples: Array<{ at: { pixel?: [number, number]; vertex?: number; uv: [number, number] };
+      /** The frame of the sample's worst value (the first such, in walk order); `role` says selection or held out. */
+      frame: FrameRef; value: number;
+      /** The candidate's UV triangle that carries the sample (§3), by index and by its three vertex indices. */
+      triangle: number; corners: [number, number, number] }> }>;
+  /** Per attachment, each motion row with a declared bound, codes in row order (`MQ_INVERSION`: the selection frames
+   *  the triangle is reversed at; `MQ_LOCAL_DEFORMATION`: the largest distance of a sample it carries; `MQ_SQUASH`,
+   *  `MQ_STRETCH`: the smallest and largest singular value) — over the selection frames only. Worst first, then
+   *  triangle index; the over-bound triangles, or with `triangles: 'all'` every triangle with a reading. */
+  triangles: Array<{ code: string; attachment: AttachmentRef; bound: { op: '<=' | '>='; value: number };
+    values: Array<{ triangle: number; value: number }> }>;
 }
 
 export interface MeshQualityReport {
@@ -642,6 +671,8 @@ export interface EffectiveSettings {
   boneOrder: string[] | null;
   schedule: MotionSchedule | null;
   budget: { maxCandidates: number } | null;
+  /** [implemented, #1315] A comparison's `overBound`, echoed when set; absent otherwise. */
+  overBound?: OverBoundRequest;
 }
 
 export interface MeshCounts {
@@ -5454,6 +5485,59 @@ field, since a full list is as large as the art. On the fixture the size of the 
 108); on the example parts it is 41 % of the kept vertices under the stand-in, and on demo/bottomwear the first
 failure falls inside the boundary runs, so the set to protect there would be boundary vertices, not interior ones.
 
+### Implemented — the over-bound report [implemented, #1315]
+
+**What the comparison now carries.** `MotionComparisonInput.overBound?: { maxSamples, triangles }` (§2, the schema)
+asks each candidate's report for an `overBound` block: for `MQ_LOCAL_DEFORMATION`'s attachment row and each measured
+region's, **every sample whose worst distance over the frames walked fails the bound is counted** (`total`), and at most
+`maxSamples` are listed worst first — each by its §3 id (an art pixel or a reference hull vertex) and UV, the frame of
+its worst value with its role (selection, held out or baseline), the value, and **the candidate's UV triangle that
+carries it**, by index and by its three vertex indices; and, per attachment, **each triangle's worst value of every
+declared motion row over the selection frames** (`MQ_INVERSION`: the selection frames it is reversed at;
+`MQ_LOCAL_DEFORMATION`: the largest distance of a sample it carries; `MQ_SQUASH` / `MQ_STRETCH`: its singular values),
+the over-bound triangles or, with `triangles: 'all'`, every triangle with a reading. The carriers are the ones the row
+was already computed from; the block is bookkeeping beside them, and nothing else moves — no row, verdict, acceptance
+or byte of a call without the field. `MQ_INVERSION`'s worst triangle on the row stays as it was. Held by `MQ152`–`MQ155`
+(*Stage A controls*).
+
+**Measured — the localisation premise does not hold as stated [measured, #1315].** The card's control (a) was that the
+source vertices the over-bound samples' triangles span are a strict subset of the vertices the rewind keeps (the
+replay's kept set less the full run's). On the fixture, the trial policy's full run (100/0, refused at 1.647442) has
+**878 samples over the bound, carried by 4 of its triangles**, which span **8 source vertices — all boundary — and 0 of
+the rewind's 8** (the rewind keeps interior source vertices 123, 141, 161, 168, 182, 189, 203, 210). The intersection
+is empty by construction rather than by measurement: a candidate's triangles span only vertices that candidate kept,
+and the rewind's set is by its definition what the full run removed. So control (a) was not written.
+
+Read spatially instead — the source vertices whose UV lies inside those 4 triangles — the over-bound region holds **24
+source vertices, 15 of them interior, and only 3 of the rewind's 8**. Protecting those 15 (`protect.vertices`, the trial
+policy otherwise) gives **100/15 (115), which still fails motion at 1.380337 px**; protecting the rewind's 8 gives 100/8
+(108), accepted at 0.837721 px — the replay's count. On this fixture, then, the vertices motion needs are not the ones
+under the broken art: 5 of the 8 lie outside the over-bound triangles. A localised retry that protects what lies under
+the over-bound samples protects more than the rewind and still fails, so the next card cannot take this set as its
+protection unchanged. (Machine: darwin, Apple M4, load 25–30; every count is the tree's.)
+
+**Opt-out bytes [measured, #1315].** Every call the `mesh-compare` suite makes without the field was run
+through both trees — this one and `5896cc7`, the tree before it — and the two texts compared: **165 of 165 the same**,
+123 posed comparisons (one of them under a #1291 amplitude plant), 19 with no schedule (three under #1291's plants),
+and 23 refusals with the same code and message — every fixture the suite poses, on darwin; the unit-by-unit split was
+not recorded. The stage-D1 record cannot widen this: its inputs carry no rig, so nothing there can be posed. In
+suite, `MQ154` holds the shape of that comparison on the fixture and the ramp.
+
+**Cost [measured, #1315].** `MQ154`'s two calls, with and without the field (with it: `maxSamples` 3),
+three calls each per process, three processes per mode alternated, on Nova's pool (WSL2, 20 threads, Bun 1.4.2, load
+0.3–0.7); the medians of the three per-process medians, the report's text written in each:
+
+| subject | frames | without | with | per frame |
+| --- | --- | --- | --- | --- |
+| the trial full run, grid selected | 99 | 598.5 ms | 657.3 ms | 6.05 → 6.64 ms (+9.8 %) |
+| `MQ79`'s strict result, all held out | 50 | 42.8 ms | 48.9 ms | 0.856 → 0.978 ms (+14 %) |
+
+Peak resident set per process 369–381 MB without and 364–377 MB with — the field's arrays (12 bytes a sample and 38 a
+triangle, made only when asked) are below the spread between runs. The same pairs on darwin (Apple M4, load 17–26)
+moved by up to 3× between runs of one mode and are not stated. So the bookkeeping is not free: about a tenth on the
+call, from the two typed-array writes it adds to every sample at every frame; a call without the field skips all of
+it.
+
 ### What #155's density-only regions need from rigc
 
 `RefinementRegion` as it stands is enough to test a field: a polygon with a `maxEdgeLength` is a density floor
@@ -5479,6 +5563,8 @@ Numbered afresh for #1302; cited as "§10 Q1" and so on.
 - **Q3.** A localised fallback needs the samples or triangles that broke the bound. Does rig-parts want an opt-in
   field on the comparison's report carrying them (per failing candidate: samples over the bound with their carrying
   triangle, or a per-triangle maximum over the selection frames), and would it then drive `protect.vertices` itself?
+  *The field exists since #1315 (`overBound`); on the fixture the vertices under the over-bound triangles are not the
+  ones motion needs (*Implemented — the over-bound report*), so the second half stands open.*
 - **Q4.** Relocation (§8 Q5) was declined for deform keys and weight transfer. For automatic meshes, which carry no
   `vertices` deform key and whose weights the dependant generates from a field, is a relocating boundary operation
   reconsidered — 26 of the 32 vertices between the fixture's trial result and its floor?
@@ -5682,6 +5768,23 @@ interior, refused in motion, and an outline vertex pushed 2 px out, refused by
 policy's runs go through the suite's memo; the unit measured 49 s alone on
 darwin (Apple M4, load 6–14), most of it the bisection's seven replays and
 comparisons and the outline search.
+
+[implemented, #1315] §10's over-bound report, on the same fixture's trial-policy full run (`MQ144`'s, refused in
+motion) and `MQ79`'s ramp in the `mesh-compare` suite, each control a unit of its own (`MQ152` to `MQ155`, after
+`MQ150`–`MQ151`) and each read beside a plant that must make it fire (`OverBoundPlant`, a member of `ComparePlant`):
+`MQ152_THE_PER_TRIANGLE_MAXIMUM_AGREES_WITH_THE_ROWS_WORST_OVER_THE_SELECTION_AND_WITH_THE_WORST_SAMPLES_CARRYING_TRIANGLE`
+(the `irr` frames selected and `grid` held out, so the table and the listing read different frames; plants: a listed
+sample's triangle taken from the reference's carrier, and the table read over every frame),
+`MQ153_A_CAP_BELOW_THE_OVER_BOUND_COUNT_LISTS_THE_WORST_SAMPLES_FIRST_AND_STATES_THE_COUNT_OF_ALL_OF_THEM`
+(a cap of a quarter of the over-bound count; plants: the samples listed in domain order, and the total counted off the
+listed samples),
+`MQ154_WITHOUT_OVER_BOUND_A_POSED_COMPARISON_WRITES_THE_SAME_TEXT_AND_WITH_IT_ONLY_THE_BLOCK_AND_THE_ECHO_ARE_ADDED`
+(on both subjects; plant: the field echoed when left out — the bytes against the tree before it are measured out of
+suite, §10 *Implemented — the over-bound report*) and
+`MQ155_A_MALFORMED_OVER_BOUND_REQUEST_IS_REFUSED_NAMING_THE_FIELD_BEFORE_ANY_BUILD_IS_READ`
+(`null`, a number, `maxSamples` 0, 2.5 or left out, `triangles` `'some'` or left out, each beside an unreadable model;
+plant: the field not validated). The card's control (a) — the listed triangles' vertices a subset of the rewind's — is
+not among them: §10 measured it empty by construction, and records what the set is instead.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
