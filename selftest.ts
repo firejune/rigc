@@ -680,6 +680,7 @@ import {
   segmentsFixture,
   type Fixture,
 } from './fixtures/public.ts';
+import { BLINK, BLINK_BOUND, BLINK_T, blinkAlpha, blinkEdgeSamples, blinkReductionInput, blinkShare, blinkSource, carriedShare as blinkCarriedShare, edgeDisplacement as blinkEdgeDisplacement, simplifiedLine } from './fixtures/blink.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
 import {
@@ -48862,6 +48863,245 @@ function runMeshQualitySuite(): number {
       probeDetail(held, probes, `${lines.join('')}; planted gradation-ignored (the need relaxed at 0.75 whatever is declared): ${ignored.join('; ')}`),
       'issue #1291: whether G could leave the declaration — a derivation that drops it has to be one of its limits or a constant, and the limits each lose a separation §8 relies on while the order of two readings already moves inside the range the six fixtures allow',
     );
+  }
+
+  // --- MQ162–MQ165 (#1326): an interior feature line — the current API's three readings, on the synthetic blink -----
+  //
+  // fixtures/blink.ts rebuilds rig-parts#160's blink from rig-c alone: a block with a 24 × 6 hole whose upper edge is
+  // the lid's, a lid bone whose share falls from 1 at the upper edge to 0 at the lower, and a translation by the
+  // hole's height that closes it. The dense reference is the rule at every point; a mesh's edge displacement is
+  // |w̄(p) − rule(p)|·|T| along the hole's ring (`edgeDisplacement`, the fixture's own reading, not the module's). Three
+  // sources: lattices at 8 and 4 px (no vertex can sit on the edge) and the 8 px lattice with the ring's grid lines
+  // added (`blinkSource(8, 4)` — every ring edge a grid edge by construction). Each control states a fact of the API as
+  // it stands; docs/MESH_REDUCTION.md §11 is the contract the line row would be written against, and nothing here
+  // implements it.
+  {
+    const blinkPlate = mqMask(dir, 'blink', BLINK.width, BLINK.height, (x, y) => blinkAlpha(x, y) / 255);
+    const blinkFrame = mqFrame(BLINK.width, BLINK.height);
+    const samples = blinkEdgeSamples();
+    /** The weights are on the six-place grid, so a figure derived by hand is compared within ten of its units. */
+    const EPS = 1e-5;
+    const lattice8 = blinkSource(8, null);
+    const lattice4 = blinkSource(4, null);
+    const lined = blinkSource(8, 4);
+    const ring = lined.line;
+    const [hx, hy, hw, hh] = BLINK.hole;
+    const corners: MqPt[] = [[hx, hy], [hx + hw, hy], [hx + hw, hy + hh], [hx, hy + hh]];
+    const onRing = (p: MqPt): boolean => corners.some((c, k) => mqPointSegment(p, c, corners[(k + 1) % 4]) <= 1e-9);
+    /**
+     * The lattice error by hand: rows at multiples of s, the upper edge `a` px below the row above it; the rule is 1 down
+     * to the edge and falls by 1/hh a px after it, so the row below carries (s − a)/hh less, the edge interpolates a/s of
+     * that, and |T| = hh turns a share into px — a(s − a)/s.
+     */
+    const byHand = (s: number): number => {
+      const a = hy - Math.floor(hy / s) * s;
+      return ((a / s) * (s - a) * (1 / hh)) * Math.hypot(BLINK_T[0], BLINK_T[1]);
+    };
+    const triangleEdges = (triangles: readonly number[]): Set<string> => {
+      const out = new Set<string>();
+      for (let t = 0; t + 2 < triangles.length; t += 3) for (let k = 0; k < 3; k++) {
+        const a = triangles[t + k];
+        const b = triangles[t + ((k + 1) % 3)];
+        out.add(`${Math.min(a, b)},${Math.max(a, b)}`);
+      }
+      return out;
+    };
+    const reduceBlink = (label: string, source: SourceMesh, protect: Partial<ProtectedFeatures>, maxResidual: number | null): { mesh: ReducedMesh | null; report: MeshQualityReport } =>
+      mqReduce(`blink ${label}`, blinkReductionInput(blinkPlate, source, protect, maxResidual));
+    const keptOf = (mesh: ReducedMesh, vertices: readonly number[]): number[] => vertices.filter((v) => mesh.indexMap[v] !== null);
+    /** The kept line as a closed chain through its surviving vertices in ring order, and the furthest removed line vertex from it — the test's own geometry. */
+    const chainDeviation = (mesh: ReducedMesh): number => {
+      const kept = keptOf(mesh, ring).map((v) => lined.mesh.points[v]);
+      if (kept.length < 2) return Infinity;
+      let worst = 0;
+      for (const v of ring) {
+        if (mesh.indexMap[v] !== null) continue;
+        let d = Infinity;
+        for (let k = 0; k < kept.length; k++) d = Math.min(d, mqPointSegment(lined.mesh.points[v], kept[k], kept[(k + 1) % kept.length]));
+        worst = Math.max(worst, d);
+      }
+      return worst;
+    };
+    const verdictOf = (report: MeshQualityReport): string => `${report.candidates[0]?.accepted}/${report.candidates[0]?.geometry?.verdict}`;
+    const lineEdges = ring.map((v, k): [number, number] => [v, ring[(k + 1) % ring.length]]);
+    const simplified = simplifiedLine(lined, BLINK_BOUND);
+
+    // --- MQ162: the fixture — three valid sources, a line of source edges, and a reader that reads the line ---
+    {
+      const probes: string[] = [];
+      const fit: ArtFitBounds = { minCoverage: 1, maxOvershoot: 2, maxUndercut: 0 };
+      for (const [label, src] of [
+        ['lattice 8', lattice8],
+        ['lattice 4', lattice4],
+        ['lined', lined],
+      ] as const) {
+        const rep = measureMeshQuality(mqInput(blinkPlate, blinkFrame, src.mesh, { artFit: fit, maxBoundaryDeviation: 1, regions: [] }, { referenceHull: src.mesh.points.slice(0, src.mesh.hull) }));
+        if (rep.candidates[0]?.geometry?.verdict !== 'pass') probes.push(`${label}: the source's own measurement is ${rep.candidates[0]?.geometry?.verdict}, not pass`);
+        src.mesh.points.forEach((p, v) => {
+          const w = src.mesh.weights?.[v] ?? [];
+          const lid = w.find((e) => e.bone === 'lid')?.weight ?? 0;
+          const sum = w.reduce((n, e) => n + e.weight, 0);
+          if (Math.abs(lid - blinkShare(p)) > EPS || Math.abs(sum - 1) > EPS) probes.push(`${label}: vertex ${v} at (${p.join(', ')}) binds the lid at ${lid} (sum ${sum}) against the rule's ${blinkShare(p)}`);
+        });
+        const read = blinkEdgeDisplacement(src.mesh, samples);
+        if (read.carried !== samples.length) probes.push(`${label}: ${read.uncarried} of ${samples.length} edge samples carried by no triangle`);
+      }
+      // The lid's edge is the ring's upper side: a lattice row never lies on it (y = 19 is no multiple of 8 or 4), which is the case the card names.
+      const onLidEdge = (p: MqPt): boolean => mqPointSegment(p, corners[0], corners[1]) <= 1e-9;
+      if (lattice8.mesh.points.some(onLidEdge) || lattice4.mesh.points.some(onLidEdge)) probes.push('a lattice source has a vertex on the lid\'s edge, so it is not the case the card names');
+      const onRingCount = lined.mesh.points.filter(onRing).length;
+      const edgesOfSource = triangleEdges(lined.mesh.triangles);
+      const notEdges = lineEdges.filter(([a, b]) => !edgesOfSource.has(`${Math.min(a, b)},${Math.max(a, b)}`));
+      if (ring.length !== onRingCount || ring.length < 3) probes.push(`the line lists ${ring.length} vertices; the test finds ${onRingCount} source vertices on the ring`);
+      if (notEdges.length > 0) probes.push(`${notEdges.length} consecutive pair(s) of the line are not source edges: ${notEdges.slice(0, 3).map((e) => e.join('–')).join(', ')}`);
+      if (!corners.every((c) => ring.some((v) => lined.mesh.points[v][0] === c[0] && lined.mesh.points[v][1] === c[1]))) probes.push('the line does not carry the hole\'s four corners');
+      const r8 = blinkEdgeDisplacement(lattice8.mesh, samples).max;
+      const r4 = blinkEdgeDisplacement(lattice4.mesh, samples).max;
+      const rl = blinkEdgeDisplacement(lined.mesh, samples).max;
+      if (Math.abs(r8 - byHand(8)) > EPS || Math.abs(r4 - byHand(4)) > EPS) probes.push(`the lattices read ${r8} and ${r4} px against ${byHand(8)} and ${byHand(4)} by hand`);
+      if (!(rl <= EPS)) probes.push(`the lined source reads ${rl} px, not 0`);
+      // The plant: the lined source with its line vertices' lid shares replaced by what the 8 px lattice carries there — a
+      // reader that did not read the line's weights would still print 0.
+      const borrowed: SourceMesh = {
+        ...lined.mesh,
+        weights: lined.mesh.points.map((p, v) => {
+          if (!ring.includes(v)) return lined.mesh.weights![v];
+          const s = blinkCarriedShare(lattice8.mesh, 'lid', p) ?? 0;
+          return [{ bone: 'lid', weight: s }, { bone: 'root', weight: 1 - s }];
+        }),
+      };
+      const planted = blinkEdgeDisplacement(borrowed, samples).max;
+      if (!(planted > BLINK_BOUND)) probes.push(`planted (the line's shares borrowed from the 8 px lattice): reads ${planted} px, not over ${BLINK_BOUND} — the reader does not see the line's weights`);
+      const held = probes.length === 0;
+      say(
+        'MQ162_THE_BLINK_FIXTURE_IS_THREE_VALID_SOURCES_A_LINE_OF_SOURCE_EDGES_AND_A_DENSE_REFERENCE_THAT_READS_THE_LATTICE_ERROR_DERIVED_BY_HAND',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `lattice 8: ${lattice8.mesh.hull}+${lattice8.mesh.points.length - lattice8.mesh.hull}, lattice 4: ${lattice4.mesh.hull}+${lattice4.mesh.points.length - lattice4.mesh.hull}, lined: ${lined.mesh.hull}+${lined.mesh.points.length - lined.mesh.hull} with a line of ${ring.length} vertices, every consecutive pair a source edge; each source passes its own art rows and binds the lid by the rule; on the ${samples.length} edge samples the lattices read ${r8.toFixed(6)} and ${r4.toFixed(6)} px (a(s − a)/s by hand: ${byHand(8)} and ${byHand(4)}), the lined source ${rl.toFixed(6)}; planted, the line's shares borrowed from the 8 px lattice read ${planted.toFixed(6)} px`,
+        ),
+        'issue #1326, item 1: the blink rig-parts#160 measured with rig-parts\'s builders, rebuilt from rig-c alone — a tensor grid makes the line a line without a triangulator, which rig-c does not have',
+      );
+    }
+
+    // --- MQ163: (a) no line — a lattice source cannot place the edge, and its reduction is accepted with the edge over the bound ---
+    {
+      const probes: string[] = [];
+      const lines: string[] = [];
+      for (const [s, src] of [
+        [8, lattice8],
+        [4, lattice4],
+      ] as const) {
+        const { mesh, report } = reduceBlink(`(a) lattice ${s}`, src.mesh, {}, BLINK_BOUND);
+        if (mesh === null) {
+          probes.push(`lattice ${s}: no mesh — ${mqSayEnd(report.termination)}`);
+          continue;
+        }
+        const before = blinkEdgeDisplacement(src.mesh, samples).max;
+        const after = blinkEdgeDisplacement(mesh, samples);
+        const removed = report.candidates[0]?.changes?.removedVertices ?? 0;
+        const residual = mqRow(report, 'MQ_SKINNING_RESIDUAL');
+        if (verdictOf(report) !== 'true/pass') probes.push(`lattice ${s}: accepted/verdict ${verdictOf(report)}`);
+        if (!(removed > 0)) probes.push(`lattice ${s}: nothing removed, so the reading is the source's and says nothing of the reduction`);
+        if (residual?.state !== 'pass') probes.push(`lattice ${s}: ${mqSay(residual)}`);
+        if (after.carried !== samples.length) probes.push(`lattice ${s}: ${after.uncarried} edge sample(s) uncarried`);
+        if (!(after.max >= before - EPS)) probes.push(`lattice ${s}: the result reads ${after.max} px, under the source's ${before}`);
+        if (s === 8 && !(after.max > BLINK_BOUND && Math.abs(after.max - byHand(8)) <= EPS)) probes.push(`lattice 8: the result reads ${after.max} px — required the source's ${byHand(8)} by hand, over ${BLINK_BOUND}`);
+        lines.push(`lattice ${s}: ${src.mesh.points.length} → ${mesh.points.length} vertices, accepted with ${mqSay(residual)}, edge ${before.toFixed(6)} → ${after.max.toFixed(6)} px`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ163_A_LATTICE_SOURCE_CANNOT_PLACE_THE_LID_EDGE_AND_ITS_REDUCTION_IS_ACCEPTED_WITH_THE_EDGE_WHERE_THE_LATTICE_PUT_IT',
+        held,
+        probeDetail(held, probes, `${lines.join('; ')} — every required row passes and the veto holds the result to its source, so nothing reads the dense reference: at 8 px the edge stays ${byHand(8)} px off it (over ${BLINK_BOUND}), and at 4 px the reduction moves it further than the source had it`),
+        'issue #1326, reading (a): rig-parts#160 measured 1.875 / 0.95 px on its lattice builds; the same holds of a lattice rig-c builds, because the veto bounds drift from the source, not from the rule',
+      );
+    }
+
+    // --- MQ164: (b) the line as protect.edges — every vertex it has survives, though its own simplification at the bound needs fewer ---
+    {
+      const probes: string[] = [];
+      const { mesh, report } = reduceBlink('(b) line edges', lined.mesh, { edges: lineEdges }, BLINK_BOUND);
+      const free = reduceBlink('(b) unprotected', lined.mesh, {}, BLINK_BOUND).mesh;
+      let detail = '';
+      if (mesh === null || free === null) probes.push(`no mesh: ${mqSayEnd(report.termination)}`);
+      else {
+        const kept = keptOf(mesh, ring);
+        const edges = triangleEdges(mesh.triangles);
+        const lost = lineEdges.filter(([a, b]) => {
+          const p = mesh.indexMap[a];
+          const q = mesh.indexMap[b];
+          return p === null || q === null || !edges.has(`${Math.min(p, q)},${Math.max(p, q)}`);
+        });
+        const edge = blinkEdgeDisplacement(mesh, samples).max;
+        const freeKept = keptOf(free, ring).length;
+        // The line's own shape: its simplification at the bound, and the furthest line vertex from that polygon.
+        const shape = simplified.map((v) => lined.mesh.points[v]);
+        const off = Math.max(...ring.map((v) => Math.min(...shape.map((p, k) => mqPointSegment(lined.mesh.points[v], p, shape[(k + 1) % shape.length])))));
+        if (verdictOf(report) !== 'true/pass') probes.push(`accepted/verdict ${verdictOf(report)}`);
+        if (kept.length !== ring.length) probes.push(`${kept.length} of ${ring.length} line vertices survive`);
+        if (lost.length > 0) probes.push(`${lost.length} line edge(s) are not result edges`);
+        if (!(edge <= EPS)) probes.push(`edge displacement ${edge} px, not 0`);
+        // The positive half: unprotected, the reduction does take line vertices — so the survival above is the protection's.
+        if (!(freeKept < ring.length)) probes.push(`unprotected, ${freeKept} of ${ring.length} line vertices survive — the protection is not what keeps them`);
+        if (!(simplified.length < ring.length && off <= EPS)) probes.push(`the line's simplification at ${BLINK_BOUND} px keeps ${simplified.length} of ${ring.length} with the rest ${off} px off it — not fewer at no deviation`);
+        detail = `${lined.mesh.points.length} → ${mesh.points.length} vertices, accepted; ${kept.length} of ${ring.length} line vertices and all ${lineEdges.length} line edges kept, edge ${edge.toFixed(6)} px; the line's simplification at ${BLINK_BOUND} px keeps ${simplified.length}, every other line vertex ${off} px off its polygon, so ${ring.length - simplified.length} of the kept vertices hold nothing of the line's shape; unprotected, ${freeKept} of ${ring.length} survive`;
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ164_A_LINE_PROTECTED_AS_EDGES_KEEPS_EVERY_VERTEX_IT_HAS_THOUGH_ITS_OWN_SIMPLIFICATION_AT_THE_BOUND_NEEDS_FEWER',
+        held,
+        probeDetail(held, probes, detail),
+        'issue #1326, reading (b): `protectionOf` adds both ends of every protected edge to the protected vertices, so a line kept as a line is kept whole — the all-or-nothing half of the gap rig-parts#160 named, against the hull, which `MQ_BOUNDARY_DEVIATION` lets thin under a bound',
+      );
+    }
+
+    // --- MQ165: (c) the simplified corners in protect.vertices — the line thins, and nothing but the veto bounds it ---
+    {
+      const probes: string[] = [];
+      const lines: string[] = [];
+      const { mesh, report } = reduceBlink('(c) corners', lined.mesh, { vertices: simplified }, BLINK_BOUND);
+      if (mesh === null) probes.push(`corners: no mesh — ${mqSayEnd(report.termination)}`);
+      else {
+        const kept = keptOf(mesh, ring);
+        const edge = blinkEdgeDisplacement(mesh, samples).max;
+        if (verdictOf(report) !== 'true/pass') probes.push(`corners: accepted/verdict ${verdictOf(report)}`);
+        if (!simplified.every((v) => mesh.indexMap[v] !== null)) probes.push('corners: a protected corner was removed');
+        if (!(kept.length < ring.length)) probes.push(`corners: ${kept.length} of ${ring.length} line vertices survive — the line did not thin`);
+        lines.push(`the ${simplified.length} corners protected: ${kept.length} of ${ring.length} line vertices kept, chain ${chainDeviation(mesh).toFixed(6)} px off the removed ones, edge ${edge.toFixed(6)} px, accepted`);
+      }
+      // The two-sided half: one corner left out, with the veto at the bound and declared absent. With it the edge stays
+      // within the bound; without it the corner goes, the edge leaves the bound and every required row still passes —
+      // so what holds the line is the veto, and no row reads the line itself.
+      const three = simplified.slice(0, -1);
+      const left = simplified[simplified.length - 1];
+      const VETO_ABSENT = null;
+      const runs = [
+        { said: `veto ${BLINK_BOUND} px`, veto: true, out: reduceBlink(`(c) three corners, veto ${BLINK_BOUND}`, lined.mesh, { vertices: three }, BLINK_BOUND) },
+        { said: 'veto absent', veto: false, out: reduceBlink('(c) three corners, veto absent', lined.mesh, { vertices: three }, VETO_ABSENT) },
+      ];
+      for (const { said, veto, out } of runs) {
+        if (out.mesh === null) {
+          probes.push(`three corners, ${said}: no mesh — ${mqSayEnd(out.report.termination)}`);
+          continue;
+        }
+        const edge = blinkEdgeDisplacement(out.mesh, samples).max;
+        const gone = out.mesh.indexMap[left] === null;
+        const residual = mqRow(out.report, 'MQ_SKINNING_RESIDUAL');
+        if (verdictOf(out.report) !== 'true/pass') probes.push(`three corners, ${said}: accepted/verdict ${verdictOf(out.report)}`);
+        if (veto && !(edge <= BLINK_BOUND && residual?.state === 'pass')) probes.push(`three corners, ${said}: edge ${edge} px, ${mqSay(residual)} — not held within ${BLINK_BOUND} by the veto`);
+        if (!veto && !(gone && edge > BLINK_BOUND && residual?.state === 'undeclared')) probes.push(`three corners, ${said}: the corner ${gone ? 'removed' : 'kept'}, edge ${edge} px, ${mqSay(residual)} — not over ${BLINK_BOUND} with the veto undeclared, so the claim that only the veto bounds the line is not shown`);
+        lines.push(`three corners, ${said}: the fourth ${gone ? 'removed' : 'kept'}, chain ${chainDeviation(out.mesh).toFixed(6)} px, edge ${edge.toFixed(6)} px, ${mqSay(residual)}, accepted ${out.report.candidates[0]?.accepted}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ165_A_LINE_THINNED_THROUGH_PROTECT_VERTICES_IS_BOUNDED_BY_NOTHING_BUT_THE_SKINNING_VETO',
+        held,
+        probeDetail(held, probes, lines.join('; ')),
+        'issue #1326, reading (c): protecting the simplified corners is the nearest the API comes to thinning a line under a bound, and it is not one — no row reads the line\'s deviation from itself; rig-parts#160\'s build (iv) is this reading on its ring source',
+      );
+    }
   }
 
   rmSync(dir, { recursive: true, force: true });
