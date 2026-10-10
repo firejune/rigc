@@ -430,6 +430,7 @@ import {
   type RemappedDeformKey,
   type ReplayPlant,
   type ReductionPlant,
+  type MeshReductionResult,
   type AttemptObserver,
   type AttemptRecord,
   type EdgeSetAudit,
@@ -47162,6 +47163,185 @@ function runMeshQualitySuite(): number {
       probeDetail(held, probes, `the coarse quad with a budget one under the ${quadInserted} insertions it needs: ${mqSayEnd(st)}, no mesh; with a 61° minimum angle: ${mqSayEnd(at)}, not accepted`),
       'rig-parts#126 (6045645512): no convergence is promised under arbitrary protection, minimum-angle or art bounds, coordinate precision or budget — a target left unmet is accepted false with a concrete blocking constraint or a budget termination',
     );
+  }
+
+  // --- MQ156–MQ158 (#1311): the refinement writes no triangle MQ_DEGENERATE refuses ---------------------------------
+  //
+  // The class, built small: an 8 × 8 lattice of 8 px cells, and a square region whose band's outer boundary passes a
+  // fraction of a pixel beyond a lattice row. Each of that row's vertices is then just inside the band with two edges
+  // leaving it, and the split where each edge leaves the band lands that fraction from the vertex — two such splits and
+  // the vertex make a triangle of half its square, under the area band the row reads. The second fixture is the coarse
+  // 12 px lattice under a 4 px square (rig-parts's synthetic "tiny region, coarse source", rebuilt here), where the
+  // point of an edge nearest its midpoint inside the region lands on the line of an existing edge.
+  {
+    const L8W = 72;
+    const L8 = mqGrid(4, 4, 68, 68, 8, 8, L8W, L8W);
+    const l8Mask = mqMask(dir, 'lattice8', L8W, L8W, (x, y) => (x >= 4 && x < 68 && y >= 4 && y < 68 ? 1 : 0));
+    const l8Frame = mqFrame(L8W, L8W);
+    const l8Input = (region: RefinementRegion): MeshReductionInput =>
+      mqReduceInput(L8, { art: { mask: l8Mask, threshold: 1, frame: l8Frame }, ...regionTargets(region), budget: { maxCandidates: 4000 } });
+    /** The square of half side 8 whose top side lies 6 − `inside` px below the lattice row y = 20, turned `deg`° about its centre: that row lies `inside` px within its 6 px band. */
+    const nearRow = (name: string, inside: number, deg: number): RefinementRegion => {
+      const [cx, cy, a] = [36, 20 + 6 - inside + 8, (deg * Math.PI) / 180];
+      const polygon = ([[-8, -8], [8, -8], [8, 8], [-8, 8]] as MqPt[]).map(([x, y]): [number, number] => [r6(cx + x * Math.cos(a) - y * Math.sin(a)), r6(cy + x * Math.sin(a) + y * Math.cos(a))]);
+      return { name, polygon, maxEdgeLength: 2, transition: 6, grade: 0.5, approximation: null };
+    };
+    /** A regular 16-gon about the same centre, circumscribed about radius 8 — a circle as a consumer hands one (P17). */
+    const sixteen: RefinementRegion = {
+      name: 'circle',
+      polygon: [...Array(16).keys()].map((k): [number, number] => [r6(36 + (8 / Math.cos(Math.PI / 16)) * Math.cos((2 * Math.PI * k) / 16)), r6(42 + (8 / Math.cos(Math.PI / 16)) * Math.sin((2 * Math.PI * k) / 16))]),
+      maxEdgeLength: 2,
+      transition: 6,
+      grade: 0.5,
+      approximation: { from: 'circle (36, 42) r 8', policy: 'regular 16-gon circumscribed about radius r, first vertex at +x', maxError: r6(8 / Math.cos(Math.PI / 16) - 8) },
+    };
+    const tinyW = 64;
+    const tinyH = 48;
+    const tinyMask = mqMask(dir, 'tiny-coarse', tinyW, tinyH, (x, y) => (x >= 4 && x < 60 && y >= 4 && y < 44 ? 1 : 0));
+    const tinyPoints: MqPt[] = [[4, 3], [60, 3], [60, 4], [61, 4], [61, 44], [60, 44], [60, 45], [4, 45], [4, 44], [3, 44], [3, 4], [4, 4]];
+    for (const y of [12, 24, 36]) for (const x of [12, 24, 36, 48]) tinyPoints.push([x, y]);
+    const tinySource: SourceMesh = {
+      points: tinyPoints,
+      uvs: tinyPoints.flatMap(([x, y]) => [x / tinyW, y / tinyH]),
+      triangles: [0, 14, 1, 0, 11, 12, 0, 12, 13, 0, 13, 14, 1, 15, 2, 1, 14, 15, 2, 15, 3, 3, 19, 4, 3, 15, 19, 4, 23, 5, 4, 19, 23, 5, 23, 6, 6, 22, 7, 6, 23, 22, 7, 20, 8, 7, 21, 20, 7, 22, 21, 8, 20, 9, 9, 16, 10, 9, 20, 16, 10, 12, 11, 10, 16, 12, 12, 16, 13, 13, 17, 14, 13, 16, 17, 14, 18, 15, 14, 17, 18, 15, 18, 19, 16, 20, 17, 17, 21, 18, 17, 20, 21, 18, 22, 19, 18, 21, 22, 19, 22, 23],
+      hull: 12,
+      weights: null,
+    };
+    const tinyRegion: RefinementRegion = { name: 'soft', polygon: [[30, 22], [34, 22], [34, 26], [30, 26]], maxEdgeLength: 2, transition: 2, grade: 1, approximation: null };
+    const tinyBounds: ArtFitBounds = { minCoverage: 1, maxOvershoot: 2, maxUndercut: 0 };
+    const tinyInput: MeshReductionInput = mqReduceInput(tinySource, {
+      art: { mask: tinyMask, threshold: 1, frame: mqFrame(tinyW, tinyH) },
+      sourceBounds: tinyBounds,
+      targets: { artFit: tinyBounds, maxBoundaryDeviation: 1, regions: [tinyRegion] },
+      regionArtSamples: [{ region: 'soft', minArtSamples: 1 }],
+      budget: { maxCandidates: 2000 },
+    });
+    const run1311 = (input: MeshReductionInput, plant: ReductionPlant | null): MeshReductionResult => {
+      const rasters = artRastersOf(input.art);
+      return reduceMeshWith(input, rasters, stepRastersOf(rasters), plant);
+    };
+    const bytes1311 = (out: MeshReductionResult): string => writeMeshQualityReport(out.report) + '\n' + JSON.stringify(out.mesh);
+    /** Half the cross product of two corners about a third, drawing pixels — the test's own area, not the module's. */
+    const ownArea = (a: MqPt, b: MqPt, c: MqPt): number => Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
+    /** What a stop says, read back out of its own words: the insertion, the triangle's three corners, its area and the band. */
+    const stopOf = (t: Termination | null): { at: MqPt; corners: MqPt[]; area: number; band: number; region: string } | null => {
+      if (t === null || t.reason !== 'no-further-valid-reduction') return null;
+      const m = /region "([^"]+)"[^(]* at \((-?[\d.]+), (-?[\d.]+)\) would write the triangle of (.+?) — area ([\d.e-]+) px², which MQ_DEGENERATE reads as degenerate: required an area above the row's band ([\d.e-]+) px²/.exec(t.blockingConstraint);
+      if (m === null) return null;
+      const corners = [...m[4].matchAll(/\((-?[\d.]+), (-?[\d.]+)\)/g)].map((c): MqPt => [Number(c[1]), Number(c[2])]);
+      return { region: m[1], at: [Number(m[2]), Number(m[3])], corners, area: Number(m[5]), band: Number(m[6]) };
+    };
+    const classCases: Array<{ label: string; input: MeshReductionInput }> = [
+      { label: 'the square, its band 1/64 px beyond the row', input: l8Input(nearRow('square', 1 / 64, 0)) },
+      { label: 'the same square shifted 1/256 px', input: l8Input(nearRow('square', 1 / 64 + 1 / 256, 0)) },
+      { label: 'the same square turned 2°', input: l8Input(nearRow('square', 1 / 64, 2)) },
+      { label: 'the coarse 12 px lattice under a 4 px square', input: tinyInput },
+    ];
+    const planted = classCases.map((c) => ({ ...c, out: run1311(c.input, 'refinement-writes-degenerate') }));
+    const fixed = classCases.map((c) => ({ ...c, out: run1311(c.input, null) }));
+
+    // --- MQ156: the plant — the refinement as it was writes the degenerate triangles the row then refuses ---
+    {
+      const probes: string[] = [];
+      const readings: string[] = [];
+      for (const { label, out } of planted) {
+        const row = mqRow(out.report, 'MQ_DEGENERATE');
+        const t = out.report.termination;
+        if (row?.state !== 'fail' || !(Number(row.value) > 0)) probes.push(`${label}: ${mqSay(row)} — the fixture does not reproduce the class`);
+        if (out.report.candidates[0]?.accepted !== false) probes.push(`${label}: accepted ${out.report.candidates[0]?.accepted}`);
+        if (t?.reason !== 'no-further-valid-reduction' || !t.blockingConstraint.includes('before any removal')) probes.push(`${label}: ${mqSayEnd(t)}`);
+        readings.push(`${label}: ${row?.value} degenerate, ${t?.reason === 'no-further-valid-reduction' ? t.blockingConstraint.slice(0, t.blockingConstraint.indexOf(' — before') > 0 ? t.blockingConstraint.indexOf(' — before') : 40) : t?.reason}`);
+      }
+      const held = probes.length === 0;
+      say(
+        'MQ156_CONTROL_THE_REFINEMENT_AS_IT_WAS_WRITES_DEGENERATE_TRIANGLES_ON_A_SQUARE_WHOSE_BAND_PASSES_A_HAIR_BEYOND_A_LATTICE_ROW_SHIFTED_OR_TURNED',
+        held,
+        probeDetail(held, probes, `planted 'refinement-writes-degenerate' (the refinement before #1311): ${readings.join('; ')}`),
+        'issue #1311: on the public demo/bottomwear an axis-aligned square region ended MQ_DEGENERATE 3 before any removal; the cause measured there is a source vertex 0.46 px inside the band\'s outer boundary with two edges leaving it, not the region\'s side on the lattice — so the fixture reproduces that, and its shifted and turned copies, rather than the instance',
+      );
+    }
+
+    // --- MQ157: the fix — no degenerate triangle written, and the stop names the insertion, the triangle and the band ---
+    {
+      const probes: string[] = [];
+      const readings: string[] = [];
+      const check = (label: string, out: MeshReductionResult, plantedOut: MeshReductionResult): string[] => {
+        const found: string[] = [];
+        const row = mqRow(out.report, 'MQ_DEGENERATE');
+        if (row?.state !== 'pass') found.push(`${label}: ${mqSay(row)}`);
+        const stop = stopOf(out.report.termination);
+        if (stop === null) {
+          found.push(`${label}: the stop does not name an insertion refused for a degenerate triangle: ${mqSayEnd(out.report.termination)}`);
+          return found;
+        }
+        if (stop.corners.length !== 3) found.push(`${label}: the stop names ${stop.corners.length} corner(s)`);
+        else {
+          const own = ownArea(stop.corners[0], stop.corners[1], stop.corners[2]);
+          if (!(own <= stop.band) || Math.abs(own - stop.area) > 1e-6) found.push(`${label}: the named corners read ${own} px² by the test's own area against the named ${stop.area} and band ${stop.band}`);
+          if (!stop.corners.some((c) => c[0] === stop.at[0] && c[1] === stop.at[1])) found.push(`${label}: the named triangle does not have the named insertion (${stop.at.join(', ')}) as a corner`);
+        }
+        // The insertion refused is one the plant made, into a triangle the test reads under the same band.
+        const pm = plantedOut.mesh;
+        const hit = pm === null ? -1 : pm.points.findIndex((p) => p[0] === stop.at[0] && p[1] === stop.at[1]);
+        let thin = false;
+        if (pm !== null && hit !== -1) {
+          for (let t = 0; t < pm.triangles.length && !thin; t += 3) {
+            const tri = [pm.triangles[t], pm.triangles[t + 1], pm.triangles[t + 2]];
+            if (tri.includes(hit) && ownArea(pm.points[tri[0]], pm.points[tri[1]], pm.points[tri[2]]) <= stop.band) thin = true;
+          }
+        }
+        if (!thin) found.push(`${label}: the plant's mesh has no triangle at the refused insertion (${stop.at.join(', ')}) within the band ${stop.band} px²`);
+        if (out.report.candidates[0]?.accepted !== false) found.push(`${label}: accepted ${out.report.candidates[0]?.accepted}`);
+        return found;
+      };
+      fixed.forEach(({ label, out }, k) => {
+        probes.push(...check(label, out, planted[k].out));
+        const stop = stopOf(out.report.termination);
+        readings.push(`${label}: ${mqSay(mqRow(out.report, 'MQ_DEGENERATE'))}, stopped at (${stop?.at.join(', ')}) — area ${stop?.area} under band ${stop?.band}, region "${stop?.region}"`);
+      });
+      // The mutant: the same reading over the plant's result has to fail on every case.
+      const missed = planted.filter(({ label, out }, k) => check(label, out, planted[k].out).length === 0).map((c) => c.label);
+      if (missed.length > 0) probes.push(`the plant passes this control on: ${missed.join('; ')}`);
+      const held = probes.length === 0;
+      say(
+        'MQ157_THE_REFINEMENT_WRITES_NO_TRIANGLE_MQ_DEGENERATE_REFUSES_AND_ITS_STOP_NAMES_THE_INSERTION_THE_TRIANGLE_AND_THE_BAND',
+        held,
+        probeDetail(held, probes, `${readings.join('; ')}; the plant fails this reading on all ${planted.length}`),
+        'issue #1311, the consumer\'s ask: the refinement never writes a degenerate triangle, or the refusal names which triangle and why. Refused rather than placed elsewhere because on the measured instance there is nowhere else: the vertex lies 0.460932 px inside the band, every point of its two edges that P16 allows lies within that depth of it, so no choice of the two splits gives the triangle more than 0.5 × 0.460932² = 0.106 px² against a band of 0.1135 — the corners and their distances from the polygon say which vertex the region has to clear',
+      );
+    }
+
+    // --- MQ158: where no insertion writes one, the call is the refinement as it was, byte for byte ---
+    {
+      const probes: string[] = [];
+      const readings: string[] = [];
+      const clear: Array<{ label: string; input: MeshReductionInput }> = [
+        { label: 'the square, its band 1/16 px beyond the row', input: l8Input(nearRow('square', 1 / 16, 0)) },
+        { label: 'the square turned 5°', input: l8Input(nearRow('square', 1 / 64, 5)) },
+        { label: 'a regular 16-gon', input: l8Input(sixteen) },
+      ];
+      let widenedCaught = 0;
+      for (const { label, input } of clear) {
+        const out = run1311(input, null);
+        const before = run1311(input, 'refinement-writes-degenerate');
+        const cand = out.report.candidates[0];
+        if (bytes1311(out) !== bytes1311(before)) probes.push(`${label}: the report or mesh differs from the refinement without the check`);
+        if (cand?.accepted !== true || !(cand.changes !== undefined && cand.changes.insertedVertices > 0 && cand.changes.removedVertices > 0)) probes.push(`${label}: accepted ${cand?.accepted}, changes ${JSON.stringify(cand?.changes === undefined ? null : { inserted: cand.changes.insertedVertices, removed: cand.changes.removedVertices })}`);
+        if (mqRow(out.report, 'MQ_DEGENERATE')?.state !== 'pass') probes.push(`${label}: ${mqSay(mqRow(out.report, 'MQ_DEGENERATE'))}`);
+        // The mutant: the check reading the band a thousand times as wide refuses insertions the row passes.
+        const widened = run1311(input, 'degenerate-band-widened');
+        if (bytes1311(widened) !== bytes1311(out)) widenedCaught++;
+        readings.push(`${label}: ${cand?.changes?.insertedVertices} inserted, ${cand?.changes?.removedVertices} removed, accepted, identical to the plant`);
+      }
+      if (widenedCaught !== clear.length) probes.push(`the band read a thousand times as wide changed ${widenedCaught} of ${clear.length} call(s), not all`);
+      const held = probes.length === 0;
+      say(
+        'MQ158_WHERE_NO_INSERTION_WRITES_A_DEGENERATE_TRIANGLE_THE_REFINEMENT_IS_THE_ONE_BEFORE_THE_CHECK_BYTE_FOR_BYTE',
+        held,
+        probeDetail(held, probes, `${readings.join('; ')}; the band read a thousand times as wide changes ${widenedCaught} of ${clear.length}`),
+        'issue #1311: the check refuses only what the row would refuse — a rule that fired on a correct insertion would move a region that refines and reduces today, which is what the circle on demo/bottomwear does (283 + 301, reduced)',
+      );
+    }
   }
 
   // --- MQ43: minWeight 0 keeps every positive share on the grid, and protected influences over the cap are refused --
