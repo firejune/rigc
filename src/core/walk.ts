@@ -57,8 +57,10 @@
  *   refuses, this entry writes the double; on 4,333 poses holding one, every
  *   NaN and Infinity stood where spine-core's did.
  *
- * Events are not carried: A10 reads none, and what a looping track fires
- * across the wrap was not measured. Nor are the clipped rows, and the walk
+ * Events are not carried: A10 reads none. What a looping track fires across
+ * the wrap is measured where a reader wants it — the live track
+ * (`./track.ts`, issue #1276), whose looping mode is this walk's with the
+ * events and the clipped rows put back. Nor are the clipped rows, and the walk
  * does not cut them (issue #1179): every clip it starts is still planned, so
  * a clip the core does not draw refuses the walk by name, as below.
  *

@@ -15,8 +15,9 @@
  * `CUR123` holds the closure, by name; the install smoke bundles it for a
  * browser and holds the bundle to zero `node:` strings.
  *
- * ⚠️ A symbol is listed here only because a dependant was seen using it.
- * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` row for
+ * ⚠️ A symbol is listed here only because a dependant was seen using it,
+ * or asked for it in writing before it could be (`openTrack`, issue #1276).
+ * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` rows for
  * `./core`, and a symbol added here and not there is not promised.
  */
 export { readModel, underSkin, underNoSkin, CoreInputError, CORE_DOCUMENT_SPEC, CORE_DOCUMENT_SPECS, CORE_BLEND_MODES, activeBones } from './index.ts';
@@ -24,6 +25,8 @@ export type { CompiledDocument, CoreSlotRow, CoreBlendMode } from './index.ts';
 export { poseRawSetup, poseRawAnimation, poseRawAnimationEach, loopedTime, setupBounds } from './raw.ts';
 export type { RawPose, RawBone, RawDrawn, RawClip, RawClipped, RawEvent, RawReset } from './raw.ts';
 export { poseWalkSetup, poseLoopingWalk } from './walk.ts';
+export { openTrack } from './track.ts';
+export type { LiveTrack, TrackOptions } from './track.ts';
 export type { WalkPose } from './walk.ts';
 export { documentPageLookup, drawnRegions, regionPageUvs, meshPageUvs, readUvSequences } from './uvs.ts';
 export type { DrawnRegion, UvPage, UvRegion, UvSource } from './uvs.ts';

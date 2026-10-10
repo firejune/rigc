@@ -224,6 +224,23 @@ of what it leaves out (`NOT_ADMITTED` in `src/core/index.ts`) is empty:
 Two kinds in item 3 have no world-vertex reading: a bounding box, whose vertices the
 oracle's dump does not write, and a point, which rigc does not emit (#934).
 
+**The live track** ([#1276](https://github.com/firejune/rigc/issues/1276)) is admitted
+on the same terms, as a construct of the walk rather than of the skeleton:
+`openTrack` in `src/core/track.ts` opens the raw entry's walk and steps it one `dt` at
+a time, as a player's frame loop does. It adds no pose math — the batch walk's body is
+the same function behind a held context — so it is held to the batch walk rather than
+to a second dump: before and after that split, 956 batch walks over the nineteen
+public rows' 54 animations (157,771 poses) read the same bits, and the core suite's
+`CO46` holds the track to `poseRawAnimation` (held) and to `poseLoopingWalk` (looped)
+pose for pose. What the looping walk never carried was measured against spine-core
+4.3.13's `AnimationState` listener: the events a looping track fires across the wrap —
+the keys after the previous time, then the keys from −1 to the new time, a key at
+exactly the duration on the wrap step alone — matched on 229,656 of 229,656 steps
+(52,880 events, 24,587 completes; 306 animations, six of them public rows'), and the
+reading that fires nothing across the wrap read 12,956 steps off (`CO47`); the clipped
+rows it cuts equal the raw entry's at the same animation time on 4,009 of 4,009 poses
+of the public row that clips (`CO48`).
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private
