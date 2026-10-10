@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.33.0](https://github.com/firejune/rigc/compare/v2.32.2...v2.33.0) (2026-10-10)
+
+
+### Features
+
+* **mesh:** named interior lines on a reduction and a measurement — `lines: NamedLine[]` held as the hull is: a line vertex leaves only when `MQ_LINE_DEVIATION` (the boundary row's exact symmetric Hausdorff, per line, against the line's own `maxDeviation`) stays in bound and its kept neighbours are joined by a result edge, line runs under the existing `boundaryRuns` opt-in, refused by name under `REDUCE_INPUT_LINE`; absent `lines`, 64 of 64 recorded calls byte-identical ([#1326](https://github.com/firejune/rigc/issues/1326)) ([#1328](https://github.com/firejune/rigc/issues/1328)) ([bb74e90](https://github.com/firejune/rigc/commit/bb74e902b6ef142388f156f91e3ece87ee2bae48))
+
 ## [2.32.2](https://github.com/firejune/rigc/compare/v2.32.1...v2.32.2) (2026-10-10)
 
 
