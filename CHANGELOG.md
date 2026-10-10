@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.32.0](https://github.com/firejune/rigc/compare/v2.31.2...v2.32.0) (2026-10-10)
+
+
+### Features
+
+* **mesh:** compareMeshesInMotion takes overBound — opt-in, the samples over each motion bound with their carrying triangle, worst first under a declared cap with the total stated, and a per-triangle maximum of every bounded motion row over the selection frames; byte-identical without it — and the localisation premise measured false on the fixture ([#1315](https://github.com/firejune/rigc/issues/1315)) ([#1316](https://github.com/firejune/rigc/issues/1316)) ([52bc534](https://github.com/firejune/rigc/commit/52bc534ff6f020c481aaceb64dc1bd2b229d024f))
+
 ## [2.31.2](https://github.com/firejune/rigc/compare/v2.31.1...v2.31.2) (2026-10-10)
 
 
