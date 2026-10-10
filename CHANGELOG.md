@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.35.0](https://github.com/firejune/rigc/compare/v2.34.0...v2.35.0) (2026-10-10)
+
+
+### Features
+
+* **core:** a live track — `openTrack(doc, animation, { loop, reset })` stepped one `dt` at a time on the batch walk's own body, with events across the wrap and the clipped rows measured against spine-core 4.3.13: 229,656 of 229,656 steps fire what AnimationState's listener fires, the refactored walks byte-identical on 157,771 poses, `openTrack` equal to `poseRawAnimation` on 103,607 and to `poseLoopingWalk` on 44,980 ([#1276](https://github.com/firejune/rigc/issues/1276)) ([#1332](https://github.com/firejune/rigc/issues/1332)) ([486adb6](https://github.com/firejune/rigc/commit/486adb6024121029ae9ed3267540e22fb1fa8358))
+
 ## [2.34.0](https://github.com/firejune/rigc/compare/v2.33.0...v2.34.0) (2026-10-10)
 
 
