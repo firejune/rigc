@@ -48893,6 +48893,7 @@ function runMeshQualitySuite(): number {
 // an install without spine-core can show the entry needs none.
 
 import { compareMeshesInMotion, compareMeshesInMotionPlanted, uvCarriers, type CompareAttachment, type ComparePlant, type MotionComparisonInput } from './src/meshcompare.ts';
+import { CONTAINS, uvCarriersWith } from './src/meshcarriers.ts';
 
 /** The plate every compare fixture draws: a strip, opaque everywhere, so every pixel centre is a sample. */
 const MC_W = 64;
@@ -49544,6 +49545,7 @@ const MESH_COMPARE_UNITS = [
   'MQ138-MQ142',
   'MQ150',
   'MQ151',
+  'MQ159-MQ161',
 ] as const;
 type MeshCompareUnitName = (typeof MESH_COMPARE_UNITS)[number];
 
@@ -49578,6 +49580,7 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ153',
   'MQ154',
   'MQ155',
+  'MQ159-MQ161',
   'MQ55-MQ74',
 ];
 
@@ -53798,6 +53801,161 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
         held,
         probeDetail(held, probes, `${lines.join('; ')}; the audited, observed calls wrote the plain calls' bytes; plants: ${caught.join('; ')}`),
         'issue #1309: the floor is read before the structure is built, so an attempt it refuses costs its floor — held to the floor the path before read after every structural check, on every attempt of two subjects, and each way the early one could differ — a floor that refuses steps the rows take, a refusal named before the structure that would have refused first — has a plant here',
+      );
+    });
+  });
+
+  // --- MQ159–MQ161 (#1323): a sample within the slack of a shared edge, a sliver on one side ---------------------------
+  // The public reproduction (demo/bottomwear at source spacing 12 and 18): a pixel centre on a 45° edge between
+  // whole-pixel vertices, the UVs rounded to six places putting it 1.35e-10 uv to one side, a sliver on that side. The
+  // containment slack, read per barycentric coordinate, admits the triangle it is outside of; the sliver, whose height
+  // is small, reads its third corner's coordinate above CONTAINS, so the two per-coordinate supports differed and the
+  // hit read as an overlap — no fold: every triangle wound one way, their areas summing to the outline's. Here the same
+  // arrangement on the suite's strip: a column one pixel wide beside one 16.5 px wide, the shared edge on a
+  // pixel-centre column, nudged in UV only by half the slack the wide triangle allows.
+  unit('MQ159-MQ161', () => {
+    const cols = [0, 16.5, 17.5, 32, 48, 64];
+    const thin = mcBuild(dir, 'mq159-thin', { mesh: mcMesh({ columns: cols }), physics: true });
+    const meshOf = (model: string): { uvs: number[]; triangles: number[] } => {
+      const doc = JSON.parse(model) as { skins: Array<{ name: string; attachments: { strip: { strip: { uvs: number[]; triangles: number[] } } } }> };
+      return doc.skins.find((k) => k.name === 'default')!.attachments.strip.strip;
+    };
+    // The wide triangle's corner across the shared edge lies cols[1] px from it: a nudge of half the slack it allows,
+    // CONTAINS / 2 of its height, puts every column sample that far outside it and inside the sliver, whose corner
+    // across the edge is cols[2] − cols[1] px away, at CONTAINS / 2 × cols[1] / (cols[2] − cols[1]) — above CONTAINS.
+    const nudge = (CONTAINS / 2) * (cols[1] / MC_W);
+    const edgeU = cols[1] / MC_W;
+    const nudged = mcEdit(thin, (doc) => {
+      const skin = (doc.skins as Array<Record<string, unknown>>).find((k) => k.name === 'default')!;
+      const uvs = (skin.attachments as Record<string, Record<string, Record<string, unknown>>>).strip.strip.uvs as number[];
+      for (let i = 0; i < uvs.length; i += 2) if (uvs[i] === edgeU) uvs[i] -= nudge;
+    });
+    const samples: Array<{ uv: [number, number] }> = [];
+    for (let y = 0; y < MC_H; y++) samples.push({ uv: [edgeU, (y + 0.5) / MC_H] });
+    // The test's own reading: every triangle whose barycentric coordinates are all at least −CONTAINS, with its smallest
+    // and its largest coordinate on a corner other than the shared edge's.
+    const reading = (m: { uvs: number[]; triangles: number[] }, p: [number, number]): Array<{ t: number; min: number; ids: number[]; l: number[] }> => {
+      const out: Array<{ t: number; min: number; ids: number[]; l: number[] }> = [];
+      for (let t = 0; t * 3 < m.triangles.length; t++) {
+        const ids = [0, 1, 2].map((k) => m.triangles[t * 3 + k]);
+        const [a, b, c] = ids.map((i) => [m.uvs[i * 2], m.uvs[i * 2 + 1]]);
+        const det = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]);
+        const l1 = ((p[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (p[1] - a[1])) / det;
+        const l2 = ((b[0] - a[0]) * (p[1] - a[1]) - (p[0] - a[0]) * (b[1] - a[1])) / det;
+        const l = [1 - l1 - l2, l1, l2];
+        if (Math.min(...l) >= -CONTAINS) out.push({ t, min: Math.min(...l), ids, l });
+      }
+      return out;
+    };
+    const nm = meshOf(nudged);
+    // A tie: two containing triangles, one only through the slack (a coordinate below 0), the other with a coordinate
+    // above CONTAINS on the corner the first does not have — the two per-coordinate supports differ.
+    const tieOf = (h: ReturnType<typeof reading>): boolean => {
+      if (h.length !== 2) return false;
+      const [p, q] = h;
+      const supp = (x: (typeof h)[number]): string => x.ids.filter((_v, k) => x.l[k] > CONTAINS).sort((m1, m2) => m1 - m2).join(',');
+      return (p.min < 0) !== (q.min < 0) && supp(p) !== supp(q);
+    };
+    const ties = samples.map((s) => reading(nm, s.uv)).filter(tieOf);
+    const plantedRefusal = (input: MotionComparisonInput, plant: ComparePlant): { code: string; message: string } | null => {
+      try {
+        compareMeshesInMotionPlanted(input, plant);
+        return null;
+      } catch (err) {
+        if (err instanceof MeshReductionError) return { code: err.code, message: err.message };
+        throw err;
+      }
+    };
+    const nudgedInput = (): MotionComparisonInput => mcInput(thin, [{ id: 'nudged', model: nudged }], { bounds: { maxLocalDeformation: 1e-6 } });
+
+    // --- MQ159: the rule before #1323 refuses the tie as an overlap -----------------------------------------------------
+    mcGuard('MQ159', () => {
+      const probes: string[] = [];
+      if (ties.length !== samples.length) probes.push(`${ties.length} of the ${samples.length} column samples are the tie by the test's own reading`);
+      const r = plantedRefusal(nudgedInput(), 'slack-support-unread');
+      const named = r === null ? [] : [...r.message.matchAll(/triangle (\d+) \(vertices/g)].map((x) => Number(x[1])).sort((a, b) => a - b);
+      const expected = ties.length === 0 ? [] : ties[0].map((x) => x.t).sort((a, b) => a - b);
+      if (r?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE' || !r.message.includes('candidate "nudged"')) probes.push(`the rule before #1323: refusal ${r?.code ?? 'none'}: ${r?.message ?? ''}`);
+      else if (!r.message.includes(`uv (${edgeU}, `) || named.join(',') !== expected.join(',')) probes.push(`the refusal names triangles ${named.join(', ')}, the test reads the tie at ${expected.join(', ')}: ${r.message}`);
+      // A plant that changes nothing is no control: the same input, unplanted, must not be refused here.
+      const clean = refusalOf(nudgedInput());
+      if (clean !== null) probes.push(`unplanted, the same input is refused too: ${clean.message}`);
+      const held = probes.length === 0;
+      say(
+        'MQ159_CONTROL_THE_RULE_BEFORE_1323_REFUSES_A_SAMPLE_WITHIN_THE_SLACK_OF_A_SHARED_EDGE_WITH_A_SLIVER_BESIDE_IT_AS_AN_OVERLAP',
+        held,
+        probeDetail(held, probes, `${ties.length} column samples, each outside one triangle within the slack and inside the sliver above CONTAINS on its far corner; the rule before #1323 refuses: ${r?.message.slice(0, 260)}…`),
+        "issue #1323: the plant — the per-coordinate support alone reads a sample on a shared edge, a hair to a sliver's side, as an overlap, which is what refused the public reproduction",
+      );
+    });
+
+    // --- MQ160: the support read to the slack's distance is the shared edge, and the comparison takes the input ---------
+    mcGuard('MQ160', () => {
+      const probes: string[] = [];
+      const carriers = uvCarriersWith(nm.uvs, nm.triangles, samples, 'nudged', null);
+      let carried = 0;
+      samples.forEach((s, j) => {
+        const c = carriers[j];
+        const h = reading(nm, s.uv);
+        if (c === null) probes.push(`sample ${j} has no carrier`);
+        else if (!h.some((x) => x.t === c.triangle)) probes.push(`sample ${j} is carried by triangle ${c.triangle}, which does not contain it`);
+        else carried++;
+      });
+      const r = refusalOf(nudgedInput());
+      const run = r === null ? compareMeshesInMotion(nudgedInput()) : null;
+      const ld = run === null ? null : (rowOf(run.candidates[0], 'MQ_LOCAL_DEFORMATION')?.value ?? null);
+      if (r !== null) probes.push(`the comparison refused the nudged candidate: ${r.message}`);
+      else if (ld === null || ld > 1e-6) probes.push(`the nudged candidate reads local deformation ${ld} against its own unnudged mesh`);
+      // The mutant: the slack read as the narrowest triangle's — the sliver's — rather than the widest's.
+      const p = plantedRefusal(nudgedInput(), 'narrowest-slack');
+      if (p?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE') probes.push(`under the plant narrowest-slack the nudged candidate is ${p === null ? 'taken' : `refused ${p.code}`}, so this control cannot tell the slack's width`);
+      const held = probes.length === 0;
+      say(
+        'MQ160_A_SAMPLE_WITHIN_THE_SLACK_OF_A_SHARED_EDGE_IS_ONE_HIT_THOUGH_A_SLIVER_BESIDE_IT_READS_A_COORDINATE_ABOVE_CONTAINS',
+        held,
+        probeDetail(held, probes, `${carried} of ${samples.length} column samples carried, the comparison takes the nudged candidate (local deformation ${ld} against its own unnudged mesh); plant narrowest-slack: refused ${p?.code}`),
+        "issue #1323: the slack is per coordinate, so in distance it is CONTAINS times a corner's height; read to the widest of those — the furthest outside a triangle the containment test admitted any hit — a sample a hair beside a shared edge is on it, whatever the sliver's height",
+      );
+    });
+
+    // --- MQ161: two triangles that both hold a sample well inside are still refused -----------------------------------
+    mcGuard('MQ161', () => {
+      const probes: string[] = [];
+      // MQ36's fold: vertex 1's UV slid past vertex 2's, positions untouched.
+      const folded = mcEdit(reference, (doc) => {
+        const skin = (doc.skins as Array<Record<string, unknown>>).find((k) => k.name === 'default')!;
+        const uvs = (skin.attachments as Record<string, Record<string, Record<string, unknown>>>).strip.strip.uvs as number[];
+        uvs[2] = 40 / MC_W;
+      });
+      const input = mcInput(reference, [{ id: 'folded', model: folded }]);
+      const r = refusalOf(input);
+      const m = r?.message.match(/sample at uv \(([^,]+), ([^)]+)\)/);
+      const fm = meshOf(folded);
+      // The test's own reading of the refused sample: each containing triangle's support at 1e-6 uv — the corners the
+      // sample lies more than 1e-6 uv inside of, a thousand times the slack's distance on this strip — and how many
+      // distinct supports there are. Two or more is an overlap no slack explains.
+      const supports = new Set<string>();
+      if (m !== null && m !== undefined) {
+        for (const x of reading(fm, [Number(m[1]), Number(m[2])])) {
+          const [a, b, c] = x.ids.map((i) => [fm.uvs[i * 2], fm.uvs[i * 2 + 1]]);
+          const twice = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+          const ps = [a, b, c];
+          const deep = x.ids.filter((_v, k) => x.l[k] * (twice / Math.hypot(ps[(k + 2) % 3][0] - ps[(k + 1) % 3][0], ps[(k + 2) % 3][1] - ps[(k + 1) % 3][1])) > 1e-6);
+          supports.add(deep.sort((p1, p2) => p1 - p2).join(','));
+        }
+      }
+      const inside = supports.size;
+      if (r?.code !== 'COMPARE_UV_CARRIER_NOT_UNIQUE') probes.push(`the fold is not refused: ${r?.code ?? 'none'} ${r?.message ?? ''}`);
+      else if (inside < 2) probes.push(`the refused sample's containing triangles read ${inside} support(s) at 1e-6 uv by the test's own reading, so it is not the overlap this control is about`);
+      // The mutant: any vertex the hits share excused, whatever the distance — the fold must then pass.
+      const p = plantedRefusal(input, 'any-shared-vertex');
+      if (p !== null && p.code === 'COMPARE_UV_CARRIER_NOT_UNIQUE') probes.push('under the plant any-shared-vertex the fold is still refused, so this control cannot tell the rule from the plant');
+      const held = probes.length === 0;
+      say(
+        'MQ161_A_SAMPLE_TWO_TRIANGLES_BOTH_HOLD_WELL_INSIDE_IS_STILL_REFUSED_AS_AN_OVERLAP',
+        held,
+        probeDetail(held, probes, `the folded candidate's refused sample reads ${inside} distinct supports at 1e-6 uv across its containing triangles: ${r?.message.slice(0, 200)}…; under the plant any-shared-vertex it is ${p === null ? 'taken' : `refused ${p.code}`}`),
+        "issue #1323: the support is read to the slack's distance and no further, so an overlap or a fold — two triangles holding the sample well inside — is still correction 4's refusal",
       );
     });
   });

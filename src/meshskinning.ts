@@ -1235,7 +1235,7 @@ export class SkinningCarry {
       }
       let carrier: Carrier | null;
       try {
-        carrier = resolveCarriers(this.su[j], this.sv[j], hits, `${this.who}: candidate (working vertex ids)`);
+        carrier = resolveCarriers(this.su[j], this.sv[j], hits, `${this.who}: candidate (working vertex ids)`, (v) => this.mesh.uv[v]);
       } catch (err) {
         if (!(err instanceof MeshReductionError)) throw err;
         if (pending.refused === null) pending.refused = `SKINNING_UV_CARRIER_NOT_UNIQUE: ${err.message}`;
