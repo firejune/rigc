@@ -5721,6 +5721,221 @@ measurement: the count is held by the declared tolerance, and moving that value 
 count is the search's and the tree's and repeats on any machine (the L1 search run twice per input, identical); the
 largest search, Ls2 on demo/bottomwear, tested 574,280 chords in 26 s.
 
+## 11. Interior feature lines (#1326)
+
+> **Stage A of [#1326](https://github.com/firejune/rigc/issues/1326): measurement and contract, no mechanism.** No
+> row, refusal, bound, budget, order, termination or emitted byte changes here. Four controls hold the current API's
+> readings on a fixture built from rig-c alone (`MQ162`–`MQ165`, `mesh-quality`, *Stage A controls*). Marks as in
+> §10: **[observed, rig-parts#160]** is the consumer's figure as its survey prints it (rig-parts PR #164,
+> `tools/feature_contour_survey.ts`, `docs/evidence/auto-feature-contours.md`, run against rig-c 2.32.1);
+> **[measured, #1326]** is a figure taken for this section — printed by the controls, or by the stage-A record's
+> scratch scripts, which import this tree at v2.32.2 and the consumer's tool read-only and write nothing into either;
+> **[proposal]** is rigc's answer to something nobody has agreed. Every reduction in this section runs the consumer's
+> blink policy (coverage 1, overshoot ≤ 2, undercut 0, `maxBoundaryDeviation` 1, influences `{ 4, 0 }`, budget
+> 2000) or its face policy (permissive: coverage 0.995, overshoot ≤ 3, undercut undeclared, budget 5000), with the
+> skinning veto at 1 px unless a line says otherwise. 2.32.1 and 2.32.2 differ only in the comparison's carrier rule
+> (#1323), which no figure here reads: the consumer's builds re-run on this tree reproduce its counts and displacements
+> to the printed digit.
+
+### The case and the gap
+
+An eyelid closes over an opening: the lid's edge is a line inside the part, the lid bone's share falls across it,
+and the motion carries one side onto the other. A mesh draws the edge where its triangles interpolate the share; the
+**dense reference** is the share rule evaluated at every point, and a mesh's **edge displacement** is the largest
+|w̄(p) − rule(p)|·|T| over samples every 0.25 px along the edge at the closed pose (rig-parts's definition,
+re-implemented in `fixtures/blink.ts` as `edgeDisplacement`). No row reads the dense reference: `MQ_SKINNING_RESIDUAL`
+and the motion comparison hold a candidate to its **source**, so a source that cannot put a vertex on the line passes
+every gate with the edge wherever its lattice put it.
+
+Existing, read on the tree: `protect.edges` takes any pair of source indices that is an edge of a source triangle
+(`REDUCE_INPUT_MISSING` otherwise) and `protectionOf` adds both ends of each to the protected vertices — so a line
+kept as edges keeps every vertex it has. `MQ_BOUNDARY_DEVIATION` lets the hull's vertices go under a bound. Nothing
+lets a line's vertices go under one. That pair is the asymmetry the card names.
+
+### The fixture [measured, #1326]
+
+`fixtures/blink.ts` — the consumer's blink rebuilt from rig-c alone: a 56 × 40 block at (4, 4) in 64 × 48, one
+24 × 6 hole at (20, 19), bones `root` and `lid`, the lid's share 1 at and above y = 19, 0 at and below y = 25 and
+(25 − y)/6 between, T = (0, 6). It sits under `fixtures/` beside `polypack_shapes.ts` rather than inside the suite
+because two readers measure the same object — the `mesh-quality` controls and the stage-A record's scripts — and a
+module the suite owns cannot be imported without running the suite. Its sources are tensor grids (columns and rows,
+two triangles a cell): lattices at 8 and 4 px, and the 8 px lattice with the ring's grid lines added, so every ring
+edge is a grid edge **without a triangulator** — rig-c has none that takes an interior line (below). The line is every
+grid vertex on the ring: 18 (the ring sampled at 4 px gives 16, and the lattice row y = 24 meets both sides).
+
+| reading | source | line vertices kept | result | edge vs dense, px | rig-parts#160, same reading on its sources |
+| --- | --- | --- | --- | --- | --- |
+| (a) lattice 8, no line | 28+35 | — | 8+2 = 10 | **1.874999** (a(s − a)/s by hand: 1.875) | 8 vertices, 1.875 |
+| (a) lattice 4, no line | 48+117 | — | 8+2 = 10 | **0.950002** (source 0.750002, 0.75 by hand) | 8 vertices, 0.95 |
+| (b) the line as `protect.edges` | 42+88 | 18 of 18 | 8+19 = 27 | **0.000002** | 27 vertices, 0 |
+| (c) the line's corners (`simplifyClosedPolygon` at 1 px, 4) in `protect.vertices` | 42+88 | 4 of 18 | 8+5 = 13 | **0.000001** | 16 vertices, 0 ((iv)) |
+| (c), one corner left out, veto 1 px | 42+88 | 3 of 18 | 8+4 = 12 | 0.570001 | — |
+| (c), one corner left out, veto absent | 42+88 | 3 of 18 | 4+3 = 7 | **3.931034**, accepted, every required row passing | — |
+
+All accepted. The consumer's blink figures are **confirmed**: re-running its own exported inputs on this tree gives
+its counts and displacements exactly (8 / 1.875, 8 / 0.95, 8 / 0.941176, 27 / 0, 16 / 0), and this tree's fixture
+reproduces (a) and (b) to the digit and (c)'s displacement, with a different count for (c) (13, not 16) because the
+source is a different construction. Two readings worth keeping: at 4 px the reduction moves the edge *further* from
+the dense reference than its source had it (0.75 → 0.95), because the veto bounds drift from the source and nothing
+bounds drift from the rule; and with one corner unprotected the kept chain sits **5.820855 px** from the removed
+corner while the edge moves 0.570001 px under the veto — a line's geometric deviation and its displacement are
+different quantities, and neither row today reads the first.
+
+### The contract [proposal]
+
+**Where a line lives — on the reduction input, not on `SourceMesh`.** `MeshReductionInput.lines?: NamedLine[]`, opt-in,
+left out = the call it was before the field. A line is a declaration about how a reduction may change a source, the
+same kind of thing as `protect` and `boundaryRuns`; `SourceMesh` is the mesh, whose fields every measurement and the
+comparison read, and a field there would either be read by none of them or change what they hash
+(`sourceMeshDigest`). The measurement takes the same array on `MeshMeasureInput` (as it takes `referenceHull`), so a
+`measure` can report the row on a candidate against its source.
+
+```ts
+interface NamedLine {
+  /** Caller's name, echoed; rigc reads nothing into it. Unique among the input's lines. */
+  name: string;
+  /** Source vertex indices in order along the line. */
+  vertices: number[];
+  /** Closed: the last joins the first. Open: two ends. */
+  closed: boolean;
+  /** The bound on MQ_LINE_DEVIATION, drawing px, finite, >= 0; required — no default. */
+  maxDeviation: number;
+}
+```
+
+**Refused by name, before any work, under one code: `REDUCE_INPUT_LINE`**, the detail naming the line, the index or
+pair, and the rule — an index that is not a source vertex; a consecutive pair (and, closed, the last–first pair) that
+is not an edge of a source triangle (the same test `protect.edges` applies); a vertex listed twice in one line; a
+closed line with fewer than 3 vertices or an open one with fewer than 2; two lines with one name; a line whose
+segments cross each other, or cross another line's, other than at a vertex both list; a line that leaves the outline
+(any of its segments outside the source's hull polygon — a hull vertex on a line is allowed, a segment off the art is
+not). A crossing is never resolved by the reducer: two lines that cross **must list the crossing as one shared source
+vertex**, and two lines that overlap along a run (the sample face's eyewhites and lashes share 5 and 10 unit pixel
+edges, below) must both list every vertex of the run. A self-crossing is refused rather than split.
+
+**`MQ_LINE_DEVIATION`**, one row per line, `object.region` null and `object.line` the name, `unit: 'px'`: the
+**symmetric Hausdorff distance between the kept chain and the source polyline**, by the same function the boundary row
+uses (`hausdorff` / `directedHausdorff`, exact to `HAUSDORFF_TOLERANCE` by bisection of each edge against the other
+polyline's edge distances — not sampled), with an open line compared as an open polyline (no closing edge on either
+side). The kept chain is the line's surviving vertices in their listed order. Drawing px: the row is geometric, so,
+like `MQ_BOUNDARY_DEVIATION` and unlike the raster rows, it involves no `pageScale` conversion. Required, gating
+like the boundary row. Why that distance:
+
+- One-sided, from the source polyline's samples to the kept chain, is what the issue's comment says the boundary row
+  does. **It does not**: `MQ_BOUNDARY_DEVIATION` is two-sided and exact. For a reduction the two sides happen to agree
+  per arc — the kept chain's vertices are a subsequence of the source line's, and an arc whose every point is within
+  b of its chord projects onto the whole chord — but a measurement of an arbitrary candidate against a source (the
+  `measure` operation) has no such guarantee, and the boundary row's convention covers both.
+- Sampling every 0.25 px is the consumer's displacement reference, a different quantity (below); the exact distance
+  needs no step and has no step to argue about.
+
+**What a line protects, and the interactions:**
+
+- A line's consecutive kept vertices are **edges of the result** — a step that would leave two consecutive kept line
+  vertices unjoined is refused, as a protected edge is today, and the Delaunay post-pass flips no line edge. A line
+  vertex may be removed only by a step whose result keeps the row within `maxDeviation` and joins its two kept
+  neighbours by an edge — the line's own form of the hull's single removal.
+- The deviation floor (`earlyFloor`): its argument carries over unchanged — the backward half of the row evaluates
+  every removed line vertex's distance to the kept chain exactly, so the furthest removed line vertex from the chain
+  the attempt would leave is a lower bound on the row, and an attempt whose floor is over the bound is refused before
+  any structure is built, named `MQ_LINE_DEVIATION`.
+- `boundaryRuns`: a run of 2 to `maxVertices` consecutive kept line vertices replaced by one chord, as one step,
+  counted once in `acceptedAt` (`kind: 'line-run'`), is proposed on the same argument as the hull's — a line's
+  single removals refuse one by one where a run would pass (a run of collinear-ish vertices whose chord is within the
+  bound) — and governed by the same opt-in rather than a second one, since the setting is the longest chord a pass
+  tries, not a property of the outline.
+- A line touching the outline: the shared vertex is a hull vertex and a line vertex. Both rules apply and **the
+  stricter wins** — it can leave only by a step that keeps both rows in bound and both chains joined; `protect.hull`
+  keeps it outright. A line vertex also in `protect.vertices` is kept; the line's chain still reads it.
+- A line's vertex that is a crossing or a run end (listed by two lines) is kept: removing it would make the two chains
+  disagree about where they meet.
+- **`protect.edges` keeps its present meaning**: a listed pair survives as an edge with both ends kept. A caller who
+  wants a line held whole lists its edges there, as today; `lines` is for a line that may thin.
+
+### The floor, found from outside [measured, #1326]
+
+The fewest vertices of each line within 1 px of it — the exact shortest cycle over every start, each chord valid when
+every vertex it skips is within the bound of it (the per-arc two-sided distance, by the subsequence argument above);
+Douglas–Peucker at the same bound for comparison. Then the floor chain made a chain of **source edges** (a scratch
+constrained Delaunay triangulation over the case's hull and lattice and the kept line vertices, lattice points within
+1 px of a chord dropped — scratch only, since rig-c has no such builder), reduced with the chords as `protect.edges`
+— the result the proposed mechanism would have at its floor — and the edge displacement read against the dense
+reference.
+
+| case | line | vertices | floor at 1 px | Douglas–Peucker at 1 px |
+| --- | --- | --- | --- | --- |
+| blink | the hole's ring | 18 | 4 | 4 |
+| sample face | lash_l (traced) | 154 | 19 | 28 |
+| sample face | lash_r (traced) | 194 | 21 | 32 |
+| sample face | mouth (traced) | 88 | 7 | 10 |
+
+| case: build | line vertices | result | edge vs dense, px — veto 1 px | veto absent |
+| --- | --- | --- | --- | --- |
+| blink: floor chain, 4 (one corner moved 1 px along the side) | 4 | 16 / 8 | **0.950002** (source 0.875002) | 0.950002 |
+| blink: the four corners, also 4 | 4 | 16 / 8 | 0 | 0 |
+| face: (a) lattice 10, no line | — | 91 | 3.463595 | — |
+| face: (b′) the traced rings as `protect.edges` | 436 | 511 | 0 | — |
+| face: (c′) the floor's 47 vertices in `protect.vertices`, today's API | 62 kept | 134 | 0.964237 (kept chain 1.765045 px off the line) | — |
+| face: the floor chains as edges | 47 | 123 / 89 | **1.014074** (the source's own) | **2.644509** |
+| face: floors at 0.75 px as edges | 72 | 145 / 114 | 0.889408 | 0.875752 |
+| face: floors at 0.5 px as edges | 120 | 196 / 162 | 0.545455 | **1.5** |
+| face: Douglas–Peucker at 1 px as edges | 70 | 144 / 112 | 0.745356 | 0.925926 |
+
+**The line's own bound is not sufficient, and the field between the lines needs interior vertices as well.** Two
+measured reasons:
+
+1. **At the face's floor the displacement is over the bound before any reduction**: the floor source itself reads
+   1.014074 px, at a sample 0.970143 px from its chord, and the veto cannot see it because the veto's reference is
+   that source. A geometric deviation δ moves the edge by about δ·|∇w|·|T| — 1 in both fixtures by construction (the
+   face's falloff band is |T|, the blink's ramp is the hole's height), above 1 where the lid's share falls faster than
+   the lid travels — so a line bound stated in drawing px bounds the edge only through a factor the line does not
+   know.
+2. **Without the veto the interior collapses and the edge leaves the bound with the line held**: 2.644509 px at the
+   floor, and 1.5 px even with the line at 0.5 px (120 vertices). The blink is the exception that shows why — its
+   share is constant on both sides of the edge, so nothing between the lines needs holding (0.95 either way); the
+   face's share falls off over 15 px around the lashes, and only interior vertices carry that.
+
+So for stage B [proposal]: a line row bounds the line's shape, and **the displacement still has to be held by a row
+that reads the field** — today only `targets.skinning` does, and it reads it against the source, so a line declared
+without the veto should be refused or reported as not motion-validated, and the source the veto measures against has
+to be one whose own edge is within the bound (the floor at 1 px is not, on the face; 0.75 px or Douglas–Peucker at
+1 px are). Between equal counts the choice of vertices matters as much as the count: the blink's exact floor and its
+four corners are both 4 vertices, at 0.95 and 0 px.
+
+**Crossings.** The eyewhite outlines meet the lash outlines — **14 and 13 junctions** (run ends and point contacts),
+with **5 and 10 unit pixel edges shared**, every junction already a traced vertex of both. With each junction pinned
+in both lines the floors are eyewhite 19 / 16 and lash 28 / 29 (alone 8 / 7 and 19 / 21): 33 and 32 distinct
+vertices per eye against 27 and 28 if the lines were independent. They are **excluded from the displacement
+builds**: the lid's share reads only the lash footprints, so an eyewhite line changes no sample's rule, and the scratch
+triangulator does not merge overlapping constraints — which is the case the contract's shared-run clause exists for.
+
+### Where the builder belongs [proposal]
+
+**`SourceMesh` input only; the consumer triangulates.** By the ownership line in this page's header: which footprint
+is a feature line, which lines meet, and at what spacing a line is sampled are authoring intent — parts's — while a
+line's deviation, its survival as edges and its refusals are generic geometry — rigc's, and the contract above is
+complete without a builder. By what each side can refuse by name: rigc can refuse an index, a non-edge pair, a
+crossing without a shared vertex and a line off the outline, all from the mesh it is handed; only the builder can
+refuse a footprint whose outline crosses another's without a meeting point, or a ring that simplifies to nothing,
+because only it sees the footprints. A rig-c builder would need what the tree does not have — a constrained Delaunay
+triangulation that recovers interior segments (rig-c has `earClip` of one outline), crossing and overlap resolution
+into shared vertices, and the interior-point placement parts already owns. And parts's `contourMesh` is, read in
+rig-parts `src/contour.ts`, constrained only against the outline: interior points are inserted and flipped Delaunay,
+and a polygon region's edges are not constraints (its own survey searched ring spacings until Delaunay happened to
+contain every ring edge — 4 px on the blink, 2.5 px on the face). So the builder that is needed is an extension of
+parts's — segment recovery against interior polylines — not a new one here.
+
+### What was rejected from the issue and the HQ comment
+
+- *"one-sided … as `MQ_BOUNDARY_DEVIATION` does"* — that row is the symmetric Hausdorff distance, computed exactly,
+  not sampled; the contract copies that.
+- *"converted by `pageScale` as every other row"* — the geometric rows are in drawing px and are not converted; only
+  the raster rows are.
+- *"rig-parts has a CDT"* — constrained against the outline only; interior lines are not constraints there.
+- rig-parts's build (iv) as "the line thinned": of its 70 anchors (the simplified rings), only the 36 that coincide
+  with a source vertex were protected, the reduction kept 62 line vertices, and its kept chain is **2.761074 px** from
+  the line — its 1.222456 px edge measures that, not a line thinned under a bound.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -6057,6 +6272,21 @@ slack the wide triangle allows (unit `MQ159-MQ161`, plants `CarrierPlant` in
   (MQ36's fold, its refused sample reading two or more distinct supports at
   1e-6 uv across its containing triangles by the test's own reading; the plant
   `any-shared-vertex` takes it)
+
+An interior feature line under the current API
+([#1326](https://github.com/firejune/rigc/issues/1326), stage A, nothing implemented) — `fixtures/blink.ts`'s
+synthetic blink, the readings §11 tabulates:
+
+- `MQ162_THE_BLINK_FIXTURE_IS_THREE_VALID_SOURCES_A_LINE_OF_SOURCE_EDGES_AND_A_DENSE_REFERENCE_THAT_READS_THE_LATTICE_ERROR_DERIVED_BY_HAND`
+  (the positive control: each source passes its own art rows and binds the lid by the rule, the line's pairs are
+  source edges, the lattices read a(s − a)/s; planted, the line's shares borrowed from the 8 px lattice must read
+  over the bound)
+- `MQ163_A_LATTICE_SOURCE_CANNOT_PLACE_THE_LID_EDGE_AND_ITS_REDUCTION_IS_ACCEPTED_WITH_THE_EDGE_WHERE_THE_LATTICE_PUT_IT`
+  (reading (a); vertices must have been removed, so the reading is the reduction's)
+- `MQ164_A_LINE_PROTECTED_AS_EDGES_KEEPS_EVERY_VERTEX_IT_HAS_THOUGH_ITS_OWN_SIMPLIFICATION_AT_THE_BOUND_NEEDS_FEWER`
+  (reading (b); unprotected, line vertices must be removed, so the survival is the protection's)
+- `MQ165_A_LINE_THINNED_THROUGH_PROTECT_VERTICES_IS_BOUNDED_BY_NOTHING_BUT_THE_SKINNING_VETO`
+  (reading (c); one corner left out, within the bound with the veto and over it, accepted, without)
 
 The decisions that change behaviour rather than an interface:
 
