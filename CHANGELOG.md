@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.36.0](https://github.com/firejune/rigc/compare/v2.35.1...v2.36.0) (2026-10-10)
+
+
+### Features
+
+* **core:** a player's bone-local adjustment — `openTrack({ adjust })` writes the locals after the timelines and before the world, constraints and physics, held to spine-core 4.3.13's `Bone.pose` on gallery/look: 1,812 of 1,812 poses equal at tolerance 0 over 12 walks; the write carried, at draw time and missing on pose 0 each red ([#1336](https://github.com/firejune/rigc/issues/1336)) ([#1337](https://github.com/firejune/rigc/issues/1337)) ([baae184](https://github.com/firejune/rigc/commit/baae184c11d59e7831b559f598f39f18329677de))
+
 ## [2.35.1](https://github.com/firejune/rigc/compare/v2.35.0...v2.35.1) (2026-10-10)
 
 
