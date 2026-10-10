@@ -406,6 +406,14 @@ const AGREED_IN_1294 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md §7, Q3), i
  * install, and bundles the entry for a browser (`CORE_PROBE_SOURCE`).
  */
 const OBSERVED_IN_1275 = 'rig-play (the successor of spine-html), issue #1275';
+/**
+ * The live track (issue #1276): promised before it could be observed, as the
+ * agreed rows above were — the rig-play 1.0 plan asked for it on the issue
+ * (a player steps once per frame by a `dt` it does not know in advance), and
+ * the player's own cards are filed on its repository. RELEASING.md *The import
+ * surface* says why.
+ */
+const REQUESTED_IN_1276 = 'rig-play 1.0 plan, requested on issue #1276';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -569,6 +577,7 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
       'ModelPageRegion',
     ],
   },
+  { entry: './core', observed: REQUESTED_IN_1276, needsRuntime: false, values: { openTrack: 'function' }, types: ['LiveTrack', 'TrackOptions'] },
 ];
 
 /**

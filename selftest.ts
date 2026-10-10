@@ -86329,7 +86329,7 @@ import { atlasRegionLookup } from './src/atlas.ts';
 import { isTrimmed, UV_CENSUS_FIELDS, uvDrawnOf, uvReachLines } from './tools/core_gate.ts';
 import { NO_ATLAS_WHY } from './tools/pose_oracle.ts';
 // The raw entry (issue #966), its own statements so the CR controls land as one hunk.
-import { poseRawAnimation, poseRawSetup, type RawPose } from './src/core/raw.ts';
+import { poseRawAnimation, poseRawAnimationEach, poseRawSetup, type RawPose } from './src/core/raw.ts';
 import { ORACLE_RAW_SPEC, ulpDistance } from './tools/pose_oracle.ts';
 import { rawCensusLines } from './tools/core_gate.ts';
 // Unposed bones and collapsed frames (issue #979), its own statements so the CC13, CC14, CC15 and CO20 controls land as one hunk.
@@ -86342,6 +86342,9 @@ import { SLIDER_PHYSICS_PROBES, sliderPhysicsPair, sliderPhysicsShape, type Slid
 import { loopedTime } from './src/core/raw.ts';
 import { poseLoopingWalk, poseWalkSetup, scanLoopingWalk, scanWalkSetup, type WalkPlant, type WalkPose } from './src/core/walk.ts';
 import type { ScanPose } from './src/core/raw.ts';
+import { walkIn, type RawReset } from './src/core/raw.ts';
+import { openTrack, type TrackOptions } from './src/core/track.ts';
+import type { CoreSlotRow } from './src/core/index.ts';
 import { noSkinView } from './src/render_core.ts';
 import { modelRead as readModelDocument } from './src/assertions/model/parse.ts';
 import { modelSteppedPoses } from './src/assertions/model/stepped_poses.ts';
@@ -98312,6 +98315,462 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
         ok,
         probeDetail(ok, probes, `${walks} walk(s) of the clipping probe and the gallery rows, each kept whole before it is read: ${arrays} vertex array(s) handed on, ${liveShared} of them shared with another row, every frame the public walk's numbers; a poser reusing one buffer per slot read red on ${plantedRed} of the ${moving} walk(s) whose vertices move`),
         'issue #1179, the second part: without its copy the scan hands A10 arrays the walk made, which A10 keeps until the animation is walked; that holds only while each pose\'s arrays are its own',
+      );
+    }
+
+    // ===========================================================================
+    // The live track (issue #1276, `src/core/track.ts`): the raw entry's walk opened and stepped one `dt` at a time, as a player's frame
+    // loop steps it. CO46 holds it to the batch walks bit for bit; CO47 holds what a looping one fires across the wrap to spine-core's
+    // AnimationState listener; CO48 holds its clipped rows to the raw entry's; CO49 its refusals.
+    // ===========================================================================
+    /** Every number by its exact double (`String` round-trips a double, `-0` apart from `0`), so two poses compare bit for bit. */
+    const exactly = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+    /** A live track's poses over `steps`: pose 0 when it is opened, then one per step. */
+    const liveWalk = (doc: CompiledDocument, name: string, steps: readonly number[], options: TrackOptions, plant: TimelinePlant = {}): RawPose[] => {
+      const track = openTrack(doc, name, options, plant);
+      return [track.first, ...steps.map((dt) => track.step(dt))];
+    };
+    /** A live looping pose narrowed to what A10's walk carries; a slot channel the live track writes `null` (not finite) read as NaN, as A10's walk keeps it. */
+    const narrowedLive = (p: RawPose): WalkPose => ({
+      trackTime: p.trackTime, animationTime: p.animationTime, bones: p.bones,
+      slots: p.slots.map((r): CoreSlotRow => [r[0], r[1], r[2] ?? Number.NaN, r[3] ?? Number.NaN, r[4] ?? Number.NaN, r[5] ?? Number.NaN, r[6] === null ? null : [r[6][0] ?? Number.NaN, r[6][1] ?? Number.NaN, r[6][2] ?? Number.NaN], r[7], r[8]]),
+      drawOrder: p.drawOrder, drawn: p.drawn,
+    });
+    const builtGreen = built.filter((b) => b.exits.every((e) => e === 0));
+
+    // --- CO46: the live track, stepped one dt at a time, poses what the batch walks pose — bit for bit --
+    //
+    // Held (`loop: false`): pose for pose `poseRawAnimation`'s, every field — at 12 fps from the animation's reset, at 12 fps from the
+    // setup's, three times the frames (the hold past the duration walked), and the two one-step jumps CR03 takes. Looped (`loop: true`,
+    // reset at the setup): `poseLoopingWalk`'s on A10's own schedule, narrowed to what that walk carries. Planted: the carry dropped — every
+    // pose a fresh track jumped to the running sum (seeking by teleport, which the card leaves to the player because a physics rig has
+    // history) — read red on the rows whose physics moves.
+    {
+      const probes: string[] = [];
+      const tally = { rows: 0, animations: 0, heldWalks: 0, heldPoses: 0, loopedWalks: 0, loopedPoses: 0, wrapped: 0, teleportRed: 0, teleportWalks: 0 };
+      for (const b of builtGreen) {
+        tally.rows++;
+        const model = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name);
+        const doc = underSkin(model, 'default');
+        for (const anim of doc.animations) {
+          tally.animations++;
+          const d = anim.timelines.duration;
+          const n = Math.round(d * 12);
+          const lists: Array<[string, number[], RawReset]> = [
+            ['12 fps', new Array<number>(n).fill(1 / 12), 'animation'],
+            ['12 fps from the setup', new Array<number>(n).fill(1 / 12), 'setup'],
+            ['12 fps held past the duration', new Array<number>(3 * n + 2).fill(1 / 12), 'animation'],
+            ...[d * 0.37, d + 0.25].flatMap((time) => (['animation', 'setup'] as const).map((reset): [string, number[], RawReset] => [`one step of ${time}`, [time], reset])),
+          ];
+          for (const [label, steps, reset] of lists) {
+            // Pose for pose as the batch walk hands them over (`poseRawAnimationEach`), so neither walk is held whole.
+            const track = openTrack(doc, anim.name, { loop: false, reset });
+            let off = -1;
+            poseRawAnimationEach(doc, anim.name, steps, {}, reset, (want, i) => {
+              const got = i === 0 ? track.first : track.step(steps[i - 1]);
+              tally.heldPoses++;
+              if (off < 0 && exactly(want) !== exactly(got)) off = i;
+            });
+            tally.heldWalks++;
+            if (off >= 0) probes.push(`${b.name} "${anim.name}" ${label}: pose ${off} differs from poseRawAnimation's`);
+          }
+          // The planted reading: no carry — each pose a fresh track opened and jumped to the running sum in one step.
+          let sum = 0;
+          let teleportOff = false;
+          poseRawAnimationEach(doc, anim.name, new Array<number>(n).fill(1 / 12), {}, 'animation', (want, i) => {
+            if (i === 0) return;
+            sum += 1 / 12;
+            if (!teleportOff && exactly(want.bones) !== exactly(liveWalk(doc, anim.name, [sum], { loop: false, reset: 'animation' })[1].bones)) teleportOff = true;
+          });
+          tally.teleportWalks++;
+          if (teleportOff) tally.teleportRed++;
+        }
+        const view = noSkinView(model);
+        for (const anim of view.animations) {
+          const steps = new Array<number>(STEP_FRAMES).fill(Math.max(anim.timelines.duration, 1) / STEP_FRAMES);
+          const want = poseLoopingWalk(view, anim.name, steps);
+          const got = liveWalk(view, anim.name, steps, { loop: true, reset: 'setup' });
+          tally.loopedWalks++;
+          tally.loopedPoses += got.length;
+          tally.wrapped += got.filter((p, i) => i > 1 && p.animationTime < got[i - 1].animationTime).length;
+          const off = want.findIndex((p, i) => got[i] === undefined || exactly(p) !== exactly(narrowedLive(got[i])));
+          if (off >= 0 || got.length !== want.length) probes.push(`${b.name} "${anim.name}" looped: pose ${off} differs from poseLoopingWalk's narrowed (${got.length} of ${want.length} pose(s))`);
+        }
+      }
+      probes.push(
+        ...floorProbes(
+          [
+            [tally.heldPoses, 1, `${tally.heldPoses} held pose(s)`],
+            [tally.wrapped, 1, `${tally.wrapped} looped step(s) across the wrap`],
+            [tally.teleportRed, 1, `${tally.teleportRed} walk(s) red with the carry dropped`],
+          ],
+          'so the live track was not held where it steps',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO46_THE_LIVE_TRACK_STEPPED_ONE_DT_AT_A_TIME_POSES_THE_BATCH_WALKS_BIT_FOR_BIT_AND_WITHOUT_ITS_CARRY_IS_RED',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${tally.rows} built row(s), ${tally.animations} animation(s): held, ${tally.heldWalks} walk(s) — 12 fps from the animation's reset and from the setup's, three times the frames, and two one-step jumps under each reset — ${tally.heldPoses} pose(s) equal to poseRawAnimation's in every field, bit for bit; ` +
+            `looped, ${tally.loopedWalks} walk(s) on A10's schedule, ${tally.loopedPoses} pose(s) equal to poseLoopingWalk's narrowed, ${tally.wrapped} step(s) across the wrap among them; with the carry dropped (a fresh track jumped to the running sum every frame) ${tally.teleportRed} of ${tally.teleportWalks} held walk(s) red`,
+        ),
+        'issue #1276: a player steps once per frame by a dt it does not know in advance; the live track is the batch walk\'s body behind a held context, so it is held to the batch walk pose for pose, and the batch walk to spine-core (CR03, CO25)',
+      );
+    }
+
+    // --- CO47: a looping live track fires its events across the wrap as spine-core's AnimationState does --
+    //
+    // Spine-core 4.3.13: `AnimationState` with `setAnimation(0, name, true)` — pose 0 applied at 0 and reset there (`reset: 'animation'`)
+    // or reset at the setup pose with nothing applied (`setup`) — then per step `update(dt)`, `apply`, `Skeleton.update(dt)`,
+    // `updateWorldTransform(Physics.update)`, a listener collecting `event` and `complete` in the order queued. The core: the live track's
+    // events, and `complete` placed by the rule `src/core/track.ts` states (it carries none). On the built rows' animations keying events
+    // and a seeded population whose keys sit at 0, just after it, in the middle, one float32 ulp and 1e-3 before the duration, on it, and
+    // one ulp and 1e-3 past the bone's last key (where the key sets the duration), over step lists that cross the wrap once and several
+    // times, land exactly on the duration, and carry the track past it by more than a cycle. Each reading the rule rejects, planted.
+    {
+      const probes: string[] = [];
+      const f32 = Math.fround;
+      const ulp = (v: number, by: 1 | -1): number => {
+        const a = new Float32Array([v]);
+        const u = new Uint32Array(a.buffer);
+        u[0] += by;
+        return a[0];
+      };
+      type Read = { seq: string[]; track: number; time: number };
+      const spineLooped = (data: SkeletonData, name: string, steps: readonly number[], reset: RawReset): Read[] => {
+        const sk = new Skeleton(data);
+        const st = new AnimationState(new AnimationStateData(data));
+        let seq: string[] = [];
+        st.addListener({ event: (_e, ev) => seq.push(`${ev.data.name}@${ev.time}`), complete: () => seq.push('complete') });
+        const entry = st.setAnimation(0, name, true);
+        sk.setupPose();
+        if (reset === 'animation') st.apply(sk);
+        sk.update(0);
+        sk.updateWorldTransform(Physics.reset);
+        const out: Read[] = [{ seq, track: entry.trackTime, time: reset === 'animation' ? entry.getAnimationTime() : 0 }];
+        for (const dt of steps) {
+          seq = [];
+          st.update(dt);
+          st.apply(sk);
+          sk.update(dt);
+          sk.updateWorldTransform(Physics.update);
+          out.push({ seq, track: entry.trackTime, time: entry.getAnimationTime() });
+        }
+        return out;
+      };
+      /** The live track's events, with `complete` where the header's rule queues it: once on a step whose track time's whole cycles rose past 0 (every step at a duration of 0), after the keys after the previous time. */
+      const coreLooped = (doc: CompiledDocument, name: string, steps: readonly number[], reset: RawReset, plant: TimelinePlant = {}): Read[] => {
+        const track = openTrack(doc, name, { loop: true, reset }, plant);
+        const d = track.duration;
+        let lastTrack = -1;
+        let last = -1;
+        const read = (p: RawPose, applied: boolean): Read => {
+          const fired = p.events.map((e) => `${e[0]}@${e[1]}`);
+          const wrapped = p.animationTime < last;
+          const first = wrapped ? p.events.filter((e) => e[1] > last).length : fired.length;
+          const complete = applied && (d === 0 || (Math.floor(p.trackTime / d) > 0 && Math.floor(p.trackTime / d) > Math.floor(lastTrack / d)));
+          if (applied) {
+            lastTrack = p.trackTime;
+            last = p.animationTime;
+          }
+          return { seq: [...fired.slice(0, first), ...(complete ? ['complete'] : []), ...fired.slice(first)], track: p.trackTime, time: p.animationTime };
+        };
+        return [read(track.first, reset === 'animation'), ...steps.map((dt) => read(track.step(dt), true))];
+      };
+      type Subject = { label: string; data: SkeletonData; doc: CompiledDocument; name: string };
+      const subjects: Subject[] = [];
+      for (const b of builtGreen) {
+        const model = readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name);
+        const keyed = model.animations.filter((a) => a.timelines.events.length > 0);
+        if (keyed.length === 0) continue;
+        const data = loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.name);
+        for (const a of keyed) subjects.push({ label: `${b.name} "${a.name}"`, data, doc: noSkinView(model), name: a.name });
+      }
+      const treeSubjects = subjects.length;
+      const rnd = seededRandom(127601);
+      const SEEDED = 80;
+      for (let i = 0; i < SEEDED; i++) {
+        const dur = WALK_DURATIONS[Math.floor(rnd() * WALK_DURATIONS.length)];
+        const spots = [0, 1e-3, dur / 2, dur > 0 ? ulp(dur, -1) : 0, Math.max(0, dur - 1e-3), dur, ulp(dur, 1), dur + 1e-3];
+        let chosen = spots.filter(() => rnd() < 0.35);
+        if (chosen.length === 0) chosen = [spots[Math.floor(rnd() * spots.length)]];
+        const events: Array<{ time: number; name: string }> = [];
+        for (const t of [...new Set(chosen.map(f32))].sort((p, q) => p - q)) {
+          events.push({ time: t, name: 'e' });
+          if (rnd() < 0.2) events.push({ time: t, name: 'g' });
+        }
+        const rotate = dur > 0 ? [{ time: 0, value: 0 }, { time: dur, value: 90 }] : [{ time: 0, value: 10 }];
+        const bones = [{ name: 'root' }, { name: 'b', parent: 'root', length: 10 }];
+        const spineText = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], skins: [{ name: 'default', attachments: {} }], events: { e: {}, g: {} }, animations: { a: { bones: { b: { rotate } }, events } } });
+        const modelText = JSON.stringify({
+          spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }], constraints: [],
+          events: [{ name: 'e' }, { name: 'g' }],
+          animations: [{ name: 'a', duration: 0, bones: [{ name: 'b', timelines: [{ name: 'rotate', keys: rotate }] }], slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events }],
+          images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+        });
+        subjects.push({ label: `event probe ${i}`, data: loadOracleData(spineText, '', `event probe ${i}`), doc: readModel(modelText, `event probe ${i}`), name: 'a' });
+      }
+      const stepLists = (d: number): Array<[string, number[]]> => {
+        const e = d > 0 ? d : 0.25;
+        const seeded: number[] = [];
+        for (let k = 0; k < 24; k++) seeded.push(rnd() < 0.15 ? e * (1 + rnd() * 1.5) : rnd() * e * 0.6);
+        return [
+          ["A10's schedule", new Array<number>(STEP_FRAMES).fill(Math.max(d, 1) / STEP_FRAMES)],
+          ['1/60 over 3.2 cycles', new Array<number>(Math.max(1, Math.round(e * 60 * 3.2))).fill(1 / 60)],
+          ['the duration per step', new Array<number>(4).fill(e)],
+          ['half the duration per step', new Array<number>(7).fill(e / 2)],
+          ['seeded, some past a whole cycle', seeded],
+        ];
+      };
+      const row = (k: { name: string; time: number; int: number; float: number; string: string }, round: (v: number) => number | null): CoreEventRow => [k.name, round(k.time), k.int, round(k.float), k.string];
+      const READINGS: Array<[string, NonNullable<TimelinePlant['events']>]> = [
+        ['nothing fired across the wrap (the raw rule alone)', (keys, last, t, round = gridRound, wrapped = false) => (wrapped ? [] : eventsFired(keys, last, t, round))],
+        ['the keys from 0 fired over (0, t], not (−1, t]', (keys, last, t, round = gridRound, wrapped = false) => (wrapped ? [...keys.filter((k) => k.time > last), ...keys.filter((k) => k.time > 0 && k.time <= t)].map((k) => row(k, round)) : eventsFired(keys, last, t, round))],
+        ['the wrap fired in key order', (keys, last, t, round = gridRound, wrapped = false) => (wrapped ? keys.filter((k) => k.time > last || k.time <= t).map((k) => row(k, round)) : eventsFired(keys, last, t, round))],
+      ];
+      const tally = { walks: 0, steps: 0, wrapSteps: 0, pastCycle: 0, events: 0, completes: 0, atDuration: 0, atDurationRising: 0, ulpBeforeRising: 0, timeOff: 0 };
+      const red = READINGS.map(() => 0);
+      for (const s of subjects) {
+        const d = s.doc.animations.find((a) => a.name === s.name)?.timelines.duration ?? 0;
+        for (const [label, steps] of stepLists(d)) {
+          for (const reset of ['animation', 'setup'] as const) {
+            tally.walks++;
+            const want = spineLooped(s.data, s.name, steps, reset);
+            const got = coreLooped(s.doc, s.name, steps, reset);
+            for (let i = 0; i < want.length; i++) {
+              tally.steps++;
+              const w = want[i];
+              const g = got[i];
+              if (w.track !== g.track || w.time !== g.time) tally.timeOff++;
+              if (w.seq.join() !== g.seq.join() && probes.length < 12) probes.push(`${s.label} ${label}, reset at the ${reset}, step ${i}: spine-core queued [${w.seq.join(', ')}], the core [${g.seq.join(', ')}]`);
+              const wrapped = i > 0 && !(i === 1 && reset === 'setup') && w.time < want[i - 1].time;
+              if (wrapped) tally.wrapSteps++;
+              if (i > 0 && d > 0 && steps[i - 1] > d) tally.pastCycle++;
+              for (const q of w.seq) {
+                if (q === 'complete') {
+                  tally.completes++;
+                  continue;
+                }
+                tally.events++;
+                const t = Number(q.slice(q.lastIndexOf('@') + 1));
+                if (d > 0 && t === d) (wrapped ? tally.atDuration++ : tally.atDurationRising++);
+                if (d > 0 && t === ulp(d, -1) && !wrapped) tally.ulpBeforeRising++;
+              }
+            }
+            READINGS.forEach(([, events], k) => {
+              const planted = coreLooped(s.doc, s.name, steps, reset, { events });
+              if (planted.some((p, i) => p.seq.join() !== want[i].seq.join())) red[k]++;
+            });
+          }
+        }
+      }
+      if (tally.timeOff > 0) probes.push(`${tally.timeOff} step(s) whose track or animation time differs from TrackEntry's`);
+      if (tally.atDurationRising > 0) probes.push(`a key at the duration fired on ${tally.atDurationRising} step(s) that did not wrap`);
+      READINGS.forEach(([label], k) => {
+        if (red[k] === 0) probes.push(`${label}, planted: no walk read red`);
+      });
+      probes.push(
+        ...floorProbes(
+          [
+            [tally.wrapSteps, 1, `${tally.wrapSteps} step(s) across the wrap`],
+            [tally.pastCycle, 1, `${tally.pastCycle} step(s) longer than a cycle`],
+            [tally.atDuration, 1, `${tally.atDuration} key(s) at the duration fired`],
+            [tally.ulpBeforeRising, 1, `${tally.ulpBeforeRising} key(s) one ulp before the duration fired on a rising step`],
+            [tally.completes, 1, `${tally.completes} complete(s)`],
+          ],
+          'so the wrap was not held where it decides',
+        ),
+      );
+      if (treeSubjects === 0) console.log(`          ⚠️ HOLE: ${examplesHole ?? 'no built row keys an event'} — the wrap was held on the seeded population alone`);
+      const ok = probes.length === 0;
+      say(
+        'CO47_A_LOOPING_LIVE_TRACK_FIRES_ITS_EVENTS_ACROSS_THE_WRAP_AS_SPINE_CORES_ANIMATIONSTATE_DOES_AND_EACH_REJECTED_READING_IS_RED',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${treeSubjects} built row animation(s) keying events and ${SEEDED} seeded probe(s), ${tally.walks} walk(s) under both resets: ${tally.steps} step(s) — ${tally.wrapSteps} across the wrap, ${tally.pastCycle} longer than a cycle — every one queuing the listener's events and completes in its order (${tally.events} event(s), ${tally.completes} complete(s)); ` +
+            `a key at the duration fired ${tally.atDuration} time(s), every one on a wrap step, where a key one float32 ulp before it fired on a rising step ${tally.ulpBeforeRising} time(s); planted — ${READINGS.map(([label], k) => `${label} → ${red[k]} walk(s) red`).join('; ')}`,
+        ),
+        'issue #1276: a looping player fires events across the wrap; the raw rule (previous time, time] fires nothing there, so what AnimationState fires is read off its listener and the core states it',
+      );
+    }
+
+    // --- CO48: a looping live track cuts its clipped rows as the raw entry does, across the wrap --
+    //
+    // `{ loop: true, keep: false }`: A10's walk cuts none (`NO_CLIPPED_ROWS` — its one reader reads none); the live track cuts each pose's
+    // drawn attachments through the clip as the raw entry does. On every subject with no physics constraint each pose is history-free, so
+    // every live pose — past the wrap included — is held to the raw entry's one step to its animation time, every field but the track
+    // time and the events; on the clipping probe with physics, to the raw entry's walk over the same steps before the first wrap.
+    // Planted: the live track handed A10's clipper.
+    {
+      const probes: string[] = [];
+      const tally = { subjects: 0, poses: 0, clippedPoses: 0, clippedRows: 0, wrapped: 0, wrappedClipped: 0, stepped: 0, a10Rows: 0, plantRed: 0 };
+      const subjects: Array<{ where: string; model: string; history: boolean }> = [
+        { where: 'the clipping probe', model: clipPair(false).model, history: false },
+        { where: 'the clipping probe with physics', model: clipPair(true).model, history: true },
+        ...builtGreen
+          .map((b) => ({ where: b.name, model: readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), history: false }))
+          .filter((s) => readModel(s.model, s.where).skins.some((k) => Object.values(k.attachments).some((slot) => Object.values(slot).some((a) => a.geometry?.kind === 'clipping')))),
+      ];
+      for (const s of subjects) {
+        tally.subjects++;
+        const view = noSkinView(readModel(s.model, s.where));
+        if (s.history !== view.constraints.some((c) => c.kind === 'physics')) probes.push(`${s.where}: declares ${s.history ? 'no' : 'a'} physics constraint, which the subject's reading assumes otherwise`);
+        for (const anim of view.animations) {
+          const d = anim.timelines.duration;
+          for (const steps of [new Array<number>(STEP_FRAMES).fill(Math.max(d, 1) / STEP_FRAMES), new Array<number>(Math.max(1, Math.round(d * 60 * 3.2))).fill(1 / 60)]) {
+            // Stepped in lockstep, so no walk is held whole but the physics probe's raw walk.
+            const live = openTrack(view, anim.name, { loop: true, reset: 'setup' });
+            const planted = openTrack(view, anim.name, { loop: true, reset: 'setup' }, { through: () => null });
+            const walked = s.history ? poseRawAnimation(view, anim.name, steps, {}, 'setup') : [];
+            tally.a10Rows += walkIn(view, anim.name, steps, {}, 'setup', { loop: true, keep: true }).reduce((n, p) => n + p.clipped.length, 0);
+            let plantOff = false;
+            let before = live.first.animationTime;
+            for (let i = 1; i <= steps.length; i++) {
+              const p = live.step(steps[i - 1]);
+              if (!plantOff && exactly(planted.step(steps[i - 1]).clipped) !== exactly(p.clipped)) plantOff = true;
+              const wrapped = p.animationTime < before;
+              before = p.animationTime;
+              tally.poses++;
+              if (wrapped) tally.wrapped++;
+              if (p.clipped.length > 0) {
+                tally.clippedPoses++;
+                tally.clippedRows += p.clipped.length;
+                if (wrapped) tally.wrappedClipped++;
+              }
+              let want: RawPose;
+              if (!s.history) want = poseRawAnimation(view, anim.name, [p.animationTime], {}, 'setup')[1];
+              else if (p.trackTime < d) {
+                want = walked[i];
+                tally.stepped++;
+              } else continue;
+              const strip = (q: RawPose): RawPose => ({ ...q, trackTime: 0, events: [] });
+              if (exactly(p.clipped) !== exactly(want.clipped)) probes.push(`${s.where} "${anim.name}" step ${i} (t ${p.animationTime}): the clipped rows differ from the raw entry's`);
+              else if (exactly(strip(p)) !== exactly(strip(want))) probes.push(`${s.where} "${anim.name}" step ${i}: the pose past its clipped rows differs from the raw entry's`);
+            }
+            if (plantOff) tally.plantRed++;
+          }
+        }
+      }
+      if (tally.a10Rows > 0) probes.push(`A10's walk cut ${tally.a10Rows} clipped row(s), which it does not`);
+      probes.push(...floorProbes([[tally.wrappedClipped, 1, `${tally.wrappedClipped} pose(s) across the wrap cutting a clipped row`], [tally.stepped, 1, `${tally.stepped} pose(s) of the physics probe`], [tally.plantRed, 1, `${tally.plantRed} planted walk(s) read red`]], 'so the clipped rows were not held across the wrap'));
+      const ok = probes.length === 0;
+      say(
+        'CO48_A_LOOPING_LIVE_TRACK_CUTS_ITS_CLIPPED_ROWS_AS_THE_RAW_ENTRY_DOES_ACROSS_THE_WRAP',
+        ok,
+        probeDetail(ok, probes.slice(0, 12), `${tally.subjects} subject(s) — the clipping probe with and without physics and the built rows that clip — ${tally.poses} looping pose(s), ${tally.clippedPoses} cutting ${tally.clippedRows} clipped row(s), ${tally.wrappedClipped} of the ${tally.wrapped} across the wrap: every history-free pose equal to the raw entry's one step to its animation time in every field but the track time and the events, and ${tally.stepped} pose(s) of the physics probe to the raw entry's walk before the first wrap; A10's walk cut ${tally.a10Rows}; with A10's clipper planted ${tally.plantRed} walk(s) red`),
+        'issue #1276: the looping walk cuts no clipped row because its one reader reads none; a player draws them, so the live track cuts them as the raw entry does, and that is held across the wrap',
+      );
+    }
+
+    // --- CO49: the live track refuses a step and a non-finite vertex by name, and a refused track stays refused --
+    {
+      const probes: string[] = [];
+      const refusal = (f: () => unknown): string => {
+        try {
+          f();
+          return '';
+        } catch (err) {
+          if (err instanceof CoreInputError) return err.message;
+          throw err;
+        }
+      };
+      const subject = builtGreen.find((b) => b.name.startsWith('gallery/'));
+      let forgedRefused = 0;
+      let forgedKept = 0;
+      let boneOnly = 0;
+      if (subject === undefined) probes.push('no gallery row built');
+      else {
+        const doc = noSkinView(readModel(readFileSync(join(subject.out, MODEL_DOCUMENT_FILE), 'utf8'), subject.name));
+        const name = doc.animations[0]?.name ?? '';
+        const track = openTrack(doc, name, { loop: true, reset: 'animation' });
+        for (const [dt, label] of [[Number.NaN, 'NaN'], [Number.POSITIVE_INFINITY, 'Infinity'], [-0.1, '-0.1']] as const) {
+          const why = refusal(() => track.step(dt));
+          if (!why.includes(`step 1 is ${label}, not a finite time at or above 0`)) probes.push(`a step of ${label}: ${JSON.stringify(why)}`);
+        }
+        if (track.trackTime !== 0) probes.push(`a refused step moved the track time to ${track.trackTime}`);
+        if (refusal(() => track.step(0.1)) !== '' || track.trackTime !== 0.1) probes.push(`a step after three refused ones did not walk to 0.1 (${track.trackTime})`);
+        for (const [label, options, want] of [
+          ['loop missing', { reset: 'setup' }, 'options.loop is undefined, not true or false'],
+          ['reset missing', { loop: true }, 'options.reset is undefined, not "animation" or "setup"'],
+        ] as const) {
+          const why = refusal(() => openTrack(doc, name, options as unknown as TrackOptions));
+          if (!why.includes(want)) probes.push(`${label}: ${JSON.stringify(why)}`);
+        }
+        const unknown = refusal(() => openTrack(doc, '__nope', { loop: true, reset: 'setup' }));
+        if (!unknown.includes('"__nope" is not one of this document')) probes.push(`an unknown animation: ${JSON.stringify(unknown)}`);
+      }
+      // The forged walks (CO25's): A10's walk keeps the non-finite value; the live track refuses where a drawn vertex is not finite, and a
+      // track once refused refuses every later step, naming the step it was refused at.
+      for (const f of forged) {
+        const view = noSkinView(readModel(f.model, `${f.row} with ${f.label}`));
+        for (const anim of view.animations) {
+          const steps = new Array<number>(STEP_FRAMES).fill(Math.max(anim.timelines.duration, 1) / STEP_FRAMES);
+          const kept = poseLoopingWalk(view, anim.name, steps);
+          const vertexAt = kept.findIndex((p) => p.drawn.some((d) => !d.vertices.every(Number.isFinite)));
+          const boneAt = kept.findIndex((p) => p.bones.some((b) => ![b.a, b.b, b.c, b.d, b.worldX, b.worldY].every(Number.isFinite)));
+          let refusedAt = -1;
+          let why = '';
+          let after = '';
+          try {
+            const track = openTrack(view, anim.name, { loop: true, reset: 'setup' });
+            for (let i = 0; i < steps.length; i++) {
+              try {
+                track.step(steps[i]);
+              } catch (err) {
+                if (!(err instanceof CoreInputError)) throw err;
+                refusedAt = i + 1;
+                why = err.message;
+                after = refusal(() => track.step(steps[i]));
+                break;
+              }
+            }
+          } catch (err) {
+            if (!(err instanceof CoreInputError)) throw err;
+            refusedAt = 0;
+            why = err.message;
+          }
+          if (vertexAt >= 0) {
+            if (refusedAt !== vertexAt || !why.includes('non-finite vertex') || (refusedAt > 0 && !after.includes(`refused at step ${refusedAt}`))) probes.push(`${f.row} with ${f.label} "${anim.name}": a vertex first non-finite at pose ${vertexAt}, the live track refused at ${refusedAt} (${JSON.stringify(why.slice(0, 80))}), then ${JSON.stringify(after.slice(0, 60))}`);
+            else forgedRefused++;
+          } else if (refusedAt >= 0) probes.push(`${f.row} with ${f.label} "${anim.name}": refused at ${refusedAt} with no vertex non-finite — ${why}`);
+          else {
+            forgedKept++;
+            if (boneAt >= 0) boneOnly++;
+          }
+        }
+      }
+      // What the raw entry passes on, stated in src/core/track.ts: a bone whose matrix is not finite and which no drawn vertex reads. A chain
+      // of two bones off the root, each scaled to twice the square root of the largest double and carrying no slot, on every gallery row:
+      // the live track walks it, and its pose holds the bone as computed — the raw entry's own walk, which reads the same.
+      let boneWalks = 0;
+      let boneHeld = 0;
+      for (const b of builtGreen.filter((r) => r.name.startsWith('gallery/'))) {
+        const m = JSON.parse(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8')) as { bones: Array<Record<string, unknown>> };
+        m.bones.push({ name: 'nf1', parent: m.bones[0].name, scaleX: 2 * ROOT_OF_MAX }, { name: 'nf2', parent: 'nf1', scaleX: 2 * ROOT_OF_MAX });
+        const view = noSkinView(readModel(JSON.stringify(m), `${b.name} with a non-finite bone`));
+        for (const anim of view.animations) {
+          boneWalks++;
+          const steps = new Array<number>(12).fill(0.1);
+          const holding = (poses: RawPose[]): number => poses.filter((p) => p.bones.some((x) => x.name === 'nf2' && ![x.a, x.b, x.c, x.d].every(Number.isFinite))).length;
+          const looped = liveWalk(view, anim.name, steps, { loop: true, reset: 'setup' });
+          const held = liveWalk(view, anim.name, steps, { loop: false, reset: 'setup' });
+          const raw = poseRawAnimation(view, anim.name, steps, {}, 'setup');
+          if (holding(looped) === looped.length && holding(held) === held.length && raw.every((p, i) => exactly(p) === exactly(held[i]))) boneHeld++;
+          else probes.push(`${b.name} "${anim.name}" with a non-finite bone: ${holding(looped)} of ${looped.length} looping and ${holding(held)} of ${held.length} held pose(s) hold it, or the raw entry's walk differs from the held track`);
+        }
+      }
+      probes.push(...floorProbes([[forgedRefused, 1, `${forgedRefused} forged walk(s) refused at a non-finite vertex`], [boneHeld, 1, `${boneHeld} walk(s) holding a non-finite bone`]], 'so the refusal was not seen'));
+      const ok = probes.length === 0;
+      say(
+        'CO49_THE_LIVE_TRACK_REFUSES_A_STEP_AND_A_NON_FINITE_VERTEX_BY_NAME_AND_A_REFUSED_TRACK_STAYS_REFUSED',
+        ok,
+        probeDetail(ok, probes.slice(0, 12), `a step of NaN, Infinity and −0.1 refused naming the step and moving nothing, the next step walked; options without loop or reset and an unknown animation refused by name; over the forged walks' animations ${forgedRefused} refused at the pose whose drawn vertex is first non-finite and every later step refused naming it, ${forgedKept} walked with no vertex non-finite (${boneOnly} of them holding a non-finite bone); a slotless bone chain past the largest double on the gallery rows walked on ${boneHeld} of ${boneWalks} animation(s), every pose holding the bone as computed, the raw entry's own walk the same — what the raw entry refuses is what is drawn`),
+        'issue #1276: the live track is the raw entry\'s walk, so a value a renderer would draw wrong is refused by name rather than drawn as nothing; a track refused part-way has moved its time and physics, so it is not stepped again',
       );
     }
   });

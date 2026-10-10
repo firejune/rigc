@@ -126,10 +126,18 @@ export function readEventKeys(value: unknown, label: string, defs: ReadonlyMap<s
   return out;
 }
 
-/** What lists the events fired over `(last, t]`: `eventsFired` unless a plant passes another. */
-export type EventsFired = (keys: readonly CoreEventKey[], last: number, t: number, round?: (v: number) => number | null) => CoreEventRow[];
+/** What lists the events fired over `(last, t]` — or across the wrap when `wrapped` — : `eventsFired` unless a plant passes another. */
+export type EventsFired = (keys: readonly CoreEventKey[], last: number, t: number, round?: (v: number) => number | null, wrapped?: boolean) => CoreEventRow[];
 
-/** The rows of the keys fired over `(last, t]`, in key order — the header's rules, rounded as the oracle rounds. */
-export function eventsFired(keys: readonly CoreEventKey[], last: number, t: number, round: (v: number) => number | null = gridRound): CoreEventRow[] {
-  return keys.filter((k) => k.time > last && k.time <= t).map((k): CoreEventRow => [k.name, round(k.time), k.int, round(k.float), k.string]);
+/**
+ * The rows of the keys fired over `(last, t]`, in key order — the header's
+ * rules, rounded as the oracle rounds. `wrapped` is a looping track's step
+ * whose animation time went down (`t < last`, the wrap): the keys after
+ * `last`, in key order, then the keys at or before `t`, in key order — the
+ * header's *Across the wrap*. Nothing but a looping track passes it.
+ */
+export function eventsFired(keys: readonly CoreEventKey[], last: number, t: number, round: (v: number) => number | null = gridRound, wrapped = false): CoreEventRow[] {
+  const row = (k: CoreEventKey): CoreEventRow => [k.name, round(k.time), k.int, round(k.float), k.string];
+  if (wrapped) return [...keys.filter((k) => k.time > last), ...keys.filter((k) => k.time <= t)].map(row);
+  return keys.filter((k) => k.time > last && k.time <= t).map(row);
 }

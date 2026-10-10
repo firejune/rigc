@@ -789,6 +789,14 @@ their names and the entry moves with them. Observed in rig-play, issue #1275
 | --- | --- | --- |
 | `rig-c/core` | `readModel`, `underSkin`, `underNoSkin`, `CoreInputError`, `CORE_DOCUMENT_SPEC`, `CORE_DOCUMENT_SPECS`, `CORE_BLEND_MODES`, `activeBones`, `poseRawSetup`, `poseRawAnimation`, `poseRawAnimationEach`, `loopedTime`, `setupBounds`, `poseWalkSetup`, `poseLoopingWalk`, `documentPageLookup`, `drawnRegions`, `regionPageUvs`, `meshPageUvs`, `readUvSequences`, `clipThrough`, `clipShapeOf`, `convexWhy`, `REGION_UVS`, `REGION_TRIANGLES`, `eventsFired` | `CompiledDocument`, `RawPose`, `RawBone`, `RawDrawn`, `RawClip`, `RawClipped`, `RawEvent`, `RawReset`, `WalkPose`, `CoreSlotRow`, `CoreBlendMode`, `ClipShape`, `ClipResult`, `DrawnRegion`, `UvPage`, `UvRegion`, `UvSource`, `ModelPage`, `ModelPageRegion` |
 
+🤝 **A second `rig-c/core` row is promised by request**
+([#1276](https://github.com/firejune/rigc/issues/1276)): `openTrack`, with the
+types `LiveTrack` and `TrackOptions` — the live track the rig-play 1.0 plan asked
+for on that issue (a player steps once per frame by a `dt` it does not know in
+advance), before the player could be seen calling it. It is the agreement
+exception above applied to this entry, and the row says so in place of an
+observation (`REQUESTED_IN_1276`).
+
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
 from the install and calls `readModel` then `poseRawSetup` on the build it
