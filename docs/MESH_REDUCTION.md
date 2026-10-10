@@ -5489,6 +5489,85 @@ Numbered afresh for #1302; cited as "§10 Q1" and so on.
   (124), unlike the random placements measured on the private part. Is the decision rule's baseline on the public
   fixture 108 (the trial replay) with the joint control at 104, and is the field to be tested against both?
 
+### Measured — relocation [measured, #1318]
+
+> **The relocating boundary operation of [#1318](https://github.com/firejune/rigc/issues/1318) is on hold, and only
+> its first measurement is written here.** The consumer raised its declared source tolerance from 1 to 2 px, with the
+> margin and the deviation bound alongside, and its two parts' hulls went from 108/102 to 40/38 against the authored
+> 39/40, every cell passing motion **[observed, rig HQ]**. Most of what a relocation inside a 1 px bound was to buy
+> is therefore bought by one declared value on the dependant's side, so the remaining stage A items (the position
+> rule, the weights and UVs of a relocated vertex, replay semantics, motion) and the stage B operation are not
+> measured or specified here. No bound, budget, row, emitted byte or control changes. Figures are from the stage-A
+> record for #1318 (scratch scripts that import the tree at `5896cc7` and write nothing into it).
+
+**Method.** §10's: the fewest-vertex closed outline over the source hull's own vertices, each allowed to sit at one
+offset of a ladder along its outward normal (the bisector of its two edge normals); a chord is nominated when every
+source hull vertex and edge sample it skips is within 1 px of it, every sample of it is within 1 px of the source
+hull, and no art pixel centre lies between it and the arc it skips; a candidate outside the frame is not offered (it
+would be `REDUCE_UV_RANGE`); the cycle is the exact shortest one over every start. The search only nominates:
+every outline below was built (ear clipping, no interior) and measured by `measureMeshQuality` against the source
+hull at the declared bounds — coverage 1, overshoot ≤ 3, undercut 0, `maxBoundaryDeviation` 1 — and every one
+reported passes all of them. Ladders: **L1** 0 / 0.5 / 0.9 px (§10's), **L3** 0 to 0.9 by 0.1, and **Ls2** −0.9
+to 0.9 by 0.3 (inward offsets too).
+
+| input | hull | B\* | kept (trial replay, above) | relocated L1 | L3 | Ls2 (floor) | Ls2 against B\* | the row that stops it |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| §8's traced fixture (`MQ85`'s) | 107 | 100 | 100 | 74 | 71 | **64** | −36 % | `MQ_BOUNDARY_DEVIATION` |
+| `MQ79`'s ramp | 52 | 28 | 28 | 12 | 12 | **12** | −57 % | art rows and the UV window (below) |
+| demo/bottomwear | 293 | 217 | 230 | 119 | 116 | **98** | −55 % | `MQ_BOUNDARY_DEVIATION` |
+| sample/bottomwear | 107 | 95 | 98 | 57 | 55 | **45** | −53 % | `MQ_BOUNDARY_DEVIATION` |
+| sample/sleeves | 198 | 166 | 167 | 89 | 84 | **81** | −51 % | `MQ_BOUNDARY_DEVIATION` |
+| sample/topwear | 66 | 59 | 59 | 44 | 43 | **40** | −32 % | `MQ_BOUNDARY_DEVIATION` |
+| sample/neck | 26 | 21 | 21 | 16 | 16 | **15** | −29 % | `MQ_BOUNDARY_DEVIATION` |
+| demo/neck | 14 | 14 | 14 | 11 | 10 | **10** | −29 % | `MQ_BOUNDARY_DEVIATION` |
+| six example parts, summed | 704 | 572 | 589 | 336 | 324 | **289** | −49 % | |
+
+(sample/hair_back's source already fails `MQ_OVERSHOOT` at 5.099 px, so it is not a reduction input; its outlines —
+B\* 162 as measured on it, L1 116, Ls2 109 — inherit the failure.) On demo/neck and sample/neck the finer outward
+ladder and the inward ladders tie (10, 15); there Ls2 is the floor only by equality.
+
+- **The relocated floor is materially below B\* on every public input**: 572 → 336 summed with §10's ladder
+  (reproduced), 324 with a ten-step outward ladder, **289 (−49 %)** once a vertex may also move inward. A finer
+  outward ladder buys little (336 → 324); the inward half buys more (324 → 289), because on a traced hull that sits
+  about a margin outside the art an inward move keeps the art covered while a chord cuts the other way.
+- **The row that stops it is the deviation, not the art** — read by switching each family of local tests off at the
+  floor's ladder and measuring what the search then finds. Without the deviation test the outline falls to 7–19
+  vertices on every input but the ramp, refused `MQ_BOUNDARY_DEVIATION` at 2.85–46.7 px (and `MQ_OVERSHOOT`);
+  without the art test it stays at
+  the same count on every input but the ramp, refused `MQ_COVERAGE`/`MQ_UNDERCUT` or passing as it is — so the art
+  rows shape where the floor's vertices go and the 1 px bound sets how many there are. The ramp is the exception:
+  the deviation does not bind it (12 with the test off), the art test does (8 without it, `MQ_COVERAGE` 0.9774), and
+  so does the frame — its straight ends are the window's edges, 52 of 156 L1 candidates lie outside it, and the L1
+  search without the window finds 8, refused `REDUCE_UV_RANGE` (u −0.0043).
+
+**The inverse — is the authored-like count reachable within 1 px?** Two targets on the trial replay's kept boundary:
+§10's aggregate ratio (authored over automatic vertices, 1961 / 3384 = 0.5795), and the shape of the consumer's hull
+gap (authored 39/40 against 108/102, about 0.376). For each: whether the floor reaches it at 1 px, and if not, the
+smallest bound t at which an outline of that count exists (the same search, both deviation tests at t, ladder
+0 / 0.5 t / 0.9 t — an upper bound, since that ladder is coarser than Ls2), with what the declared bounds then refuse.
+
+| input | target at 0.5795 | at 1 px? | else t needed, refused by | target at 0.376 | at 1 px? | else t needed, refused by |
+| --- | --- | --- | --- | --- | --- | --- |
+| traced fixture | 58 | no (64) | 1.22 px — deviation 1.21 | 38 | no | 1.49 px — deviation 1.49 |
+| `MQ79`'s ramp | 16 | **yes** (12) | — | 11 | no | 1.16 px — deviation 1.05 |
+| demo/bottomwear | 133 | **yes** (98) | — | 87 | no | 1.22 px — deviation 1.21 |
+| sample/bottomwear | 57 | **yes** (45) | — | 37 | no | 1.27 px — deviation 1.27 |
+| sample/sleeves | 97 | **yes** (81) | — | 63 | no | 1.55 px — deviation 1.54 |
+| sample/topwear | 34 | no (40) | 1.27 px — deviation 1.27 | 22 | no | 2.04 px — deviation 2.02, overshoot 3.61 |
+| sample/neck | 12 | no (15) | 1.49 px — deviation 1.48 | 8 | no | 3.46 px — deviation 3.45, overshoot 4.00 |
+| demo/neck | 8 | no (10) | 3.02 px — deviation 2.72, overshoot 4.12 | 5 | no | not at 8 px (6) |
+
+So within the declared 1 px no input reaches the consumer-shaped hull count, and the refusing row is
+`MQ_BOUNDARY_DEVIATION` everywhere; at §10's looser ratio the ramp and the three largest parts reach it by relocation
+and the fixture, topwear and the two necks do not. On the larger parts the bound that would be needed is 1.2–1.6 px, and on
+the small ones 2–3.5 px with `MQ_OVERSHOOT` (bound 3) refusing too — which is the same direction as the consumer's
+measurement: the count is held by the declared tolerance, and moving that value is what moves it.
+
+**Machine.** The fixture and the example parts in three Nova pool jobs (WSL2, 20 threads, Bun 1.4.2, 1-minute load
+0.0–6.9); the ramp's row on darwin (Apple M4) after the window refusal was caught by name rather than thrown. Every
+count is the search's and the tree's and repeats on any machine (the L1 search run twice per input, identical); the
+largest search, Ls2 on demo/bottomwear, tested 574,280 chords in 26 s.
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
