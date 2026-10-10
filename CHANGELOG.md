@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.32.2](https://github.com/firejune/rigc/compare/v2.32.1...v2.32.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* **mesh:** the comparison's carrier rule re-reads a sample's support by distance when the per-coordinate reading refuses it — a sample on a 45° shared edge that six-decimal UV rounding moved 1.35e-10 into a sliver was refused as two carriers; the result had no fold (280 of 280 triangles one sign, every interior edge consistent, areas summing to the outline), measured ([#1323](https://github.com/firejune/rigc/issues/1323)) ([#1324](https://github.com/firejune/rigc/issues/1324)) ([1001caf](https://github.com/firejune/rigc/commit/1001cafe104e1d4066aa8dbadeb53722e9d07898))
+
 ## [2.32.1](https://github.com/firejune/rigc/compare/v2.32.0...v2.32.1) (2026-10-10)
 
 
