@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.32.1](https://github.com/firejune/rigc/compare/v2.32.0...v2.32.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **mesh:** refineRegions refuses, by name, an insertion whose triangle MQ_DEGENERATE would read as degenerate, instead of writing it — the square region's three degenerate triangles are the band's outer boundary landing 0.46 px inside a lattice row, not the region's side on the lattice; a second public instance (26 hidden degenerates) is closed by the same rule ([#1311](https://github.com/firejune/rigc/issues/1311)) ([#1321](https://github.com/firejune/rigc/issues/1321)) ([b86a73d](https://github.com/firejune/rigc/commit/b86a73df6aeb26785541a148ab593767d4f02d53))
+
 ## [2.32.0](https://github.com/firejune/rigc/compare/v2.31.2...v2.32.0) (2026-10-10)
 
 
