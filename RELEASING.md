@@ -521,6 +521,7 @@ entry as `rig-c/plate`:
 | `rig-c/mesh` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
 | `rig-c/errors` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
 | `rig-c/meshcompare` | [#1230](https://github.com/firejune/rigc/issues/1230), by agreement | nothing |
+| `rig-c/core` | [#1275](https://github.com/firejune/rigc/issues/1275) | nothing |
 | `rig-c/cli` | [#859](https://github.com/firejune/rigc/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
 | `rig-c/package.json` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
 
@@ -538,7 +539,8 @@ today. A rename goes red naming the entry and the symbol — its
 package still runs and only the probe can tell — and a removed entry goes
 red naming the entry (`drop-named-entry` takes `./render` away, and
 `drop-rig-entry`, `drop-mesh-entry` and `drop-errors-entry` each take one
-of the three #1212 named, and `drop-meshcompare-entry` the one #1230 named). The list grows by observation: a module or a symbol
+of the three #1212 named, `drop-meshcompare-entry` the one #1230 named, and
+`drop-core-named-entry` the one #1275 named). The list grows by observation: a module or a symbol
 nobody was seen using is not promised, however public it looks, and one that
 somebody is seen using is added to that table with their name and the issue
 — a later observation of an entry already listed is a row of its own, so
@@ -773,6 +775,49 @@ and the core poser at the installed version
 contract's `MQ45`). Its line prints the comparison's frames, samples and wall
 time.
 
+🎞️ **An entry for the poser a browser player links**
+([#1275](https://github.com/firejune/rigc/issues/1275)). rig-play, the
+successor of spine-html, poses `skeleton.model.json` with rigc's own core and
+links no Spine runtime; it was seen importing the core's files through the
+`./*.ts` courtesy, which promises nothing, and `rig-c/render` — the one named
+entry that poses — needs the runtime. So `rig-c/core` names the poser:
+`src/core/entry.ts`, a module that only re-exports, so the core's files keep
+their names and the entry moves with them. Observed in rig-play, issue #1275
+(`OBSERVED_IN_1275`):
+
+| entry | values held | types observed |
+| --- | --- | --- |
+| `rig-c/core` | `readModel`, `underSkin`, `underNoSkin`, `CoreInputError`, `CORE_DOCUMENT_SPEC`, `CORE_DOCUMENT_SPECS`, `CORE_BLEND_MODES`, `activeBones`, `poseRawSetup`, `poseRawAnimation`, `poseRawAnimationEach`, `loopedTime`, `setupBounds`, `poseWalkSetup`, `poseLoopingWalk`, `documentPageLookup`, `drawnRegions`, `regionPageUvs`, `meshPageUvs`, `readUvSequences`, `clipThrough`, `clipShapeOf`, `convexWhy`, `REGION_UVS`, `REGION_TRIANGLES`, `eventsFired` | `CompiledDocument`, `RawPose`, `RawBone`, `RawDrawn`, `RawClip`, `RawClipped`, `RawEvent`, `RawReset`, `WalkPose`, `CoreSlotRow`, `CoreBlendMode`, `ClipShape`, `ClipResult`, `DrawnRegion`, `UvPage`, `UvRegion`, `UvSource`, `ModelPage`, `ModelPageRegion` |
+
+The promise is "no runtime, and nothing a browser lacks", so it is held where
+that is true. With the runtime taken away, the smoke imports `rig-c/core`
+from the install and calls `readModel` then `poseRawSetup` on the build it
+just wrote (`SMOKE_CORE_POSES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`: the
+fixture's bones in order, the `hand` bone's world matrix with determinant 1,
+and `readModel("{}")` refused as the `CoreInputError` the entry exports). Then
+it bundles `import { readModel, poseRawSetup } from 'rig-c/core'` with vite —
+library mode, one entry, the browser build vite makes by default, no node
+polyfill, at the version this tree's `bun.lock` resolves, installed into a
+directory of its own and never into the install — and runs **the bundle**
+under Bun with `globalThis.document` undefined on the same document, holding
+every bone it poses to the direct import's
+(`SMOKE_CORE_BUNDLES_FOR_A_BROWSER_WITH_NO_NODE_MODULE`; its line prints the
+vite version, the bundle's bytes and the `hand` matrix). ⚠️ The bundle
+carrying the string `node:` zero times is checked and is **not sufficient**,
+measured: vite replaces a node builtin it meets in a browser build with an
+empty module and only warns, so a core module importing `node:fs` — even
+calling it on `readModel`'s path — bundled to zero `node:` strings and exit 0.
+So the config the smoke writes refuses every node builtin at resolution, by
+name (`NODE_MODULE_REACHED`), and the warning is a fault as well; the
+`import-node-in-core` plant puts an import of `node:fs` at the top of the
+packed `src/core/index.ts` and has to go red at that step alone. In a clone,
+`CUR123` holds the entry's static closure: every module it reaches by value is
+under `src/core/`, none names a package or a node builtin by value, and the
+one module outside `src/core/` it names is `src/model.ts`, as a type — that
+module imports `node:crypto`, and a type import is erased. The adapter in
+`src/render_core.ts` (`corePosed`, `pieces`, `clipCover`, `placementOf`)
+reaches `src/atlas.ts` and `src/model.ts` by value and is not on this entry.
+
 📞 **A symbol a dependant calls is held by a call, not only by its kind**
 (#1212). Present and callable is not what a caller relies on, so the smoke
 also calls, from the install, the functions that dependant was seen calling,
@@ -800,8 +845,8 @@ What is **not** promised, so nobody reads more into an entry than is there:
   is the compiler's whole module and promises one function out of it.
 - **Types, by the smoke.** `BoneTransform` (through `rig-c/transform`),
   `BoneSnapshot`, `Frame` and `Mesh` (through `rig-c/render`), the five
-  `Rig*` types (through `rig-c/rig`) and `AlphaMask` (through
-  `rig-c/mesh`) were observed and are **not held by the smoke**: a type
+  `Rig*` types (through `rig-c/rig`), `AlphaMask` (through
+  `rig-c/mesh`) and the nineteen through `rig-c/core` were observed and are **not held by the smoke**: a type
   does not exist at run time, and checking one against the install needs
   `tsc`, which neither the package nor the `installs` job has — that job
   installs no dev dependencies, on purpose. A renamed type surfaces in the
@@ -847,9 +892,10 @@ spelled in full and **1 of the 42** shipped modules spelled without its
 extension, where the package with no map resolved all 42. Bun does not try an
 array of targets either, so the fallback is spelled per extension instead.
 `bun run smoke` resolves every shipped path both ways from the install, two
-of its plants take the named entries and the patterns away in turn, four
-more take one named entry away each, one renames a listed symbol, and one
-forks the parser's error class from the one its entry exports.
+of its plants take the named entries and the patterns away in turn, six
+more take one named entry away each, one renames a listed symbol, one
+forks the parser's error class from the one its entry exports, and one puts a
+node import in the core's closure, which only the browser bundle can see.
 
 ### Whether the tarball runs
 
@@ -900,7 +946,10 @@ that has a `package.json` of its own, and runs it in three phases (issue
 3. **The runtime taken away again.** `rigc --version` names `cli_core.ts` once
    more, every listed entry is imported again and held to whether it needs
    the runtime, `rig-c/meshcompare` compares meshes of the round-tripped
-   build from the install (*The import surface*, `MQ45`), and `rigc render`
+   build from the install (*The import surface*, `MQ45`), `rig-c/core`
+   poses its setup pose from the install and again from a vite browser
+   bundle of the entry that resolved no node module (*The import surface*,
+   [#1275](https://github.com/firejune/rigc/issues/1275)), and `rigc render`
    and `rigc check` run without it on the
    round-tripped build — the same bytes as the core entry's, by the comparison
    above, and read from that side so a broken core build goes red at one step
@@ -926,9 +975,11 @@ broken on purpose — `tools/plate.ts` out of `files`, `src/validate.ts` out of 
 packed tree, `@esotericsoftware/spine-core` put back in `dependencies` (the
 install then has the runtime, which is not the package this tree packs),
 `cli_core.ts` out of `files` (the install's `rigc --version` dies), the skills
-plant, nine on the import surface (the map removed, the map cut to its
-named entries, each of five named entries removed in turn, one listed symbol
-renamed, the parser's error class forked from its entry's), and two on
+plant, ten on the import surface (the map removed, the map cut to its
+named entries, each of six named entries removed in turn, one listed symbol
+renamed, the parser's error class forked from its entry's), one in the core's
+closure (an import of `node:fs` that Bun loads and only the browser bundle
+refuses), and two on
 the core entry's build — its body made to refuse, and one byte appended to the
 atlas it wrote, which only the comparison can see; both edit one line of
 `src/cli/core_commands.ts`, because every module that entry reaches is a static

@@ -297,6 +297,10 @@ a card of its own.
   requires is that everything written to disk was gated by a reader held to a parser
   rigc did not write; the no-bypass rule (no `--no-validate`, no escape, no API handing
   back ungated artifacts) is unchanged.
+- **What the core poses, now that a dependant poses through it.** A runtime-free web
+  player (rig-play) poses the model document through the named entry `rig-c/core`
+  (#1275, [RELEASING.md](../RELEASING.md) *The import surface*): a module that
+  re-exports this core and adds nothing, so what it poses is what the gates above hold.
 - **The licence posture** in [README.md](../README.md), *Licensing, stated plainly*.
   Step 4 brought that section's text to what the package links and where the Spine
   Runtimes License applies (#1070); this page states nothing about it.

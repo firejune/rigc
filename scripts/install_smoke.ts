@@ -35,7 +35,7 @@
  * removed, its deep paths removed, a named entry removed (one plant per entry
  * since #1212), one observed symbol renamed, the parser's error class forked
  * from the one its entry exports, the core entry's build made to refuse, one byte of that build's
- * output moved — and INVERTS the verdict: such a case is green only when the smoke
+ * output moved, a node builtin imported inside `rig-c/core`'s closure (#1275) — and INVERTS the verdict: such a case is green only when the smoke
  * went red at the step it was supposed to, naming what went missing. The worktree is never patched; the patch is applied to the extraction
  * and packed from there, and a plant that removed nothing is itself a fault.
  *
@@ -98,6 +98,7 @@
  * `scripts/` it is read by no gate whose population it can weaken.
  */
 import { spawnSync } from 'node:child_process';
+import { builtinModules } from 'node:module';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
@@ -317,6 +318,7 @@ const NAMED_EXPORTS: Record<string, string> = {
   './mesh': 'src/mesh.ts',
   './errors': 'src/errors.ts',
   './meshcompare': 'src/meshcompare.ts',
+  './core': 'src/core/entry.ts',
   './cli': 'cli.ts',
   './package.json': 'package.json',
 };
@@ -395,6 +397,15 @@ const AGREED_IN_1230 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md, P1 and P2)
  * (`MeshMeasureInput.skinning`), added by issue #1294 on `rig-c/mesh`, which the measurement already lives behind.
  */
 const AGREED_IN_1294 = 'rig-parts#126 agreed (docs/MESH_REDUCTION.md §7, Q3), issue #1294';
+/**
+ * The poser a runtime-free web player links (issue #1275): rig-play poses
+ * `skeleton.model.json` with rigc's own core and was seen importing these from
+ * the core's files through the pattern courtesy, which promises nothing. The
+ * entry re-exports them (`src/core/entry.ts`) and needs nothing installed
+ * beside the package; phase three CALLS `readModel` and `poseRawSetup` from the
+ * install, and bundles the entry for a browser (`CORE_PROBE_SOURCE`).
+ */
+const OBSERVED_IN_1275 = 'rig-play (the successor of spine-html), issue #1275';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -504,6 +515,60 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
     values: { compareMeshesInMotion: 'function', uvCarriers: 'function' },
     types: ['MotionComparisonInput', 'BuiltCandidate', 'CompareAttachment'],
   },
+  {
+    entry: './core',
+    observed: OBSERVED_IN_1275,
+    needsRuntime: false,
+    values: {
+      readModel: 'function',
+      underSkin: 'function',
+      underNoSkin: 'function',
+      CoreInputError: 'function',
+      CORE_DOCUMENT_SPEC: 'constant',
+      CORE_DOCUMENT_SPECS: 'constant',
+      CORE_BLEND_MODES: 'constant',
+      activeBones: 'function',
+      poseRawSetup: 'function',
+      poseRawAnimation: 'function',
+      poseRawAnimationEach: 'function',
+      loopedTime: 'function',
+      setupBounds: 'function',
+      poseWalkSetup: 'function',
+      poseLoopingWalk: 'function',
+      documentPageLookup: 'function',
+      drawnRegions: 'function',
+      regionPageUvs: 'function',
+      meshPageUvs: 'function',
+      readUvSequences: 'function',
+      clipThrough: 'function',
+      clipShapeOf: 'function',
+      convexWhy: 'function',
+      REGION_UVS: 'constant',
+      REGION_TRIANGLES: 'constant',
+      eventsFired: 'function',
+    },
+    types: [
+      'CompiledDocument',
+      'RawPose',
+      'RawBone',
+      'RawDrawn',
+      'RawClip',
+      'RawClipped',
+      'RawEvent',
+      'RawReset',
+      'WalkPose',
+      'CoreSlotRow',
+      'CoreBlendMode',
+      'ClipShape',
+      'ClipResult',
+      'DrawnRegion',
+      'UvPage',
+      'UvRegion',
+      'UvSource',
+      'ModelPage',
+      'ModelPageRegion',
+    ],
+  },
 ];
 
 /**
@@ -531,13 +596,16 @@ const RENAME_PLANT = { entry: './render', symbol: 'loadPosable', renamed: 'loadP
  * entry, because each is a different dependant's import that has to go red by
  * its own name.
  */
-type DropPlant = 'drop-named-entry' | 'drop-rig-entry' | 'drop-mesh-entry' | 'drop-errors-entry' | 'drop-meshcompare-entry';
+type DropPlant = 'drop-named-entry' | 'drop-rig-entry' | 'drop-mesh-entry' | 'drop-errors-entry' | 'drop-meshcompare-entry' | 'drop-core-named-entry';
+// ⚠️ `./core`'s plant is `drop-core-named-entry`, not `drop-core-entry`: that name was
+// taken by #1061 for `cli_core.ts` leaving `files`, a different fault at a different step.
 const DROPPED_ENTRIES: Record<DropPlant, string> = {
   'drop-named-entry': './render',
   'drop-rig-entry': './rig',
   'drop-mesh-entry': './mesh',
   'drop-errors-entry': './errors',
   'drop-meshcompare-entry': './meshcompare',
+  'drop-core-named-entry': './core',
 };
 const isDropPlant = (plant: Plant): plant is DropPlant => plant in DROPPED_ENTRIES;
 
@@ -1051,6 +1119,191 @@ if (bad.length === 0 && summary !== null && summary.moved !== undefined) {
 process.exit(bad.length === 0 && summary !== null ? 0 : 1);
 `;
 
+/**
+ * The two steps that read `rig-c/core` from the install with the runtime taken
+ * away (issue #1275), and the names their faults carry.
+ *
+ * - `core-pose` imports the entry under Bun and poses the build's model
+ *   document: `readModel`, then `poseRawSetup`.
+ * - `core-browser` bundles `import { readModel, poseRawSetup } from 'rig-c/core'`
+ *   for a browser with vite (library mode, one entry, no node polyfills), and
+ *   then runs THE BUNDLE under Bun with `globalThis.document` undefined on the
+ *   same document — and holds every bone it poses to the direct import's, bit
+ *   for bit, since one bundle that drops a branch would pose differently.
+ *
+ * 🚨 Zero `node:` strings in the bundle is necessary and NOT sufficient, measured
+ * before this was written: vite replaces a node builtin it meets in a browser
+ * build with an empty module and prints a warning, so a core module importing
+ * `node:fs` bundled to 0 `node:` strings and exit 0 — even with the import
+ * called on `readModel`'s path. So the config this step writes carries a
+ * resolver that REFUSES any builtin by name (`NODE_MODULE_REACHED`), the
+ * warning is a fault too, and the string count is held beside them. The
+ * `import-node-in-core` plant goes red at this step and nowhere else.
+ */
+const CORE_POSE_STEP = 'core-pose';
+const CORE_POSE_CASE = 'SMOKE_CORE_POSES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE';
+const CORE_BROWSER_STEP = 'core-browser';
+const CORE_BROWSER_CASE = 'SMOKE_CORE_BUNDLES_FOR_A_BROWSER_WITH_NO_NODE_MODULE';
+/** The fixture bone whose world matrix both steps print: the last of the chain, under a rotated parent, so the matrix is not the identity. */
+const CORE_PROBE_BONE = 'hand';
+/** Where the bundle lands, beside `--out` and never in it. */
+const CORE_BUNDLE_DIR = 'core-bundle';
+const CORE_BUNDLE_FILE = 'core.js';
+/** The vite resolver's refusal, which the step reads off the build's output. */
+const NODE_REFUSAL = 'NODE_MODULE_REACHED';
+
+/**
+ * What `import-node-in-core` puts at the top of the packed core index: an
+ * import of a node builtin that nothing calls. Bun loads it, so every other
+ * step still runs; vite tree-shakes the binding and, unrefused, would bundle
+ * it to nothing — which is exactly the silence the refusal above exists for.
+ */
+const NODE_PLANT_MODULE = 'src/core/index.ts';
+const NODE_PLANT_LINE = "import { readFileSync as plantedNodeRead } from 'node:fs';\nexport const plantedNodeReader = plantedNodeRead;\n";
+
+/**
+ * Imports `rig-c/core` — directly from the install (`direct`), or through the
+ * browser bundle vite wrote (`bundle`) — and poses the fixture's setup pose.
+ * Prints `CORE_BAD <what>` per failure, then `CORE_MATRIX` (the probe bone)
+ * and `CORE_BONES` (every bone's matrix and origin, for the comparison of the
+ * two runs). Every expected figure is the fixture's: its bone names in order,
+ * and a determinant of 1, since no bone of the fixture is scaled.
+ */
+const CORE_PROBE_SOURCE = `import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const HERE = fileURLToPath(new URL('.', import.meta.url));
+const plan = JSON.parse(readFileSync(join(HERE, 'core_probe.json'), 'utf8'));
+const mode = process.argv[2];
+const bad = [];
+const said = (what) => bad.push(what);
+const why = (e) => (e && e.message ? e.message : String(e));
+if (existsSync(join(HERE, 'node_modules', ...plan.runtime.split('/')))) said(plan.runtime + ' is installed in this directory, and this pose is the one an install without it runs');
+let core = null;
+if (mode === 'bundle') {
+  if (typeof globalThis.document !== 'undefined') said('globalThis.document is defined in this run, and the bundle is held to running without one');
+  try {
+    core = (await import(pathToFileURL(join(HERE, plan.bundle)).href)).core;
+  } catch (e) {
+    said('importing the bundle ' + plan.bundle + ' threw ' + why(e));
+  }
+} else {
+  try {
+    const at = fileURLToPath(import.meta.resolve('${NAME}/core'));
+    if (!at.startsWith(join(HERE, 'node_modules'))) said('${NAME}/core resolved to ' + at + ', which is not under this install');
+    core = await import('${NAME}/core');
+  } catch (e) {
+    said('${NAME}/core: import threw ' + why(e));
+  }
+}
+if (core && (typeof core.readModel !== 'function' || typeof core.poseRawSetup !== 'function')) {
+  said((mode === 'bundle' ? 'the bundle' : '${NAME}/core') + ' hands over readModel ' + typeof core.readModel + ' and poseRawSetup ' + typeof core.poseRawSetup + ', and two functions were required');
+  core = null;
+}
+if (core) {
+  const text = readFileSync(join(HERE, plan.model), 'utf8');
+  try {
+    const pose = core.poseRawSetup(core.readModel(text));
+    const names = pose.bones.map((b) => b.name);
+    if (names.join(',') !== plan.bones.join(',')) said('poseRawSetup posed the bones ' + JSON.stringify(names) + ', and the fixture declares ' + JSON.stringify(plan.bones));
+    const bone = pose.bones.find((b) => b.name === plan.bone);
+    if (!bone) said('poseRawSetup posed no bone ' + JSON.stringify(plan.bone));
+    else {
+      const m = { bone: bone.name, a: bone.a, b: bone.b, c: bone.c, d: bone.d, worldX: bone.worldX, worldY: bone.worldY };
+      const det = bone.a * bone.d - bone.b * bone.c;
+      if (![m.a, m.b, m.c, m.d, m.worldX, m.worldY].every(Number.isFinite)) said('the world matrix of ' + plan.bone + ' is ' + JSON.stringify(m) + ', and six finite numbers were required');
+      else if (Math.abs(det - 1) > 1e-9) said('the world matrix of ' + plan.bone + ' has determinant ' + det + ', and 1 was required: no bone of the fixture is scaled');
+      console.log('CORE_MATRIX ' + JSON.stringify(m));
+    }
+    console.log('CORE_BONES ' + JSON.stringify(pose.bones.map((b) => [b.name, b.a, b.b, b.c, b.d, b.worldX, b.worldY])));
+  } catch (e) {
+    said('readModel then poseRawSetup on ' + plan.model + ' threw ' + why(e));
+  }
+  if (mode !== 'bundle') {
+    let refusal = null;
+    try {
+      core.readModel('{}');
+    } catch (e) {
+      refusal = e;
+    }
+    if (refusal === null || typeof core.CoreInputError !== 'function' || !(refusal instanceof core.CoreInputError)) said('readModel("{}") ' + (refusal === null ? 'returned a document' : 'threw ' + why(refusal) + ', not the CoreInputError ${NAME}/core exports') + ', and a refusal a dependant can catch by that class was required');
+  }
+}
+for (const line of bad) console.log('CORE_BAD ' + line);
+process.exit(bad.length === 0 && core !== null ? 0 : 1);
+`;
+
+/** The one file vite bundles: the two calls a player makes, through the entry, by its bare name. */
+const BROWSER_ENTRY_SOURCE = `import { readModel, poseRawSetup } from '${NAME}/core';
+export const core = { readModel, poseRawSetup };
+`;
+
+/**
+ * The vite config the browser step writes into the install: library mode, one
+ * entry, ES output, the browser platform vite builds for by default — and a
+ * resolver that refuses every node builtin by name, with or without the
+ * `node:` prefix, rather than letting vite stub it (see above).
+ */
+function browserConfigSource(): string {
+  const builtins = JSON.stringify([...new Set(builtinModules.map((m) => m.replace(/^node:/, '')))].sort());
+  return `const BUILTINS = new Set(${builtins});
+export default {
+  logLevel: 'info',
+  plugins: [
+    {
+      name: 'rigc-smoke-refuses-node-builtins',
+      enforce: 'pre',
+      resolveId(id, importer) {
+        const bare = id.startsWith('node:') ? id.slice(5) : id;
+        if (id.startsWith('node:') || BUILTINS.has(bare) || BUILTINS.has(bare.split('/')[0])) {
+          this.error('${NODE_REFUSAL} ' + id + ' imported by ' + importer + ' — a browser has no node module, and this bundle takes none');
+        }
+        return null;
+      },
+    },
+  ],
+  build: {
+    lib: { entry: 'browser_entry.mjs', formats: ['es'], fileName: () => '${CORE_BUNDLE_FILE}' },
+    outDir: '${CORE_BUNDLE_DIR}',
+    emptyOutDir: true,
+  },
+};
+`;
+}
+
+/**
+ * The bundler, installed once per run into a directory of its own — never
+ * into a case's install, which is the subject and has to stay the install a
+ * user receives — at the version this tree's lockfile resolves (`bun.lock`),
+ * or failing that the range `devDependencies` declares. It is a tool here, not
+ * the package under test: the bundle resolves the entry from the case's
+ * install, through the importer's own directory.
+ */
+let bundler: { js: string; version: string; faults: string[] } | null = null;
+function bundlerOnce(): { js: string; version: string; faults: string[] } {
+  if (bundler !== null) return bundler;
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { devDependencies?: Record<string, string> };
+  const lock = existsSync(join(ROOT, 'bun.lock')) ? readFileSync(join(ROOT, 'bun.lock'), 'utf8') : '';
+  const wanted = /"vite": \["vite@([^"]+)"/.exec(lock)?.[1] ?? manifest.devDependencies?.vite ?? null;
+  if (wanted === null) {
+    bundler = { js: '', version: '', faults: [`${CORE_BROWSER_CASE}: this tree declares no vite in devDependencies and bun.lock resolves none, so there is no bundler version to install — the step will not guess one`] };
+    return bundler;
+  }
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-bundler-')));
+  LEFT_BEHIND.push(dir);
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: 'rigc-install-smoke-bundler', private: true, version: '0.0.0' }, null, 2)}\n`);
+  const installed = run('npm', ['install', `vite@${wanted}`, '--no-audit', '--no-fund', '--no-package-lock'], dir);
+  const js = join(dir, 'node_modules', 'vite', 'bin', 'vite.js');
+  const pkg = join(dir, 'node_modules', 'vite', 'package.json');
+  if (!existsSync(js) || !existsSync(pkg)) {
+    bundler = { js: '', version: wanted, faults: [`${CORE_BROWSER_CASE}: npm install vite@${wanted} exited ${installed.status} and left no ${js}. ${installed.out.trim().slice(0, 1500)}`] };
+    return bundler;
+  }
+  bundler = { js, version: (JSON.parse(readFileSync(pkg, 'utf8')) as { version?: string }).version ?? wanted, faults: [] };
+  return bundler;
+}
+
 // ---------------------------------------------------------------------------
 // Running things
 // ---------------------------------------------------------------------------
@@ -1284,6 +1537,8 @@ type Plant =
   | 'drop-mesh-entry'
   | 'drop-errors-entry'
   | 'drop-meshcompare-entry'
+  | 'drop-core-named-entry'
+  | 'import-node-in-core'
   | 'rename-symbol'
   | 'fork-compile-error'
   | 'refuse-core-build'
@@ -1370,11 +1625,14 @@ function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>, issue 
   // The comparison probe imports `rig-c/meshcompare`, and `rig-c/mesh` for the class its refusal is caught
   // by, so taking either entry away reddens that step too — by the entry's name, which is what the plant requires.
   const compares = entry === './meshcompare' || entry === './mesh';
+  // The core's two steps import `rig-c/core` by its bare name — the call from the install and the browser bundle — so
+  // taking the entry away reddens both of them too, by the entry's name (issue #1275).
+  const poses = entry === './core';
   return {
     names: [`${NAME}${entry.slice(1)}`],
-    steps: ['exports', 'exports-without-runtime', ...(compares ? [MESHCOMPARE_STEP] : [])],
+    steps: ['exports', 'exports-without-runtime', ...(compares ? [MESHCOMPARE_STEP] : []), ...(poses ? [CORE_POSE_STEP, CORE_BROWSER_STEP] : [])],
     alone: true,
-    what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`${NAME}${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''} have to go red naming the entry, and nothing else`,
+    what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`${NAME}${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''}${poses ? ', the pose from the install and the browser bundle' : ''} have to go red naming the entry, and nothing else`,
   };
 }
 
@@ -1423,6 +1681,13 @@ const PLANTED: Record<Exclude<Plant, 'none'>, { names: string[]; steps: string[]
   'drop-mesh-entry': droppedEntryPlant('drop-mesh-entry'),
   'drop-errors-entry': droppedEntryPlant('drop-errors-entry'),
   'drop-meshcompare-entry': droppedEntryPlant('drop-meshcompare-entry', '#1230'),
+  'drop-core-named-entry': droppedEntryPlant('drop-core-named-entry', '#1275'),
+  'import-node-in-core': {
+    names: [CORE_BROWSER_CASE, NODE_REFUSAL, 'node:fs'],
+    steps: [CORE_BROWSER_STEP],
+    alone: true,
+    what: `an import of \`node:fs\` put at the top of the packed \`${NODE_PLANT_MODULE}\` (issue #1275), which \`${NAME}/core\` reaches: Bun loads it, so the builds, the direct pose and every probe still run, and vite left to itself would tree-shake the binding to a bundle with no \`node:\` string in it and exit 0 — so the browser step, and only it, has to go red naming the module`,
+  },
   'rename-symbol': {
     names: [`${NAME}${RENAME_PLANT.entry.slice(1)}`, RENAME_PLANT.symbol],
     steps: ['exports'],
@@ -1549,6 +1814,13 @@ function tarballFor(
       return { tgz: '', faults, paths: [], evidence: '' };
     }
     writeFileSync(victim, text.replace(FORK_ERROR_IMPORT, FORK_ERROR_PLANTED));
+  } else if (plant === 'import-node-in-core') {
+    const victim = join(pkgDir, NODE_PLANT_MODULE);
+    if (!existsSync(victim)) {
+      faults.push(`SMOKE_PLANT_APPLIED: ${NODE_PLANT_MODULE} is not in the packed tree, so the plant "${plant}" plants nothing`);
+      return { tgz: '', faults, paths: [], evidence: '' };
+    }
+    writeFileSync(victim, `${NODE_PLANT_LINE}${readFileSync(victim, 'utf8')}`);
   } else if (plant === 'refuse-core-build' || plant === 'move-core-byte') {
     const victim = join(pkgDir, CORE_BUILD_MODULE);
     const text = existsSync(victim) ? readFileSync(victim, 'utf8') : '';
@@ -1628,6 +1900,13 @@ function tarballFor(
       faults.push(`SMOKE_PLANT_APPLIED: the packed ${file} does not export ${RENAME_PLANT.symbol} under the name ${RENAME_PLANT.renamed} alone, so the plant "${plant}" planted nothing`);
     } else {
       evidence = `the packed ${file} exports ${RENAME_PLANT.symbol} as ${RENAME_PLANT.renamed} and no longer under its own name`;
+    }
+  } else if (plant === 'import-node-in-core') {
+    const shipped = run('tar', ['-xzOf', second, `package/${NODE_PLANT_MODULE}`], work);
+    if (shipped.status !== 0 || !shipped.out.startsWith(NODE_PLANT_LINE)) {
+      faults.push(`SMOKE_PLANT_APPLIED: the packed ${NODE_PLANT_MODULE} does not open with the planted import of node:fs, so the plant "${plant}" planted nothing`);
+    } else {
+      evidence = `the packed ${NODE_PLANT_MODULE} opens with an import of node:fs`;
     }
   } else if (plant === 'refuse-core-build' || plant === 'move-core-byte') {
     const shipped = run('tar', ['-xzOf', second, `package/${CORE_BUILD_MODULE}`], work);
@@ -2087,6 +2366,69 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     } else {
       fault(MESHCOMPARE_STEP, `${MESHCOMPARE_CASE}: the full entry wrote no build/skeleton.model.json, so there is no build to compare`);
     }
+    // Issue #1275: the poser a runtime-free player links, from this install with the runtime gone — called under Bun,
+    // then bundled for a browser and called again from the bundle. Both read `build/` for the reason the comparison does.
+    if (existsSync(join(outDir, 'skeleton.model.json'))) {
+      writeFileSync(
+        join(home, 'core_probe.json'),
+        `${JSON.stringify({ runtime: RUNTIME, model: `${FULL_OUT}/skeleton.model.json`, bone: CORE_PROBE_BONE, bones: RIG_SPEC.bones.map((b) => b.name), bundle: `${CORE_BUNDLE_DIR}/${CORE_BUNDLE_FILE}` }, null, 2)}\n`,
+      );
+      writeFileSync(join(home, 'core_probe.mjs'), CORE_PROBE_SOURCE);
+      const read = (ran: Ran): { bad: string[]; matrix: string | undefined; bones: string | undefined } => ({
+        bad: ran.out.split('\n').filter((line) => line.startsWith('CORE_BAD ')).map((line) => line.slice('CORE_BAD '.length)),
+        matrix: /^CORE_MATRIX (.+)$/m.exec(ran.out)?.[1],
+        bones: /^CORE_BONES (.+)$/m.exec(ran.out)?.[1],
+      });
+      const direct = run('bun', [join(home, 'core_probe.mjs'), 'direct'], home);
+      output += direct.out;
+      const posed = read(direct);
+      for (const line of posed.bad) fault(CORE_POSE_STEP, `${CORE_POSE_CASE}: ${line}`);
+      if (direct.status !== 0 || posed.matrix === undefined) {
+        if (posed.bad.length === 0) fault(CORE_POSE_STEP, `${CORE_POSE_CASE}: the pose probe exited ${direct.status} without a verdict. ${direct.out.trim().slice(0, 2000)}`);
+      } else {
+        notes.push(`without ${RUNTIME}: ${CORE_POSE_CASE} — readModel then poseRawSetup through ${NAME}/core posed ${RIG_SPEC.bones.length} bone(s); ${CORE_PROBE_BONE} ${posed.matrix}`);
+      }
+
+      // The browser bundle.
+      const tool = bundlerOnce();
+      const node = onPath('node');
+      for (const f of tool.faults) fault(CORE_BROWSER_STEP, f);
+      if (node === null) fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: \`node\` is not on PATH, and vite runs on it`);
+      if (tool.faults.length === 0 && node !== null) {
+        writeFileSync(join(home, 'browser_entry.mjs'), BROWSER_ENTRY_SOURCE);
+        writeFileSync(join(home, 'vite.browser.config.mjs'), browserConfigSource());
+        const built = run('node', [tool.js, 'build', '--config', 'vite.browser.config.mjs'], home);
+        output += built.out;
+        const bundle = join(home, CORE_BUNDLE_DIR, CORE_BUNDLE_FILE);
+        const refused = built.out.split('\n').find((line) => line.includes(NODE_REFUSAL));
+        const externalised = built.out.split('\n').find((line) => /externali[sz]ed for browser compatibility/.test(line));
+        if (built.status !== 0 || !existsSync(bundle)) {
+          fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: \`vite build\` (vite ${tool.version}, library mode) of ${NAME}/core exited ${built.status} and wrote ${existsSync(bundle) ? '' : 'no '}${CORE_BUNDLE_DIR}/${CORE_BUNDLE_FILE}${refused === undefined ? '' : ` — ${refused.trim().slice(0, 400)}`}. ${refused === undefined ? built.out.trim().slice(0, 1500) : ''}`);
+        } else if (externalised !== undefined) {
+          fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: vite ${tool.version} externalised a node module out of ${NAME}/core's closure: ${externalised.trim().slice(0, 400)}`);
+        } else {
+          const text = readFileSync(bundle, 'utf8');
+          const nodeStrings = text.split('node:').length - 1;
+          const modules = /(\d+) modules transformed/.exec(built.out)?.[1] ?? '?';
+          if (nodeStrings !== 0) fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: the bundle ${CORE_BUNDLE_DIR}/${CORE_BUNDLE_FILE} carries the string "node:" ${nodeStrings} time(s), and 0 was required`);
+          const ran = run('bun', [join(home, 'core_probe.mjs'), 'bundle'], home);
+          output += ran.out;
+          const fromBundle = read(ran);
+          for (const line of fromBundle.bad) fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: ${line}`);
+          if (ran.status !== 0 || fromBundle.bones === undefined) {
+            if (fromBundle.bad.length === 0) fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: the bundle's pose probe exited ${ran.status} without a verdict. ${ran.out.trim().slice(0, 2000)}`);
+          } else if (posed.bones !== undefined && fromBundle.bones !== posed.bones) {
+            fault(CORE_BROWSER_STEP, `${CORE_BROWSER_CASE}: the bundle posed the bones ${fromBundle.bones.slice(0, 600)} and ${NAME}/core imported directly posed ${posed.bones.slice(0, 600)}; the same numbers were required`);
+          } else if (nodeStrings === 0) {
+            notes.push(
+              `without ${RUNTIME}: ${CORE_BROWSER_CASE} — vite ${tool.version} bundled ${NAME}/core for a browser (library mode, ${modules} module(s) transformed, no node builtin resolved) into ${statSync(bundle).size} byte(s) carrying "node:" 0 times; run under Bun with globalThis.document undefined it posed ${CORE_PROBE_BONE} ${fromBundle.matrix ?? ''}, every bone identical to the direct import's`,
+            );
+          }
+        }
+      }
+    } else {
+      fault(CORE_POSE_STEP, `${CORE_POSE_CASE}: the full entry wrote no build/skeleton.model.json, so there is no document to pose`);
+    }
     if (existsSync(join(outDir, 'skeleton.model.json'))) {
       const rendered = run(bin, ['render', '--candidate', 'build', '--out', 'frames'], home);
       output += rendered.out;
@@ -2206,7 +2548,7 @@ exit codes:
      here says the package is broken
 
 cases:
-  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, compares meshes of that build through ${NAME}/meshcompare, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
+  clean          a correct package installs WITHOUT spine-core and its rigc runs the core entry, whose build has to exit 0 and write its files; with spine-core installed beside it the same rigc builds through the round trip, writing the same bytes as the core entry's build of the same fixture, resolves every \`exports\` entry and every shipped path, reads every observed symbol through its entry and calls the ones a dependant was seen calling; with spine-core taken away again it imports every observed entry as stated, compares meshes of that build through ${NAME}/meshcompare, poses its setup pose through ${NAME}/core and through a vite browser bundle of that entry holding no node module, renders and checks that build, links its skills, and the bin shim names Bun when bun is absent
   unusual-path   the same, installed at an absolute path with spaces and non-ASCII in it
   drop-plate     tools/plate.ts out of \`files\`  — the smoke has to go RED naming it
   drop-src-module  src/validate.ts out of the packed tree — the smoke has to go RED naming it
@@ -2220,6 +2562,8 @@ cases:
   drop-mesh-entry    ${DROPPED_ENTRIES['drop-mesh-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-mesh-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
   drop-errors-entry  ${DROPPED_ENTRIES['drop-errors-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-errors-entry'].slice(1)} has to go RED naming it, with the runtime and without it, and nothing else
   drop-meshcompare-entry  ${DROPPED_ENTRIES['drop-meshcompare-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-meshcompare-entry'].slice(1)} and the comparison from the install have to go RED naming it, and nothing else
+  drop-core-named-entry  ${DROPPED_ENTRIES['drop-core-named-entry']} out of \`exports\` — importing ${NAME}${DROPPED_ENTRIES['drop-core-named-entry'].slice(1)}, the pose from the install and the browser bundle have to go RED naming it, and nothing else
+  import-node-in-core    an import of node:fs at the top of the packed ${NODE_PLANT_MODULE} — the browser bundle, and only it, has to go RED naming the module
   rename-symbol      ${RENAME_PLANT.symbol} exported under another name — the symbol read through ${NAME}${RENAME_PLANT.entry.slice(1)} has to go RED naming both
   fork-compile-error ${FORK_ERROR_MODULE} given a CompileError of its own — the parser's refusal, caught by the class ${NAME}/errors exports, has to go RED alone naming both
   refuse-core-build  the core entry's build body made to refuse — the core-build step, and only it, has to go RED naming SMOKE_CORE_ENTRY_BUILDS
@@ -2351,6 +2695,8 @@ function main(): number {
     { name: 'drop-mesh-entry', source, installer, plant: 'drop-mesh-entry', dirName: 'planted-mesh-entry' },
     { name: 'drop-errors-entry', source, installer, plant: 'drop-errors-entry', dirName: 'planted-errors-entry' },
     { name: 'drop-meshcompare-entry', source, installer, plant: 'drop-meshcompare-entry', dirName: 'planted-meshcompare-entry' },
+    { name: 'drop-core-named-entry', source, installer, plant: 'drop-core-named-entry', dirName: 'planted-core-named-entry' },
+    { name: 'import-node-in-core', source, installer, plant: 'import-node-in-core', dirName: 'planted-node-in-core' },
     { name: 'rename-symbol', source, installer, plant: 'rename-symbol', dirName: 'planted-rename' },
     { name: 'fork-compile-error', source, installer, plant: 'fork-compile-error', dirName: 'planted-fork-error' },
     { name: 'refuse-core-build', source, installer, plant: 'refuse-core-build', dirName: 'planted-core-build' },

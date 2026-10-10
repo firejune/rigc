@@ -75244,6 +75244,87 @@ function runCurrencySuite(): number {
       'issue #1061: the owner settled 2.0.0 as one package whose install carries no runtime — the round trip stays what a clone and CI run, so the dependency moves to devDependencies, and the launcher is the one place that decides which entry an install runs; a choice anything but resolution could flip would be a bypass of the 🔒 invariant spelled as a variable',
     );
 
+    // CUR123 — the entry a browser player links reaches only the core (issue #1275).
+    //
+    // `rig-c/core` is promised to bundle for a browser with no node polyfill, and
+    // what makes that true is a property of the entry's static closure: every
+    // module it reaches by value is under src/core/, no module in it names a
+    // package or a node builtin by value, and the one place it leaves src/core/ is
+    // a TYPE import of src/model.ts, which a bundler erases — model.ts itself
+    // imports `node:crypto`, so a value import of it would carry node into the
+    // browser. The same closure walk as CUR113, from a smaller root, over src/
+    // read off the disk (a file not yet committed included). The install smoke
+    // measures the bundle; this names the module that would break it, before a
+    // pack. The entry is read from package.json's `exports`, not spelled here.
+    {
+      const exportsMap = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { exports?: Record<string, string> }).exports ?? {};
+      const target = exportsMap['./core'];
+      const entry = target === undefined ? '' : target.replace(/^\.\//, '');
+      const TYPE_EXCEPTION = 'src/model.ts';
+      const corePopulation = srcPopulation(root);
+      const closureFaults = (pop: ReadonlyMap<string, string>): { modules: string[]; typeOnly: string[]; faults: string[] } => {
+        const faults: string[] = [];
+        if (entry === '' || !pop.has(entry)) {
+          faults.push(`package.json's exports maps ./core to ${JSON.stringify(target)}, which is not a module under src/`);
+          return { modules: [], typeOnly: [], faults };
+        }
+        const closure = coreClosureFrom(pop, [entry]);
+        const chain = (module: string): string => {
+          const out: string[] = [];
+          for (let at: string | null = module; at !== null; at = closure.via.get(at) ?? null) out.unshift(at);
+          return out.join(' > ');
+        };
+        faults.push(...closure.problems);
+        const typeOnly = new Set<string>();
+        for (const module of closure.modules) {
+          if (!module.startsWith('src/core/')) faults.push(`🔒 ${module} is outside src/core/ and ./core reaches it by value: ${chain(module)}`);
+          for (const { spec, typeOnly: isType } of specifiersOf(codeOnly(pop.get(module) ?? ''))) {
+            if (!spec.startsWith('.')) {
+              if (!isType) faults.push(`🔒 ${module} imports "${spec}" by value, and ./core reaches it: ${chain(module)}`);
+              continue;
+            }
+            if (!isType) continue;
+            const reached = join(dirname(module), spec).split('\\').join('/');
+            if (reached.startsWith('src/core/')) continue;
+            typeOnly.add(reached);
+            if (reached !== TYPE_EXCEPTION) faults.push(`${module} type-imports ${reached}, and the one module outside src/core/ the entry's closure may name, as a type, is ${TYPE_EXCEPTION}`);
+          }
+        }
+        return { modules: closure.modules, typeOnly: [...typeOnly].sort(), faults };
+      };
+      const live123 = closureFaults(corePopulation);
+      const probes123 = [...live123.faults];
+      // The plants, each on a copy of the population, each into the deepest closure member other than the entry.
+      const member123 = live123.modules.filter((m) => m !== entry).sort((a, b) => b.split('/').length - a.split('/').length || a.localeCompare(b))[0];
+      const plants123: Array<[string, string, string]> = [
+        ['a value import of src/model.ts', "import { spineFileSha256 as planted } from '../model.ts';", `${TYPE_EXCEPTION} is outside src/core/`],
+        ['a node builtin', "import { readFileSync as planted } from 'node:fs';", 'imports "node:fs" by value'],
+        ['a package', "import { Skeleton as planted } from '@esotericsoftware/spine-core';", 'imports "@esotericsoftware/spine-core" by value'],
+        ['a type import of a module other than src/model.ts', "import type { CompileError as Planted } from '../errors.ts';", 'type-imports src/errors.ts'],
+      ];
+      const caught123: string[] = [];
+      if (member123 === undefined) probes123.push('./core reaches no module but itself, so the plants have nowhere to go');
+      else {
+        for (const [label, line, mustSay] of plants123) {
+          const raised = closureFaults(plantedInto(corePopulation, member123, line)).faults.filter((f) => !live123.faults.includes(f));
+          if (!raised.some((f) => f.includes(mustSay))) probes123.push(`${label} planted in ${member123} raised [${raised.join('; ')}], none saying "${mustSay}"`);
+          else caught123.push(label);
+        }
+      }
+      const held123 = probes123.length === 0 && live123.modules.length > 1;
+      say(
+        'CUR123_THE_CORE_ENTRY_REACHES_ONLY_THE_CORE_BY_VALUE_AND_MODEL_TS_ONLY_AS_A_TYPE',
+        held123,
+        probeDetail(
+          held123,
+          probes123,
+          `./core is ${entry}; its static value closure over src/ read off the disk is ${live123.modules.length} module(s), every one under src/core/ [${live123.modules.join(', ')}], none importing a package or a node builtin by value; ` +
+            `outside src/core/ it names only [${live123.typeOnly.join(', ')}], as a type; planted in ${member123 ?? '(none)'}, ${caught123.length} of ${plants123.length} are named — ${caught123.join('; ')}`,
+        ),
+        'issue #1275: rig-c/core is the entry a runtime-free web player bundles for a browser, so it may reach nothing a browser lacks — src/model.ts imports node:crypto and is admitted only as a type, which the bundler erases; the install smoke bundles it and this names the module that would break that before a pack',
+      );
+    }
+
     // CUR117 — RELEASING.md's row of the commands an install without the
     // runtime runs is the set the command table derives (issue #1178). At
     // v2.12.0 the row listed eight while `bun cli_core.ts --help` listed ten —
