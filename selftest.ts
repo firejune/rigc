@@ -49354,6 +49354,10 @@ const MESH_COMPARE_UNITS = [
   'MQ109-MQ110',
   'MQ111-MQ115',
   'MQ144-MQ147',
+  'MQ152',
+  'MQ153',
+  'MQ154',
+  'MQ155',
   'MQ116-MQ133',
   'MQ134-MQ135',
   'MQ136-MQ137',
@@ -49390,6 +49394,10 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ104-MQ105',
   'MQ111-MQ115',
   'MQ144-MQ147',
+  'MQ152',
+  'MQ153',
+  'MQ154',
+  'MQ155',
   'MQ55-MQ74',
 ];
 
@@ -52058,7 +52066,258 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
         );
       });
     });
-  });
+
+    // --- MQ152–MQ155 (#1315): where a candidate's motion rows broke, opt-in on the comparison's report ----------------
+    // docs/MESH_REDUCTION.md §10 *Failure localisation*: `overBound` lists the samples over the local-deformation bound
+    // with the candidate triangle that carries each, and each triangle's worst value over the selection frames. The
+    // subject is the trial policy's fully reduced result (MQ144's, refused in motion), posed against the source. The
+    // card's control (a) — that the vertices the listed triangles span are a subset of the rewind's — is not here: the
+    // listed triangles are the candidate's own, so they span only vertices the full run kept, which the rewind's kept
+    // set excludes by its definition; measured, the intersection is empty (docs/MESH_REDUCTION.md §10).
+    type ObRequest = MotionComparisonInput['overBound'];
+    const obInput = (model: string, selection: string[], overBound: ObRequest | null | undefined): MotionComparisonInput => ({
+      reference: { id: 'source', model: reference },
+      candidates: [{ id: 'full', model }],
+      attachments: [{ attachment: abAttachment, art: abArt, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+      referenceArtFit: mvStrict,
+      candidateArtFit: mvStrict,
+      schedule: { frames: ['setup', { animation: 'bend_b', fps: 12 }, { animation: 'bend_c', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection },
+      bounds: { maxLocalDeformation: 1 },
+      motionRequired: true,
+      perFrame: false,
+      ...(overBound === undefined ? {} : { overBound: overBound as ObRequest }),
+    });
+    const obCompare = (model: string, selection: string[], overBound: ObRequest | null | undefined, plant: ComparePlant | null = null): MeshQualityReport =>
+      plant === null ? compareMeshesInMotion(obInput(model, selection, overBound)) : compareMeshesInMotionPlanted(obInput(model, selection, overBound), plant);
+    /** The trial policy's fully reduced result as a build, and the frame ids of each phase the strict walk named. */
+    const obFull = lazily(() => {
+      // The full run alone (MQ144's `abTrial().full`, through the memo) — not the bisection, which nothing here reads.
+      const full = abReduce(trialPolicy);
+      const model = full.mesh === null ? null : abBuild(dir, 'ab-trial-full-152', full.mesh);
+      const walked = model === null ? [] : (obCompare(model, [], undefined).candidates[0].motion?.schedule.walked ?? []);
+      return {
+        mesh: full.mesh,
+        model,
+        grid: walked.filter((f) => f.phase === 'grid').map((f) => f.id),
+        irr: walked.filter((f) => f.phase === 'irr').map((f) => f.id),
+      };
+    });
+    /** Every sample the art and the source hull give — the most a row can list, so a cap at it lists them all. */
+    const obEvery = abMask.width * abMask.height + ab.mesh.hull;
+    /** §3's domain order of a listed sample: art pixels row by row, then hull vertices. */
+    const domainKey = (at: { pixel?: [number, number]; vertex?: number }): number => (at.pixel !== undefined ? at.pixel[1] * abMask.width + at.pixel[0] : abMask.width * abMask.height + (at.vertex ?? 0));
+    const obRow = (r: MeshQualityReport) => r.candidates[0]?.overBound?.rows.find((x) => x.code === 'MQ_LOCAL_DEFORMATION' && x.region === null);
+    const obTable = (r: MeshQualityReport, code: string) => r.candidates[0]?.overBound?.triangles.find((x) => x.code === code);
+
+    unit('MQ152', () => {
+      mcGuard('MQ152', () => {
+        const probes: string[] = [];
+        const { mesh, model, irr } = obFull();
+        // Selection = the irr frames (grid held out): the table reads only those, the listing reads every frame.
+        const read = (plant: ComparePlant | null): string[] => {
+          const out: string[] = [];
+          if (mesh === null || model === null) return ['the trial policy returned no mesh'];
+          const r = obCompare(model, irr, { maxSamples: obEvery, triangles: 'all' }, plant);
+          const local = row(r, 'MQ_LOCAL_DEFORMATION');
+          const listed = obRow(r);
+          const table = obTable(r, 'MQ_LOCAL_DEFORMATION');
+          const selection = local?.motion?.byRole.selection ?? null;
+          if (local === undefined || listed === undefined || table === undefined || selection === null || selection.value === null) return [`row ${local?.state}, listing ${listed === undefined ? 'absent' : 'present'}, table ${table === undefined ? 'absent' : 'present'}, selection reading ${JSON.stringify(selection)}`];
+          const byTriangle = new Map(table.values.map((v) => [v.triangle, v.value]));
+          const most = Math.max(...table.values.map((v) => v.value));
+          if (most !== selection.value) out.push(`the table's largest value is ${most} against the row's worst over the selection frames ${selection.value}`);
+          const top = listed.samples[0];
+          if (top === undefined || top.value !== local.value) out.push(`the first listed sample reads ${top?.value} against the row's worst ${local.value}`);
+          // Every listed sample at a selection frame reads no more than its triangle's entry, and the triangle is the candidate's.
+          for (const s of listed.samples) {
+            const t = mesh.triangles.slice(s.triangle * 3, s.triangle * 3 + 3);
+            if (JSON.stringify(t) !== JSON.stringify(s.corners)) {
+              out.push(`sample ${JSON.stringify(s.at)} names triangle ${s.triangle} with corners ${s.corners.join(', ')}; the candidate's triangle ${s.triangle} is ${t.join(', ')}`);
+              break;
+            }
+            const entry = byTriangle.get(s.triangle);
+            if (s.frame.role === 'selection' && (entry === undefined || s.value > entry)) {
+              out.push(`sample ${JSON.stringify(s.at)} reads ${s.value} at selection frame ${s.frame.id} in triangle ${s.triangle}, whose entry is ${entry}`);
+              break;
+            }
+          }
+          // The selection's worst sample: its triangle's entry is the selection's worst.
+          const atWorst = listed.samples.filter((s) => s.frame.role === 'selection');
+          if (atWorst.length > 0 && byTriangle.get(atWorst[0].triangle) !== atWorst[0].value) out.push(`the worst sample at a selection frame reads ${atWorst[0].value} in triangle ${atWorst[0].triangle}, whose entry is ${byTriangle.get(atWorst[0].triangle)}`);
+          return out;
+        };
+        probes.push(...read(null));
+        const plants: Array<[ComparePlant, number]> = (['over-bound-reference-carrier', 'over-bound-table-every-frame'] as ComparePlant[]).map((p) => [p, read(p).length]);
+        for (const [p, n] of plants) if (n === 0) probes.push(`the plant ${p} reads as agreeing too, so the predicate cannot fire`);
+        const r = mesh !== null && model !== null ? obCompare(model, irr, { maxSamples: 1, triangles: 'all' }) : null;
+        const local = r === null ? undefined : row(r, 'MQ_LOCAL_DEFORMATION');
+        const table = r === null ? undefined : obTable(r, 'MQ_LOCAL_DEFORMATION');
+        const held = probes.length === 0;
+        say(
+          'MQ152_THE_PER_TRIANGLE_MAXIMUM_AGREES_WITH_THE_ROWS_WORST_OVER_THE_SELECTION_AND_WITH_THE_WORST_SAMPLES_CARRYING_TRIANGLE',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the trial policy's full run, irr frames selected (${irr.length}), grid held out: MQ_LOCAL_DEFORMATION ${local?.value} over every frame, ${local?.motion?.byRole.selection?.value} over the selection; the table lists ${table?.values.length} triangles, largest ${table === undefined ? '?' : Math.max(...table.values.map((v) => v.value))}; plants — ${plants.map(([p, n]) => `${p}: ${n} disagreement(s)`).join(', ')}`,
+          ),
+          'issue #1315: the table is the cheaper companion of the listing, so it has to be the same carriers and the same distances — its maximum is the row\'s worst over the selection, and a listed sample\'s triangle is the candidate\'s own',
+        );
+      });
+    });
+
+    unit('MQ153', () => {
+      mcGuard('MQ153', () => {
+        const probes: string[] = [];
+        const { model, grid } = obFull();
+        const capOf = (total: number): number => Math.max(1, Math.floor(total / 4));
+        let said = '';
+        const read = (plant: ComparePlant | null): string[] => {
+          if (model === null) return ['the trial policy returned no mesh'];
+          const all = obRow(obCompare(model, grid, { maxSamples: obEvery, triangles: 'over-bound' }));
+          if (all === undefined || all.total === 0 || all.samples.length !== all.total) return [`the uncapped listing: ${all === undefined ? 'absent' : `${all.samples.length} listed of ${all.total}`}; required every over-bound sample listed, and some`];
+          const cap = capOf(all.total);
+          const capped = obRow(obCompare(model, grid, { maxSamples: cap, triangles: 'over-bound' }, plant));
+          if (capped === undefined) return ['the capped listing is absent'];
+          const out: string[] = [];
+          if (capped.samples.length !== cap) out.push(`${capped.samples.length} listed under a cap of ${cap}`);
+          if (capped.total !== all.total) out.push(`the capped call states ${capped.total} over the bound against the uncapped ${all.total}`);
+          if (JSON.stringify(capped.samples) !== JSON.stringify(all.samples.slice(0, cap))) out.push('the capped listing is not the first entries of the uncapped one');
+          const order = all.samples.findIndex((s, i) => i > 0 && (s.value > all.samples[i - 1].value || (s.value === all.samples[i - 1].value && domainKey(s.at) <= domainKey(all.samples[i - 1].at))));
+          if (order !== -1) out.push(`the uncapped listing breaks worst-first, then domain order, at entry ${order}`);
+          const floor = capped.samples[capped.samples.length - 1]?.value ?? Infinity;
+          const above = all.samples.slice(cap).filter((s) => s.value > floor).length;
+          if (above > 0) out.push(`${above} unlisted samples read more than the last listed one (${floor})`);
+          if (plant === null) said = `${all.total} samples over the bound; capped at ${cap}: ${capped.samples.length} listed, ${capped.total} stated, values ${capped.samples[0]?.value} down to ${floor}`;
+          return out;
+        };
+        probes.push(...read(null));
+        const plants: Array<[ComparePlant, number]> = (['over-bound-domain-order', 'over-bound-total-is-listed'] as ComparePlant[]).map((p) => [p, read(p).length]);
+        for (const [p, n] of plants) if (n === 0) probes.push(`the plant ${p} holds the cap too, so the predicate cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ153_A_CAP_BELOW_THE_OVER_BOUND_COUNT_LISTS_THE_WORST_SAMPLES_FIRST_AND_STATES_THE_COUNT_OF_ALL_OF_THEM',
+          held,
+          probeDetail(held, probes, `the trial policy's full run, grid selected: ${said}; plants — ${plants.map(([p, n]) => `${p}: ${n} fault(s)`).join(', ')}`),
+          'issue #1315: a full listing is as large as the art, so the caller caps it — and a capped listing is only usable if it is the worst ones and says how many it left out',
+        );
+      });
+    });
+
+    unit('MQ154', () => {
+      mcGuard('MQ154', () => {
+        const probes: string[] = [];
+        const { model, grid } = obFull();
+        /** The parsed text with the two keys the field adds removed, written again — the bytes a call without it must write. */
+        const without = (text: string): string => {
+          const doc = JSON.parse(text) as { effective: Record<string, unknown>; reference: Record<string, unknown> | null; candidates: Array<Record<string, unknown>> };
+          delete doc.effective.overBound;
+          for (const c of doc.candidates) delete c.overBound;
+          return `${JSON.stringify(doc, null, 2)}\n`;
+        };
+        const keys = (text: string): string[] => {
+          const doc = JSON.parse(text) as { effective: Record<string, unknown>; reference: Record<string, unknown> | null; candidates: Array<Record<string, unknown>> };
+          return [...('overBound' in doc.effective ? ['effective'] : []), ...(doc.reference !== null && 'overBound' in doc.reference ? ['reference'] : []), ...doc.candidates.flatMap((c, i) => ('overBound' in c ? [`candidates[${i}]`] : []))];
+        };
+        const subjects: Array<{ name: string; off: () => string; on: () => string; planted: () => string }> = [];
+        if (model !== null) {
+          subjects.push({
+            name: "MQ85's trial full run, grid selected",
+            off: () => writeMeshQualityReport(obCompare(model, grid, undefined)),
+            on: () => writeMeshQualityReport(obCompare(model, grid, { maxSamples: 3, triangles: 'all' })),
+            planted: () => writeMeshQualityReport(obCompare(model, grid, undefined, 'over-bound-echo-when-unset')),
+          });
+        }
+        const strict = memoReduceMesh(mvReduceInput(mvSrc));
+        if (strict.mesh !== null) {
+          const source = mvBuild(dir, 'mv-source-154', mvSrc);
+          const cand = mvBuild(dir, 'mv-strict-154', strict.mesh);
+          const mv = (over: ObRequest | undefined, plant: ComparePlant | null = null): string => {
+            const input: MotionComparisonInput = {
+              reference: { id: 'source', model: source },
+              candidates: [{ id: 'strict', model: cand }],
+              attachments: [{ attachment: { skin: null, slot: 'ramp', attachment: 'ramp' }, art: { mask: mvMask, threshold: 1, frame: mvFrame }, finalThreshold: 1, minArtSamples: 1, regions: [] }],
+              referenceArtFit: mvStrict,
+              candidateArtFit: mvStrict,
+              schedule: { frames: ['setup', { animation: 'idle', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'none' }, selection: [] },
+              bounds: { maxLocalDeformation: 1 },
+              motionRequired: true,
+              perFrame: true,
+              ...(over === undefined ? {} : { overBound: over }),
+            };
+            return writeMeshQualityReport(plant === null ? compareMeshesInMotion(input) : compareMeshesInMotionPlanted(input, plant));
+          };
+          subjects.push({ name: "MQ79's strict reduction, every frame held out", off: () => mv(undefined), on: () => mv({ maxSamples: 3, triangles: 'over-bound' }), planted: () => mv(undefined, 'over-bound-echo-when-unset') });
+        }
+        if (subjects.length < 2) probes.push(`${subjects.length} of 2 subjects built`);
+        const lines: string[] = [];
+        let plantFired = 0;
+        for (const s of subjects) {
+          const off = s.off();
+          const offAgain = s.off();
+          const on = s.on();
+          if (off !== offAgain) probes.push(`${s.name}: two calls without the field write different texts`);
+          if (keys(off).length > 0) probes.push(`${s.name}: without the field the text carries overBound at ${keys(off).join(', ')}`);
+          if (JSON.stringify(keys(on)) !== JSON.stringify(['effective', 'candidates[0]'])) probes.push(`${s.name}: with the field overBound sits at [${keys(on).join(', ')}]; required the echo and the candidate only`);
+          if (without(off) !== off) probes.push(`${s.name}: the text without the field does not survive a parse and rewrite, so the comparison below reads nothing`);
+          if (without(on) !== off) probes.push(`${s.name}: with the field, the text less its two keys differs from the text without it`);
+          const planted = s.planted();
+          if (keys(planted).length > 0) plantFired++;
+          lines.push(`${s.name}: ${off.length} bytes without, ${on.length} with (the block ${on.length - off.length} more)`);
+        }
+        if (plantFired !== subjects.length) probes.push(`the plant (the field echoed when left out) shows on ${plantFired} of ${subjects.length} subjects, so the predicate cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ154_WITHOUT_OVER_BOUND_A_POSED_COMPARISON_WRITES_THE_SAME_TEXT_AND_WITH_IT_ONLY_THE_BLOCK_AND_THE_ECHO_ARE_ADDED',
+          held,
+          probeDetail(held, probes, `${lines.join('; ')}; the plant (echoed when left out) shows on ${plantFired} of ${subjects.length}`),
+          'issue #1315: the field changes nothing in acceptance, verdicts or any existing byte — the bytes against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §10), and this holds the shape of that comparison',
+        );
+      });
+    });
+
+    unit('MQ155', () => {
+      mcGuard('MQ155', () => {
+        const probes: string[] = [];
+        const refused = (overBound: unknown, plant: ComparePlant | null, models: 'unreadable' | 'readable'): { code: string; message: string } | null => {
+          const m = models === 'unreadable' ? '{ not a model document' : reference;
+          try {
+            if (plant === null) compareMeshesInMotion(obInput(m, [], overBound as ObRequest));
+            else compareMeshesInMotionPlanted(obInput(m, [], overBound as ObRequest), plant);
+            return null;
+          } catch (err) {
+            if (err instanceof MeshReductionError) return { code: err.code, message: err.message };
+            return { code: `(not a MeshReductionError: ${(err as Error).name})`, message: (err as Error).message };
+          }
+        };
+        const cases: Array<[string, unknown, string]> = [
+          ['null', null, 'overBound is null'],
+          ['a number', 3, 'overBound is 3'],
+          ['maxSamples 0', { maxSamples: 0, triangles: 'all' }, 'overBound.maxSamples is 0'],
+          ['maxSamples 2.5', { maxSamples: 2.5, triangles: 'all' }, 'overBound.maxSamples is 2.5'],
+          ['maxSamples left out', { triangles: 'all' }, 'overBound.maxSamples is undefined'],
+          ["triangles 'some'", { maxSamples: 2, triangles: 'some' }, 'overBound.triangles is "some"'],
+          ['triangles left out', { maxSamples: 2 }, 'overBound.triangles is undefined'],
+        ];
+        const lines: string[] = [];
+        for (const [name, value, names] of cases) {
+          // An unreadable model beside it: the field is refused before any build is read.
+          const r = refused(value, null, 'unreadable');
+          if (r?.code !== 'COMPARE_INPUT_MISSING' || !r.message.includes(names)) probes.push(`${name}: ${r?.code ?? 'compared'} — ${r?.message}; required COMPARE_INPUT_MISSING naming "${names}", before any build is read`);
+          else lines.push(name);
+        }
+        const planted = refused(null, 'over-bound-unvalidated', 'readable');
+        if (planted !== null) probes.push(`the plant (the field not validated): null is refused anyway — ${planted.code}`);
+        const held = probes.length === 0;
+        say(
+          'MQ155_A_MALFORMED_OVER_BOUND_REQUEST_IS_REFUSED_NAMING_THE_FIELD_BEFORE_ANY_BUILD_IS_READ',
+          held,
+          probeDetail(held, probes, `refused naming the field: ${lines.join(', ')}; the plant (no validation) compares on null`),
+          'issue #1315: no count is assumed and no table is chosen for the caller, and null is not a request — asking for nothing is leaving the field out',
+        );
+      });
+    });
+    });
 
   // --- MQ116–MQ119, MQ130–MQ133 (#1294): the skinning-envelope residual ----------------------------------------
   // §7's mechanism 1, measured against the poser it is meant to predict without running. The subjects are MQ79's

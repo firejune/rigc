@@ -95,7 +95,11 @@ import {
   type MotionReading,
   type MotionRowDetail,
   type MotionSchedule,
+  type OverBoundReport,
+  type OverBoundRequest,
+  type OverBoundRow,
   type ScheduleUsed,
+  type TriangleMaxima,
   type SourceMesh,
   type WorstSample,
 } from './meshquality.ts';
@@ -165,6 +169,17 @@ export interface MotionComparisonInput {
    * before any build is read, in the measurement's words. Echoed in `effective` when set, `null` included.
    */
   motionAmplitude?: MotionAmplitude | null;
+  /**
+   * Issue #1315: asks each candidate's report for where its motion rows broke — the samples over each declared
+   * `MQ_LOCAL_DEFORMATION` bound (the attachment's row and each measured region's), each with the frame of its worst
+   * value and the candidate's UV triangle that carries it, at most `maxSamples` per row, worst first, with the count
+   * of all of them; and each candidate triangle's worst value of every declared motion row over the selection frames
+   * (`triangles`: the over-bound triangles, or `all` with a reading). Nothing else moves: no row, verdict, acceptance
+   * or byte of a report without it. Left out, not asked; anything that is not an `OverBoundRequest` in full — `null`
+   * included, since asking for nothing is leaving the field out — is refused `COMPARE_INPUT_MISSING` naming the field,
+   * before any build is read. Echoed in `effective` when set.
+   */
+  overBound?: OverBoundRequest;
 }
 
 /**
@@ -173,7 +188,27 @@ export interface MotionComparisonInput {
  * before the builds are read; `null` echoed for a field left out; and the load counted as a required row, so the
  * amplitude moves a verdict. `compareMeshesInMotion` plants none.
  */
-export type ComparePlant = 'amplitude-not-carried' | 'null-read-as-left-out' | 'amplitude-unvalidated' | 'echo-when-unset' | 'amplitude-gates-acceptance';
+export type ComparePlant =
+  | 'amplitude-not-carried'
+  | 'null-read-as-left-out'
+  | 'amplitude-unvalidated'
+  | 'echo-when-unset'
+  | 'amplitude-gates-acceptance'
+  | OverBoundPlant;
+
+/**
+ * Issue #1315's faults in `overBound`, for the `mesh-compare` suite's negative controls: a listed sample's triangle
+ * taken from the reference's carrier rather than the candidate's; the samples listed in domain order rather than worst
+ * first; the total counted off the listed samples; the per-triangle table read over every frame rather than the
+ * selection's; the field echoed when left out; and the field not validated, so `null` and a malformed request pass.
+ */
+export type OverBoundPlant =
+  | 'over-bound-reference-carrier'
+  | 'over-bound-domain-order'
+  | 'over-bound-total-is-listed'
+  | 'over-bound-table-every-frame'
+  | 'over-bound-echo-when-unset'
+  | 'over-bound-unvalidated';
 
 // ---------------------------------------------------------------------------
 // fixed tolerances — the tree's own
@@ -285,6 +320,14 @@ function validateInput(input: MotionComparisonInput, plant: ComparePlant | null)
       if (err instanceof MeshReductionError) refuse('COMPARE_INPUT_MISSING', err.message.slice(err.code.length + 2));
       throw err;
     }
+  }
+  if (plant !== 'over-bound-unvalidated' && input.overBound !== undefined) {
+    // Issue #1315: a request in full, or the field left out. No count is assumed and no table is chosen for the caller.
+    const o: unknown = input.overBound;
+    const shape = "an OverBoundRequest { maxSamples, triangles }, or the field left out — null asks for nothing, which is what leaving it out says";
+    if (!isObject(o)) missing('overBound', o, shape);
+    if (!Number.isInteger(o.maxSamples) || (o.maxSamples as number) < 1) missing('overBound.maxSamples', o.maxSamples, 'a whole number >= 1 — the most over-bound samples listed per row; there is no default');
+    if (o.triangles !== 'over-bound' && o.triangles !== 'all') missing('overBound.triangles', o.triangles, "'over-bound' or 'all' — which triangles the per-triangle table lists; there is no default");
   }
   const s = input.schedule;
   if (s === null) return;
@@ -915,7 +958,9 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
 
   // --- motion ---------------------------------------------------------------------------------
   const schedule = input.schedule;
-  type Motion = { section: EvidenceSection & { schedule: ScheduleUsed }; perFrame: NonNullable<CandidateReport['perFrame']> } | null;
+  type Motion = { section: EvidenceSection & { schedule: ScheduleUsed }; perFrame: NonNullable<CandidateReport['perFrame']>; overBound: OverBoundReport | null } | null;
+  // Issue #1315: the request as the caller set it; `?? undefined` only matters under the unvalidated plant.
+  const overBound: OverBoundRequest | undefined = input.overBound ?? undefined;
   let motionOf: (b: Build, isReference: boolean) => Motion = () => null;
   if (schedule !== null) {
     const physicsConstraints = reference.doc.constraints.filter((c) => c.kind === 'physics').length;
@@ -958,6 +1003,9 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
       const posed = isReference ? posedRef : poseBuild(b.doc, order.map((i) => refs[i]), frames, walks);
       const built: Built[] = [];
       const perFrame: NonNullable<CandidateReport['perFrame']> = [];
+      // Issue #1315: kept for a candidate only, and only when asked — a call without the field does none of this.
+      const ask = isReference ? undefined : overBound;
+      const located: OverBoundReport | null = ask === undefined ? null : { selectionFrames: frames.filter((f) => f.ref.role === 'selection').length, rows: [], triangles: [] };
       order.forEach((i, k) => {
         const a = input.attachments[i];
         const ref = refs[i];
@@ -996,6 +1044,18 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
         const squash: Reading[] = [];
         const inversion: Reading[] = [];
         const folds: Array<{ triangle: number; frame: string }> = [];
+        // Issue #1315: each sample's worst distance over every frame and the frame of it (first in walk order); each
+        // triangle's worst reading of each row over the selection frames. Bookkeeping over values computed below anyway.
+        const nTri = mesh.triangles.length / 3;
+        const track = located !== null;
+        const sampleWorst = new Float64Array(track ? samples.length : 0).fill(-1);
+        const sampleFrame = new Int32Array(track ? samples.length : 0).fill(-1);
+        const triLocal = new Float64Array(track ? nTri : 0).fill(-1);
+        const triHi = new Float64Array(track ? nTri : 0).fill(-Infinity);
+        const triLo = new Float64Array(track ? nTri : 0).fill(Infinity);
+        const triStretchRead = new Uint8Array(track ? nTri : 0);
+        const triReversed = new Int32Array(track ? nTri : 0);
+        const triInversionRead = new Uint8Array(track ? nTri : 0);
         const setupWorld = posed.setup[k];
         const setupAreas = setupWorld === null ? [] : triangleAreas(setupWorld, mesh.triangles);
         const setupBand = setupWorld === null ? 0 : areaBand(setupAreas, setupWorld);
@@ -1007,6 +1067,7 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
             notDrawn.push(f.ref.id);
             return;
           }
+          const selected = track && (f.ref.role === 'selection' || plant === 'over-bound-table-every-frame');
           // Local deformation: the carried points, sample by sample.
           let worst = -1;
           let worstAt = -1;
@@ -1019,6 +1080,16 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
             if (d > worst) {
               worst = d;
               worstAt = j;
+            }
+            if (track) {
+              if (d > sampleWorst[j]) {
+                sampleWorst[j] = d;
+                sampleFrame[j] = fi;
+              }
+              if (selected) {
+                const t = candCarrier[j]!.triangle;
+                if (d > triLocal[t]) triLocal[t] = d;
+              }
             }
             for (let r = 0; r < a.regions.length; r++) {
               if (inRegion[r][j] && d > regionWorst[r].d) regionWorst[r] = { d, j };
@@ -1046,9 +1117,16 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
             if (sv !== null) {
               if (hi === null || sv.max > hi.value) hi = { frame: fi, value: sv.max, at: { triangle: t } };
               if (lo === null || sv.min < lo.value) lo = { frame: fi, value: sv.min, at: { triangle: t } };
+              if (selected) {
+                triStretchRead[t] = 1;
+                if (sv.max > triHi[t]) triHi[t] = sv.max;
+                if (sv.min < triLo[t]) triLo[t] = sv.min;
+              }
             }
+            if (selected) triInversionRead[t] = 1;
             if (Math.abs(after[t]) <= band) continue;
             if (Math.sign(setupAreas[t]) !== Math.sign(after[t])) {
+              if (selected) triReversed[t]++;
               reversed++;
               if (firstReversed === -1) firstReversed = t;
               if (folding.has(ref.slot)) folds.push({ triangle: t, frame: f.ref.id });
@@ -1102,6 +1180,60 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
           // A slot `deformMayFold` names: the row holds no bound (A39 exempts it), keeps its count rather than zeroing it, and lists every fold.
           built.push(motionRow(plans.inversion, inversion, frames, schedule, notDrawn, folding.has(ref.slot) ? { folds, degenerateAtSetup } : { degenerateAtSetup }));
         }
+        if (located !== null && ask !== undefined) {
+          // Issue #1315: the samples over the local-deformation bound, per measured row, and the per-triangle tables.
+          const localBound = { op: '<=' as const, value: input.bounds.maxLocalDeformation };
+          const listed = (region: string | null, inside: readonly boolean[] | null): OverBoundRow => {
+            const over: Array<{ j: number; v: number }> = [];
+            for (let j = 0; j < samples.length; j++) {
+              if (sampleFrame[j] < 0 || (inside !== null && !inside[j])) continue;
+              const v = r6(sampleWorst[j]);
+              if (judged(v, localBound) === 'fail') over.push({ j, v });
+            }
+            if (plant !== 'over-bound-domain-order') over.sort((p, q) => q.v - p.v || p.j - q.j);
+            const kept = over.slice(0, ask.maxSamples);
+            return {
+              code: 'MQ_LOCAL_DEFORMATION',
+              attachment: ref,
+              region,
+              bound: localBound,
+              total: plant === 'over-bound-total-is-listed' ? kept.length : over.length,
+              samples: kept.map(({ j, v }) => {
+                const s = samples[j];
+                const c = plant === 'over-bound-reference-carrier' ? refCarrier[j]! : candCarrier[j]!;
+                return {
+                  at: s.pixel !== null ? { pixel: s.pixel, uv: s.uv } : { vertex: s.vertex ?? -1, uv: s.uv },
+                  frame: frames[sampleFrame[j]].ref,
+                  value: v,
+                  triangle: c.triangle,
+                  corners: [c.corners[0], c.corners[1], c.corners[2]],
+                };
+              }),
+            };
+          };
+          if (art >= a.minArtSamples) located.rows.push(listed(null, null));
+          const measuredRegions = a.regions
+            .map((r, ri) => ({ name: r.name, ri }))
+            .filter(({ ri }) => artIn(inRegion[ri]) >= a.regions[ri].minArtSamples)
+            .sort((p, q) => (p.name < q.name ? -1 : p.name > q.name ? 1 : 0));
+          for (const { name, ri } of measuredRegions) located.rows.push(listed(name, inRegion[ri]));
+          const table = (code: string, bound: { op: '<=' | '>='; value: number }, read: (t: number) => number | null): TriangleMaxima => {
+            const values: Array<{ triangle: number; value: number }> = [];
+            for (let t = 0; t < nTri; t++) {
+              const raw = read(t);
+              if (raw === null) continue;
+              const value = r6(raw);
+              if (ask.triangles === 'all' || judged(value, bound) === 'fail') values.push({ triangle: t, value });
+            }
+            values.sort((p, q) => (bound.op === '<=' ? q.value - p.value : p.value - q.value) || p.triangle - q.triangle);
+            return { code, attachment: ref, bound, values };
+          };
+          // Codes in the rows' order (ROW_ORDER: codes as strings); a row with no declared bound has no table.
+          if (setupWorld !== null && plans.inversion.bound !== null) located.triangles.push(table('MQ_INVERSION', plans.inversion.bound, (t) => (triInversionRead[t] === 1 ? triReversed[t] : null)));
+          if (art >= a.minArtSamples) located.triangles.push(table('MQ_LOCAL_DEFORMATION', localBound, (t) => (triLocal[t] >= 0 ? triLocal[t] : null)));
+          if (setupWorld !== null && plans.squash.bound !== null) located.triangles.push(table('MQ_SQUASH', plans.squash.bound, (t) => (triStretchRead[t] === 1 ? triLo[t] : null)));
+          if (setupWorld !== null && plans.stretch.bound !== null) located.triangles.push(table('MQ_STRETCH', plans.stretch.bound, (t) => (triStretchRead[t] === 1 ? triHi[t] : null)));
+        }
         // P7's opt-in table: each attachment-level row's value at every frame walked, null where none was taken.
         const label = (code: string): string => (order.length > 1 ? `${code}[${nameOf(ref)}]` : code);
         const table: Array<[string, Reading[]]> = [
@@ -1124,17 +1256,18 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
         const ref = refs[order[k]];
         grouped.push(...built.filter((x) => x.row.object.attachment === ref).sort((p, q) => ROW_ORDER(p.row, q.row)));
       }
-      return { section: { ...sectionOf(grouped), schedule: scheduleUsed }, perFrame };
+      return { section: { ...sectionOf(grouped), schedule: scheduleUsed }, perFrame, overBound: located };
     };
   }
   const referenceMotion = motionOf(reference, true);
   const candidateMotions = candidates.map((c) => motionOf(c, false));
-  const reportOf = (b: Build, geometry: { geometry: EvidenceSection | null; counts: MeshCounts | null }, measured: Motion): CandidateReport => {
+  const reportOf = (b: Build, geometry: { geometry: EvidenceSection | null; counts: MeshCounts | null }, measured: Motion, isCandidate: boolean): CandidateReport => {
     const motion = measured === null ? null : measured.section;
     // P6: the geometry verdict pass (every required row measured and passing), and — when motion is required — the motion verdict pass.
     const accepted = geometry.geometry !== null && geometry.geometry.verdict === 'pass' && (!input.motionRequired || (motion !== null && motion.verdict === 'pass'));
     const out: CandidateReport = { id: b.id, counts: geometry.counts, geometry: geometry.geometry, motion, accepted };
     if (input.perFrame && measured !== null) out.perFrame = measured.perFrame;
+    if (isCandidate && overBound !== undefined) out.overBound = measured === null ? null : measured.overBound;
     return out;
   };
   const effective: EffectiveSettings = {
@@ -1163,6 +1296,11 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
     schedule,
     budget: null,
     ...(amplitude === undefined ? (plant === 'echo-when-unset' ? { motionAmplitude: null } : {}) : { motionAmplitude: amplitude }),
+    ...(overBound === undefined
+      ? plant === 'over-bound-echo-when-unset'
+        ? { overBound: { maxSamples: 1, triangles: 'over-bound' as const } }
+        : {}
+      : { overBound: { maxSamples: overBound.maxSamples, triangles: overBound.triangles } }),
   };
   return {
     spec: MESH_QUALITY_REPORT_SPEC,
@@ -1171,8 +1309,8 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
     poser: schedule === null ? null : { kind: 'core', rigcVersion: readVersion() },
     motionRequired: input.motionRequired,
     sourceCounts: refGeometry.counts,
-    reference: reportOf(reference, refGeometry, referenceMotion),
-    candidates: candidates.map((c, i) => reportOf(c, candGeometry[i], candidateMotions[i])),
+    reference: reportOf(reference, refGeometry, referenceMotion, false),
+    candidates: candidates.map((c, i) => reportOf(c, candGeometry[i], candidateMotions[i], true)),
     termination: null,
   };
 }
