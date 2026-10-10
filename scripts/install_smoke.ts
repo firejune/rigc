@@ -414,6 +414,13 @@ const OBSERVED_IN_1275 = 'rig-play (the successor of spine-html), issue #1275';
  * surface* says why.
  */
 const REQUESTED_IN_1276 = 'rig-play 1.0 plan, requested on issue #1276';
+/**
+ * The live track's adjustment of the bone locals (issue #1336): the types of
+ * `TrackOptions.adjust`, requested in writing on the issue with the player's
+ * four shapes, before the player could call it — the row above's exception
+ * again. No value: the hook is an option of `openTrack`, which that row holds.
+ */
+const REQUESTED_IN_1336 = 'rig-play player migration, requested on issue #1336';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -578,6 +585,7 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
     ],
   },
   { entry: './core', observed: REQUESTED_IN_1276, needsRuntime: false, values: { openTrack: 'function' }, types: ['LiveTrack', 'TrackOptions'] },
+  { entry: './core', observed: REQUESTED_IN_1336, needsRuntime: false, values: {}, types: ['LocalAdjust', 'AdjustableLocals', 'BoneLocals'] },
 ];
 
 /**

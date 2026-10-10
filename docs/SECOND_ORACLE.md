@@ -241,6 +241,23 @@ reading that fires nothing across the wrap read 12,956 steps off (`CO47`); the c
 rows it cuts equal the raw entry's at the same animation time on 4,009 of 4,009 poses
 of the public row that clips (`CO48`).
 
+**The live track's adjustment** ([#1336](https://github.com/firejune/rigc/issues/1336))
+is held to spine-core directly, because it is a player's input rather than a
+construct the batch walk already carries: `openTrack`'s `adjust` writes the bone
+locals after the animation's timelines and before the world transforms, the
+constraints and the physics step, and spine-core's player writes `Bone.pose`
+between `AnimationState.apply` and `updateWorldTransform(Physics.update)`. On
+gallery/look — `scaleY` written on `head`, which carries the deformed head mesh,
+every face bone, and the physics-driven `ahoge_whip` two bones below it — 12 walks
+(three animations, looping and held, both resets, 150 mixed steps each) read 1,812
+of 1,812 poses equal in every bone's world transform and every drawn vertex at
+tolerance 0, 1,806 of them moved by the write (`CO50`). The equality needs
+spine-core's bones brought back to the setup pose before each `apply`, which is
+the core's own reading — every pose is posed from the setup pose; without it the
+write on a channel no timeline keys compounds frame to frame and every walk reads
+off. The write made at draw time (after `updateWorldTransform`, the bone's own
+matrix alone) and pose 0 left unadjusted read off on every walk they apply to.
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private

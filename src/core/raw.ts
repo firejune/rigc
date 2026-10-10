@@ -114,7 +114,7 @@
  * missing would draw a different picture in silence.
  */
 import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, underNoSkin, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
-import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type TimelinePlant } from './animation.ts';
+import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type LocalAdjust, type TimelinePlant } from './animation.ts';
 import { constraintsAbsentWhy, pathAnimationsWhy } from './constraints.ts';
 import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.ts';
 import { attachmentStates } from './deform.ts';
@@ -612,6 +612,8 @@ export interface TrackState<P> {
   readonly resolve: NonNullable<TimelinePlant['shown']>;
   readonly shape: PoseShape<P>;
   readonly ctx: ReturnType<typeof freshStepContext>;
+  /** The caller's adjustment of each step's locals (`LocalAdjust` in `./animation.ts`): the live track's `adjust`, absent on every batch walk. */
+  readonly adjust?: LocalAdjust;
   /** The running sum of the steps taken. */
   trackTime: number;
   /** The animation time of the step before, −1 before the first. */
@@ -631,12 +633,12 @@ function animationOf(doc: CompiledDocument, animation: string): CompiledDocument
  * `reset: 'setup'` pose 0 is the setup pose, reset; under `animation` it is the
  * animation applied at 0 and reset there, a step of 0 (`stepWalk`'s `first`).
  */
-function openWalk<P>(doc: CompiledDocument, anim: CompiledDocument['animations'][number], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>): { track: TrackState<P>; first: P } {
+function openWalk<P>(doc: CompiledDocument, anim: CompiledDocument['animations'][number], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, adjust?: LocalAdjust): { track: TrackState<P>; first: P } {
   const why = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? steppedPreviousPassWhy(doc);
   if (why !== null) throw new CoreInputError(`the raw walk leaves the bones out: ${why}`);
   const ctx = freshStepContext(plant.physicsStep);
   if (mode.loop && mode.wrapResets !== false) ctx.loop = true;
-  const track: TrackState<P> = { doc, anim, duration: anim.timelines.duration, mode, plant, raw: { ...plant, ...roundPlant(mode) }, resolve: plant.shown ?? shownAttachment, shape, ctx, trackTime: 0, last: -1 };
+  const track: TrackState<P> = { doc, anim, duration: anim.timelines.duration, mode, plant, raw: { ...plant, ...roundPlant(mode) }, resolve: plant.shown ?? shownAttachment, shape, ctx, adjust, trackTime: 0, last: -1 };
   if (reset === 'setup') {
     // The reset taken at the setup pose, before the animation is applied (`src/deformmeasure.ts`'s `poseAt`): pose 0 is the setup pose.
     const setup = poseSetup(doc, { ...plant, ...roundPlant(mode) }, ctx);
@@ -657,7 +659,7 @@ function openWalk<P>(doc: CompiledDocument, anim: CompiledDocument['animations']
  * resets the physics there — and nothing else passes it.
  */
 function stepWalk<P>(track: TrackState<P>, dt: number, first = false): P {
-  const { doc, anim, duration, mode, plant, raw, resolve, shape, ctx } = track;
+  const { doc, anim, duration, mode, plant, raw, resolve, shape, ctx, adjust } = track;
   track.trackTime += dt;
   const trackTime = track.trackTime;
   const last = track.last;
@@ -665,7 +667,7 @@ function stepWalk<P>(track: TrackState<P>, dt: number, first = false): P {
   const before = ctx.time;
   ctx.time += mode.clock === undefined ? dt : mode.clock(dt, t - (first ? 0 : Math.max(last, 0)));
   const sliders: SliderApplication[] = [];
-  const world = shape.rows ? posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before }).world : posedBoneWorldAlone(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before });
+  const world = shape.rows ? posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust }).world : posedBoneWorldAlone(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust });
   if (first) ctx.phase = 'update';
   const placeholders = new Map<string, string | null>();
   const slots = posedSlots(doc, anim.timelines, t, raw, sliders, placeholders);
@@ -706,8 +708,8 @@ function walkEach<P>(doc: CompiledDocument, animation: string, steps: readonly n
  * `stepRawTrack` steps. Every pose is assembled as the raw entry's
  * (`RAW_SHAPE`).
  */
-export function openRawTrack(doc: CompiledDocument, animation: string, plant: TimelinePlant, reset: RawReset, mode: WalkMode): { track: TrackState<RawPose>; first: RawPose } {
-  return openWalk(doc, animationOf(doc, animation), plant, reset, mode, RAW_SHAPE);
+export function openRawTrack(doc: CompiledDocument, animation: string, plant: TimelinePlant, reset: RawReset, mode: WalkMode, adjust?: LocalAdjust): { track: TrackState<RawPose>; first: RawPose } {
+  return openWalk(doc, animationOf(doc, animation), plant, reset, mode, RAW_SHAPE, adjust);
 }
 
 /** One step of an opened raw track (`openRawTrack`): `walkIn`'s step, the step itself checked by the caller. */

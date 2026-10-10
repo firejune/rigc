@@ -95,6 +95,41 @@
  * and the events (4,009 of 4,009 on the tree row, 690 of them cutting 12,420
  * rows).
  *
+ * ## The adjustment (issue #1336)
+ *
+ * `adjust` is a player's own bone-local value — a breath's scale, a look's
+ * rotation — written onto the bones every pose, after the animation's
+ * timelines posed the locals at the step's time and before the world
+ * transforms, the constraints and the physics step (`LocalAdjust` in
+ * `./animation.ts`, which states the view's rules). It runs on every pose the
+ * animation is applied to — every `step`, and pose 0 under `reset:
+ * 'animation'` — and not on pose 0 under `reset: 'setup'`, the setup pose
+ * with nothing applied: a player applies its adjustment wherever it applies
+ * the animation state, the first frame included, and spine-core's reset at
+ * the setup pose applies none. Absent, every pose is the one the track posed
+ * before it existed, bit for bit (`CO46`, unchanged; `CO50` holds a hook that
+ * writes nothing to the same bits).
+ *
+ * `CO50` holds it to spine-core 4.3.13 on gallery/look, whose `head` carries
+ * the deformed head mesh and every face bone, and the physics-driven
+ * `ahoge_whip` two bones below it: the same `scaleY` written on `head` by the
+ * core's hook and on `Bone.pose` between `AnimationState.apply` and
+ * `updateWorldTransform(Physics.update)`, every bone's world transform and
+ * every drawn vertex equal at tolerance 0 over looping and held walks under
+ * both resets — spine-core's skeleton brought back to the setup pose
+ * (`setupPoseBones`) before each `apply`, which is the core's own reading:
+ * every pose is posed from the setup pose. Measured, and held red there:
+ *
+ * - **The write carried from frame to frame** — spine-core without that
+ *   reset, where no timeline writes an unkeyed channel back, so a `scaleY`
+ *   multiplied every frame compounds (every walk off from pose 2). The core
+ *   carries no local from one step to the next; a value a player wants
+ *   carried it keeps and writes again.
+ * - **The write at draw time** — made after `updateWorldTransform`, the
+ *   bone's own matrix alone brought up to date: the bone moves, its
+ *   children, the meshes they carry and the physics do not.
+ * - **Pose 0 not adjusted** under `reset: 'animation'`.
+ *
  * ## The oracle chain
  *
  * Nothing here is held to spine-core directly but the events: the live track
@@ -106,19 +141,22 @@
  *
  * ⛔ **A track refused part-way stays refused.** A step is checked before
  * anything moves; a refusal past that — a construct the core leaves out, a
- * non-finite vertex — comes after the track time and the physics have moved,
- * so every later `step` refuses naming the step it was refused at, and the
- * caller opens the track again. Seeking is the caller's too: a physics rig has
+ * non-finite vertex or write — comes after the track time and the physics
+ * have moved, so every later `step` refuses naming the step it was refused
+ * at, and the caller opens the track again. So does an error the caller's own
+ * `adjust` throws: it is thrown mid-step, after the same moves. Seeking is the caller's too: a physics rig has
  * history, so a seek is "open, then step to the time".
  */
 import { CoreInputError, type CompiledDocument } from './index.ts';
 import { openRawTrack, stepRawTrack, type RawPose, type RawReset, type TrackState, type WalkMode } from './raw.ts';
-import type { TimelinePlant } from './animation.ts';
+import type { LocalAdjust, TimelinePlant } from './animation.ts';
+export type { AdjustableLocals, BoneLocals, LocalAdjust } from './animation.ts';
 
-/** How a live track is opened: whether it loops, and where its physics is reset (`RawReset`). Both are the caller's and neither has a default. */
+/** How a live track is opened: whether it loops, and where its physics is reset (`RawReset`) — both the caller's, neither with a default — and the caller's adjustment of every pose's bone locals (the header's *The adjustment*). */
 export interface TrackOptions {
   loop: boolean;
   reset: RawReset;
+  adjust?: LocalAdjust;
 }
 
 /** A live track (`openTrack`): pose 0, then one pose per `step`. */
@@ -147,7 +185,8 @@ const LOOPED: WalkMode = { loop: true, keep: false, live: true };
 export function openTrack(doc: CompiledDocument, animation: string, options: TrackOptions, plant: TimelinePlant = {}): LiveTrack {
   if (typeof options !== 'object' || options === null || typeof options.loop !== 'boolean') throw new CoreInputError(`the live track's options.loop is ${JSON.stringify((options as Partial<TrackOptions> | null)?.loop)}, not true or false`);
   if (options.reset !== 'animation' && options.reset !== 'setup') throw new CoreInputError(`the live track's options.reset is ${JSON.stringify(options.reset)}, not "animation" or "setup"`);
-  const { track, first } = openRawTrack(doc, animation, plant, options.reset, options.loop ? LOOPED : HELD);
+  if (options.adjust !== undefined && typeof options.adjust !== 'function') throw new CoreInputError(`the live track's options.adjust is ${typeof options.adjust}, not a function`);
+  const { track, first } = openRawTrack(doc, animation, plant, options.reset, options.loop ? LOOPED : HELD, options.adjust);
   return new Track(track, first);
 }
 
@@ -186,7 +225,7 @@ class Track implements LiveTrack {
       this.latest = pose.animationTime;
       return pose;
     } catch (err) {
-      if (err instanceof CoreInputError) this.refused = `${n} (${err.message})`;
+      this.refused = `${n} (${err instanceof Error ? err.message : String(err)})`;
       throw err;
     }
   }
