@@ -31,11 +31,26 @@ export interface Carrier {
 }
 
 /**
+ * Issue #1323's faults in resolving several carriers, for the `mesh-compare` suite's controls: the rule before the
+ * issue (the per-coordinate support alone, `slackSupport` never read); the slack read as the narrowest triangle's
+ * rather than the widest's; and any shared vertex excused whatever the distance, so two triangles that both hold a
+ * sample well inside — an overlap — carry it by the first.
+ */
+export type CarrierPlant = 'slack-support-unread' | 'narrowest-slack' | 'any-shared-vertex';
+
+/**
  * Each sample's carrier in one mesh's UV triangulation — §3 and correction 4.
  * Throws `COMPARE_UV_CARRIER_NOT_UNIQUE` for a sample two triangles carry
- * other than across a vertex or edge they share.
+ * other than across a vertex or edge they share — where "across" is read, since
+ * issue #1323, to the distance the containment slack itself allows
+ * (`slackSupport`).
  */
 export function uvCarriers(uvs: readonly number[], triangles: readonly number[], samples: ReadonlyArray<{ uv: [number, number] }>, who: string): Array<Carrier | null> {
+  return uvCarriersWith(uvs, triangles, samples, who, null);
+}
+
+/** `uvCarriers` with a fault planted in resolving several carriers (`CarrierPlant`). Internal: on no entry. */
+export function uvCarriersWith(uvs: readonly number[], triangles: readonly number[], samples: ReadonlyArray<{ uv: [number, number] }>, who: string, plant: CarrierPlant | null): Array<Carrier | null> {
   const areas = triangleAreas(uvs, triangles);
   const band = areaBand(areas, uvs);
   const live: number[] = [];
@@ -101,7 +116,8 @@ export function uvCarriers(uvs: readonly number[], triangles: readonly number[],
       }
     });
   }
-  return samples.map((s, j) => resolveCarriers(s.uv[0], s.uv[1], hits[j] ?? [], who));
+  const uvOf = (v: number): readonly [number, number] => [uvs[v * 2], uvs[v * 2 + 1]];
+  return samples.map((s, j) => resolveCarriers(s.uv[0], s.uv[1], hits[j] ?? [], who, uvOf, plant));
 }
 
 /**
@@ -143,25 +159,81 @@ export function carrierIn(
 
 /**
  * The carrier of a sample from every triangle that contains it: none, the one, or — several — the first when they all
- * meet there at a shared vertex or edge; else `COMPARE_UV_CARRIER_NOT_UNIQUE` (correction 4).
+ * meet there at a shared vertex or edge; else `COMPARE_UV_CARRIER_NOT_UNIQUE` (correction 4). Where the per-coordinate
+ * support refuses, the support is read again to the slack's distance (issue #1323, {@link slackSupport}) when the
+ * corners' UVs are given (`uvOf`).
  */
-export function resolveCarriers(px: number, py: number, hits: readonly Carrier[], who: string): Carrier | null {
+export function resolveCarriers(
+  px: number,
+  py: number,
+  hits: readonly Carrier[],
+  who: string,
+  uvOf: ((v: number) => readonly [number, number]) | null = null,
+  plant: CarrierPlant | null = null,
+): Carrier | null {
   if (hits.length === 0) return null;
   if (hits.length === 1) return hits[0];
   // Several carriers are one hit only across a vertex or an edge they all share: the sample's support — the corners
   // it does not sit at zero weight on — is then the same vertex indices in each, and the carried point is theirs.
-  const support = (c: Carrier): string =>
+  const shared = (supportOf: (c: Carrier) => string): boolean => {
+    const first = supportOf(hits[0]);
+    return first.split(',').length <= 2 && hits.every((c) => supportOf(c) === first);
+  };
+  const byCoordinate = (c: Carrier): string =>
     c.corners
       .filter((_v, k) => c.bary[k] > CONTAINS)
       .sort((a, b) => a - b)
       .join(',');
-  const first = support(hits[0]);
-  const shared = first.split(',').length <= 2 && hits.every((c) => support(c) === first);
-  if (!shared) {
+  if (!shared(byCoordinate) && (uvOf === null || plant === 'slack-support-unread' || !shared(slackSupport(hits, uvOf, plant)))) {
     refuse(
       'COMPARE_UV_CARRIER_NOT_UNIQUE',
       `${who}: the sample at uv (${px}, ${py}) lies in ${hits.length} UV triangles — ${hits.map((c) => `triangle ${c.triangle} (vertices ${c.corners.join(', ')})`).join(' and ')} — that do not meet there at a shared vertex or edge; required one carrier per sample (correction 4: overlapping or folded UV triangles would carry it by an arbitrary one)`,
     );
   }
   return hits[0];
+}
+
+/**
+ * Issue #1323: a carrier's support read to the slack's distance rather than per coordinate — the corners the sample
+ * lies further than `CONTAINS × H` (UV units) inside of, measured from each corner's opposite edge, with `H` the widest
+ * triangle height among the hits: the furthest outside a triangle the containment test (`carrierIn`) admitted any of
+ * them at this sample.
+ *
+ * Why: the slack is per barycentric coordinate, so in distance it is `CONTAINS` times the height of the corner it is
+ * read against. A sample on a shared edge, a hair to one side — a pixel centre on a 45° or axis-parallel edge between
+ * whole-pixel vertices, put off it by the UVs' rounding — is admitted by the triangle it is outside of, while the
+ * triangle it is inside of, if it is a sliver, reads its third corner's coordinate above `CONTAINS` because its height
+ * is small: two per-coordinate supports, read as an overlap though the sample is within the slack of the edge both
+ * share. Measured on demo/bottomwear's reduction at source spacing 18: 1.35e-10 uv from the edge, coordinates −3.2e-10
+ * and +6.5e-8, heights 0.42 and 0.0021. Read in distance, both corners are within the slack and the support is the
+ * shared edge. A sample two triangles both hold further inside than that — an overlap or a fold — is still refused.
+ */
+function slackSupport(hits: readonly Carrier[], uvOf: (v: number) => readonly [number, number], plant: CarrierPlant | null): (c: Carrier) => string {
+  if (plant === 'any-shared-vertex') {
+    const common = hits[0].corners.filter((v) => hits.every((c) => c.corners.includes(v)));
+    return () => (common.length > 0 ? [...common].sort((a, b) => a - b).slice(0, 1).join(',') : 'none');
+  }
+  const heights = new Map<Carrier, [number, number, number]>();
+  let widest = 0;
+  let narrowest = Infinity;
+  for (const c of hits) {
+    const p = c.corners.map(uvOf);
+    const twice = Math.abs((p[1][0] - p[0][0]) * (p[2][1] - p[0][1]) - (p[2][0] - p[0][0]) * (p[1][1] - p[0][1]));
+    const h = [0, 1, 2].map((k) => {
+      const a = p[(k + 1) % 3];
+      const b = p[(k + 2) % 3];
+      return twice / Math.hypot(b[0] - a[0], b[1] - a[1]);
+    }) as [number, number, number];
+    heights.set(c, h);
+    widest = Math.max(widest, ...h);
+    narrowest = Math.min(narrowest, ...h);
+  }
+  const slack = CONTAINS * (plant === 'narrowest-slack' ? narrowest : widest);
+  return (c: Carrier): string => {
+    const h = heights.get(c)!;
+    return c.corners
+      .filter((_v, k) => c.bary[k] * h[k] > slack)
+      .sort((a, b) => a - b)
+      .join(',');
+  };
 }

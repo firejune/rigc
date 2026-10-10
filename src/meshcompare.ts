@@ -104,7 +104,7 @@ import {
   type WorstSample,
 } from './meshquality.ts';
 import { areaBand, stretchSingularValues, triangleAreas } from './areaband.ts';
-import { uvCarriers, type Carrier } from './meshcarriers.ts';
+import { uvCarriers, uvCarriersWith, type Carrier, type CarrierPlant } from './meshcarriers.ts';
 import { CoreInputError, readModel, underNoSkin, underSkin, type CompiledDocument } from './core/index.ts';
 import { poseRawAnimationEach, poseRawSetup, type RawPose } from './core/raw.ts';
 import { sampleTime } from './core/animation.ts';
@@ -186,7 +186,9 @@ export interface MotionComparisonInput {
  * Issue #1291's faults in carrying `motionAmplitude` into the setup measurement, for the `mesh-compare` suite's
  * negative controls: the amplitude not handed over; `null` handed over as the field left out; the field not validated
  * before the builds are read; `null` echoed for a field left out; and the load counted as a required row, so the
- * amplitude moves a verdict. `compareMeshesInMotion` plants none.
+ * amplitude moves a verdict. `compareMeshesInMotion` plants none. Issue #1323 adds `CarrierPlant`
+ * (`src/meshcarriers.ts`): a fault in resolving a sample's several carriers, planted in every `uvCarriers` the
+ * comparison reads.
  */
 export type ComparePlant =
   | 'amplitude-not-carried'
@@ -194,7 +196,8 @@ export type ComparePlant =
   | 'amplitude-unvalidated'
   | 'echo-when-unset'
   | 'amplitude-gates-acceptance'
-  | OverBoundPlant;
+  | OverBoundPlant
+  | CarrierPlant;
 
 /**
  * Issue #1315's faults in `overBound`, for the `mesh-compare` suite's negative controls: a listed sample's triangle
@@ -995,11 +998,14 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
       }
       return { samples: out, art };
     });
-    const refCarriers = order.map((i, k) => uvCarriers(reference.meshes[i].uvs, reference.meshes[i].triangles, samplesOf[k].samples, `reference "${reference.id}", attachment ${nameOf(refs[i])}`));
+    const carrierPlant: CarrierPlant | null = plant === 'slack-support-unread' || plant === 'narrowest-slack' || plant === 'any-shared-vertex' ? plant : null;
+    const carriersOf = (uvs: readonly number[], triangles: readonly number[], samples: ReadonlyArray<{ uv: [number, number] }>, who: string): Array<Carrier | null> =>
+      uvCarriersWith(uvs, triangles, samples, who, carrierPlant);
+    const refCarriers = order.map((i, k) => carriersOf(reference.meshes[i].uvs, reference.meshes[i].triangles, samplesOf[k].samples, `reference "${reference.id}", attachment ${nameOf(refs[i])}`));
     const posedRef = poseBuild(reference.doc, order.map((i) => refs[i]), frames, walks);
 
     motionOf = (b: Build, isReference: boolean) => {
-      const carriers = isReference ? refCarriers : order.map((i, k) => uvCarriers(b.meshes[i].uvs, b.meshes[i].triangles, samplesOf[k].samples, `candidate "${b.id}", attachment ${nameOf(refs[i])}`));
+      const carriers = isReference ? refCarriers : order.map((i, k) => carriersOf(b.meshes[i].uvs, b.meshes[i].triangles, samplesOf[k].samples, `candidate "${b.id}", attachment ${nameOf(refs[i])}`));
       const posed = isReference ? posedRef : poseBuild(b.doc, order.map((i) => refs[i]), frames, walks);
       const built: Built[] = [];
       const perFrame: NonNullable<CandidateReport['perFrame']> = [];

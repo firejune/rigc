@@ -881,6 +881,32 @@ export interface MotionSchedule {
   containing triangle has the same corners at nonzero weight, one or two of
   them — so two triangles that meet at one place through duplicated vertices are
   refused, not excused; the band is `areaBand` over the UVs.
+  [implemented, #1323] **"Across a shared edge or vertex" is read to the
+  distance the slack allows.** Where the per-coordinate support above
+  refuses, `resolveCarriers` (`src/meshcarriers.ts`) reads it again by
+  `slackSupport`: a corner is in a hit's support when the sample lies further
+  than `1e-9 × H` (UV units) inside it — its barycentric coordinate times its
+  height over the opposite edge — with `H` the widest triangle height among the
+  hits, the furthest outside a triangle the containment test admitted any of
+  them. The slack is per coordinate, so in distance it is 1e-9 times a corner's
+  height: a sample a hair beside a shared edge is admitted by the triangle it is
+  outside of, while a sliver on the other side, whose height is small, reads its
+  far corner's coordinate above 1e-9 — two per-coordinate supports, read as an
+  overlap. Measured on the public reproduction (demo/bottomwear at source
+  spacing 12 and 18, the result 282 + 0): the pixel centre (216.5, 56.5) lies
+  exactly on the result's edge 263–265, (215, 58)–(219, 54), in px; the UVs,
+  rounded to six places, put it 1.35e-10 uv to the side of the sliver
+  (263, 265, 264) — coordinates −3.2e-10 on the far triangle's third vertex
+  (height 0.42 uv) and +6.5e-8 on the sliver's (height 0.0021 uv), the same
+  1.35e-10 either way. No fold: all 280 triangles wind one way in px and in UV,
+  no interior edge has both third vertices on one side, and their areas sum to
+  the outline's (twice the area, 705960 px², both). A sample two triangles both
+  hold further inside than the slack — an overlap or a fold — is still refused;
+  every sample the per-coordinate rule resolves is carried as before, so the
+  change reaches only inputs that were refused. The skinning residual reads the
+  same function with the working mesh's UVs (#1294, #1295), so a reduction step
+  its veto refused on such a tie (`SKINNING_UV_CARRIER_NOT_UNIQUE`) is taken
+  now.
 - [agreed, rig-parts#126] **P9 — `minArtSamples` is an explicit positive
   integer input with no hidden rigc constant.** [proposal] It is stated **per
   attachment** (required) and **per region** (required for every region whose
@@ -6013,6 +6039,25 @@ the same shifted 1/256 px and turned 2°, and the coarse 12 px lattice under a
   refined, reduced and accepted, identical to the plant; the plant
   `degenerate-band-widened` changes all three)
 
+A sample within the slack of a shared edge, a sliver beside it
+([#1323](https://github.com/firejune/rigc/issues/1323), [implemented]) — the
+`mesh-compare` suite's strip with a column one pixel wide beside one 16.5 px
+wide, the shared edge on a pixel-centre column, nudged in UV only by half the
+slack the wide triangle allows (unit `MQ159-MQ161`, plants `CarrierPlant` in
+`ComparePlant`):
+
+- `MQ159_CONTROL_THE_RULE_BEFORE_1323_REFUSES_A_SAMPLE_WITHIN_THE_SLACK_OF_A_SHARED_EDGE_WITH_A_SLIVER_BESIDE_IT_AS_AN_OVERLAP`
+  (the plant `slack-support-unread`: `COMPARE_UV_CARRIER_NOT_UNIQUE` naming
+  the two triangles the test's own barycentric reading finds at all 16 column
+  samples; the same input unplanted is not refused)
+- `MQ160_A_SAMPLE_WITHIN_THE_SLACK_OF_A_SHARED_EDGE_IS_ONE_HIT_THOUGH_A_SLIVER_BESIDE_IT_READS_A_COORDINATE_ABOVE_CONTAINS`
+  (16 of 16 carried, the comparison takes the candidate; the plant
+  `narrowest-slack`, the slack read as the sliver's height, refuses it)
+- `MQ161_A_SAMPLE_TWO_TRIANGLES_BOTH_HOLD_WELL_INSIDE_IS_STILL_REFUSED_AS_AN_OVERLAP`
+  (MQ36's fold, its refused sample reading two or more distinct supports at
+  1e-6 uv across its containing triangles by the test's own reading; the plant
+  `any-shared-vertex` takes it)
+
 The decisions that change behaviour rather than an interface:
 
 - `MQ40_A_CANDIDATE_THAT_PASSES_AT_THRESHOLD_NINE_AND_FAILS_AT_ONE_IS_NOT_ACCEPTED` (Thresholds, P4)
@@ -6122,3 +6167,12 @@ not any stage's here.
   posing entry parts is promised, `rig-c/render`, needs spine-core; the
   core poser that does not has no entry. §0 records the agreed new entry (P1),
   [implemented, #1230] as `rig-c/meshcompare`.
+- #1323 reads `COMPARE_UV_CARRIER_NOT_UNIQUE` on the full reduction of
+  demo/bottomwear at spacing 12 and 18 as a fold in the result's UVs. Measured,
+  it is not one: the refused sample lies on the shared edge in px and 1.35e-10
+  uv off it after six-place rounding; every triangle winds one way and the areas
+  sum to the outline's. The fault was the comparison's carrier rule, not the
+  reducer, and the reducer's rows were right not to see it — `MQ_ORIENTATION`
+  counts triangles whose signed Spine-world area is negative outside the A39
+  band, and none is. §3, correction 4 records the rule.
+
