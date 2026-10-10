@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.34.0](https://github.com/firejune/rigc/compare/v2.33.0...v2.34.0) (2026-10-10)
+
+
+### Features
+
+* **package:** a named entry `rig-c/core` for the poser a browser player links — readModel, the raw and looping walks, the page-UV and clip rules, promised by observation (rig-play), held by the smoke from an install with no spine-core and measured to bundle for a browser with no node module reached (vite 8.2.2, 150,995 bytes), its closure held to `src/core/` by CUR123 ([#1275](https://github.com/firejune/rigc/issues/1275)) ([#1330](https://github.com/firejune/rigc/issues/1330)) ([dd48900](https://github.com/firejune/rigc/commit/dd48900d76ef61151b765add494baf92fc8b51be))
+
 ## [2.33.0](https://github.com/firejune/rigc/compare/v2.32.2...v2.33.0) (2026-10-10)
 
 
