@@ -140,6 +140,8 @@ import {
   measureMeshQualityStep,
   measureMeshQualityWith,
   validateMotionAmplitude,
+  lineDeviationRows,
+  validateLines,
   type AcceptedOperation,
   type AttachmentRef,
   type ArtFitBounds,
@@ -152,6 +154,7 @@ import {
   type MeshQualityReport,
   type MeshReductionInput,
   type MotionAmplitude,
+  type NamedLine,
   type RefinementRegion,
   type ReductionChanges,
   type Retriangulation,
@@ -349,6 +352,12 @@ function validateReduction(input: MeshReductionInput, plant: ReductionPlant | nu
   const src = input.source;
   if (!isObject(src) || !Array.isArray(src.points)) refuse('REDUCE_INPUT_MISSING', `${who}: source is not { points, uvs, triangles, hull, weights }`);
   const n = src.points.length;
+  // Issue #1326: refused before any work, in the measurement's words. A source too malformed to index is left to the
+  // admission measurement, which refuses it by its own code before anything reads a line.
+  if ('lines' in input && input.lines !== undefined) {
+    const readable = src.points.every((q) => Array.isArray(q) && q.length === 2 && isFiniteNumber(q[0]) && isFiniteNumber(q[1])) && Array.isArray(src.triangles) && src.triangles.every((v) => Number.isInteger(v)) && Number.isInteger(src.hull);
+    if (readable || !Array.isArray(input.lines)) validateLines(who, 'lines', input.lines, src);
+  }
 
   const p = input.protect;
   if (p === undefined || p === null || !isObject(p)) refuse('REDUCE_INPUT_MISSING', `${who}: protect is ${JSON.stringify(p)}; required a ProtectedFeatures — a reduction has no default protection (P20)`);
@@ -950,6 +959,17 @@ interface Run {
   skinning: SkinningRun | null;
   /** Issue #1295: the controls' faults and inspector, or null. */
   hooks: SkinningHooks | null;
+  /** Issue #1326: the declared lines, or null when the input left `lines` out. */
+  lines: LineRun | null;
+}
+
+/** Issue #1326: the input's lines as the steps read them. */
+interface LineRun {
+  lines: NamedLine[];
+  /** Source vertex → the indices of the lines that list it, ascending. */
+  of: Map<number, number[]>;
+  /** Per line, source vertex → its position in the line's list. */
+  at: Array<Map<number, number>>;
 }
 
 /**
@@ -975,7 +995,7 @@ export type SkinningVetoPlant = CarryPlant | 'full-recompute' | 'post-pass-unche
 
 /** One decision the residual took part in, as a control reads it (issue #1295). */
 export interface SkinningInspection {
-  phase: 'insertion' | 'removal' | 'boundary-run' | 'delaunay';
+  phase: 'insertion' | 'removal' | 'boundary-run' | 'line-run' | 'delaunay';
   /** `candidatesTried` when it was decided. */
   step: number;
   /** Whether the working mesh now holds the trial (an insertion always does). */
@@ -1017,6 +1037,8 @@ function measureAgainstTargets(run: Run, mesh: SourceMesh, id: string, final = f
     preset: input.preset,
     ...amplitudeOf(run.input, run.plant, final),
     ...(final ? skinningOfResult(run) : {}),
+    // Issue #1326: the result's own measurement carries the line rows; every step reads them beside it (`lineRowsOf`).
+    ...(final && input.lines !== undefined ? { lines: input.lines, lineSource: { id: 'source', mesh: input.source } } : {}),
   };
   return run.stepRasters === null ? measureMeshQualityWith(measureInput, run.rasters) : measureMeshQualityStep(measureInput, run.stepRasters);
 }
@@ -1109,10 +1131,10 @@ function amplitudeOf(input: MeshReductionInput, plant: ReductionPlant | null, fi
 }
 
 /** The order constraints are named in when several fail on one step: structure, then shape, then art, then density. */
-const BLOCKING_ORDER = ['MQ_ORIENTATION', 'MQ_DEGENERATE', 'MQ_BOUNDARY_DEVIATION', 'MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT', 'MQ_MIN_ANGLE', 'MQ_MAX_EDGE', 'MQ_TRANSITION'];
+const BLOCKING_ORDER = ['MQ_ORIENTATION', 'MQ_DEGENERATE', 'MQ_BOUNDARY_DEVIATION', 'MQ_LINE_DEVIATION', 'MQ_COVERAGE', 'MQ_OVERSHOOT', 'MQ_UNDERCUT', 'MQ_MIN_ANGLE', 'MQ_MAX_EDGE', 'MQ_TRANSITION'];
 
 function rowName(row: MeasureRow): string {
-  const region = row.object.region === null ? '' : `[${row.object.region}]`;
+  const region = row.object.region !== null ? `[${row.object.region}]` : row.object.line === undefined ? '' : `[line ${row.object.line}]`;
   if (row.state === 'fail') return `${row.code}${region}: ${row.value} against ${row.bound!.op} ${row.bound!.value}`;
   return `${row.code}${region}: ${row.state} — ${row.reason ?? ''}`;
 }
@@ -1123,8 +1145,11 @@ function rowName(row: MeasureRow): string {
  * art bound declared `null` is not (`artBoundAbsent`, issue #1254); the
  * overshoot row gated is the 8-connected one (P12).
  */
-function firstBlockingRow(report: MeshQualityReport, artFit: ArtFitBounds): MeasureRow | null {
-  const rows = report.candidates[0]?.geometry?.rows ?? [];
+function firstBlockingRow(report: MeshQualityReport, artFit: ArtFitBounds, lineRows: readonly MeasureRow[] = []): MeasureRow | null {
+  // Issue #1326: a step's line rows are read beside the measurement's (`lineRowsOf`), never by it — the rows of the lines
+  // the step touches; every other line's row is unchanged and passed when its last step was taken.
+  const measured = report.candidates[0]?.geometry?.rows ?? [];
+  const rows = lineRows.length === 0 ? measured : [...measured, ...lineRows];
   const required = (r: MeasureRow): boolean => {
     if (artBoundAbsent(artFit, r)) return false;
     if (r.code === 'MQ_OVERSHOOT') return r.art?.connectivity === 8;
@@ -1426,7 +1451,7 @@ type PhaseEnd =
  * unreplayed run held after that step.
  */
 function accept(run: Run, kind: AcceptedOperation['kind'], sourceVertices: number[]): boolean {
-  if (kind === 'boundary-run' && run.plant === 'run-split-per-vertex') {
+  if ((kind === 'boundary-run' || kind === 'line-run') && run.plant === 'run-split-per-vertex') {
     for (const v of sourceVertices) run.acceptedAt.push({ step: run.steps, kind: 'removal', count: 1, sourceVertices: [v] });
   } else {
     run.acceptedAt.push({ step: run.steps, kind, count: kind === 'insertion' ? 1 : sourceVertices.length, sourceVertices: [...sourceVertices] });
@@ -1460,7 +1485,18 @@ export type ReductionPlant =
   | RetriangulationPlant
   | OrderPlant
   | AmplitudePlant
-  | RefinementPlant;
+  | RefinementPlant
+  | LinePlant;
+
+/**
+ * Issue #1326's faults in the line mechanism, for the `mesh-quality` suite's controls: the line rows read by no step
+ * (neither before the structure nor beside the measurement); the hole a line vertex leaves ear-clipped whole rather
+ * than along the line's chord, so only the edge check after it can refuse an unjoined chain; that check skipped as
+ * well; the post-pass flipping line edges; a vertex two lines list left removable; the line-run sweep counting a
+ * step at every start, whether or not it tries a run there; and the rows read before the structure half a pixel
+ * short of each line's bound, so they refuse steps the rows would take.
+ */
+export type LinePlant = 'line-rows-unread' | 'line-chord-unconstrained' | 'line-join-unchecked' | 'line-flips-unguarded' | 'line-crossings-unkept' | 'line-sweep-counts-steps' | 'line-early-short';
 
 /**
  * Issue #1311's faults in the refinement: the insertion its rule chose written without asking whether it writes a
@@ -1501,7 +1537,7 @@ export type AmplitudePlant =
 /** One removal-phase attempt as a control reads it (issue #1279): what was tried, and what refused it or null when taken. */
 export interface AttemptRecord {
   step: number;
-  kind: 'removal' | 'boundary-run';
+  kind: 'removal' | 'boundary-run' | 'line-run';
   sourceVertices: number[];
   /** Null when taken; else reads the name of what refused it — measuring the attempt in full when the floor decided it. Read it only inside the observer, while the working mesh is the one the attempt was tried on. */
   refusedBy: (() => string) | null;
@@ -1618,7 +1654,7 @@ type Removal = { triangles: Array<[number, number, number]>; added: () => Array<
  * One removal made on `work`'s triangles: the triangles after it — every triangle not touching `v` as it was, the
  * same tuple, then the hole's new ones, `fresh` — or the structural reason it cannot be made.
  */
-function removalStep(work: Work, v: number): { triangles: Array<[number, number, number]>; fresh: Array<[number, number, number]> } | { blocked: string } {
+function removalStep(work: Work, v: number, chords: readonly Chord[] = []): { triangles: Array<[number, number, number]>; fresh: Array<[number, number, number]> } | { blocked: string } {
   const star = work.triangles.filter((t) => t.includes(v));
   const next = new Map<number, number>();
   const incoming = new Set<number>();
@@ -1645,7 +1681,23 @@ function removalStep(work: Work, v: number): { triangles: Array<[number, number,
   if (ring.length !== (boundary ? next.size + 1 : next.size)) return { blocked: `retriangulation: vertex ${v}'s triangles do not form one fan` };
   const rest = work.triangles.filter((t) => !t.includes(v));
   const fresh: Array<[number, number, number]> = [];
-  if (ring.length >= 3) {
+  if (ring.length >= 3 && chords.length > 0) {
+    const poly = ring.map((id): [number, number] => [work.pos[id][0], work.pos[id][1]]);
+    if (findSelfIntersection(poly) !== null) return { blocked: `retriangulation: the hole vertex ${v} leaves is not a strictly simple polygon` };
+    const pieces = chordPieces(work, v, ring, poly, chords);
+    if ('blocked' in pieces) return pieces;
+    for (const piece of pieces.pieces) {
+      const pp = piece.map((id): [number, number] => [work.pos[id][0], work.pos[id][1]]);
+      let tris: number[];
+      try {
+        tris = earClip(pp);
+      } catch (err) {
+        if (!(err instanceof MeshError)) throw err;
+        return { blocked: `retriangulation: the hole vertex ${v} leaves does not ear-clip on the side of a line's chord (${err.message})` };
+      }
+      for (let i = 0; i < tris.length; i += 3) fresh.push([piece[tris[i]], piece[tris[i + 1]], piece[tris[i + 2]]]);
+    }
+  } else if (ring.length >= 3) {
     const poly = ring.map((id): [number, number] => [work.pos[id][0], work.pos[id][1]]);
     if (findSelfIntersection(poly) !== null) return { blocked: `retriangulation: the hole vertex ${v} leaves is not a strictly simple polygon` };
     let tris: number[];
@@ -1662,9 +1714,54 @@ function removalStep(work: Work, v: number): { triangles: Array<[number, number,
   return { triangles: [...rest, ...fresh], fresh };
 }
 
+/**
+ * Issue #1326: a line's chord through a removed vertex — its kept neighbours along the line, `a` before and `c` after
+ * in listed order, which the hole the vertex leaves has to join by an edge.
+ */
+interface Chord {
+  a: number;
+  c: number;
+  line: string;
+}
+
+/** Issue #1326: the chords a removal of `v` must keep, the vertices in `gone` already removed by the same operation; null when no line is declared. */
+type ChordsFor = ((v: number, gone: ReadonlySet<number>) => Chord[]) | null;
+
+/**
+ * Issue #1326: the hole `v` leaves cut along each chord in turn, so that each chord is a side of a piece and the pieces'
+ * ear-clipped triangles hold it as an edge — or the line refusal naming the chord when it is not a diagonal of the
+ * hole: its ends are not in one piece, or a piece it makes is not strictly simple or does not turn as the hole turns
+ * (the chord leaves the hole, or runs through a vertex of it). A chord that is already a side is left as it is.
+ */
+function chordPieces(work: Work, v: number, ring: readonly number[], poly: ReadonlyArray<readonly [number, number]>, chords: readonly Chord[]): { pieces: number[][] } | { blocked: string } {
+  const turn = Math.sign(signedArea(poly.map((q): [number, number] => [q[0], q[1]])));
+  const unjoinable = (ch: Chord): { blocked: string } => ({
+    blocked: `line "${ch.line}" (a): the kept line vertices ${ch.a}–${ch.c} on either side of vertex ${v} cannot be joined — the chord is not a diagonal of the hole ${v} leaves`,
+  });
+  const pieces: number[][] = [[...ring]];
+  for (const ch of chords) {
+    const k = pieces.findIndex((pc) => pc.includes(ch.a) && pc.includes(ch.c));
+    if (k === -1) return unjoinable(ch);
+    const pc = pieces[k];
+    const ia = pc.indexOf(ch.a);
+    const ic = pc.indexOf(ch.c);
+    const lo = Math.min(ia, ic);
+    const hi = Math.max(ia, ic);
+    if (hi - lo === 1 || (lo === 0 && hi === pc.length - 1)) continue;
+    const one = pc.slice(lo, hi + 1);
+    const two = [...pc.slice(hi), ...pc.slice(0, lo + 1)];
+    for (const piece of [one, two]) {
+      const pp = piece.map((id): [number, number] => [work.pos[id][0], work.pos[id][1]]);
+      if (Math.sign(signedArea(pp)) !== turn || findSelfIntersection(pp) !== null) return unjoinable(ch);
+    }
+    pieces.splice(k, 1, one, two);
+  }
+  return { pieces };
+}
+
 /** `removalStep` with the edges it adds: those of the hole's new triangles no triangle before it holds, in their order. */
-function removalOf(work: Work, v: number, audit: EdgeSetAudit | null = null): Removal {
-  const step = removalStep(work, v);
+function removalOf(work: Work, v: number, audit: EdgeSetAudit | null = null, chordsFor: ChordsFor = null): Removal {
+  const step = removalStep(work, v, chordsFor === null ? [] : chordsFor(v, new Set()));
   if ('blocked' in step) return step;
   const old = work.triangles;
   const n = work.alive.length;
@@ -1705,7 +1802,7 @@ function loadOrder(run: Run): { order: number[]; load: Map<number, number> } {
   const order: number[] = [];
   for (let v = 0; v < work.nSource; v++) {
     if (!work.alive[v] || run.protectedVertices.has(v)) continue;
-    const step = removalOf(work, v, run.edgeAudit);
+    const step = removalOf(work, v, run.edgeAudit, chordsForRun(run, [v]));
     let most = 0;
     if ('blocked' in step) most = Infinity;
     else for (const [a, b] of step.added()) most = Math.max(most, edgeLoad(work, a, b));
@@ -1728,16 +1825,18 @@ function loadOrder(run: Run): { order: number[]; load: Map<number, number> } {
  * structural reason one of the removals cannot be made. The outline loses the run and gains the chord from the
  * vertex before it to the vertex after it; nothing is measured in between.
  */
-function runRemovalOf(work: Work, vertices: readonly number[], audit: EdgeSetAudit | null = null): Removal {
+function runRemovalOf(work: Work, vertices: readonly number[], audit: EdgeSetAudit | null = null, chordsFor: ChordsFor = null): Removal {
   const was = work.triangles;
   // Issue #1307: each removal's own added edges are never read here, so none is built; what the run adds is read off
   // the triangles its removals made. A triangle of `after` that no removal made is the same tuple as one of `was`
   // (`removalStep` keeps every untouched triangle as it was), so every edge it holds is old and it adds nothing.
   const made = new Set<readonly number[]>();
   let after: Array<[number, number, number]>;
+  const gone = new Set<number>();
   try {
     for (const v of vertices) {
-      const step = removalStep(work, v);
+      const step = removalStep(work, v, chordsFor === null ? [] : chordsFor(v, gone));
+      gone.add(v);
       if ('blocked' in step) return step;
       for (const t of step.fresh) made.add(t);
       work.triangles = step.triangles;
@@ -1840,6 +1939,40 @@ function removeVertices(run: Run): PhaseEnd {
         }
       }
     }
+    // Issue #1326: line runs, under the same opt-in — each line in declared order, each start in its listed order, the
+    // runs of 2 to `maxVertices` consecutive kept line vertices from it, longest first, never an open line's end or a
+    // protected vertex, never leaving a closed line fewer than three. The first taken ends that start's sweep.
+    if (runs !== undefined && run.lines !== null) {
+      for (const line of run.lines.lines) {
+        for (const s of line.vertices) {
+          if (run.plant === 'line-sweep-counts-steps') run.steps++;
+          if (!work.alive[s] || run.protectedVertices.has(s)) continue;
+          const chain = line.vertices.filter((v) => work.alive[v]);
+          const at = chain.indexOf(s);
+          const most = line.closed ? Math.min(runs.maxVertices, chain.length - 3) : Math.min(runs.maxVertices, chain.length - 1 - at);
+          for (let r = most; r >= 2; r--) {
+            const members: number[] = [];
+            for (let i = 0; i < r; i++) {
+              const v = chain[(at + i) % chain.length];
+              if (run.protectedVertices.has(v)) break;
+              members.push(v);
+            }
+            if (members.length < r) continue;
+            if (run.steps >= input.budget.maxCandidates) return { kind: 'budget' };
+            run.steps++;
+            tried++;
+            const block = tryOperation(run, members, false, 'line-run');
+            if (run.observe !== null) run.observe({ step: run.steps, kind: 'line-run', sourceVertices: [...members], refusedBy: block === null ? null : () => refusalText(block), decidedByFloor: typeof block === 'function' && block.decidedByFloor, pass, predictedLoad: null });
+            if (block === null) {
+              taken++;
+              if (accept(run, 'line-run', members)) return { kind: 'replayed' };
+              break;
+            }
+            lastBlock = { refusal: block, what: `removing source vertices ${members.join(', ')} of line "${line.name}" as one line run` };
+          }
+        }
+      }
+    }
     // Issue #1283: with the load order the pass's singles are ranked once, here, over the mesh the runs left; without
     // it they are every source index ascending, exactly as before the field.
     const ranked = byLoad ? loadOrder(run) : null;
@@ -1863,7 +1996,8 @@ function removeVertices(run: Run): PhaseEnd {
     if (taken === 0) {
       // A pass that took nothing left the working mesh as it found it, so a refusal the floor decided is measured
       // now in the state it was decided in.
-      const constraint = tried === 0 ? 'protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge)' : lastName();
+      const kept = run.lines === null ? '' : ", or an open line's end or a vertex two lines list";
+      const constraint = tried === 0 ? `protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge${kept})` : lastName();
       return { kind: 'stuck', constraint };
     }
   }
@@ -1982,7 +2116,15 @@ export interface FloorAudit {
  */
 function structureOf(run: Run, vertices: readonly number[]): string | { canon: Canonical; undo: () => void } {
   const { work, input } = run;
-  const step = vertices.length === 1 ? removalOf(work, vertices[0], run.edgeAudit) : runRemovalOf(work, vertices, run.edgeAudit);
+  // Issue #1326: what a line asks of the structure — enough of it kept, its chord through each removed vertex an edge
+  // of the hole's triangulation, and every consecutive pair of its kept vertices an edge after the step.
+  const touched = run.lines === null ? [] : touchedLines(run, vertices);
+  if (touched.length > 0) {
+    const structural = lineStructure(run, vertices, touched);
+    if (structural !== null) return structural;
+  }
+  const chordsFor = touched.length === 0 ? null : chordsForRun(run, vertices);
+  const step = vertices.length === 1 ? removalOf(work, vertices[0], run.edgeAudit, chordsFor) : runRemovalOf(work, vertices, run.edgeAudit, chordsFor);
   if ('blocked' in step) return step.blocked;
   const jump = input.protect.weightJump;
   if (jump !== null) {
@@ -2009,6 +2151,24 @@ function structureOf(run: Run, vertices: readonly number[]): string | { canon: C
       if (!edges.has(pairKey(a, b, n))) {
         undo();
         return `protect (a): the protected source edge ${a}–${b} is no longer an edge`;
+      }
+    }
+  }
+  if (touched.length > 0 && run.plant !== 'line-join-unchecked') {
+    const n = work.alive.length;
+    const edges = new Set<number>();
+    for (const t of work.triangles) for (let k = 0; k < 3; k++) edges.add(pairKey(t[k], t[(k + 1) % 3], n));
+    for (const li of touched) {
+      const line = run.lines!.lines[li];
+      const chain = line.vertices.filter((v) => work.alive[v]);
+      const pairs = line.closed ? chain.length : chain.length - 1;
+      for (let k = 0; k < pairs; k++) {
+        const a = chain[k];
+        const b = chain[(k + 1) % chain.length];
+        if (!edges.has(pairKey(a, b, n))) {
+          undo();
+          return `line "${line.name}" (a): the consecutive kept line vertices ${a}–${b} are no longer joined by an edge`;
+        }
       }
     }
   }
@@ -2074,7 +2234,7 @@ function auditFloors(audit: FloorAudit, run: Run, vertices: readonly number[], e
  * before the structure is built (`earlyFloor`); an attempt it refuses is not built at all unless an observer or the
  * floor audit asks what the path before would have decided.
  */
-function tryOperation(run: Run, vertices: readonly number[], full: boolean): Refusal | null {
+function tryOperation(run: Run, vertices: readonly number[], full: boolean, kind: AttemptRecord['kind'] = vertices.length > 1 ? 'boundary-run' : 'removal'): Refusal | null {
   const { input } = run;
   const floored = !full && run.plant !== 'measure-every-candidate' && !(vertices.length > 1 && run.plant === 'run-skips-rows');
   const audit = run.floorAudit;
@@ -2100,18 +2260,40 @@ function tryOperation(run: Run, vertices: readonly number[], full: boolean): Ref
       return refusal;
     }
   }
+  // Issue #1326: the rows of the lines the operation touches, read before any structure is built — they read nothing
+  // but the line vertices' positions, which the operation fixes, so this is the row itself and not a bound on it, and
+  // a refusal here is the one the measurement would make. Read, the refusal names what the full path names.
+  const touched = run.lines === null || run.plant === 'line-rows-unread' ? [] : touchedLines(run, vertices);
+  let lineRows: MeasureRow[] = [];
+  if (floored && touched.length > 0) {
+    const structural = lineStructure(run, vertices, touched);
+    if (structural !== null) return structural;
+    lineRows = lineRowsOf(run, vertices, touched);
+    const short = run.plant === 'line-early-short' ? 0.5 : 0;
+    if (lineRows.some((r) => r.state !== 'pass' || (short > 0 && r.value! > r.bound!.value - short))) {
+      const members = [...vertices];
+      const refusal = (() => {
+        const measured = tryOperation(run, members, true, kind);
+        if (measured === null) throw new Error(`a line row refused removing ${members.join(', ')}, which the full path accepts`);
+        return refusalText(measured);
+      }) as FloorRefusal;
+      refusal.decidedByFloor = true;
+      return refusal;
+    }
+  }
   const built = structureOf(run, vertices);
   if (typeof built === 'string') return built;
   const { canon, undo } = built;
   if (audit !== null && early !== null) auditFloors(audit, run, vertices, early, deviationFloor(run, canon.mesh, vertices), false);
-  const phase: SkinningInspection['phase'] = vertices.length > 1 ? 'boundary-run' : 'removal';
+  const phase: SkinningInspection['phase'] = kind;
   if (vertices.length > 1 && run.plant === 'run-skips-rows') {
     followSkinning(run, phase);
     return null;
   }
   const measured = measureAgainstTargets(run, canon.mesh, 'candidate');
+  if (touched.length > 0 && lineRows.length === 0) lineRows = lineRowsOf(run, vertices, touched);
   const blocking =
-    firstBlockingRow(measured, run.input.targets.artFit) ??
+    firstBlockingRow(measured, run.input.targets.artFit, lineRows) ??
     (run.plant === 'amplitude-gates-steps' ? ((measured.candidates[0]?.geometry?.rows ?? []).find((r) => (r.code === 'MQ_DEFORM_LOAD' || r.code === 'MQ_ALLOCATION_CONTRAST') && r.state === 'undeclared') ?? null) : null);
   if (blocking !== null) {
     undo();
@@ -2201,6 +2383,14 @@ function delaunayFlips(run: Run, plant: ReductionPlant | null): FlipResult {
   const alive = work.alive.reduce((n, a) => n + (a ? 1 : 0), 0);
   const maxFlips = (alive * (alive - 1)) / 2;
   const guarded = new Set(run.protectedEdges.map(([a, b]) => edgeKey(a, b)));
+  // Issue #1326: every edge between consecutive kept line vertices is held as a protected edge is — the pass flips none.
+  if (run.lines !== null && plant !== 'line-flips-unguarded') {
+    for (const line of run.lines.lines) {
+      const chain = line.vertices.filter((v) => work.alive[v]);
+      const pairs = line.closed ? chain.length : chain.length - 1;
+      for (let k = 0; k < pairs; k++) guarded.add(edgeKey(chain[k], chain[(k + 1) % chain.length]));
+    }
+  }
   const jump = input.protect.weightJump;
   const regions = plant === 'flips-ignore-regions' ? [] : input.targets.regions;
   const heldCache = new Map<string, boolean>();
@@ -2497,8 +2687,10 @@ function reduceValidated(
       stepRasters: steps,
       skinning: null,
       hooks,
+      lines: null,
     };
     run.skinning = skinningRunOf(run, skinningAdmitted);
+    run.lines = lineRunOf(run);
 
     // Issue #1268: a replay ends in its own termination, never as an exhausted budget; a stop the run never reaches
     // leaves the run's own termination, which then carries `stopAfterAccepted` saying so.
@@ -2731,5 +2923,120 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     ...(amplitude === undefined ? {} : { motionAmplitude: amplitude }),
     ...(input.retriangulate === undefined ? {} : { retriangulate: input.retriangulate }),
     ...(input.removalOrder === undefined ? {} : { removalOrder: input.removalOrder }),
+    ...(input.lines === undefined ? {} : { lines: input.lines }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// named lines (issue #1326, docs/MESH_REDUCTION.md §11)
+// ---------------------------------------------------------------------------
+
+/**
+ * The input's lines as the steps read them, or null when `lines` was left out. An open line's two ends and every
+ * vertex two lines list — a crossing or the end of a shared run — are added to the protected vertices: an end has one
+ * neighbour on the line, so no chord can stand for it, and removing a shared vertex would make two chains disagree
+ * about where they meet. Every other line vertex stays a candidate, held by the steps to its line.
+ */
+function lineRunOf(run: Run): LineRun | null {
+  const declared = run.input.lines;
+  if (declared === undefined) return null;
+  const of = new Map<number, number[]>();
+  const at = declared.map((line, li) => {
+    const here = new Map<number, number>();
+    line.vertices.forEach((v, k) => {
+      here.set(v, k);
+      const list = of.get(v);
+      if (list === undefined) of.set(v, [li]);
+      else list.push(li);
+    });
+    return here;
+  });
+  for (const line of declared) {
+    if (!line.closed) {
+      run.protectedVertices.add(line.vertices[0]);
+      run.protectedVertices.add(line.vertices[line.vertices.length - 1]);
+    }
+  }
+  if (run.plant !== 'line-crossings-unkept') for (const [v, list] of of) if (list.length > 1) run.protectedVertices.add(v);
+  return { lines: declared, of, at };
+}
+
+/** The lines an operation removing `vertices` touches — those listing any of them — ascending, which is declared order. */
+function touchedLines(run: Run, vertices: readonly number[]): number[] {
+  const out = new Set<number>();
+  for (const v of vertices) for (const li of run.lines!.of.get(v) ?? []) out.add(li);
+  return [...out].sort((a, b) => a - b);
+}
+
+/** What a line asks before its row: a closed line keeps three vertices and an open one its ends. Null when the operation leaves both. */
+function lineStructure(run: Run, vertices: readonly number[], touched: readonly number[]): string | null {
+  const { work } = run;
+  for (const li of touched) {
+    const line = run.lines!.lines[li];
+    const kept = line.vertices.filter((v) => work.alive[v] && !vertices.includes(v)).length;
+    if (line.closed && kept < 3) return `line "${line.name}": removing ${vertices.join(', ')} would leave ${kept} of its vertices kept; required at least 3 on a closed line`;
+    if (!line.closed && (vertices.includes(line.vertices[0]) || vertices.includes(line.vertices[line.vertices.length - 1]))) {
+      return `line "${line.name}": removing ${vertices.join(', ')} would remove an end of the open line; required both ends kept`;
+    }
+  }
+  return null;
+}
+
+/**
+ * The rows of the touched lines on the chain the operation leaves — the measurement's own rows (`lineDeviationRows`),
+ * over the source's points by source index: a line vertex is kept when it is alive and not removed by the operation.
+ */
+function lineRowsOf(run: Run, vertices: readonly number[], touched: readonly number[]): MeasureRow[] {
+  const { work } = run;
+  const gone = new Set(vertices);
+  return lineDeviationRows(
+    run.input.attachment,
+    touched.map((li) => run.lines!.lines[li]),
+    run.input.source.points,
+    (v) => (work.alive[v] && !gone.has(v) ? v : null),
+  );
+}
+
+/**
+ * The chords a removal must keep (`ChordsFor`), or null when no declared line is touched or a plant takes the chords
+ * away: for each line listing `v`, its kept neighbours before and after `v` in listed order (wrapping on a closed
+ * line), skipping what the operation has already removed. A side with no kept neighbour — an open line's end — has
+ * no chord.
+ */
+function chordsForRun(run: Run, vertices: readonly number[]): ChordsFor {
+  if (run.lines === null || run.plant === 'line-chord-unconstrained' || run.plant === 'line-join-unchecked') return null;
+  if (!vertices.some((v) => run.lines!.of.has(v))) return null;
+  const { work } = run;
+  const lines = run.lines;
+  return (v, gone) => {
+    const out: Chord[] = [];
+    for (const li of lines.of.get(v) ?? []) {
+      const line = lines.lines[li];
+      const list = line.vertices;
+      const k = lines.at[li].get(v)!;
+      const keptAt = (i: number): boolean => work.alive[list[i]] && !gone.has(list[i]) && list[i] !== v;
+      let a = -1;
+      let c = -1;
+      for (let step = 1; step < list.length; step++) {
+        const i = k - step;
+        if (i < 0 && !line.closed) break;
+        const j = (i + list.length) % list.length;
+        if (keptAt(j)) {
+          a = list[j];
+          break;
+        }
+      }
+      for (let step = 1; step < list.length; step++) {
+        const i = k + step;
+        if (i >= list.length && !line.closed) break;
+        const j = i % list.length;
+        if (keptAt(j)) {
+          c = list[j];
+          break;
+        }
+      }
+      if (a !== -1 && c !== -1 && a !== c) out.push({ a, c, line: line.name });
+    }
+    return out;
   };
 }

@@ -735,6 +735,26 @@ against `5896cc7` on every call the `mesh-compare` suite makes without it, 165 o
 named one. `OverBoundPlant`, a member of `ComparePlant`, is the suite's plant,
 merely exported, so by the rule above not promised.
 
+Named lines on a reduction and a measurement
+([#1326](https://github.com/firejune/rigc/issues/1326)) are additive on the
+agreed row's types: `MeshReductionInput.lines` and `MeshMeasureInput.lines`
+(`NamedLine[]`, `{ name, vertices, closed, maxDeviation }`) are new optional
+inputs, with `MeshMeasureInput.lineSource` (`LineSource`, `{ id, mesh }`)
+beside the measurement's; set, the report gains one `MQ_LINE_DEVIATION` row
+per line, `MeasureRow.object.line` on those rows only, `effective.lines` (and
+on a measurement `effective.lineSource`, by id and digest), and a reduction
+may record `AcceptedOperation.kind` `'line-run'` under `boundaryRuns`; a
+malformed value is refused `REDUCE_INPUT_LINE`, a new code. A call without the
+field writes every byte as before — measured against `d0f289b` on the 18
+inputs of the stage-D1 record, 54 of 54 reductions (as recorded and under the
+three opt-ins together) and measurements, and 10 of 10 calls of the stage-A
+fixtures (docs/MESH_REDUCTION.md, §11). `NamedLine` and `LineSource` are reached
+through the recorded `MeshReductionInput` and `MeshMeasureInput`; the smoke
+records no new name, because no dependant has named one yet — the row is added
+when one is seen importing them. `validateLines`, `lineDeviation`,
+`lineDeviationRows` and the `LinePlant` members of `ReductionPlant` are merely
+exported, so by the rule above not promised.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says

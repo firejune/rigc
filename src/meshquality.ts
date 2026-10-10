@@ -71,7 +71,7 @@ import {
 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
 import { allocationContrast, boundaryNecessityOnce, deformLoad, gradeMax, minAngleP10, type AllocationArt, type AllocationPlant } from './meshallocation.ts';
-import { skinningEchoOf, skinningResidual, validateSkinning, type ReductionSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
+import { skinningEchoOf, skinningResidual, sourceMeshDigest, validateSkinning, type ReductionSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
 import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
 
@@ -294,6 +294,45 @@ export interface MeshReductionInput {
    * mesh, `acceptedAt`, the termination and every other row are the call's without it (docs/MESH_REDUCTION.md §8).
    */
   motionAmplitude?: MotionAmplitude | null;
+  /**
+   * Named interior feature lines (issue #1326, docs/MESH_REDUCTION.md §11) — opt-in. Left out = no line is declared
+   * and the call is the one it was before the field existed, byte for byte. Set, each line's vertices may thin under
+   * its own `MQ_LINE_DEVIATION` bound: a line vertex is removed only by a step after which the line's row is within
+   * `maxDeviation` and its two kept neighbours are joined by an edge of the result; the triangulation post-pass flips
+   * no line edge; and, under `boundaryRuns`, a run of consecutive kept line vertices may be replaced by one chord as
+   * one step (`acceptedAt` kind `'line-run'`). An open line's two ends and a vertex two lines list are kept. The
+   * result's measurement carries one row per line, in declared order. Refused `REDUCE_INPUT_LINE`, before any work,
+   * when a line is not well formed against `source` (`validateLines`); `null` is refused like any value that is not
+   * a list. `protect.edges` keeps its meaning: a line held whole is listed there.
+   */
+  lines?: NamedLine[];
+}
+
+/**
+ * Issue #1326: an interior feature line of a source mesh — a chain of source vertices, each consecutive pair (and on a
+ * closed line the last–first pair) an edge of a source triangle. It lives on the reduction's and the measurement's
+ * input rather than on `SourceMesh`, so no field every measurement and comparison reads (and `sourceMeshDigest`
+ * hashes) changes.
+ */
+export interface NamedLine {
+  /** The caller's name, echoed in the row and in every refusal; rigc reads nothing into it. Unique among the input's lines. */
+  name: string;
+  /** Source vertex indices in order along the line, each once. */
+  vertices: number[];
+  /** Closed: the last joins the first, and at least 3 vertices. Open: two ends, at least 2 vertices. */
+  closed: boolean;
+  /** The bound `MQ_LINE_DEVIATION` is held to, drawing px, finite, 0 or more. Required: there is no default and no declared-absent form. */
+  maxDeviation: number;
+}
+
+/**
+ * Issue #1326: the source a measurement reads its lines against — the mesh their indices are into, by the caller's id.
+ * The line's kept chain on the measured mesh is read by position: a line vertex is kept when the measured mesh has a
+ * vertex at its exact position, as every vertex a reduction keeps does (P19: a survivor is never resampled).
+ */
+export interface LineSource {
+  id: string;
+  mesh: SourceMesh;
 }
 
 /**
@@ -328,11 +367,11 @@ export interface BoundaryRuns {
 export interface AcceptedOperation {
   /** The attempt number — `candidatesTried` as it stood when the operation was taken, 1-based. */
   step: number;
-  /** A refinement insertion, one source vertex removed, or a boundary run replaced by one chord. */
-  kind: 'insertion' | 'removal' | 'boundary-run';
-  /** Vertices the operation inserted (an insertion: 1) or removed (a removal: 1; a boundary run: 2 or more). */
+  /** A refinement insertion, one source vertex removed, a boundary run replaced by one chord, or (issue #1326) a run of a line's kept vertices replaced by one chord. */
+  kind: 'insertion' | 'removal' | 'boundary-run' | 'line-run';
+  /** Vertices the operation inserted (an insertion: 1) or removed (a removal: 1; a boundary run or a line run: 2 or more). */
   count: number;
-  /** The source indices it removed, in outline order for a run — each `null` in `indexMap`; empty for an insertion. */
+  /** The source indices it removed, in outline order for a boundary run and in the line's listed order for a line run — each `null` in `indexMap`; empty for an insertion. */
   sourceVertices: number[];
 }
 
@@ -390,6 +429,17 @@ export interface MeshMeasureInput {
    * full is refused `REDUCE_INPUT_MISSING` naming its path, before any work.
    */
   skinning?: SkinningResidualInput | null;
+  /**
+   * Issue #1326 (docs/MESH_REDUCTION.md §11): named lines over `lineSource`'s vertices — the same `NamedLine` list a
+   * reduction takes. Left out, no line row is written and the report is the one written without the field, byte for
+   * byte. Set, `lineSource` is required, and the report gains one required `MQ_LINE_DEVIATION` row per line, in
+   * declared order: the symmetric Hausdorff distance between the line's kept chain on this mesh and its polyline on
+   * `lineSource`. Refused `REDUCE_INPUT_LINE`, before any work, as a reduction refuses it; `null` is refused like any
+   * value that is not a list.
+   */
+  lines?: NamedLine[];
+  /** Issue #1326: the mesh `lines` index into, by the caller's id — required with `lines` and refused without it. Echoed by id and digest. */
+  lineSource?: LineSource;
 }
 
 /**
@@ -441,8 +491,8 @@ export type MeasureState = 'pass' | 'fail' | 'undeclared' | 'refused' | 'not-mea
 export interface MeasureRow {
   /** Stable code, e.g. `MQ_COVERAGE`. */
   code: string;
-  /** The object measured: attachment always; region when the row is a region's. */
-  object: { attachment: AttachmentRef; region: string | null };
+  /** The object measured: attachment always; region when the row is a region's; `line` on `MQ_LINE_DEVIATION` only (issue #1326), the line's name. */
+  object: { attachment: AttachmentRef; region: string | null; line?: string };
   state: MeasureState;
   /** The measured value: present on pass, fail and undeclared; null otherwise. */
   value: number | null;
@@ -696,6 +746,10 @@ export interface EffectiveSettings {
   skinning?: SkinningEcho | null;
   /** A comparison's `overBound`, echoed when the input set it (issue #1315); absent otherwise. */
   overBound?: OverBoundRequest;
+  /** A measurement's or a reduction's `lines`, echoed when the input set it (issue #1326); absent otherwise. */
+  lines?: NamedLine[];
+  /** A measurement's `lineSource`, by id and `sourceMeshDigest`, echoed when the input set it (issue #1326); absent otherwise. */
+  lineSource?: { id: string; digest: string };
 }
 
 export interface MeshCounts {
@@ -950,6 +1004,34 @@ function validateInput(input: MeshMeasureInput): void {
   }
   validateMotionAmplitude(who, input.motionAmplitude);
   validateSkinning(who, input.skinning);
+  validateMeasureLines(who, input);
+}
+
+/**
+ * Issue #1326: a measurement's `lines` and `lineSource`, refused `REDUCE_INPUT_LINE` before any work — the two together
+ * or neither, the source well formed enough to index, then the lines against it (`validateLines`).
+ */
+function validateMeasureLines(who: string, input: MeshMeasureInput): void {
+  const { lines, lineSource } = input;
+  if (lines === undefined) {
+    if (lineSource !== undefined) refuse('REDUCE_INPUT_LINE', `${who}: lineSource is set and lines is left out; required lines with it, or neither — a source no line reads is not an input`);
+    return;
+  }
+  const mesh: unknown = isObject(lineSource) ? lineSource.mesh : undefined;
+  const ok =
+    isObject(lineSource) &&
+    typeof lineSource.id === 'string' &&
+    lineSource.id !== '' &&
+    isObject(mesh) &&
+    Array.isArray(mesh.points) &&
+    mesh.points.every(isPoint) &&
+    Array.isArray(mesh.triangles) &&
+    mesh.triangles.every((v: unknown) => Number.isInteger(v)) &&
+    Number.isInteger(mesh.hull);
+  if (!ok) {
+    refuse('REDUCE_INPUT_LINE', `${who}: lineSource is ${lineSource === undefined ? 'missing (undefined)' : JSON.stringify(isObject(lineSource) ? { id: lineSource.id, mesh: isObject(mesh) ? '{…}' : mesh } : lineSource)}; required { id: a non-empty string, mesh: the SourceMesh the lines index into } whenever lines is set`);
+  }
+  validateLines(who, 'lines', lines, lineSource!.mesh);
 }
 
 /**
@@ -984,6 +1066,161 @@ export function validateMotionAmplitude(who: string, amplitude: unknown): void {
       if (!isFiniteNumber(theta) || theta < 0) refuse('REDUCE_INPUT_MISSING', `${who}: ${here}.theta is ${JSON.stringify(theta)}; required a finite number, 0 or more (‖M − I‖ of the pair's relative linear part)`);
     });
   });
+}
+
+/**
+ * Issue #1326 (docs/MESH_REDUCTION.md §11): `lines` refused `REDUCE_INPUT_LINE` before any work, against the mesh the
+ * indices are into — `MeshReductionInput.source`, or `MeshMeasureInput.lineSource.mesh`. `field` is the path the
+ * messages name. Each refusal names the line (its index and name), the index or pair, and the rule, in this order:
+ * the list and each line's shape (a non-empty name, `closed` a boolean, `maxDeviation` a finite number 0 or more —
+ * left out and `null` each named as itself, since neither is a bound), its vertex count (closed 3 or more, open 2 or
+ * more), each index a source vertex, no vertex twice, each consecutive pair (closed: and the last–first) an edge of a
+ * source triangle, no line vertex whose position another source vertex shares (the measurement reads a kept vertex by
+ * its position); then names unique across the lines; then each segment inside the source's outline (its hull
+ * polygon, the boundary counting as inside); then no two segments meeting other than at a vertex both list — two
+ * lines that cross list the crossing as one shared vertex, and two that run together list every vertex of the run.
+ * Nothing is resolved here or later: a crossing is the caller's to list. Shared by the reduction and the measurement,
+ * so both refuse one value in the same words; merely exported, as `validateMotionAmplitude` is.
+ */
+export function validateLines(who: string, field: string, lines: unknown, mesh: { points: ReadonlyArray<readonly [number, number]>; triangles: readonly number[]; hull: number }): void {
+  function no(message: string): never {
+    return refuse('REDUCE_INPUT_LINE', `${who}: ${message}`);
+  }
+  if (!Array.isArray(lines)) no(`${field} is ${JSON.stringify(lines)}; required a list of { name, vertices, closed, maxDeviation }, or the field left out (issue #1326: no line is declared)`);
+  const list = lines as unknown[];
+  const n = mesh.points.length;
+  const edges = new Set<number>();
+  for (let t = 0; t + 2 < mesh.triangles.length; t += 3) {
+    for (let k = 0; k < 3; k++) {
+      const a = mesh.triangles[t + k];
+      const b = mesh.triangles[t + ((k + 1) % 3)];
+      edges.add(a < b ? a * n + b : b * n + a);
+    }
+  }
+  const at = new Map<string, number[]>();
+  mesh.points.forEach((p, v) => {
+    const key = `${p[0]},${p[1]}`;
+    const here = at.get(key);
+    if (here === undefined) at.set(key, [v]);
+    else here.push(v);
+  });
+  const named: NamedLine[] = [];
+  list.forEach((line, i) => {
+    const it = `${field}[${i}]`;
+    if (!isObject(line)) no(`${it} is ${JSON.stringify(line)}; required { name, vertices, closed, maxDeviation }`);
+    if (typeof line.name !== 'string' || line.name === '') no(`${it}.name is ${JSON.stringify(line.name)}; required a non-empty string, unique among the lines — the row and every refusal name the line by it`);
+    const said = `${it} ("${line.name}")`;
+    if (typeof line.closed !== 'boolean') no(`${said}.closed is ${JSON.stringify(line.closed)}; required true (the last vertex joins the first) or false (two ends)`);
+    const bound = line.maxDeviation;
+    if (bound === undefined) no(`${said}.maxDeviation is missing (undefined); required a finite number of drawing px, 0 or more — the bound MQ_LINE_DEVIATION is held to, which has no default`);
+    if (bound === null) no(`${said}.maxDeviation is null; required a finite number of drawing px, 0 or more — a line declares its own bound and has no declared-absent form (a line held whole is protect.edges; a line with no bound is not declared)`);
+    if (!isFiniteNumber(bound) || bound < 0) no(`${said}.maxDeviation is ${typeof bound === 'number' ? String(bound) : JSON.stringify(bound)}; required a finite number of drawing px, 0 or more`);
+    const vs = line.vertices;
+    if (!Array.isArray(vs)) no(`${said}.vertices is ${JSON.stringify(vs)}; required a list of source vertex indices in order along the line`);
+    const vertices = vs as unknown[];
+    const least = line.closed ? 3 : 2;
+    if (vertices.length < least) no(`${said} is ${line.closed ? 'closed' : 'open'} with ${vertices.length} vertex(es); required at least ${least} — ${line.closed ? 'a closed line is a polygon' : 'an open line has two ends'}`);
+    vertices.forEach((v, k) => {
+      if (!Number.isInteger(v) || (v as number) < 0 || (v as number) >= n) no(`${said}.vertices[${k}] is ${JSON.stringify(v)}; required a source vertex index in 0..${n - 1}`);
+    });
+    const ids = vertices as number[];
+    const first = new Map<number, number>();
+    ids.forEach((v, k) => {
+      const was = first.get(v);
+      if (was !== undefined) no(`${said} lists vertex ${v} twice (vertices[${was}] and vertices[${k}]); required each vertex once — a line that touches itself is refused, never split`);
+      first.set(v, k);
+    });
+    const pairs = line.closed ? ids.length : ids.length - 1;
+    for (let k = 0; k < pairs; k++) {
+      const a = ids[k];
+      const b = ids[(k + 1) % ids.length];
+      if (!edges.has(a < b ? a * n + b : b * n + a)) {
+        no(`${said}: the pair ${a}–${b} (vertices[${k}], vertices[${(k + 1) % ids.length}]) is not an edge of a source triangle; required each consecutive pair${line.closed ? ', and the last–first pair,' : ''} to be one — the same test protect.edges applies`);
+      }
+    }
+    for (const v of ids) {
+      const p = mesh.points[v];
+      const all = at.get(`${p[0]},${p[1]}`)!;
+      if (all.length > 1) no(`${said}: vertex ${v} at (${p[0]}, ${p[1]}) shares its position with source vertex ${all.find((u) => u !== v)}; required a line vertex at a position no other source vertex has — a measurement reads a kept line vertex by its position`);
+    }
+    named.push({ name: line.name, vertices: ids, closed: line.closed, maxDeviation: bound as number });
+  });
+  const byName = new Map<string, number>();
+  named.forEach((line, i) => {
+    const was = byName.get(line.name);
+    if (was !== undefined) no(`${field}[${i}] is named "${line.name}", as ${field}[${was}] is; required one name per line — its row is keyed by it`);
+    byName.set(line.name, i);
+  });
+  const hull = mesh.points.slice(0, Math.max(0, mesh.hull));
+  type Segment = { line: number; a: number; b: number; lo: [number, number]; hi: [number, number] };
+  const segments: Segment[] = [];
+  named.forEach((line, i) => {
+    const pairs = line.closed ? line.vertices.length : line.vertices.length - 1;
+    for (let k = 0; k < pairs; k++) {
+      const a = line.vertices[k];
+      const b = line.vertices[(k + 1) % line.vertices.length];
+      if (hull.length >= 3) {
+        const off = segmentLeavesPolygon(mesh.points[a], mesh.points[b], hull);
+        if (off !== null) no(`${field}[${i}] ("${line.name}"): the segment ${a}–${b} leaves the source's outline at (${r6(off[0])}, ${r6(off[1])}); required every segment inside the hull polygon — a hull vertex on a line is allowed, a segment off the art is not`);
+      }
+      const p = mesh.points[a];
+      const q = mesh.points[b];
+      segments.push({ line: i, a, b, lo: [Math.min(p[0], q[0]), Math.min(p[1], q[1])], hi: [Math.max(p[0], q[0]), Math.max(p[1], q[1])] });
+    }
+  });
+  const slack = 1e-9;
+  for (let s = 0; s < segments.length; s++) {
+    const u = segments[s];
+    for (let t = s + 1; t < segments.length; t++) {
+      const w = segments[t];
+      // A shared endpoint is a vertex both lines list (each segment's ends are its own line's vertices): a meeting there is the crossing or the run, declared.
+      if (u.a === w.a || u.a === w.b || u.b === w.a || u.b === w.b) continue;
+      if (u.hi[0] < w.lo[0] - slack || w.hi[0] < u.lo[0] - slack || u.hi[1] < w.lo[1] - slack || w.hi[1] < u.lo[1] - slack) continue;
+      if (segmentsMeet(mesh.points[u.a], mesh.points[u.b], mesh.points[w.a], mesh.points[w.b])) {
+        const lu = named[u.line];
+        const lw = named[w.line];
+        no(
+          `${field}[${u.line}] ("${lu.name}")'s segment ${u.a}–${u.b} meets ${u.line === w.line ? 'its own' : `${field}[${w.line}] ("${lw.name}")'s`} segment ${w.a}–${w.b} other than at a vertex both list; required two lines that cross to list the crossing as one shared source vertex, and a line not to cross itself — rig-c resolves no crossing`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Issue #1326: where the segment p–q leaves the closed polygon `poly` (the boundary counting as inside), or null when
+ * it does not — the ends tested, then the midpoint of every piece between the parameters at which it meets an edge or
+ * passes a polygon vertex, so a segment that leaves through a notch and comes back is found whether or not it crosses
+ * an edge properly.
+ */
+function segmentLeavesPolygon(p: Pt, q: Pt, poly: readonly Pt[]): Pt | null {
+  if (!inClosedPolygon(p, poly)) return p;
+  if (!inClosedPolygon(q, poly)) return q;
+  const dx = q[0] - p[0];
+  const dy = q[1] - p[1];
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return null;
+  const ts = [0, 1];
+  const along = (r: Pt): number => ((r[0] - p[0]) * dx + (r[1] - p[1]) * dy) / len2;
+  const m = poly.length;
+  for (let i = 0; i < m; i++) {
+    const c = poly[i];
+    const d = poly[(i + 1) % m];
+    if (distanceToSegment(c, p, q) <= ON_BOUNDARY) ts.push(along(c));
+    if (!segmentsMeet(p, q, c, d)) continue;
+    const ex = d[0] - c[0];
+    const ey = d[1] - c[1];
+    const den = dx * ey - dy * ex;
+    if (den !== 0) ts.push(((c[0] - p[0]) * ey - (c[1] - p[1]) * ex) / den);
+  }
+  const cuts = ts.filter((t) => t >= 0 && t <= 1).sort((a, b) => a - b);
+  for (let k = 0; k + 1 < cuts.length; k++) {
+    if (cuts[k + 1] - cuts[k] <= 1e-12) continue;
+    const t = (cuts[k] + cuts[k + 1]) / 2;
+    const mid: Pt = [p[0] + dx * t, p[1] + dy * t];
+    if (!inClosedPolygon(mid, poly)) return mid;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,12 +1506,16 @@ export function regionEdgeBound(a: readonly [number, number], b: readonly [numbe
   return bound;
 }
 
-/** Distance from a point to a closed polyline (the polygon's boundary), and the edge that realises it. */
-function pointToBoundary(p: Pt, poly: readonly Pt[]): { d: number; edge: number } {
+/**
+ * Distance from a point to a closed polyline (the polygon's boundary), and the edge that realises it. `closed: false`
+ * (issue #1326) reads an open polyline — no closing edge; one point is its own degenerate edge.
+ */
+function pointToBoundary(p: Pt, poly: readonly Pt[], closed = true): { d: number; edge: number } {
   let d = Infinity;
   let edge = 0;
   const n = poly.length;
-  for (let i = 0; i < n; i++) {
+  const edges = closed || n === 1 ? n : n - 1;
+  for (let i = 0; i < edges; i++) {
     const v = distanceToSegment(p, poly[i], poly[(i + 1) % n]);
     if (v < d) {
       d = v;
@@ -1295,26 +1536,32 @@ function pointToBoundary(p: Pt, poly: readonly Pt[]): { d: number; edge: number 
  * of those maxima bounds it from above. A piece whose bound cannot beat the best
  * value already found is dropped; the rest are halved. No sampling density is
  * chosen, so nothing here can miss a maximum between two samples.
+ *
+ * `aClosed` / `bClosed` false (issue #1326, `MQ_LINE_DEVIATION`) read that side as an open polyline: its edges are
+ * the consecutive pairs and no closing one, and a single point is its own degenerate edge. Both true is the outline
+ * rows' reading, edge for edge as before the flags.
  */
-function directedHausdorff(a: readonly Pt[], b: readonly Pt[], carried: ((p: Pt) => Float64Array) | null = null): { d: number; edge: number; at: Pt } {
+function directedHausdorff(a: readonly Pt[], b: readonly Pt[], carried: ((p: Pt) => Float64Array) | null = null, aClosed = true, bClosed = true): { d: number; edge: number; at: Pt } {
   const m = b.length;
+  const mEdges = bClosed || m === 1 ? m : m - 1;
   const toEach =
     carried ??
     ((p: Pt): Float64Array => {
-      const out = new Float64Array(m);
-      for (let j = 0; j < m; j++) out[j] = distanceToSegment(p, b[j], b[(j + 1) % m]);
+      const out = new Float64Array(mEdges);
+      for (let j = 0; j < mEdges; j++) out[j] = distanceToSegment(p, b[j], b[(j + 1) % m]);
       return out;
     });
   const minOf = (g: Float64Array): number => {
     let v = Infinity;
-    for (let j = 0; j < m; j++) v = Math.min(v, g[j]);
+    for (let j = 0; j < mEdges; j++) v = Math.min(v, g[j]);
     return v;
   };
   let best = -1;
   let bestEdge = 0;
   let bestAt: Pt = a[0];
   const n = a.length;
-  for (let i = 0; i < n; i++) {
+  const nEdges = aClosed || n === 1 ? n : n - 1;
+  for (let i = 0; i < nEdges; i++) {
     const p0 = a[i];
     const p1 = a[(i + 1) % n];
     const at = (t: number): Pt => [p0[0] + (p1[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * t];
@@ -1333,7 +1580,7 @@ function directedHausdorff(a: readonly Pt[], b: readonly Pt[], carried: ((p: Pt)
     while (stack.length > 0) {
       const piece = stack.pop()!;
       let upper = Infinity;
-      for (let j = 0; j < m; j++) upper = Math.min(upper, Math.max(piece.g0[j], piece.g1[j]));
+      for (let j = 0; j < mEdges; j++) upper = Math.min(upper, Math.max(piece.g0[j], piece.g1[j]));
       if (upper <= best + HAUSDORFF_TOLERANCE || piece.depth >= 64) continue;
       const tm = (piece.t0 + piece.t1) / 2;
       const gm = toEach(at(tm));
@@ -1351,11 +1598,54 @@ function directedHausdorff(a: readonly Pt[], b: readonly Pt[], carried: ((p: Pt)
  * taken on when the worst point is the candidate's, else the candidate edge
  * nearest the reference's worst point.
  */
-function hausdorff(candidate: readonly Pt[], reference: readonly Pt[], carried: { forward: (p: Pt) => Float64Array; backward: (p: Pt) => Float64Array } | null = null): { d: number; candidateEdge: number } {
-  const forward = directedHausdorff(candidate, reference, carried?.forward ?? null);
-  const backward = directedHausdorff(reference, candidate, carried?.backward ?? null);
+function hausdorff(candidate: readonly Pt[], reference: readonly Pt[], carried: { forward: (p: Pt) => Float64Array; backward: (p: Pt) => Float64Array } | null = null, closed = true): { d: number; candidateEdge: number } {
+  const forward = directedHausdorff(candidate, reference, carried?.forward ?? null, closed, closed);
+  const backward = directedHausdorff(reference, candidate, carried?.backward ?? null, closed, closed);
   if (forward.d >= backward.d) return { d: forward.d, candidateEdge: forward.edge };
-  return { d: backward.d, candidateEdge: pointToBoundary(backward.at, candidate).edge };
+  return { d: backward.d, candidateEdge: pointToBoundary(backward.at, candidate, closed).edge };
+}
+
+/**
+ * Issue #1326: `MQ_LINE_DEVIATION`'s distance — the symmetric Hausdorff distance between a line's kept chain and its
+ * source polyline, by the outline rows' own function (`hausdorff`, exact to `HAUSDORFF_TOLERANCE`), a closed line as
+ * two polygons and an open one as two open polylines, with the chain edge the worst value belongs to. The reduction
+ * reads it on the chain an attempt would leave before it builds anything, and the row reads it on the measured mesh:
+ * one function of the same points in the same order, so the two are the same number.
+ */
+export function lineDeviation(kept: ReadonlyArray<readonly [number, number]>, reference: ReadonlyArray<readonly [number, number]>, closed: boolean): { d: number; chainEdge: number } {
+  const hd = hausdorff(kept, reference, null, closed);
+  return { d: hd.d, chainEdge: hd.candidateEdge };
+}
+
+/**
+ * Issue #1326: one `MQ_LINE_DEVIATION` row per line, in declared order. `reference` holds the points the lines' indices
+ * are into; `keptAt(v)` is the measured mesh's index of line vertex v, or null when the mesh does not keep it. The row:
+ * `object.line` the name and `object.region` null, drawing px, bound `<= maxDeviation`, required; the value the
+ * distance on the `r6` grid; the worst sample the chain edge it belongs to (as the measured mesh's indices; one kept
+ * vertex is its own `vertex`), nothing when the value is 0; `not-measurable` when the mesh keeps no vertex of the line.
+ * Merely exported — the reduction reads its steps' rows through it, so no row is written twice.
+ */
+export function lineDeviationRows(attachment: AttachmentRef, lines: readonly NamedLine[], reference: ReadonlyArray<readonly [number, number]>, keptAt: (v: number) => number | null): MeasureRow[] {
+  return lines.map((line): MeasureRow => {
+    const object = { attachment, region: null, line: line.name };
+    const chain = line.vertices.filter((v) => keptAt(v) !== null);
+    if (chain.length === 0) {
+      const reason = `attachment ${nameOf(attachment)}: line "${line.name}" has no vertex the measured mesh keeps (none of its ${line.vertices.length} source positions is a vertex of it), so there is no chain to measure`;
+      return { code: 'MQ_LINE_DEVIATION', object, state: 'not-measurable', value: null, bound: null, unit: 'px', worst: null, reason };
+    }
+    const hd = lineDeviation(
+      chain.map((v) => reference[v]),
+      line.vertices.map((v) => reference[v]),
+      line.closed,
+    );
+    const value = r6(hd.d);
+    const bound = { op: '<=' as const, value: line.maxDeviation };
+    let worst: WorstSample = NOTHING_WORSE;
+    if (hd.d !== 0) {
+      worst = chain.length === 1 ? { at: { vertex: keptAt(chain[0])! } } : { at: { edge: [keptAt(chain[hd.chainEdge])!, keptAt(chain[(hd.chainEdge + 1) % chain.length])!] } };
+    }
+    return { code: 'MQ_LINE_DEVIATION', object, state: judged(value, bound), value, bound, unit: 'px', worst, reason: null };
+  });
 }
 
 /** A point as a key: both coordinates' shortest round-trip decimals, a negative zero told from a positive one. */
@@ -1850,6 +2140,19 @@ function measureValidated(input: MeshMeasureInput, rasters: ArtRasters, steps: S
     rows.push(measuredRow(traceSpec, r6(hd.d), null, hd.d === 0 ? NOTHING_WORSE : { at: { edge: edgeOfHull(hd.candidateEdge) } }, false));
   } else {
     rows.push(unmeasuredRow(traceSpec, 'not-measurable', `attachment ${nameOf(attachment)}: the tracer refused the art at alpha >= ${threshold}: ${traced.refused}`, false));
+  }
+
+  // --- named lines (issue #1326): only when the input declared them, one row per line in declared order ---------
+  // `compareRows` ties them (one code, region null, no connectivity) and the sort is stable, so the order is the input's.
+  if (input.lines !== undefined) {
+    const lineSourceMesh = input.lineSource!.mesh;
+    const byPosition = new Map<string, number>();
+    points.forEach((p, v) => {
+      const key = `${p[0]},${p[1]}`;
+      if (!byPosition.has(key)) byPosition.set(key, v);
+    });
+    const keptAt = (v: number): number | null => byPosition.get(`${lineSourceMesh.points[v][0]},${lineSourceMesh.points[v][1]}`) ?? null;
+    for (const row of lineDeviationRows(attachment, input.lines, lineSourceMesh.points, keptAt)) rows.push({ row, required: true });
   }
 
   // --- triangles: sign, degeneracy, angle --------------------------------------------------
@@ -2398,6 +2701,8 @@ function effectiveOf(input: MeshMeasureInput, skinningPlant: SkinningPlant | nul
     budget: null,
     ...(input.motionAmplitude === undefined ? {} : { motionAmplitude: input.motionAmplitude }),
     ...(input.skinning === undefined ? (skinningPlant === 'echo-when-unset' ? { skinning: null } : {}) : { skinning: skinningEchoOf(input.skinning) }),
+    ...(input.lines === undefined ? {} : { lines: input.lines }),
+    ...(input.lineSource === undefined ? {} : { lineSource: { id: input.lineSource.id, digest: sourceMeshDigest(input.lineSource.mesh) } }),
   };
 }
 
@@ -2498,6 +2803,8 @@ function effectiveJson(e: EffectiveSettings): Json {
     ...(e.removalOrder === undefined ? {} : { removalOrder: e.removalOrder }),
     ...(e.skinning === undefined ? {} : { skinning: skinningEchoJson(e.skinning) }),
     ...(e.overBound === undefined ? {} : { overBound: { maxSamples: e.overBound.maxSamples, triangles: e.overBound.triangles } }),
+    ...(e.lines === undefined ? {} : { lines: e.lines.map((l): Json => ({ name: l.name, vertices: [...l.vertices], closed: l.closed, maxDeviation: l.maxDeviation })) }),
+    ...(e.lineSource === undefined ? {} : { lineSource: { id: e.lineSource.id, digest: e.lineSource.digest } }),
   };
 }
 
@@ -2521,7 +2828,7 @@ function worstJson(w: WorstSample | null): Json {
 function rowJson(r: MeasureRow): Json {
   const out: { [key: string]: Json } = {
     code: r.code,
-    object: { attachment: attachmentJson(r.object.attachment), region: r.object.region },
+    object: r.object.line === undefined ? { attachment: attachmentJson(r.object.attachment), region: r.object.region } : { attachment: attachmentJson(r.object.attachment), region: r.object.region, line: r.object.line },
     state: r.state,
     value: r.value,
     bound: r.bound === null ? null : { op: r.bound.op, value: r.bound.value },

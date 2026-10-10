@@ -424,6 +424,7 @@ import {
   type MeshQualityReport,
   type MeshReductionInput,
   type MotionAmplitude,
+  type NamedLine,
   type ProtectedFeatures,
   type ReducedMesh,
   type RefinementRegion,
@@ -48873,8 +48874,8 @@ function runMeshQualitySuite(): number {
   // |w̄(p) − rule(p)|·|T| along the hole's ring (`edgeDisplacement`, the fixture's own reading, not the module's). Three
   // sources: lattices at 8 and 4 px (no vertex can sit on the edge) and the 8 px lattice with the ring's grid lines
   // added (`blinkSource(8, 4)` — every ring edge a grid edge by construction). Each control states a fact of the API as
-  // it stands; docs/MESH_REDUCTION.md §11 is the contract the line row would be written against, and nothing here
-  // implements it.
+  // it stood before stage B; docs/MESH_REDUCTION.md §11 is the contract, and MQ166–MQ175 below hold its implementation
+  // (`lines`, `REDUCE_INPUT_LINE`, `MQ_LINE_DEVIATION`).
   {
     const blinkPlate = mqMask(dir, 'blink', BLINK.width, BLINK.height, (x, y) => blinkAlpha(x, y) / 255);
     const blinkFrame = mqFrame(BLINK.width, BLINK.height);
@@ -49101,6 +49102,559 @@ function runMeshQualitySuite(): number {
         probeDetail(held, probes, lines.join('; ')),
         'issue #1326, reading (c): protecting the simplified corners is the nearest the API comes to thinning a line under a bound, and it is not one — no row reads the line\'s deviation from itself; rig-parts#160\'s build (iv) is this reading on its ring source',
       );
+    }
+
+    // --- MQ166–MQ175 (#1326, stage B): named lines — `lines`, `REDUCE_INPUT_LINE`, `MQ_LINE_DEVIATION` -----------------
+    //
+    // §11's contract as implemented. The subjects are the blink's lined source (its ring the line, closed) and small
+    // lines over the 8 px lattice found by walking its grid — every index below is derived from the fixture's own
+    // coordinates and edges, none typed. The rasters are taken once over the blink's art and every call reads them,
+    // so a refusal "before any work" is one after which they were never used.
+    {
+      const lnRasters = artRastersOf(blinkReductionInput(blinkPlate, lattice8.mesh, {}, null).art);
+      const lnInput = (source: SourceMesh, protect: Partial<ProtectedFeatures>, maxResidual: number | null, over: Partial<MeshReductionInput> = {}): MeshReductionInput => ({
+        ...blinkReductionInput(blinkPlate, source, protect, maxResidual),
+        ...over,
+      });
+      const lnRun = (input: MeshReductionInput, plant: ReductionPlant | null = null, observe: AttemptObserver | null = null): MeshReductionResult =>
+        reduceMeshWith(input, lnRasters, stepRastersOf(lnRasters), plant, observe);
+      const ringLine = (maxDeviation: number): NamedLine => ({ name: 'lid', vertices: ring, closed: true, maxDeviation });
+      const edgeName = (a: number, b: number): string => `${Math.min(a, b)},${Math.max(a, b)}`;
+      /** Consecutive kept vertices of a line, by source index, that are not an edge of the result — the test's own reading. */
+      const unjoined = (mesh: ReducedMesh, vertices: readonly number[], closed: boolean): string[] => {
+        const edges = triangleEdges(mesh.triangles);
+        const kept = vertices.filter((v) => mesh.indexMap[v] !== null);
+        const out: string[] = [];
+        const pairs = closed ? kept.length : kept.length - 1;
+        for (let k = 0; k < pairs; k++) {
+          const a = kept[k];
+          const b = kept[(k + 1) % kept.length];
+          if (!edges.has(edgeName(mesh.indexMap[a]!, mesh.indexMap[b]!))) out.push(`${a}–${b}`);
+        }
+        return out;
+      };
+      /**
+       * The test's own two-sided distance between a kept chain and its source polyline: the furthest removed vertex from
+       * the chain, and the chain sampled every `step` px against the polyline — exact on the first half, within `step` on
+       * the second.
+       */
+      const OWN_STEP = 0.05;
+      const ownDeviation = (points: ReadonlyArray<MqPt>, vertices: readonly number[], keptOf: (v: number) => boolean, closed: boolean): number => {
+        const line = vertices.map((v) => points[v]);
+        const kept = vertices.filter(keptOf).map((v) => points[v]);
+        const toPoly = (p: MqPt, poly: ReadonlyArray<MqPt>): number => {
+          if (poly.length === 1) return Math.hypot(p[0] - poly[0][0], p[1] - poly[0][1]);
+          let d = Infinity;
+          const pairs = closed ? poly.length : poly.length - 1;
+          for (let k = 0; k < pairs; k++) d = Math.min(d, mqPointSegment(p, poly[k], poly[(k + 1) % poly.length]));
+          return d;
+        };
+        let worst = 0;
+        for (const p of line) worst = Math.max(worst, toPoly(p, kept));
+        const pairs = closed ? kept.length : kept.length - 1;
+        for (let k = 0; k < pairs; k++) {
+          const a = kept[k];
+          const b = kept[(k + 1) % kept.length];
+          const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / OWN_STEP));
+          for (let m = 0; m <= n; m++) worst = Math.max(worst, toPoly([a[0] + ((b[0] - a[0]) * m) / n, a[1] + ((b[1] - a[1]) * m) / n], line));
+        }
+        return worst;
+      };
+      const lineRows = (report: MeshQualityReport): MeasureRow[] => mqRows(report).filter((r) => r.code === 'MQ_LINE_DEVIATION');
+      // The 8 px lattice's grid, by its own coordinates and edges.
+      const gx = [...new Set(lattice8.mesh.points.map((p) => p[0]))].sort((a, b) => a - b);
+      const gy = [...new Set(lattice8.mesh.points.map((p) => p[1]))].sort((a, b) => a - b);
+      const gridAt = (i: number, j: number): number => lattice8.mesh.points.findIndex((p) => p[0] === gx[i] && p[1] === gy[j]);
+      const latticeEdges = triangleEdges(lattice8.mesh.triangles);
+      const joined = (a: number, b: number): boolean => a >= 0 && b >= 0 && latticeEdges.has(edgeName(a, b));
+      /** The first column i, 1 ≤ i ≤ the last but one, whose vertex at row j satisfies `ok` — rows above the hole, so every share is the lid's alone. */
+      const findColumn = (j: number, ok: (i: number) => boolean): number => {
+        for (let i = 1; i + 1 < gx.length; i++) if (gy[j + 1] < hy && ok(i)) return i;
+        return -1;
+      };
+      const lnRefusal = (input: MeshReductionInput): { code: string; message: string; uses: number } | null => {
+        const rasters = artRastersOf(input.art);
+        try {
+          reduceMeshWith(input, rasters, stepRastersOf(rasters));
+          return null;
+        } catch (err) {
+          if (err instanceof MeshReductionError) return { code: err.code, message: err.message, uses: rasters.tally.uses };
+          return { code: `(not a MeshReductionError: ${(err as Error).name})`, message: (err as Error).message, uses: rasters.tally.uses };
+        }
+      };
+      const measureRefusal = (input: MeshMeasureInput): { code: string; message: string } | null => {
+        try {
+          measureMeshQuality(input);
+          return null;
+        } catch (err) {
+          if (err instanceof MeshReductionError) return { code: err.code, message: err.message };
+          return { code: `(not a MeshReductionError: ${(err as Error).name})`, message: (err as Error).message };
+        }
+      };
+      const blinkAttachment = blinkReductionInput(blinkPlate, lined.mesh, {}, null).attachment;
+      const lineMeasure = (mesh: SourceMesh, extra: Partial<MeshMeasureInput>): MeshMeasureInput =>
+        mqInput(blinkPlate, blinkFrame, mesh, { artFit: null, maxBoundaryDeviation: null, regions: [] }, { attachment: blinkAttachment, ...extra });
+
+      // --- MQ166: every malformed line is refused REDUCE_INPUT_LINE by name, before any work, in both operations ---
+      {
+        const probes: string[] = [];
+        const r0 = ring[0];
+        const r1 = ring[1];
+        const r2 = ring[2];
+        const r3 = ring[3];
+        const n = lined.mesh.points.length;
+        // A source with one more point at a line vertex's position (isolated: no triangle reads it).
+        const doubled: SourceMesh = { ...lined.mesh, points: [...lined.mesh.points, [lined.mesh.points[r0][0], lined.mesh.points[r0][1]]], uvs: [...lined.mesh.uvs, lined.mesh.uvs[r0 * 2], lined.mesh.uvs[r0 * 2 + 1]], weights: [...lined.mesh.weights!, lined.mesh.weights![r0]] };
+        // A source with the ring's first vertex moved off the block (outside the hull polygon), indices and triangles kept.
+        const [bx, by] = BLINK.block;
+        const off: SourceMesh = { ...lined.mesh, points: lined.mesh.points.map((p, v): [number, number] => (v === r0 ? [bx / 2, by / 2] : [p[0], p[1]])) };
+        // A folded source: the ring's second vertex moved below the hole by half its height, so its edge to the first
+        // crosses the bottom side's edge nearest the bottom-left corner — two source edges that meet at no shared vertex.
+        const bottomLeft = ring.findIndex((v) => lined.mesh.points[v][0] === hx && lined.mesh.points[v][1] === hy + hh);
+        const qLeft = ring[bottomLeft];
+        const q = ring[bottomLeft - 1];
+        const folded: SourceMesh = { ...lined.mesh, points: lined.mesh.points.map((p, v): [number, number] => (v === r1 ? [p[0], hy + hh + hh / 2] : [p[0], p[1]])) };
+        const P = folded.points;
+        const cross = (a: MqPt, b: MqPt, c: MqPt): number => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        const crossesOwn = Math.sign(cross(P[r0], P[r1], P[qLeft])) * Math.sign(cross(P[r0], P[r1], P[q])) < 0 && Math.sign(cross(P[qLeft], P[q], P[r0])) * Math.sign(cross(P[qLeft], P[q], P[r1])) < 0;
+        if (!crossesOwn) probes.push('the folded source does not make its two edges cross by the test\'s own orientation test, so the crossing cases test nothing');
+        const leftSideDown = [...ring.slice(bottomLeft + 1)].reverse();
+        const valid = { name: 'lid', vertices: [r0, r1, r2], closed: false, maxDeviation: 1 };
+        type Case = { rule: string; lines: unknown; source?: SourceMesh; expect: string[] };
+        const cases: Case[] = [
+          { rule: 'a list', lines: null, expect: ['lines is null', 'required a list'] },
+          { rule: 'a line object', lines: [7], expect: ['lines[0] is 7'] },
+          { rule: 'a non-empty name', lines: [{ ...valid, name: '' }], expect: ['lines[0].name is ""'] },
+          { rule: 'closed a boolean', lines: [{ ...valid, closed: 'yes' }], expect: ['lines[0] ("lid").closed is "yes"'] },
+          { rule: 'maxDeviation left out', lines: [{ name: 'lid', vertices: [r0, r1], closed: false }], expect: ['lines[0] ("lid").maxDeviation is missing (undefined)', 'no default'] },
+          { rule: 'maxDeviation null', lines: [{ ...valid, maxDeviation: null }], expect: ['lines[0] ("lid").maxDeviation is null', 'no declared-absent form'] },
+          { rule: 'maxDeviation 0 or more', lines: [{ ...valid, maxDeviation: -1 }], expect: ['lines[0] ("lid").maxDeviation is -1'] },
+          { rule: 'maxDeviation finite', lines: [{ ...valid, maxDeviation: Number.NaN }], expect: ['lines[0] ("lid").maxDeviation is NaN'] },
+          { rule: 'vertices a list', lines: [{ ...valid, vertices: 'x' }], expect: ['lines[0] ("lid").vertices is "x"'] },
+          { rule: 'closed: 3 vertices or more', lines: [{ ...valid, vertices: [r0, r1], closed: true }], expect: ['is closed with 2 vertex(es)', 'at least 3'] },
+          { rule: 'open: 2 vertices or more', lines: [{ ...valid, vertices: [r0] }], expect: ['is open with 1 vertex(es)', 'at least 2'] },
+          { rule: 'a source vertex', lines: [{ ...valid, vertices: [r0, n] }], expect: [`vertices[1] is ${n}`, `0..${n - 1}`] },
+          { rule: 'each vertex once', lines: [{ ...valid, vertices: [r0, r1, r2, r1] }], expect: [`lists vertex ${r1} twice (vertices[1] and vertices[3])`] },
+          { rule: 'each pair a source edge', lines: [{ ...valid, vertices: [r0, r2] }], expect: [`the pair ${r0}–${r2} (vertices[0], vertices[1]) is not an edge of a source triangle`] },
+          { rule: 'the closing pair a source edge', lines: [{ ...valid, vertices: [r0, r1, r2], closed: true }], expect: [`the pair ${r2}–${r0} (vertices[2], vertices[0])`, 'the last–first pair'] },
+          { rule: 'a position no other vertex has', lines: [valid], source: doubled, expect: [`vertex ${r0} at`, `shares its position with source vertex ${n}`] },
+          { rule: 'one name per line', lines: [{ ...valid, vertices: [r0, r1] }, { ...valid, vertices: [r2, r3] }], expect: ['lines[1] is named "lid", as lines[0] is'] },
+          { rule: 'inside the outline', lines: [{ ...valid, vertices: [r0, r1] }], source: off, expect: [`the segment ${r0}–${r1} leaves the source's outline`] },
+          { rule: 'no crossing between lines', lines: [{ ...valid, name: 'a', vertices: [r0, r1] }, { ...valid, name: 'b', vertices: [qLeft, q] }], source: folded, expect: [`lines[0] ("a")'s segment ${r0}–${r1} meets lines[1] ("b")'s segment ${qLeft}–${q} other than at a vertex both list`] },
+          { rule: 'no crossing of a line with itself', lines: [{ ...valid, name: 'self', vertices: [r1, r0, ...leftSideDown, qLeft, q] }], source: folded, expect: [`segment ${r1}–${r0} meets its own segment ${qLeft}–${q}`] },
+        ];
+        const seen: string[] = [];
+        for (const c of cases) {
+          const input = lnInput(c.source ?? lined.mesh, {}, null, { lines: c.lines as NamedLine[] });
+          const got = lnRefusal(input);
+          if (got === null) {
+            probes.push(`${c.rule}: not refused`);
+            continue;
+          }
+          const missing = c.expect.filter((e) => !got.message.includes(e));
+          if (got.code !== 'REDUCE_INPUT_LINE' || missing.length > 0 || !got.message.includes('attachment (no skin)/blink/blink')) probes.push(`${c.rule}: ${got.code} "${got.message.slice(0, 200)}" — missing ${JSON.stringify(missing)}`);
+          else if (got.uses !== 0) probes.push(`${c.rule}: refused after the rasters were read ${got.uses} time(s) — not before any work`);
+          else seen.push(c.rule);
+        }
+        // The measurement: the same rule in the same words, and its own two (lines and lineSource together or neither).
+        const asReduced = lnRefusal(lnInput(lined.mesh, {}, null, { lines: [{ ...valid, vertices: [r0, r2] }] }));
+        const asMeasured = measureRefusal(lineMeasure(lined.mesh, { lines: [{ ...valid, vertices: [r0, r2] }], lineSource: { id: 'lined', mesh: lined.mesh } }));
+        if (asReduced === null || asMeasured === null || asReduced.message !== asMeasured.message || asMeasured.code !== 'REDUCE_INPUT_LINE') probes.push(`the measurement refuses the non-edge pair as ${JSON.stringify(asMeasured)}; the reduction as ${JSON.stringify(asReduced)} — not one code in one set of words`);
+        const noSource = measureRefusal(lineMeasure(lined.mesh, { lines: [valid] }));
+        const noLines = measureRefusal(lineMeasure(lined.mesh, { lineSource: { id: 'lined', mesh: lined.mesh } }));
+        if (noSource?.code !== 'REDUCE_INPUT_LINE' || !noSource.message.includes('lineSource is missing (undefined)')) probes.push(`lines without lineSource: ${JSON.stringify(noSource)}`);
+        if (noLines?.code !== 'REDUCE_INPUT_LINE' || !noLines.message.includes('lineSource is set and lines is left out')) probes.push(`lineSource without lines: ${JSON.stringify(noLines)}`);
+        // The positive controls: the ring, two lines sharing a run, and the measurement with both fields, refused by nothing.
+        const okRing = lnRefusal(lnInput(lined.mesh, {}, null, { lines: [ringLine(BLINK_BOUND)] }));
+        const p = gridAt(1, 1);
+        const x = gridAt(2, 1);
+        const sharedRun = lnRefusal(lnInput(lattice8.mesh, {}, null, { lines: [{ ...valid, name: 'one', vertices: [p, x, gridAt(3, 1)] }, { ...valid, name: 'two', vertices: [p, x, gridAt(2, 2)] }] }));
+        const okMeasure = measureRefusal(lineMeasure(lined.mesh, { lines: [ringLine(BLINK_BOUND)], lineSource: { id: 'lined', mesh: lined.mesh } }));
+        if (okRing !== null || sharedRun !== null || okMeasure !== null) probes.push(`a valid input was refused: ring ${JSON.stringify(okRing)}, a shared run ${JSON.stringify(sharedRun)}, the measurement ${JSON.stringify(okMeasure)}`);
+        const held = probes.length === 0;
+        say(
+          'MQ166_A_MALFORMED_LINE_IS_REFUSED_REDUCE_INPUT_LINE_NAMING_THE_LINE_THE_INDEX_OR_PAIR_AND_THE_RULE_BEFORE_ANY_WORK',
+          held,
+          probeDetail(held, probes, `${seen.length} of ${cases.length} rules refused REDUCE_INPUT_LINE with the rasters never read (${seen.join('; ')}); the measurement refuses the non-edge pair in the reduction's words and its own two (lines without lineSource, lineSource without lines); the ring, two lines sharing a run, and a measurement with both fields are refused by nothing`),
+          'issue #1326, §11: every rule the contract lists refuses by name before any work — a crossing is the caller\'s to list as a shared vertex, never resolved — and the measurement, which already refuses under the REDUCE_ family, refuses the same value in the same words',
+        );
+      }
+
+      // --- MQ167: the blink's ring thins to its four corners under its own bound, and the row reads the chain ---
+      {
+        const probes: string[] = [];
+        const input = lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)] });
+        const out = lnRun(input);
+        const planted = lnRun(input, 'line-rows-unread');
+        let detail = '';
+        if (out.mesh === null || planted.mesh === null) probes.push(`no mesh: ${mqSayEnd(out.report.termination)} / ${mqSayEnd(planted.report.termination)}`);
+        else {
+          const kept = keptOf(out.mesh, ring);
+          const rows = lineRows(out.report);
+          const row = rows[0];
+          const own = ownDeviation(lined.mesh.points, ring, (v) => out.mesh!.indexMap[v] !== null, true);
+          const lost = unjoined(out.mesh, ring, true);
+          const isCorner = (v: number): boolean => corners.some((c) => c[0] === lined.mesh.points[v][0] && c[1] === lined.mesh.points[v][1]);
+          if (verdictOf(out.report) !== 'true/pass') probes.push(`accepted/verdict ${verdictOf(out.report)}`);
+          if (kept.length !== corners.length || !kept.every(isCorner)) probes.push(`${kept.length} of ${ring.length} line vertices kept (${kept.join(', ')}), not the hole's ${corners.length} corners`);
+          if (lost.length > 0) probes.push(`kept line vertices not joined by a result edge: ${lost.join(', ')}`);
+          if (rows.length !== 1 || row.object.line !== 'lid' || row.object.region !== null || row.unit !== 'px' || row.state !== 'pass' || row.bound?.op !== '<=' || row.bound.value !== BLINK_BOUND) probes.push(`the row: ${JSON.stringify(rows).slice(0, 300)}`);
+          else if (!(Math.abs(row.value! - own) <= OWN_STEP + 1e-6 && own <= BLINK_BOUND)) probes.push(`the row reads ${row.value} and the test ${own} px against the bound ${BLINK_BOUND}`);
+          // The measurement reads the same row off the result against the source, by position.
+          const remeasured = lineRows(measureMeshQuality(lineMeasure(out.mesh, { lines: [ringLine(BLINK_BOUND)], lineSource: { id: 'lined', mesh: lined.mesh } })));
+          if (JSON.stringify(remeasured) !== JSON.stringify(rows)) probes.push(`measuring the result reads ${JSON.stringify(remeasured).slice(0, 200)}, not the reduction's row`);
+          // The plant: no step reads the row, the chain thins past the bound, and both the reduction's and a measurement's row say so.
+          const plantedOwn = ownDeviation(lined.mesh.points, ring, (v) => planted.mesh!.indexMap[v] !== null, true);
+          const plantedRow = lineRows(planted.report)[0];
+          const plantedMeasured = lineRows(measureMeshQuality(lineMeasure(planted.mesh, { lines: [ringLine(BLINK_BOUND)], lineSource: { id: 'lined', mesh: lined.mesh } })))[0];
+          if (!(plantedOwn > BLINK_BOUND)) probes.push(`planted line-rows-unread: the chain reads ${plantedOwn} px, not over ${BLINK_BOUND} — the plant is not seen`);
+          if (plantedRow?.state !== 'fail' || planted.report.candidates[0]?.accepted !== false || Math.abs(plantedRow.value! - plantedOwn) > OWN_STEP + 1e-6) probes.push(`planted: the result's row ${mqSay(plantedRow)}, accepted ${planted.report.candidates[0]?.accepted}, the test ${plantedOwn}`);
+          if (JSON.stringify(plantedMeasured) !== JSON.stringify(plantedRow)) probes.push('planted: a measurement of the result does not read the reduction\'s row');
+          // An open line, measured: the top side from the first corner to the second, against the planted result.
+          const topEnd = ring.findIndex((v) => lined.mesh.points[v][0] === hx + hw && lined.mesh.points[v][1] === hy);
+          const top = ring.slice(0, topEnd + 1);
+          const openRow = lineRows(measureMeshQuality(lineMeasure(planted.mesh, { lines: [{ name: 'top', vertices: top, closed: false, maxDeviation: BLINK_BOUND }], lineSource: { id: 'lined', mesh: lined.mesh } })))[0];
+          const openOwn = ownDeviation(lined.mesh.points, top, (v) => planted.mesh!.indexMap[v] !== null, false);
+          if (openRow === undefined || openRow.value === null || Math.abs(openRow.value - openOwn) > OWN_STEP + 1e-6) probes.push(`the open top side measured on the planted result: ${mqSay(openRow)}, the test ${openOwn}`);
+          detail = `${lined.mesh.points.length} → ${out.mesh.points.length} vertices, accepted; ${ring.length} → ${kept.length} line vertices, the hole's corners, every consecutive pair a result edge; ${mqSay(row)} (the test: ${own.toFixed(6)}), edge ${blinkEdgeDisplacement(out.mesh, samples).max.toFixed(6)} px; a measurement of the result reads the same row; planted line-rows-unread: ${keptOf(planted.mesh, ring).length} kept, the chain ${plantedOwn.toFixed(6)} px, ${mqSay(plantedRow)}, not accepted; the open top side (${top.length} vertices) measured on it reads ${openRow?.value} (the test ${openOwn.toFixed(6)})`;
+        }
+        const held = probes.length === 0;
+        say(
+          'MQ167_A_LINE_THINS_UNDER_ITS_OWN_BOUND_TO_THE_HOLES_FOUR_CORNERS_JOINED_BY_RESULT_EDGES_AND_MQ_LINE_DEVIATION_READS_ITS_CHAIN',
+          held,
+          probeDetail(held, probes, detail),
+          'issue #1326, §11: MQ_LINE_DEVIATION is the boundary row\'s exact symmetric Hausdorff distance between the kept chain and the source polyline, one required row per line, and a line vertex leaves only under it — on the blink, at 1 px, 18 → 4, where protect.edges kept 18 (MQ164)',
+        );
+      }
+
+      // --- MQ168: a removal that would leave two consecutive kept line vertices unjoined is refused by name ---
+      {
+        const probes: string[] = [];
+        // A vee over the lattice: v at row 1, a and c diagonally below it either side, w straight below on the chord a–c —
+        // so no triangulation of the hole v leaves can hold a–c while w is kept.
+        const i = findColumn(1, (k) => joined(gridAt(k, 1), gridAt(k - 1, 2)) && joined(gridAt(k, 1), gridAt(k + 1, 2)) && gridAt(k, 2) >= 0);
+        const v = gridAt(i, 1);
+        const a = gridAt(i - 1, 2);
+        const c = gridAt(i + 1, 2);
+        const w = gridAt(i, 2);
+        const vee = [a, v, c];
+        const lines: string[] = [];
+        if (i === -1) probes.push('no vee found on the lattice');
+        else {
+          const veeLine: NamedLine = { name: 'vee', vertices: vee, closed: false, maxDeviation: Math.hypot(gx[i + 1] - gx[i - 1], gy[2] - gy[1]) };
+          const attempt = (plant: ReductionPlant | null): { kept: boolean; said: string[]; lost: string[] } => {
+            const said: string[] = [];
+            const out = lnRun(lnInput(lattice8.mesh, { vertices: [w] }, null, { lines: [veeLine] }), plant, (rec) => {
+              if (rec.sourceVertices.includes(v)) said.push(rec.refusedBy === null ? 'taken' : rec.refusedBy());
+            });
+            return { kept: out.mesh?.indexMap[v] !== null && out.mesh !== null, said, lost: out.mesh === null ? ['(no mesh)'] : unjoined(out.mesh, vee, false) };
+          };
+          const plain = attempt(null);
+          const chordless = attempt('line-chord-unconstrained');
+          const unchecked = attempt('line-join-unchecked');
+          if (!plain.kept || plain.lost.length > 0 || plain.said.length === 0 || !plain.said.every((s) => s.startsWith(`line "vee" (a): the kept line vertices ${a}–${c} on either side of vertex ${v} cannot be joined`))) probes.push(`unplanted: v ${plain.kept ? 'kept' : 'removed'}, unjoined ${plain.lost.join(', ')}, refused as ${JSON.stringify(plain.said.slice(0, 1))}`);
+          if (!chordless.kept || chordless.said.length === 0 || !chordless.said.every((s) => s.startsWith(`line "vee" (a): the consecutive kept line vertices ${a}–${c} are no longer joined by an edge`))) probes.push(`planted line-chord-unconstrained (the hole ear-clipped whole): v ${chordless.kept ? 'kept' : 'removed'}, refused as ${JSON.stringify(chordless.said.slice(0, 1))} — the check after the structure does not name it`);
+          if (unchecked.kept || unchecked.lost.length === 0) probes.push(`planted line-join-unchecked: v ${unchecked.kept ? 'kept' : 'removed'}, unjoined ${JSON.stringify(unchecked.lost)} — the plant is not seen`);
+          lines.push(`the vee ${a}–${v}–${c} over w ${w} (protected): v kept, refused ${plain.said.length} time(s) as "${plain.said[0]?.slice(0, 120)}"; with the hole ear-clipped whole, refused by the edge check as "${chordless.said[0]?.slice(0, 90)}"; with neither, v removed and ${unchecked.lost.join(', ')} left unjoined`);
+        }
+        const held = probes.length === 0;
+        say(
+          'MQ168_A_STEP_THAT_WOULD_LEAVE_TWO_CONSECUTIVE_KEPT_LINE_VERTICES_UNJOINED_IS_REFUSED_BY_NAME',
+          held,
+          probeDetail(held, probes, lines.join('; ')),
+          'issue #1326, §11: consecutive kept line vertices are result edges — the hole a line vertex leaves is cut along its chord, refused by name when the chord is not a diagonal of it, and the edge check after the structure names what that misses, as protect (a) does',
+        );
+      }
+
+      // --- MQ169: line runs under the boundaryRuns opt-in — one step each, kind 'line-run'; none without the opt-in ---
+      {
+        const probes: string[] = [];
+        const maxVertices = 4;
+        const withRuns = lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)], boundaryRuns: { maxVertices } });
+        const without = lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)] });
+        const ops = (r: MeshReductionResult): AcceptedOperation[] => r.report.candidates[0]?.changes?.acceptedAt ?? [];
+        const runs = lnRun(withRuns);
+        const singles = lnRun(without);
+        const lineRuns = ops(runs).filter((o) => o.kind === 'line-run');
+        const position = new Map(ring.map((v, k) => [v, k]));
+        let detail = '';
+        if (runs.mesh === null || singles.mesh === null) probes.push('no mesh');
+        else {
+          if (lineRuns.length === 0) probes.push('no line run was accepted');
+          for (const o of lineRuns) {
+            const at = o.sourceVertices.map((v) => position.get(v));
+            const inOrder = at.every((k, m) => k !== undefined && (m === 0 || (k - at[m - 1]! + ring.length) % ring.length >= 1));
+            if (o.count !== o.sourceVertices.length || o.count < 2 || o.count > maxVertices || !inOrder || !o.sourceVertices.every((v) => runs.mesh!.indexMap[v] === null)) probes.push(`line run ${JSON.stringify(o)}: count, listed order or removal wrong`);
+          }
+          if (unjoined(runs.mesh, ring, true).length > 0 || lineRows(runs.report)[0]?.state !== 'pass') probes.push(`with runs: unjoined ${unjoined(runs.mesh, ring, true).join(', ')}, ${mqSay(lineRows(runs.report)[0])}`);
+          if (ops(singles).some((o) => o.kind === 'line-run' || o.count !== 1)) probes.push('without the opt-in an operation is not a single removal');
+          const split = lnRun(withRuns, 'run-split-per-vertex');
+          if (!ops(split).every((o) => o.kind !== 'line-run')) probes.push('planted run-split-per-vertex: a line-run entry survived');
+          else if (ops(split).length === ops(runs).length) probes.push('planted run-split-per-vertex: acceptedAt has as many entries as the unplanted run — the split is not seen');
+          const leaked = lnRun(without, 'runs-without-opt-in');
+          if (!ops(leaked).some((o) => o.kind === 'line-run')) probes.push('planted runs-without-opt-in: no line run tried without the opt-in — the plant is not seen');
+          detail = `maxVertices ${maxVertices}: ${lineRuns.length} line run(s) accepted (${lineRuns.map((o) => `${o.count} at step ${o.step}`).join(', ')}), every one counted once, its vertices removed in listed order; ${runs.mesh.points.length} vertices, ${keptOf(runs.mesh, ring).length} line vertices kept and joined, ${mqSay(lineRows(runs.report)[0])}; without the opt-in ${ops(singles).length} single removals and no run (${singles.mesh.points.length} vertices); planted: split per vertex ${ops(split).length} entries, runs without the opt-in ${ops(leaked).filter((o) => o.kind === 'line-run').length} line run(s)`;
+        }
+        const held = probes.length === 0;
+        say(
+          'MQ169_LINE_RUNS_UNDER_THE_BOUNDARY_RUNS_OPT_IN_ARE_ONE_STEP_EACH_KIND_LINE_RUN_AND_NONE_IS_TRIED_WITHOUT_IT',
+          held,
+          probeDetail(held, probes, detail),
+          'issue #1326, §11: a run of consecutive kept line vertices replaced by one chord is one step under the existing boundaryRuns opt-in — the setting is the longest chord a pass tries, not a property of the outline — and counted once in acceptedAt',
+        );
+      }
+
+      // --- MQ170: the Delaunay post-pass flips no line edge ---
+      {
+        const probes: string[] = [];
+        // A straight line along row 1 through a vertex with only its four axis neighbours: removing it leaves a diamond
+        // cut by the line's chord, an edge the Delaunay criterion would flip (the angles opposite it sum past π).
+        const i = findColumn(1, (k) => !joined(gridAt(k, 1), gridAt(k - 1, 0)) && !joined(gridAt(k, 1), gridAt(k + 1, 0)) && !joined(gridAt(k, 1), gridAt(k - 1, 2)) && !joined(gridAt(k, 1), gridAt(k + 1, 2)));
+        const a = gridAt(i - 1, 1);
+        const v = gridAt(i, 1);
+        const c = gridAt(i + 1, 1);
+        const up = lattice8.mesh.points[gridAt(i, 0)];
+        const down = lattice8.mesh.points[gridAt(i, 2)];
+        const pa = lattice8.mesh.points[a];
+        const pc = lattice8.mesh.points[c];
+        const angle = (o: MqPt): number => Math.abs(Math.atan2(pa[1] - o[1], pa[0] - o[0]) - Math.atan2(pc[1] - o[1], pc[0] - o[0]));
+        const sum = angle(up) + angle(down);
+        const others = lattice8.mesh.points.map((_, k) => k).filter((k) => k !== v);
+        const rowLine: NamedLine = { name: 'row', vertices: [a, v, c], closed: false, maxDeviation: BLINK_BOUND };
+        const pass = (r: MeshReductionResult): Retriangulation | undefined => r.report.candidates[0]?.changes?.retriangulation;
+        const withLine = lnRun(lnInput(lattice8.mesh, { vertices: others }, null, { lines: [rowLine], retriangulate: 'delaunay' }));
+        const noLine = lnRun(lnInput(lattice8.mesh, { vertices: others }, null, { retriangulate: 'delaunay' }));
+        const planted = lnRun(lnInput(lattice8.mesh, { vertices: others }, null, { lines: [rowLine], retriangulate: 'delaunay' }), 'line-flips-unguarded');
+        const ringRun = lnRun(lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)], retriangulate: 'delaunay' }));
+        const lostOf = (r: MeshReductionResult, vs: readonly number[], closed: boolean): string[] => (r.mesh === null ? ['(no mesh)'] : unjoined(r.mesh, vs, closed));
+        if (i === -1 || !(sum > Math.PI)) probes.push(`no straight line over a four-neighbour vertex whose chord is not locally Delaunay (column ${i}, opposite angles ${sum})`);
+        if (withLine.mesh?.indexMap[v] !== null || lostOf(withLine, [a, v, c], false).length > 0 || pass(withLine)?.taken !== true) probes.push(`with the line: v ${withLine.mesh?.indexMap[v] === null ? 'removed' : 'kept'}, unjoined ${lostOf(withLine, [a, v, c], false).join(', ')}, the pass ${JSON.stringify(pass(withLine))?.slice(0, 80)}`);
+        if (!(noLine.mesh?.indexMap[v] === null && lostOf(noLine, [a, v, c], false).length > 0)) probes.push('without the line the pass keeps the chord, so it is not an edge the pass would flip — the control shows nothing');
+        if (lostOf(planted, [a, v, c], false).length === 0) probes.push('planted line-flips-unguarded: the chord survives — the plant is not seen');
+        if (lostOf(ringRun, ring, true).length > 0 || pass(ringRun)?.taken !== true) probes.push(`the blink's ring under the pass: unjoined ${lostOf(ringRun, ring, true).join(', ')}, ${JSON.stringify(pass(ringRun))?.slice(0, 80)}`);
+        const held = probes.length === 0;
+        say(
+          'MQ170_THE_DELAUNAY_POST_PASS_FLIPS_NO_LINE_EDGE',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the line ${a}–${v}–${c} thinned to its chord (opposite angles ${((sum * 180) / Math.PI).toFixed(3)}°): with the line the pass flips ${pass(withLine)?.flips} and the chord stays; without it, and planted line-flips-unguarded, the pass flips ${pass(noLine)?.flips} / ${pass(planted)?.flips} and the chord is lost; the blink's ring under the pass: ${pass(ringRun)?.flips} flip(s), every kept line edge kept`,
+          ),
+          'issue #1326, §11: the post-pass holds every edge between consecutive kept line vertices as it holds a protected edge',
+        );
+      }
+
+      // --- MQ171: a vertex two lines list — a crossing or a shared run's end — is kept ---
+      {
+        const probes: string[] = [];
+        // The run's end: lines one and two share p–x and part at x, one straight on to q, two down to r, whose chord p–r is
+        // a lattice edge — so x is removable unless the shared vertex is kept.
+        const i = findColumn(1, (k) => joined(gridAt(k - 1, 1), gridAt(k, 2)) && !joined(gridAt(k, 1), gridAt(k - 1, 2)) && !joined(gridAt(k, 1), gridAt(k + 1, 2)));
+        const p = gridAt(i - 1, 1);
+        const x = gridAt(i, 1);
+        const q = gridAt(i + 1, 1);
+        const r = gridAt(i, 2);
+        const loose = Math.hypot(gx[i + 1] - gx[i - 1], gy[2] - gy[0]);
+        const runEnd: NamedLine[] = [
+          { name: 'one', vertices: [p, x, q], closed: false, maxDeviation: loose },
+          { name: 'two', vertices: [p, x, r], closed: false, maxDeviation: loose },
+        ];
+        // The crossing: a horizontal and a vertical line through one vertex two columns on.
+        const k = i + 2;
+        const xc = gridAt(k, 1);
+        const crossing: NamedLine[] = [
+          { name: 'across', vertices: [gridAt(k - 1, 1), xc, gridAt(k + 1, 1)], closed: false, maxDeviation: loose },
+          { name: 'along', vertices: [gridAt(k, 0), xc, gridAt(k, 2)], closed: false, maxDeviation: loose },
+        ];
+        const keptAt = (lines: NamedLine[], at: number, plant: ReductionPlant | null): { kept: boolean; lost: string[] } => {
+          const out = lnRun(lnInput(lattice8.mesh, {}, null, { lines }), plant);
+          return { kept: out.mesh !== null && out.mesh.indexMap[at] !== null, lost: out.mesh === null ? ['(no mesh)'] : lines.flatMap((l) => unjoined(out.mesh!, l.vertices, l.closed)) };
+        };
+        const run = keptAt(runEnd, x, null);
+        const runPlanted = keptAt(runEnd, x, 'line-crossings-unkept');
+        const cross = keptAt(crossing, xc, null);
+        const crossPlanted = keptAt(crossing, xc, 'line-crossings-unkept');
+        if (i === -1 || xc < 0) probes.push('no run end or crossing found on the lattice');
+        if (!run.kept || run.lost.length > 0) probes.push(`the run's end: x ${run.kept ? 'kept' : 'removed'}, unjoined ${run.lost.join(', ')}`);
+        if (!cross.kept || cross.lost.length > 0) probes.push(`the crossing: ${cross.kept ? 'kept' : 'removed'}, unjoined ${cross.lost.join(', ')}`);
+        if (runPlanted.kept) probes.push('planted line-crossings-unkept: the run\'s end is still kept — the plant is not seen');
+        const held = probes.length === 0;
+        say(
+          'MQ171_A_VERTEX_TWO_LINES_LIST_A_CROSSING_OR_A_SHARED_RUNS_END_IS_KEPT',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `the run's end ${x} (lines one and two share ${p}–${x}) kept, both chains joined; the crossing ${xc} kept; planted line-crossings-unkept: the run's end ${runPlanted.kept ? 'kept' : 'removed'} (each line's chord through it is an edge the hole can hold), the crossing ${crossPlanted.kept ? 'kept' : 'removed'} (two chords that cross cannot both be edges, so its own chords keep it whatever is protected)`,
+          ),
+          'issue #1326, §11: a vertex two lines list is where their chains meet — removing it would make them disagree about where — so it is kept rather than resolved',
+        );
+      }
+
+      // --- MQ172: a line vertex on the hull obeys the stricter of the two rules; protect.hull keeps it outright ---
+      {
+        const probes: string[] = [];
+        // v on the hull's top side, c its hull neighbour, a diagonally inside: v's line deviation is its distance from a–c.
+        const i = findColumn(0, (k) => joined(gridAt(k, 0), gridAt(k - 1, 1)) && joined(gridAt(k, 0), gridAt(k + 1, 0)) && gridAt(k, 0) < lattice8.mesh.hull);
+        const v = gridAt(i, 0);
+        const a = gridAt(i - 1, 1);
+        const c = gridAt(i + 1, 0);
+        const dev = mqPointSegment(lattice8.mesh.points[v], lattice8.mesh.points[a], lattice8.mesh.points[c]);
+        const attempt = (bound: number | null, protect: Partial<ProtectedFeatures>, plant: ReductionPlant | null): { removed: boolean; said: string[]; lost: string[] } => {
+          const said: string[] = [];
+          const lines = bound === null ? {} : { lines: [{ name: 'rim', vertices: [a, v, c], closed: false, maxDeviation: bound }] };
+          const out = lnRun(lnInput(lattice8.mesh, protect, null, lines), plant, (rec) => {
+            if (rec.sourceVertices.includes(v)) said.push(rec.refusedBy === null ? 'taken' : rec.refusedBy());
+          });
+          return { removed: out.mesh !== null && out.mesh.indexMap[v] === null, said, lost: out.mesh === null ? ['(no mesh)'] : unjoined(out.mesh, [a, v, c], false) };
+        };
+        const free = attempt(null, {}, null);
+        const tight = attempt(dev / 2, {}, null);
+        const room = attempt(dev * 2, {}, null);
+        const hull = attempt(dev * 2, { hull: true }, null);
+        const plantedTight = attempt(dev / 2, {}, 'line-rows-unread');
+        if (i === -1) probes.push('no hull vertex with a diagonal line found');
+        if (!free.removed) probes.push('without the line the hull vertex is kept, so the boundary row alone does not let it go — the control shows nothing');
+        if (tight.removed || tight.said.length === 0 || !tight.said.every((s) => s.startsWith('MQ_LINE_DEVIATION[line rim]'))) probes.push(`the line's bound under v's deviation: v ${tight.removed ? 'removed' : 'kept'}, refused as ${JSON.stringify(tight.said.slice(0, 1))}`);
+        if (!room.removed || room.lost.length > 0) probes.push(`the line's bound over v's deviation: v ${room.removed ? 'removed' : 'kept'}, unjoined ${room.lost.join(', ')}`);
+        if (hull.removed || hull.said.length > 0) probes.push(`protect.hull: v ${hull.removed ? 'removed' : 'kept'}, ${hull.said.length} attempt(s) on it`);
+        if (!plantedTight.removed) probes.push('planted line-rows-unread: v still kept under the tight bound — the plant is not seen');
+        const held = probes.length === 0;
+        say(
+          'MQ172_A_LINE_VERTEX_ON_THE_HULL_LEAVES_ONLY_WHEN_BOTH_ROWS_HOLD_AND_PROTECT_HULL_KEEPS_IT_OUTRIGHT',
+          held,
+          probeDetail(
+            held,
+            probes,
+            `hull vertex ${v} on the line ${a}–${v}–${c}, ${dev.toFixed(6)} px from its chord: no line — removed (the boundary row passes it); the line at ${(dev / 2).toFixed(6)} — kept, refused as "${tight.said[0]?.slice(0, 80)}"; at ${(dev * 2).toFixed(6)} — removed, the chord a result edge; protect.hull — kept, never attempted; planted line-rows-unread at the tight bound — ${plantedTight.removed ? 'removed' : 'kept'}`,
+          ),
+          'issue #1326, §11: a vertex on both the hull and a line is held by both rows and both chains — the stricter wins — and protect.hull keeps it outright',
+        );
+      }
+
+      // --- MQ173: lines that touch no step leave every byte as the call without them ---
+      {
+        const probes: string[] = [];
+        const ringEdges = ring.map((v, k): [number, number] => [v, ring[(k + 1) % ring.length]]);
+        const withoutLines = (text: string): string => {
+          const doc = JSON.parse(text) as { effective: Record<string, unknown>; candidates: Array<{ geometry: { rows: Array<{ code: string; state: string }>; summary: Record<string, number> } | null }> };
+          delete doc.effective.lines;
+          delete doc.effective.lineSource;
+          for (const c of doc.candidates) {
+            if (c.geometry === null) continue;
+            c.geometry.rows = c.geometry.rows.filter((r) => r.code !== 'MQ_LINE_DEVIATION');
+            const s = c.geometry.summary;
+            for (const k of Object.keys(s)) s[k] = 0;
+            for (const r of c.geometry.rows) {
+              if (r.state === 'pass') s.pass++;
+              else if (r.state === 'fail') s.fail++;
+              else if (r.state === 'undeclared') s.undeclared++;
+              else if (r.state === 'refused') s.refused++;
+              else s.notMeasurable++;
+            }
+            s.measured = s.pass + s.fail;
+          }
+          return JSON.stringify(doc);
+        };
+        // The line held whole by protect.edges in both calls — so no line vertex is ever a candidate — under every opt-in a line reads.
+        const base = lnInput(lined.mesh, { edges: ringEdges }, BLINK_BOUND, { boundaryRuns: { maxVertices: 4 }, retriangulate: 'delaunay' });
+        const lined_ = { ...base, lines: [ringLine(BLINK_BOUND)] };
+        const plain = lnRun(base);
+        const declared = lnRun(lined_);
+        const sameMesh = JSON.stringify(plain.mesh) === JSON.stringify(declared.mesh);
+        const sameReport = withoutLines(writeMeshQualityReport(plain.report)) === withoutLines(writeMeshQualityReport(declared.report));
+        if (!sameMesh || !sameReport) probes.push(`the reduction with the line declared and held whole: mesh ${sameMesh ? 'identical' : 'differs'}, report without its line row and echo ${sameReport ? 'identical' : 'differs'}`);
+        if (lineRows(declared.report).length !== 1 || (declared.report.effective.lines?.length ?? 0) !== 1) probes.push('the declared call carries no line row or no echo, so the identity compared nothing it adds');
+        // The measurement: the same mesh with and without the line.
+        const m0 = writeMeshQualityReport(measureMeshQuality(lineMeasure(lined.mesh, {})));
+        const m1 = writeMeshQualityReport(measureMeshQuality(lineMeasure(lined.mesh, { lines: [ringLine(BLINK_BOUND)], lineSource: { id: 'lined', mesh: lined.mesh } })));
+        if (withoutLines(m0) !== withoutLines(m1) || m0 === m1) probes.push(`the measurement with the line: ${withoutLines(m0) === withoutLines(m1) ? 'the same without the row, and nothing added' : 'differs beyond the row and the echo'}`);
+        const leaked = lnRun(lined_, 'line-sweep-counts-steps');
+        if (withoutLines(writeMeshQualityReport(leaked.report)) === withoutLines(writeMeshQualityReport(plain.report))) probes.push('planted line-sweep-counts-steps: the report is still the call\'s without the line — the comparison does not see a line path that leaves a trace');
+        const held = probes.length === 0;
+        say(
+          'MQ173_A_LINE_NO_STEP_TOUCHES_LEAVES_THE_MESH_AND_EVERY_REPORT_BYTE_BUT_ITS_ROW_AND_ECHO_AS_THE_CALL_WITHOUT_IT',
+          held,
+          probeDetail(held, probes, `the blink's ring held whole by protect.edges, under boundaryRuns and the post-pass: with the line declared the mesh is identical and the report differs by its one row and its echo only (${writeMeshQualityReport(declared.report).length - writeMeshQualityReport(plain.report).length} bytes); a measurement likewise; planted line-sweep-counts-steps: caught`),
+          'issue #1326: left out, `lines` is the call it was — measured byte for byte against main on the recorded inputs out of suite (docs/MESH_REDUCTION.md §11); in suite, the line machinery is held to leave no trace on a step it does not touch',
+        );
+      }
+
+      // --- MQ174: a replay with lines is the full run's prefix, byte for byte ---
+      {
+        const probes: string[] = [];
+        const input = (over: Partial<MeshReductionInput> = {}): MeshReductionInput => lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)], boundaryRuns: { maxVertices: 4 }, ...over });
+        const full = lnRun(input());
+        const ops = full.report.candidates[0]?.changes?.acceptedAt ?? [];
+        const lineRunAt = ops.map((o, k) => (o.kind === 'line-run' ? k + 1 : 0)).filter((k) => k > 0);
+        const sample = [...new Set([1, 2, ...lineRunAt, ...lineRunAt.map((k) => k + 1), ops.length])].filter((k) => k >= 1 && k <= ops.length).sort((x, y) => x - y);
+        const replayAll = (plant: ReductionPlant | null): string[] => {
+          const parted: string[] = [];
+          for (const k of sample) {
+            if (parted.length > 0) break;
+            const r = lnRun(input({ stopAfterAccepted: k }), plant);
+            const cut = lnRun(input({ budget: { maxCandidates: ops[k - 1].step } }));
+            const t = r.report.termination;
+            if (JSON.stringify(r.mesh) !== JSON.stringify(cut.mesh)) parted.push(`step ${k}: the replayed mesh is not the budget cut's`);
+            else if (t?.reason !== 'replayed-to-accepted-step' || t.acceptedSteps !== k) parted.push(`step ${k}: termination ${JSON.stringify(t)}`);
+            else if (JSON.stringify(r.report.candidates[0]?.changes?.acceptedAt) !== JSON.stringify(ops.slice(0, k))) parted.push(`step ${k}: acceptedAt is not the full run's first ${k}`);
+          }
+          return parted;
+        };
+        if (lineRunAt.length === 0) probes.push('the full run took no line run, so the replay crosses none');
+        probes.push(...replayAll(null));
+        const early = replayAll('stop-one-early');
+        if (early.length === 0) probes.push('planted stop-one-early: every sampled replay still matched — the comparison does not see a stop on the wrong step');
+        const held = probes.length === 0;
+        say(
+          'MQ174_A_REPLAY_WITH_LINES_IS_THE_FULL_RUNS_PREFIX_BYTE_FOR_BYTE_ACROSS_LINE_RUNS',
+          held,
+          probeDetail(held, probes, `the blink's ring under boundaryRuns: ${ops.length} accepted operations, line runs at k = ${lineRunAt.join(', ')}; stopAfterAccepted k is the budget cut at acceptedAt[k − 1] with the full run's first k entries at k = ${sample.join(', ')}; planted stop-one-early: ${early[0]?.slice(0, 80)}`),
+          'issue #1326: a line run is one accepted operation and one unit of stopAfterAccepted, so the replay promise (#1268) holds across it',
+        );
+      }
+
+      // --- MQ175: the line rows read before the structure decide nothing the full path would not ---
+      {
+        const probes: string[] = [];
+        const bytesOf = (r: MeshReductionResult): string => `${JSON.stringify(r.mesh)}\n${writeMeshQualityReport(r.report)}`;
+        const hullI = findColumn(0, (k) => joined(gridAt(k, 0), gridAt(k - 1, 1)) && joined(gridAt(k, 0), gridAt(k + 1, 0)) && gridAt(k, 0) < lattice8.mesh.hull);
+        const subjects: Array<[string, MeshReductionInput]> = [
+          ['the ring at 1 px', lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)] })],
+          ['the ring at 1 px, runs', lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)], boundaryRuns: { maxVertices: 4 } })],
+          ['the ring at 0.5 px, veto absent', lnInput(lined.mesh, {}, null, { lines: [ringLine(BLINK_BOUND / 2)] })],
+          ['a hull vertex on a line, its bound under its deviation', lnInput(lattice8.mesh, {}, null, { lines: [{ name: 'rim', vertices: [gridAt(hullI - 1, 1), gridAt(hullI, 0), gridAt(hullI + 1, 0)], closed: false, maxDeviation: BLINK_BOUND }] })],
+        ];
+        let early = 0;
+        const caught: string[] = [];
+        for (const [label, input] of subjects) {
+          let own: string;
+          try {
+            own = bytesOf(lnRun(input, null, (rec) => {
+              if (rec.decidedByFloor && rec.refusedBy !== null && rec.refusedBy().startsWith('MQ_LINE_DEVIATION')) early++;
+            }));
+          } catch (err) {
+            probes.push(`${label}: reading an early refusal threw — ${(err as Error).message.slice(0, 120)}`);
+            continue;
+          }
+          if (own !== bytesOf(lnRun(input, 'measure-every-candidate'))) probes.push(`${label}: the run that reads the line rows first differs from the one that measures every candidate`);
+          try {
+            caught.push(`${label}: ${bytesOf(lnRun(input, 'line-early-short')) === own ? 'the same bytes' : 'bytes differ'}`);
+          } catch (err) {
+            caught.push(`${label}: threw — ${(err as Error).message.slice(0, 80)}`);
+          }
+        }
+        if (early === 0) probes.push('no attempt was decided by a line row before the structure, so the identity compared nothing it changed');
+        if (caught.every((c) => c.endsWith('the same bytes'))) probes.push(`the plant — the early reading half a pixel short of the bound — wrote the same bytes on every subject (${caught.join('; ')})`);
+        const held = probes.length === 0;
+        say(
+          'MQ175_CONTROL_THE_LINE_ROWS_READ_BEFORE_THE_STRUCTURE_REFUSE_ONLY_WHAT_THE_FULL_PATH_REFUSES_AND_CHANGE_NO_BYTE',
+          held,
+          probeDetail(held, probes, `${subjects.length} subjects byte-identical with the early reading and with every candidate measured; ${early} attempt(s) refused by a line row before any structure, each named as the full path names it; the plant: ${caught.join('; ')}`),
+          'issue #1326, §11\'s floor clause: a line row reads only the line vertices\' positions, which an attempt fixes before anything is built, so it is read whole there rather than bounded — the extension of the deviation floor is the row itself, held verdict-identical here',
+        );
+      }
     }
   }
 

@@ -410,6 +410,10 @@ export interface ReductionTargets {
   `sourceCounts` null, `REDUCE_SOURCE_FAILS_ITS_ART_BOUNDS` as `invalid-input`.
   The line between them: a malformed input is thrown, a well-formed request
   that cannot be met is the report's termination with no mesh (`MQ23`).
+  [implemented, #1326] `REDUCE_INPUT_LINE`: a malformed `lines` (or, on a
+  measurement, `lines` without `lineSource` or `lineSource` without `lines`),
+  thrown by both operations before any work, in the same words (`validateLines`;
+  §11 *The contract*, `MQ166`).
 - **Correction 3 — source admissibility is not target density.**
   [implemented, #1224] `reduceMesh` measures the source with `sourceBounds` as
   its art fit and refuses on `MQ_COVERAGE`, the 8-connected `MQ_OVERSHOOT`,
@@ -513,7 +517,7 @@ export interface AcceptedOperation {
   /** The attempt number — `candidatesTried` as it stood when the operation was taken, 1-based; strictly ascending. */
   step: number;
   /** A refinement insertion, one source vertex removed, or a boundary run replaced by one chord (§8). */
-  kind: 'insertion' | 'removal' | 'boundary-run';
+  kind: 'insertion' | 'removal' | 'boundary-run' | 'line-run'; // 'line-run': #1326, §11
   /** Vertices inserted (an insertion: 1) or removed (a removal: 1; a boundary run: 2 or more). */
   count: number;
   /** The source indices removed — each `null` in `indexMap` — in outline order for a run; `[]` for an insertion. */
@@ -1106,6 +1110,7 @@ defined here, with these readings of what the table leaves open:
 | `MQ_OVERSHOOT` | its overshoot, against the filled silhouette as defined in the next bullet | px | yes |
 | `MQ_UNDERCUT` | the furthest **uncovered** art pixel from the nearest covered pixel, by the same exact distance transform | px | yes |
 | `MQ_BOUNDARY_DEVIATION` | [agreed, P13] symmetric Hausdorff distance between the reduced hull polygon and the **source** hull polygon, exact on the polygons — the required reduction-preservation bound | px | no |
+| `MQ_LINE_DEVIATION` | [implemented, #1326] per named line (`object.line`, `object.region` null): the same exact symmetric Hausdorff distance between the line's kept chain and its source polyline — open lines as open polylines — against the line's `maxDeviation`; required; written only when `lines` is declared, in declared order (§11) | px | no |
 | `MQ_TRACE_DEVIATION` | [agreed, P13] the same distance against the **traced** silhouette outline — a diagnostic, never required; `not-measurable` with the tracer's refusal as its reason when tracing is refused | px | no |
 | `MQ_HOLES` | transparent pixels inside the hull, reported (spanned, drawing nothing) | count | yes |
 | `MQ_ISLANDS` | art islands the mesh joins, and the bridge area holding no art | count | yes |
@@ -5723,6 +5728,12 @@ largest search, Ls2 on demo/bottomwear, tested 574,280 chords in 26 s.
 
 ## 11. Interior feature lines (#1326)
 
+> **Stage B ([#1326](https://github.com/firejune/rigc/issues/1326), released by the HQ comment of 2026-10-10 with a
+> narrower scope: no builder, nothing on `SourceMesh`) implements *The contract* below** — each clause marked
+> **[implemented, #1326]** with what the tree does, controls `MQ166`–`MQ175`. Left out, `lines` changes no byte:
+> measured against `d0f289b` on the 18 inputs of the stage-D1 record (as recorded, under the three opt-ins together,
+> and each source measured — 54 of 54) and on Stage A's ten fixture calls (10 of 10), identical.
+>
 > **Stage A of [#1326](https://github.com/firejune/rigc/issues/1326): measurement and contract, no mechanism.** No
 > row, refusal, bound, budget, order, termination or emitted byte changes here. Four controls hold the current API's
 > readings on a fixture built from rig-c alone (`MQ162`–`MQ165`, `mesh-quality`, *Stage A controls*). Marks as in
@@ -5781,14 +5792,19 @@ bounds drift from the rule; and with one corner unprotected the kept chain sits 
 corner while the edge moves 0.570001 px under the veto — a line's geometric deviation and its displacement are
 different quantities, and neither row today reads the first.
 
-### The contract [proposal]
+### The contract [proposal; implemented, #1326]
 
-**Where a line lives — on the reduction input, not on `SourceMesh`.** `MeshReductionInput.lines?: NamedLine[]`, opt-in,
+**Where a line lives — on the reduction input, not on `SourceMesh`.** [implemented, #1326 — `NamedLine`,
+`MeshReductionInput.lines`, `MeshMeasureInput.lines`; echoed as `effective.lines`] `MeshReductionInput.lines?: NamedLine[]`, opt-in,
 left out = the call it was before the field. A line is a declaration about how a reduction may change a source, the
 same kind of thing as `protect` and `boundaryRuns`; `SourceMesh` is the mesh, whose fields every measurement and the
 comparison read, and a field there would either be read by none of them or change what they hash
 (`sourceMeshDigest`). The measurement takes the same array on `MeshMeasureInput` (as it takes `referenceHull`), so a
-`measure` can report the row on a candidate against its source.
+`measure` can report the row on a candidate against its source. **[implemented, #1326]** with one field the clause
+leaves implicit: the indices are into the source, which a measurement is not otherwise handed, so it takes
+`lineSource: { id, mesh }` beside `lines` — required with it and refused without it, echoed by id and
+`sourceMeshDigest` as `skinning.source` is — and reads a line vertex as kept when the measured mesh has a vertex at its
+exact position (a reduction never moves a survivor, P19). So one `lines` value serves both calls unchanged.
 
 ```ts
 interface NamedLine {
@@ -5812,6 +5828,16 @@ segments cross each other, or cross another line's, other than at a vertex both 
 not). A crossing is never resolved by the reducer: two lines that cross **must list the crossing as one shared source
 vertex**, and two lines that overlap along a run (the sample face's eyewhites and lashes share 5 and 10 unit pixel
 edges, below) must both list every vertex of the run. A self-crossing is refused rather than split.
+**[implemented, #1326]** in that order (`validateLines`), with three readings the clause leaves open: `maxDeviation`
+left out and `null` are each refused naming themselves (a line has no declared-absent form — a line held whole is
+`protect.edges`); `null` for `lines` itself is refused as `boundaryRuns: null` is; and one rule is added — **a line
+vertex whose position another source vertex shares** is refused, because the measurement reads a kept vertex by its
+position and two vertices at one point would make the two operations disagree. The measurement refuses under the
+same code and in the same words: it already refuses under the `REDUCE_` family (`REDUCE_MASK_SIZE`,
+`REDUCE_UV_RANGE`), and no `MEASURE_` code exists, so a second family would split one rule across two names.
+Since every listed pair must be a source edge, "crossing" and "off the outline" can only fire on a source whose edges
+cross or leave its hull — a folded one; both are checked anyway, because validation runs before the admission
+measurement that would refuse such a source. `MQ166` sees each rule red.
 
 **`MQ_LINE_DEVIATION`**, one row per line, `object.region` null and `object.line` the name, `unit: 'px'`: the
 **symmetric Hausdorff distance between the kept chain and the source polyline**, by the same function the boundary row
@@ -5819,7 +5845,13 @@ uses (`hausdorff` / `directedHausdorff`, exact to `HAUSDORFF_TOLERANCE` by bisec
 polyline's edge distances — not sampled), with an open line compared as an open polyline (no closing edge on either
 side). The kept chain is the line's surviving vertices in their listed order. Drawing px: the row is geometric, so,
 like `MQ_BOUNDARY_DEVIATION` and unlike the raster rows, it involves no `pageScale` conversion. Required, gating
-like the boundary row. Why that distance:
+like the boundary row. **[implemented, #1326]** as written (`lineDeviation`, `lineDeviationRows`): `hausdorff` gained
+an open-polyline reading (no closing edge; one point is its own degenerate edge), the closed reading edge for edge as
+before; the value is on the `r6` grid; the worst sample is the chain edge it belongs to, in the measured mesh's
+indices; a mesh that keeps no vertex of a line reads `not-measurable`. Rows sort by code then region, and lines tie
+there, so the stable sort leaves them in declared order (A18). A step's rows are read beside the measurement by the
+same function rather than handed to it — validating the lines on every step would cost one O(segments²) crossing check
+per candidate for nothing. Why that distance:
 
 - One-sided, from the source polyline's samples to the kept chain, is what the issue's comment says the boundary row
   does. **It does not**: `MQ_BOUNDARY_DEVIATION` is two-sided and exact. For a reduction the two sides happen to agree
@@ -5834,23 +5866,67 @@ like the boundary row. Why that distance:
 - A line's consecutive kept vertices are **edges of the result** — a step that would leave two consecutive kept line
   vertices unjoined is refused, as a protected edge is today, and the Delaunay post-pass flips no line edge. A line
   vertex may be removed only by a step whose result keeps the row within `maxDeviation` and joins its two kept
-  neighbours by an edge — the line's own form of the hull's single removal.
+  neighbours by an edge — the line's own form of the hull's single removal. **[implemented, #1326]** The hole a line
+  vertex leaves is cut along each chord its lines need before it is ear-clipped (`chordPieces`), so the join does not
+  hang on which ear the clipper takes; a chord that is not a diagonal of the hole is refused by name (`line "…" (a):
+  … cannot be joined`), and the edge check after the structure (`line "…" (a): … no longer joined`) names anything
+  that misses (`MQ168`). The post-pass holds every kept line edge as a protected edge (`MQ170`). An open line's two
+  ends are kept — a single removal there has one neighbour and no chord — and a closed line keeps three.
 - The deviation floor (`earlyFloor`): its argument carries over unchanged — the backward half of the row evaluates
   every removed line vertex's distance to the kept chain exactly, so the furthest removed line vertex from the chain
   the attempt would leave is a lower bound on the row, and an attempt whose floor is over the bound is refused before
-  any structure is built, named `MQ_LINE_DEVIATION`.
+  any structure is built, named `MQ_LINE_DEVIATION`. **[implemented, #1326] — as the row itself, not a bound on it.**
+  The row reads only the line vertices' positions, which an attempt fixes before anything is built, so the tree reads
+  the whole row of every line the attempt touches there; a refusal is a thunk that, read, names what the full path
+  names (structure first). Verdict-identical by construction, and measured: every result byte-identical against
+  every candidate measured (`measure-every-candidate`) on four blink subjects in suite (`MQ175`) and on the sample
+  face, singles and runs, out of suite.
 - `boundaryRuns`: a run of 2 to `maxVertices` consecutive kept line vertices replaced by one chord, as one step,
   counted once in `acceptedAt` (`kind: 'line-run'`), is proposed on the same argument as the hull's — a line's
   single removals refuse one by one where a run would pass (a run of collinear-ish vertices whose chord is within the
   bound) — and governed by the same opt-in rather than a second one, since the setting is the longest chord a pass
-  tries, not a property of the outline.
+  tries, not a property of the outline. **[implemented, #1326]** After each pass's boundary runs and before its single
+  removals: lines in declared order, starts in listed order, runs longest first, never an end or a protected vertex,
+  never leaving a closed line under three (`MQ169`; replay across them, `MQ174`).
 - A line touching the outline: the shared vertex is a hull vertex and a line vertex. Both rules apply and **the
   stricter wins** — it can leave only by a step that keeps both rows in bound and both chains joined; `protect.hull`
   keeps it outright. A line vertex also in `protect.vertices` is kept; the line's chain still reads it.
+  **[implemented, #1326]** (`MQ172`).
 - A line's vertex that is a crossing or a run end (listed by two lines) is kept: removing it would make the two chains
-  disagree about where they meet.
+  disagree about where they meet. **[implemented, #1326]** (`MQ171`) — measured, the protection is load-bearing at a run's end
+  only: at a true crossing the two chords cross, so no triangulation of the hole holds both and the chord rule keeps
+  the vertex by itself.
 - **`protect.edges` keeps its present meaning**: a listed pair survives as an edge with both ends kept. A caller who
-  wants a line held whole lists its edges there, as today; `lines` is for a line that may thin.
+  wants a line held whole lists its edges there, as today; `lines` is for a line that may thin. **[implemented,
+  #1326]** — unchanged; a line that no step touches leaves every byte but its row and echo (`MQ173`).
+
+### Stage B — measured [measured, #1326]
+
+The new input on the two cases, beside Stage A's readings, at the consumer's policies with the skinning veto at
+1 px and `maxDeviation` 1 px; the floor is the yardstick, not a promise — no minimality is claimed for the chain.
+Edge = the displacement against the dense reference (`edgeDisplacement`).
+
+| case: build | line vertices | `MQ_LINE_DEVIATION` | result V | edge vs dense, px |
+| --- | --- | --- | --- | --- |
+| blink: (b) the line as `protect.edges` | 18 → 18 | — | 27 | 0.000002 |
+| blink: (c) its corners in `protect.vertices` | 18 → 4 (3 of 4 chain edges result edges) | — | 13 | 0.000001 |
+| blink: **`lines`** | 18 → **4** (the corners, 4 of 4 joined) | 0 | **13** | **0** |
+| blink: `lines` + `boundaryRuns` 4 | 18 → 4 | 0.999133 | 13 | 0.570001 |
+| blink: floor chain (4) as edges (Stage A) | 4 | — | 16 | 0.950002 |
+| face: (b) traced rings as `protect.edges` | 436 → 436 | — | 511 | 0 |
+| face: (c) floor vertices in `protect.vertices` | 436 → 62 | — | 134 | 0.964237 |
+| face: **`lines`** | 436 → **25 + 26 + 10 = 61** (61 of 61 joined) | 1, 1, 1 | **133** | **1.009629** |
+| face: `lines` + `boundaryRuns` 8 | 436 → 23 + 24 + 9 = 56 | 1, 1, 1 | 123 | 1.009629 |
+| face: `lines`, veto absent | 436 → 58 | 1, 1, 1 | 100 | 2.333333 |
+| face: `lines` at 0.75 px | 436 → 98 | 0.73, 0.73, 0.74 | 173 | 1 |
+| face: floor chains (19 + 21 + 7 = 47) as edges (Stage A) | 47 | — | 123 | 1.014074 |
+| face: five lines, the eyewhites sharing 32 vertices and 15 segments with the lashes | 602 → 126 | 1 × 5 | 169 | 1.009629 |
+
+The line's own bound does what it says and no more — Stage A's finding stands: the chain sits within 1 px and the
+edge reads 1.0096 px, so the motion bound remains the consumer's to derive (HQ ruling on #1326). The eyewhites run
+only on a source that carries them: the consumer's exported ring source holds 9 of 86 and 12 of 80 of their traced
+vertices, and a line declared over those is refused `REDUCE_INPUT_LINE` (a pair that is no source edge); on a scratch
+source whose constraints are the union of all five rings (shared vertices merged by position) they reduce as above.
 
 ### The floor, found from outside [measured, #1326]
 
@@ -6287,6 +6363,29 @@ synthetic blink, the readings §11 tabulates:
   (reading (b); unprotected, line vertices must be removed, so the survival is the protection's)
 - `MQ165_A_LINE_THINNED_THROUGH_PROTECT_VERTICES_IS_BOUNDED_BY_NOTHING_BUT_THE_SKINNING_VETO`
   (reading (c); one corner left out, within the bound with the veto and over it, accepted, without)
+
+Named lines ([#1326](https://github.com/firejune/rigc/issues/1326), stage B, [implemented]) — the blink's lined source
+and lines over its 8 px lattice found by walking the grid; plants `LinePlant` in `ReductionPlant`:
+
+- `MQ166_A_MALFORMED_LINE_IS_REFUSED_REDUCE_INPUT_LINE_NAMING_THE_LINE_THE_INDEX_OR_PAIR_AND_THE_RULE_BEFORE_ANY_WORK`
+  (20 rules, each red on its own malformed input with the rasters never read; the measurement's same words and its
+  own two; a valid ring, a shared run and a measurement refused by nothing)
+- `MQ167_A_LINE_THINS_UNDER_ITS_OWN_BOUND_TO_THE_HOLES_FOUR_CORNERS_JOINED_BY_RESULT_EDGES_AND_MQ_LINE_DEVIATION_READS_ITS_CHAIN`
+  (the row against the test's own two-sided reading, closed and open; plant `line-rows-unread`)
+- `MQ168_A_STEP_THAT_WOULD_LEAVE_TWO_CONSECUTIVE_KEPT_LINE_VERTICES_UNJOINED_IS_REFUSED_BY_NAME`
+  (a vee whose chord runs through a kept vertex; plants `line-chord-unconstrained`, `line-join-unchecked`)
+- `MQ169_LINE_RUNS_UNDER_THE_BOUNDARY_RUNS_OPT_IN_ARE_ONE_STEP_EACH_KIND_LINE_RUN_AND_NONE_IS_TRIED_WITHOUT_IT`
+  (plants `run-split-per-vertex`, `runs-without-opt-in`)
+- `MQ170_THE_DELAUNAY_POST_PASS_FLIPS_NO_LINE_EDGE` (a chord the criterion flips without the line; plant
+  `line-flips-unguarded`)
+- `MQ171_A_VERTEX_TWO_LINES_LIST_A_CROSSING_OR_A_SHARED_RUNS_END_IS_KEPT` (plant `line-crossings-unkept`)
+- `MQ172_A_LINE_VERTEX_ON_THE_HULL_LEAVES_ONLY_WHEN_BOTH_ROWS_HOLD_AND_PROTECT_HULL_KEEPS_IT_OUTRIGHT`
+  (plant `line-rows-unread`)
+- `MQ173_A_LINE_NO_STEP_TOUCHES_LEAVES_THE_MESH_AND_EVERY_REPORT_BYTE_BUT_ITS_ROW_AND_ECHO_AS_THE_CALL_WITHOUT_IT`
+  (plant `line-sweep-counts-steps`; identity with `lines` left out against `d0f289b` is the out-of-suite figure in §11)
+- `MQ174_A_REPLAY_WITH_LINES_IS_THE_FULL_RUNS_PREFIX_BYTE_FOR_BYTE_ACROSS_LINE_RUNS` (plant `stop-one-early`)
+- `MQ175_CONTROL_THE_LINE_ROWS_READ_BEFORE_THE_STRUCTURE_REFUSE_ONLY_WHAT_THE_FULL_PATH_REFUSES_AND_CHANGE_NO_BYTE`
+  (against `measure-every-candidate`; plant `line-early-short`)
 
 The decisions that change behaviour rather than an interface:
 
