@@ -797,6 +797,15 @@ advance), before the player could be seen calling it. It is the agreement
 exception above applied to this entry, and the row says so in place of an
 observation (`REQUESTED_IN_1276`).
 
+🤝 **A third, by the same exception**
+([#1336](https://github.com/firejune/rigc/issues/1336)): the types
+`LocalAdjust`, `AdjustableLocals` and `BoneLocals` — what `TrackOptions.adjust`
+takes, a player's own bone-local value written after the animation's
+timelines and before the world transforms, the constraints and the physics
+step, requested on that issue before the player could call it
+(`REQUESTED_IN_1336`). The row holds no value: the hook is an option of
+`openTrack`, which the row above holds.
+
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
 from the install and calls `readModel` then `poseRawSetup` on the build it

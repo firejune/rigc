@@ -706,6 +706,108 @@ export function posedBones(doc: CompiledDocument, timelines: CoreAnimationTimeli
   });
 }
 
+/**
+ * A player's bone-local adjustment (issue #1336): a function the live track
+ * (`openTrack`'s `adjust`, `./track.ts`) calls once per pose, after the
+ * animation's timelines have posed the bone locals at the step's time and
+ * before the world transforms, the constraints and the physics step — so a
+ * write is what the rest of the step reads: the bone's children, the
+ * attachments drawn through it, every constraint and the physics constraint
+ * stepped on top of it. It is spine-core's "application code" writing
+ * `Bone.pose` between `AnimationState.apply` and `updateWorldTransform`
+ * (`CO50` holds the two equal at tolerance 0).
+ *
+ * - **The view is the step's locals, posed from the setup pose.** Every pose
+ *   of a walk is posed from the setup pose at its time (`./raw.ts`,
+ *   `TrackState`), so a write lives for the pose it was written in and the
+ *   next step's hook reads the timelines' value again, not the write. A
+ *   channel no timeline keys reads its setup value on every step.
+ * - **A bone the hook does not write is untouched**: the timelines' bone
+ *   object as it was, the setup bone itself where nothing keys it. A written
+ *   bone is copied before the write, so the document is never written.
+ * - **A write that is not a finite number is refused by name**, the bone, the
+ *   channel and the value — where the core refuses a non-finite value, by
+ *   name, rather than posing a picture with it (`finite` in `./raw.ts`).
+ */
+export interface BoneLocals {
+  rotation: number;
+  x: number;
+  y: number;
+  scaleX: number;
+  scaleY: number;
+  shearX: number;
+  shearY: number;
+}
+
+/** The locals of a step's bones, by name (`BoneLocals`). */
+export interface AdjustableLocals {
+  /** The document's bones, in its order. */
+  readonly names: readonly string[];
+  /** One bone's locals, read and written in place; a name the document has no bone for is refused by name. */
+  bone(name: string): BoneLocals;
+}
+
+/** What `openTrack`'s `adjust` is: called once per pose with the step's locals (`BoneLocals`). */
+export type LocalAdjust = (locals: AdjustableLocals) => void;
+
+/** The seven channels a `BoneLocals` reads and writes, each with the value an unstated one reads as (`worldTransforms`' defaults). */
+const LOCAL_CHANNELS = { rotation: 0, x: 0, y: 0, scaleX: 1, scaleY: 1, shearX: 0, shearY: 0 } as const;
+type LocalChannel = keyof typeof LOCAL_CHANNELS;
+
+/** One bone of a step's `bones`, read through and written through, copied on its first write (`BoneLocals`' second rule). */
+class StepLocals implements BoneLocals {
+  constructor(
+    private readonly bones: ModelBone[],
+    private readonly index: number,
+    private readonly setup: ModelBone,
+  ) {}
+
+  private read(channel: LocalChannel): number {
+    return this.bones[this.index][channel] ?? LOCAL_CHANNELS[channel];
+  }
+
+  private write(channel: LocalChannel, value: number): void {
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new CoreInputError(`the adjustment wrote bone "${this.setup.name}" ${channel} = ${String(value)}, not a finite number`);
+    if (this.bones[this.index] === this.setup) this.bones[this.index] = { ...this.setup };
+    this.bones[this.index][channel] = value;
+  }
+
+  get rotation(): number { return this.read('rotation'); }
+  set rotation(v: number) { this.write('rotation', v); }
+  get x(): number { return this.read('x'); }
+  set x(v: number) { this.write('x', v); }
+  get y(): number { return this.read('y'); }
+  set y(v: number) { this.write('y', v); }
+  get scaleX(): number { return this.read('scaleX'); }
+  set scaleX(v: number) { this.write('scaleX', v); }
+  get scaleY(): number { return this.read('scaleY'); }
+  set scaleY(v: number) { this.write('scaleY', v); }
+  get shearX(): number { return this.read('shearX'); }
+  set shearX(v: number) { this.write('shearX', v); }
+  get shearY(): number { return this.read('shearY'); }
+  set shearY(v: number) { this.write('shearY', v); }
+}
+
+/** The adjustment run over a step's `bones` (`posedBones`' array, in the document's order), which it may replace bone by bone (`BoneLocals`). */
+function adjustLocals(doc: CompiledDocument, bones: ModelBone[], adjust: LocalAdjust): void {
+  const views = new Map<string, StepLocals>();
+  const names = doc.bones.map((b) => b.name);
+  adjust({
+    names,
+    bone(name: string): BoneLocals {
+      let view = views.get(name);
+      if (view === undefined) {
+        const index = names.indexOf(name);
+        if (index < 0) throw new CoreInputError(`the adjustment asked for bone ${JSON.stringify(name)}, which is not one of this document's bones`);
+        // A copy the timelines made is this step's own; the setup bone is the document's, copied on its first write.
+        view = new StepLocals(bones, index, doc.bones[index]);
+        views.set(name, view);
+      }
+      return view;
+    },
+  });
+}
+
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 
 /**
@@ -779,6 +881,21 @@ export function posedSlots(
 }
 
 /**
+ * One step of the stepped phase, as a walk hands it to the bones: the physics
+ * context and the clock before the step (`./constraints_physics.ts`), and the
+ * caller's adjustment of the locals (`LocalAdjust`). The adjustment rides here
+ * rather than on the plant because it is not a rule the core measured and a
+ * control plants back — it is the caller's input to one walk — and because
+ * the step context exists exactly where a walk is stepped: the live track's
+ * every pose but a `reset: 'setup'` pose 0, which no animation is applied to.
+ */
+export interface PoseStep {
+  ctx: PhysicsStepContext;
+  before: number;
+  adjust?: LocalAdjust;
+}
+
+/**
  * The bone rows at `t`, in the oracle's shape and rounding. With `constraints`
  * — the animation's constraint timelines — the document's constraints are
  * applied after the timelines, posed at `t` (`./constraints.ts`, construct
@@ -792,7 +909,7 @@ export function posedBoneRows(doc: CompiledDocument, timelines: CoreAnimationTim
 }
 
 /** `posedBoneRows`, with the world transforms the rows were read off — what the sample's attachments are posed through. */
-export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[], step?: { ctx: PhysicsStepContext; before: number }): { rows: CoreBoneRow[]; world: Map<string, CoreWorld> } {
+export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant = {}, constraints?: CoreConstraintTimelines, sliders?: SliderApplication[], step?: PoseStep): { rows: CoreBoneRow[]; world: Map<string, CoreWorld> } {
   const posed = posedBoneStep(doc, timelines, t, plant, constraints, sliders, step);
   return { rows: stepRows(posed), world: posed.world };
 }
@@ -804,7 +921,7 @@ export function posedBoneWorld(doc: CompiledDocument, timelines: CoreAnimationTi
  * no row, so the scan's walk (`scanWalkIn` in `./raw.ts`, A10's) asks for
  * this; the raw entry's walk still forms the rows it does not read, unchanged.
  */
-export function posedBoneWorldAlone(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: { ctx: PhysicsStepContext; before: number } | undefined): Map<string, CoreWorld> {
+export function posedBoneWorldAlone(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: PoseStep | undefined): Map<string, CoreWorld> {
   return posedBoneStep(doc, timelines, t, plant, constraints, sliders, step).world;
 }
 
@@ -835,9 +952,11 @@ function stepRows(posed: PosedStep): CoreBoneRow[] {
 }
 
 /** `posedBoneWorld` up to its rows, refusing a bone the evaluator gave no transform (`PosedStep`). */
-function posedBoneStep(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: { ctx: PhysicsStepContext; before: number } | undefined): PosedStep {
+function posedBoneStep(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: PoseStep | undefined): PosedStep {
   const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
+  // The caller's adjustment, after the timelines and before anything reads the locals (`LocalAdjust`).
+  if (step?.adjust !== undefined) adjustLocals(doc, bones, step.adjust);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
   if (constraints !== undefined && step !== undefined) {
     // One step of the stepped phase (issue #956, `./constraints_physics.ts`): the physics records posed by their timelines and stepped under the walk's context; the deformed curve a path walks as above. No previous pass: under the step it is the previous step's, and `poseAnimations` leaves such bones out.

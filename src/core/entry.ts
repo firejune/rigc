@@ -26,7 +26,7 @@ export { poseRawSetup, poseRawAnimation, poseRawAnimationEach, loopedTime, setup
 export type { RawPose, RawBone, RawDrawn, RawClip, RawClipped, RawEvent, RawReset } from './raw.ts';
 export { poseWalkSetup, poseLoopingWalk } from './walk.ts';
 export { openTrack } from './track.ts';
-export type { LiveTrack, TrackOptions } from './track.ts';
+export type { LiveTrack, TrackOptions, AdjustableLocals, BoneLocals, LocalAdjust } from './track.ts';
 export type { WalkPose } from './walk.ts';
 export { documentPageLookup, drawnRegions, regionPageUvs, meshPageUvs, readUvSequences } from './uvs.ts';
 export type { DrawnRegion, UvPage, UvRegion, UvSource } from './uvs.ts';

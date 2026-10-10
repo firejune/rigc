@@ -98321,7 +98321,8 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
     // ===========================================================================
     // The live track (issue #1276, `src/core/track.ts`): the raw entry's walk opened and stepped one `dt` at a time, as a player's frame
     // loop steps it. CO46 holds it to the batch walks bit for bit; CO47 holds what a looping one fires across the wrap to spine-core's
-    // AnimationState listener; CO48 holds its clipped rows to the raw entry's; CO49 its refusals.
+    // AnimationState listener; CO48 holds its clipped rows to the raw entry's; CO49 its refusals; CO50 the player's adjustment of the bone
+    // locals (issue #1336) to spine-core's Bone.pose written between AnimationState.apply and updateWorldTransform.
     // ===========================================================================
     /** Every number by its exact double (`String` round-trips a double, `-0` apart from `0`), so two poses compare bit for bit. */
     const exactly = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
@@ -98771,6 +98772,253 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
         ok,
         probeDetail(ok, probes.slice(0, 12), `a step of NaN, Infinity and −0.1 refused naming the step and moving nothing, the next step walked; options without loop or reset and an unknown animation refused by name; over the forged walks' animations ${forgedRefused} refused at the pose whose drawn vertex is first non-finite and every later step refused naming it, ${forgedKept} walked with no vertex non-finite (${boneOnly} of them holding a non-finite bone); a slotless bone chain past the largest double on the gallery rows walked on ${boneHeld} of ${boneWalks} animation(s), every pose holding the bone as computed, the raw entry's own walk the same — what the raw entry refuses is what is drawn`),
         'issue #1276: the live track is the raw entry\'s walk, so a value a renderer would draw wrong is refused by name rather than drawn as nothing; a track refused part-way has moved its time and physics, so it is not stepped again',
+      );
+    }
+
+    // --- CO50: the live track's adjustment writes the locals before the world, the constraints and the physics, as a player writes Bone.pose --
+    //
+    // Issue #1336 (b). Spine-core 4.3.13: `AnimationState` with `setAnimation(0, name, loop)`, pose 0 as CO47 takes it (applied at 0 and
+    // reset there, or reset at the setup pose with nothing applied), then per step `update(dt)`, `setupPoseBones()`, `apply`,
+    // `Skeleton.update(dt)`, the player's `bone.pose.scaleY *= f`, `updateWorldTransform(Physics.update)` — and the same `f` written on the
+    // core's `adjust`. The subject is chosen by structure, among the gallery rows (which every run builds): the first declaring a physics
+    // constraint whose bone has an ancestor with child bones that also carries, itself or below it, a mesh some animation deforms; the
+    // adjusted bone is the deepest such ancestor, so children, a deform and the physics all ride on the write. Every bone's world
+    // transform and every drawn vertex held at tolerance 0, over every animation, looping and held, under both resets, on a seeded list of
+    // mixed steps that crosses the wrap. `setupPoseBones` is the core's own reading (every pose posed from the setup pose); without it
+    // spine-core carries the write on a channel no timeline keys, and that reading is held red, as are the write made at draw time (after
+    // `updateWorldTransform`, the bone's own matrix alone brought up to date) and no adjustment on pose 0. The draw-time reading is held on
+    // spine-core's side: planted on the core's as an `evaluate` that poses the children from the unadjusted locals, it read green on every
+    // walk — the row's sliders repose the adjusted bone's subtree from the step's locals inside the constraints, so a write misplaced
+    // between the world and the constraints is washed out there, and only a write after the whole step is the draw-time hook the issue
+    // names. Then the refusals, and a hook that reads every channel and writes nothing held to the track opened without one, bit for bit.
+    {
+      const probes: string[] = [];
+      const ADJUST_STEPS = 150;
+      const factorAt = (i: number): number => 1 + 0.3 * Math.sin(i + 1);
+      type Flat = { bones: Array<[string, number[]]>; drawn: Array<[string, string, number[]]> };
+      const flatCore = (p: RawPose): Flat => ({ bones: p.bones.map((b): [string, number[]] => [b.name, [b.a, b.b, b.c, b.d, b.worldX, b.worldY]]), drawn: p.drawn.map((d): [string, string, number[]] => [d.slot, d.attachment, d.vertices]) });
+      const flatSpine = (sk: Skeleton): Flat => {
+        const drawn: Flat['drawn'] = [];
+        for (const slot of sk.drawOrder.appliedPose) {
+          const att = slot.appliedPose.attachment;
+          if (!(att instanceof MeshAttachment) && !(att instanceof RegionAttachment)) continue;
+          const world = new Array<number>(att instanceof MeshAttachment ? att.worldVerticesLength : 8).fill(0);
+          if (att instanceof MeshAttachment) att.computeWorldVertices(sk, slot, 0, att.worldVerticesLength, world, 0, 2);
+          else att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), world, 0, 2);
+          drawn.push([slot.data.name, att.name, world]);
+        }
+        return { bones: sk.bones.map((b): [string, number[]] => [b.data.name, [b.appliedPose.a, b.appliedPose.b, b.appliedPose.c, b.appliedPose.d, b.appliedPose.worldX, b.appliedPose.worldY]]), drawn };
+      };
+      /** The first pose of `got` that differs from `want` in a bone's world transform or a drawn vertex, by exact double, or −1. */
+      const firstOff = (want: readonly Flat[], got: readonly Flat[]): number => {
+        if (want.length !== got.length) return Math.min(want.length, got.length);
+        return want.findIndex((w, i) => exactly(w) !== exactly(got[i]));
+      };
+      /**
+       * Spine-core's readings: the oracle (`setupPoseBones` each step, the write on every pose the state is applied to), and the three it
+       * rejects — the write carried from frame to frame, pose 0 not adjusted, and the write made after `updateWorldTransform` with the
+       * bone's own matrix brought up to date alone (a hook at draw time: the bone moves, its children, the meshes they carry and the
+       * physics do not).
+       */
+      type SpineReading = 'oracle' | 'carried' | 'not on pose 0' | 'after the world';
+      const spineAdjusted = (data: SkeletonData, name: string, bone: string, loop: boolean, steps: readonly number[], reset: RawReset, reading: SpineReading): Flat[] => {
+        const sk = new Skeleton(data);
+        const st = new AnimationState(new AnimationStateData(data));
+        st.setAnimation(0, name, loop);
+        sk.setupPose();
+        const b = sk.findBone(bone);
+        if (b === null) throw new Error(`spine-core has no bone "${bone}"`);
+        const late = reading === 'after the world';
+        const atDraw = (f: number): void => {
+          b.appliedPose.scaleY *= f;
+          b.appliedPose.updateWorldTransform(sk);
+        };
+        if (reset === 'animation') {
+          st.apply(sk);
+          if (reading !== 'not on pose 0' && !late) b.pose.scaleY *= factorAt(0);
+        }
+        sk.update(0);
+        sk.updateWorldTransform(Physics.reset);
+        if (reset === 'animation' && late) atDraw(factorAt(0));
+        const out = [flatSpine(sk)];
+        steps.forEach((dt, k) => {
+          st.update(dt);
+          if (reading !== 'carried') sk.setupPoseBones();
+          st.apply(sk);
+          sk.update(dt);
+          if (!late) b.pose.scaleY *= factorAt(k + 1);
+          sk.updateWorldTransform(Physics.update);
+          if (late) atDraw(factorAt(k + 1));
+          out.push(flatSpine(sk));
+        });
+        return out;
+      };
+      /** The core's walk with `adjust` multiplying `bone`'s scaleY by the step's factor. */
+      const coreAdjusted = (doc: CompiledDocument, name: string, bone: string, loop: boolean, steps: readonly number[], reset: RawReset): Flat[] => {
+        let k = 0;
+        const track = openTrack(doc, name, {
+          loop,
+          reset,
+          adjust: (locals) => {
+            locals.bone(bone).scaleY *= factorAt(k);
+          },
+        });
+        const out = [flatCore(track.first)];
+        for (const dt of steps) {
+          k++;
+          out.push(flatCore(track.step(dt)));
+        }
+        return out;
+      };
+      const tally = { walks: 0, poses: 0, wrapped: 0, moved: 0, carriedRed: 0, pose0Red: 0, pose0Walks: 0, afterRed: 0, silentWalks: 0, silentPoses: 0, refusals: 0 };
+      let subject: { name: string; bone: string; physics: string; mesh: string } | null = null;
+      for (const b of builtGreen.filter((r) => r.name.startsWith('gallery/'))) {
+        const view = noSkinView(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name));
+        const parentOf = new Map(view.bones.map((x) => [x.name, x.parent ?? null]));
+        const lineage = (name: string): string[] => {
+          const up: string[] = [];
+          for (let at: string | null = name; at !== null; at = parentOf.get(at) ?? null) up.push(at);
+          return up;
+        };
+        const deformed = view.animations.flatMap((a) => a.timelines.attachments.filter((t) => t.deform !== null).map((t) => t.slot));
+        const slotBone = new Map(view.slots.map((s) => [s.name, s.bone]));
+        for (const c of view.constraints) {
+          const record = c.record;
+          if (record?.kind !== 'physics' || subject !== null) continue;
+          for (const ancestor of lineage(record.bone).slice(1)) {
+            const mesh = deformed.find((slot) => lineage(slotBone.get(slot) ?? '').includes(ancestor));
+            if (mesh === undefined || !view.bones.some((x) => x.parent === ancestor)) continue;
+            subject = { name: b.name, bone: ancestor, physics: c.name, mesh };
+            break;
+          }
+        }
+        if (subject === null) continue;
+        const data = loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.name);
+        const rnd = seededRandom(133602);
+        const MIXED = [1 / 60, 1 / 30, 1 / 24, 0];
+        for (const anim of view.animations) {
+          const steps = Array.from({ length: ADJUST_STEPS }, () => (rnd() < 0.2 ? rnd() * 0.08 : MIXED[Math.floor(rnd() * MIXED.length)]));
+          for (const loop of [true, false]) {
+            for (const reset of ['animation', 'setup'] as const) {
+              tally.walks++;
+              const where = `${b.name} "${anim.name}" ${loop ? 'looping' : 'held'}, reset at the ${reset}`;
+              const want = spineAdjusted(data, anim.name, subject.bone, loop, steps, reset, 'oracle');
+              const got = coreAdjusted(view, anim.name, subject.bone, loop, steps, reset);
+              tally.poses += got.length;
+              const off = firstOff(want, got);
+              if (off >= 0) probes.push(`${where}: pose ${off} differs from spine-core's with the same scaleY written on "${subject.bone}"`);
+              // Every pose the write reached: the adjusted walk against the same walk with nothing written.
+              const plain = liveWalk(view, anim.name, steps, { loop, reset }).map(flatCore);
+              tally.moved += got.filter((p, i) => exactly(p) !== exactly(plain[i])).length;
+              if (loop) {
+                const times = openTrack(view, anim.name, { loop, reset });
+                let before = times.first.animationTime;
+                for (const dt of steps) {
+                  const t = times.step(dt).animationTime;
+                  if (t < before) tally.wrapped++;
+                  before = t;
+                }
+              }
+              if (firstOff(spineAdjusted(data, anim.name, subject.bone, loop, steps, reset, 'carried'), got) >= 0) tally.carriedRed++;
+              if (reset === 'animation') {
+                tally.pose0Walks++;
+                if (firstOff(spineAdjusted(data, anim.name, subject.bone, loop, steps, reset, 'not on pose 0'), got) >= 0) tally.pose0Red++;
+              }
+              if (firstOff(spineAdjusted(data, anim.name, subject.bone, loop, steps, reset, 'after the world'), got) >= 0) tally.afterRed++;
+              // A hook that reads every channel of every bone and writes nothing: the track opened without one, every field, bit for bit.
+              const silent = openTrack(view, anim.name, {
+                loop,
+                reset,
+                adjust: (locals) => {
+                  for (const n of locals.names) {
+                    const l = locals.bone(n);
+                    if (![l.rotation, l.x, l.y, l.scaleX, l.scaleY, l.shearX, l.shearY].every(Number.isFinite)) throw new Error(`bone "${n}" read a non-finite local`);
+                  }
+                },
+              });
+              const bare = openTrack(view, anim.name, { loop, reset });
+              let silentOff = exactly(silent.first) === exactly(bare.first) ? -1 : 0;
+              steps.forEach((dt, i) => {
+                const s = silent.step(dt);
+                if (silentOff < 0 && exactly(s) !== exactly(bare.step(dt))) silentOff = i + 1;
+                else if (silentOff >= 0) bare.step(dt);
+              });
+              tally.silentWalks++;
+              tally.silentPoses += steps.length + 1;
+              if (silentOff >= 0) probes.push(`${where}: a hook writing nothing moved pose ${silentOff}`);
+            }
+          }
+        }
+        // The refusals: a write that is not finite names the bone, the channel and the value, and the track stays refused; an unknown bone
+        // and an adjust that is not a function are refused by name.
+        const refusal = (f: () => unknown): string => {
+          try {
+            f();
+            return '';
+          } catch (err) {
+            if (err instanceof CoreInputError) return err.message;
+            throw err;
+          }
+        };
+        const name = view.animations[0]?.name ?? '';
+        const bone = subject.bone;
+        for (const [channel, value, label] of [['scaleY', Number.NaN, 'NaN'], ['rotation', Number.POSITIVE_INFINITY, 'Infinity'], ['x', Number.NEGATIVE_INFINITY, '-Infinity']] as const) {
+          // Reset at the setup, so pose 0 runs no hook: the first step writes nothing, the second writes the value.
+          let calls = 0;
+          const track = openTrack(view, name, { loop: true, reset: 'setup', adjust: (locals) => { if (++calls === 2) locals.bone(bone)[channel] = value; } });
+          track.step(1 / 60);
+          const why = refusal(() => track.step(1 / 30));
+          const after = refusal(() => track.step(1 / 60));
+          if (!why.includes(`bone "${bone}" ${channel} = ${label}, not a finite number`) || !after.includes('refused at step 2')) probes.push(`${channel} written ${label}: refused ${JSON.stringify(why)}, then ${JSON.stringify(after)}`);
+          else tally.refusals++;
+        }
+        const unknown = refusal(() => openTrack(view, name, { loop: true, reset: 'animation', adjust: (locals) => void locals.bone('__nope') }));
+        if (!unknown.includes('bone "__nope", which is not one of this document\'s bones')) probes.push(`an unknown bone: ${JSON.stringify(unknown)}`);
+        else tally.refusals++;
+        const notFunction = refusal(() => openTrack(view, name, { loop: true, reset: 'setup', adjust: 1 as unknown as TrackOptions['adjust'] }));
+        if (!notFunction.includes('options.adjust is number, not a function')) probes.push(`an adjust that is not a function: ${JSON.stringify(notFunction)}`);
+        else tally.refusals++;
+        // The caller's own error, thrown mid-step after the time and the physics moved: passed on as thrown, and the track refused after it.
+        let thrown = 0;
+        const throwing = openTrack(view, name, { loop: true, reset: 'setup', adjust: () => { if (++thrown === 2) throw new Error('the player failed'); } });
+        throwing.step(1 / 60);
+        let passed = '';
+        try {
+          throwing.step(1 / 30);
+        } catch (err) {
+          if (err instanceof Error && !(err instanceof CoreInputError)) passed = err.message;
+        }
+        const afterThrow = refusal(() => throwing.step(1 / 60));
+        if (passed !== 'the player failed' || !afterThrow.includes('refused at step 2 (the player failed)')) probes.push(`an adjust that throws: passed on ${JSON.stringify(passed)}, then ${JSON.stringify(afterThrow)}`);
+        else tally.refusals++;
+        break;
+      }
+      if (subject === null) probes.push('no gallery row declares a physics constraint below a bone with children carrying a deformed mesh — the control has no subject');
+      probes.push(
+        ...floorProbes(
+          [
+            [tally.poses, 1, `${tally.poses} pose(s) held`],
+            [tally.wrapped, 1, `${tally.wrapped} looping step(s) across the wrap`],
+            [tally.moved, 1, `${tally.moved} pose(s) the write moved`],
+            [tally.carriedRed, 1, `${tally.carriedRed} walk(s) red with the write carried`],
+            [tally.pose0Red, 1, `${tally.pose0Red} walk(s) red with pose 0 not adjusted`],
+            [tally.afterRed, tally.walks, `${tally.afterRed} of ${tally.walks} walk(s) red with the hook after the world`],
+            [tally.refusals, 6, `${tally.refusals} of 6 refusal(s) by name`],
+          ],
+          'so the adjustment was not held where it decides',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO50_THE_LIVE_TRACKS_ADJUSTMENT_WRITES_THE_LOCALS_BEFORE_THE_WORLD_AND_THE_PHYSICS_AS_SPINE_CORES_BONE_POSE_DOES_AND_EACH_REJECTED_READING_IS_RED',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${subject === null ? 'no subject' : `${subject.name}, scaleY written on "${subject.bone}" (above physics "${subject.physics}" and deformed mesh slot "${subject.mesh}")`}: ${tally.walks} walk(s) — every animation, looping and held, under both resets, ${ADJUST_STEPS} mixed step(s) each — ${tally.poses} pose(s) equal to spine-core's in every bone's world transform and every drawn vertex at tolerance 0, ${tally.moved} of them moved by the write, ${tally.wrapped} looping step(s) across the wrap; ` +
+            `rejected — the write carried from frame to frame ${tally.carriedRed} of ${tally.walks} walk(s) red, pose 0 not adjusted ${tally.pose0Red} of ${tally.pose0Walks}, the hook after the world ${tally.afterRed} of ${tally.walks}; ${tally.refusals} refusal(s) by name (NaN, Infinity and −Infinity written, each track refused after; an unknown bone; an adjust that is not a function; an adjust that throws, its error passed on and the track refused after); a hook reading every channel and writing nothing equal to the track without one on ${tally.silentPoses} pose(s) of ${tally.silentWalks} walk(s), every field, bit for bit`,
+        ),
+        'issue #1336: a player writes its own bone-local value between AnimationState.apply and updateWorldTransform so that children, deforms and physics follow it; a hook at draw time is not that, so the hook is held to spine-core on a row where all three ride on the write',
       );
     }
   });
