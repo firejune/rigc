@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.35.1](https://github.com/firejune/rigc/compare/v2.35.0...v2.35.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **docs:** the headline says what the tool makes, and names Spine once as the format ([#1334](https://github.com/firejune/rigc/issues/1334)) ([399cb2b](https://github.com/firejune/rigc/commit/399cb2bd8c557870d4e165dc071cc00a0744ea6e))
+
 ## [2.35.0](https://github.com/firejune/rigc/compare/v2.34.0...v2.35.0) (2026-10-10)
 
 
