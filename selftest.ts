@@ -49198,6 +49198,111 @@ function abBuild(dir: string, name: string, mesh: SourceMesh): string {
   return modelDocument(built.model, built.skeletonText, built.atlasText);
 }
 
+/**
+ * Issue #1302: the fewest-vertex closed outline over the traced boundary's own vertices, each allowed to sit at one of
+ * `offsets` px out along its outward normal (0 keeps it where the source has it) — §8's C2 construction, which a
+ * removal-only reduction cannot reach because it never moves a vertex. A chord is nominated when (1) every source
+ * hull vertex and edge sample it skips is within `tol` of it, (2) every sample of it is within `tol` of the source
+ * hull, and (3) no art pixel centre lies between it and the arc it skips; the local tests only nominate — the control
+ * measures what it built with `measureMeshQuality`, which decides. A shortest cycle over the unrolled loop from every
+ * start, spans up to `maxSpan`; deterministic (ascending start, offset, span). Fixture construction only.
+ */
+function abRelocatedOutline(hull: readonly MqPt[], mask: AlphaMask, offsets: readonly number[], tol: number, maxSpan = 40): MqPt[] {
+  const n = hull.length;
+  const O = offsets.length;
+  const seg = (p: MqPt, a: MqPt, b: MqPt): number => {
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const l2 = dx * dx + dy * dy;
+    const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+    return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+  };
+  let area = 0;
+  for (let i = 0; i < n; i++) area += hull[i][0] * hull[(i + 1) % n][1] - hull[(i + 1) % n][0] * hull[i][1];
+  const sgn = area > 0 ? 1 : -1;
+  const normal = hull.map((b, i): MqPt => {
+    const [a, c] = [hull[(i - 1 + n) % n], hull[(i + 1) % n]];
+    const [l1, l2] = [Math.hypot(b[0] - a[0], b[1] - a[1]), Math.hypot(c[0] - b[0], c[1] - b[1])];
+    const nx = sgn * ((b[1] - a[1]) / l1 + (c[1] - b[1]) / l2);
+    const ny = sgn * (-(b[0] - a[0]) / l1 - (c[0] - b[0]) / l2);
+    const l = Math.hypot(nx, ny) || 1;
+    return [nx / l, ny / l];
+  });
+  const pos = (i: number, o: number): MqPt => [hull[i][0] + offsets[o] * normal[i][0], hull[i][1] + offsets[o] * normal[i][1]];
+  const outward = offsets.findIndex((x) => x > 0);
+  if (outward >= 0 && inClosedPolygon(pos(0, outward), hull)) throw new Error('abRelocatedOutline: the normal points inward');
+  const hullDist = (p: MqPt): number => {
+    let d = Infinity;
+    for (let i = 0; i < n; i++) d = Math.min(d, seg(p, hull[i], hull[(i + 1) % n]));
+    return d;
+  };
+  const near: MqPt[] = [];
+  for (let y = 0; y < mask.height; y++) {
+    for (let x = 0; x < mask.width; x++) {
+      if (mask.alpha[y * mask.width + x] === 0) continue;
+      const p: MqPt = [x + 0.5, y + 0.5];
+      if (hullDist(p) < tol + 3) near.push(p);
+    }
+  }
+  const inBox = (p: MqPt, poly: readonly MqPt[]): boolean => {
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const q of poly) [x0, y0, x1, y1] = [Math.min(x0, q[0]), Math.min(y0, q[1]), Math.max(x1, q[0]), Math.max(y1, q[1])];
+    return p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
+  };
+  const valid = (i: number, ao: number, span: number, bo: number): boolean => {
+    const [a, b] = [pos(i, ao), pos((i + span) % n, bo)];
+    for (let k = 0; k < span; k++) {
+      const [v, w] = [hull[(i + k) % n], hull[(i + k + 1) % n]];
+      for (let t = 0; t <= 8; t++) if (seg([v[0] + ((w[0] - v[0]) * t) / 8, v[1] + ((w[1] - v[1]) * t) / 8], a, b) > tol) return false;
+    }
+    const m = Math.max(2, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.25));
+    for (let t = 0; t <= m; t++) if (hullDist([a[0] + ((b[0] - a[0]) * t) / m, a[1] + ((b[1] - a[1]) * t) / m]) > tol) return false;
+    const sliver: MqPt[] = [a];
+    for (let k = 0; k <= span; k++) sliver.push(hull[(i + k) % n]);
+    sliver.push(b);
+    return !near.some((p) => inBox(p, sliver) && inClosedPolygon(p, sliver));
+  };
+  const cache = new Uint8Array(n * O * (maxSpan + 1) * O);
+  const ok = (i: number, ao: number, span: number, bo: number): boolean => {
+    const at = ((i * O + ao) * (maxSpan + 1) + span) * O + bo;
+    if (cache[at] === 0) cache[at] = valid(i, ao, span, bo) ? 1 : 2;
+    return cache[at] === 1;
+  };
+  let best: MqPt[] | null = null;
+  const dist = new Float64Array((n + 1) * O);
+  const prev = new Int32Array((n + 1) * O);
+  for (let s = 0; s < n; s++) {
+    for (let so = 0; so < O; so++) {
+      dist.fill(Infinity);
+      prev.fill(-1);
+      dist[so] = 1;
+      for (let k = 0; k < n; k++) {
+        for (let o = 0; o < O; o++) {
+          if (k === 0 && o !== so) continue;
+          const dk = dist[k * O + o];
+          if (!Number.isFinite(dk)) continue;
+          for (let span = 1; span <= Math.min(maxSpan, n - k); span++) {
+            for (let o2 = 0; o2 < O; o2++) {
+              if (k + span === n && o2 !== so) continue;
+              const at = (k + span) * O + o2;
+              if (dk + 1 >= dist[at] || !ok((s + k) % n, o, span, o2)) continue;
+              dist[at] = dk + 1;
+              prev[at] = k * O + o;
+            }
+          }
+        }
+      }
+      const total = dist[n * O + so] - 1;
+      if (!Number.isFinite(total) || (best !== null && total >= best.length)) continue;
+      const path: MqPt[] = [];
+      for (let at = prev[n * O + so]; at >= 0 && Math.floor(at / O) > 0; at = prev[at]) path.push(pos((s + Math.floor(at / O)) % n, at % O));
+      path.push(pos(s, so));
+      best = path.reverse();
+    }
+  }
+  if (best === null) throw new Error('abRelocatedOutline: no closed outline holds the tests');
+  return best.map(([x, y]): MqPt => [r6(x), r6(y)]);
+}
+
 // ---------------------------------------------------------------------------
 // mesh-compare's units and its run memo (issue #1300)
 // ---------------------------------------------------------------------------
@@ -49248,6 +49353,7 @@ const MESH_COMPARE_UNITS = [
   'MQ106-MQ108',
   'MQ109-MQ110',
   'MQ111-MQ115',
+  'MQ144-MQ147',
   'MQ116-MQ133',
   'MQ134-MQ135',
   'MQ136-MQ137',
@@ -49283,6 +49389,7 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ79-MQ80',
   'MQ104-MQ105',
   'MQ111-MQ115',
+  'MQ144-MQ147',
   'MQ55-MQ74',
 ];
 
@@ -51788,6 +51895,166 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
           held,
           probeDetail(held, probes, `the ramp posed on idle, the source against its strict reduction (candidate accepted: ${off.candidates[0]?.accepted}): without the field, one text twice and no motionAmplitude key; with the field and with null, every byte but the two rows, the echo and the setup summaries that text's, the motion sections and the acceptances included; the plant (the load gating the setup verdict): ${plantSaid}`),
           'issue #1291: both rows are undeclared, so the amplitude may change what the setup section reads and nothing the comparison decides — the bytes of a comparison without it against the tree before it are measured out of suite (docs/MESH_REDUCTION.md §8), and this holds the shape that comparison projected',
+        );
+      });
+    });
+
+    // --- MQ144–MQ147 (#1302): the trial policy's kept vertices, decomposed, against the floor of the same bounds ------
+    // docs/MESH_REDUCTION.md §9 on this fixture: under the consumer's policy (boundary runs of 8, the Delaunay post-pass,
+    // the deformation-load order) parts's replay keeps a boundary at B* and an interior the motion cut leaves (MQ144); a
+    // mesh built over an outline whose vertices may move outward, with the interior only at the joints, passes every
+    // static row and motion with fewer vertices and bindings (MQ145); the source starts at several times that floor
+    // (MQ146); and a declared influence limit bounds no kept vertex of a removal-only reduction (MQ147). Each predicate is
+    // also read on a run or a plant that must make it fire, named in its line.
+    const trialPolicy: Partial<MeshReductionInput> = { boundaryRuns: abRuns, retriangulate: 'delaunay', removalOrder: 'deformation-load' };
+    const abTrial = lazily(() => {
+      const full = abReduce(trialPolicy);
+      const steps = opsOf(full).length;
+      const cut = bisect(trialPolicy, steps, 't');
+      const bstar = (full.report.candidates[0]?.geometry?.rows ?? []).find((r) => r.code === 'MQ_BOUNDARY_NECESSARY')?.value ?? null;
+      return { full, steps, cut, bstar };
+    });
+    /** Every vertex a mesh keeps, in one bucket each: boundary at and above B*, interior the motion cut leaves, interior a static row keeps. */
+    const bucketsOf = (kept: SourceMesh, full: SourceMesh, bstar: number, plant: 'motion-against-the-source' | null = null) => {
+      const fullInterior = full.points.length - full.hull;
+      const keptInterior = kept.points.length - kept.hull;
+      return {
+        atBstar: Math.min(kept.hull, bstar),
+        aboveBstar: Math.max(0, kept.hull - bstar),
+        motionCut: plant === 'motion-against-the-source' ? sourceInterior - fullInterior : keptInterior - fullInterior,
+        staticRow: fullInterior,
+      };
+    };
+    const bucketSum = (b: { atBstar: number; aboveBstar: number; motionCut: number; staticRow: number }): number => b.atBstar + b.aboveBstar + b.motionCut + b.staticRow;
+    const bindingsOf = (m: SourceMesh): number => (m.weights ?? []).reduce((n, w) => n + w.length, 0);
+    /** The floor: the relocated outline and one vertex on the centre line at each joint, its share there the fixture's own. */
+    const abFloor = lazily(() => {
+      const outline = abRelocatedOutline(ab.boundary, abMask, [0, 0.5, 0.9], 1);
+      const centre = (x: number): MqPt => {
+        const u = (x - AB_W / 2) / (148 * AB_SCALE);
+        return [x, r6(AB_H / 2 - 10 * AB_SCALE + 12 * AB_SCALE * Math.min(1, u * u))];
+      };
+      const joints = [centre(AB_JOINT_B), centre(AB_JOINT_C)];
+      const points = [...outline, ...joints];
+      const mesh = abMeshOver(outline, joints, (i) => abWeightAt(points[i][0]));
+      return { outline, joints, mesh };
+    });
+
+    unit('MQ144-MQ147', () => {
+      mcGuard('MQ144', () => {
+        const probes: string[] = [];
+        const { full, steps, cut, bstar } = abTrial();
+        const kept = cut.chosen?.mesh ?? null;
+        const { chosen: strictChosen } = abBisected();
+        if (full.mesh === null || kept === null || bstar === null || cut.report === null) probes.push(`the trial policy returned ${full.mesh === null ? 'no mesh' : 'a mesh'}, B* ${bstar}, a chosen replay ${kept === null ? 'none' : 'present'}`);
+        else {
+          const b = bucketsOf(kept, full.mesh, bstar);
+          if (bucketSum(b) !== kept.points.length) probes.push(`the buckets ${JSON.stringify(b)} sum to ${bucketSum(b)} against the ${kept.points.length} vertices kept`);
+          if (b.aboveBstar !== 0 || kept.hull !== full.mesh.hull) probes.push(`the replay keeps ${kept.hull} boundary vertices against B* ${bstar} and the full run's ${full.mesh.hull}; required the boundary at B*, every boundary operation inside the cut`);
+          if (b.staticRow !== 0) probes.push(`the fully reduced result keeps ${b.staticRow} interior vertices; required none — no static row keeps an interior vertex on this fixture`);
+          if (!(b.motionCut > 0)) probes.push(`the motion cut leaves ${b.motionCut} interior vertices; required some — the replay stops before the interior is emptied`);
+          if (!cut.report.candidates[0].accepted) probes.push(`the chosen replay is not accepted over every frame (held out included)`);
+          // The rewind loss — what the full run removed after the accepted step — is the whole of the replay's excess over the full run.
+          const rewind = kept.points.length - full.mesh.points.length;
+          if (rewind !== b.motionCut + (kept.hull - full.mesh.hull)) probes.push(`the rewind loss ${rewind} is not the motion-cut interior ${b.motionCut} plus the boundary removed after the step ${kept.hull - full.mesh.hull}`);
+          const planted = bucketsOf(kept, full.mesh, bstar, 'motion-against-the-source');
+          if (bucketSum(planted) === kept.points.length) probes.push('the plant — the motion bucket read against the source rather than the fully reduced result — still sums to the kept vertices');
+          if (strictChosen?.mesh != null && strictChosen.mesh.hull - bstar === 0) probes.push(`the plant — MQ88's strict replay — keeps its boundary at B* too (${strictChosen.mesh.hull}), so the boundary predicate cannot fire`);
+        }
+        const held = probes.length === 0;
+        const b = kept !== null && full.mesh !== null && bstar !== null ? bucketsOf(kept, full.mesh, bstar) : null;
+        say(
+          'MQ144_UNDER_THE_TRIAL_POLICY_THE_REPLAY_KEEPS_ITS_BOUNDARY_AT_B_STAR_AND_ONLY_INTERIOR_THE_MOTION_CUT_LEAVES_AND_THE_BUCKETS_SUM_TO_ITS_VERTICES',
+          held,
+          probeDetail(held, probes, `boundary runs 8 + Delaunay post-pass + deformation-load order, bisected on grid in ${cut.replays} replays over ${steps} operations: step ${cut.lo}, ${counts(kept)}; buckets — boundary at B* ${b?.atBstar}, above B* ${b?.aboveBstar}, interior the motion cut leaves ${b?.motionCut}, interior a static row keeps ${b?.staticRow} (fully reduced ${counts(full.mesh)}; rewind loss ${kept !== null && full.mesh !== null ? kept.points.length - full.mesh.points.length : '?'}); plants: the motion bucket read against the source sums to ${b === null || full.mesh === null || bstar === null || kept === null ? '?' : bucketSum(bucketsOf(kept, full.mesh, bstar, 'motion-against-the-source'))}, MQ88's strict replay keeps ${strictChosen?.mesh?.hull ?? '?'} boundary vertices against B* ${bstar}`),
+          'issue #1302 asks where the kept vertices come from before any mechanism is proposed; on the public fixture every one is either the removal-only boundary floor or interior the replay cut before the reduction reached it',
+        );
+      });
+
+      mcGuard('MQ145', () => {
+        const probes: string[] = [];
+        const { cut } = abTrial();
+        const kept = cut.chosen?.mesh ?? null;
+        const { outline, joints, mesh } = abFloor();
+        const st = abMeasure('floor', mesh);
+        const mo = abCompare([{ id: 'floor', model: abBuild(dir, 'ab-floor', mesh) }], []);
+        const local = row(mo, 'MQ_LOCAL_DEFORMATION');
+        if (kept === null) probes.push('the trial policy chose no replay to compare with');
+        else {
+          if (!(mesh.points.length < kept.points.length)) probes.push(`the floor keeps ${mesh.points.length} vertices against the trial replay's ${kept.points.length}; required fewer`);
+          if (!(bindingsOf(mesh) < bindingsOf(kept))) probes.push(`the floor carries ${bindingsOf(mesh)} bindings against the trial replay's ${bindingsOf(kept)}; required fewer`);
+        }
+        if (st.candidates[0].geometry?.verdict !== 'pass' || !st.candidates[0].accepted) probes.push(`the floor's static rows: ${(st.candidates[0].geometry?.rows ?? []).filter((r) => r.state === 'fail').map((r) => `${r.code} ${r.value}`).join(', ')}; required every row passing`);
+        if (local?.state !== 'pass' || !mo.candidates[0].accepted || (row(mo, 'MQ_INVERSION')?.value ?? 1) !== 0) probes.push(`the floor in motion: ${mvSaid(local)}, MQ_INVERSION ${row(mo, 'MQ_INVERSION')?.value}, accepted ${mo.candidates[0].accepted}; required within 1, no inversion, every frame held out`);
+        // Plant 1: the same outline with no interior vertex — the joints are what the motion needs.
+        const bare = abMeshOver(outline, [], (i) => abWeightAt(outline[i][0]));
+        const bareMo = abCompare([{ id: 'bare', model: abBuild(dir, 'ab-floor-bare', bare) }], []);
+        const bareLocal = row(bareMo, 'MQ_LOCAL_DEFORMATION');
+        if (bareMo.candidates[0].accepted) probes.push(`the plant — the floor's outline with no interior — is accepted in motion (${mvSaid(bareLocal)}), so the motion predicate cannot fire`);
+        // Plant 2: the outline vertex furthest along x pushed the bound plus a pixel out fails the deviation row, by name.
+        let far = 0;
+        for (let i = 1; i < mesh.hull; i++) if (mesh.points[i][0] > mesh.points[far][0]) far = i;
+        const pushedPoints = mesh.points.map(([x, y], i): MqPt => (i === far ? [r6(x + 2), y] : [x, y]));
+        const pushed: SourceMesh = { ...mesh, points: pushedPoints, uvs: pushedPoints.flatMap(([x, y]) => [r6(x / AB_W), r6(y / AB_H)]) };
+        const pushedDev = (abMeasure('pushed', pushed).candidates[0].geometry?.rows ?? []).find((r) => r.code === 'MQ_BOUNDARY_DEVIATION');
+        if (pushedDev?.state !== 'fail') probes.push(`the plant — floor vertex ${far} pushed 2 px out — reads MQ_BOUNDARY_DEVIATION ${pushedDev?.value} ${pushedDev?.state}; required a fail`);
+        const held = probes.length === 0;
+        say(
+          'MQ145_A_MESH_OVER_A_RELOCATED_OUTLINE_WITH_THE_INTERIOR_ONLY_AT_THE_JOINTS_PASSES_EVERY_STATIC_ROW_AND_MOTION_WITH_FEWER_VERTICES_AND_BINDINGS_THAN_THE_TRIAL_REPLAY',
+          held,
+          probeDetail(held, probes, `outline over the source hull's vertices moved 0, 0.5 or 0.9 px out: ${outline.length}; + ${joints.length} on the centre line at the joints = ${counts(mesh)}, ${bindingsOf(mesh)} bindings, against the trial replay's ${counts(kept)}, ${kept === null ? '?' : bindingsOf(kept)}; static ${st.candidates[0].geometry?.verdict}, motion ${mvSaid(local)}, every frame held out; plants: no interior ${mvSaid(bareLocal)} — refused, vertex ${far} pushed 2 px reads MQ_BOUNDARY_DEVIATION ${pushedDev?.value} — fail`),
+          'issue #1302 asks for the smallest mesh the trial\'s bounds admit, by any construction, as the floor the search is measured against; this one is built, not searched, and it needs positions the source does not have',
+        );
+      });
+
+      mcGuard('MQ146', () => {
+        const probes: string[] = [];
+        const { mesh } = abFloor();
+        const { cut } = abTrial();
+        const src = ab.mesh;
+        const many = (floor: SourceMesh): boolean => src.points.length > 3 * floor.points.length && sourceInterior > floor.points.length;
+        if (!many(mesh)) probes.push(`the source holds ${counts(src)} against the floor's ${counts(mesh)}; required more than three times its vertices and more interior vertices than it holds in all`);
+        if (cut.chosen?.mesh != null && many(cut.chosen.mesh)) probes.push(`the plant — the trial replay (${counts(cut.chosen.mesh)}) read as the floor — reads as a source three times over too, so the predicate cannot fire`);
+        const held = probes.length === 0;
+        say(
+          'MQ146_THE_SOURCE_STARTS_AT_MORE_THAN_THREE_TIMES_THE_FLOOR_AND_ITS_INTERIOR_ALONE_EXCEEDS_IT',
+          held,
+          probeDetail(held, probes, `source ${counts(src)} (contour at tolerance 1, grid every ${AB_SPACING} px) against the floor's ${counts(mesh)}; the plant (the trial replay, ${counts(cut.chosen?.mesh ?? null)}) is not three times under the source`),
+          'issue #1302 (d): how many vertices the source has before any reduction, against the floor the same bounds admit — the reduction only removes, so its start is the dependant\'s sampling',
+        );
+      });
+
+      mcGuard('MQ147', () => {
+        const probes: string[] = [];
+        const { full } = abTrial();
+        const limited = abReduce({ ...trialPolicy, influences: { maxInfluences: 1, minWeight: 0.5 } });
+        const sameAsSource = (r: AbRun): string | null => {
+          if (r.mesh === null) return 'no mesh';
+          const m = r.mesh;
+          for (let v = 0; v < m.indexMap.length; v++) {
+            const to = m.indexMap[v];
+            if (to === null) continue;
+            // The reduction writes a vertex's bindings in its canonical order (share, then bone order), so compare them by bone.
+            const byBone = (w: Array<{ bone: string; weight: number }> | undefined): string => JSON.stringify([...(w ?? [])].sort((p, q) => (p.bone < q.bone ? -1 : p.bone > q.bone ? 1 : 0)));
+            if (byBone(m.weights?.[to]) !== byBone(ab.mesh.weights?.[v])) return `source vertex ${v} carries ${JSON.stringify(m.weights?.[to])} against the source's ${JSON.stringify(ab.mesh.weights?.[v])}`;
+          }
+          return null;
+        };
+        const widest = (m: SourceMesh | null): number => (m === null ? -1 : Math.max(...(m.weights ?? []).map((w) => w.length)));
+        const own = sameAsSource(limited);
+        if (own !== null) probes.push(`with influences { maxInfluences: 1, minWeight: 0.5 } declared: ${own}; required every kept vertex's bindings the source's`);
+        if (limited.mesh === null || full.mesh === null || bindingsOf(limited.mesh) !== bindingsOf(full.mesh)) probes.push(`bindings ${limited.mesh === null ? '?' : bindingsOf(limited.mesh)} under the limit against ${full.mesh === null ? '?' : bindingsOf(full.mesh)} under { 4, 0 }; required the same`);
+        if (!(widest(limited.mesh) > 1)) probes.push(`the widest kept vertex carries ${widest(limited.mesh)} influences; required more than the declared 1, or the fixture tests nothing`);
+        // Plant: the same limit applied on the dependant's side, to the source before the call — the bindings the limit would buy.
+        const pruned: SourceMesh = { ...ab.mesh, weights: (ab.mesh.weights ?? []).map((w) => [w.reduce((a, b) => (b.weight > a.weight ? b : a))].map((b) => ({ bone: b.bone, weight: 1 }))) };
+        const prunedRun = abReduce({ ...trialPolicy, source: pruned });
+        if (sameAsSource(prunedRun) === null) probes.push('the plant — the source pruned to one influence before the call — reads as carrying the source\'s bindings');
+        const held = probes.length === 0;
+        say(
+          'MQ147_A_DECLARED_INFLUENCE_LIMIT_PRUNES_NO_KEPT_VERTEX_OF_A_REMOVAL_ONLY_REDUCTION_SO_THE_RESULTS_BINDINGS_ARE_THE_SOURCES',
+          held,
+          probeDetail(held, probes, `trial policy with influences { 1, 0.5 }: ${counts(limited.mesh)}, ${limited.mesh === null ? '?' : bindingsOf(limited.mesh)} bindings, widest kept vertex ${widest(limited.mesh)} influences, every kept vertex the source's; under { 4, 0 }: ${full.mesh === null ? '?' : bindingsOf(full.mesh)}; the plant (pruned before the call): ${counts(prunedRun.mesh)}, ${prunedRun.mesh === null ? '?' : bindingsOf(prunedRun.mesh)} bindings — ${sameAsSource(prunedRun)}`),
+          'issue #1302 item 2 asks what a declared minWeight / maxInfluences does to bindings: §6 applies the limit to interpolated weights only, so on a reduction that inserts nothing it moves no binding — the influence count is the source\'s',
         );
       });
     });

@@ -5213,6 +5213,282 @@ bash batch.sh bound                         # the bound after C1: 3 runs per T a
 bash batch.sh time                          # 3 main + 3 cut runs per T and TS call, one process each, alternated
 ```
 
+## 10. Mesh economy against the authored rig (#1302)
+
+> **Stage A of [#1302](https://github.com/firejune/rigc/issues/1302): measurement only.** No bound, budget, order,
+> termination, base or emitted byte changes here. Four controls hold the decomposition's checkable claims on the
+> public fixture (`MQ144`–`MQ147`, `mesh-compare`, *Stage A controls*). Marks as in §7 and §8:
+> **[observed, rigc#1271]** is the consumer's figure as its card and follow-up state it, or a share derived from
+> those reports — none re-measured, and no per-part figure of its private parts is written here;
+> **[measured, #1302]** is a figure taken for this section, from the stage-A record for #1302 (scratch scripts that
+> import the tree at `6458e15` and write nothing into it) or printed by the controls, with the machine beside it;
+> **[assumed]** is §8's linear-blend motion stand-in (*Measured — bounded alternatives*: every bone pivots alone at
+> the share-weighted centroid of the vertices it carries and turns ±5°; art samples on a stride-3 grid, even parity
+> selection, odd held out), used where a part has no public rig.
+>
+> **The trial policy** is the consumer's: coverage 1, overshoot ≤ 3, undercut 0, `maxBoundaryDeviation` 1,
+> influences `{ 4, 0 }`, budget 5000, `boundaryRuns: { maxVertices: 8 }`, `retriangulate: 'delaunay'`,
+> `removalOrder: 'deformation-load'`; the replay is rig-parts's — `stopAfterAccepted` bisected between the source
+> (0) and the full run, chosen on the `grid` frames, `irr` held out — and acceptance is local deformation ≤ 1 with no
+> inversion. **The rewind loss** of a replay is the vertices the full run removed after the accepted step: the
+> replay's count less the full run's. It is, by construction, the whole of the gap between a replay and the fully
+> reduced result.
+
+### The consumer's figures [observed, rigc#1271]
+
+Over the 47 mapped meshes, the automatic candidate against the authored rig: **+72.56 % vertices (1961 → 3384),
++100.46 % triangles (2404 → 4819), +164.34 % bindings (4447 → 11755)**, every motion gate passing; the three
+largest components +508 %, +573 %, +334 % in vertices. Read from the consumer's own per-part reports and stated
+here only as shares of those totals:
+
+- **The growth is 70 % interior, 30 % boundary** of the added vertices; on the three largest components, 89 %
+  interior.
+- **The boundary half is the removal-only floor.** On the parts the automatic path produced, about nine tenths of
+  the boundary growth is B\* (§8, the fewest source-hull vertices an outline can keep under the art rows and the
+  1 px deviation) standing above the authored boundary; the rest, about a tenth, is boundary kept above B\*.
+- **The interior half is the rewind.** Every automatic part whose full reduction passed motion ended with **no
+  interior vertex**, as every public input below does; all the interior growth is on the parts that were replayed,
+  where the bisection settled early in the run (on the largest components, between a tenth and a quarter of the
+  accepted operations). The consumer's reports do not carry the full run's count, so its rewind loss is bounded rather
+  than read: at most the replayed parts' kept vertices less their B\*, which comes to about as many vertices as the
+  whole 47-mesh gap.
+- **The automatic source starts at about 3.3× the authored vertex count** (interior about 5.9×, boundary about
+  2.2×), before any reduction.
+- **Influences per vertex are the source's.** Authored about 2.3, the automatic source about 3.6 — already before
+  any reduction — and the result the same; the reduction pruned no share on any part. A candidate the consumer had
+  matched to the authored density, with weights generated the same way, carries about a third more influences per
+  vertex than the authored rig. Of the +164 % bindings, the vertex count (+72.56 %) and the influences per vertex
+  (+53.2 %, 2.27 → 3.47) take **56 % and 44 %** on a log scale (vertex count first: 44 % / 56 %; influences first:
+  68 % / 32 % — the split depends on the order, the log share does not).
+
+### Measured — the kept vertices, decomposed [measured, #1302]
+
+Per input, under the trial policy: the source; B\* over the source hull (`MQ_BOUNDARY_NECESSARY`, read off the
+reduction's own report); the relocated outline — §8's C2 method, each source hull vertex allowed 0, 0.5 or 0.9 px out
+along its normal, the fewest-vertex outline under the same art rows and deviation; the full run and its motion; the
+replay; and the replay's kept vertices in four buckets — **(a)** boundary at B\*, **(a′)** boundary above B\*, **(b)**
+interior the motion cut leaves (the replay's interior less the full run's), **(c)** interior a static row keeps (the
+full run's interior) — beside **the rewind loss** and its share of the kept vertices. The strict policy (no opt-in)
+is the last column, as its replay's count with its rewind loss.
+
+| input | source b/i (total), influences per vertex | B\* / relocated | full run b/i, motion px | replay step / ops: b/i (total) | (a) / (a′) / (b) / (c) | rewind loss (share of kept) | strict replay (rewind) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| §8's traced fixture (`MQ85`'s), posed | 107/129 (236), 1.44 | 100 / **74** | 100/0, 1.647442 — refused | 127 / 135: 100/8 (**108**) | 100 / 0 / 8 / 0 | 8 (7 %) | 191 (89) |
+| `MQ79`'s ramp, posed | 52/95 (147), 1.90 | 28 / — | 28/0, 0.244563 — accepted | 107 / 107: 28/0 (28) | 28 / 0 / 0 / 0 | 0 | 53 (25) |
+| demo/bottomwear [assumed motion] | 293/243 (536), 4.00 | 217 / 119 | 223/0, 12.52 — refused | 26 / 275: 230/243 (473) | 217 / 13 / 243 / 0 | 250 (53 %) | 526 (244) |
+| sample/bottomwear [assumed] | 107/123 (230), 4.00 | 95 / 57 | 95/0, 4.94 — refused | 11 / 130: 98/116 (214) | 95 / 3 / 116 / 0 | 119 (56 %) | 230 (129) |
+| sample/sleeves [assumed] | 198/33 (231), 4.00 | 166 / 89 | 166/0, 1.84 — refused | 23 / 50: 167/26 (193) | 166 / 1 / 26 / 0 | 27 (14 %) | 209 (19) |
+| sample/topwear [assumed] | 66/76 (142), 2.00 | 59 / 44 | 59/0, 3.39 — refused | 69 / 78: 59/9 (68) | 59 / 0 / 9 / 0 | 9 (13 %) | 121 (58) |
+| sample/neck [assumed] | 26/81 (107), 2.00 | 21 / 16 | 21/0, 0.52 — accepted | 83 / 83: 21/0 (21) | 21 / 0 / 0 / 0 | 0 | 57 (31) |
+| demo/neck [assumed] | 14/75 (89), 2.00 | 14 / 11 | 14/0, 0.31 — accepted | 75 / 75: 14/0 (14) | 14 / 0 / 0 / 0 | 0 | 14 (0) |
+
+(sample/hair_back is `invalid-input` at admission, as in D1; its source hull has B\* — not measured, no reduction
+runs — and a relocated outline of 116 against 174 hull vertices.) Machines: the fixture's and the ramp's rows on
+Nova's pool (WSL2, 20 threads, Bun 1.4.2, 1-minute load 1.0–5.7), the example parts in three pool jobs (load
+0.7–1.9); every count is the tree's and repeats on any machine, and the fixture's row is printed by `MQ144` on darwin
+(Apple M4, load 6–14) with the same figures.
+
+What the table says, bucket by bucket:
+
+- **(c) is zero everywhere.** No static row keeps an interior vertex: every full run under the trial policy ends
+  with no interior vertex at all. In the fixture's last removal pass the only refusals are 800 boundary attempts
+  (700 runs, 100 singles), every one `MQ_BOUNDARY_DEVIATION` decided by the deviation floor — fill distance,
+  coverage, minimum angle and `weightJump` (b) refuse nothing in the trial policy (no `minAngle`, no `weightJump`
+  declared). So the brief's bucket "interior kept by a static row before motion" is empty on these inputs.
+- **(a′) is small.** The boundary sits at B\* or within 13 of it (demo/bottomwear, where the cut falls inside the
+  boundary runs); over the six example parts, 17 of 589 boundary vertices kept are above B\*.
+- **(b) is all of the interior, and the rewind loss is all of the excess.** Where the full run passes motion (the
+  ramp, the two necks) nothing is lost; where it fails, the replay keeps every interior vertex the full run would
+  have removed after the step — on the two bottomwears that is the entire source interior or nearly (243 of 243,
+  116 of 123), because the stand-in fails already inside the boundary runs that come first in the order. Over the six
+  example parts the rewind loss is **405 of 983 kept vertices (41 %)**; on the fixture 8 of 108 under the trial
+  policy, against 89 of 191 under the strict one.
+- **(a) is the dependant's sampling held to its own tolerance.** B\* is removal-only: the outline can keep only
+  source hull vertices, and a hull traced and simplified at 1 px against a 1 px deviation leaves most of them
+  necessary (§8 *What holds the boundary*). An outline whose vertices may move ≤ 0.9 px out goes from 100 to **74**
+  on the fixture and from 572 to 336 summed over the six example parts (−41 %), under the same art rows and the same
+  deviation.
+
+**The multi-interval search and the post-pass recover little here.** On the fixture the trial walk's first failure
+is step 119 and its last pass step 127 — the bisection found the last pass, with 4 passing steps after the first
+failure; the post-pass is already in the policy. A greedy thinning of the chosen replay's own vertex set with motion
+in the loop (§8's C0 method, 11 trials) leaves 100/3 (103): 5 of the 8 interior vertices were not needed. On the
+example parts the bisection is the search; a full walk was not run on the two bottomwears (it is what exhausted the
+first pool job's hour).
+
+**Correction to the brief.** "191 / 132 with opt-ins on the traced fixture": 191 is the strict replay (`MQ88`); 133
+is boundary runs with the post-pass and **without** the load order (§8's *bounded alternatives*, re-measured here:
+step 102 of 135, 100/33). With all three opt-ins — the trial policy — the fixture's replay keeps **108** (`MQ144`).
+The decision rule's baseline on this fixture is therefore 108, not 132.
+
+### Measured — bindings [measured, #1302]
+
+- **The reduction never changes a kept vertex's bindings.** §6 applies `InfluenceLimits` to interpolated weights
+  only, and a reduction that inserts nothing interpolates none: under the trial policy with `influences:
+  { maxInfluences: 1, minWeight: 0.5 }` declared, the fixture's result carries the source's bindings on every kept
+  vertex (137, the same as under `{ 4, 0 }`), and a kept vertex has 2 influences against the declared 1 (`MQ147`).
+  On the example parts the same holds — a result's influences per vertex are its source's (4.00 on both bottomwears
+  and sleeves, 2.00 elsewhere). So the binding count of a result is its vertex count times the influences the
+  dependant's weights carry, and only the first factor is the reduction's.
+- **Pruning on the dependant's side, before the call** (the strongest `max` shares kept, shares under `minWeight`
+  dropped, renormalised on the 6-decimal grid), judged by the stand-in against the **unpruned** source [assumed]:
+
+  | input | source bindings: as given / max 2 / min 0.1 / both | the pruned source itself against the unpruned, px: max 2 / min 0.1 / both |
+  | --- | --- | --- |
+  | demo/bottomwear | 2144 / 1072 / 1612 / 1022 | 6.23 / 3.14 / 6.23 — refused |
+  | sample/bottomwear | 920 / 460 / 660 / 432 | 3.44 / 1.44 / 3.44 — refused |
+  | sample/sleeves | 924 / 462 / 556 / 429 | 2.42 / 1.73 / 2.42 — refused |
+  | sample/topwear | 284 / 284 / 226 / 226 | 0 / 1.13 / 1.13 |
+  | sample/neck | 214 / 214 / 178 / 178 | 0 / 0.31 / 0.31 |
+  | demo/neck | 178 / 178 / 151 / 151 | 0 / 0.22 / 0.22 |
+
+  Max 2 halves the bindings of the four-influence parts and moves the unreduced source itself 2.4–6.2 px under the
+  stand-in: the motion bound, held against the source, refuses the pruning before any vertex is removed. Where
+  pruning passes (the necks), the trial results' bindings fall by the same share (28 → 25, 42 → 34) at the same
+  vertex count. So a declared influence limit is a weight-field decision the comparison can only judge against a
+  reference that has it too; it is not a lever the reduction holds.
+
+### Measured — the floor [measured, #1302]
+
+On the fixture, the smallest meshes found that pass every static row of `measureMeshQuality` against the source hull
+and motion over every frame at the trial's bounds, posed:
+
+| construction | b/i (total) | bindings | motion, grid / irr px |
+| --- | --- | --- | --- |
+| the trial replay (for comparison) | 100/8 (108) | 153 | 0.837721 / 0.784423 |
+| B\* outline + one vertex on the centre line at each joint | 100/2 (102) | 141 | 0.713167 / 0.667798 |
+| relocated outline (0, 0.5, 0.9 px) + the two joint vertices | **74/2 (76)** | **108** | 0.720679 / 0.674837 (`MQ145`) |
+| relocated outline (0, 0.3, 0.6, 0.9 px) + the two joint vertices | **73/2 (75)** | 106 | 0.720679 / 0.674837 |
+| either relocated outline, no interior | 74/0, 73/0 | — | 1.624318, 1.270209 — refused |
+| either outline + greedy thinning from the source grid (§8's C1/C2) | 100/3, 74/3, 73/3 | 143, 109, 108 | 0.867748–0.872558 |
+
+The joint vertices take positions the source does not have (the field is exact there because it depends on x
+alone); greedy thinning over the source's grid needs one vertex more. So the floor on the fixture is **75–76
+vertices, 106–108 bindings**, against the trial's 108 and 153: of the 32–33 vertices between them, 26–27 are
+the outline (removal-only against relocation) and 6 the interior (the rewind against two joint vertices).
+
+**The authored-like density on the example parts.** No public authored reference exists, so the target is the
+card's aggregate ratio — authored over automatic, 1961 / 3384 = 0.5795 — times the trial replay's count on each
+part. Feasibility under the declared bounds:
+
+| input | target | the bound that refuses it |
+| --- | --- | --- |
+| demo/neck | 8 | `MQ_BOUNDARY_DEVIATION` (with the art rows): B\* is 14, a relocated outline 11 |
+| sample/neck | 12 | `MQ_BOUNDARY_DEVIATION`: B\* 21, relocated 16 |
+| sample/topwear | 39 | `MQ_BOUNDARY_DEVIATION`: B\* 59, relocated 44 |
+| sample/sleeves | 112 | `MQ_BOUNDARY_DEVIATION` for a removal-only outline (B\* 166); a relocated one (89) fits, and was not built further |
+| sample/bottomwear | 124 | motion [assumed]: B\*'s 95 plus 29, 44 or 58 interior vertices protected (farthest-point or by weight gradient), the rest reduced, reads 1.92–3.55 px |
+| demo/bottomwear | 274 | motion [assumed]: 223 plus 51, 77 or 102 protected, 4.37–8.17 px |
+
+So on the public inputs the authored-like density is not reached under the declared bounds by any construction
+tried: on the four smaller parts the outline alone is over the target (even relocated on three), and on the two
+bottomwears the dependant's four-influence weight field, held to 1 px against itself, needs more interior than the
+target leaves — under the stand-in, which is not the consumer's rig.
+
+### Measured — the joint-proximity control [measured, #1302]
+
+The HQ's pre-registered rule needs a baseline: density-only regions (`RefinementRegion`, no bone) at the joints, at a
+stated count. On the fixture, **2 regions** (one square per joint, centred on the centre line), transition 0, the
+trial policy otherwise:
+
+| regions | full run | accepted without a rewind | kept b/i (total), bindings |
+| --- | --- | --- | --- |
+| none (the trial replay) | 100/0, refused | no — step 127 | 100/8 (108), 153 |
+| at the joints, half-size 4 px, `maxEdgeLength` 40 | 100/4, 0.844792 | **yes** | **100/4 (104)**, 145 |
+| at the joints, half-size 4 px, `maxEdgeLength` 60 or 90 | 100/5, 0.835528 | yes | 100/5 (105), 147 |
+| at the joints, half-size 20 / 30 / 40 px, `maxEdgeLength` 26–40 | accepted | yes | 132 / 149 / 174 |
+| the same squares in the rigid zones, half-size 4 px, `maxEdgeLength` 40 | 100/24 at the step, refused full | no — step 111 | 100/24 (124), 178 |
+| the same squares in the rigid zones, half-size 20–40 px | refused full | no | 137–172 |
+
+On `MQ79`'s ramp the full run already passes, and one region anywhere only adds vertices (42–63 against 28).
+Machines: the larger regions on Nova's pool (load 1.7–3.9), the 4 px regions on darwin (Apple M4, load 6–14).
+
+**So the joint-proximity control at 2 regions reads 104 against the trial's 108**: it removes the rewind (the full
+run is accepted) at the price of holding 4 interior vertices where the floor needs 2, and the same squares placed in
+the rigid zones read 124 — on this fixture placement matters, which the HQ's random-placement measurement on a
+private part did not find there. The mechanism is the one the HQ named: a region changes where the full run halts so
+that it passes and nothing is rewound. A region larger than its need only buys density (132–174).
+
+### Which side holds which share
+
+The source's density, its weights and the hull's sampling are the dependant's inputs; the search, its operations and
+the rows are rigc's. On the fixture, between the trial's 108 and the floor's 76 (32 vertices, 45 bindings):
+
+- **26 vertices (81 %) are the outline**, and they are rigc's operation set more than anyone's input: a removal-only
+  reduction cannot reach an outline whose vertices sit off the source's samples, and #1271 measured that sampling the
+  hull finer makes it worse (§8, the correction to Q1). Relocation was declined in §8 Q5 for deform-key and weight-
+  transfer reasons that do not apply to an automatic mesh with no `vertices` deform key.
+- **6 vertices (19 %) are the rewind**, and the rewind is the replay protocol's: rigc's `stopAfterAccepted` makes a
+  prefix the only thing a failed full run can be cut back to, and parts's bisection picks the prefix.
+- **Bindings**: 45 more on the trial result (153 against 108), all from the vertex count — the fixture's field
+  carries one or two influences everywhere, and every kept vertex keeps the source's.
+
+On the consumer's 47 meshes, stated as shares of the card's totals:
+
+- **About 70 % (the interior) is the rewind** — rigc's replay protocol, cut by parts's search. Every public input
+  agrees: (c) is empty and (b) is the rewind loss.
+- **About 30 % (the boundary) is the removal-only floor over a 1 px hull at a 1 px bound** — the two-tolerance
+  mechanism of §8; the declared bound and the sampling are the dependant's, the absence of a relocating operation is
+  rigc's.
+- **Of the bindings, 44 % (log share) is the influences per vertex, which is the dependant's alone**: its weights carry
+  about half again the authored influences per vertex before the reduction runs, and the reduction cannot change them
+  (`MQ147`). The other 56 % follows the vertex count.
+- **The start density is the dependant's, and it matters through the rewind**: a rewound replay keeps source vertices,
+  so a source at 3.3× the authored count leaves a rewind that much denser.
+
+The follow-up is therefore cut on rigc's side first, in this order: the rewind (whatever stops a failed full run
+from keeping every later-removed vertex), then the outline (a relocating boundary operation for meshes with no
+deform keys); the influence count is a question for the dependant's weight generator, not for the reduction.
+
+### Measured — what a localised fallback would need from the comparison [measured, #1302]
+
+The HQ's first candidate mechanism protects only the vertices of the samples or triangles that broke the bound and
+lets the rest reduce to the end. The reduction already takes the protection: `protect.vertices` keeps any set of
+source vertices through every pass (the floor constructions above use it). What is missing is the input to choose
+the set: a comparison's `MQ_LOCAL_DEFORMATION` row reports **one** worst sample — its pixel and UV, not the
+candidate triangle that carries it — at one frame, per role and per phase; `perFrame` adds a value per frame with no
+location; `MQ_INVERSION` names one triangle. The comparison computes every sample's carrier and distance in each
+frame and keeps only the maximum. A localised fallback would need, per failing candidate, the samples over the bound
+(or the per-triangle maximum over the selection frames) with the candidate's carrying triangle — an opt-in report
+field, since a full list is as large as the art. On the fixture the size of the prize is small (the rewind is 8 of
+108); on the example parts it is 41 % of the kept vertices under the stand-in, and on demo/bottomwear the first
+failure falls inside the boundary runs, so the set to protect there would be boundary vertices, not interior ones.
+
+### What #155's density-only regions need from rigc
+
+`RefinementRegion` as it stands is enough to test a field: a polygon with a `maxEdgeLength` is a density floor
+inside it with no bone, the reduction honours it, and the post-pass never flips an edge it holds (`MQ102`). The joint
+control above is that test, built from the tree as it is. What a comparison between fields needs and the reports do
+not carry, all derivable by the caller today but not reported: the kept vertices inside each region and its band
+against those outside; whether the full run was accepted (the termination says `replayed-to-accepted-step` only for
+a replay) and, for a replay, the rewind loss — which needs the full run's count, which only a caller that ran the
+full run has. A shading-gradient field cannot be tested on the public fixture: its plates are checkerboards with
+`PLACEHOLDER` burned in, with no shading to take a gradient of.
+
+### Questions for rig-parts and the HQ
+
+Numbered afresh for #1302; cited as "§10 Q1" and so on.
+
+- **Q1.** The rewind loss on the consumer's parts is bounded here, not read: its reports keep the chosen replay and
+  not the full run's counts. Will rig-parts record, per replayed part, the full run's boundary/interior and the
+  replay's, so the rewind loss and buckets (a)–(c) can be read on the 47 meshes (and A–E) rather than bounded?
+- **Q2.** Do the consumer's authored meshes qualify under the trial's bounds as candidates (`compareMeshesInMotion`
+  is topology-independent; they can be measured today), and what is their motion error against the automatic source?
+  The authored-density targets here are refused on every public part, which says nothing about the authored meshes
+  themselves.
+- **Q3.** A localised fallback needs the samples or triangles that broke the bound. Does rig-parts want an opt-in
+  field on the comparison's report carrying them (per failing candidate: samples over the bound with their carrying
+  triangle, or a per-triangle maximum over the selection frames), and would it then drive `protect.vertices` itself?
+- **Q4.** Relocation (§8 Q5) was declined for deform keys and weight transfer. For automatic meshes, which carry no
+  `vertices` deform key and whose weights the dependant generates from a field, is a relocating boundary operation
+  reconsidered — 26 of the 32 vertices between the fixture's trial result and its floor?
+- **Q5.** Is a coarser source or a declared influence limit on rig-parts's side? Pruning to 2 influences halves the
+  bindings of the four-influence example parts and is refused by the motion bound against the unpruned source
+  (2.4–6.2 px [assumed]) before any reduction: if the limit is wanted, the reference has to carry it too.
+- **Q6 (HQ).** On the fixture the joint-proximity control (2 regions, 104) beats the same regions in the rigid zones
+  (124), unlike the random placements measured on the private part. Is the decision rule's baseline on the public
+  fixture 108 (the trial replay) with the joint control at 104, and is the field to be tested against both?
+
 ## Stage A controls
 
 [proposal] Suite prefix `MQ`, unused in `selftest.ts` today; names follow the
@@ -5387,6 +5663,25 @@ left out),
 decision in §8 was measured against — the amplitude carried into every
 measurement of the call, a `ReductionPlant` that is not a fault — to the same
 bytes as the result's alone.
+
+[measured, #1302] §10's decomposition, on the same fixture in the `mesh-compare`
+suite, as one unit (`MQ144-MQ147`) after the codes #1294–#1300 took — each read
+beside a run or a plant that must make it fire, named in its line:
+`MQ144_UNDER_THE_TRIAL_POLICY_THE_REPLAY_KEEPS_ITS_BOUNDARY_AT_B_STAR_AND_ONLY_INTERIOR_THE_MOTION_CUT_LEAVES_AND_THE_BUCKETS_SUM_TO_ITS_VERTICES`
+(the four buckets and the rewind loss of the trial policy's bisected replay;
+plants: the motion bucket read against the source, and `MQ88`'s strict replay,
+whose boundary is above B\*),
+`MQ145_A_MESH_OVER_A_RELOCATED_OUTLINE_WITH_THE_INTERIOR_ONLY_AT_THE_JOINTS_PASSES_EVERY_STATIC_ROW_AND_MOTION_WITH_FEWER_VERTICES_AND_BINDINGS_THAN_THE_TRIAL_REPLAY`
+(the floor, built by `abRelocatedOutline`; plants: the same outline with no
+interior, refused in motion, and an outline vertex pushed 2 px out, refused by
+`MQ_BOUNDARY_DEVIATION`),
+`MQ146_THE_SOURCE_STARTS_AT_MORE_THAN_THREE_TIMES_THE_FLOOR_AND_ITS_INTERIOR_ALONE_EXCEEDS_IT`
+(plant: the trial replay read as the floor) and
+`MQ147_A_DECLARED_INFLUENCE_LIMIT_PRUNES_NO_KEPT_VERTEX_OF_A_REMOVAL_ONLY_REDUCTION_SO_THE_RESULTS_BINDINGS_ARE_THE_SOURCES`
+(plant: the same limit applied to the source before the call). The trial
+policy's runs go through the suite's memo; the unit measured 49 s alone on
+darwin (Apple M4, load 6–14), most of it the bisection's seven replays and
+comparisons and the outline search.
 
 Every other name in the list is printed under its own code, by the suite the
 paragraphs above name.
