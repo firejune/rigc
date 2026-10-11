@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.41.0](https://github.com/rig-c/core/compare/v2.40.1...v2.41.0) (2026-10-11)
+
+
+### Features
+
+* **cli:** rigc inspect draws one moment of a build for an agent to read — bones, names, axes, a world grid and the declared axes over the art at the setup pose, one grid time or a sheet, zoomed to a bone, a slot or a box — with a legend stating the transform both ways and every bone's origin and tip in world units and pixels, posed as render poses it and held by IN01–IN15 ([#1357](https://github.com/rig-c/core/issues/1357)) ([#1360](https://github.com/rig-c/core/issues/1360)) ([9b18801](https://github.com/rig-c/core/commit/9b188010e373cb0074447afb74ade8d242ba3eb2))
+
 ## [2.40.1](https://github.com/rig-c/core/compare/v2.40.0...v2.40.1) (2026-10-11)
 
 
