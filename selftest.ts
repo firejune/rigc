@@ -128991,7 +128991,8 @@ function runRepackSuite(): number {
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
-import { AXIS_PIXELS, GRID_MIN_PIXELS, INSPECT_COLOURS, inspectCandidate, type InspectLegend, type InspectPlant, type InspectRequest, legendText } from './src/inspect.ts';
+import { AXIS_PIXELS, GRID_MIN_PIXELS, INSPECT_COLOURS, inspectCandidate, type InspectLegend, type InspectPlant, type InspectRequest, legendText, WEIGHT_RAMP } from './src/inspect.ts';
+import { drawText as drawGlyphs } from './tools/font5x7.ts';
 import { loadCandidate } from './src/render_shared.ts';
 
 /**
@@ -129349,8 +129350,8 @@ function runInspectSuite(): number {
       [['--zoom', 'arm'], ['names both a bone and a slot; say which with --zoom bone:arm or --zoom slot:arm']],
       [['--zoom', 'pin'], ['is one point', '--zoom pin:<pad>']],
       [['--animation', 'jump', '--at', '0'], ['no animation "jump" in this skeleton; it has [wave]']],
-      [['--show', 'bones,mesh'], ['"mesh" is not a view inspect draws; it draws [art, grid, declared, bones, axes, names]']],
-      [['--compare', 'elsewhere'], ['inspect takes no --compare; it takes --candidate']],
+      [['--show', 'bones,skin'], ['"skin" is not a view inspect draws; it draws [art, grid, weights:<bone>, mesh, hull, declared, bones, axes, slots, names]']],
+      [['--hide', 'arm'], ['inspect takes no --hide; it takes --candidate']],
       [['--animation', 'wave', '--at', '0.3'], ['not on the 12 fps frame grid', '3 (0.2500s) and 4 (0.3333s)']],
       [['--animation', 'wave', '--at', '2'], ['past the end of "wave": it lasts 1s']],
       [['--at', '0.5'], ['--at needs --animation <name>']],
@@ -129379,7 +129380,7 @@ function runInspectSuite(): number {
       'IN05_EVERY_REFUSAL_NAMES_WHAT_EXISTS_EXITS_2_AND_WRITES_NOTHING',
       held,
       probeDetail(held, probes, `${refusals.length} refusals — an unknown bone or slot, a name that is both, a zoom on one point, an unknown animation, skin, view word and flag, a time off the 12 fps grid and one past the end, --at without --animation and the reverse, two boxes — each exit 2 naming what exists and leaving no file; the same rig with no model document posed by spine-core, said so, its legend held as IN01's, and --show declared refused naming the document it reads`),
-      'issue #1357: the messages are the interface, so a miss names the roster it missed, and a view this cut does not draw (mesh) is an unknown word like any other — a message promising a later cut is a claim that rots',
+      'issue #1357: the messages are the interface, so a miss names the roster it missed, and a view inspect does not draw is an unknown word like any other — a message promising a later cut is a claim that rots',
     );
   }
 
@@ -129548,7 +129549,592 @@ function runInspectSuite(): number {
     say('IN11_MUTANTS', false, `the probe did not build, so no mutant ran: ${probe.built.join('; ')}`, '');
   }
 
+  bad += runInspectCut2(probe);
   rmSync(probe.work, { recursive: true, force: true });
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// inspect, cut 2 — what a bone moves, two builds, and labels that read (issue #1357)
+// ---------------------------------------------------------------------------
+
+/**
+ * The mesh probe's chosen numbers. The box and scale are the cut-1 probe's
+ * (scale 2, a box corner at −20.25), so every whole world coordinate lands on a
+ * pixel CENTRE: a vertex's pixel is its floor with half a pixel either way, and
+ * a heat pixel whose centre IS a vertex reads that vertex's weight exactly.
+ */
+const INSPECT_MESH_PROBE = {
+  /** The strip's six vertices in world units, hull order; `a` sits at the origin and `b` at (20, 0), so these are `a`-local too. */
+  strip: [[0, -5], [20, -5], [40, -5], [40, 5], [20, 5], [0, 5]] as Array<[number, number]>,
+  /** Bone `a`'s weight at each vertex; `b` takes the rest. */
+  weightA: [1, 0.5, 0, 0, 0.5, 1],
+  triangles: [0, 1, 5, 1, 4, 5, 1, 2, 4, 2, 3, 4],
+  /** The triangle edges that are not hull edges: inside the strip, never on its outline. */
+  interior: [[1, 5], [1, 4], [2, 4]] as Array<[number, number]>,
+  /** `tag` is a region on `b`, lifted clear of the strip. */
+  tagY: 15,
+  /** Three bones at one origin — `knot` and its two identity children — and `near` 3 units (6 px) right of them, on one row. */
+  knot: { x: -10, y: 30 },
+  near: { x: -7, y: 30 },
+  /** A bone no attachment weights; the moved copy lowers it this far. */
+  idle: { x: 60, y: 30, movedY: 20 },
+} as const;
+
+const INSPECT_MESH_BONES = ['root', 'a', 'b', 'knot', 'knot_a', 'knot_b', 'near', 'idle'];
+
+/** The mesh probe, and its copy with `idle` lowered — the one change a compare of the two may show. */
+function writeInspectMeshProbe(idleY: number): { outDir: string; work: string; built: string[] } {
+  const { strip, weightA, triangles, tagY, knot, near, idle } = INSPECT_MESH_PROBE;
+  const dirs = writeProbeRig({
+    bones: [
+      { name: 'root' },
+      { name: 'a', parent: 'root', x: 0, y: 0, length: 20 },
+      { name: 'b', parent: 'a', x: 20, y: 0, length: 20 },
+      { name: 'knot', parent: 'root', x: knot.x, y: knot.y },
+      { name: 'knot_a', parent: 'knot' },
+      { name: 'knot_b', parent: 'knot' },
+      { name: 'near', parent: 'root', x: near.x, y: near.y },
+      { name: 'idle', parent: 'root', x: idle.x, y: idleY },
+    ],
+    slots: [
+      { name: 'strip', bone: 'a', attachment: 'strip' },
+      { name: 'tag', bone: 'b', attachment: 'tag' },
+    ],
+    skins: {
+      default: {
+        strip: {
+          strip: {
+            type: 'mesh',
+            image: 'block.png',
+            uvs: [0, 1, 0.5, 1, 1, 1, 1, 0, 0.5, 0, 0, 0],
+            triangles,
+            hull: strip.length,
+            weights: strip.map(([x, y], i) =>
+              [
+                ...(weightA[i] > 0 ? [{ bone: 'a', x, y, weight: weightA[i] }] : []),
+                ...(weightA[i] < 1 ? [{ bone: 'b', x: x - 20, y, weight: 1 - weightA[i] }] : []),
+              ],
+            ),
+          },
+        },
+        tag: { tag: { image: 'marker.png', y: tagY } },
+      },
+    },
+  });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      animations: { swap: { duration: 1, loop: false, drawOrder: [{ t: 0.5, offsets: [{ slot: 'strip', offset: 1 }] }, { t: 1 }], tracks: [] } },
+    }, null, 2)}\n`,
+  );
+  const built: string[] = [];
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+  if (build.status !== 0) built.push(`the mesh probe (idle at y ${idleY}) did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  return { outDir: dirs.outDir, work: dirs.dir, built };
+}
+
+/** A build's view in this process, through the loading `cmdInspect` does — with a second build beside it when `compareDir` is named. */
+function inspectView2(dir: string, request: InspectRequest, plant: InspectPlant = {}, compareDir?: string): ReturnType<typeof inspectCandidate> {
+  const load = (d: string): { candidate: ReturnType<typeof loadCandidate>; texts: { skeletonText: string; modelText: string | undefined } } => {
+    const skeletonPath = join(d, 'skeleton.json');
+    const atlasPath = join(d, 'skeleton.atlas');
+    const skeletonText = readFileSync(skeletonPath, 'utf8');
+    const candidate = loadCandidate(
+      { skeletonText, atlasText: readFileSync(atlasPath, 'utf8'), atlasDir: d, label: skeletonPath },
+      { skeleton: skeletonPath, atlas: atlasPath },
+      undefined,
+    );
+    const modelPath = join(d, 'skeleton.model.json');
+    return { candidate, texts: { skeletonText, modelText: existsSync(modelPath) ? readFileSync(modelPath, 'utf8') : undefined } };
+  };
+  const a = load(dir);
+  return inspectCandidate(a.candidate, a.texts, request, plant, compareDir === undefined ? undefined : load(compareDir));
+}
+
+/** The probe box's pixel for a world point — the transform written out, as `inspectProbePixel`. */
+const meshPixel = (wx: number, wy: number): [number, number] => inspectProbePixel(wx, wy);
+
+/** How many pixels `text` lights in the 5x7 font — counted by drawing it, so a label's ink is known before it is read. */
+function glyphInk(text: string): number {
+  let n = 0;
+  drawGlyphs(text, 0, 0, 1, () => {
+    n++;
+  });
+  return n;
+}
+
+/** A text's width in the 5x7 font: five columns a glyph and one between. */
+const textWidthOf = (text: string): number => text.length * 6 - 1;
+
+/** Pixels of one exact colour inside a box of the picture. */
+function inkIn(plate: Plate, box: { x: number; y: number; width: number; height: number }, rgba: readonly number[]): number {
+  let n = 0;
+  for (let y = box.y; y < box.y + box.height; y++) {
+    for (let x = box.x; x < box.x + box.width; x++) {
+      if (x < 0 || y < 0 || x >= plate.width || y >= plate.height) continue;
+      if (plate.get(x, y).join() === rgba.join()) n++;
+    }
+  }
+  return n;
+}
+
+/** IN16's reading: the strip's legend entry is the spec's mesh, and every vertex and edge midpoint of it is drawn in the mesh colour; the region is not. */
+function inspectMeshFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const { strip, triangles, tagY } = INSPECT_MESH_PROBE;
+  const entry = legend.tiles[0]?.meshes?.find((m) => m.slot === 'strip');
+  if (entry === undefined) return ['legend: no meshes[] entry for slot "strip"'];
+  if (entry.kind !== 'mesh' || entry.vertexCount !== strip.length || entry.triangleCount !== triangles.length / 3 || entry.hull !== strip.length) {
+    faults.push(`legend: strip is ${entry.kind} with ${entry.vertexCount} vertices, ${entry.triangleCount} triangles, hull ${entry.hull}; the spec states a mesh of ${strip.length}, ${triangles.length / 3}, hull ${strip.length}`);
+  }
+  if (entry.edges.length !== 9) faults.push(`legend: strip has ${entry.edges.length} edges, its four triangles have 9`);
+  const mesh = INSPECT_COLOURS.mesh.rgba;
+  strip.forEach(([wx, wy], v) => {
+    const [px, py] = meshPixel(wx, wy);
+    if (Math.abs(entry.world[2 * v] - wx) > 1e-4 || Math.abs(entry.world[2 * v + 1] - wy) > 1e-4) faults.push(`legend: strip vertex ${v} at world (${entry.world[2 * v]}, ${entry.world[2 * v + 1]}), the spec puts it at (${wx}, ${wy})`);
+    if (Math.abs(entry.pixel[2 * v] - px) > 1e-3 || Math.abs(entry.pixel[2 * v + 1] - py) > 1e-3) faults.push(`legend: strip vertex ${v} at pixel (${entry.pixel[2 * v]}, ${entry.pixel[2 * v + 1]}), the probe box puts it at (${px}, ${py})`);
+    const got = plate.get(Math.floor(px), Math.floor(py));
+    if (got.join() !== mesh.join()) faults.push(`picture: strip vertex ${v}'s pixel (${Math.floor(px)}, ${Math.floor(py)}) is ${got.join(',')}, not the mesh colour ${mesh.join(',')}`);
+  });
+  for (const [p, q] of entry.edges) {
+    const [ax, ay] = meshPixel(...strip[p]);
+    const [bx, by] = meshPixel(...strip[q]);
+    const box = { x: Math.floor((ax + bx) / 2) - 1, y: Math.floor((ay + by) / 2) - 1, width: 3, height: 3 };
+    if (inkIn(plate, box, mesh) === 0) faults.push(`picture: no mesh colour within a pixel of edge ${p}-${q}'s midpoint (${box.x + 1}, ${box.y + 1})`);
+  }
+  const [tx, ty] = meshPixel(20, tagY);
+  if (inkIn(plate, { x: Math.floor(tx) - 1, y: Math.floor(ty) - 1, width: 3, height: 3 }, mesh) !== 0) faults.push('picture: mesh colour at the centre of the region "tag" — a region is not a mesh');
+  return faults;
+}
+
+/** IN17's reading: the hull's six edges in the hull colour, the three inside edges in the mesh colour and not the hull's. */
+function inspectHullFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const { strip, interior } = INSPECT_MESH_PROBE;
+  if (legend.tiles[0]?.meshes?.find((m) => m.slot === 'strip')?.hull !== strip.length) faults.push(`legend: strip's hull is not ${strip.length}`);
+  const near = (p: number, q: number): { x: number; y: number; width: number; height: number } => {
+    const [ax, ay] = meshPixel(...strip[p]);
+    const [bx, by] = meshPixel(...strip[q]);
+    return { x: Math.floor((ax + bx) / 2) - 1, y: Math.floor((ay + by) / 2) - 1, width: 3, height: 3 };
+  };
+  for (let i = 0; i < strip.length; i++) {
+    if (inkIn(plate, near(i, (i + 1) % strip.length), INSPECT_COLOURS.hull.rgba) === 0) faults.push(`picture: hull edge ${i}-${(i + 1) % strip.length} has no hull colour at its midpoint`);
+  }
+  for (const [p, q] of interior) {
+    if (inkIn(plate, near(p, q), INSPECT_COLOURS.hull.rgba) !== 0) faults.push(`picture: inside edge ${p}-${q} is drawn in the hull colour — it is not on the hull`);
+    if (inkIn(plate, near(p, q), INSPECT_COLOURS.mesh.rgba) === 0) faults.push(`picture: inside edge ${p}-${q} has no mesh colour at its midpoint`);
+  }
+  return faults;
+}
+
+/** The ramp at `w` from the stops the module states, interpolated here: each channel rounded. */
+function rampAt(w: number): number[] {
+  for (let i = 0; i + 1 < WEIGHT_RAMP.length; i++) {
+    const lo = WEIGHT_RAMP[i];
+    const hi = WEIGHT_RAMP[i + 1];
+    if (w <= hi.weight) return lo.rgba.map((c, k) => Math.round(c + ((hi.rgba[k] - c) * (w - lo.weight)) / (hi.weight - lo.weight)));
+  }
+  return [...WEIGHT_RAMP[WEIGHT_RAMP.length - 1].rgba];
+}
+
+/** IN18's reading, for `weights:a`: the legend's weights are the spec's, and the heat at each vertex's pixel is the ramp at its weight — a weight of 0 unpainted. */
+function inspectWeightFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const { strip, weightA, tagY } = INSPECT_MESH_PROBE;
+  if (legend.weights?.bone !== 'a') faults.push(`legend: weights.bone is ${JSON.stringify(legend.weights?.bone)}, the request named "a"`);
+  const entry = legend.tiles[0]?.meshes?.find((m) => m.slot === 'strip');
+  if (entry?.weights === undefined) return [...faults, 'legend: strip states no weights'];
+  if (JSON.stringify(entry.weights) !== JSON.stringify(weightA)) faults.push(`legend: strip's weights for "a" are [${entry.weights.join(', ')}], the spec states [${weightA.join(', ')}]`);
+  const tag = legend.tiles[0]?.meshes?.find((m) => m.slot === 'tag');
+  if (tag?.weights?.join() !== '0,0,0,0') faults.push(`legend: region "tag" on bone b states weights [${tag?.weights?.join(', ')}] for "a", required [0, 0, 0, 0]`);
+  strip.forEach(([wx, wy], v) => {
+    const [px, py] = meshPixel(wx, wy);
+    const want = weightA[v] === 0 ? [...BACKGROUND] : rampAt(weightA[v]);
+    const got = plate.get(Math.floor(px), Math.floor(py));
+    if (got.join() !== want.join()) faults.push(`picture: vertex ${v} (weight ${weightA[v]}) is ${got.join(',')} at (${Math.floor(px)}, ${Math.floor(py)}), the ramp at its weight is ${want.join(',')}`);
+  });
+  // A quarter of the way along the bottom edge from vertex 0 (weight 1) to vertex 1 (0.5): a pixel centre on the edge,
+  // so its weight is 0.875 — a point whose ramp channels (223.75, 66.25, 15) sit clear of a rounding tie, so the float
+  // noise of a posed vertex cannot flip one.
+  const [mx, my] = meshPixel(strip[0][0] + (strip[1][0] - strip[0][0]) / 4, strip[0][1]);
+  const mid = weightA[0] + (weightA[1] - weightA[0]) / 4;
+  const got = plate.get(Math.floor(mx), Math.floor(my));
+  if (got.join() !== rampAt(mid).join()) faults.push(`picture: the bottom edge a quarter along (weight ${mid}) is ${got.join(',')}, the ramp says ${rampAt(mid).join(',')}`);
+  const [tx, ty] = meshPixel(20, tagY);
+  if (plate.get(Math.floor(tx), Math.floor(ty)).join() !== BACKGROUND.join()) faults.push('picture: region "tag" is painted for "a", which does not move it');
+  return faults;
+}
+
+/** IN20's reading: the slot order is `want`, and each number is drawn in its box. */
+function inspectSlotFaults(plate: Plate, legend: InspectLegend, want: string[]): string[] {
+  const faults: string[] = [];
+  const slots = legend.tiles[0]?.slots ?? [];
+  const got = slots.map((s) => s.slot);
+  if (got.join() !== want.join()) faults.push(`legend: slot order [${got.join(', ')}], the skeleton draws [${want.join(', ')}]`);
+  for (const s of slots) {
+    if (want[s.order] !== s.slot) faults.push(`legend: slot "${s.slot}" numbered ${s.order}, the skeleton draws it ${want.indexOf(s.slot)}`);
+    const ink = inkIn(plate, s.box, INSPECT_COLOURS.slot.rgba);
+    if (ink !== glyphInk(String(s.order))) faults.push(`picture: slot "${s.slot}"'s box holds ${ink} slot-colour pixels, "${s.order}" in the font is ${glyphInk(String(s.order))}`);
+  }
+  return faults;
+}
+
+/** IN22's reading: two halves on one transform that differ only around `idle`, whose origin moved by the copy's one change. */
+function inspectMovedFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const [ta, tb] = legend.tiles;
+  if (ta?.build !== 'A' || tb?.build !== 'B') return [`legend: tiles are [${legend.tiles.map((t) => t.build).join(', ')}], required [A, B]`];
+  if (ta.transform.minX !== tb.transform.minX || ta.transform.maxY !== tb.transform.maxY || ta.transform.scale !== tb.transform.scale) faults.push('legend: the two halves state different transforms');
+  const dy = INSPECT_MESH_PROBE.idle.movedY - INSPECT_MESH_PROBE.idle.y;
+  for (const bone of ta.bones) {
+    const other = tb.bones.find((b) => b.name === bone.name);
+    const shift = bone.name === 'idle' ? dy : 0;
+    // 1e-5 world units: the posers carry float noise of ~1e-7 in a world origin (IN01's tolerance).
+    if (other === undefined || Math.abs(other.origin.world[0] - bone.origin.world[0]) > 1e-5 || Math.abs(other.origin.world[1] - bone.origin.world[1] - shift) > 1e-5) {
+      faults.push(`legend: bone "${bone.name}" at (${bone.origin.world.join(', ')}) in A and (${other?.origin.world.join(', ')}) in B; the copy moves only idle, by ${dy} in y`);
+    }
+  }
+  const ia = ta.bones.find((b) => b.name === 'idle');
+  const ib = tb.bones.find((b) => b.name === 'idle');
+  if (ia === undefined || ib === undefined) return [...faults, 'legend: no idle bone'];
+  const near = [
+    [Math.floor(ia.origin.pixel[0]) - ta.box.x, Math.floor(ia.origin.pixel[1]) - ta.box.y],
+    [Math.floor(ib.origin.pixel[0]) - tb.box.x, Math.floor(ib.origin.pixel[1]) - tb.box.y],
+  ];
+  let differ = 0;
+  let stray = '';
+  for (let y = 0; y < ta.box.height; y++) {
+    for (let x = 0; x < ta.box.width; x++) {
+      if (plate.get(ta.box.x + x, ta.box.y + y).join() === plate.get(tb.box.x + x, tb.box.y + y).join()) continue;
+      const inLabel = [ta, tb].some((t) => t.label !== undefined && x + t.box.x >= t.label.box.x && x + t.box.x < t.label.box.x + t.label.box.width && y + t.box.y >= t.label.box.y && y + t.box.y < t.label.box.y + t.label.box.height);
+      if (inLabel) continue;
+      differ++;
+      if (!near.some(([nx, ny]) => Math.abs(x - nx) <= 2 && Math.abs(y - ny) <= 2) && stray === '') stray = `(${x}, ${y})`;
+    }
+  }
+  if (differ === 0) faults.push('picture: the two halves are the same — the moved bone made no difference');
+  if (stray !== '') faults.push(`picture: the halves differ at tile pixel ${stray}, more than 2 px from idle's origin in either build`);
+  return faults;
+}
+
+/** IN24's reading: three bones on one pixel are one label, "knot +2", with all three in the legend's label and bones. */
+function inspectFoldFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const tile = legend.tiles[0];
+  const [kx, ky] = meshPixel(INSPECT_MESH_PROBE.knot.x, INSPECT_MESH_PROBE.knot.y).map(Math.floor);
+  const at = (tile?.labels ?? []).filter((l) => l.anchor[0] === kx && l.anchor[1] === ky);
+  if (at.length !== 1) return [`legend: ${at.length} label(s) on knot's pixel (${kx}, ${ky}) — [${at.map((l) => l.text).join(', ')}]; three bones on one pixel are one label`];
+  const label = at[0];
+  if (label.text !== 'knot +2' || label.bones.join() !== 'knot,knot_a,knot_b') faults.push(`legend: the label is ${JSON.stringify(label.text)} for [${label.bones.join(', ')}], required "knot +2" for [knot, knot_a, knot_b]`);
+  for (const name of ['knot', 'knot_a', 'knot_b']) {
+    const bone = tile?.bones.find((b) => b.name === name);
+    if (bone === undefined || bone.undrawn !== null) faults.push(`legend: bone "${name}" is ${bone === undefined ? 'missing' : `undrawn (${bone.undrawn})`} — folding a label leaves every bone in the legend`);
+  }
+  const ink = inkIn(plate, label.box, INSPECT_COLOURS.name.rgba);
+  if (ink !== glyphInk(label.text)) faults.push(`picture: the label's box holds ${ink} name-colour pixels, "${label.text}" in the font is ${glyphInk(label.text)}`);
+  return faults;
+}
+
+/** IN25's reading: no two labels crowd each other, and `near`'s — which began on knot's — was moved with a leader. */
+function inspectAvoidFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const labels = legend.tiles[0]?.labels ?? [];
+  for (let i = 0; i < labels.length; i++) {
+    for (let j = i + 1; j < labels.length; j++) {
+      const [p, q] = [labels[i].box, labels[j].box];
+      if (p.x < q.x + q.width + 1 && q.x < p.x + p.width + 1 && p.y < q.y + q.height + 1 && q.y < p.y + p.height + 1) faults.push(`legend: labels "${labels[i].text}" and "${labels[j].text}" crowd each other at (${p.x}, ${p.y}) and (${q.x}, ${q.y})`);
+    }
+  }
+  const near = labels.find((l) => l.bones.includes('near'));
+  if (near === undefined) return [...faults, 'legend: no label for near'];
+  if (!near.moved) faults.push(`legend: near's label was not moved, though it begins 6 px right of knot's on the same row and "knot +2" is ${textWidthOf('knot +2')} px wide`);
+  const [ax, ay] = near.anchor;
+  if (plate.get(ax, ay).join() !== INSPECT_COLOURS.leader.rgba.join()) faults.push(`picture: near's anchor pixel (${ax}, ${ay}) is ${plate.get(ax, ay).join(',')}, not the leader colour — a moved label is joined to its origin`);
+  return faults;
+}
+
+/** IN26's reading for `--hide-bone 'knot_*'`: the two children are left out by name and the label is knot's alone. */
+function inspectFilterFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const tile = legend.tiles[0];
+  for (const name of ['knot_a', 'knot_b']) {
+    const bone = tile?.bones.find((b) => b.name === name);
+    if (bone === undefined || bone.undrawn === null || !bone.undrawn.includes("--hide-bone knot_*")) faults.push(`legend: bone "${name}" undrawn ${JSON.stringify(bone?.undrawn)}, required the --hide-bone pattern that left it out`);
+  }
+  const knot = (tile?.labels ?? []).find((l) => l.bones.includes('knot'));
+  if (knot?.text !== 'knot' || knot.bones.length !== 1) faults.push(`legend: knot's label is ${JSON.stringify(knot?.text)} for [${knot?.bones.join(', ')}], required "knot" alone`);
+  else if (inkIn(plate, knot.box, INSPECT_COLOURS.name.rgba) !== glyphInk('knot')) faults.push('picture: knot\'s label is not "knot" in the font');
+  if (JSON.stringify(legend.boneFilter) !== JSON.stringify({ include: null, exclude: ['knot_*'] })) faults.push(`legend: boneFilter ${JSON.stringify(legend.boneFilter)}`);
+  return faults;
+}
+
+function runInspectCut2(cut1: InspectProbe): number {
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const probe = writeInspectMeshProbe(INSPECT_MESH_PROBE.idle.y);
+  const moved = writeInspectMeshProbe(INSPECT_MESH_PROBE.idle.movedY);
+  const built = [...probe.built, ...moved.built];
+  const outPng = (name: string): string => join(probe.work, `${name}.png`);
+  const boxFlag = ['--viewport', `${INSPECT_PROBE.box.x},${INSPECT_PROBE.box.y},${INSPECT_PROBE.box.width},${INSPECT_PROBE.box.height}`, '--max', String(INSPECT_PROBE.max)];
+  const legendOf = (png: string): InspectLegend => JSON.parse(readFileSync(png.replace(/\.png$/, '.json'), 'utf8')) as InspectLegend;
+  /** One CLI run over the mesh probe in the probe box, read back as the picture and the legend — or the probe lines saying why not. */
+  const viewOf = (name: string, args: string[]): { plate: Plate; legend: InspectLegend; stdout: string } | string => {
+    if (built.length > 0) return built.join('; ');
+    const run = runCli(['inspect', '--candidate', probe.outDir, ...boxFlag, ...args, '--out', outPng(name)]);
+    if (run.status !== 0) return `inspect ${args.join(' ')} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`;
+    return { plate: readPlate(outPng(name)), legend: legendOf(outPng(name)), stdout: run.stdout };
+  };
+  const held = (probes: string[]): boolean => probes.length === 0;
+  const control = (name: string, args: string[], read: (plate: Plate, legend: InspectLegend, stdout: string) => string[], clean: string, why: string): void => {
+    const got = viewOf(name.slice(0, 4), args);
+    const probes = typeof got === 'string' ? [got] : read(got.plate, got.legend, got.stdout);
+    say(name, held(probes), probeDetail(held(probes), probes, clean), why);
+  };
+  const skeletonSlots = (): string[] => (JSON.parse(readFileSync(join(probe.outDir, 'skeleton.json'), 'utf8')) as { slots: Array<{ name: string }> }).slots.map((s) => s.name);
+
+  control(
+    'IN16_MESH_EDGES_ARE_DRAWN_THROUGH_THE_VERTEX_PIXELS_THE_LEGEND_STATES',
+    ['--show', 'mesh'],
+    inspectMeshFaults,
+    'the strip\'s legend entry is the spec\'s mesh — 6 vertices, 4 triangles, hull 6, 9 edges — every vertex at the world point the spec states and the pixel the probe box puts it at, each vertex pixel in the mesh colour, every edge\'s midpoint within a pixel of it, and the region "tag" undrawn',
+    'issue #1357: the mesh view answers "what is the triangulation here", so its marks sit on the vertices the legend names or the legend is not their key',
+  );
+  control(
+    'IN17_THE_HULL_IS_THE_OUTLINE_AND_NOT_THE_INSIDE_EDGES',
+    ['--show', 'mesh,hull'],
+    inspectHullFaults,
+    'the six hull edges in the hull colour at their midpoints; the three inside edges in the mesh colour and not the hull\'s',
+    'issue #1357: a hull is vertices 0..hull−1 in order and back — drawn over every edge it would say nothing the mesh view does not',
+  );
+  control(
+    'IN18_THE_WEIGHT_HEAT_AT_A_VERTEX_IS_THE_RAMP_AT_THAT_VERTEXS_WEIGHT',
+    ['--show', 'weights:a'],
+    inspectWeightFaults,
+    `the legend's weights for "a" are the spec's [${INSPECT_MESH_PROBE.weightA.join(', ')}] and the region's [0, 0, 0, 0]; each vertex pixel is the ramp at its weight — the stops themselves at 1 and 0.5, the background at 0 — and the bottom edge a quarter along the ramp at 0.875, interpolated here from the stated stops`,
+    'issue #1357: "what does this bone move" is read off the heat, so the colour at a vertex is that vertex\'s weight through the ramp the legend states, read off skeleton.json rather than re-derived from a pose',
+  );
+  {
+    const probes: string[] = [];
+    if (built.length > 0) probes.push(...built);
+    else {
+      for (const [args, fragments] of [
+        [['--show', 'weights:elbow'], [`--show weights:elbow: no bone of that name; the bones are [${INSPECT_MESH_BONES.join(', ')}]`]],
+        [['--show', 'weights'], ['--show "weights" needs the bone whose weights it paints: weights:<bone>']],
+        [['--show', 'weights:'], ['--show "weights:" needs the bone']],
+      ] as Array<[string[], string[]]>) {
+        const out = outPng(`w-refused-${args[1].length}`);
+        const run = runCli(['inspect', '--candidate', probe.outDir, ...boxFlag, ...args, '--out', out]);
+        const missing = fragments.filter((f) => !run.stderr.includes(f));
+        if (run.status !== 2 || missing.length > 0) probes.push(`${args.join(' ')}: exit ${String(run.status)}, missing ${JSON.stringify(missing)} from: ${run.stderr.trim().split('\n')[0]}`);
+        if (existsSync(out)) probes.push(`${args.join(' ')}: refused and still wrote ${out}`);
+      }
+      const idle = viewOf('weights-idle', ['--show', 'weights:idle']);
+      if (typeof idle === 'string') probes.push(idle);
+      else {
+        if (!idle.stdout.includes('weights: bone "idle" weights no vertex of any region or mesh shows here — nothing painted')) probes.push(`weights:idle printed no line saying it painted nothing: ${idle.stdout.trim().split('\n').slice(-4).join(' | ')}`);
+        let painted = 0;
+        for (let y = 0; y < idle.plate.height; y++) for (let x = 0; x < idle.plate.width; x++) if (idle.plate.get(x, y).join() !== BACKGROUND.join()) painted++;
+        if (painted !== 0) probes.push(`weights:idle painted ${painted} pixel(s); a bone that weights nothing draws nothing`);
+      }
+    }
+    say(
+      'IN19_AN_UNKNOWN_WEIGHTS_BONE_IS_REFUSED_BY_NAME_AND_ONE_THAT_WEIGHTS_NOTHING_SAYS_SO',
+      held(probes),
+      probeDetail(held(probes), probes, 'weights:elbow refused naming the eight bones, weights and weights: refused asking for one — each exit 2 writing nothing; weights:idle exit 0, no pixel painted and a line saying so'),
+      'issue #1357: a bone the build lacks is a miss named with its roster; a bone that moves nothing is an answer, and an empty picture with no sentence would read as a fault in the tool',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const declared = built.length > 0 ? [] : skeletonSlots();
+    const setup = viewOf('slots-setup', ['--show', 'slots']);
+    if (typeof setup === 'string') probes.push(setup);
+    else probes.push(...inspectSlotFaults(setup.plate, setup.legend, declared).map((f) => `setup: ${f}`));
+    // The key at 0.5 s moves strip one place later. On render's 12 fps grid it first shows on frame 7: six steps of
+    // 1/12 s reach 0.49999999999999994 s, short of the key, in both posers (render --geometry records the same), so
+    // frame 5 is held to the declared order and frame 7 to the swap.
+    const swapped = [...declared].reverse();
+    for (const [t, want] of [[5 / 12, declared], [7 / 12, swapped]] as Array<[number, string[]]>) {
+      const run = viewOf(`slots-${t}`, ['--show', 'slots', '--animation', 'swap', '--at', String(t)]);
+      if (typeof run === 'string') probes.push(run);
+      else probes.push(...inspectSlotFaults(run.plate, run.legend, want).map((f) => `swap at ${t}s: ${f}`));
+    }
+    say(
+      'IN20_SLOT_NUMBERS_ARE_THE_SKELETONS_DRAW_ORDER_AT_THE_POSE_DRAWN',
+      held(probes),
+      probeDetail(held(probes), probes, `at the setup pose the order is skeleton.json's slots array [${declared.join(', ')}]; on swap at frame 5 the same, and at frame 7 — the first its 0.5 s key shows on — strip one place later, [${swapped.join(', ')}]; each number drawn in the font in its box`),
+      'issue #1357: "which is drawn over which" is the draw order at the moment drawn, so a drawOrder key is read where the pose put it, not off the setup list',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const self = built.length > 0 ? null : runCli(['inspect', '--candidate', probe.outDir, '--compare', probe.outDir, ...boxFlag, '--show', 'bones,names,mesh,slots', '--out', outPng('self')]);
+    if (self === null) probes.push(...built);
+    else if (self.status !== 0) probes.push(`inspect --compare itself exited ${String(self.status)}: ${self.stderr.trim().slice(0, 300)}`);
+    else {
+      const plate = readPlate(outPng('self'));
+      const legend = legendOf(outPng('self'));
+      const [ta, tb] = legend.tiles;
+      if (legend.builds?.length !== 2 || legend.builds[0].skeletonSha256 !== legend.builds[1].skeletonSha256) probes.push(`legend: builds ${JSON.stringify(legend.builds)}, required two of one skeleton`);
+      if (!self.stdout.includes('poser    A: rigc core') || !self.stdout.includes('poser    B: rigc core')) probes.push('the run did not name the poser of each half');
+      const w = legend.viewport.width;
+      if (ta === undefined || tb === undefined || tb.box.x !== ta.box.x + w + SHEET_GAP || tb.box.y !== ta.box.y) probes.push(`legend: halves at (${ta?.box.x}, ${ta?.box.y}) and (${tb?.box.x}, ${tb?.box.y}), required side by side ${SHEET_GAP} px apart`);
+      else {
+        if (JSON.stringify({ ...ta.transform, x0: 0 }) !== JSON.stringify({ ...tb.transform, x0: 0 })) probes.push('legend: the halves state different transforms');
+        if (ta.label?.text !== 'A core' || tb.label?.text !== 'B core') probes.push(`legend: half labels ${JSON.stringify(ta.label?.text)} and ${JSON.stringify(tb.label?.text)}, required "A core" and "B core"`);
+        let differ = 0;
+        for (let y = 0; y < ta.box.height; y++) {
+          for (let x = 0; x < ta.box.width; x++) {
+            const lb = ta.label?.box;
+            if (lb !== undefined && x + ta.box.x >= lb.x && x + ta.box.x < lb.x + lb.width && y + ta.box.y >= lb.y && y + ta.box.y < lb.y + lb.height) continue;
+            if (plate.get(ta.box.x + x, ta.box.y + y).join() !== plate.get(tb.box.x + x, tb.box.y + y).join()) differ++;
+          }
+        }
+        if (differ !== 0) probes.push(`picture: a build beside itself differs in ${differ} pixel(s) outside the half labels`);
+      }
+    }
+    say(
+      'IN21_A_BUILD_COMPARED_WITH_ITSELF_IS_TWO_IDENTICAL_HALVES_ON_ONE_TRANSFORM',
+      held(probes),
+      probeDetail(held(probes), probes, 'bones, names, mesh and slots of the mesh probe beside itself: two halves side by side on one transform, labelled "A core" and "B core", one skeleton sha256 twice, every pixel outside the two labels equal, and the poser of each named on its own line'),
+      'issue #1357: the positive control under every compare — a difference between the halves is a difference between the builds only if two copies of one build show none',
+    );
+  }
+  control(
+    'IN22_A_ONE_BONE_CHANGE_DIFFERS_EXACTLY_WHERE_THAT_BONE_IS',
+    ['--compare', moved.outDir, '--show', 'bones'],
+    inspectMovedFaults,
+    `the mesh probe beside its copy with idle lowered ${INSPECT_MESH_PROBE.idle.y - INSPECT_MESH_PROBE.idle.movedY} units: one transform; every bone at one world origin in both halves but idle, which is ${INSPECT_MESH_PROBE.idle.movedY - INSPECT_MESH_PROBE.idle.y} in y off; the halves differ, and only within 2 px of idle's origin in either`,
+    'issue #1357: "did this change move anything" is answered by the two halves differing where the change is and nowhere else — on one grid, or a whole half would differ for the framing alone',
+  );
+  {
+    const probes: string[] = [];
+    const refusals: Array<[string[], string[]]> = [
+      [['--zoom', 'bone:knot'], ['the --compare build: --zoom "bone:knot": no bone or slot of that name. Bones: [root, arm, fore, pin]']],
+      [['--animation', 'swap', '--at', '0'], ['the --compare build: no animation "swap" in this skeleton; it has [wave]']],
+      [['--show', 'weights:a'], ['the --compare build: --show weights:a: no bone of that name; the bones are [root, arm, fore, pin]']],
+      [['--bone', 'knot*'], ['the --compare build: --bone "knot*" matches no bone; the bones are [root, arm, fore, pin]']],
+    ];
+    for (const [i, [args, fragments]] of refusals.entries()) {
+      if (built.length > 0 || cut1.built.length > 0) {
+        probes.push(...built, ...cut1.built);
+        break;
+      }
+      const out = outPng(`c-refused-${i}`);
+      const run = runCli(['inspect', '--candidate', probe.outDir, '--compare', cut1.outDir, ...(args.includes('--zoom') ? [] : boxFlag), ...args, '--out', out]);
+      const missing = fragments.filter((f) => !run.stderr.includes(f));
+      if (run.status !== 2 || missing.length > 0) probes.push(`${args.join(' ')}: exit ${String(run.status)}, missing ${JSON.stringify(missing)} from: ${run.stderr.trim().split('\n')[0]}`);
+      if (existsSync(out)) probes.push(`${args.join(' ')}: refused and still wrote ${out}`);
+    }
+    say(
+      'IN23_TWO_BUILDS_THAT_CANNOT_SHARE_A_VIEW_ARE_REFUSED_NAMING_WHICH_AND_WHY',
+      held(probes),
+      probeDetail(held(probes), probes, `${refusals.length} refusals of the mesh probe beside the cut-1 probe — a zoom bone, an animation, a weights bone and a --bone pattern the second build lacks — each exit 2, naming the --compare build and its roster, writing nothing`),
+      'issue #1357: a compare is one view of two builds, so a name only one of them has is refused naming the one that lacks it — never a picture with half of it framed on nothing',
+    );
+  }
+  control(
+    'IN24_BONES_ON_ONE_PIXEL_ARE_ONE_LABEL_AND_THE_LEGEND_KEEPS_EVERY_BONE',
+    ['--show', 'names'],
+    inspectFoldFaults,
+    'knot, knot_a and knot_b, three bones on one origin pixel, are one label "knot +2" whose legend entry lists all three, every one of them drawn in the legend\'s bones, and the label\'s box holds the text\'s ink exactly',
+    'issue #1357 (HQ, reading cut 1\'s trailer picture): three names stacked under one origin made the head unreadable; one label per pixel is what a reader can take in, and the legend is where the rest stay',
+  );
+  control(
+    'IN25_A_LABEL_THAT_WOULD_OVERPRINT_ANOTHER_IS_MOVED_WITH_A_LEADER',
+    ['--show', 'names'],
+    inspectAvoidFaults,
+    'near\'s label begins 6 px right of knot\'s on the same row and would overprint it: it is moved, no two labels crowd each other, and a leader joins it to its origin',
+    'issue #1357 (HQ): labels of different origins overprinted horizontally on the trailer\'s fringe chains; moving the later one down, in declaration order, is deterministic and keeps every label readable',
+  );
+  {
+    const probes: string[] = [];
+    const hidden = viewOf('filter-hide', ['--show', 'bones,names', '--hide-bone', 'knot_*']);
+    if (typeof hidden === 'string') probes.push(hidden);
+    else probes.push(...inspectFilterFaults(hidden.plate, hidden.legend));
+    const only = viewOf('filter-only', ['--show', 'bones', '--bone', 'knot*']);
+    if (typeof only === 'string') probes.push(only);
+    else {
+      const tile = only.legend.tiles[0];
+      const drawnNames = (tile?.bones ?? []).filter((b) => b.undrawn === null).map((b) => b.name);
+      if (drawnNames.join() !== 'knot,knot_a,knot_b') probes.push(`--bone knot*: drew [${drawnNames.join(', ')}], required [knot, knot_a, knot_b]`);
+      const [ax, ay] = meshPixel(0, 0).map(Math.floor);
+      if (inkIn(only.plate, { x: ax - 1, y: ay - 1, width: 3, height: 3 }, INSPECT_COLOURS.origin.rgba) !== 0) probes.push('--bone knot*: bone a\'s origin mark is drawn');
+      const a = tile?.bones.find((b) => b.name === 'a');
+      if (a?.undrawn !== 'not matched by --bone knot*') probes.push(`--bone knot*: a undrawn ${JSON.stringify(a?.undrawn)}`);
+    }
+    if (built.length === 0) {
+      const out = outPng('filter-refused');
+      const run = runCli(['inspect', '--candidate', probe.outDir, ...boxFlag, '--bone', 'zz*', '--out', out]);
+      const want = `--bone "zz*" matches no bone; the bones are [${INSPECT_MESH_BONES.join(', ')}]`;
+      if (run.status !== 2 || !run.stderr.includes(want)) probes.push(`--bone zz*: exit ${String(run.status)}: ${run.stderr.trim().split('\n')[0]}`);
+      if (existsSync(out)) probes.push(`--bone zz*: refused and still wrote ${out}`);
+    }
+    say(
+      'IN26_THE_BONE_FILTER_DRAWS_WHAT_ITS_GLOBS_SAY_AND_REFUSES_ONE_THAT_MATCHES_NOTHING',
+      held(probes),
+      probeDetail(held(probes), probes, "--hide-bone 'knot_*' leaves the two children out by name and knot's label is its own; --bone 'knot*' draws those three and no other mark, the rest undrawn naming the pattern; --bone 'zz*' refused naming the eight bones, exit 2, nothing written"),
+      'issue #1357 (HQ): a picture of eighty bones is read a chain at a time; a pattern that matches nothing is a typo, refused with the roster rather than an empty picture',
+    );
+  }
+  {
+    const probes = [...built];
+    const args = ['--compare', moved.outDir, ...boxFlag, '--show', 'art,weights:b,mesh,hull,slots,bones,names', '--animation', 'swap', '--at', '0,0.5'];
+    const runs = built.length === 0 ? ['det2-a', 'det2-b'].map((n) => runCli(['inspect', '--candidate', probe.outDir, ...args, '--out', outPng(n)])) : [];
+    const filtered = built.length === 0 ? runCli(['inspect', '--candidate', probe.outDir, ...args, '--hide-bone', 'knot', '--out', outPng('det2-f')]) : null;
+    for (const r of [...runs, ...(filtered === null ? [] : [filtered])]) if (r.status !== 0) probes.push(`inspect exited ${String(r.status)}: ${r.stderr.trim().slice(0, 300)}`);
+    if (probes.length === 0) {
+      for (const ext of ['.png', '.json']) {
+        if (!readFileSync(outPng('det2-a').replace('.png', ext)).equals(readFileSync(outPng('det2-b').replace('.png', ext)))) probes.push(`two runs wrote different ${ext} bytes`);
+      }
+      if (readFileSync(outPng('det2-a')).equals(readFileSync(outPng('det2-f')))) probes.push('--hide-bone knot wrote the same picture, so the comparison above could not tell two pictures apart');
+    }
+    say(
+      'IN27_TWO_RUNS_OF_A_COMPARE_OF_EVERY_NEW_VIEW_WRITE_THE_SAME_BYTES',
+      held(probes),
+      probeDetail(held(probes), probes, 'two processes over a compare of every cut-2 view at two times: PNG and legend byte-identical; a third with --hide-bone knot differs'),
+      'issue #1357: determinism held as A18 holds a build — labels are placed in declaration order, never in an order a map or a hash chooses',
+    );
+  }
+
+  // IN28–IN35 — the mutants: each planted defect red by name, under the control that exists to see it.
+  if (built.length === 0) {
+    const box = { kind: 'viewport' as const, x: INSPECT_PROBE.box.x, y: INSPECT_PROBE.box.y, width: INSPECT_PROBE.box.width, height: INSPECT_PROBE.box.height };
+    const base = (over: Partial<InspectRequest>): InspectRequest => inspectProbeRequest({ frame: box, ...over });
+    const mutants: Array<[string, InspectPlant, Partial<InspectRequest>, (r: ReturnType<typeof inspectCandidate>) => string[], string, string?]> = [
+      ['IN28_MESH_EDGES_ONE_PIXEL_OFF_THEIR_VERTICES_ARE_RED', { meshShift: [1, 0] }, { show: ['mesh'] }, (r) => inspectMeshFaults(r.plate, r.legend), 'IN16\'s reading'],
+      ['IN29_A_HULL_DRAWN_AS_EVERY_EDGE_IS_RED', { hullAllEdges: true }, { show: ['mesh', 'hull'] }, (r) => inspectHullFaults(r.plate, r.legend), 'IN17\'s reading'],
+      ['IN30_THE_WRONG_BONES_WEIGHTS_ARE_RED', { weightsOf: 'b' }, { show: ['weights'], weightsBone: 'a' }, (r) => inspectWeightFaults(r.plate, r.legend), 'IN18\'s reading'],
+      ['IN31_SLOTS_NUMBERED_AGAINST_THE_DRAW_ORDER_ARE_RED', { slotsReversed: true }, { show: ['slots'] }, (r) => inspectSlotFaults(r.plate, r.legend, skeletonSlots()), 'IN20\'s reading'],
+      ['IN32_A_COMPARE_THAT_DRAWS_THE_FIRST_BUILD_TWICE_IS_RED', { compareFirstTwice: true }, { show: ['bones'] }, (r) => inspectMovedFaults(r.plate, r.legend), 'IN22\'s reading', moved.outDir],
+      ['IN33_NAMES_NOT_FOLDED_ON_A_SHARED_PIXEL_ARE_RED', { noFold: true }, { show: ['names'] }, (r) => inspectFoldFaults(r.plate, r.legend), 'IN24\'s reading'],
+      ['IN34_LABELS_LEFT_OVERPRINTING_EACH_OTHER_ARE_RED', { noAvoid: true }, { show: ['names'] }, (r) => inspectAvoidFaults(r.plate, r.legend), 'IN25\'s reading'],
+      ['IN35_A_BONE_FILTER_IGNORED_IS_RED', { ignoreFilter: true }, { show: ['bones', 'names'], boneFilter: { exclude: ['knot_*'] } }, (r) => inspectFilterFaults(r.plate, r.legend), 'IN26\'s reading'],
+    ];
+    // The same readings over the same requests with nothing planted are clean — or a red mutant would prove nothing.
+    for (const [name, plant, over, read, by, compareDir] of mutants) {
+      const clean = read(inspectView2(probe.outDir, base(over), {}, compareDir));
+      const planted = read(inspectView2(probe.outDir, base(over), plant, compareDir));
+      say(
+        name,
+        clean.length === 0 && planted.length > 0,
+        clean.length > 0 ? `the unplanted run is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${by} found nothing` : `${JSON.stringify(plant)} planted: ${by} names it — ${planted[0]}; the same request unplanted reads clean`,
+        'issue #1357: a control nobody has seen fail is not a control — each defect cut 2 can make is planted in the view and caught by name',
+      );
+    }
+  } else {
+    say('IN28_MUTANTS', false, `the mesh probe did not build, so no mutant ran: ${built.join('; ')}`, '');
+  }
+  rmSync(probe.work, { recursive: true, force: true });
+  rmSync(moved.work, { recursive: true, force: true });
   return bad;
 }
 

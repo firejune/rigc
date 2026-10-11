@@ -41,7 +41,7 @@ installed.
 | the same, and one texture instead of many | `rigc build --pack` | the parts arranged onto shared atlas pages, written beside the skeleton — losslessly, so the picture is the picture |
 | a pack somebody already made | `rigc build --atlas-in` | the same skeleton, with every part resolved to a region of that atlas — or a named refusal, never a part that silently does not draw |
 | a compiled rig | `rigc render` | every animation as PNG frames, plus one labelled contact sheet of the whole shot |
-| a compiled rig and a question about its geometry | `rigc inspect` | one picture of its bones, axes, a world grid or a declared axis over the art — at the setup pose, one time or a sheet of several, zoomed to a bone or a slot — and a legend that puts every mark back in world units |
+| a compiled rig and a question about its geometry | `rigc inspect` | one picture of its bones, axes, mesh edges and hulls, one bone's weights, the draw order, a world grid or a declared axis over the art — at the setup pose, one time or a sheet of several, zoomed to a bone or a slot, or beside a second build on one transform — and a legend that puts every mark back in world units |
 | a compiled rig | `rigc preview` | one self-contained `.html` that plays it in Spine's own web player |
 | two to four compiled rigs | `rigc vote` | one ballot page a human picks from, and the answer checked into a ledger |
 | a picture of a key pose | `rigc pose` | where each loose part PNG sits in it, in spec coordinates — the movement between two poses is then yours to key ([docs/MOTION.md](docs/MOTION.md)) |
@@ -410,10 +410,14 @@ rigc inspect --candidate spine --show art,bones,names --dim   # inspect.png + in
 bone where the art is*, *which way does it squash*, *where in rig units is this
 point*, *is this axis held*. It draws the build's art, framed as `render` frames it,
 and over it any of `bones` (origin to tip, a bone of length 0 marked as one),
-`names`, `axes` (each bone's world x and y), `grid` (in world units) and `declared`
+`names` (one label per pixel), `axes` (each bone's world x and y), `mesh` and `hull`
+(each mesh's edges and outline), `weights:<bone>` (what that bone moves, as a heat),
+`slots` (the draw order at the pose), `grid` (in world units) and `declared`
 (each `invariants.axes` line and the bones held to it), at the setup pose, at
 `--animation <name> --at <s[,s…]>` — one picture, or a sheet — or zoomed with
-`--zoom <bone|slot>[:pad]` or `--viewport x,y,w,h`. Beside the PNG it writes a legend:
+`--zoom <bone|slot>[:pad]` or `--viewport x,y,w,h`; `--bone`/`--hide-bone` pick the
+bones by glob, and `--compare <dir>` draws a second build beside the first on one
+transform, to see what a change moved. Beside the PNG it writes a legend:
 the world-to-pixel transform both ways, what each colour means, and every bone's
 origin and tip in world units and in pixels, so a position read off the picture goes
 straight back into the spec. [AUTHORING §13](docs/AUTHORING.md#13-asking-the-picture-a-question--rigc-inspect)

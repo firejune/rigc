@@ -56,7 +56,7 @@ import { BallotError } from '../ballot.ts';
 import { ChainFitError } from '../chainfit.ts';
 import { CheckError } from '../check.ts';
 import { IngestError, type IngestStage } from '../ingest.ts';
-import { InspectError, DEFAULT_SHOW, DIM_KEEP, INSPECT_DEFAULT_FPS, ON_GRID_FRAMES, SHOW_WORDS } from '../inspect.ts';
+import { InspectError, DEFAULT_SHOW, DIM_KEEP, INSPECT_DEFAULT_FPS, ON_GRID_FRAMES, SHOW_SPELLINGS } from '../inspect.ts';
 import { NotAPngError } from '../png.ts';
 import { PoseError } from '../pose.ts';
 import { RepackError } from '../repack.ts';
@@ -1063,10 +1063,13 @@ const FLAG_MEANINGS: Record<string, string> = {
     'refused the same way. Not with `--slot`: the two are one statement',
   max: 'longest side of a rendered frame, in pixels (default 256)',
   show:
-    `what \`inspect\` draws, comma-separated, from [${SHOW_WORDS.join(', ')}] (default \`${DEFAULT_SHOW.join(',')}\`): art = the ` +
-    "build's own frame; grid = lines at whole multiples of a step in world units, labelled; declared = each invariants.axes " +
+    `what \`inspect\` draws, comma-separated, from [${SHOW_SPELLINGS.join(', ')}] (default \`${DEFAULT_SHOW.join(',')}\`): art = the ` +
+    "build's own frame; grid = lines at whole multiples of a step in world units, labelled; weights:<bone> = that bone's " +
+    'weight over every region and mesh it moves, as a heat on a ramp the legend states; mesh = each mesh\'s triangle edges; ' +
+    "hull = each mesh's hull outline; declared = each invariants.axes " +
     "line through its two bones' origins, its held bones drawn in their own colour; bones = each bone from origin to tip, " +
-    'a bone of length 0 marked as one; axes = each bone\'s world x and y axes; names = each bone\'s name. Any other word ' +
+    'a bone of length 0 marked as one; axes = each bone\'s world x and y axes; slots = each slot\'s place in the posed ' +
+    'draw order; names = the bones\' names, one label per pixel (bones sharing an origin pixel are "first +N"). Any other word ' +
     'is refused naming these',
   dim: `fade the art toward white (each channel keeps ${DIM_KEEP} of its distance from white), so what is drawn over it reads`,
   at:
@@ -1078,6 +1081,17 @@ const FLAG_MEANINGS: Record<string, string> = {
     'frame the picture to one bone (origin to tip) or one slot (its attachment\'s vertices) over every time drawn, padded ' +
     'by <pad> world units on every side (default: a quarter of the box\'s longer side). A name that is both a bone and a ' +
     'slot is refused until written bone:<name> or slot:<name>; a name that is neither lists both rosters. Not with --viewport',
+  bone:
+    "draw only the bones these globs match (`*` any run of characters, `?` one, the whole name; comma-separated) — on `inspect`, " +
+    "for bones, axes and names; every bone stays in the legend, a left-out one saying why in `undrawn`. A pattern that matches no " +
+    'bone is refused naming the bones there are',
+  'hide-bone':
+    "draw none of the bones these globs match — `--bone` the other way round, applied after it, so `--bone 'bang_*' " +
+    "--hide-bone '*_ctl'` is the fringe chains without their control bones",
+  compare:
+    'a second build to draw beside --candidate, the same view at the same times on one world box and one transform — the union ' +
+    'of both framings unless --zoom or --viewport pins it — each half labelled with its build and the poser that posed it. A ' +
+    'name, animation or skin the second build lacks is refused naming it',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
   ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
@@ -1178,6 +1192,9 @@ const FLAG_VALUES: Record<string, string> = {
   show: '<view[,view…]>',
   at: '<s[,s…]>',
   zoom: '<name>[:<pad>]',
+  bone: '<glob[,glob…]>',
+  'hide-bone': '<glob[,glob…]>',
+  compare: '<dir|skeleton.json>',
   record: '<result.json>',
   ballot: '<ballot.html>',
   ledger: '<votes.jsonl>',
@@ -1564,8 +1581,10 @@ export const COMMANDS: CommandDoc[] = [
       'rigc inspect --candidate <dir | skeleton.json> [--show art,bones,…] [--dim] [--max 256] [--poser core|spine] [--out inspect.png]   (the setup pose)',
       'rigc inspect … --animation <name> --at <s[,s…]> [--fps 12] [--skin <name>]   (one time, or a sheet of several on one grid)',
       'rigc inspect … --zoom <bone|slot>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
+      "rigc inspect … --bone 'bang_*' --hide-bone '*_ctl'   (which bones bones, axes and names draw)",
+      'rigc inspect … --compare <dir | skeleton.json>   (a second build beside the first, on one transform)',
     ],
-    flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'max', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'bone', 'hide-bone', 'compare', 'max', 'poser', 'out'],
     overrides: {
       animation: { meaning: 'the animation --at reads its times from (default: the setup pose, with no --at)' },
       fps: { meaning: `the frame grid --at is read on, which is the grid \`render --fps\` draws (default ${INSPECT_DEFAULT_FPS})` },

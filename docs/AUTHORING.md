@@ -10093,12 +10093,10 @@ pixel (`IN09`).
 | Where in rig units is this point? | `--show art,grid --zoom <bone or slot>` or `--viewport x,y,w,h` | grid lines at whole multiples of a step in **world units**, each labelled with its value, the lines through 0 darker. The legend's transform converts any pixel exactly; the grid is for reading by eye |
 | Is this axis declared, and held? | `--show art,declared,bones` | each `invariants.axes` line (§3.7) through its two bones' origins, drawn across the whole tile, and the bones it holds drawn in their own colour; the legend states each held bone's world x axis and how far off the line it lies, as `A51` measures it, at the pose drawn |
 | Did it break during the move? | any of the above `--animation <name> --at <s,s,…>` | one tile per time, left to right on one grid, each labelled with its time and frame |
-
-Two questions are not this cut's: **what does this bone move** (its weights over
-the meshes it skins, the mesh edges and hulls, the slots' draw order) and **did this
-change move anything** (two builds side by side on one grid). `--show mesh`,
-`hull`, `weights:<bone>`, `slots` and `--compare` are refused as any unknown word
-or flag is, naming what this version draws.
+| What does this bone move? | `--show art,mesh,weights:<bone> --dim` | the bone's weight over every region and mesh it moves, as a heat: a pixel whose centre lies in a triangle is painted the ramp's colour at the blend of its corners' weights — blue near 0, yellow at 0.5, red at 1 (the stops are in the legend) — and a weight of 0 is not painted, so the art shows where the bone does not reach. A region and an unweighted mesh are moved whole by their slot's bone. The weights are read off `skeleton.json`, the file both posers skin from; a bone that weights nothing paints nothing and the run says so on a line of its own |
+| How is this part triangulated? | `--show art,mesh,hull --zoom slot:<slot>` | each mesh's triangle edges, and over them its hull — vertex 0 to 1 to … to `hull − 1` and back. Regions are not drawn: a region is not a mesh. The legend lists every vertex in world units and in pixels |
+| Which is drawn over which? | `--show art,slots` | each slot that shows a region or mesh numbered by its place in the draw order **at the pose drawn** (0 is drawn first), on a white box at the centre of its attachment's box — so a `drawOrder` key (§4.7) shows from the first frame `render` draws it on |
+| Did this change move anything? | `--compare <dir>` beside any view | the same view of a second build beside the first, at the same times, on **one** world box and one transform, each half labelled `A`/`B` with the poser that posed it. A mark on a different pixel in the two halves is at a different place in the two rigs |
 
 ### 13.2 Where it looks
 
@@ -10119,11 +10117,40 @@ or flag is, naming what this version draws.
   (default a quarter of the box's longer side). A name that is both a bone and a slot
   is refused until it is written `bone:<name>` or `slot:<name>`; a bone of length 0
   with no pad is one point, and is refused asking for one.
+- **Two builds** — `--compare <dir | skeleton.json>`. The second build is loaded as
+  the first is (its own poser, chosen by what it carries, on a `poser    B:` line),
+  posed at the same times, and drawn beside it: one time is two halves side by side,
+  several are pairs, four to a row. The box is the one `--viewport` names, or the
+  union of what `--zoom` names in **both** builds, or — with neither — the union of
+  `render`'s framing of each, so a half is `render`'s frame of its build only where
+  the two framings agree. A name either build lacks is refused naming that build.
 - `--max` is each tile's longer side in pixels (default 256), as on `render`.
 - `--dim` fades the art toward white (each channel keeps 0.4 of its distance from
   white) so what is drawn over it reads.
 
-### 13.3 The legend
+### 13.3 Labels, and which bones are drawn
+
+- **One label per pixel.** Bones whose origins land on one pixel — a `_ctl` bone and
+  its identity child, a chain's joint — are one label: the first by declaration
+  order, then `+N` for the rest (`leg0_ctl +2`). The pixel is the unit because it is
+  what overprints: two origins a third of a pixel apart print their names on each
+  other as surely as two that coincide. The legend's `labels` lists every bone of
+  each label, and `bones` keeps every bone.
+- **No label over another.** Labels are placed in declaration order (slot numbers
+  first); one that would touch an earlier label moves down a text line at a time
+  until it is clear, and a grey leader joins it to its origin. After 16 lines it
+  stays where it began and the legend marks it `overlaps`.
+- **`--bone <glob[,glob…]>`** draws only the bones a pattern matches, and
+  **`--hide-bone <glob[,glob…]>`** none of the ones it matches, applied after
+  `--bone` — so `--bone 'bang_*' --hide-bone '*_ctl,*_px'` is the fringe chains
+  without their control bones. A pattern is a glob — `*` any run of characters, `?`
+  one, matched against the whole name — rather than a regular expression: bone names
+  are identifiers, the patterns are comma-separated, and a glob needs no escaping in
+  the shell. The filter is on `bones`, `axes` and `names`; every bone stays in the
+  legend, and a left-out one says which flag left it out in `undrawn`. A pattern
+  that matches no bone is refused naming the bones there are.
+
+### 13.4 The legend
 
 `<out>.json` beside `<out>.png`, `rigc-inspect/1`. What it states:
 
@@ -10139,29 +10166,48 @@ or flag is, naming what this version draws.
   top-left pixel), and `bones[]` — every bone in declaration order with its
   `parent`, `length`, `zeroLength`, `origin` and `tip` each as `{ world, pixel }`,
   `undrawn` (why it is not drawn — its world matrix is 0 at this time, unposed by the
-  skin or scaled to 0 — or `null`), and with `axes` shown, the two axis ends. With
-  `grid`, the step and every line's value; with `declared`, each entry's line in
-  degrees, its two points, and each held bone's angle and how far off the line it is.
+  skin or scaled to 0, or a `--bone`/`--hide-bone` pattern left it out — or `null`),
+  and with `axes` shown, the two axis ends. With `grid`, the step and every line's
+  value; with `declared`, each entry's line in degrees, its two points, and each held
+  bone's angle and how far off the line it is. With `names`, `labels[]`: each label's
+  `text`, the `bones` it stands for, its `anchor` pixel, the `box` it is drawn in,
+  and whether it was `moved` or `overlaps`. With `mesh`, `hull` or `weights`,
+  `meshes[]`: every region and mesh the pose shows, in draw order, with its `kind`,
+  `vertexCount`, `triangleCount`, `hull` (a mesh's hull vertex count), its unique
+  triangle `edges` as vertex pairs, every posed vertex in `world` and `pixel`, and
+  with `weights` the bone's weight at each vertex. With `slots`, `slots[]`: each
+  slot's `order`, `slot`, `attachment`, `bone`, its `anchor` and number's `box`.
+  On a sheet or a compare, `label` — the tile's label text and box; with `--compare`,
+  `build` — `A` or `B`.
 - `colours` — every colour the picture draws, as RGBA, with what it means.
 - `poser`, `show`, `dim`, `skin`, `animation`, `fps` and `framing` — what was drawn
   and how it was framed (`shot`, `zoom` with the bone or slot, the pad and whether it
   was stated, or `viewport`).
+- `weights` — with `weights:<bone>`: the bone, the ramp's stops as RGBA, the floor
+  below which nothing is painted, and how a pixel's weight is read.
+- `boneFilter` — `--bone` and `--hide-bone` as given.
+- `builds` — with `--compare`: each build (`A`, `B`), the poser that posed it, and
+  its `skeleton.json`'s sha256. `poser` is build `A`'s.
 
 Every number is `JSON.stringify`'s, the double the pose produced, not a rounding of
 it. The same build and flags write the same bytes (`IN10`).
 
-### 13.4 What it refuses
+### 13.5 What it refuses
 
 Each of these exits 2, writes nothing, and names what exists: a bone or slot the
 build does not have (both rosters listed), an animation or skin it does not declare,
 a `--show` word it does not draw, a flag it does not take, a time off the frame grid
 or past the end, `--at` without `--animation` and the reverse, `--zoom` beside
-`--viewport`, and `--show declared` on a skeleton with no `skeleton.model.json`
-beside it whose `spine.sha256` is its own — a Spine export states no rig invariants.
+`--viewport`, `--show declared` on a skeleton with no `skeleton.model.json`
+beside it whose `spine.sha256` is its own — a Spine export states no rig invariants —
+`weights` with no bone or with a bone the build lacks (the bones listed), a
+`--bone`/`--hide-bone` pattern that matches no bone (the bones listed), and, with
+`--compare`, any of these that holds of the second build, said as `the --compare
+build: …`.
 A rig that declares no `invariants.axes` is not refused: the picture draws nothing
 for `declared` and the run says so on a line of its own.
 
-### 13.5 What it is not
+### 13.6 What it is not
 
 - **Not a score.** Nothing in it is a pass bar; the picture is read, and what is read
   is acted on in the spec.

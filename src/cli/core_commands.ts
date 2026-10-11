@@ -30,7 +30,7 @@ import { ingest, INGEST_GUTTERS, type IngestFinding, IngestSpecRefused, type Ing
 import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
-import { type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readShowWords, readTimes, readZoom } from '../inspect.ts';
+import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
@@ -676,7 +676,10 @@ export function cmdInspect(flags: Record<string, string>): void {
   if (flags.zoom !== undefined && flags.viewport !== undefined) {
     throw new InspectError('--zoom and --viewport both choose the box the picture is of; give one of them');
   }
-  const show = readShowWords(flags.show);
+  const { show, weightsBone } = readShow(flags.show);
+  const include = readBonePatterns('bone', flags.bone);
+  const exclude = readBonePatterns('hide-bone', flags['hide-bone']);
+  const boneFilter = include === undefined && exclude === undefined ? undefined : { ...(include === undefined ? {} : { include }), ...(exclude === undefined ? {} : { exclude }) };
   const times = readTimes(flags.at);
   const fps = readPositiveNumber(flags, 'fps', INSPECT_DEFAULT_FPS, 1);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
@@ -709,14 +712,42 @@ export function cmdInspect(flags: Record<string, string>): void {
   const animation = readAnimationFlag(flags, [...candidate.facts.animations]) ?? null;
   readPoserFlag(flags);
   refuseUnchosen(candidate.choice);
+  // `--compare`: the second build, loaded the way the first was — its own poser chosen by what it carries, and said.
+  let compare: InspectCompare | undefined;
+  if (flags.compare !== undefined) {
+    const other = resolveDrawable(flags.compare, undefined);
+    const otherText = readSkeletonText(other.skeletonPath);
+    console.log(`  ..    compare  ${other.skeletonPath}`);
+    const otherCandidate = loadCandidate(
+      { skeletonText: otherText, atlasText: other.atlasText, atlasDir: dirname(other.atlasPath), label: other.skeletonPath },
+      { skeleton: other.skeletonPath, atlas: other.atlasPath },
+      posersAsked(flags),
+    );
+    refuseUnchosen(otherCandidate.choice);
+    compare = { candidate: otherCandidate, texts: { skeletonText: otherText, modelText: modelTextBeside(other.skeletonPath, otherText) } };
+  }
   const result = inspectCandidate(
     candidate,
     { skeletonText, modelText: modelTextBeside(skeletonPath, skeletonText) },
-    { show, dim: flags.dim !== undefined, animation, times, fps, skin: flags.skin, frame, maxSide },
+    {
+      show,
+      ...(weightsBone === undefined ? {} : { weightsBone }),
+      ...(boneFilter === undefined ? {} : { boneFilter }),
+      dim: flags.dim !== undefined,
+      animation,
+      times,
+      fps,
+      skin: flags.skin,
+      frame,
+      maxSide,
+    },
+    {},
+    compare,
   );
   const { legend } = result;
-  console.log(`  ..    poser    ${result.poserNote}`);
-  const when = animation === null ? 'the setup pose' : `${animation} at ${legend.tiles.map((t) => `${t.time.toFixed(4)}s (frame ${t.frame})`).join(', ')}, ${fps} fps grid`;
+  console.log(`  ..    poser    ${compare === undefined ? '' : 'A: '}${result.poserNote}`);
+  if (result.comparePoserNote !== undefined) console.log(`  ..    poser    B: ${result.comparePoserNote}`);
+  const when = animation === null ? 'the setup pose' : `${animation} at ${legend.tiles.filter((t) => t.build !== 'B').map((t) => `${t.time.toFixed(4)}s (frame ${t.frame})`).join(', ')}, ${fps} fps grid`;
   console.log(`  ..    view     ${legend.show.join(',')}${legend.dim ? ' over dimmed art' : ''} — ${when}`);
   const v = legend.viewport;
   // Four places for reading; the legend carries every number exactly.
