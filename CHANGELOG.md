@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.39.0](https://github.com/firejune/rigc/compare/v2.38.0...v2.39.0) (2026-10-11)
+
+
+### Features
+
+* **core:** an entry's alpha and additive blending on openTracks — MixOptions.alpha/additive and setAlpha as spine-core 4.3.13's TrackEntry weighs and adds: 3,978 of 3,978 poses equal at tolerance 0 over 18 walks on six gallery-and-probe subjects and a blend probe; alpha inverted or ignored, additive as replace, an additive rotation through the remembered direction and the holds as if no entry added each red ([#1344](https://github.com/firejune/rigc/issues/1344)) ([#1345](https://github.com/firejune/rigc/issues/1345)) ([0c1c296](https://github.com/firejune/rigc/commit/0c1c2966b364b87f09390c364bc2dd7bb1be546d))
+
 ## [2.38.0](https://github.com/firejune/rigc/compare/v2.37.0...v2.38.0) (2026-10-11)
 
 
