@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.39.1](https://github.com/rig-c/core/compare/v2.39.0...v2.39.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **pkg:** the repository is rig-c/core and @rig-c/core is published as a third name — 761 links moved in 66 files with the skills' 31 repository URLs and README's 35 blob/tree links read before and after, ALIASES a list CUR122 holds release.yml to name for name (each alias dropped from the publish or either confirmation red over 15 plants), and the scoped pack reading 219 of 219 files the same ([#1347](https://github.com/rig-c/core/issues/1347)) ([#1348](https://github.com/rig-c/core/issues/1348)) ([f2bd939](https://github.com/rig-c/core/commit/f2bd93901d20c14e451a2fd3872e8612c9312e77))
+
 ## [2.39.0](https://github.com/firejune/rigc/compare/v2.38.0...v2.39.0) (2026-10-11)
 
 
