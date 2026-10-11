@@ -74,6 +74,11 @@ row for each.
    cover a feature the art shows — and answer each with `render --hide <slot>` (or
    `--slot <slot,…>`), which draws the frame again without that part on the same
    grid, so the two frames say which part a pixel is. AUTHORING §0 holds the three.
+   When the question is geometry — is this bone where the art is, which way does it
+   squash, where in rig units is this point — `rigc inspect --candidate <out> --show
+   art,bones,names --dim` draws the bones over the art and writes a legend beside the
+   picture that puts every mark back in world units; AUTHORING §13 maps each
+   question to its view.
 5. `rigc check --candidate <out> --frames <dir>` when you have reference pictures
    (`--out <dir>` writes the picture each of its numbers came from — open the worst).
    Read its output from the top: the framing block says whether the figures under

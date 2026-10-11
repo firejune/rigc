@@ -56,6 +56,7 @@ import { BallotError } from '../ballot.ts';
 import { ChainFitError } from '../chainfit.ts';
 import { CheckError } from '../check.ts';
 import { IngestError, type IngestStage } from '../ingest.ts';
+import { InspectError, DEFAULT_SHOW, DIM_KEEP, INSPECT_DEFAULT_FPS, ON_GRID_FRAMES, SHOW_WORDS } from '../inspect.ts';
 import { NotAPngError } from '../png.ts';
 import { PoseError } from '../pose.ts';
 import { RepackError } from '../repack.ts';
@@ -125,7 +126,7 @@ export { PACKAGE_ROOT, readPackageMeta, readVersion };
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences', 'keep-pages']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences', 'keep-pages', 'dim']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -996,7 +997,7 @@ const FLAG_MEANINGS: Record<string, string> = {
     "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
     'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
   poser:
-    "`render` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
+    "`render`, `inspect` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
     'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
     "beside the skeleton and the skeleton is the one the document records (spine.sha256), `spine` otherwise and wherever the core refuses the input by name; the `poser` " +
     'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name. ' +
@@ -1061,6 +1062,22 @@ const FLAG_MEANINGS: Record<string, string> = {
     'draw every slot but these, comma-separated — `--slot` the other way round, on the same grid, recorded and ' +
     'refused the same way. Not with `--slot`: the two are one statement',
   max: 'longest side of a rendered frame, in pixels (default 256)',
+  show:
+    `what \`inspect\` draws, comma-separated, from [${SHOW_WORDS.join(', ')}] (default \`${DEFAULT_SHOW.join(',')}\`): art = the ` +
+    "build's own frame; grid = lines at whole multiples of a step in world units, labelled; declared = each invariants.axes " +
+    "line through its two bones' origins, its held bones drawn in their own colour; bones = each bone from origin to tip, " +
+    'a bone of length 0 marked as one; axes = each bone\'s world x and y axes; names = each bone\'s name. Any other word ' +
+    'is refused naming these',
+  dim: `fade the art toward white (each channel keeps ${DIM_KEEP} of its distance from white), so what is drawn over it reads`,
+  at:
+    `the times of --animation to draw, in seconds, comma-separated — one is a picture, several a sheet of tiles on one ` +
+    `grid in the order given. Each must be a frame of the --fps grid render draws the animation on (within ` +
+    `${ON_GRID_FRAMES} of a frame), and is refused naming the frames either side otherwise; without --animation the ` +
+    'picture is the setup pose and --at is refused',
+  zoom:
+    'frame the picture to one bone (origin to tip) or one slot (its attachment\'s vertices) over every time drawn, padded ' +
+    'by <pad> world units on every side (default: a quarter of the box\'s longer side). A name that is both a bone and a ' +
+    'slot is refused until written bone:<name> or slot:<name>; a name that is neither lists both rosters. Not with --viewport',
   record: 'a saved vote to check against its ballot and append to the ledger, instead of writing a ballot',
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
   ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
@@ -1158,6 +1175,9 @@ const FLAG_VALUES: Record<string, string> = {
   slot: '<name[,name…]>',
   hide: '<name[,name…]>',
   max: '<px>',
+  show: '<view[,view…]>',
+  at: '<s[,s…]>',
+  zoom: '<name>[:<pad>]',
   record: '<result.json>',
   ballot: '<ballot.html>',
   ledger: '<votes.jsonl>',
@@ -1535,6 +1555,36 @@ export const COMMANDS: CommandDoc[] = [
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
     },
+  },
+  {
+    name: 'inspect',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      'rigc inspect --candidate <dir | skeleton.json> [--show art,bones,…] [--dim] [--max 256] [--poser core|spine] [--out inspect.png]   (the setup pose)',
+      'rigc inspect … --animation <name> --at <s[,s…]> [--fps 12] [--skin <name>]   (one time, or a sheet of several on one grid)',
+      'rigc inspect … --zoom <bone|slot>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
+    ],
+    flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'max', 'poser', 'out'],
+    overrides: {
+      animation: { meaning: 'the animation --at reads its times from (default: the setup pose, with no --at)' },
+      fps: { meaning: `the frame grid --at is read on, which is the grid \`render --fps\` draws (default ${INSPECT_DEFAULT_FPS})` },
+      viewport: { meaning: 'frame the picture to this world box, y up — x,y its bottom-left corner — instead of render\'s framing of the whole rig' },
+      out: {
+        value: '<file.png>',
+        meaning:
+          'the picture to write (default `inspect.png`; a directory means that name in it), and beside it the legend, the same ' +
+          'path with .json for .png: the world-to-pixel transform both ways, what each colour means, and every bone\'s origin ' +
+          'and tip in world units and in pixels',
+      },
+    },
+    notes: [
+      'inspect draws one moment of the build for an agent to read, and its legend says',
+      'where every mark is in world units and in pixels. It poses through the poser',
+      'render would pose the candidate with, and the poser line says which. Without',
+      '--zoom or --viewport the picture is framed as render frames the build, so its',
+      'art is render\'s frame at the same time and --max. Nothing in it is a score.',
+    ],
   },
   {
     name: 'preview',
@@ -2704,6 +2754,12 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
   // Same kind as a PoseError, and printed the same way for the same reason: the
   // messages name a path, a bone or an attachment, and reprinting the whole
   // usage under them buries the one line that says what to change.
+  // A view refused before anything was drawn (issue #1357): a name the build does not have, a time off render's
+  // frame grid, a box with no size. The message lists what exists; the usage under it would bury that.
+  if (err instanceof InspectError) {
+    console.error(`rigc inspect: ${err.message}`);
+    process.exit(2);
+  }
   if (err instanceof ChainFitError) {
     console.error(`rigc chainfit: ${err.message}`);
     process.exit(2);
