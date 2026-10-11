@@ -303,6 +303,19 @@ wants. The remedy is that line: write the code it names **in a commit message on
 this branch, or in the pull request title or body**. A rename takes the old name
 out of the tree, so it is declared exactly like any other removal.
 
+⚠️ **The squash text has to parse, or the landing is never released.**
+release-please skips a commit its parser throws on and still reports success.
+The `squash-text` workflow parses the text your squash will write — one
+commit's own subject and body, or the pull request title over every commit
+message when there are several — with the parser release-please runs, and names
+the line and column it stops at. The usual cause is a body line that opens with
+a code span holding a nested call, such as a line starting
+`` `outer(inner(x))` ``: the grammar reads the start of the line as a footer
+token. Move the span off the start of the line, in the commit message — the pull
+request body does not reach the squash. RELEASING.md *A commit release-please
+cannot parse is a release that does not happen* has the measurement
+([#1354](https://github.com/rig-c/core/issues/1354)).
+
 Keep one unit of work per commit. A body that has to explain two unrelated things
 is two commits.
 
