@@ -36,6 +36,12 @@
  * the one a viewport pins), so a mark that sits on a different pixel in the two
  * halves sits at a different place in the two rigs.
  *
+ * ⭐ **Density is a measurement, never a verdict** (issue #1371). A part's
+ * triangles over its posed area, against the figure's — the triangles and area
+ * of every slot the pose shows, whatever a slot filter keeps. No bar, no
+ * budget: `A13_MESH_BUDGET` is the one gate on counts, and this only says where
+ * the triangles are.
+ *
  * Links nothing from the runtime: the poser is handed in.
  */
 import { createHash } from 'node:crypto';
@@ -69,7 +75,7 @@ import {
 export const INSPECT_SPEC = 'rigc-inspect/1';
 
 /** Every word `--show` takes, in the order the picture draws them (bottom first). `weights` is spelled `weights:<bone>`. */
-export const SHOW_WORDS = ['art', 'grid', 'weights', 'mesh', 'hull', 'declared', 'bones', 'axes', 'slots', 'names'] as const;
+export const SHOW_WORDS = ['art', 'grid', 'density', 'weights', 'mesh', 'hull', 'declared', 'bones', 'axes', 'slots', 'names'] as const;
 export type ShowWord = (typeof SHOW_WORDS)[number];
 
 /** The words as a refusal lists them — `weights` with the bone it needs. */
@@ -110,6 +116,32 @@ export const WEIGHT_RAMP: ReadonlyArray<{ weight: number; rgba: readonly [number
   { weight: 0, rgba: [40, 80, 230, 255] },
   { weight: 0.5, rgba: [250, 205, 0, 255] },
   { weight: 1, rgba: [215, 20, 20, 255] },
+];
+
+/**
+ * The density ramp (issue #1371): a part's ratio — its triangles per world
+ * unit² over the figure's — painted at its colour here, interpolated **in log₂
+ * of the ratio** between the two stops either side, each channel rounded, and
+ * clamped to the end stops outside 1/16..16. Log because the ratio is a
+ * quotient: 4× and 1/4× are the same distance from the figure, and a linear
+ * ramp would spend half its colours between 8× and 16×.
+ *
+ * ⭐ **1× is a mid grey, neither hue, and not the background.** A part as dense
+ * as the figure reads as neutral, and is still visibly a part (the background is
+ * `[232, 232, 232]`, `--dim`'s art is paler still).
+ *
+ * ⭐ **Green to magenta, never blue to red** — ColorBrewer's PiYG ends with
+ * the light stops between them. The weights ramp says blue is 0 and red is 1,
+ * and an agent may read the two pictures side by side; a density ramp that ran
+ * blue to red would put "sparse" and "weight 0" in one colour. Neither end is a
+ * mark colour either: the mesh edge and hull drawn over a fill stay readable.
+ */
+export const DENSITY_RAMP: ReadonlyArray<{ ratio: number; rgba: readonly [number, number, number, number] }> = [
+  { ratio: 1 / 16, rgba: [39, 100, 25, 255] },
+  { ratio: 1 / 4, rgba: [161, 215, 106, 255] },
+  { ratio: 1, rgba: [185, 185, 185, 255] },
+  { ratio: 4, rgba: [233, 163, 201, 255] },
+  { ratio: 16, rgba: [142, 1, 82, 255] },
 ];
 
 /** Below this weight a heat pixel is not painted. Not a rounding of any weight: it only keeps a weight of 0 that a barycentric sum spelled as 1e-17 off the picture. */
@@ -172,8 +204,9 @@ export interface BoneFilter {
 
 /**
  * `--overlay-slot` / `--hide-overlay-slot`: which slots the per-slot views
- * (`mesh`, `hull`, `weights:<bone>`, `slots`) draw, by glob. The art is not
- * filtered — it is what the geometry is read against.
+ * (`mesh`, `hull`, `weights:<bone>`, `density`, `slots`) draw, by glob. The art
+ * is not filtered — it is what the geometry is read against — and neither is the
+ * figure a density is measured against.
  */
 export interface SlotFilter {
   /** Draw only the slots some pattern matches; absent draws every slot. */
@@ -189,7 +222,7 @@ export interface InspectRequest {
   weightsBone?: string;
   /** Which bones `bones`, `axes` and `names` draw; absent is every one. */
   boneFilter?: BoneFilter;
-  /** Which slots `mesh`, `hull`, `weights` and `slots` draw; absent is every one. */
+  /** Which slots `mesh`, `hull`, `weights`, `density` and `slots` draw; absent is every one. */
   slotFilter?: SlotFilter;
   dim: boolean;
   /** `null` is the setup pose. */
@@ -250,6 +283,14 @@ export interface InspectPlant {
   ignoreSlotFilter?: boolean;
   /** Draw the first build in both halves of a `--compare`. */
   compareFirstTwice?: boolean;
+  /** Density: take a part's area as its posed vertices' bounding box — the image's box, for an unrotated region — rather than its triangles'. */
+  densityAreaOfBox?: boolean;
+  /** Density: state and paint the figure's density over the part's, upside down. */
+  densityRatioInverted?: boolean;
+  /** Density: interpolate the ramp linearly in the ratio, not in its log. */
+  densityLinearRamp?: boolean;
+  /** Density: take the figure's totals over the slots the filter keeps, not over every slot. */
+  densityTotalsFiltered?: boolean;
 }
 
 /** A point in both spaces. */
@@ -299,7 +340,7 @@ export interface LegendLabel {
   overlaps: boolean;
 }
 
-/** One region or mesh the frame shows, when `mesh`, `hull` or `weights` is drawn — and, with a slot filter, that it keeps. */
+/** One region or mesh the frame shows, when `mesh`, `hull`, `weights` or `density` is drawn — and, with a slot filter, that it keeps. */
 export interface LegendMesh {
   slot: string;
   attachment: string;
@@ -346,6 +387,43 @@ export interface LegendDeclared {
   bones: Array<{ name: string; degrees: number | null; off: number | null }>;
 }
 
+/** One slot's row of the density table: one region or mesh the pose shows. */
+export interface LegendDensitySlot {
+  /** Its place in the posed draw order (0 is drawn first) — the number `slots` draws, filtered or not. */
+  order: number;
+  slot: string;
+  attachment: string;
+  kind: 'region' | 'mesh';
+  /** The slot colour × attachment colour alpha at this pose: a part at 0 is in the totals and draws nothing. */
+  alpha: number;
+  vertices: number;
+  triangles: number;
+  /** A mesh's hull vertex count; `null` for a region. */
+  hull: number | null;
+  /** The posed area: the sum of its triangles' absolute areas, world units². */
+  area: number;
+  /** `triangles / area`, per world unit²; `null` with `why` when the area is 0. */
+  trianglesPerArea: number | null;
+  /** `trianglesPerArea` over the figure's: the number to read. `null` with `why`. */
+  ratio: number | null;
+  /** The colour the part is painted, or `null` when it is not (no ratio, or a slot filter left it out of the picture — then it is not listed). */
+  rgba: number[] | null;
+  /** How many bones its vertices are weighted to (weight above 0) — a region's or an unweighted mesh's is its slot's one bone. */
+  bones: number;
+  /** Those bones, in the order the skeleton declares them. */
+  boneNames: string[];
+  /** `null`, or why `trianglesPerArea` or `ratio` has no value. */
+  why: string | null;
+}
+
+/** The figure's density at one tile's pose, and each kept slot's row. */
+export interface LegendDensity {
+  /** Over EVERY slot whose attachment at this pose is a region or mesh, whatever a slot filter keeps. */
+  figure: { slots: number; triangles: number; area: number; trianglesPerArea: number | null; why: string | null };
+  /** The slots the filter keeps, in the posed draw order. */
+  slots: LegendDensitySlot[];
+}
+
 export interface LegendTile {
   /** With `--compare`: which build this tile is — `A` is `--candidate`, `B` is `--compare`. */
   build?: 'A' | 'B';
@@ -364,6 +442,8 @@ export interface LegendTile {
   labels?: LegendLabel[];
   meshes?: LegendMesh[];
   slots?: LegendSlot[];
+  /** With `density`: the figure's totals and every kept slot's row. */
+  density?: LegendDensity;
   declared?: LegendDeclared[];
   grid?: { step: number; x: number[]; y: number[] };
 }
@@ -387,6 +467,8 @@ export interface InspectLegend {
   slotFilter?: { include: string[] | null; exclude: string[] | null };
   /** With `weights:<bone>`: the bone, the ramp a weight is painted with, and how a pixel's weight is read. */
   weights?: { bone: string; ramp: Array<{ weight: number; rgba: number[] }>; floor: number; reading: string };
+  /** With `density`: the ramp, its scale, and how area, totals and ratio are read. */
+  density?: { ramp: Array<{ ratio: number; rgba: number[] }>; scale: string; area: string; totals: string; ratio: string; reading: string };
   /** With `--compare`: each build, the poser that posed it and its `skeleton.json`'s sha256; a tile names its own in `build`. */
   builds?: Array<{ build: 'A' | 'B'; poser: 'core' | 'spine'; skeletonSha256: string }>;
   coordinates: { world: string; image: string; toPixel: string; toWorld: string };
@@ -748,6 +830,136 @@ function heatTriangle(plate: Plate, p: ReadonlyArray<[number, number]>, w: reado
   }
 }
 
+/**
+ * The density ramp's colour at `ratio`: interpolated in log₂ of the ratio
+ * between the two stops either side, each channel rounded, clamped to the end
+ * stops. `linear` is the mutant's reading — interpolated in the ratio itself.
+ */
+export function densityColour(ratio: number, linear = false): RGBA {
+  const at = (r: number): number => (linear ? r : Math.log2(r));
+  const first = DENSITY_RAMP[0];
+  const last = DENSITY_RAMP[DENSITY_RAMP.length - 1];
+  if (ratio <= first.ratio) return [...first.rgba] as RGBA;
+  if (ratio >= last.ratio) return [...last.rgba] as RGBA;
+  for (let i = 0; i + 1 < DENSITY_RAMP.length; i++) {
+    const lo = DENSITY_RAMP[i];
+    const hi = DENSITY_RAMP[i + 1];
+    if (ratio > hi.ratio) continue;
+    const t = (at(ratio) - at(lo.ratio)) / (at(hi.ratio) - at(lo.ratio));
+    return [0, 1, 2, 3].map((c) => Math.round(lo.rgba[c] + (hi.rgba[c] - lo.rgba[c]) * t)) as RGBA;
+  }
+  return [...last.rgba] as RGBA;
+}
+
+/** A posed attachment's area: the sum of its triangles' absolute areas, in the units its vertices are in. */
+export function trianglesArea(vertices: readonly number[], triangles: readonly number[]): number {
+  let sum = 0;
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const [a, b, c] = [triangles[t] * 2, triangles[t + 1] * 2, triangles[t + 2] * 2];
+    sum += Math.abs((vertices[b] - vertices[a]) * (vertices[c + 1] - vertices[a + 1]) - (vertices[c] - vertices[a]) * (vertices[b + 1] - vertices[a + 1])) / 2;
+  }
+  return sum;
+}
+
+/** The bounding box of the vertices, as an area — the density mutant's wrong reading of a part's size. */
+function boxArea(vertices: readonly number[]): number {
+  const xs = vertices.filter((_, i) => i % 2 === 0);
+  const ys = vertices.filter((_, i) => i % 2 === 1);
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+
+/** Every pixel whose centre the triangle holds, painted one colour — the heat's inside test. */
+function fillTriangle(plate: Plate, p: ReadonlyArray<[number, number]>, rgba: RGBA): void {
+  const [[x0, y0], [x1, y1], [x2, y2]] = p;
+  const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+  if (area === 0) return;
+  const left = Math.max(0, Math.floor(Math.min(x0, x1, x2)));
+  const right = Math.min(plate.width - 1, Math.floor(Math.max(x0, x1, x2)));
+  const top = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+  const bottom = Math.min(plate.height - 1, Math.floor(Math.max(y0, y1, y2)));
+  const inside = -1e-6;
+  for (let py = top; py <= bottom; py++) {
+    for (let px = left; px <= right; px++) {
+      const cx = px + 0.5;
+      const cy = py + 0.5;
+      const b0 = ((x1 - cx) * (y2 - cy) - (x2 - cx) * (y1 - cy)) / area;
+      const b1 = ((x2 - cx) * (y0 - cy) - (x0 - cx) * (y2 - cy)) / area;
+      if (b0 < inside || b1 < inside || 1 - b0 - b1 < inside) continue;
+      put(plate, px, py, rgba);
+    }
+  }
+}
+
+/**
+ * The density table at one pose: every region and mesh the pose shows, in the
+ * posed draw order, with the figure's totals over all of them — the slot filter
+ * decides which rows are listed and painted, never what the figure is. Read,
+ * never filled in: a part whose posed area is 0 has no density and says why,
+ * and a figure with no area has none either.
+ */
+function densityAt(
+  attachments: readonly AttachmentPose[],
+  rest: ReadonlyMap<string, AttachmentRest>,
+  weights: (slot: string, attachment: string) => VertexWeights | string,
+  boneOrder: readonly string[],
+  slotsOut: ReadonlySet<string>,
+  plant: InspectPlant,
+): LegendDensity {
+  const rows: Array<LegendDensitySlot & { kept: boolean }> = [];
+  for (const [order, shown] of attachments.entries()) {
+    const r = rest.get(restKey(shown.slot, shown.attachment));
+    if (r === undefined) throw new Error(`slot "${shown.slot}" attachment "${shown.attachment}": the rest table has no entry for it — the poser disagrees with itself`);
+    const read = weights(shown.slot, shown.attachment);
+    if (typeof read === 'string') throw new InspectError(`--show density: ${read}`);
+    const named = new Set<string>();
+    for (const run of read) for (const [bone, w] of run) if (w > 0) named.add(bone);
+    const boneNames = boneOrder.filter((b) => named.has(b));
+    const triangles = r.triangles.length / 3;
+    const area = plant.densityAreaOfBox ? boxArea(shown.vertices) : trianglesArea(shown.vertices, r.triangles);
+    rows.push({
+      order,
+      slot: shown.slot,
+      attachment: shown.attachment,
+      kind: r.kind,
+      alpha: shown.color[3],
+      vertices: shown.vertices.length / 2,
+      triangles,
+      hull: r.kind === 'mesh' ? (r.hull ?? null) : null,
+      area,
+      trianglesPerArea: area > 0 ? triangles / area : null,
+      ratio: null,
+      rgba: null,
+      bones: boneNames.length,
+      boneNames,
+      why: area > 0 ? null : 'its posed area is 0 — every triangle collapsed to a line or a point at this pose (a scale of 0 does), so it covers nothing and has no density',
+      kept: !slotsOut.has(shown.slot),
+    });
+  }
+  const over = plant.densityTotalsFiltered ? rows.filter((r) => r.kept) : rows;
+  const triangles = over.reduce((n, r) => n + r.triangles, 0);
+  const area = over.reduce((n, r) => n + r.area, 0);
+  const figurePerArea = area > 0 ? triangles / area : null;
+  const figure = {
+    slots: over.length,
+    triangles,
+    area,
+    trianglesPerArea: figurePerArea,
+    why: figurePerArea !== null ? null : over.length === 0 ? 'the pose shows no region or mesh' : "every part's posed area is 0, so the figure covers nothing and has no density",
+  };
+  const slots: LegendDensitySlot[] = [];
+  for (const { kept, ...row } of rows) {
+    if (!kept) continue;
+    if (row.trianglesPerArea !== null && figurePerArea !== null) {
+      row.ratio = plant.densityRatioInverted ? figurePerArea / row.trianglesPerArea : row.trianglesPerArea / figurePerArea;
+      row.rgba = [...densityColour(row.ratio, plant.densityLinearRamp === true)];
+    } else if (row.why === null) {
+      row.why = `the figure has no density: ${figure.why ?? ''}`;
+    }
+    slots.push(row);
+  }
+  return { figure, slots };
+}
+
 /** Two pixel boxes overlap, or sit with no clear pixel between them. */
 function crowds(a: PixelBox, b: PixelBox): boolean {
   return a.x < b.x + b.width + 1 && b.x < a.x + a.width + 1 && a.y < b.y + b.height + 1 && b.y < a.y + a.height + 1;
@@ -925,7 +1137,7 @@ interface Gathered {
   sha: string;
 }
 
-const MESH_VIEWS: readonly ShowWord[] = ['mesh', 'hull', 'weights'];
+const MESH_VIEWS: readonly ShowWord[] = ['mesh', 'hull', 'weights', 'density'];
 const restKey = (slot: string, attachment: string): string => `${slot}\u0000${attachment}`;
 
 /** A refusal about the second build says so: the same sentence, under the name of the build it is about. */
@@ -971,7 +1183,7 @@ function gather(tag: 'A' | 'B', candidate: Candidate, texts: InspectTexts, reque
       pages,
       lengths,
       axes,
-      weights: request.show.includes('weights') ? weightsReader(texts.skeletonText, request.skin) : null,
+      weights: request.show.includes('weights') || request.show.includes('density') ? weightsReader(texts.skeletonText, request.skin) : null,
       sha: createHash('sha256').update(texts.skeletonText).digest('hex'),
     };
   });
@@ -1120,6 +1332,30 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
               "Each vertex's weight is in its tile's meshes[].weights, read off skeleton.json",
           },
         }),
+    ...(request.show.includes('density')
+      ? {
+          density: {
+            ramp: DENSITY_RAMP.map((s) => ({ ratio: s.ratio, rgba: [...s.rgba] })),
+            scale:
+              "log2: a ratio's colour is interpolated in log2(ratio) between the two stops either side, each channel rounded; " +
+              `at or below ${DENSITY_RAMP[0].ratio} and at or above ${DENSITY_RAMP[DENSITY_RAMP.length - 1].ratio} it is the end stop's. ` +
+              '1, as dense as the figure, is the neutral grey',
+            area:
+              "a part's area is its posed mesh's own: the sum of its triangles' absolute areas in world units², through the vertices " +
+              "the pose carries — not the image's box and not its alpha. A region is two triangles over its quad",
+            totals:
+              "the figure's are over EVERY slot whose attachment at the pose is a region or mesh — whatever --overlay-slot and " +
+              '--hide-overlay-slot keep, whatever its alpha, wherever it lies against the box drawn',
+            ratio:
+              "a part's triangles per world unit² over the figure's (Σ triangles / Σ area): 2 is twice as dense as the figure, 0.5 " +
+              "half. null where a part's posed area is 0, with why",
+            reading:
+              "each kept part is filled with its ratio's colour — every pixel whose centre lies in one of its triangles — in the " +
+              "posed draw order, so where parts overlap the pixel is the part drawn last, as in the art. Each tile's density " +
+              "states the figure and every kept part's row, in draw order",
+          },
+        }
+      : {}),
     ...(compare ? { builds: builds.map((b) => ({ build: b.tag, poser: b.poser, skeletonSha256: b.sha })) } : {}),
     coordinates: {
       world: 'spine world: y up, world units',
@@ -1209,6 +1445,37 @@ function drawTile(
   // ── what a bone moves: weights under the edges, the edges under the hull ──
   let weighted = false;
   let anyMesh = false;
+  // ── density: each kept part filled with its ratio's colour, under the heat and the edges ──
+  if (build.rest !== null && build.weights !== null && request.show.includes('density')) {
+    const shownAll = frame.attachments ?? [];
+    const density = densityAt(shownAll, build.rest, build.weights, build.bones.map((b) => b.name), slotsOut, plant);
+    legendTile.density = density;
+    for (const row of density.slots) {
+      const shown = shownAll[row.order];
+      const rest = build.rest.get(restKey(shown.slot, shown.attachment));
+      if (rest === undefined || row.rgba === null) continue;
+      const rgba = row.rgba as RGBA;
+      const at = (v: number): [number, number] => {
+        const [px, py] = toPixel(shown.vertices[2 * v], shown.vertices[2 * v + 1]);
+        return [tx(px), ty(py)];
+      };
+      for (let t = 0; t + 2 < rest.triangles.length; t += 3) fillTriangle(tile, [at(rest.triangles[t]), at(rest.triangles[t + 1]), at(rest.triangles[t + 2])], rgba);
+    }
+    if (first) {
+      const f = density.figure;
+      const fmt = (n: number): string => String(Number(n.toPrecision(4)));
+      if (f.trianglesPerArea === null) notes.push(`density: ${f.why ?? ''} — nothing painted`);
+      else {
+        const by = density.slots.filter((r) => r.ratio !== null).sort((p, q) => (q.ratio ?? 0) - (p.ratio ?? 0) || p.order - q.order);
+        const at = (r: LegendDensitySlot): string => `"${r.slot}" at ${fmt(r.ratio ?? 0)}x`;
+        const ends =
+          by.length === 0 ? '' : by.length === 1 ? `; the one listed, ${at(by[0])}` : `; of the ${density.slots.length} listed, the densest ${at(by[0])}, the sparsest ${at(by[by.length - 1])}`;
+        notes.push(`density: the figure is ${f.triangles} triangles over ${Number(f.area.toFixed(2))} world units² across ${f.slots} slots${ends} — every row is in the legend`);
+        const unrated = density.slots.filter((r) => r.ratio === null);
+        if (unrated.length > 0) notes.push(`density: no ratio for ${unrated.map((r) => `"${r.slot}"`).join(', ')} — ${unrated[0].why ?? ''}`);
+      }
+    }
+  }
   if (build.rest !== null) {
     legendTile.meshes = [];
     const [mx, my] = plant.meshShift ?? [0, 0];

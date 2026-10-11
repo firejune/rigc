@@ -1064,7 +1064,9 @@ const FLAG_MEANINGS: Record<string, string> = {
   max: 'longest side of a rendered frame, in pixels (default 256)',
   show:
     `what \`inspect\` draws, comma-separated, from [${SHOW_SPELLINGS.join(', ')}] (default \`${DEFAULT_SHOW.join(',')}\`): art = the ` +
-    "build's own frame; grid = lines at whole multiples of a step in world units, labelled; weights:<bone> = that bone's " +
+    "build's own frame; grid = lines at whole multiples of a step in world units, labelled; density = each region and mesh " +
+    "filled by its triangles per world unit² over the figure's, on a log ramp centred on 1x that the legend states, with the " +
+    "figure's totals over every slot and each slot's row in the legend; weights:<bone> = that bone's " +
     'weight over every region and mesh it moves, as a heat on a ramp the legend states; mesh = each mesh\'s triangle edges; ' +
     "hull = each mesh's hull outline; declared = each invariants.axes " +
     "line through its two bones' origins, its held bones drawn in their own colour; bones = each bone from origin to tip, " +
@@ -1089,11 +1091,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     "draw none of the bones these globs match — `--bone` the other way round, applied after it, so `--bone 'bang_*' " +
     "--hide-bone '*_ctl'` is the fringe chains without their control bones",
   'overlay-slot':
-    "draw the per-slot views — mesh, hull, weights:<bone> and slots — only for the slots these globs match (`*` any run of " +
+    "draw the per-slot views — mesh, hull, weights:<bone>, density and slots — only for the slots these globs match (`*` any run of " +
     "characters, `?` one, the whole name; comma-separated); the art is every slot's still, since it is what the geometry is read " +
-    "against. Not `--slot`: that flag draws a subset of the art on `render`, by exact name. The legend's meshes[] and slots[] list " +
-    'only the slots kept, a slot number stays its place in the whole draw order, and a pattern that matches no slot is refused ' +
-    'naming the slots there are',
+    "against. Not `--slot`: that flag draws a subset of the art on `render`, by exact name. The legend's meshes[], slots[] and " +
+    "density rows list only the slots kept — the figure's density totals stay over every slot —, a slot number stays its place in " +
+    'the whole draw order, and a pattern that matches no slot is refused naming the slots there are',
   'hide-overlay-slot':
     "draw none of the per-slot views for the slots these globs match — `--overlay-slot` the other way round, applied after it, " +
     "so `--overlay-slot 'hair_*' --hide-overlay-slot hair_back` is the hair but its back layer",
