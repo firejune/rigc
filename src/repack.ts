@@ -40,6 +40,10 @@
  * PNG is missing or not the size the atlas declares, would be lifted from
  * texels the atlas does not describe.
  *
+ * `repack --keep-pages` (issue #1339) asks another question of the same
+ * atlas — not "can it be repacked?" but "can the model document state it as
+ * it stands?" — and `keptPageRefusals` is its list.
+ *
  * 🔒 Every refusal is collected before the first file is written, and the
  * command writes nothing when there is one. Nothing here guesses: there is no
  * "close enough" cut.
@@ -49,8 +53,10 @@
  */
 import { type AtlasPage, type AtlasRegion, extractRegion, footprintCell, packFootprints, pageFootprint, type ParsedAtlas, readEntry } from './atlas.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
+import { MODEL_DOCUMENT_FILE } from './model.ts';
+import { readPngHeader } from './png.ts';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 /**
  * A repack refused: an input it cannot lift exactly, a repack that lost
@@ -258,6 +264,99 @@ export function atlasRefusals(parsed: ParsedAtlas, atlasDir: string): { refusals
     });
   }
   return { refusals, pages };
+}
+
+/**
+ * The page lines `skeleton.model.json` states (issue #1339): `size` as the
+ * page's `width`/`height`, `pma`, and `scale` as the number written
+ * (`pagesOfAtlas`). `filter: Linear, Linear` is the one sampling the document
+ * implies by leaving filters out — the core's draw is bilinear on every path
+ * (`src/render.ts`'s header) — so a page stating it states nothing the document
+ * drops.
+ */
+const PAGE_FIELDS_STATED = new Set(['size', 'pma', 'scale']);
+
+/** The region lines the document states: placement, the drawing's own size and turn, and `index`. */
+const REGION_FIELDS_STATED = new Set([...REGION_PLACEMENT_KEYS, 'index']);
+
+/**
+ * Every reason a model document cannot be written for this atlas AS IT STANDS
+ * — `repack --keep-pages`, issue #1339 — in file order, empty when it can be.
+ *
+ * The question is not `atlasRefusals`' (can it be lifted and repacked?) but
+ * whether the document's `pages` section can say everything the atlas says.
+ * So a turned region, a trimmed region, a page `scale:`, `pma: true`, an
+ * `index:` and a name the atlas spells twice are not refused here — the
+ * document states each of them (`ModelPage`, `ModelPageRegion`) and the core
+ * reads them (`./core/uvs.ts`); whether the skeleton still rebuilds byte for
+ * byte against them is the command's check (b), not a guess made here. Every
+ * line the document has no field for is refused naming its page or region: a
+ * player reading only the document would draw without it. The page PNGs are
+ * checked as `atlasRefusals` checks them — on disk, the size the atlas
+ * declares, every rectangle on its page — because the document is written to
+ * sit beside them; and a page name that is not a relative path below the
+ * atlas's directory is refused, because the document's page names are paths
+ * from the directory it sits in.
+ *
+ * ⚠️ What no refusal here can see is a texel. Nothing in the three files
+ * records one — the atlas states rectangles, not contents — so a page edited
+ * after it was packed is a page the atlas still describes, and the document
+ * written beside it is the same bytes. That is a limit of the inputs, stated
+ * rather than papered over.
+ */
+export function keptPageRefusals(parsed: ParsedAtlas, atlasDir: string): string[] {
+  const refusals: string[] = [];
+  if (parsed.regions.length === 0) refusals.push('the atlas names no region, so the document would state no placement');
+  for (const { page, fields, regions } of atlasFields(parsed)) {
+    const segments = page.name.split('/');
+    if (page.name.includes('\\') || isAbsolute(page.name) || segments.some((s) => s === '' || s === '.' || s === '..')) {
+      refusals.push(
+        `page "${page.name}" is not a relative path below the atlas's directory (an empty, "." or ".." segment, a leading "/" or a "\\"), ` +
+          `and ${MODEL_DOCUMENT_FILE}'s page names are paths from the directory it sits in`,
+      );
+    } else {
+      const path = resolve(atlasDir, page.name);
+      if (!existsSync(path)) refusals.push(`page "${page.name}" is not on disk: nothing at ${path}`);
+      else {
+        const header = readPngHeader(path);
+        if (header.info === null) refusals.push(`page "${page.name}" cannot be read as PNG: ${header.problem}`);
+        else if (header.info.width !== page.width || header.info.height !== page.height) {
+          refusals.push(
+            `page "${page.name}" declares size ${page.width}x${page.height} and ${path} is ${header.info.width}x${header.info.height} — ` +
+              'the document would state the declared grid beside a page that is not on it',
+          );
+        }
+      }
+    }
+    for (const entry of fields) {
+      const value = entry.values.join(', ');
+      if (PAGE_FIELDS_STATED.has(entry.key) || (entry.key === 'filter' && value === PAGE_FIELDS_WRITTEN.filter)) continue;
+      refusals.push(
+        entry.key === 'filter'
+          ? `page "${page.name}" states filter: ${value} — ${MODEL_DOCUMENT_FILE} states no filter and the core samples every page bilinearly (filter: ${PAGE_FIELDS_WRITTEN.filter}), so a player reading the document would draw this page otherwise than the atlas asks`
+          : `page "${page.name}" states ${entry.key}: ${value}, a line ${MODEL_DOCUMENT_FILE} has no field for — a player reading only the document would draw without it`,
+      );
+    }
+    regions.forEach(({ raw, fields: regionFields }, k) => {
+      const name = raw.trim();
+      for (const entry of regionFields) {
+        if (entry.key === 'rotate') {
+          if (!ROTATE_VALUES.has(entry.values[0] ?? '')) {
+            refusals.push(`region "${name}" on page "${page.name}" states rotate: ${entry.values.join(', ')}, which is not one of true, false, 0, 90, 180, 270 — the turns the document's degrees can state`);
+          }
+          continue;
+        }
+        if (REGION_FIELDS_STATED.has(entry.key)) continue;
+        refusals.push(
+          `region "${name}" on page "${page.name}" states ${entry.key}: ${entry.values.join(', ')}, a line ${MODEL_DOCUMENT_FILE} has no field for` +
+            `${entry.key === 'split' || entry.key === 'pad' ? ' (a nine-patch region)' : ''} — a player reading only the document would draw without it`,
+        );
+      }
+      const geometry = geometryRefusal(page, page.regions[k]);
+      if (geometry !== null) refusals.push(geometry);
+    });
+  }
+  return refusals;
 }
 
 /** Every region the atlas names, lifted, in file order, by its (trimmed) name. */

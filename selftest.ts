@@ -127352,7 +127352,7 @@ function runVerdictSuppliersSuite(): number {
 // repack — a packed build repacked from its own output (issue #1169)
 // ---------------------------------------------------------------------------
 
-import { atlasRefusals as repackAtlasRefusals, liftAtlas as repackLift, polygonOwnedTexels, regionDifferences as repackRegionDifferences, REPACK_WORK_PREFIX } from './src/repack.ts';
+import { atlasRefusals as repackAtlasRefusals, documentDisagreements as repackDocumentDisagreements, liftAtlas as repackLift, polygonOwnedTexels, regionDifferences as repackRegionDifferences, REPACK_WORK_PREFIX } from './src/repack.ts';
 
 /** One `rigc repack` (or any `bun <argv>`) in a child of its own, with a private `TMPDIR` under `parent`, as a caller runs it: both streams, and what it left in `tmpdir()`. */
 function repackRun(parent: string, label: string, argv: readonly string[]): { status: number | null; stdout: string; stderr: string; left: string[]; made: string | null } {
@@ -127394,9 +127394,10 @@ function gateReports(stdout: string): { green: number; all: number } {
  * trimmed of its transparent border (`offsets:`) and turned a quarter
  * (`rotate: 90`) on one page — what `extractRegion` reads back, written by its
  * inverse at 90 — beside a copy of the skeleton. The shapes the corpus has and
- * rigc's own packer never writes, on a rig whose skeleton rigc wrote.
+ * rigc's own packer never writes, on a rig whose skeleton rigc wrote. With
+ * `trim` false every region keeps its whole drawing and is only turned.
  */
-function relaidTurnedTrimmed(from: string, to: string): { turned: number; trimmed: number } {
+function relaidTurnedTrimmed(from: string, to: string, trim = true): { turned: number; trimmed: number } {
   mkdirSync(to, { recursive: true });
   const parsed = parseAtlasText(readFileSync(join(from, 'skeleton.atlas'), 'utf8'));
   const parts: Array<{ name: string; plate: Plate; x0: number; y0: number; w: number; h: number }> = [];
@@ -127417,7 +127418,7 @@ function relaidTurnedTrimmed(from: string, to: string): { turned: number; trimme
           y1 = Math.max(y1, y);
         }
       }
-      if (x1 < 0) [x0, y0, x1, y1] = [0, 0, part.width - 1, part.height - 1];
+      if (!trim || x1 < 0) [x0, y0, x1, y1] = [0, 0, part.width - 1, part.height - 1];
       parts.push({ name: region.name.trim(), plate: part, x0, y0, w: x1 - x0 + 1, h: y1 - y0 + 1 });
     }
   }
@@ -127890,6 +127891,252 @@ function runRepackSuite(): number {
       held,
       probeDetail(held, probes, '--stage-box torso on the same input: ingest\'s own refusal (the slot hangs on a bone that is not the root) printed after "rigc repack: ingest refused the skeleton:", exit 2, --out never made'),
       'issue #1169: repack does not restate ingest\'s stage-box rules; it hands the flag through and lets ingest\'s refusal speak',
+    );
+  }
+
+  // --- RPK20..RPK25: --keep-pages, the model document for the pages already in place (issue #1339) ---
+  // Every file of a directory by name and SHA-256, so "nothing but the document was written" is read off the disk.
+  const digests = (dir: string): Map<string, string> => new Map(readdirSync(dir).sort().map((n) => [n, createHash('sha256').update(readFileSync(join(dir, n))).digest('hex')] as const));
+  // Every pose the core gives a document: the setup pose, then every animation (by name) walked 60 steps of 1/20 s, as text — compared at tolerance 0.
+  const corePoses = (modelText: string): string[] => {
+    const view = underNoSkin(readModel(modelText));
+    const steps = Array.from({ length: 60 }, () => 1 / 20);
+    const out = [`setup ${JSON.stringify(poseRawSetup(view))}`];
+    for (const name of view.animations.map((a) => a.name).sort()) poseRawAnimation(view, name, steps).forEach((p, i) => out.push(`${name}[${i}] ${JSON.stringify(p)}`));
+    return out;
+  };
+  const firstApart = (a: readonly string[], b: readonly string[]): string | null => {
+    if (a.length !== b.length) return `${a.length} pose(s) against ${b.length}`;
+    const at = a.findIndex((line, i) => line !== b[i]);
+    return at < 0 ? null : `pose ${a[at].split(' ')[0]} differs`;
+  };
+  const keep = (label: string, input: string, extra: readonly string[] = []): ReturnType<typeof repackRun> => repack(label, ['cli.ts', 'repack', input, '--out', input, '--keep-pages', ...extra]);
+  const keptRows = [
+    { row: 'nod', built: nodIn },
+    { row: 'flex', built: flexIn },
+  ];
+  const kept = new Map<string, string>();
+  {
+    const probes: string[] = [];
+    const said: string[] = [];
+    for (const { row, built } of keptRows) {
+      const input = bareBuildCopy(built, join(work, `${row}-kept`));
+      const before = digests(input);
+      const run = keep(`${row}-kept`, input);
+      if (run.status !== 0) {
+        probes.push(`${row}: exit ${run.status}: ${run.stderr.trim().slice(-400)}`);
+        continue;
+      }
+      kept.set(row, input);
+      const after = digests(input);
+      const written = [...after.keys()].filter((n) => !before.has(n));
+      if (written.join() !== MODEL_DOCUMENT_FILE) probes.push(`${row}: the run added [${written.join(', ')}], not ${MODEL_DOCUMENT_FILE} alone`);
+      for (const [name, hash] of before) if (after.get(name) !== hash) probes.push(`${row}: ${name} changed (sha256 ${hash.slice(0, 12)} before, ${after.get(name)?.slice(0, 12) ?? 'gone'} after)`);
+      const atlasText = readFileSync(join(input, 'skeleton.atlas'), 'utf8');
+      const doc = JSON.parse(readFileSync(join(input, MODEL_DOCUMENT_FILE), 'utf8')) as { pages?: unknown; spine?: { sha256?: string } };
+      const disagree = repackDocumentDisagreements(doc.pages, parseAtlasText(atlasText));
+      if (disagree === null || disagree.lines.length > 0) probes.push(`${row}: documentDisagreements against the atlas: ${disagree === null ? 'no pages' : disagree.lines.slice(0, 3).join('; ')}`);
+      if (JSON.stringify(doc.pages) !== JSON.stringify(pagesOfAtlas(atlasText))) probes.push(`${row}: the document's pages are not pagesOfAtlas of the atlas on disk`);
+      if (doc.spine?.sha256 !== spineFileSha256(readFileSync(join(input, 'skeleton.json'), 'utf8'))) probes.push(`${row}: spine.sha256 does not name the skeleton.json on disk`);
+      if (gateReports(run.stdout).all !== 1 || gateReports(run.stdout).green !== 1) probes.push(`${row}: ${gateReports(run.stdout).green} of ${gateReports(run.stdout).all} gate report(s) green, not 1 of 1`);
+      for (const line of ['(a) pages: the document states the atlas\'s', '(b) skeleton.json: byte-identical to the input\'s — the document\'s spine.sha256 names the file on disk', '(c) gate: green']) {
+        if (!run.stdout.includes(line)) probes.push(`${row}: stdout does not say ${JSON.stringify(line)}`);
+      }
+      if (/\.\.\s+lift\s/.test(run.stdout)) probes.push(`${row}: a lift line was printed — --keep-pages lifts nothing`);
+      // The second entry writes the same document through its own gate.
+      const core = bareBuildCopy(built, join(work, `${row}-kept-core`));
+      const coreRun = repack(`${row}-kept-core`, ['cli_core.ts', 'repack', core, '--out', core, '--keep-pages']);
+      if (coreRun.status !== 0) probes.push(`${row}: cli_core.ts exit ${coreRun.status}: ${coreRun.stderr.trim().slice(-300)}`);
+      else if (!readFileSync(join(core, MODEL_DOCUMENT_FILE)).equals(readFileSync(join(input, MODEL_DOCUMENT_FILE)))) probes.push(`${row}: cli_core.ts wrote another ${MODEL_DOCUMENT_FILE} than cli.ts`);
+      said.push(`${row} (${before.size} file(s) unchanged by hash, ${disagree?.regions ?? 0} region(s) agreeing)`);
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK20_KEEP_PAGES_WRITES_THE_MODEL_DOCUMENT_ALONE_STATING_THE_ATLAS_AS_IT_STANDS_BESIDE_THE_SKELETON_ON_DISK',
+      held,
+      probeDetail(held, probes, `gallery ${said.join(' and ')} built --pack, reduced to the three kinds of file, then repack --keep-pages with --out the same directory: every file there before is the same bytes after (sha256), ${MODEL_DOCUMENT_FILE} is the one file added, its pages are pagesOfAtlas of the atlas on disk and documentDisagreements finds nothing, spine.sha256 names the skeleton.json beside it, one gate report green, and cli_core.ts writes the same document byte for byte`),
+      'issue #1339: a consumer moving to a player that reads skeleton.model.json kept its old pages, and the document a repack wrote described other pages; what was wanted is the document for the pages already there',
+    );
+  }
+  {
+    const probes: string[] = [];
+    const said: string[] = [];
+    for (const { row, built } of keptRows) {
+      const input = kept.get(row);
+      if (input === undefined) {
+        probes.push(`${row}: no kept document to pose (RPK20 did not write one)`);
+        continue;
+      }
+      const ours = corePoses(readFileSync(join(input, MODEL_DOCUMENT_FILE), 'utf8'));
+      const theirs = corePoses(readFileSync(join(built, MODEL_DOCUMENT_FILE), 'utf8'));
+      const apart = firstApart(ours, theirs);
+      if (apart !== null) probes.push(`${row}: ${apart}`);
+      // Pixels from the untouched pages, read decoded rather than as PNG bytes (tools/render_hashes.ts says why).
+      const frames = (dir: string, label: string): string => {
+        const to = join(work, `${row}-render-${label}`);
+        const r = spawnSync(process.execPath, ['cli.ts', 'render', '--candidate', dir, '--poser', 'core', '--fps', '6', '--max', '128', '--out', to], { cwd: import.meta.dir, encoding: 'utf8' });
+        if (r.status !== 0) probes.push(`${row}: render of ${label} exit ${r.status}: ${r.stderr.trim().slice(-300)}`);
+        else if (!/^ {2}\.\. {4}poser {4}rigc core — /m.test(r.stdout)) probes.push(`${row}: render of ${label} does not say the core posed it`);
+        return to;
+      };
+      const a = frames(built, 'build');
+      const b = frames(input, 'kept');
+      const pngs = (dir: string): string[] => (existsSync(dir) ? readdirSync(dir, { recursive: true }).map(String).filter((n) => n.endsWith('.png')).sort() : []);
+      const names = pngs(a);
+      if (names.length === 0) probes.push(`${row}: the build's render drew no frame`);
+      if (names.join() !== pngs(b).join()) probes.push(`${row}: the two renders drew different frame sets (${names.length} against ${pngs(b).length})`);
+      else {
+        const differ = names.filter((n) => !Buffer.from(readPlate(join(a, n)).data).equals(Buffer.from(readPlate(join(b, n)).data)));
+        if (differ.length > 0) probes.push(`${row}: ${differ.length} frame(s) draw other pixels, first ${differ[0]}`);
+      }
+      const stageOf = (dir: string): string => JSON.stringify((JSON.parse(readFileSync(join(dir, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: unknown }).stage);
+      said.push(`${row} ${ours.length} pose(s) and ${names.length} frame(s) (stage ${stageOf(input) === stageOf(built) ? 'equal' : `${stageOf(input)} kept, ${stageOf(built)} built`})`);
+    }
+    // With the stage carried as a box and read with --stage-box, the stage is the build's too, and so is every pose.
+    const box = boxBuild.status === 0 ? bareBuildCopy(boxBuilt, join(work, 'stage-box-kept')) : null;
+    if (box === null) probes.push('nod with a stage box did not build');
+    else {
+      const run = keep('stage-box-kept', box, ['--stage-box', 'stage']);
+      if (run.status !== 0) probes.push(`stage-box: exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+      else {
+        const doc = JSON.parse(readFileSync(join(box, MODEL_DOCUMENT_FILE), 'utf8')) as { stage: unknown };
+        if (JSON.stringify(doc.stage) !== JSON.stringify(declared)) probes.push(`stage-box: the kept document's stage is ${JSON.stringify(doc.stage)}, not the declared ${JSON.stringify(declared)}`);
+        if (!run.stdout.includes('read from the bounding box in slot "stage" (--stage-box)')) probes.push('stage-box: the stage line does not name the slot');
+        const apart = firstApart(corePoses(readFileSync(join(box, MODEL_DOCUMENT_FILE), 'utf8')), corePoses(readFileSync(join(boxBuilt, MODEL_DOCUMENT_FILE), 'utf8')));
+        if (apart !== null) probes.push(`stage-box: ${apart}`);
+        said.push(`nod with a stage box under --stage-box: stage ${JSON.stringify(declared)} as declared and every pose equal`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'RPK21_THE_KEPT_DOCUMENT_POSES_THE_BUILDS_FRAMES_AT_TOLERANCE_0_AND_RENDER_DRAWS_THE_BUILDS_PIXELS_FROM_THE_UNTOUCHED_PAGES',
+      held,
+      probeDetail(held, probes, `readModel of the kept document and of the one build wrote, posed by poseRawSetup and poseRawAnimation (every animation, 60 steps of 1/20 s), text-equal pose for pose; render --poser core of the build and of the kept directory, every frame's decoded pixels equal: ${said.join('; ')} — without --stage-box the stage is the header box by repack's rules, by design, and neither the poses nor the frames read it`),
+      'issue #1339\'s verification: the document written this way poses, through the core, the same frames as the document build wrote, and render draws the same pixels from the untouched pages',
+    );
+  }
+  {
+    // What the document is refused for, each by name, nothing written.
+    const probes: string[] = [];
+    const refused = (label: string, input: string, wants: readonly string[], status = 1, extra: readonly string[] = []): void => {
+      const run = keep(label, input, extra);
+      if (run.status !== status) probes.push(`${label}: exit ${run.status}, not ${status}: ${run.stderr.trim().slice(-200)}`);
+      for (const want of wants) if (!run.stderr.includes(want)) probes.push(`${label}: stderr does not say ${JSON.stringify(want)}: ${JSON.stringify(run.stderr.trim().slice(0, 300))}`);
+      // A usage refusal is made before anything is read; every other one says nothing was written.
+      if (!run.stderr.includes('nothing was written') && !run.stderr.includes('repack --keep-pages takes no')) probes.push(`${label}: the refusal does not say nothing was written`);
+    };
+    const absentDocument = (label: string, dir: string): void => {
+      if (existsSync(join(dir, MODEL_DOCUMENT_FILE))) probes.push(`${label}: ${MODEL_DOCUMENT_FILE} was written beside the refused input`);
+    };
+    const parsed = parseAtlasText(readFileSync(join(nodIn, 'skeleton.atlas'), 'utf8'));
+    const first = parsed.regions[0].name.trim();
+    // A region renamed in the atlas: the skeleton's attachment names a region the atlas no longer has.
+    const renamed = bareBuildCopy(nodIn, join(work, 'kept-renamed'));
+    const lines = readFileSync(join(renamed, 'skeleton.atlas'), 'utf8').split('\n');
+    const at = lines.indexOf(parsed.regions[0].name);
+    lines[at] = `${first}_renamed`;
+    writeFileSync(join(renamed, 'skeleton.atlas'), lines.join('\n'));
+    refused('kept-renamed', renamed, [`"${first}"`, 'does not have', `${first}_renamed`]);
+    absentDocument('kept-renamed', renamed);
+    // A skeleton the rebuild does not write byte for byte: no acceptance, and no document naming another skeleton.
+    const edited = bareBuildCopy(nodIn, join(work, 'kept-edited'));
+    const text = readFileSync(join(edited, 'skeleton.json'), 'utf8');
+    const stripped = text.replace(/,\n\s*"images": "[^"]*"/, '');
+    writeFileSync(join(edited, 'skeleton.json'), stripped);
+    if (stripped === text) probes.push('kept-edited: the plant found no skeleton.images to drop');
+    refused('kept-edited', edited, ['(b) skeleton.json: 1 place(s) differ from the input', 'skeleton.images: absent from the input', "spine.sha256 would name this rebuild, not the skeleton.json beside it"]);
+    absentDocument('kept-edited', edited);
+    refused('kept-accept', edited, ['repack --keep-pages takes no --accept-skeleton-differences', 'spine.sha256 names a skeleton other than the skeleton.json on disk'], 2, ['--accept-skeleton-differences']);
+    // A page line the document has no field for, named; the same input with filter Linear, Linear is the accepted spelling.
+    const nearest = bareBuildCopy(nodIn, join(work, 'kept-nearest'));
+    const atlasText = readFileSync(join(nearest, 'skeleton.atlas'), 'utf8');
+    writeFileSync(join(nearest, 'skeleton.atlas'), atlasText.replace('filter: Linear, Linear', 'filter: Nearest, Nearest'));
+    refused('kept-nearest', nearest, [`page "${parsed.pages[0].name}" states filter: Nearest, Nearest`, 'samples every page bilinearly', 'cannot be stated by skeleton.model.json as it stands']);
+    absentDocument('kept-nearest', nearest);
+    const nine = bareBuildCopy(nodIn, join(work, 'kept-split'));
+    writeFileSync(join(nine, 'skeleton.atlas'), atlasText.replace(`bounds: ${parsed.regions[0].x}, ${parsed.regions[0].y}, `, `split: 1, 1, 1, 1\nbounds: ${parsed.regions[0].x}, ${parsed.regions[0].y}, `));
+    refused('kept-split', nine, [`region "${first}" on page "${parsed.pages[0].name}" states split: 1, 1, 1, 1, a line skeleton.model.json has no field for (a nine-patch region)`]);
+    // An existing document in --out, never written over: the build's own directory, document and all.
+    const before = readFileSync(join(nodIn, MODEL_DOCUMENT_FILE));
+    refused('kept-existing', nodIn, [`already holds ${MODEL_DOCUMENT_FILE}`, 'never over one'], 2);
+    if (!readFileSync(join(nodIn, MODEL_DOCUMENT_FILE)).equals(before)) probes.push('kept-existing: the existing document changed');
+    // The packing flags say nothing here.
+    refused('kept-padding', edited, ['repack --keep-pages takes no --padding: nothing is packed'], 2, ['--padding', '4']);
+    const held = probes.length === 0;
+    say(
+      'RPK22_KEEP_PAGES_REFUSES_BY_NAME_A_RENAMED_REGION_A_SKELETON_THE_REBUILD_DIFFERS_FROM_A_LINE_THE_DOCUMENT_CANNOT_STATE_AND_AN_EXISTING_DOCUMENT',
+      held,
+      probeDetail(held, probes, `on copies of gallery/nod: "${first}" renamed in the atlas refused by the build against the atlas naming the region it lacks and the near miss; skeleton.images dropped from the skeleton refused by check (b) naming the path and why no acceptance is taken (--accept-skeleton-differences itself refused, exit 2); filter: Nearest, Nearest and a split: line each refused naming the page or region; a directory already holding ${MODEL_DOCUMENT_FILE} refused exit 2 and the document left as it was; --padding refused — each exit 1 or 2, no document written`),
+      'issue #1339: a document beside a skeleton it does not describe, or stating less than the atlas says, is the silence; every refusal names what the document could not carry',
+    );
+  }
+  {
+    // A turned region is stated, not refused: the document has degrees and the core reads them (./core/uvs.ts).
+    const input = join(work, 'kept-turned');
+    const shape = relaidTurnedTrimmed(nodIn, input, false);
+    const before = digests(input);
+    const run = keep('kept-turned', input);
+    const probes: string[] = [];
+    if (run.status !== 0) probes.push(`turned: exit ${run.status}: ${run.stderr.trim().slice(0, 1200)}`);
+    else {
+      const atlasText = readFileSync(join(input, 'skeleton.atlas'), 'utf8');
+      const doc = JSON.parse(readFileSync(join(input, MODEL_DOCUMENT_FILE), 'utf8')) as { pages?: Array<{ regions: Array<{ degrees: number }> }> };
+      if (JSON.stringify(doc.pages) !== JSON.stringify(pagesOfAtlas(atlasText))) probes.push('turned: the document\'s pages are not pagesOfAtlas of the relaid atlas');
+      const turned = (doc.pages?.flatMap((p) => p.regions) ?? []).filter((r) => r.degrees === 90).length;
+      if (turned !== shape.turned || turned === 0) probes.push(`turned: the document states ${turned} region(s) at 90, not ${shape.turned}`);
+      const after = digests(input);
+      for (const [name, hash] of before) if (after.get(name) !== hash) probes.push(`turned: ${name} changed`);
+      const clean = kept.get('nod');
+      if (clean === undefined) probes.push('turned: no kept nod document to pose against');
+      else {
+        const apart = firstApart(corePoses(readFileSync(join(input, MODEL_DOCUMENT_FILE), 'utf8')), corePoses(readFileSync(join(clean, MODEL_DOCUMENT_FILE), 'utf8')));
+        if (apart !== null) probes.push(`turned: against nod's kept document, ${apart}`);
+      }
+    }
+    // Trimmed as well: the document could state it, but a trimmed region's quad is its kept rectangle, so the
+    // setup-pose box in the header moves and check (b) refuses — on the header's fields and nowhere else.
+    const trimmedIn = join(work, 'kept-trimmed');
+    const trimmedShape = relaidTurnedTrimmed(nodIn, trimmedIn);
+    const refusedRun = keep('kept-trimmed', trimmedIn);
+    const paths = [...refusedRun.stderr.matchAll(/^ {4}(\S+): .* in the input, .* in the rebuild$/gm)].map((m) => m[1]);
+    if (trimmedShape.trimmed === 0) probes.push('trimmed: no region was trimmed, so the case was not reached');
+    if (refusedRun.status !== 1) probes.push(`trimmed: exit ${refusedRun.status}, not 1`);
+    if (!refusedRun.stderr.includes('(b) skeleton.json:') || paths.length === 0) probes.push(`trimmed: check (b) did not name the paths: ${JSON.stringify(refusedRun.stderr.trim().slice(0, 400))}`);
+    const offHeader = paths.filter((p) => !/^skeleton\.(x|y|width|height)$/.test(p));
+    if (offHeader.length > 0) probes.push(`trimmed: check (b) named paths outside the header box: ${offHeader.join(', ')}`);
+    if (refusedRun.stderr.includes('(a) pages:')) probes.push('trimmed: the document\'s pages were refused, so the trim was not stated');
+    if (existsSync(join(trimmedIn, MODEL_DOCUMENT_FILE))) probes.push('trimmed: a document was written beside the refused input');
+    const held = probes.length === 0;
+    say(
+      'RPK23_A_TURNED_REGION_IS_STATED_AND_A_TRIMMED_ONE_MOVES_ONLY_THE_HEADER_BOX_WHICH_CHECK_B_REFUSES',
+      held,
+      probeDetail(held, probes, `nod's ${shape.turned} region(s) laid turned 90, whole: accepted, the document's pages pagesOfAtlas of that atlas, every input file the same bytes and every pose equal to the document kept over nod's own pack; laid turned and ${trimmedShape.trimmed} trimmed with offsets: refused by check (b) on ${paths.join(', ')} alone — a trimmed region's quad is its kept rectangle, so the setup-pose box the header states moves — exit 1, no document written`),
+      'issue #1339 asked for a rotated or trimmed region to be refused by name; the tree says otherwise — ModelPageRegion states degrees and offsets and ./core/uvs.ts reads both — and what a trim does change, the skeleton\'s header box, is check (b)\'s to name, measured rather than guessed',
+    );
+  }
+  {
+    // What the three files cannot show: a texel. Stated as the limit it is — the document written over an edited page is the same bytes.
+    const probes: string[] = [];
+    const input = bareBuildCopy(nodIn, join(work, 'kept-texel'));
+    const page = parseAtlasText(readFileSync(join(input, 'skeleton.atlas'), 'utf8')).pages[0].name;
+    const plate = readPlate(join(input, page));
+    let i = 0;
+    while (i < plate.data.length && plate.data[i + 3] === 0) i += 4;
+    plate.data[i] ^= 1;
+    plate.writePng(join(input, page));
+    const run = keep('kept-texel', input);
+    const clean = kept.get('nod');
+    if (run.status !== 0) probes.push(`exit ${run.status}: ${run.stderr.trim().slice(-300)}`);
+    else if (clean === undefined) probes.push('no clean kept document to compare with');
+    else if (!readFileSync(join(input, MODEL_DOCUMENT_FILE)).equals(readFileSync(join(clean, MODEL_DOCUMENT_FILE)))) probes.push('the document over the edited page differs from the one over the clean page, so it records texels after all — the limit below is wrong');
+    const help = runCli(['repack', '--help']);
+    if (!help.stdout.includes('Nothing in the three files records a') || !help.stdout.includes('texel, so a page edited after its pack is not seen')) probes.push('repack --help does not state the limit');
+    const held = probes.length === 0;
+    say(
+      'RPK24_A_TEXEL_EDITED_AFTER_THE_PACK_IS_NOT_SEEN_AND_THE_HELP_SAYS_SO',
+      held,
+      probeDetail(held, probes, `one colour bit of the first opaque texel of nod's ${page} flipped after the build: --keep-pages writes the same document bytes as over the clean page — nothing in the atlas or the skeleton records a texel, and the document states placement only — and repack --help states that limit`),
+      'issue #1339: the brief asked for a page edited by one texel to be refused; no record of texels exists in the three files a consumer keeps, so the honest answer is the stated limit, held by a control that goes red the day the document starts recording texels',
     );
   }
 
@@ -129121,6 +129368,12 @@ function main(): void {
       'and trimmed accepted and exact; the flags build --pack takes and no other; the second entry writing the same files; ' +
       'a build carrying a stage box repacked with `--stage-box` keeping its declared stage, without it keeping its skeleton while ' +
       'the stage line names the header box and the flag, and `--stage-box` on a slot that is not a box refused in ingest\'s words; ' +
+      'issue #1339 — `--keep-pages`, the model document alone for the pages already in place: on two gallery rigs every input ' +
+      'file the same bytes after and the document stating the atlas as it stands beside the skeleton on disk, its poses equal ' +
+      'to build\'s document at tolerance 0 and render drawing build\'s pixels from the untouched pages; a renamed region, a ' +
+      'skeleton the rebuild differs from, a line the document has no field for and an existing document refused by name; a ' +
+      'turned region stated while a trim moves only the header box, which check (b) names; and a texel edited after the pack ' +
+      'not seen, the limit the help states; ' +
       'and no rigc-* directory left in tmpdir() by any run, a red gate exiting from inside runBuild included)' +
       ', + ' + n('slider-reader') + ' slider-reader controls (the twelve-cell table in AUTHORING §3.5.2.1 re-measured through spine-core ' +
       'and compared to what the doc states, two-sided — nothing left a stated bound AND every stated end is ' +
