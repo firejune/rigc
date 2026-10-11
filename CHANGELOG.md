@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.44.0](https://github.com/rig-c/core/compare/v2.43.0...v2.44.0) (2026-10-11)
+
+
+### Features
+
+* **cli:** rigc inspect draws where a rig's triangles are — --show density fills each region and mesh by its triangles per posed world unit² over the figure's, on a log ramp centred on 1x, with the figure's totals over every slot and each slot's row in the legend — held by IN41–IN49 ([#1371](https://github.com/rig-c/core/issues/1371)) ([#1372](https://github.com/rig-c/core/issues/1372)) ([0f42708](https://github.com/rig-c/core/commit/0f427084f77d73483a0770ca7507b7bf51f98dc9))
+
 ## [2.43.0](https://github.com/rig-c/core/compare/v2.42.0...v2.43.0) (2026-10-11)
 
 
