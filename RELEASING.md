@@ -810,6 +810,12 @@ several tracks of one document, set, queued, mixed and emptied as spine-core's
 `AnimationState` does, which the player asked for with the same four shapes.
 The hook itself is an option of `openTrack` and of `openTracks`, so the row
 holds `openTracks` as its one value and `openTrack` stays the row above's.
+[#1344](https://github.com/firejune/rigc/issues/1344) widened that surface
+without adding to it: an entry's `alpha` and `additive` are fields of
+`MixOptions` (and so of `QueueOptions`) and of `TrackEntryView`, and
+`setAlpha` a method of `LiveTracks` — all types the row already names, so the
+row keeps its symbols and no row is added for that issue: a row is keyed by
+the symbols an entry exports, and none was added.
 
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
