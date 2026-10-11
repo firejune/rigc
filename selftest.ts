@@ -75691,6 +75691,103 @@ function runCurrencySuite(): number {
         'issue #1359: under COMMIT_OR_PR_TITLE a single commit squashes to its own subject, so a check that reads the title judges a line the squash does not write',
       );
     }
+
+    // --- CUR127: `removals` re-runs on an edit of the text it reads (issue #1368) ----
+    //
+    // `removals` accepts a removed control's declaration from a commit message,
+    // the pull request title or its body, and it lived in ci.yml, which does not
+    // run on `edited`: writing the declaration the job asked for into the title
+    // or body re-ran nothing, and the red stood until a new head was pushed. It
+    // now lives in squash-text.yml, which runs on `edited` and starts no
+    // selftest shard. This holds where it is — defined once, in that workflow,
+    // with `edited` among its triggers — and that what an edit changes is still
+    // what it reads: the title and body through `env:`, appended to what it
+    // judges, over a full-history checkout.
+    {
+      const FILE = 'squash-text.yml';
+      const SAID = `printf '%s\\n%s\\n' "$PR_TITLE" "$PR_BODY" >> "$work/said"`;
+      const VERDICT = 'judge "$work/gone" "$work/said" "  "';
+      const ENV_WANT: Record<string, string> = {
+        PR_TITLE: 'github.event.pull_request.title',
+        PR_BODY: 'github.event.pull_request.body',
+        BASE_SHA: 'github.event.pull_request.base.sha',
+        HEAD_SHA: 'github.event.pull_request.head.sha',
+      };
+      const removalsFaults = (edited: Record<string, string>): string[] => {
+        const faults: string[] = [];
+        const all = parseAll(edited, faults);
+        if (all === null) return faults;
+        const homes = Object.entries(all)
+          .filter(([, flow]) => (flow.jobs ?? {}).removals !== undefined)
+          .map(([file]) => file);
+        if (homes.length !== 1 || homes[0] !== FILE) {
+          faults.push(`a job named \`removals\` is defined in ${homes.length === 0 ? 'no workflow' : homes.join(', ')}, where it is defined once, in ${FILE}, which re-runs on \`edited\``);
+        }
+        const flow = all[FILE];
+        const types = ((flow?.on ?? {}).pull_request as { types?: string[] } | null | undefined)?.types ?? [];
+        if (!types.includes('edited')) faults.push(`${FILE}: \`pull_request\` does not list "edited", so declaring a removal in the title or body does not run \`removals\` again`);
+        const job = (flow?.jobs ?? {}).removals;
+        if (job === undefined) return faults;
+        const steps = job.steps ?? [];
+        const checkout = steps.find((step) => /actions\/checkout/.test(step.uses ?? ''));
+        if (String(checkout?.with?.['fetch-depth'] ?? '') !== '0') faults.push(`${FILE}: \`removals\` checks out without \`fetch-depth: 0\`, so the merge base it compares against is not there`);
+        const at = steps.findIndex((step) => runLines(step).includes(VERDICT));
+        if (at < 0) return [...faults, `${FILE}: no step of \`removals\` runs \`${VERDICT}\`, so nothing judges what left the tree`];
+        const step = steps[at];
+        for (const [variable, field] of Object.entries(ENV_WANT)) {
+          const value = step.env?.[variable] ?? '';
+          if (!new RegExp(`^\\$\\{\\{\\s*${field.replace(/\./g, '\\.')}\\s*\\}\\}$`).test(value)) faults.push(`${FILE}: the \`removals\` step's env ${variable} is ${JSON.stringify(value)}, where it reads \${{ ${field} }}`);
+        }
+        if (!runLines(step).includes(SAID)) faults.push(`${FILE}: the \`removals\` step does not append the title and body to what it judges (\`${SAID}\`), so an edit of them changes nothing it reads`);
+        return faults;
+      };
+      const standing = removalsFaults(texts);
+      const fileText = texts[FILE] ?? '';
+      const ciText = texts['ci.yml'] ?? '';
+      const jobAt = fileText.indexOf('\n  removals:\n');
+      /** One edit inside the `removals` job alone, so a string the other jobs share is planted where this gate reads it. */
+      const inJob = (from: string, to: string): string | null => {
+        if (jobAt < 0) return null;
+        const job = once(fileText.slice(jobAt), from, to);
+        return job === null ? null : fileText.slice(0, jobAt) + job;
+      };
+      const plants: Array<{ what: string; edit: Record<string, string | null>; at?: string; quiet?: boolean }> = [
+        { what: 'a second removals job back in ci.yml', edit: { 'ci.yml': `${ciText.trimEnd()}\n\n  removals:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo planted\n` }, at: 'a job named `removals`' },
+        { what: 'edited dropped from the triggers', edit: { [FILE]: once(fileText, 'types: [opened, edited, synchronize, reopened]', 'types: [opened, synchronize, reopened]') }, at: `${FILE}: \`pull_request\` does not list "edited", so declaring` },
+        { what: 'the body left out of the env', edit: { [FILE]: inJob('          PR_BODY: ${{ github.event.pull_request.body }}\n', '') }, at: `${FILE}: the \`removals\` step's env PR_BODY` },
+        { what: 'the title and body no longer judged', edit: { [FILE]: inJob(`          ${SAID}\n`, '') }, at: `${FILE}: the \`removals\` step does not append` },
+        { what: 'a shallow checkout of removals', edit: { [FILE]: inJob('          fetch-depth: 0\n', '          fetch-depth: 1\n') }, at: `${FILE}: \`removals\` checks out without` },
+        { what: 'the removals step renamed', edit: { [FILE]: inJob('- name: A control that leaves is named by the change that removes it', '- name: removals') }, quiet: true },
+      ];
+      const probes: string[] = [];
+      const cases: string[] = [];
+      for (const plant of plants) {
+        if (Object.values(plant.edit).some((text) => text === null)) {
+          probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+          continue;
+        }
+        const raised = raisedBy(removalsFaults({ ...texts, ...(plant.edit as Record<string, string>) }), { at: plant.at, was: standing });
+        if (plant.quiet === true) {
+          if (raised.length > 0) probes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+          cases.push(`${plant.what} -> quiet`);
+          continue;
+        }
+        if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+        cases.push(`${plant.what} -> ${raised.length}`);
+      }
+      const held = standing.length === 0 && probes.length === 0;
+      say(
+        'CUR127_REMOVALS_RERUNS_ON_AN_EDIT_OF_THE_TITLE_AND_BODY_IT_READS',
+        held,
+        probeDetail(
+          held,
+          [...standing, ...probes],
+          `\`removals\` is defined once, in ${FILE}, which lists "edited"; it checks out full history, reads the title, body and both SHAs through \`env:\` ` +
+            `and appends the title and body to what it judges — over ${cases.length} plant(s): ${cases.join('; ')}`,
+        ),
+        'issue #1368: a check whose remedy is a sentence in the pull request text, and which an edit of that text does not re-run, stays red after it is satisfied',
+      );
+    }
   }
 
   // --- CUR113–CUR115: the package as an install receives it — spine-core a devDependency (issue #1061) --
@@ -135310,7 +135407,7 @@ function scanDocsQuotes(
  * arriving under the SAME rule. That is narrower and it is not closed: a rule
  * reaching several blocks still hides one of them leaving. Closing it needs a
  * comparison against something that is not this run, which nothing in the tree
- * supplies — see the removal check in `.github/workflows/ci.yml`, which is that
+ * supplies — see the removal check in `.github/workflows/squash-text.yml`, which is that
  * comparison for a neighbouring population and lives outside the suite for
  * exactly the reason it cannot be built inside one.
  */
@@ -136148,7 +136245,7 @@ function runDocsQuoteSuite(): { failures: number; holes: number } {
   // instrument arrives this clause is what it has to contradict. The instrument
   // it wants is a comparison against another revision, which a suite that runs
   // from a fresh clone with no arguments cannot have — see the removal check in
-  // `.github/workflows/ci.yml`.
+  // `.github/workflows/squash-text.yml`.
   const reachProbes: string[] = [];
   const standing = docsQuoteReachFloors(scan);
   const reachedBy = (rule: string): string[] => [
