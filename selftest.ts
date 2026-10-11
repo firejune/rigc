@@ -129204,7 +129204,7 @@ function runRepackSuite(): number {
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
-import { AXIS_PIXELS, GRID_MIN_PIXELS, INSPECT_COLOURS, inspectCandidate, type InspectLegend, type InspectPlant, type InspectRequest, legendText, WEIGHT_RAMP } from './src/inspect.ts';
+import { AXIS_PIXELS, DENSITY_RAMP, GRID_MIN_PIXELS, INSPECT_COLOURS, inspectCandidate, type InspectLegend, type InspectPlant, type InspectRequest, legendText, WEIGHT_RAMP } from './src/inspect.ts';
 import { drawText as drawGlyphs } from './tools/font5x7.ts';
 import { loadCandidate } from './src/render_shared.ts';
 
@@ -129563,7 +129563,7 @@ function runInspectSuite(): number {
       [['--zoom', 'arm'], ['names both a bone and a slot; say which with --zoom bone:arm or --zoom slot:arm']],
       [['--zoom', 'pin'], ['is one point', '--zoom pin:<pad>']],
       [['--animation', 'jump', '--at', '0'], ['no animation "jump" in this skeleton; it has [wave]']],
-      [['--show', 'bones,skin'], ['"skin" is not a view inspect draws; it draws [art, grid, weights:<bone>, mesh, hull, declared, bones, axes, slots, names]']],
+      [['--show', 'bones,skin'], ['"skin" is not a view inspect draws; it draws [art, grid, density, weights:<bone>, mesh, hull, declared, bones, axes, slots, names]']],
       [['--hide', 'arm'], ['inspect takes no --hide; it takes --candidate']],
       [['--animation', 'wave', '--at', '0.3'], ['not on the 12 fps frame grid', '3 (0.2500s) and 4 (0.3333s)']],
       [['--animation', 'wave', '--at', '2'], ['past the end of "wave": it lasts 1s']],
@@ -130141,6 +130141,185 @@ function inspectSlotFilterFaults(plate: Plate, legend: InspectLegend, alone: { p
   return faults;
 }
 
+// ---------------------------------------------------------------------------
+// inspect — density (issue #1371)
+// ---------------------------------------------------------------------------
+
+/**
+ * The density probe's chosen numbers, world units, in the inspect probe box
+ * (every whole coordinate on a pixel centre). Two meshes whose ratio is known
+ * by construction: `p`, a 20 × 20 square fanned into 8 triangles about its
+ * centre (area 400), and `q`, one triangle of base 40 and height 25 (area 500,
+ * its bounding box 1000 — so the box is not the area). The figure is 9
+ * triangles over 900, so `p` is 2× the figure and `q` 0.2×. `p`'s top row is
+ * weighted half to `p` and half to `q` (two bones, both at the origin, so
+ * local is world); `q` is unweighted on `q` (one bone).
+ */
+const INSPECT_DENSITY_PROBE = {
+  /** `p`'s side, its lower-left corner at the origin. */
+  side: 20,
+  /** `q`'s three corners: a right angle at the first, base along y = −20. */
+  q: [[30, -20], [70, -20], [30, 5]] as Array<[number, number]>,
+  /** A world point inside each part, clear of every edge, and one outside both. */
+  insideP: [13, 7] as [number, number],
+  insideQ: [40, -12] as [number, number],
+  outside: [50, 30] as [number, number],
+} as const;
+
+/** `p`'s vertices, hull first (the eight around the edge, counter-clockwise from the origin), then the centre. */
+function densityProbeSquare(): Array<[number, number]> {
+  const h = INSPECT_DENSITY_PROBE.side / 2;
+  const s = INSPECT_DENSITY_PROBE.side;
+  return [[0, 0], [h, 0], [s, 0], [s, h], [s, s], [h, s], [0, s], [0, h], [h, h]];
+}
+
+/** The density probe — with `flat`, a third slot whose bone is scaled to 0 on x, so its posed area is 0. */
+function writeInspectDensityProbe(flat = false): { outDir: string; work: string; built: string[] } {
+  const square = densityProbeSquare();
+  const s = INSPECT_DENSITY_PROBE.side;
+  const centre = square.length - 1;
+  const fan = Array.from({ length: centre }, (_, i) => [centre, i, (i + 1) % centre]).flat();
+  const dirs = writeProbeRig({
+    bones: [
+      { name: 'root' },
+      { name: 'p', parent: 'root' },
+      { name: 'q', parent: 'root' },
+      ...(flat ? [{ name: 'z', parent: 'root', x: 60, y: 30, scaleX: 0 }] : []),
+    ],
+    slots: [
+      { name: 'p', bone: 'p', attachment: 'p' },
+      { name: 'q', bone: 'q', attachment: 'q' },
+      ...(flat ? [{ name: 'flat', bone: 'z', attachment: 'flat' }] : []),
+    ],
+    skins: {
+      default: {
+        p: {
+          p: {
+            type: 'mesh',
+            image: 'block.png',
+            uvs: square.flatMap(([x, y]) => [x / s, 1 - y / s]),
+            triangles: fan,
+            hull: centre,
+            weights: square.map(([x, y]) => (y === s ? [{ bone: 'p', x, y, weight: 0.5 }, { bone: 'q', x, y, weight: 0.5 }] : [{ bone: 'p', x, y, weight: 1 }])),
+          },
+        },
+        q: { q: { type: 'mesh', image: 'block.png', uvs: [0, 1, 1, 1, 0, 0], triangles: [0, 1, 2], hull: 3, vertices: INSPECT_DENSITY_PROBE.q.flat() } },
+        ...(flat ? { flat: { flat: { image: 'marker.png' } } } : {}),
+      },
+    },
+  });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({ spec: 'rigc-motion/1', archetype: 'static_probe', cut: 'static_probe', easings: {}, animations: { still: { duration: 1, loop: false, tracks: [{ bone: 'root', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] }] } } }, null, 2)}\n`,
+  );
+  const built: string[] = [];
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+  if (build.status !== 0) built.push(`the density probe${flat ? ' with a flat slot' : ''} did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  return { outDir: dirs.outDir, work: dirs.dir, built };
+}
+
+/**
+ * How far a posed area or a ratio may sit from the probe's number, relative to
+ * it. Not slack in the measurement: the posers carry float noise in a posed
+ * vertex (IN01 holds an origin to 1e-5 world units), and on these probes it
+ * reads 399.99999999999994 for 400 — fourteen orders below this, and every
+ * mutant moves a ratio by more than half of itself.
+ */
+const DENSITY_NOISE = 1e-9;
+
+/** `got` is not `want`, beyond the posers' float noise — or it is null where a number is required. */
+const offBy = (got: number | null, want: number): boolean => got === null || Math.abs(got - want) > DENSITY_NOISE * Math.abs(want);
+
+/** The ramp's colour at `ratio`, written out from the stated stops: linear in log2(ratio) between the two either side, each channel rounded. */
+function densityRampAt(ratio: number): number[] {
+  const stops = DENSITY_RAMP;
+  if (ratio <= stops[0].ratio) return [...stops[0].rgba];
+  if (ratio >= stops[stops.length - 1].ratio) return [...stops[stops.length - 1].rgba];
+  const i = stops.findIndex((s, k) => k + 1 < stops.length && ratio >= s.ratio && ratio <= stops[k + 1].ratio);
+  const t = (Math.log2(ratio) - Math.log2(stops[i].ratio)) / (Math.log2(stops[i + 1].ratio) - Math.log2(stops[i].ratio));
+  return [0, 1, 2, 3].map((c) => Math.round(stops[i].rgba[c] + (stops[i + 1].rgba[c] - stops[i].rgba[c]) * t));
+}
+
+/** Each part's area and the figure's, from the probe's numbers by hand. */
+function densityProbeExpected(): { p: number; q: number; figure: number; ratioP: number; ratioQ: number } {
+  const [[ax, ay], [bx], [, cy]] = INSPECT_DENSITY_PROBE.q;
+  const p = INSPECT_DENSITY_PROBE.side ** 2;
+  const q = ((bx - ax) * (cy - ay)) / 2;
+  const fanned = densityProbeSquare().length - 1;
+  const figure = (fanned + 1) / (p + q);
+  return { p, q, figure, ratioP: fanned / p / figure, ratioQ: 1 / q / figure };
+}
+
+/**
+ * IN41's reading, for `--show density` over the density probe: the figure is 9
+ * triangles over 900, `p` reads 2 and `q` 0.2 as the probe's numbers give them,
+ * each with its bones, and the picture holds each part's ramp colour — `p`'s on
+ * every pixel centred in its square and nowhere else.
+ */
+function inspectDensityFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const want = densityProbeExpected();
+  const d = legend.tiles[0]?.density;
+  if (d === undefined) return ['legend: the tile states no density'];
+  if (JSON.stringify(legend.density?.ramp) !== JSON.stringify(DENSITY_RAMP.map((s) => ({ ratio: s.ratio, rgba: [...s.rgba] })))) faults.push('legend: density.ramp is not the stated stops');
+  if (d.figure.slots !== 2 || d.figure.triangles !== 9 || offBy(d.figure.area, want.p + want.q)) faults.push(`legend: figure ${JSON.stringify(d.figure)}, required 2 slots, 9 triangles, area ${want.p + want.q}`);
+  const rows = new Map(d.slots.map((r) => [r.slot, r]));
+  const p = rows.get('p');
+  const q = rows.get('q');
+  if (d.slots.map((r) => `${r.slot}:${r.order}`).join() !== 'p:0,q:1') faults.push(`legend: rows ${d.slots.map((r) => `${r.slot}:${r.order}`).join()}, required p:0,q:1`);
+  if (p === undefined || q === undefined) return [...faults, 'legend: a part has no row'];
+  if (p.kind !== 'mesh' || p.vertices !== 9 || p.triangles !== 8 || p.hull !== 8 || offBy(p.area, want.p)) faults.push(`legend: p is ${p.kind} ${p.vertices}v ${p.triangles}t hull ${String(p.hull)} area ${p.area}, required mesh 9v 8t hull 8 area ${want.p}`);
+  if (q.triangles !== 1 || offBy(q.area, want.q)) faults.push(`legend: q has ${q.triangles} triangle(s) over ${q.area}, required 1 over ${want.q}`);
+  if (offBy(p.ratio, want.ratioP)) faults.push(`legend: p's ratio ${String(p.ratio)}, required ${want.ratioP} (8 / ${want.p} over 9 / ${want.p + want.q})`);
+  if (offBy(q.ratio, want.ratioQ)) faults.push(`legend: q's ratio ${String(q.ratio)}, required ${want.ratioQ} (1 / ${want.q} over 9 / ${want.p + want.q})`);
+  if (p.boneNames.join() !== 'p,q' || p.bones !== 2) faults.push(`legend: p is weighted to ${p.bones} [${p.boneNames.join(', ')}], required 2 [p, q]`);
+  if (q.boneNames.join() !== 'q' || q.bones !== 1) faults.push(`legend: q is weighted to ${q.bones} [${q.boneNames.join(', ')}], required its slot's one bone [q]`);
+  const colourP = densityRampAt(want.ratioP);
+  const colourQ = densityRampAt(want.ratioQ);
+  if (JSON.stringify(p.rgba) !== JSON.stringify(colourP)) faults.push(`legend: p is painted ${JSON.stringify(p.rgba)}, the stops give ${JSON.stringify(colourP)} at ${want.ratioP}`);
+  const at = (w: readonly [number, number]): [number, number] => {
+    const [x, y] = meshPixel(w[0], w[1]);
+    return [Math.floor(x), Math.floor(y)];
+  };
+  for (const [name, w, rgba] of [['p', INSPECT_DENSITY_PROBE.insideP, colourP], ['q', INSPECT_DENSITY_PROBE.insideQ, colourQ], ['outside both', INSPECT_DENSITY_PROBE.outside, [...BACKGROUND]]] as const) {
+    const [x, y] = at(w);
+    if (plate.get(x, y).join() !== rgba.join()) faults.push(`picture: (${x}, ${y}), ${name}, is ${plate.get(x, y).join(',')}, required ${rgba.join(',')}`);
+  }
+  // p's square spans whole world units, so its corners sit on pixel centres and every centre from one to the other is in it.
+  const [x0, y1] = at([0, 0]);
+  const [x1, y0] = at([INSPECT_DENSITY_PROBE.side, INSPECT_DENSITY_PROBE.side]);
+  const ink = inkSet(plate, colourP);
+  const box = (x1 - x0 + 1) * (y1 - y0 + 1);
+  const outsideBox = [...ink].filter((k) => {
+    const [x, y] = k.split(',').map(Number);
+    return x < x0 || x > x1 || y < y0 || y > y1;
+  });
+  if (ink.size !== box || outsideBox.length > 0) faults.push(`picture: ${ink.size} pixels in p's colour, ${outsideBox.length} outside its square; its square holds ${box} pixel centres`);
+  return faults;
+}
+
+/**
+ * IN43's reading over the patch probe: `--overlay-slot strip` lists and paints
+ * the strip alone, and its figure — and so the strip's ratio — is the
+ * unfiltered run's, over all three slots.
+ */
+function inspectDensityFilterFaults(filtered: { plate: Plate; legend: InspectLegend }, all: { plate: Plate; legend: InspectLegend }): string[] {
+  const faults: string[] = [];
+  const f = filtered.legend.tiles[0]?.density;
+  const u = all.legend.tiles[0]?.density;
+  if (f === undefined || u === undefined) return ['legend: a run states no density'];
+  if (u.figure.slots !== 3) faults.push(`the unfiltered figure is over ${u.figure.slots} slots, the patch probe shows 3`);
+  if (JSON.stringify(f.figure) !== JSON.stringify(u.figure)) faults.push(`legend: the filtered figure ${JSON.stringify(f.figure)} is not the unfiltered ${JSON.stringify(u.figure)}`);
+  if (f.slots.map((r) => r.slot).join() !== 'strip') faults.push(`legend: rows [${f.slots.map((r) => r.slot).join(', ')}], the filter keeps [strip]`);
+  if (JSON.stringify(f.slots[0]) !== JSON.stringify(u.slots.find((r) => r.slot === 'strip'))) faults.push("legend: the filtered strip row is not the unfiltered run's");
+  const [tx, ty] = meshPixel(20, INSPECT_MESH_PROBE.tagY);
+  const tag = [Math.floor(tx), Math.floor(ty)] as const;
+  if (all.plate.get(...tag).join() === BACKGROUND.join()) faults.push('the unfiltered run leaves the tag unpainted, so its absence would prove nothing');
+  if (filtered.plate.get(...tag).join() !== BACKGROUND.join()) faults.push(`picture: --overlay-slot strip paints the tag at (${tag[0]}, ${tag[1]})`);
+  return faults;
+}
+
 function runInspectCut2(cut1: InspectProbe): number {
   let bad = 0;
   const say = (name: string, ok: boolean, detail: string, why: string): void => {
@@ -130563,6 +130742,153 @@ function runInspectCut2(cut1: InspectProbe): number {
       );
     } else {
       say('IN40_A_SLOT_FILTER_IGNORED_IS_RED', false, `a probe did not build, so the mutant did not run: ${prereq.join('; ')}`, '');
+    }
+    // IN41–IN48 — density (issue #1371): a measurement read against probes whose ratio is known by construction.
+    {
+      const dense = writeInspectDensityProbe();
+      const flat = writeInspectDensityProbe(true);
+      const densePre = [...dense.built];
+      const viewD = (dir: string, pre: string[], name: string, args: string[]): { plate: Plate; legend: InspectLegend; stdout: string } | string => {
+        if (pre.length > 0) return pre.join('; ');
+        const run = runCli(['inspect', '--candidate', dir, ...boxFlag, ...args, '--out', outPng(name)]);
+        if (run.status !== 0) return `inspect ${args.join(' ')} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`;
+        return { plate: readPlate(outPng(name)), legend: legendOf(outPng(name)), stdout: run.stdout };
+      };
+      const want = densityProbeExpected();
+      {
+        const got = viewD(dense.outDir, densePre, 'dn-probe', ['--show', 'density']);
+        const probes = typeof got === 'string' ? [got] : inspectDensityFaults(got.plate, got.legend);
+        say(
+          'IN41_A_PARTS_DENSITY_IS_ITS_TRIANGLES_OVER_ITS_POSED_AREA_AGAINST_THE_FIGURES',
+          held(probes),
+          probeDetail(held(probes), probes, `--show density over two meshes of chosen geometry: the figure 9 triangles over ${want.p + want.q} world units²; p, 8 triangles over ${want.p}, reads ${want.ratioP} and q, 1 over ${want.q} (its box ${2 * want.q}), reads ${want.ratioQ} — each the probe's numbers within its float noise; p weighted to [p, q], q unweighted to its slot's [q]; each part painted the stops' log2 colour at its ratio, p's on every one of the pixel centres its square holds and nowhere else`),
+          'issue #1371: whether the triangles are where the motion is cannot be read off a count — a part\'s density against the figure\'s is the relative number an author asks for',
+        );
+      }
+      {
+        const probes: string[] = [];
+        const got = viewOf('dn-region', ['--show', 'density']);
+        if (typeof got === 'string') probes.push(got);
+        else {
+          const marker = readPlate(join(probe.work, 'marker.png'));
+          const { strip } = INSPECT_MESH_PROBE;
+          const stripArea = (Math.max(...strip.map((v) => v[0])) - Math.min(...strip.map((v) => v[0]))) * (Math.max(...strip.map((v) => v[1])) - Math.min(...strip.map((v) => v[1])));
+          const tagArea = marker.width * marker.height;
+          const d = got.legend.tiles[0]?.density;
+          const tag = d?.slots.find((r) => r.slot === 'tag');
+          const st = d?.slots.find((r) => r.slot === 'strip');
+          const figure = (4 + 2) / (stripArea + tagArea);
+          if (d === undefined || tag === undefined || st === undefined) probes.push('legend: no density row for the strip or the tag');
+          else {
+            if (tag.kind !== 'region' || tag.vertices !== 4 || tag.triangles !== 2 || tag.hull !== null) probes.push(`legend: the tag is ${tag.kind} ${tag.vertices}v ${tag.triangles}t hull ${String(tag.hull)}, required region 4v 2t hull null`);
+            if (offBy(tag.area, tagArea)) probes.push(`legend: the tag's area ${tag.area}, its quad is ${marker.width} x ${marker.height} = ${tagArea}`);
+            if (tag.boneNames.join() !== 'b') probes.push(`legend: the tag is weighted to [${tag.boneNames.join(', ')}], a region moves whole with its slot's [b]`);
+            if (offBy(st.area, stripArea) || st.boneNames.join() !== 'a,b') probes.push(`legend: the strip's area ${st.area} on [${st.boneNames.join(', ')}], required ${stripArea} on [a, b]`);
+            if (d.figure.triangles !== 6 || offBy(d.figure.area, stripArea + tagArea)) probes.push(`legend: figure ${d.figure.triangles} over ${d.figure.area}, required 6 over ${stripArea + tagArea}`);
+            if (offBy(tag.ratio, 2 / tagArea / figure)) probes.push(`legend: the tag's ratio ${String(tag.ratio)}, required ${2 / tagArea / figure}`);
+            if (offBy(st.ratio, 4 / stripArea / figure)) probes.push(`legend: the strip's ratio ${String(st.ratio)}, required ${4 / stripArea / figure}`);
+          }
+        }
+        say(
+          'IN42_A_REGION_IS_TWO_TRIANGLES_OVER_ITS_QUAD',
+          held(probes),
+          probeDetail(held(probes), probes, "--show density over the mesh probe: the tag region reads 4 vertices, 2 triangles, no hull, an area of its image's width x height and its slot's one bone; the strip its 40 x 10; the figure 6 triangles over their sum, each ratio from those numbers"),
+          'issue #1371: a region draws two triangles like any mesh, so it is in the figure as two triangles over its quad — leaving it out would make every mesh look sparser than the art it sits among',
+        );
+      }
+      {
+        const probes: string[] = [];
+        const all = viewP('dn-all', ['--show', 'density']);
+        const kept = viewP('dn-keep', ['--show', 'density', '--overlay-slot', 'strip']);
+        for (const v of [all, kept]) if (typeof v === 'string') probes.push(v);
+        if (typeof all !== 'string' && typeof kept !== 'string') probes.push(...inspectDensityFilterFaults(kept, all));
+        say(
+          'IN43_THE_SLOT_FILTER_PICKS_THE_ROWS_AND_NEVER_THE_FIGURE',
+          held(probes),
+          probeDetail(held(probes), probes, '--show density --overlay-slot strip over the patch probe: the figure is the unfiltered one over all 3 slots, byte for byte, the rows are [strip] with the unfiltered strip row, and the tag the unfiltered run paints is left unpainted'),
+          'issue #1371: the ratio is against the figure — a filter that shrank the figure to what it draws would make a part read as 1x of itself',
+        );
+      }
+      {
+        const probes: string[] = [];
+        const views = 'art,mesh,hull,slots,bones,names';
+        const plain = viewOf('dn-plain', ['--show', views]);
+        const withD = viewOf('dn-with', ['--show', `art,density,${views.slice('art,'.length)}`]);
+        for (const v of [plain, withD]) if (typeof v === 'string') probes.push(v);
+        let changed = 0;
+        if (typeof plain !== 'string' && typeof withD !== 'string') {
+          if ('density' in plain.legend || (plain.legend.tiles[0] !== undefined && 'density' in plain.legend.tiles[0])) probes.push('the legend with no density word states a density');
+          if (plain.stdout.includes('density')) probes.push('the run with no density word prints a density line');
+          const a = JSON.parse(legendText(plain.legend)) as InspectLegend;
+          const b = JSON.parse(legendText(withD.legend)) as InspectLegend;
+          delete b.density;
+          for (const t of b.tiles) delete t.density;
+          b.show = b.show.filter((w) => w !== 'density');
+          if (legendText(a) !== legendText(b)) probes.push('the legend with density differs from the one without beyond show and density');
+          const painted = new Set((withD.legend.tiles[0]?.density?.slots ?? []).map((r) => (r.rgba ?? []).join()));
+          for (let y = 0; y < plain.plate.height; y++) {
+            for (let x = 0; x < plain.plate.width; x++) {
+              if (plain.plate.get(x, y).join() === withD.plate.get(x, y).join()) continue;
+              changed++;
+              if (!painted.has(withD.plate.get(x, y).join()) && probes.length < 8) probes.push(`picture: (${x}, ${y}) differs and holds ${withD.plate.get(x, y).join(',')}, no part's density colour`);
+            }
+          }
+          if (changed === 0) probes.push('density changed no pixel, so nothing here shows it leaves the rest alone');
+        }
+        say(
+          'IN44_DENSITY_ADDS_ITS_FILL_AND_ITS_ROWS_AND_MOVES_NOTHING_ELSE',
+          held(probes),
+          probeDetail(held(probes), probes, `every existing per-slot and bone view over the mesh probe, with and without density: no density field or line without the word; the legends equal once show and density are set aside; the ${changed} pixels that differ each hold a part's density colour`),
+          'issue #1371: the view is opt-in — a picture that does not ask for it is the picture it was (the bytes before this change were measured by hand at the landing; the tree does not hold them)',
+        );
+      }
+      {
+        const probes: string[] = [];
+        const got = viewD(flat.outDir, flat.built, 'dn-flat', ['--show', 'density']);
+        if (typeof got === 'string') probes.push(got);
+        else {
+          const d = got.legend.tiles[0]?.density;
+          const row = d?.slots.find((r) => r.slot === 'flat');
+          if (d === undefined || row === undefined) probes.push('legend: no row for the flat slot');
+          else {
+            if (row.area !== 0 || row.trianglesPerArea !== null || row.ratio !== null || row.rgba !== null || row.why === null) probes.push(`legend: the flat row ${JSON.stringify({ area: row.area, trianglesPerArea: row.trianglesPerArea, ratio: row.ratio, rgba: row.rgba, why: row.why })}, required area 0, nulls and a why`);
+            if (d.figure.triangles !== 11 || offBy(d.figure.area, want.p + want.q)) probes.push(`legend: figure ${d.figure.triangles} over ${d.figure.area}, required 11 (the flat region's 2 counted) over ${want.p + want.q}`);
+            if (!got.stdout.includes('density: no ratio for "flat"')) probes.push('the run does not say the flat slot has no ratio');
+          }
+        }
+        say(
+          'IN45_A_PART_WITH_NO_AREA_HAS_NO_RATIO_AND_SAYS_WHY',
+          held(probes),
+          probeDetail(held(probes), probes, 'a region on a bone scaled to 0 on x: area 0, triangles per area and ratio null with why, unpainted, said on a line of its own; its 2 triangles still in the figure, which covers no more area'),
+          'issue #1371: a density over no area is not a number, and the compiler never invents one — the slot says why rather than reading as infinitely dense or as 0',
+        );
+      }
+      // IN46–IN49 — the mutants, each red by name under the reading that exists to see it.
+      if (densePre.length === 0 && prereq.length === 0) {
+        const box = { kind: 'viewport' as const, x: INSPECT_PROBE.box.x, y: INSPECT_PROBE.box.y, width: INSPECT_PROBE.box.width, height: INSPECT_PROBE.box.height };
+        const req = (over: Partial<InspectRequest>): InspectRequest => inspectProbeRequest({ frame: box, show: ['density'], ...over });
+        const allView = inspectView2(patched.outDir, req({}));
+        const mutants: Array<[string, InspectPlant, (plant: InspectPlant) => string[], string]> = [
+          ['IN46_AREA_TAKEN_AS_THE_BOX_IS_RED', { densityAreaOfBox: true }, (pl) => { const r = inspectView2(dense.outDir, req({}), pl); return inspectDensityFaults(r.plate, r.legend); }, "IN41's reading"],
+          ['IN47_A_RATIO_UPSIDE_DOWN_IS_RED', { densityRatioInverted: true }, (pl) => { const r = inspectView2(dense.outDir, req({}), pl); return inspectDensityFaults(r.plate, r.legend); }, "IN41's reading"],
+          ['IN48_A_LINEAR_RAMP_WHERE_LOG_IS_STATED_IS_RED', { densityLinearRamp: true }, (pl) => { const r = inspectView2(dense.outDir, req({}), pl); return inspectDensityFaults(r.plate, r.legend); }, "IN41's reading"],
+          ['IN49_TOTALS_OVER_THE_FILTERED_SLOTS_ONLY_ARE_RED', { densityTotalsFiltered: true }, (pl) => inspectDensityFilterFaults(inspectView2(patched.outDir, req({ slotFilter: { include: ['strip'] } }), pl), allView), "IN43's reading"],
+        ];
+        for (const [name, plant, read, by] of mutants) {
+          const clean = read({});
+          const planted = read(plant);
+          say(
+            name,
+            clean.length === 0 && planted.length > 0,
+            clean.length > 0 ? `the unplanted run is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${by} found nothing` : `${JSON.stringify(plant)} planted: ${by} names it — ${planted[0]}; the same request unplanted reads clean`,
+            'issue #1371: a control nobody has seen fail is not a control — each way the density can be wrong is planted and caught by name',
+          );
+        }
+      } else {
+        say('IN46_MUTANTS', false, `a probe did not build, so no mutant ran: ${[...densePre, ...prereq].join('; ')}`, '');
+      }
+      rmSync(dense.work, { recursive: true, force: true });
+      rmSync(flat.work, { recursive: true, force: true });
     }
     rmSync(patched.work, { recursive: true, force: true });
   }

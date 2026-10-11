@@ -412,12 +412,13 @@ point*, *is this axis held*. It draws the build's art, framed as `render` frames
 and over it any of `bones` (origin to tip, a bone of length 0 marked as one),
 `names` (one label per pixel), `axes` (each bone's world x and y), `mesh` and `hull`
 (each mesh's edges and outline), `weights:<bone>` (what that bone moves, as a heat),
+`density` (each part's triangles per area against the figure's, on a log ramp),
 `slots` (the draw order at the pose), `grid` (in world units) and `declared`
 (each `invariants.axes` line and the bones held to it), at the setup pose, at
 `--animation <name> --at <s[,s…]>` — one picture, or a sheet — or zoomed with
 `--zoom <bone|slot>[:pad]` or `--viewport x,y,w,h`; `--bone`/`--hide-bone` pick the
 bones by glob, `--overlay-slot`/`--hide-overlay-slot` the slots whose mesh, hull,
-weights and number are drawn over the whole painting, and `--compare <dir>` draws a second build beside the first on one
+weights, density and number are drawn over the whole painting, and `--compare <dir>` draws a second build beside the first on one
 transform, to see what a change moved. Beside the PNG it writes a legend:
 the world-to-pixel transform both ways, what each colour means, and every bone's
 origin and tip in world units and in pixels, so a position read off the picture goes

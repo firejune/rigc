@@ -10095,6 +10095,7 @@ pixel (`IN09`).
 | Did it break during the move? | any of the above `--animation <name> --at <s,s,…>` | one tile per time, left to right on one grid, each labelled with its time and frame |
 | What does this bone move? | `--show art,mesh,weights:<bone> --dim` | the bone's weight over every region and mesh it moves, as a heat: a pixel whose centre lies in a triangle is painted the ramp's colour at the blend of its corners' weights — blue near 0, yellow at 0.5, red at 1 (the stops are in the legend) — and a weight of 0 is not painted, so the art shows where the bone does not reach. A region and an unweighted mesh are moved whole by their slot's bone. The weights are read off `skeleton.json`, the file both posers skin from; a bone that weights nothing paints nothing and the run says so on a line of its own |
 | Does this part's edge follow that bone? | `--show art,weights:<bone>,mesh --overlay-slot <part> --zoom slot:<part>` | the part's own triangles and the bone's weight over them alone, over the whole painting. Where slots stack — a neck under the face, the hair, a collar — every mesh crossing the box is drawn and the heat is the union of every slot the bone moves, so the part's edge has no pixel of its own until the others are left out. The legend's `meshes[]` gives the part's weight for the bone at every vertex, so "does the top row follow the head" is read as numbers as well as colour |
+| Is this rig's density where its motion is? | `--show art,density --dim` | each region and mesh filled by its **ratio** — its triangles per world unit² over the figure's — on one ramp, log-scaled and centred on 1×: grey is as dense as the figure, pink to magenta denser (4×, 16×), light to dark green sparser (1/4×, 1/16×), clamped past the end stops (the stops are in the legend). A part's area is its posed mesh's own, the sum of its triangles' areas at the pose drawn, not the image's box; a region is two triangles over its quad. Where parts overlap the pixel is the part drawn last, as in the art, so a part under others is read with `--overlay-slot <part>`. The figure's totals are always over every slot the pose shows — the filter picks what is drawn and listed, never what the figure is — and the legend's `density` gives each slot's attachment, kind, vertices, triangles, hull, area, triangles per area, ratio and the bones it is weighted to, in draw order. A measurement, not a verdict: no bar is drawn, and `A13_MESH_BUDGET` stays the one gate on counts |
 | How is this part triangulated? | `--show art,mesh,hull --zoom slot:<slot>` | each mesh's triangle edges, and over them its hull — vertex 0 to 1 to … to `hull − 1` and back. Regions are not drawn: a region is not a mesh. The legend lists every vertex in world units and in pixels |
 | Which is drawn over which? | `--show art,slots` | each slot that shows a region or mesh numbered by its place in the draw order **at the pose drawn** (0 is drawn first), on a white box at the centre of its attachment's box — so a `drawOrder` key (§4.7) shows from the first frame `render` draws it on |
 | Did this change move anything? | `--compare <dir>` beside any view | the same view of a second build beside the first, at the same times, on **one** world box and one transform, each half labelled `A`/`B` with the poser that posed it. A mark on a different pixel in the two halves is at a different place in the two rigs |
@@ -10151,11 +10152,12 @@ pixel (`IN09`).
   legend, and a left-out one says which flag left it out in `undrawn`. A pattern
   that matches no bone is refused naming the bones there are.
 - **`--overlay-slot <glob[,glob…]>`** draws the per-slot views — `mesh`, `hull`,
-  `weights:<bone>` and `slots` — only for the slots a pattern matches, and
+  `weights:<bone>`, `density` and `slots` — only for the slots a pattern matches, and
   **`--hide-overlay-slot <glob[,glob…]>`** for none of the ones it matches, applied
   after `--overlay-slot`; the patterns are globs, as `--bone`'s are. The **art is not
   filtered**: the painting is what the edge is read against, and `--dim` already
-  quiets it. A slot left out is absent from `meshes[]` and `slots[]`, and a slot kept
+  quiets it, and neither is the figure a `density` is measured against. A slot left
+  out is absent from `meshes[]`, `slots[]` and the density rows, and a slot kept
   keeps its number — its place in the whole draw order, not among the slots drawn. A
   pattern that matches no slot is refused naming the slots there are. It is not
   `--slot`: on `render` that flag draws a subset of the *art*, by exact name, which is
@@ -10182,7 +10184,15 @@ pixel (`IN09`).
   value; with `declared`, each entry's line in degrees, its two points, and each held
   bone's angle and how far off the line it is. With `names`, `labels[]`: each label's
   `text`, the `bones` it stands for, its `anchor` pixel, the `box` it is drawn in,
-  and whether it was `moved` or `overlaps`. With `mesh`, `hull` or `weights`,
+  and whether it was `moved` or `overlaps`. With `density`, `density`: the
+  `figure` at this tile's pose — `slots`, `triangles`, `area` (world units²) and
+  `trianglesPerArea`, over every slot whose attachment is a region or mesh — and
+  `slots[]`, one row per kept slot in draw order: `order`, `slot`, `attachment`,
+  `kind`, `alpha`, `vertices`, `triangles`, `hull`, `area`, `trianglesPerArea`,
+  `ratio`, the `rgba` it is painted, `bones` (how many bones it is weighted to —
+  a region's or an unweighted mesh's is its slot's one) and `boneNames`. A part
+  whose posed area is 0 has `trianglesPerArea` and `ratio` `null` and says why in
+  `why`; it is not painted. With `mesh`, `hull`, `weights` or `density`,
   `meshes[]`: every region and mesh the pose shows, in draw order, with its `kind`,
   `vertexCount`, `triangleCount`, `hull` (a mesh's hull vertex count), its unique
   triangle `edges` as vertex pairs, every posed vertex in `world` and `pixel`, and
@@ -10196,6 +10206,9 @@ pixel (`IN09`).
   was stated, or `viewport`).
 - `weights` — with `weights:<bone>`: the bone, the ramp's stops as RGBA, the floor
   below which nothing is painted, and how a pixel's weight is read.
+- `density` — with `density`: the ramp's stops (`ratio`, RGBA), the `scale` it is
+  read on (log₂ of the ratio, clamped at the end stops), and in words what `area`,
+  the figure's `totals` and the `ratio` are and how a pixel is painted.
 - `boneFilter` — `--bone` and `--hide-bone` as given.
 - `slotFilter` — `--overlay-slot` and `--hide-overlay-slot` as given; with it,
   `meshes[]` and `slots[]` list only the slots it keeps.
