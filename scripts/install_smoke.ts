@@ -13,7 +13,7 @@
  * `--wait`, which says nothing about the package. See *The wait* below.
  *
  * Nothing else in this repository asks that question. `prepublishOnly` gates the
- * SOURCE TREE, the `ships` job in `ci.yml` reads packed PATH LISTS, `CUR16` reads
+ * SOURCE TREE, the `ships` job in `squash-text.yml` reads packed PATH LISTS, `CUR16` reads
  * the relative imports of shipped modules, and `release.yml` publishes and never
  * installs. Each of those is a fact about a list; this is the fact about a
  * program — `npm pack`, `npm install` into an empty directory, and a real build:

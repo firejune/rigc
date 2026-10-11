@@ -4,6 +4,7 @@
  *
  *     bun scripts/commit_parse.ts message <file | ->
  *     bun scripts/commit_parse.ts pr
+ *     bun scripts/commit_parse.ts subject
  *     bun scripts/commit_parse.ts history <n> [<ref>]
  *
  * 🚨 **The incident.** The squash of #1352 (1c04a03) shipped nothing. Line 20
@@ -76,12 +77,16 @@
  * squash text from `PR_TITLE`, `PR_NUMBER`, `PR_BODY`, `BASE_SHA` and
  * `HEAD_SHA` in the environment — never from arguments, since a pull request
  * title and body are a stranger's text — and the branch commits from git.
- * `history` parses the newest `<n>` commits on `<ref>` (default `HEAD`) and
+ * `subject` reads the same environment and the same commits and prints only
+ * the squash subject, without ` (#N)` — the line the `ships` job reads a type
+ * from (issue #1359), so that job and `pr` have one reader of what the squash
+ * will say rather than two. `history` parses the newest `<n>` commits on `<ref>` (default `HEAD`) and
  * names each one release-please would have skipped.
  *
  * Exit codes: **0** every message parses; **1** at least one does not, each
  * named with its line, column and the line itself; **2** a usage error or a
- * git read that did not complete, so nothing was measured.
+ * git read that did not complete, so nothing was measured. `subject` parses
+ * nothing and exits **0** with the subject printed, or **2**.
  *
  * Not `tools/`: it does not ship, and it runs from a checkout.
  */
@@ -230,6 +235,24 @@ export function squashText(input: SquashInput): string {
 }
 
 /**
+ * The subject line the squash writes, without the ` (#N)` GitHub appends: the
+ * one commit's own subject, or the pull request title over several. Read off
+ * `squashText` rather than decided again beside it, so the `ships` job and the
+ * parse check cannot disagree about which line the squash opens with
+ * (issue #1359).
+ */
+export function squashSubject(input: SquashInput): string {
+  const first = squashText(input).split('\n')[0];
+  const suffix = ` (#${input.number})`;
+  return first.endsWith(suffix) ? first.slice(0, -suffix.length) : first;
+}
+
+/** Where the squash subject comes from, in words, for a reader of either mode's output. */
+export function subjectSource(commitCount: number): string {
+  return `${commitCount} commit(s) on the branch, so the squash subject is ${commitCount === 1 ? "the commit's own" : 'the pull request title'}`;
+}
+
+/**
  * The pull request check's whole judgement over text it is handed, with no git
  * and no environment in it — `pr` calls it, and so does the selftest, so the
  * controls and the check are one piece of code rather than two agreeing.
@@ -239,7 +262,7 @@ export function judgeSquash(input: SquashInput & { body: string }): { exit: 0 | 
   const { source, overridden } = releasePleaseParts(text, input.body);
   const what = overridden ? 'the commit override' : 'the squash text';
   const lines = [
-    `${input.commits.length} commit(s) on the branch, so the squash subject is ${input.commits.length === 1 ? "the commit's own" : 'the pull request title'}` +
+    subjectSource(input.commits.length) +
       (overridden ? '; the pull request body carries BEGIN_COMMIT_OVERRIDE, which release-please reads instead of the squash text' : ''),
     overridden ? 'the override release-please reads:' : 'the squash text, as GitHub writes it when the merge box is left alone:',
     ...source.split('\n').map((line) => `  > ${line}`),
@@ -272,6 +295,39 @@ function git(args: string[]): string | null {
   return ran.stdout;
 }
 
+/**
+ * The pull request as `pr` and `subject` both read it: the title, number and
+ * body from the environment — never from arguments, since they are a
+ * stranger's text — and every commit between the merge base and the head from
+ * git, oldest first. Null, with the reason on stderr, when any of it could not
+ * be read.
+ */
+function pullRequestFromEnvironment(mode: string): (SquashInput & { body: string }) | null {
+  const env = (name: string): string | null => {
+    const value = process.env[name];
+    return value === undefined ? null : value;
+  };
+  const title = env('PR_TITLE');
+  const number = env('PR_NUMBER');
+  const base = env('BASE_SHA');
+  const head = env('HEAD_SHA');
+  const body = env('PR_BODY') ?? '';
+  if (title === null || number === null || base === null || head === null) {
+    console.error(`${mode} reads PR_TITLE, PR_NUMBER, BASE_SHA and HEAD_SHA (and PR_BODY) from the environment, and one of the four is unset`);
+    return null;
+  }
+  const mergeBase = git(['merge-base', base, head]);
+  if (mergeBase === null) return null;
+  const log = git(['log', '--reverse', '--format=%B%x00', `${mergeBase.trim()}..${head}`]);
+  if (log === null) return null;
+  const commits = log.split('\0').map((m) => m.replace(/^\n/, '')).filter((m) => m.trim() !== '');
+  if (commits.length === 0) {
+    console.error(`no commits between ${mergeBase.trim()} and ${head}, so there is no squash text to read`);
+    return null;
+  }
+  return { title, number, commits, body };
+}
+
 function report(label: string, faults: readonly ParseFault[]): number {
   if (faults.length === 0) return 0;
   for (const line of describeFaults(label, faults)) console.log(line);
@@ -287,30 +343,16 @@ function main(argv: string[]): number {
     console.log('release-please parses this message');
     return 0;
   }
-  if (mode === 'pr' && rest.length === 0) {
-    const env = (name: string): string | null => {
-      const value = process.env[name];
-      return value === undefined ? null : value;
-    };
-    const title = env('PR_TITLE');
-    const number = env('PR_NUMBER');
-    const base = env('BASE_SHA');
-    const head = env('HEAD_SHA');
-    const body = env('PR_BODY') ?? '';
-    if (title === null || number === null || base === null || head === null) {
-      console.error('pr reads PR_TITLE, PR_NUMBER, BASE_SHA and HEAD_SHA (and PR_BODY) from the environment, and one of the four is unset');
-      return 2;
+  if ((mode === 'pr' || mode === 'subject') && rest.length === 0) {
+    const read = pullRequestFromEnvironment(mode);
+    if (read === null) return 2;
+    if (mode === 'subject') {
+      // stdout carries the subject alone, for a shell to capture; where it came from goes to stderr.
+      console.error(subjectSource(read.commits.length));
+      console.log(squashSubject(read));
+      return 0;
     }
-    const mergeBase = git(['merge-base', base, head]);
-    if (mergeBase === null) return 2;
-    const log = git(['log', '--reverse', '--format=%B%x00', `${mergeBase.trim()}..${head}`]);
-    if (log === null) return 2;
-    const commits = log.split('\0').map((m) => m.replace(/^\n/, '')).filter((m) => m.trim() !== '');
-    if (commits.length === 0) {
-      console.error(`no commits between ${mergeBase.trim()} and ${head}, so there is no squash text to read`);
-      return 2;
-    }
-    const verdict = judgeSquash({ title, number, commits, body });
+    const verdict = judgeSquash(read);
     for (const line of verdict.lines) console.log(line);
     return verdict.exit;
   }
@@ -337,7 +379,7 @@ function main(argv: string[]): number {
     console.log(`${entries.length - failed} of ${entries.length} commit(s) on ${ref} parse; ${failed} would be skipped by release-please`);
     return failed === 0 ? 0 : 1;
   }
-  console.error('usage: bun scripts/commit_parse.ts message <file | -> | pr | history <n> [<ref>]');
+  console.error('usage: bun scripts/commit_parse.ts message <file | -> | pr | subject | history <n> [<ref>]');
   return 2;
 }
 

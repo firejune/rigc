@@ -671,7 +671,7 @@ import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIE
 import { compareSteppedPoses, coreRefusalOf, documentedCoreRefusal, STEPPED_FACT_FAMILIES, type SteppedFactFamily } from './tools/verdict_gate.ts';
 import { MERGED_TALLY_SPEC, PREPUBLISH_TALLY_VARIABLE, tallyDecision, treeHead, type MergedTally, type TallyTree } from './scripts/prepublish_gate.ts';
 import { ALIASES } from './scripts/alias_tarball.ts';
-import { judgeSquash, parseFaults, squashText } from './scripts/commit_parse.ts';
+import { judgeSquash, parseFaults, squashSubject, squashText } from './scripts/commit_parse.ts';
 import { rigFactsDerivationsOf, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -75573,6 +75573,122 @@ function runCurrencySuite(): number {
             `over ${cases.length} plant(s): ${cases.join('; ')}`,
         ),
         'issue #1354: a check that a title edit does not re-run, or that executes the title it reads, is not the check the card asked for',
+      );
+    }
+
+    // --- CUR126: `ships` reads the subject the squash writes (issue #1359) ----
+    //
+    // `ships` read the pull request TITLE as the squash subject, and under
+    // `COMMIT_OR_PR_TITLE` that is only true for a branch of several commits:
+    // #1356's one commit was retyped `ci:` → `fix(release):` and `ships` stayed
+    // red until the title was edited, and a `docs:` commit under a `fix:` title
+    // would have passed it and landed hidden from the release. It now reads
+    // `bun scripts/commit_parse.ts subject`, which is `squashSubject` over the
+    // same `squashText` CUR124 holds. This holds the reader on fixtures — with a
+    // title-reader beside it that must disagree, so the rows can tell the two
+    // apart — and holds the job: one `ships` in the tree, in the workflow that
+    // re-runs on `edited`, installing what the reader imports, handing it the
+    // pull request through `env:`, and judging what it printed.
+    {
+      const FILE = 'squash-text.yml';
+      const READ = 'bun scripts/commit_parse.ts subject';
+      const VERDICT = 'judge "$work/changed" "$subject" "$work/said" "  "';
+      const ENV_WANT: Record<string, string> = {
+        PR_TITLE: 'github.event.pull_request.title',
+        PR_NUMBER: 'github.event.pull_request.number',
+        BASE_SHA: 'github.event.pull_request.base.sha',
+        HEAD_SHA: 'github.event.pull_request.head.sha',
+      };
+      const rowsFor = (reader: (input: { title: string; number: string; commits: string[] }) => string): { rows: string[]; wrong: string[] } => {
+        const cases: Array<{ what: string; title: string; commits: string[]; want: string }> = [
+          { what: 'one docs commit under a fix title', title: 'fix: the title', commits: ['docs: the one commit\n\nA body the subject does not carry.\n'], want: 'docs: the one commit' },
+          { what: 'one fix commit under a ci title', title: 'ci: the title', commits: ['fix(release): the one commit\n'], want: 'fix(release): the one commit' },
+          { what: 'two fix commits under a docs title', title: 'docs: the title', commits: ['fix: the first\n', 'fix: the second\n'], want: 'docs: the title' },
+        ];
+        const rows: string[] = [];
+        const wrong: string[] = [];
+        for (const c of cases) {
+          const got = reader({ title: c.title, number: '1359', commits: c.commits });
+          rows.push(`${c.what} -> ${JSON.stringify(got)}`);
+          if (got !== c.want) wrong.push(`${c.what}: the reader answered ${JSON.stringify(got)} where the squash writes ${JSON.stringify(c.want)}`);
+        }
+        return { rows, wrong };
+      };
+      const reader = rowsFor(squashSubject);
+      const titleReader = rowsFor((input) => input.title);
+      const shipsFaults = (edited: Record<string, string>): string[] => {
+        const faults: string[] = [];
+        const all = parseAll(edited, faults);
+        if (all === null) return faults;
+        const homes = Object.entries(all)
+          .filter(([, flow]) => (flow.jobs ?? {}).ships !== undefined)
+          .map(([file]) => file);
+        if (homes.length !== 1 || homes[0] !== FILE) {
+          faults.push(`a job named \`ships\` is defined in ${homes.length === 0 ? 'no workflow' : homes.join(', ')}, where it is defined once, in ${FILE}, which re-runs on \`edited\``);
+        }
+        const job = (all[FILE]?.jobs ?? {}).ships;
+        if (job === undefined) return faults;
+        const steps = job.steps ?? [];
+        const at = steps.findIndex((step) => runLines(step).some((line) => line.includes(READ)));
+        if (at < 0) return [...faults, `${FILE}: no step of \`ships\` runs \`${READ}\`, so the subject it judges is not the one the squash writes`];
+        const step = steps[at];
+        for (const [variable, field] of Object.entries(ENV_WANT)) {
+          const value = step.env?.[variable] ?? '';
+          if (!new RegExp(`^\\$\\{\\{\\s*${field.replace(/\./g, '\\.')}\\s*\\}\\}$`).test(value)) faults.push(`${FILE}: the \`ships\` step's env ${variable} is ${JSON.stringify(value)}, where it reads \${{ ${field} }}`);
+        }
+        if (!steps.slice(0, at).some((step) => runLines(step).includes('bun install --frozen-lockfile'))) {
+          faults.push(`${FILE}: \`ships\` runs no \`bun install --frozen-lockfile\` before \`${READ}\`, and the reader imports the pinned parser at load`);
+        }
+        if (!runLines(step).includes(VERDICT)) faults.push(`${FILE}: the \`ships\` verdict is not \`${VERDICT}\`, so what it judges is not the subject the reader printed`);
+        return faults;
+      };
+      const standing = shipsFaults(texts);
+      const fileText = texts[FILE] ?? '';
+      const ciText = texts['ci.yml'] ?? '';
+      const plants: Array<{ what: string; edit: Record<string, string | null>; at?: string; quiet?: boolean }> = [
+        { what: 'the verdict judges the title again', edit: { [FILE]: once(fileText, VERDICT, 'judge "$work/changed" "$PR_TITLE" "$work/said" "  "') }, at: `${FILE}: the \`ships\` verdict` },
+        { what: 'a second ships job back in ci.yml', edit: { 'ci.yml': `${ciText.trimEnd()}\n\n  ships:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo planted\n` }, at: 'a job named `ships`' },
+        {
+          what: 'ships stops installing what the reader imports',
+          edit: { [FILE]: once(fileText, '      - uses: oven-sh/setup-bun@v2\n      - run: bun install --frozen-lockfile\n\n      - name: A landing', '      - uses: oven-sh/setup-bun@v2\n\n      - name: A landing') },
+          at: `${FILE}: \`ships\` runs no`,
+        },
+        {
+          what: 'the number left out of the env the reader reads',
+          edit: { [FILE]: once(fileText, '          PR_NUMBER: ${{ github.event.pull_request.number }}\n        run: |\n          # `sort`', '        run: |\n          # `sort`') },
+          at: `${FILE}: the \`ships\` step's env PR_NUMBER`,
+        },
+        { what: 'the ships step renamed', edit: { [FILE]: once(fileText, '- name: A landing that changes the package is visible to the release', '- name: ships') }, quiet: true },
+      ];
+      const probes: string[] = [...reader.wrong];
+      if (titleReader.wrong.length === 0) probes.push('a reader that returns the title agreed with every fixture row, so the rows cannot tell the squash subject from the title');
+      const cases: string[] = [];
+      for (const plant of plants) {
+        if (Object.values(plant.edit).some((text) => text === null)) {
+          probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+          continue;
+        }
+        const raised = raisedBy(shipsFaults({ ...texts, ...(plant.edit as Record<string, string>) }), { at: plant.at, was: standing });
+        if (plant.quiet === true) {
+          if (raised.length > 0) probes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+          cases.push(`${plant.what} -> quiet`);
+          continue;
+        }
+        if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+        cases.push(`${plant.what} -> ${raised.length}`);
+      }
+      const held = standing.length === 0 && probes.length === 0;
+      say(
+        'CUR126_SHIPS_JUDGES_THE_SUBJECT_THE_SQUASH_WRITES_READ_FROM_THE_ONE_ASSEMBLY_AND_RERUNS_ON_A_TITLE_EDIT',
+        held,
+        probeDetail(
+          held,
+          [...standing, ...probes],
+          `squashSubject answers the one commit's subject for one commit and the title for several — ${reader.rows.join('; ')} — where a title-reader ` +
+            `gets ${titleReader.wrong.length} of ${reader.rows.length} row(s) wrong; \`ships\` is defined once, in ${FILE}, installs, runs \`${READ}\` with the pull request ` +
+            `through \`env:\` and judges what it printed — over ${cases.length} plant(s): ${cases.join('; ')}`,
+        ),
+        'issue #1359: under COMMIT_OR_PR_TITLE a single commit squashes to its own subject, so a check that reads the title judges a line the squash does not write',
       );
     }
   }
