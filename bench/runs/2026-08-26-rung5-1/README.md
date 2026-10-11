@@ -41,7 +41,7 @@ a repaired copy. Rule 3's re-inspection is *"a re-read of stored candidates"*, s
 candidate only its author's directory layout can load is one no later re-inspection can
 read. The corrected path is what the other three 2026-08-26 candidates already emit at
 this depth (`bench/runs/2026-08-26-rung3-1/spine/` and `-rung4-1/spine/` both write
-`../../../../examples/…`). Issue [#181](https://github.com/firejune/rigc/issues/181),
+`../../../../examples/…`). Issue [#181](https://github.com/rig-c/core/issues/181),
 applied under the owner's ruling of 2026-08-26 and the protocol exception it added to
 [`bench/runs/README.md`](../README.md).
 

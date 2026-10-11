@@ -4,9 +4,9 @@
  * ⭐ **One survey, two consumers.** `A39_DEFORM_KEEPS_TRIANGLE_WINDING` reads the
  * reversals out of it and refuses a build; `explain`'s `DEFORM` block prints the
  * whole of it and refuses nothing. That split is issue
- * [#296](https://github.com/firejune/rigc/issues/296)'s two halves —
- * [#314](https://github.com/firejune/rigc/pull/314) landed the assertion and
- * [#316](https://github.com/firejune/rigc/issues/316) the report — and the reason
+ * [#296](https://github.com/rig-c/core/issues/296)'s two halves —
+ * [#314](https://github.com/rig-c/core/pull/314) landed the assertion and
+ * [#316](https://github.com/rig-c/core/issues/316) the report — and the reason
  * they share this file rather than each posing the skeleton themselves is that
  * the report's `winding 32 of 32 kept` and A39's `8 of 32 reverse` are **the same
  * count**. Two derivations of one number drift, and the one that drifts silently

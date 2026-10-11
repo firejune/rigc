@@ -1,7 +1,7 @@
 # What the portrait measured
 
 The measurement half of [`gallery/portrait`](README.md), and stage 1 of
-[issue #285](https://github.com/firejune/rigc/issues/285): *can rigc author
+[issue #285](https://github.com/rig-c/core/issues/285): *can rigc author
 scene direction — a standing portrait that breathes, blinks, shifts gaze and
 turns its head in 2.5D — on plain Spine data?*
 
@@ -48,10 +48,10 @@ at `±162, ±120, 0` rather than evenly, sample the projection where it changes.
 
 ✅ **Two cells of that row are now different, and the row is kept because the old
 numbers are the finding.** The 160 went to **0**:
-[#294](https://github.com/firejune/rigc/issues/294) shipped, the keys state
+[#294](https://github.com/rig-c/core/issues/294) shipped, the keys state
 `{ "kind": "yaw", "radius": 170, "degrees": 12 }`, and the compiler writes the run
 (README, *The mesh*). The **20 tracks and 81 keys** went to **8 and 33**:
-[#295](https://github.com/firejune/rigc/issues/295) shipped, and the sixteen
+[#295](https://github.com/rig-c/core/issues/295) shipped, and the sixteen
 sibling tracks are two group tracks whose keys state a `yaw` and a depth per
 member (README, *The features*).
 
@@ -80,7 +80,7 @@ dx = x·(cos t − 1) − z·sin t
 
 evaluated at some `(x, z)`, and the spec had no way to say so — it could only
 hold the results. That was
-[#294](https://github.com/firejune/rigc/issues/294), and it is fixed: a deform
+[#294](https://github.com/rig-c/core/issues/294), and it is fixed: a deform
 key states its transform and the compiler evaluates it
 ([AUTHORING §4.11.1](../../docs/AUTHORING.md)).
 
@@ -204,7 +204,7 @@ instead. Add a column at `x = −155` and the fold arrives at 20.95°.
 opposite: keep the outermost column comfortably inside the silhouette
 (`|x| ≤ R·cos θ_max`) and let the last band be a single wide one. This is the
 most counter-intuitive result of the experiment, and it is the reason
-[#296](https://github.com/firejune/rigc/issues/296) asks for a measurement
+[#296](https://github.com/rig-c/core/issues/296) asks for a measurement
 rather than a rule of thumb.
 
 ### The verdict on angle
@@ -224,7 +224,7 @@ gaps stage 3 of #285 left unbooked.
 
 ### Defects
 
-**[#292](https://github.com/firejune/rigc/issues/292) — `rigc render`'s
+**[#292](https://github.com/rig-c/core/issues/292) — `rigc render`'s
 `bilinear` samples straight alpha, so every atlas-region edge draws a dark rim
 over what is behind it.** Measured at **−31/255** down the forehead here, and
 **−60/255** in a minimal case of two parts that share one colour and should be
@@ -237,13 +237,13 @@ check` — `src/render.ts`'s own header says both paths are bilinear so a filter
 difference stays out of the residual, and a systematic rim at every region edge
 is in the residual instead.
 
-**[#293](https://github.com/firejune/rigc/issues/293) — `setup: { "slot": null }`
+**[#293](https://github.com/rig-c/core/issues/293) — `setup: { "slot": null }`
 crashes with a raw `TypeError`.** §5.1's contract is that a spec mistake arrives
 as a named refusal. Found by the probe that isolated #292.
 
 ### Instrument gaps
 
-**[#294](https://github.com/firejune/rigc/issues/294) — a `deform` key has no
+**[#294](https://github.com/rig-c/core/issues/294) — a `deform` key has no
 generator.** ✅ **Fixed.** The big one. 160 floats of one closed-form expression,
 and two of this example's three animations contained a *stated approximation*
 whose only cause was how many floats the honest version would take (`turn`'s
@@ -257,7 +257,7 @@ still ship.** Undoing them is an art decision about what `turn` and `gaze` look
 like, and this record's claim was only ever that the *transcription* was what
 priced them out.
 
-**[#295](https://github.com/firejune/rigc/issues/295) — a `groups` track can
+**[#295](https://github.com/rig-c/core/issues/295) — a `groups` track can
 only key one shared value.** ✅ **Fixed.** The gallery's usual lever for cutting
 track count bought nothing on a face, because *every part needing a different
 number is what parallax means*. Of `turn`'s 20 tracks exactly one was a group;
@@ -282,7 +282,7 @@ easings and six different values.
 > `groups` entries with one shared value, and forcing them onto the new field
 > would have been a worse spec that used it.
 
-**[#296](https://github.com/firejune/rigc/issues/296) — nothing measures what a
+**[#296](https://github.com/rig-c/core/issues/296) — nothing measures what a
 `deform` key does.** The setup geometry is measured and printed (coverage,
 overshoot, hole); the deformed geometry is not. A key that folds a mesh inside
 out is green, `A35` passes, and the coverage line still reports the setup pose at
@@ -295,12 +295,12 @@ fold angles without seven renders.
 > check over the corpus falsified that in two places: the official `spineboy-pro`
 > export reverses one of `hoverboard-board`'s 101 triangles, and `gallery/flex`'s
 > leaf reverses up to 7 of 75 — the second a real defect
-> ([#313](https://github.com/firejune/rigc/issues/313)), the first correct editor
+> ([#313](https://github.com/rig-c/core/issues/313)), the first correct editor
 > output. Hence `archetype` plus an `invariants.deformMayFold` opt-out rather than
 > the unconditional rule this entry asked for.
 >
 > 🆕 **And the other half landed the same day**
-> ([#316](https://github.com/firejune/rigc/issues/316)): `rigc explain` now
+> ([#316](https://github.com/rig-c/core/issues/316)): `rigc explain` now
 > prints a `DEFORM` block per key — the area and stretch extremes, the vertices
 > moved and the winding, with a worst-key rollup per animation
 > ([AUTHORING §4.11.2](../../docs/AUTHORING.md)). On this example's own `turn` it
@@ -400,8 +400,8 @@ because the draft-plus-editor-handwork premise of rigc depends on the draft
 being *auditable* — a draft nobody can check is not a saving.
 
 > 🆕 **Closed 2026-09-03, both halves.** `A39` refuses the fold
-> ([#314](https://github.com/firejune/rigc/pull/314)) and `explain`'s `DEFORM`
-> block prints the extremes ([#316](https://github.com/firejune/rigc/issues/316)),
+> ([#314](https://github.com/rig-c/core/pull/314)) and `explain`'s `DEFORM`
+> block prints the extremes ([#316](https://github.com/rig-c/core/issues/316)),
 > so the throwaway script's job is now two commands that ship. ⚠️ The narrower
 > claim survives: those measure what a key **did**, not whether it was the key
 > the shot wanted — [FACE §9.3](../../docs/FACE.md) keeps that limit and the

@@ -15,7 +15,7 @@ recoil, the follow-through.
 🆕 **And the two shapes are now IN the spec rather than beside it.** This
 README always wrote them out as two affine transforms, because that is where the
 36 offsets came from; since
-[#294](https://github.com/firejune/rigc/issues/294) the keys **state** them
+[#294](https://github.com/rig-c/core/issues/294) the keys **state** them
 ([AUTHORING §4.11.1](../../docs/AUTHORING.md)) and the compiler evaluates them.
 The emitted numbers agree with the hand-written table this example shipped to
 **0.0004 px** — identical at the three decimals below, the difference being that
@@ -105,7 +105,7 @@ Measured by the metric the `contour` generator already applies to itself — the
 emitted triangles rasterised back over the part's own alpha — the first version
 covered **94.31%** of the art and the corrected one covers **100.00%**. That
 measurement is now on the `MESH` line for authored geometry too, which is
-[issue #277](https://github.com/firejune/rigc/issues/277), **fixed**:
+[issue #277](https://github.com/rig-c/core/issues/277), **fixed**:
 
 ```
 MESH  ball         authored 9 vertices / 8 triangles  (budget 8)  bones=[ball]  attachments=[ball]  covers 100.00% of the art, reaching 15.00px past it
@@ -247,11 +247,11 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 | `rigc build --profile spine` | green — the run's own verdict is quoted below the table, and `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` is among the rules it measured |
 | `rigc build --profile spine-html` | green as well — same, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
 | the deformed geometry, measured | the mesh's rim box is **220.0 × 220.0** at the apex and **264.0 × 162.8** at the impact — exactly `1.20 × 220` and `0.74 × 220`, so the affine transform in the spec is the one that reaches the screen |
-| the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/firejune/rigc/issues/294)) |
+| the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/rig-c/core/issues/294)) |
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
 | mesh coverage | the emitted triangles cover **100.00%** of the ball's 28 020 art pixels (94.31% before the rim was moved out) |
 | `rigc render` | 21 frames at 25 fps, contact sheet **looked at** twice — the first pass had a squash flat enough to read as a pancake and a ball with its outline eaten by the mesh |
-| loop seam | **at `--max 288`**, which is 288×261 here: **0 / 255** max channel difference, 0 pixels differing of 75 168, at 25 fps (21 frames) — `0.8 × 25 = 20` is whole, so the last frame is at the duration and this is a seam reading ([#337](https://github.com/firejune/rigc/issues/337)). The last frame is the first frame to the byte. 📏 The `--max` is part of the figure: a seam reading is scale-relative and a zero at one size is not a zero at every size ([#336](https://github.com/firejune/rigc/issues/336)) |
+| loop seam | **at `--max 288`**, which is 288×261 here: **0 / 255** max channel difference, 0 pixels differing of 75 168, at 25 fps (21 frames) — `0.8 × 25 = 20` is whole, so the last frame is at the duration and this is a seam reading ([#337](https://github.com/rig-c/core/issues/337)). The last frame is the first frame to the byte. 📏 The `--max` is part of the figure: a seam reading is scale-relative and a zero at one size is not a zero at every size ([#336](https://github.com/rig-c/core/issues/336)) |
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws (headless chromium, no console or page errors) |
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[squash]` |
 | part determinism | `make_parts.ts` twice ⇒ identical bytes for all 16 PNGs |
@@ -261,7 +261,7 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
 commands and compares them line for line: the figures here are read off the run
 instead of being kept by hand
-([#609](https://github.com/firejune/rigc/issues/609)).
+([#609](https://github.com/rig-c/core/issues/609)).
 
 `rigc build`:
 
@@ -282,7 +282,7 @@ SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_co
 ## What this cost — the authoring notes
 
 **A mesh that clipped its own art was green, and a `contour` of the same art was
-refused.** [Issue #277](https://github.com/firejune/rigc/issues/277), **fixed**.
+refused.** [Issue #277](https://github.com/rig-c/core/issues/277), **fixed**.
 The numbers are in *The rim is not on the silhouette* above: 94.31% coverage, 18
 assertions passed, nothing said. The generator that builds its own geometry
 measures the result against the mask it came from and refuses under 99.5%;

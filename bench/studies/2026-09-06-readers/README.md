@@ -11,7 +11,7 @@
   and an optional `--seed` / `--samples`. Every experiment reproduces byte for byte from the committed harness
 - evidence: [`evidence/`](evidence) — one file per experiment, each carrying the invocation that produced it.
   Every figure below is a cell in one of those files
-- issue: [#420](https://github.com/firejune/rigc/issues/420), **stage 1 — the measurement only**. No guard was
+- issue: [#420](https://github.com/rig-c/core/issues/420), **stage 1 — the measurement only**. No guard was
   written and `src/compile.ts` was not touched; the recommendation for stage 2 is at the end
 
 ## The question
@@ -26,7 +26,7 @@ and `value` is one call to `data.property.value(skeleton, bone.appliedPose, data
 If an author states a range that includes readings the runtime **cannot return**, that part of the dial
 is dead: it never selects the frames it was meant to, and nothing at runtime reports it.
 
-[#405](https://github.com/firejune/rigc/issues/405) and [#417](https://github.com/firejune/rigc/issues/417)
+[#405](https://github.com/rig-c/core/issues/405) and [#417](https://github.com/rig-c/core/issues/417)
 each closed that defect for **one** cell — `FromRotate` under `local: false`. There are twelve cells: six
 readers, each with a `local` branch and a world branch. Eleven of them had never been measured.
 
@@ -67,7 +67,7 @@ a guard could be built on.
 ⛔ **All six `local` rows are unbounded, and that is load-bearing.** It is the negative control for
 anything stage 2 builds: a compiler that refused every non-`rotate` slider would look correct against a
 suite that only tested refusals. This is the shape that caught a real mutant in
-[#410](https://github.com/firejune/rigc/issues/410).
+[#410](https://github.com/rig-c/core/issues/410).
 
 ## Three things the table is not
 
@@ -119,8 +119,8 @@ overstated the threshold by 360/256 and the interval **claimed readings the read
 produce** — measured, −3.99e-14, −3.0e-14 and −2.85e-14 all come back `359.99999999999994`.
 
 ⛔ That is exactly this study's subject, turned on the instrument: **a formula that is right in the
-regime it was written for and silently wrong one binade over.** It is [#417](https://github.com/firejune/rigc/issues/417),
-[#431](https://github.com/firejune/rigc/issues/431) and [#434](https://github.com/firejune/rigc/issues/434)
+regime it was written for and silently wrong one binade over.** It is [#417](https://github.com/rig-c/core/issues/417),
+[#431](https://github.com/rig-c/core/issues/431) and [#434](https://github.com/rig-c/core/issues/434)
 in a row, and it was in the measuring tool as well as in the compiler — inside a study whose whole
 question is which values a reader can produce.
 
@@ -133,7 +133,7 @@ would be the same mistake one keystroke over.
 
 🔒 And the corrected figure is **inside the gate**, not narrated next to it: `RD07` bisects the
 threshold itself and compares it to the one `docs/AUTHORING.md` prints. A number the doc states and
-nothing derives is [#429](https://github.com/firejune/rigc/issues/429)'s shape, and it was this
+nothing derives is [#429](https://github.com/rig-c/core/issues/429)'s shape, and it was this
 figure's shape until the correction.
 
 ### 2. …and it has a 5.3e-6° hole at 180°

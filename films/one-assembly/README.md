@@ -45,7 +45,7 @@ hold two identical frames at each join.
 - **The art is drawn from scratch.** `art/make_parts.ts` writes fourteen SVGs and
   rasterises them; no example asset, no traced reference. Nothing from Spine's example
   projects is anywhere in this film. (This is the same ground the demo GIF's own review,
-  [#248](https://github.com/firejune/rigc/pull/248), established for the art it ships.)
+  [#248](https://github.com/rig-c/core/pull/248), established for the art it ships.)
 
 ## Running it
 
@@ -78,7 +78,7 @@ One adaptation, and it is mechanical:
 
 | File | Adapted | Why |
 | --- | --- | --- |
-| `art/make_parts.ts`, `art/mock.ts`, `spec/make_specs.ts`, `spec/check_framing.ts`, `gif/assemble_gif.ts` | each resolves its own directory with `fileURLToPath(new URL('…', import.meta.url))` where it used to read `new URL('…', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote the parts into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/firejune/rigc/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. |
+| `art/make_parts.ts`, `art/mock.ts`, `spec/make_specs.ts`, `spec/check_framing.ts`, `gif/assemble_gif.ts` | each resolves its own directory with `fileURLToPath(new URL('…', import.meta.url))` where it used to read `new URL('…', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote the parts into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/rig-c/core/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. |
 
 One preserved oddity worth naming rather than tidying: the motion spec's `cut` field is
 `'gif-demo'`, the name of the scratchpad directory the film was made in. It is left as

@@ -15,7 +15,7 @@
  * The knob is the **anchor report**. `chainfit` is handed a `rigc pose` report and
  * hangs every chain off the placements in it; an objective change moves those
  * placements and nothing else, which is exactly the perturbation
- * [PR #322](https://github.com/firejune/rigc/pull/322) performed by accident when
+ * [PR #322](https://github.com/rig-c/core/pull/322) performed by accident when
  * it saw `rear-bracer`'s share move 0.36 → 0.89 on a 0.0008 residual change.
  * Perturbing the anchor reproduces that channel rather than simulating it.
  *
@@ -43,7 +43,7 @@
  *    within about one step of the local optimum rather than on it.
  *  - `readback-floor` — ±0.16 px, ±0.27°, ±3.1 % scale: the worst known-answer
  *    readback error the `PO01`/`PO02` controls measure, as re-baselined in
- *    [#306](https://github.com/firejune/rigc/issues/306). Wider than the
+ *    [#306](https://github.com/rig-c/core/issues/306). Wider than the
  *    convergence band and a different quantity — accuracy against a constructed
  *    truth rather than the fitter's own resolution — and reported as the band
  *    within which `pose`'s answer is measurably indistinguishable from correct.

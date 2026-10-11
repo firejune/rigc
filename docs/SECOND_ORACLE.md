@@ -224,7 +224,7 @@ of what it leaves out (`NOT_ADMITTED` in `src/core/index.ts`) is empty:
 Two kinds in item 3 have no world-vertex reading: a bounding box, whose vertices the
 oracle's dump does not write, and a point, which rigc does not emit (#934).
 
-**The live track** ([#1276](https://github.com/firejune/rigc/issues/1276)) is admitted
+**The live track** ([#1276](https://github.com/rig-c/core/issues/1276)) is admitted
 on the same terms, as a construct of the walk rather than of the skeleton:
 `openTrack` in `src/core/track.ts` opens the raw entry's walk and steps it one `dt` at
 a time, as a player's frame loop does. It adds no pose math — the batch walk's body is
@@ -241,7 +241,7 @@ reading that fires nothing across the wrap read 12,956 steps off (`CO47`); the c
 rows it cuts equal the raw entry's at the same animation time on 4,009 of 4,009 poses
 of the public row that clips (`CO48`).
 
-**The live track's adjustment** ([#1336](https://github.com/firejune/rigc/issues/1336))
+**The live track's adjustment** ([#1336](https://github.com/rig-c/core/issues/1336))
 is held to spine-core directly, because it is a player's input rather than a
 construct the batch walk already carries: `openTrack`'s `adjust` writes the bone
 locals after the animation's timelines and before the world transforms, the
@@ -258,7 +258,7 @@ write on a channel no timeline keys compounds frame to frame and every walk read
 off. The write made at draw time (after `updateWorldTransform`, the bone's own
 matrix alone) and pose 0 left unadjusted read off on every walk they apply to.
 
-**The live tracks** ([#1336](https://github.com/firejune/rigc/issues/1336), the
+**The live tracks** ([#1336](https://github.com/rig-c/core/issues/1336), the
 issue's other piece) are held to spine-core directly too, because they are a
 second state machine rather than a construct the walk carries: `openTracks` in
 `src/core/tracks.ts` is `AnimationState`'s update, apply, mix, hold and queue
@@ -290,7 +290,7 @@ poses, every field. An animation keying a constraint timeline, a sequence, the
 draw order or a path's deform is refused by name (`gallery/walk`, `gallery/ride`).
 
 **An entry's alpha and additive blending**
-([#1344](https://github.com/firejune/rigc/issues/1344)) are held the same way:
+([#1344](https://github.com/rig-c/core/issues/1344)) are held the same way:
 `MixOptions.alpha` and `MixOptions.additive` are spine-core's `TrackEntry.alpha`
 and `TrackEntry.additive` (4.3.13 has no `MixBlend` on an entry — `additive` is a
 boolean), and `setAlpha` changes the current entry's alpha while it plays. One

@@ -670,7 +670,7 @@ import { modelEventKeys } from './src/assertions/model/event_keys.ts';
 import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIES, POSED_FACT_FAMILIES, type Cut4c5Family, type PosedFactFamily, type PosedFactTally } from './tools/verdict_gate.ts';
 import { compareSteppedPoses, coreRefusalOf, documentedCoreRefusal, STEPPED_FACT_FAMILIES, type SteppedFactFamily } from './tools/verdict_gate.ts';
 import { MERGED_TALLY_SPEC, PREPUBLISH_TALLY_VARIABLE, tallyDecision, treeHead, type MergedTally, type TallyTree } from './scripts/prepublish_gate.ts';
-import { ALIAS } from './scripts/alias_tarball.ts';
+import { ALIASES } from './scripts/alias_tarball.ts';
 import { rigFactsDerivationsOf, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -70123,7 +70123,7 @@ const SKILL_CLAIM_BLIND_SPOTS: ReadonlyArray<{ row: string; stale: string; clean
 //     the path first gets `.agents/docs/X`. A reference that works for only one
 //     kind of reader is not a reference, so the logical reading is the one held,
 //     and the physical one is printed beside it.
-//   - a repository URL, `https://github.com/firejune/rigc/(blob|tree)/main/<p>`,
+//   - a repository URL, `https://github.com/rig-c/core/(blob|tree)/main/<p>`,
 //     read as the tracked path `<p>` — offline, against the tree being measured.
 //   - a package path, `node_modules/rig-c/<p>`, against the simulated package.
 //   - a plugin path, `${CLAUDE_PLUGIN_ROOT}/<p>`, against the plugin root of the
@@ -70158,7 +70158,7 @@ interface SkillShapeReading {
   faults: string[];
 }
 
-const SKILL_REPO_URL = /https:\/\/github\.com\/firejune\/rigc\/(?:blob|tree)\/main\/([A-Za-z\d_./-]*[A-Za-z\d_/-])/g;
+const SKILL_REPO_URL = /https:\/\/github\.com\/rig-c\/core\/(?:blob|tree)\/main\/([A-Za-z\d_./-]*[A-Za-z\d_/-])/g;
 /**
  * The name a tree's package installs under, read from that tree's own
  * `package.json` and never written into a control (issue #1258): the package
@@ -70614,10 +70614,10 @@ function runSkillSurfaceSuite(): number {
     'skills/climbs/SKILL.md': '---\nname: climbs\ndescription: x\n---\n\n[GUIDE.md](../../docs/GUIDE.md)\n',
     'skills/unshipped/SKILL.md': `---\nname: unshipped\ndescription: x\n---\n\n\`node_modules/${packageName}/docs/UNSHIPPED.md\`\n`,
     'skills/deadurl/SKILL.md':
-      '---\nname: deadurl\ndescription: x\n---\n\n[GUIDE.md](https://github.com/firejune/rigc/blob/main/docs/NOWHERE.md)\n',
+      '---\nname: deadurl\ndescription: x\n---\n\n[GUIDE.md](https://github.com/rig-c/core/blob/main/docs/NOWHERE.md)\n',
     'skills/deadplugin/SKILL.md': '---\nname: deadplugin\ndescription: x\n---\n\n`${CLAUDE_PLUGIN_ROOT}/docs/NOWHERE.md`\n',
     'skills/clean/SKILL.md':
-      '---\nname: clean\ndescription: x\n---\n\n[GUIDE.md](https://github.com/firejune/rigc/blob/main/docs/GUIDE.md), ' +
+      '---\nname: clean\ndescription: x\n---\n\n[GUIDE.md](https://github.com/rig-c/core/blob/main/docs/GUIDE.md), ' +
       `installed at \`node_modules/${packageName}/docs/GUIDE.md\` and in the plugin at \`\${CLAUDE_PLUGIN_ROOT}/docs/\`, ` +
       'beside [a file of its own](notes.md).\n',
     'skills/clean/notes.md': 'notes\n',
@@ -70978,7 +70978,7 @@ const CURRENCY_DOCTRINE = 'CLAUDE.md';
  * README sends a reader to in one hop, which is how `docs/BENCHMARK.md`,
  * `docs/LADDER.md` and `docs/GATE.md` are read even though none of them is in the
  * package. Both halves are derived: the second reads README's own links, absolute
- * `github.com/firejune/rigc/blob/main/…` ones included, because #332 established
+ * `github.com/rig-c/core/blob/main/…` ones included, because #332 established
  * that a link OUT of the package to repository material is spelled absolute — so
  * a scan that read only relative links would find none of the landing set. The
  * third is **doctrine**, one file, spelled at `CURRENCY_DOCTRINE` above; a run in
@@ -70990,7 +70990,7 @@ function currencyDocs(root: string, shipped: Set<string>): CurrencyDoc[] {
   if (existsSync(join(root, CURRENCY_DOCTRINE))) found.set(CURRENCY_DOCTRINE, 'doctrine');
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   const targets = [
-    ...[...readme.matchAll(/https:\/\/github\.com\/firejune\/rigc\/(?:blob|tree)\/main\/([A-Za-z\d_./-]+)/g)].map(
+    ...[...readme.matchAll(/https:\/\/github\.com\/rig-c\/core\/(?:blob|tree)\/main\/([A-Za-z\d_./-]+)/g)].map(
       (m) => m[1],
     ),
     ...relativeLinks(root, 'README.md')
@@ -71648,8 +71648,8 @@ function scanNamedThings(doc: CurrencyDoc, shipsToo: (path: string) => boolean, 
  * vocabulary of forms, and a form that stops matching goes silent rather than
  * red. CUR01's floors catch a form that stops matching *the tree*; this catches a
  * form that stops matching *the defect*. Every string below is a hunk from
- * [#359](https://github.com/firejune/rigc/pull/359) or
- * [#357](https://github.com/firejune/rigc/pull/357) as it stood before the repair,
+ * [#359](https://github.com/rig-c/core/pull/359) or
+ * [#357](https://github.com/rig-c/core/pull/357) as it stood before the repair,
  * paired with the repaired text, and the requirement is two-sided: the stale
  * spelling must fault and the current one must not. Delete a form and a row here
  * stops faulting; loosen one and a clean row starts.
@@ -74169,123 +74169,160 @@ function runCurrencySuite(): number {
         'named something else"',
     );
 
-    // --- CUR121: the alias is held to the package by its files (issue #1258)
+    // --- CUR121: each alias is held to the package by its files (issues #1258, #1347)
     //
-    // 🪞 The package is published under two names — `package.json`'s, and
-    // `ALIAS`, the name every version up to 2.20.4 shipped under — and the
-    // promise is that the second carries the first's files at every version.
-    // The confirmation reads that off the registry: `--alias` fetches the same
-    // version under the alias and compares the unpacked tarballs. A registry
-    // on PATH that serves both names drives it offline, once with the alias
-    // identical but for its name line and once per way it can differ, and the
-    // tool that makes the alias for the publish is driven over the same
-    // tarballs. ⚠️ What none of these reaches is a green case: the fake
-    // installs nothing, so every run here is red at the install, and the exit
-    // code of a late alias over a green case (3) is read in the script rather
-    // than seen here. The lines are what is held.
+    // 🪞 The package is published under its `package.json` name and under every
+    // name in `ALIASES` — `spine-rigc`, the name every version up to 2.20.4
+    // shipped under, and `@rig-c/core`, the package under the toolchain's scope
+    // — and the promise is that each alias carries the package's files at every
+    // version. The confirmation reads that off the registry: one `--alias` per
+    // name fetches the same version under it and compares the unpacked
+    // tarballs, each alias on its own line. A registry on PATH that serves
+    // every name drives it offline — the tarball file named the way `npm pack`
+    // names a scoped package, `@scope/name` as `scope-name` — once with every
+    // alias identical but for its name line, once per way an alias can
+    // differ, and once with the difference in the first alias rather than the
+    // last, so a reading that stopped at the first verdict or read only one
+    // alias goes red. The tool that makes each alias for the publish is driven
+    // over the same tarballs, under every name. ⚠️ What none of these reaches is
+    // a green case: the fake installs nothing, so every run here is red at the
+    // install, and the exit code of a late alias over a green case (3) is read
+    // in the script rather than seen here. The lines are what is held.
     {
       const stage = mkdtempSync(join(harnessTemp(), 'rigc-fake-alias-stage-'));
       const manifestOf = (name: string, version = FAKE): string => `{\n  "name": ${JSON.stringify(name)},\n  "version": ${JSON.stringify(version)}\n}\n`;
+      /** The file `npm pack` names a package's tarball after: a scoped `@scope/name` is `scope-name`. */
+      const fileOf = (name: string): string => name.replace(/^@/, '').replace(/\//g, '-');
       /** A tarball of `package/<path>` files, written to `into`. */
       const tarball = (label: string, files: Record<string, string>, into: string): string => {
-        const src = join(stage, label);
+        const src = join(stage, fileOf(label));
+        // Cleared first: a label is reused across runs, and a file an earlier run wrote must not ride into a later one.
+        rmSync(src, { recursive: true, force: true });
         for (const [path, text] of Object.entries(files)) {
           mkdirSync(dirname(join(src, 'package', path)), { recursive: true });
           writeFileSync(join(src, 'package', path), text);
         }
-        const tgz = join(into, `${label}.tgz`);
+        const tgz = join(into, `${fileOf(label)}.tgz`);
         const made = spawnSync('tar', ['-czf', tgz, '-C', src, 'package'], { encoding: 'utf8' });
         if (made.status !== 0) throw new Error(`CUR121: tar of ${label} exited ${String(made.status)}: ${made.stderr}`);
         return tgz;
       };
       const primaryFiles = { 'package.json': manifestOf(packageName), 'src/probe.ts': 'export const probe = 1;\n' };
-      /** A registry serving `<name>.tgz` from its own directory for every name it holds, and installing nothing. */
-      const servesNames = (aliasFiles: Record<string, string> | null): string => {
+      const sameAs = (alias: string): Record<string, string> => ({ ...primaryFiles, 'package.json': manifestOf(alias) });
+      /** A registry serving `<file>.tgz` from its own directory for every name it holds, and installing nothing. */
+      const servesNames = (aliasFiles: ReadonlyMap<string, Record<string, string> | null>): string => {
         const dir = fakeRegistry(
           '#!/bin/sh\n' +
             '# Serves each name whose tarball sits beside this script; installs nothing.\n' +
             'here=$(dirname "$0")\n' +
             'name="${2%@*}"\n' +
+            "file=$(printf '%s' \"$name\" | sed -e 's#^@##' -e 's#/#-#g')\n" +
             'if [ "$1" = "view" ]; then\n' +
-            '  if [ -f "$here/$name.tgz" ]; then echo "https://registry.invalid/$name.tgz"; exit 0; fi\n' +
+            '  if [ -f "$here/$file.tgz" ]; then echo "https://registry.invalid/$file.tgz"; exit 0; fi\n' +
             '  echo "npm error code E404" >&2\n' +
             '  exit 1\n' +
             'fi\n' +
             'if [ "$1" = "pack" ]; then\n' +
             '  dest=""; prev=""\n' +
             '  for arg in "$@"; do if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi; prev="$arg"; done\n' +
-            `  cp "$here/$name.tgz" "$dest/$name-${FAKE}.tgz"\n` +
+            `  cp "$here/$file.tgz" "$dest/$file-${FAKE}.tgz"\n` +
             '  exit $?\n' +
             'fi\n' +
             'echo "npm error this fake registry installs nothing" >&2\n' +
             'exit 1\n',
         );
         tarball(packageName, primaryFiles, dir);
-        if (aliasFiles !== null) tarball(ALIAS, aliasFiles, dir);
+        for (const [alias, files] of aliasFiles) if (files !== null) tarball(alias, files, dir);
         return dir;
       };
       const ALIAS_CASE = 'SMOKE_ALIAS_CARRIES_THE_SAME_FILES';
-      const aliasLine = (out: string): string => out.split('\n').find((line) => line.includes(ALIAS_CASE)) ?? '';
-      const runs: Array<{ what: string; alias: Record<string, string> | null; pass: boolean; said: string[] }> = [
-        { what: 'the alias identical but for its name line', alias: { ...primaryFiles, 'package.json': manifestOf(ALIAS) }, pass: true, said: ['2 file(s)', `${packageName}@${FAKE}`] },
-        { what: 'one byte appended to a file', alias: { ...primaryFiles, 'package.json': manifestOf(ALIAS), 'src/probe.ts': 'export const probe = 1;\n!' }, pass: false, said: ['package/src/probe.ts differs', 'first parting at byte'] },
-        { what: 'a file the package does not carry', alias: { ...primaryFiles, 'package.json': manifestOf(ALIAS), 'src/extra.ts': 'x\n' }, pass: false, said: ['package/src/extra.ts is in'] },
-        { what: 'the manifest changed beyond its name', alias: { ...primaryFiles, 'package.json': manifestOf(ALIAS, '0.0.1-other') }, pass: false, said: ['package/package.json differs beyond its name line'] },
-        { what: 'an alias the registry is not serving', alias: null, pass: false, said: [`${ALIAS}@${FAKE}`, 'NOT taken', `--alias ${ALIAS}`] },
+      const aliasFlags = ALIASES.flatMap((alias) => ['--alias', alias]);
+      /** The output from the alias's own verdict line on, or '' when no line names it. */
+      const aliasTail = (out: string, alias: string): string => {
+        const lines = out.split('\n');
+        const at = lines.findIndex((line) => line.includes(ALIAS_CASE) && line.includes(`${alias}@${FAKE}`));
+        return at === -1 ? '' : lines.slice(at).join('\n');
+      };
+      const first = ALIASES[0];
+      const last = ALIASES[ALIASES.length - 1];
+      interface AliasRun {
+        what: string;
+        /** The alias the case changes, and how; every other alias is served identical but for its name line. */
+        target: string;
+        files: (alias: string) => Record<string, string> | null;
+        said: string[];
+      }
+      const runs: AliasRun[] = [
+        { what: 'every alias identical but for its name line', target: '', files: sameAs, said: ['2 file(s)', `${packageName}@${FAKE}`] },
+        { what: `one byte appended to a file of ${last}`, target: last, files: (alias) => ({ ...sameAs(alias), 'src/probe.ts': 'export const probe = 1;\n!' }), said: ['package/src/probe.ts differs', 'first parting at byte'] },
+        { what: `a file the package does not carry, in ${last}`, target: last, files: (alias) => ({ ...sameAs(alias), 'src/extra.ts': 'x\n' }), said: ['package/src/extra.ts is in'] },
+        { what: `${last}'s manifest changed beyond its name`, target: last, files: (alias) => ({ ...primaryFiles, 'package.json': manifestOf(alias, '0.0.1-other') }), said: ['package/package.json differs beyond its name line'] },
+        { what: `${last} not served by the registry`, target: last, files: () => null, said: [`${last}@${FAKE}`, 'NOT taken', aliasFlags.join(' ')] },
+        { what: `one byte appended to a file of ${first}, the first alias read`, target: first, files: (alias) => ({ ...sameAs(alias), 'src/probe.ts': 'export const probe = 1;\n!' }), said: ['package/src/probe.ts differs'] },
       ];
       const aliasProbes: string[] = [];
       const aliasCases: string[] = [];
+      if (ALIASES.length < 2 || new Set(ALIASES).size !== ALIASES.length) aliasProbes.push(`ALIASES is ${JSON.stringify(ALIASES)}, and these runs are written over two or more distinct names`);
       for (const one of runs) {
-        const dir = servesNames(one.alias);
-        const ran = smokeWith(dir, ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--wait', '0.05', '--alias', ALIAS]);
+        const dir = servesNames(new Map(ALIASES.map((alias) => [alias, alias === one.target ? one.files(alias) : sameAs(alias)])));
+        const ran = smokeWith(dir, ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--wait', '0.05', ...aliasFlags]);
         rmSync(dir, { recursive: true, force: true });
-        const line = aliasLine(ran.out);
-        const tail = ran.out.slice(ran.out.indexOf(line));
-        const faults = [
-          ...(line === '' ? [`no ${ALIAS_CASE} line, so the alias was never read`] : []),
-          ...(line !== '' && one.pass && !line.includes(`PASS  ${ALIAS_CASE}`) ? [`the alias was not passed: ${line.trim().slice(0, 200)}`] : []),
-          ...(line !== '' && !one.pass && !line.includes(`FAIL  ${ALIAS_CASE}`) ? [`the alias was not failed: ${line.trim().slice(0, 200)}`] : []),
-          ...one.said.filter((text) => !tail.includes(text)).map((text) => `the alias's reading does not say "${text}"`),
-          ...(ran.out.includes('SMOKE_INSTALL_EMPTY_DIR') ? [] : ['the case did not reach the install, so the alias was read on a run that did not get as far as a real one']),
-          ...(ran.status === 1 ? [] : [`exit ${ran.status}, where a red case — the fake installs nothing — is 1 whatever the alias reads`]),
-        ];
-        for (const f of faults) aliasProbes.push(`${one.what}: ${f}`);
-        aliasCases.push(`${one.what} -> ${line.includes(`PASS  ${ALIAS_CASE}`) ? 'PASS' : line.includes(`FAIL  ${ALIAS_CASE}`) ? 'FAIL' : 'unread'}`);
+        const verdicts: string[] = [];
+        for (const alias of ALIASES) {
+          const tail = aliasTail(ran.out, alias);
+          const line = tail.split('\n')[0] ?? '';
+          const pass = alias !== one.target;
+          const faults = [
+            ...(line === '' ? [`no ${ALIAS_CASE} line names ${alias}@${FAKE}, so that alias was never read`] : []),
+            ...(line !== '' && pass && !line.includes(`PASS  ${ALIAS_CASE}`) ? [`${alias} was not passed: ${line.trim().slice(0, 200)}`] : []),
+            ...(line !== '' && !pass && !line.includes(`FAIL  ${ALIAS_CASE}`) ? [`${alias} was not failed: ${line.trim().slice(0, 200)}`] : []),
+            ...(pass ? (one.target === '' ? one.said : []) : one.said).filter((text) => !tail.includes(text)).map((text) => `${alias}'s reading does not say "${text}"`),
+          ];
+          for (const f of faults) aliasProbes.push(`${one.what}: ${f}`);
+          verdicts.push(`${alias} ${line.includes(`PASS  ${ALIAS_CASE}`) ? 'PASS' : line.includes(`FAIL  ${ALIAS_CASE}`) ? 'FAIL' : 'unread'}`);
+        }
+        if (!ran.out.includes('SMOKE_INSTALL_EMPTY_DIR')) aliasProbes.push(`${one.what}: the case did not reach the install, so the aliases were read on a run that did not get as far as a real one`);
+        if (ran.status !== 1) aliasProbes.push(`${one.what}: exit ${ran.status}, where a red case — the fake installs nothing — is 1 whatever the aliases read`);
+        aliasCases.push(`${one.what} -> ${verdicts.join(', ')}`);
       }
       // The flag where it cannot mean anything is refused, not ignored.
       const refusals: Array<{ what: string; argv: string[]; said: string }> = [
-        { what: '--alias on a tarball this tree packs', argv: ['--case', 'clean', '--alias', ALIAS], said: '--source registry' },
-        { what: "--alias naming the package's own name", argv: ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--alias', packageName], said: 'not a second one' },
+        { what: '--alias on a tarball this tree packs', argv: ['--case', 'clean', ...aliasFlags], said: '--source registry' },
+        { what: "--alias naming the package's own name", argv: ['--source', 'registry', '--version', FAKE, '--case', 'clean', ...aliasFlags, '--alias', packageName], said: 'not a second one' },
+        { what: '--alias naming one alias twice', argv: ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--alias', first, '--alias', first], said: 'given twice' },
+        { what: '--alias with no name after it', argv: ['--source', 'registry', '--version', FAKE, '--case', 'clean', '--alias', first, '--alias'], said: 'needs another name' },
       ];
       for (const one of refusals) {
         const ran = smokeWith(null, one.argv);
-        const line = aliasLine(ran.out);
+        const line = ran.out.split('\n').find((text) => text.includes(ALIAS_CASE)) ?? '';
         if (ran.status !== 1 || !line.includes(`FAIL  ${ALIAS_CASE}`) || !line.includes(one.said) || ran.out.includes('SMOKE_CASE')) {
           aliasProbes.push(`${one.what}: exit ${ran.status}, line ${JSON.stringify(line.trim().slice(0, 200))} — a refusal naming "${one.said}", before any case, was required`);
         }
         aliasCases.push(`${one.what} -> refused`);
       }
-      // The tool the publish runs, over the same tarballs: it makes the alias,
-      // holds it to the package, and refuses a manifest whose name it cannot
-      // change in exactly one line.
+      // The tool the publish runs, over the same tarballs and under every
+      // name: it makes each alias, holds it to the package, and refuses a
+      // manifest whose name it cannot change in exactly one line.
       const tool = (argv: string[]): { status: number; out: string; stdout: string } => {
         const ran = spawnSync(process.execPath, ['scripts/alias_tarball.ts', ...argv], { cwd: root, encoding: 'utf8' });
         return { status: ran.status ?? -1, out: `${ran.stdout ?? ''}${ran.stderr ?? ''}`, stdout: ran.stdout ?? '' };
       };
       const toolDir = mkdtempSync(join(harnessTemp(), 'rigc-alias-tool-'));
       const primaryTgz = tarball('tool-primary', primaryFiles, toolDir);
-      const made = tool(['pack', '--name', ALIAS, '--out', join(toolDir, 'out'), '--tarball', primaryTgz]);
-      const madeTgz = made.stdout.trim().split('\n').pop() ?? '';
-      if (made.status !== 0 || !madeTgz.endsWith('.tgz') || !existsSync(madeTgz)) aliasProbes.push(`alias_tarball pack exited ${made.status} printing ${JSON.stringify(madeTgz)}: ${made.out.trim().slice(0, 300)}`);
-      else {
-        const same = tool(['compare', primaryTgz, madeTgz]);
-        if (same.status !== 0) aliasProbes.push(`alias_tarball compare of the package and the alias it made exited ${same.status}: ${same.out.trim().slice(0, 300)}`);
-        const differs = tool(['compare', primaryTgz, tarball('tool-differs', { ...primaryFiles, 'package.json': manifestOf(ALIAS), 'src/probe.ts': 'export const probe = 2;\n' }, toolDir)]);
-        if (differs.status !== 1 || !differs.out.includes('package/src/probe.ts differs')) aliasProbes.push(`alias_tarball compare of an alias with a changed file exited ${differs.status}, and 1 naming the file was required: ${differs.out.trim().slice(0, 300)}`);
+      for (const alias of ALIASES) {
+        const made = tool(['pack', '--name', alias, '--out', join(toolDir, `out-${fileOf(alias)}`), '--tarball', primaryTgz]);
+        const madeTgz = made.stdout.trim().split('\n').pop() ?? '';
+        if (made.status !== 0 || !madeTgz.endsWith('.tgz') || !existsSync(madeTgz)) aliasProbes.push(`alias_tarball pack --name ${alias} exited ${made.status} printing ${JSON.stringify(madeTgz)}: ${made.out.trim().slice(0, 300)}`);
+        else {
+          const same = tool(['compare', primaryTgz, madeTgz]);
+          if (same.status !== 0 || !same.out.includes(`PASS  ALIAS_SAME_CONTENT: ${alias} carries`)) aliasProbes.push(`alias_tarball compare of the package and the alias ${alias} it made exited ${same.status}: ${same.out.trim().slice(0, 300)}`);
+        }
+        const differs = tool(['compare', primaryTgz, tarball(`tool-differs-${fileOf(alias)}`, { ...sameAs(alias), 'src/probe.ts': 'export const probe = 2;\n' }, toolDir)]);
+        if (differs.status !== 1 || !differs.out.includes('package/src/probe.ts differs')) aliasProbes.push(`alias_tarball compare of ${alias} with a changed file exited ${differs.status}, and 1 naming the file was required: ${differs.out.trim().slice(0, 300)}`);
       }
-      const minified = tool(['pack', '--name', ALIAS, '--out', join(toolDir, 'out-minified'), '--tarball', tarball('tool-minified', { ...primaryFiles, 'package.json': `{"name":${JSON.stringify(packageName)},"version":"${FAKE}"}\n` }, toolDir)]);
+      const minified = tool(['pack', '--name', first, '--out', join(toolDir, 'out-minified'), '--tarball', tarball('tool-minified', { ...primaryFiles, 'package.json': `{"name":${JSON.stringify(packageName)},"version":"${FAKE}"}\n` }, toolDir)]);
       if (minified.status !== 2 || !minified.out.includes('exactly one')) aliasProbes.push(`alias_tarball pack of a one-line manifest exited ${minified.status}, and 2 refusing a name it cannot change in exactly one line was required: ${minified.out.trim().slice(0, 300)}`);
-      aliasCases.push('alias_tarball pack, compare both ways, and a one-line manifest -> read');
+      aliasCases.push(`alias_tarball pack and compare both ways under ${ALIASES.join(' and ')}, and a one-line manifest -> read`);
       rmSync(toolDir, { recursive: true, force: true });
       rmSync(stage, { recursive: true, force: true });
       const aliasHeld = aliasProbes.length === 0;
@@ -74295,23 +74332,25 @@ function runCurrencySuite(): number {
         probeDetail(
           aliasHeld,
           aliasProbes,
-          `an \`npm\` serving ${packageName}@${FAKE} and ${ALIAS}@${FAKE} ends \`--alias ${ALIAS}\` with ${ALIAS_CASE} passed on ` +
-            'an alias identical but for its name line and failed, naming the path, on each way it can differ — ' +
-            `${aliasCases.join('; ')}`,
+          `an \`npm\` serving ${packageName}@${FAKE} and ${ALIASES.map((alias) => `${alias}@${FAKE}`).join(' and ')} ends \`${aliasFlags.join(' ')}\` with ` +
+            `one ${ALIAS_CASE} line per alias, passed on an alias identical but for its name line and failed, naming the path, on each way ` +
+            `one can differ, the others still read — ${aliasCases.join('; ')}`,
         ),
-        'issue #1258: the package is published under two names, and the promise that the second carries the first\'s ' +
-          'files is only as good as the reading that would see it broken — the tarballs cannot share a hash, so the ' +
-          'unpacked files are what is compared',
+        'issue #1258: the package is published under more than one name, and the promise that each alias carries the ' +
+          'package\'s files is only as good as the reading that would see it broken — the tarballs cannot share a hash, so ' +
+          'the unpacked files are what is compared; issue #1347 made it a list, so a reading of one alias is a reading of too few',
       );
     }
 
-    // --- CUR122: release.yml publishes the alias it confirms (issue #1258) ----
+    // --- CUR122: release.yml publishes the aliases it confirms (issues #1258, #1347)
     //
-    // The alias's name is written in two places a person edits — the pack step
-    // and every confirmation call — and in one a program reads, `ALIAS`. They
-    // have to agree, the alias publish has to follow the gated one in the same
-    // job (the gate's verdict is about this commit, and the alias is this
-    // commit's files), and RELEASING.md has to say how to confirm both names.
+    // Each alias's name is written in two places a person edits — its own pack
+    // step and every confirmation call — and in one a program reads,
+    // `ALIASES`. They have to agree name for name, every alias publish has to
+    // follow the gated one in the same job (the gate's verdict is about this
+    // commit, and each alias is this commit's files), and RELEASING.md has to
+    // say how to confirm every name. Dropping any one alias from the publish
+    // or from either confirmation is planted, once per alias.
     {
       interface AliasStep {
         name?: string;
@@ -74320,6 +74359,7 @@ function runCurrencySuite(): number {
       interface AliasWorkflow {
         jobs?: Record<string, { steps?: AliasStep[] }>;
       }
+      const PACK = 'scripts/alias_tarball.ts pack';
       const aliasFaults = (yml: string, doc: string): string[] => {
         const faults: string[] = [];
         let wf: AliasWorkflow;
@@ -74333,33 +74373,41 @@ function runCurrencySuite(): number {
         const publishers: Array<{ job: string; at: number }> = [];
         for (const [job, body] of Object.entries(wf.jobs ?? {})) {
           (body.steps ?? []).forEach((step, at) => {
-            if (lines(step).some((line) => line.includes('scripts/alias_tarball.ts pack'))) packers.push({ job, at, step });
+            if (lines(step).some((line) => line.includes(PACK))) packers.push({ job, at, step });
             if (lines(step).some((line) => /^npm publish(\s|$)/.test(line))) publishers.push({ job, at });
           });
         }
-        if (packers.length !== 1) {
-          faults.push(`release.yml: ${packers.length} step(s) pack the alias with scripts/alias_tarball.ts, where one does`);
-        } else {
-          const [packer] = packers;
-          const packLine = lines(packer.step).find((line) => line.includes('scripts/alias_tarball.ts pack')) ?? '';
+        const packed: string[] = [];
+        for (const packer of packers) {
+          const packLines = lines(packer.step).filter((line) => line.includes(PACK));
+          if (packLines.length !== 1) {
+            faults.push(`release.yml: step "${packer.step.name ?? '(unnamed)'}" packs ${packLines.length} alias(es) with ${PACK}, where each step packs one`);
+            continue;
+          }
+          const [packLine] = packLines;
           const named = /--name\s+"?([^"\s]+)"?/.exec(packLine)?.[1] ?? null;
-          if (named !== ALIAS) faults.push(`release.yml: the alias is packed as ${JSON.stringify(named)}, and scripts/alias_tarball.ts names it ${JSON.stringify(ALIAS)}`);
+          packed.push(named ?? '(no --name)');
+          if (named === null || !ALIASES.includes(named)) faults.push(`release.yml: an alias is packed as ${JSON.stringify(named)}, which is not among the names scripts/alias_tarball.ts holds (${ALIASES.join(', ')})`);
           const variable = /^([A-Za-z_][A-Za-z_\d]*)="\$\(bun scripts\/alias_tarball\.ts pack\b/.exec(packLine)?.[1] ?? null;
           const publishesIt = variable !== null && lines(packer.step).some((line) => line.startsWith(`npm publish "$${variable}"`));
-          if (!publishesIt) faults.push('release.yml: the step that packs the alias does not `npm publish` the path it printed, so what is published is not what was compared');
-          const gated = publishers.filter((p) => p.job === packer.job && p.at < packer.at);
-          if (gated.length === 0) faults.push(`release.yml: no \`npm publish\` from the checkout runs before the alias in job "${packer.job}", so the alias goes out ahead of — or without — the gated publish`);
+          if (!publishesIt) faults.push(`release.yml: the step that packs ${JSON.stringify(named)} does not \`npm publish\` the path it printed, so what is published is not what was compared`);
+          const gated = publishers.filter((p) => p.job === packer.job && p.at < packer.at && !packers.some((other) => other.job === p.job && other.at === p.at));
+          if (gated.length === 0) faults.push(`release.yml: no \`npm publish\` from the checkout runs before the alias ${JSON.stringify(named)} in job "${packer.job}", so it goes out ahead of — or without — the gated publish`);
+        }
+        for (const alias of ALIASES) {
+          const times = packed.filter((name) => name === alias).length;
+          if (times !== 1) faults.push(`release.yml: ${times} step(s) pack and publish the alias ${alias}, where one does — scripts/alias_tarball.ts names ${ALIASES.length} alias(es) and each is published at every version`);
         }
         const calls: string[] = [];
         for (const body of Object.values(wf.jobs ?? {})) for (const step of body.steps ?? []) calls.push(...lines(step).filter((line) => line.startsWith('bun run smoke')));
-        if (calls.length === 0) faults.push('release.yml calls no `bun run smoke`, so nothing confirms either name');
+        if (calls.length === 0) faults.push('release.yml calls no `bun run smoke`, so nothing confirms any name');
         for (const call of calls) {
           const argv = call.split(/\s+/);
-          const at = argv.indexOf('--alias');
-          const given = at === -1 ? null : argv[at + 1] ?? null;
-          if (given !== ALIAS) faults.push(`release.yml: \`${call}\` confirms ${given === null ? 'no alias' : `the alias ${given}`}, and the alias published is ${ALIAS}`);
+          const given = argv.flatMap((arg, at) => (arg === '--alias' ? [argv[at + 1] ?? '(nothing)'] : []));
+          for (const alias of ALIASES) if (!given.includes(alias)) faults.push(`release.yml: \`${call}\` does not confirm the alias ${alias}, which is published`);
+          for (const name of given) if (!ALIASES.includes(name)) faults.push(`release.yml: \`${call}\` confirms ${JSON.stringify(name)}, which no step publishes as an alias`);
         }
-        for (const name of [packageName, ALIAS]) {
+        for (const name of [packageName, ...ALIASES]) {
           if (!doc.includes(`npm view ${name} version`)) faults.push(`RELEASING.md carries no \`npm view ${name} version\`, so the cut's own confirmation of that name is stated nowhere`);
         }
         return faults;
@@ -74368,17 +74416,33 @@ function runCurrencySuite(): number {
       const doc = readFileSync(join(root, 'RELEASING.md'), 'utf8');
       const standing = aliasFaults(yml, doc);
       const edit = (text: string, from: string, to: string): string | null => (text.includes(from) ? text.split(from).join(to) : null);
-      const aliasStepAt = yml.indexOf('      - name: Publish the alias');
-      const aliasStep = aliasStepAt === -1 ? '' : yml.slice(aliasStepAt, yml.indexOf('\n\n', aliasStepAt) + 2);
+      /** `from` → `to` on the one line holding `marker`, or null when no line holds both. */
+      const editLine = (text: string, marker: string, from: string, to: string): string | null => {
+        const lines = text.split('\n');
+        const at = lines.findIndex((line) => line.includes(marker) && line.includes(from));
+        if (at === -1) return null;
+        lines[at] = lines[at].split(from).join(to);
+        return lines.join('\n');
+      };
+      const stepOf = (alias: string): string => {
+        const at = yml.indexOf(`      - name: Publish the alias ${alias}\n`);
+        return at === -1 ? '' : yml.slice(at, yml.indexOf('\n\n', at) + 2);
+      };
       const gatedStep = '      - name: Publish to npm\n';
       const plants: Array<{ what: string; yml: string | null; doc?: string | null; quiet?: boolean }> = [
-        { what: 'the re-run stops confirming the alias', yml: edit(yml, `"$VERSION" --wait 15 --case clean --alias ${ALIAS}`, '"$VERSION" --wait 15 --case clean') },
-        { what: 'the alias is packed under another name', yml: edit(yml, `pack --name ${ALIAS}`, `pack --name ${ALIAS}-other`) },
-        { what: 'the alias step is dropped', yml: aliasStep === '' ? null : edit(yml, aliasStep, '') },
-        { what: 'the alias is published ahead of the gated publish', yml: aliasStep === '' ? null : edit(yml.replace(aliasStep, ''), gatedStep, `${aliasStep}${gatedStep}`) },
-        { what: 'the alias step publishes the checkout instead of the tarball', yml: edit(yml, 'npm publish "$alias_tgz" --provenance', 'npm publish --provenance') },
-        { what: 'RELEASING.md stops confirming the alias', yml, doc: edit(doc, `npm view ${ALIAS} version`, `npm view ${ALIAS} dist-tags`) },
-        { what: 'the alias step is renamed', yml: edit(yml, `name: Publish the alias ${ALIAS}`, 'name: Second name'), quiet: true },
+        ...ALIASES.flatMap((alias) => {
+          const step = stepOf(alias);
+          return [
+            { what: `the cut's confirmation stops confirming ${alias}`, yml: editLine(yml, '"$version" --wait', ` --alias ${alias}`, '') },
+            { what: `the re-run stops confirming ${alias}`, yml: editLine(yml, '"$VERSION" --wait', ` --alias ${alias}`, '') },
+            { what: `${alias} is packed under another name`, yml: edit(yml, `pack --name ${alias} `, `pack --name ${alias}-other `) },
+            { what: `${alias}'s step is dropped`, yml: step === '' ? null : edit(yml, step, '') },
+            { what: `${alias} is published ahead of the gated publish`, yml: step === '' ? null : edit(yml.replace(step, ''), gatedStep, `${step}${gatedStep}`) },
+            { what: `RELEASING.md stops confirming ${alias}`, yml, doc: edit(doc, `npm view ${alias} version`, `npm view ${alias} dist-tags`) },
+            { what: `${alias}'s step is renamed`, yml: edit(yml, `name: Publish the alias ${alias}\n`, `name: Another name for ${alias}\n`), quiet: true },
+          ];
+        }),
+        { what: 'the alias steps publish the checkout instead of the tarball', yml: edit(yml, 'npm publish "$alias_tgz" --provenance', 'npm publish --provenance') },
       ];
       const plantProbes: string[] = [];
       const plantCases: string[] = [];
@@ -74404,12 +74468,13 @@ function runCurrencySuite(): number {
         probeDetail(
           held,
           [...standing, ...plantProbes],
-          `release.yml packs the alias as ${ALIAS} — the name scripts/alias_tarball.ts holds — after the gated \`npm publish\` in the ` +
-            'same job and publishes the tarball it printed, every `bun run smoke` call confirms that alias, and RELEASING.md ' +
-            `carries \`npm view\` for ${packageName} and ${ALIAS} — over ${plants.length} plant(s): ${plantCases.join('; ')}`,
+          `release.yml packs each of ${ALIASES.join(' and ')} — the names scripts/alias_tarball.ts holds — once, in its own step after the gated ` +
+            '`npm publish` in the same job, and publishes the tarball it printed; every `bun run smoke` call confirms every alias, and RELEASING.md ' +
+            `carries \`npm view\` for ${[packageName, ...ALIASES].join(', ')} — over ${plants.length} plant(s): ${plantCases.join('; ')}`,
         ),
         'issue #1258: an alias named in three places drifts in the one nobody reads, and an alias published ahead of the gate ' +
-          'or from another tree than the one compared is the same files only by luck',
+          'or from another tree than the one compared is the same files only by luck; issue #1347 made the alias a list, so ' +
+          'dropping any one name from the publish or from either confirmation has to be its own red',
       );
     }
 
@@ -79728,10 +79793,10 @@ function typeAliasesIn(source: string): Map<string, string> {
 // like, and a fenced block that no longer matches the tool is a wrong answer
 // handed to exactly the reader who cannot check it.
 //
-// 🚨 It bit twice in one night. [#412](https://github.com/firejune/rigc/issues/412)
+// 🚨 It bit twice in one night. [#412](https://github.com/rig-c/core/issues/412)
 // added one line and one suffix to what `build` prints for a depth mesh, and
 // `gallery/look/README.md` — which quotes that block — went stale the moment it
-// landed. Nothing went red. [#407](https://github.com/firejune/rigc/issues/407)
+// landed. Nothing went red. [#407](https://github.com/rig-c/core/issues/407)
 // then regenerated the same README from a worktree that predated #412, so it
 // landed stale again, and again nothing went red. A block repaired by hand is a
 // block that will be stale again.
@@ -110902,7 +110967,7 @@ interface ChainFitRelocationFixture {
  * `estimateChainFit` gives a bone whose frozen visible share is under the floor
  * one unmasked look, and keeps that relocation only if it left more of the part
  * scoreable. Both decisions are taken per pass, and the REJECTED side of the
- * second one is what [#287](https://github.com/firejune/rigc/pull/287) repaired:
+ * second one is what [#287](https://github.com/rig-c/core/pull/287) repaired:
  * it used to reset the bone to hinge 0 rather than to the seed it started from,
  * which on pass 0 is the same thing and on every later pass throws away the
  * relocation the first pass found. Worse, it reset the BONE while restoring its
@@ -112846,7 +112911,7 @@ function runBallotSuite(): number {
  * `render` samples `i = 0..round(d · fps)`, so it is — exactly when `d · fps` is
  * a whole number. Where it is not, the tool was comparing `t = 0` against a time
  * that is not the wrap point and reporting the result as a seam
- * ([#337](https://github.com/firejune/rigc/issues/337)): on `portrait`'s `idle`,
+ * ([#337](https://github.com/rig-c/core/issues/337)): on `portrait`'s `idle`,
  * a cycle that does close, the default `--fps 12` read **14 276 pixels at
  * 206/255**.
  *
@@ -130423,7 +130488,7 @@ function runSliderReaderSuite(): number {
 // `gallery/portrait`, two of them driven by a `bun -e` script that writes a
 // variant motion spec. Script (a) built its deform run as one row of five shifts
 // repeated five times — the mesh's own column order, correct while the vertex
-// list was row-major. [#375](https://github.com/firejune/rigc/issues/375)
+// list was row-major. [#375](https://github.com/rig-c/core/issues/375)
 // renumbered that list along its outline walk on 2026-09-04 and the script went
 // on writing the same five values at the same POSITIONS in a list where a
 // position no longer meant a column. A `vertices` run is positional by format,
@@ -132233,7 +132298,7 @@ function runDocScriptSuite(): number {
 //    cut away.
 //
 // 🔒 **The sealed subtree.** Three landed run records under `bench/runs/` carry
-// anchored output and [#181](https://github.com/firejune/rigc/issues/181)
+// anchored output and [#181](https://github.com/rig-c/core/issues/181)
 // forbids repairing any measure or reading in them; one of the three is
 // anchored by the two rules above. A gate whose population contains a record
 // nobody may touch is publishing a figure it cannot act on, so the subtree is

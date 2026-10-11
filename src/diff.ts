@@ -362,7 +362,7 @@ function atPlaces(n: number): number {
  * it, so `note` states both rates and which side is the bigger one. A histogram
  * intersection over the same quantity reads 421/1339 whether the candidate has
  * a third of the reference's keys or three times them — that ambiguity is what
- * [issue #20](https://github.com/firejune/rigc/issues/20) turned on, and a
+ * [issue #20](https://github.com/rig-c/core/issues/20) turned on, and a
  * figure that repeated it would be the second copy of the same defect.
  */
 function rateAgreement(id: string, what: string, unit: string, a: number, b: number, convention: string): DiffMeasure {

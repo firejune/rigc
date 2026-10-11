@@ -117,25 +117,25 @@ converted atlas does not. Three controls separated the two:
 
 ## 4. What verifying it found in rigc
 
-**rigc's rasteriser skipped clipping attachments** — [#844](https://github.com/firejune/rigc/issues/844).
+**rigc's rasteriser skipped clipping attachments** — [#844](https://github.com/rig-c/core/issues/844).
 On the first model's blink frame f0115, `check` read MAE **1.07** against **0.53**
 at an open-eye frame, and its `--out` picture showed both irises drawn over
 closed lids; spine-webgl read 0.16 against 0.06 and clipped them. The code said
 why in a comment and nothing said it to the reader: a clipping attachment draws
 no pixel, so it was skipped — but it removes pixels, and skipping it drew what
 the runtime removes. Fixed in v1.2.1 by
-[#847](https://github.com/firejune/rigc/pull/847), which runs spine-core's own
+[#847](https://github.com/rig-c/core/pull/847), which runs spine-core's own
 `SkeletonClipping` beside the draw-order walk: f0115 now reads **0.60**, the
 blink's excess over an open frame went from 0.54 to 0.07, and every unclipped
 figure is byte-identical.
 
 **A sidecar-less reference that is not opaque was measured whole-frame** —
-[#842](https://github.com/firejune/rigc/issues/842), found while writing the
+[#842](https://github.com/rig-c/core/issues/842), found while writing the
 guide's paragraph for foreign sources rather than by the run itself. A foreign
 player's frames carry no `frames.json`, so `check` finds the content box
 against a background colour and did not read alpha: the same drawn pixels read
 MAE 2.25 on grey and 20.37 on a transparent background, both at exit 0. Fixed in
-v1.2.1 by [#845](https://github.com/firejune/rigc/pull/845): such a set is now
+v1.2.1 by [#845](https://github.com/rig-c/core/pull/845): such a set is now
 **refused** by name, because with the box pinned the transparent set reads 32.90
 where the grey one reads 0.00 — a figure about the background that no flag
 repairs.
@@ -192,11 +192,11 @@ invented while the source's motion files sat unread, it made no reference
 frames, and it never ran `check`. The gate was green, 13 measured and 0 failed,
 and that green was genuine: every one of those defects is a value the spec asked
 for, which is exactly what a gate cannot see. That sitting is why v1.2.0 exists
-— [#834](https://github.com/firejune/rigc/issues/834) (`check --out` writes the
-picture the number came from), [#835](https://github.com/firejune/rigc/issues/835)
-(`render --slot`/`--hide`), [#836](https://github.com/firejune/rigc/issues/836)
+— [#834](https://github.com/rig-c/core/issues/834) (`check --out` writes the
+picture the number came from), [#835](https://github.com/rig-c/core/issues/835)
+(`render --slot`/`--hide`), [#836](https://github.com/rig-c/core/issues/836)
 (the skill's loop says what to look for and where a foreign source's reference
-frames come from) and [#837](https://github.com/firejune/rigc/issues/837)
+frames come from) and [#837](https://github.com/rig-c/core/issues/837)
 (`preview` carries the gate's line).
 
 **After it**, an agent of the first sitting's family was given the same prompt
@@ -209,8 +209,8 @@ drawable's bounding-box centre, though the drawables' vertices were in hand, and
 it ran `check` once per rig and reported MAE **85.75** and **65.17** as results.
 Those figures are not attributed to the regions alone — that conversion differs
 from this one in more than mesh against region — but two sentences were missing
-from the text, and [#849](https://github.com/firejune/rigc/issues/849) added them
-([#850](https://github.com/firejune/rigc/pull/850)): a figure is where the loop
+from the text, and [#849](https://github.com/rig-c/core/issues/849) added them
+([#850](https://github.com/rig-c/core/pull/850)): a figure is where the loop
 starts, not where it ends, and a drawable's geometry is a mesh attachment with
 its vertices, UVs and triangles, where a region at its box keeps only the box.
 

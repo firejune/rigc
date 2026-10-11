@@ -9,7 +9,7 @@ compatibility: Requires Bun 1.2 or later and the npm package rig-c.
 
 Load this when the request is a **skeleton rather than a movement**: loose part
 PNGs in, a bone hierarchy out. Every rule below is owned by
-[RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md); this file says when to open it and what it
+[RIGGING.md](https://github.com/rig-c/core/blob/main/docs/RIGGING.md); this file says when to open it and what it
 will not do for you.
 
 ## Non-negotiables
@@ -30,15 +30,15 @@ are named in RIGGING §11 — neither as a pass bar.
 
 ## Read, in this order
 
-1. [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) — the rig spec field by field (§3),
+1. [AUTHORING.md](https://github.com/rig-c/core/blob/main/docs/AUTHORING.md) — the rig spec field by field (§3),
    the failure map (§5–§6), reading a pose out of a picture (§8.1, §11, §12),
    and the editor's own conventions (§10).
-2. [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) — the structure itself: what identifies a
+2. [RIGGING.md](https://github.com/rig-c/core/blob/main/docs/RIGGING.md) — the structure itself: what identifies a
    pivot and what moving one costs (§2–§3), gauges (§4), what a chain can reach
    (§6), and the instruments that see structure (§11).
-3. Then [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) once the skeleton exists;
-   [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md) if the figure is a head;
-   [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) if the skeleton was handed to you already
+3. Then [MOTION.md](https://github.com/rig-c/core/blob/main/docs/MOTION.md) once the skeleton exists;
+   [FACE.md](https://github.com/rig-c/core/blob/main/docs/FACE.md) if the figure is a head;
+   [INGEST.md](https://github.com/rig-c/core/blob/main/docs/INGEST.md) if the skeleton was handed to you already
    compiled.
 
 Every guide linked here is in the installed package at `node_modules/rig-c/docs/`,

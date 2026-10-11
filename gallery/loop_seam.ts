@@ -21,7 +21,7 @@
  * is a seam measurement only on a set whose last frame landed on `d`.
  *
  * 🚨 **The condition is not a formality, and omitting a flag is what breaks it**
- * (issue [#337](https://github.com/firejune/rigc/issues/337)). `portrait`'s
+ * (issue [#337](https://github.com/rig-c/core/issues/337)). `portrait`'s
  * `idle` is 3.2 s and does close; rendered at the default rate — `--fps 12`, so
  * `3.2 × 12 = 38.4` — its last frame sits at 3.1667 s, and this tool read
  * **14 276 pixels differing, worst channel 206/255** on it. That is the size of a
@@ -31,7 +31,7 @@
  * flag the numbers still print, and the verdict says they are unverified.
  *
  * 📏 **Every figure it prints is scale-relative, and the scale is `--max`**
- * (issue [#336](https://github.com/firejune/rigc/issues/336)). A curve sampled
+ * (issue [#336](https://github.com/rig-c/core/issues/336)). A curve sampled
  * into segments need not return its endpoint key to the last bit, and a residual
  * below the art's own quantisation is *invisible* at one frame size and lands on
  * a pixel boundary at another. Measured on `portrait`'s `idle`, one build, one

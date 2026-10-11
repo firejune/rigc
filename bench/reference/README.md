@@ -57,7 +57,7 @@ rendered by the same checkout as the `check` that reads them.** Two things follo
   fixture and `src/render.ts` is code; a sampler repair changes the second and not the
   first, and from then on every number `check` prints carries the difference between two
   renderers on top of the difference between two rigs. That is not hypothetical:
-  [#301](https://github.com/firejune/rigc/pull/301) made `bilinear` interpolate in
+  [#301](https://github.com/rig-c/core/pull/301) made `bilinear` interpolate in
   premultiplied space so a region edge draws no dark rim, and for two days this directory
   held frames from before it. **The frames here are on the post-#301 sampler**, adopted as
   the standing basis by **gate v2.4** on 2026-09-03; the ladder's own record of what that
@@ -210,10 +210,10 @@ siblings carry does not exist for it. Its frames must never be committed, publis
 or shipped, and they are not in this directory or anywhere else in this repository.
 
 They may be **rendered locally**, and only there. The owner ruled on **2026-08-26**
-([#3](https://github.com/firejune/rigc/issues/3)) that #3's rule — *"never vendor,
+([#3](https://github.com/rig-c/core/issues/3)) that #3's rule — *"never vendor,
 commit, publish or ship"* — does not forbid a render that stays on one disk, which is
 what left rung 7 attemptable: with no frames obtainable there was no honest input for
-either writing or verifying its brief ([#14](https://github.com/firejune/rigc/issues/14)).
+either writing or verifying its brief ([#14](https://github.com/rig-c/core/issues/14)).
 So `render_reference.ts` takes one deliberate, narrow exception for that example: it
 writes to `bench/reference-local/7-anticipation/` by default, it **refuses any `--out`
 inside this repository that `git check-ignore` does not accept**, it fails closed if

@@ -18,7 +18,7 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   `release-please-config.json` carries a `changelog-sections` array: it is the
   default node list plus `check` → *Instrument*, so instrument work on shipped
   sources counts and gets its own changelog line instead of riding along
-  silently ([#163](https://github.com/firejune/rigc/issues/163)). Overriding the
+  silently ([#163](https://github.com/rig-c/core/issues/163)). Overriding the
   array replaces the default rather than extending it, so the whole list is
   written out — dropping a row from it hides that type.
 
@@ -42,7 +42,7 @@ Every push to `main` runs `release.yml`, which hands the new commits to
 
   ✅ **What does the noticing is the `ships` job in
   [`.github/workflows/ci.yml`](.github/workflows/ci.yml)**
-  ([#516](https://github.com/firejune/rigc/issues/516)). It runs on
+  ([#516](https://github.com/rig-c/core/issues/516)). It runs on
   every pull request, extracts both ends of the landing and asks **`npm pack
   --dry-run`** what each one publishes — not the `files` array, because npm adds
   `package.json`, `README.md` and `LICENSE` on top of it, so a literal reading of
@@ -62,7 +62,7 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   rewritten in the merge box **after** the check has reported. Measured over the
   newest 100 merged pull requests, 86 subjects are exactly the title plus
   ` (#N)`, thirteen differ only by issue references the title has since lost, and
-  [#353](https://github.com/firejune/rigc/pull/353) is the one that was genuinely
+  [#353](https://github.com/rig-c/core/pull/353) is the one that was genuinely
   rewritten at merge. So when a cut looks overdue, the old manual reading still
   settles it: **look at what changed inside `files`, not at the commit types.**
 - **Something releasable** → it opens, or updates, a pull request titled
@@ -106,7 +106,7 @@ the commit that introduces these files, and is not maintained afterwards.
    pull request's head, installed into a copy of a dependant's checkout, has
    to type-check under the dependant's own `typecheck` script and build its
    public example to the same bytes as the same build on the last release
-   ([#1212](https://github.com/firejune/rigc/issues/1212)). Manual for now;
+   ([#1212](https://github.com/rig-c/core/issues/1212)). Manual for now;
    from a checkout of the release pull request's head, with the dependant's
    checkout beside it and its examples fetched (`bun run fetch-examples`
    there):
@@ -133,8 +133,8 @@ the commit that introduces these files, and is not maintained afterwards.
    dependant's own that has not landed yet to the candidate copy only, which
    is how #1212 verified the dependant's switch to the named entries before
    it was theirs to land. `<name>` is the name the dependant declares: the
-   package's own, `rig-c`, or the alias it is also published as,
-   `spine-rigc` — in which case the candidate is repacked under that name by
+   package's own, `rig-c`, or one of the aliases it is also published as,
+   `spine-rigc` or `@rig-c/core` — in which case the candidate is repacked under that name by
    `scripts/alias_tarball.ts`, its files unchanged, so the dependant's own
    imports resolve. rig-parts 0.16.0 declares `spine-rigc`, and on the tree
    that renamed the package the check came back green against
@@ -142,7 +142,7 @@ the commit that introduces these files, and is not maintained afterwards.
    byte-identical.
 5. **Approve the `ci` run.** It is already there and sitting in
    `action_required`, so the required `test` check is blocked until you do:
-   `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`, or **Approve
+   `gh api -X POST repos/rig-c/core/actions/runs/<id>/approve`, or **Approve
    and run** in the Actions tab. Every cut needs this — see below for why, and
    for why the branch name is not worth memorising.
 6. **Merge it.** That is the cut.
@@ -155,8 +155,8 @@ the commit that introduces these files, and is not maintained afterwards.
    processing and nothing is wrong with the cut: re-run the confirmation
    (Actions → release → Run workflow, with the version) rather than re-cutting
    anything. *Whether the tarball runs*, below, has the window and the codes.
-8. Confirm both names: `npm view rig-c version` and `npm view spine-rigc version`
-   print the version just cut, and each name's npm page shows the provenance
+8. Confirm every name: `npm view rig-c version`, `npm view spine-rigc version` and
+   `npm view @rig-c/core version` print the version just cut, and each name's npm page shows the provenance
    attestation linking its tarball to the workflow run.
 
 ### What the release notes say about `build`'s bytes
@@ -172,7 +172,7 @@ Every file `build` writes is byte-identical to vX.Y.Z's
 
 Verbatim, because a dependant's release intake reads the release body for
 these exact words and decides between taking the bump and opening a card on
-them ([#1167](https://github.com/firejune/rigc/issues/1167)). A body with
+them ([#1167](https://github.com/rig-c/core/issues/1167)). A body with
 neither, with both, or with a paraphrase is one that intake cannot read.
 
 ⚖️ **What the positive form rests on, and so what it covers.** It is stated
@@ -229,7 +229,7 @@ paragraph tells it what to do once it has. 2.2.0 is the case it is written
 from: its header `x`/`y`/`width`/`height` changed from the stage to the
 setup-pose bounding box, the entry said so only as a *Bug Fix*, and a consumer
 that read the header as the stage was mis-sized in silence
-([#1168](https://github.com/firejune/rigc/issues/1168)); its notes and its
+([#1168](https://github.com/rig-c/core/issues/1168)); its notes and its
 `CHANGELOG.md` entry now open with the paragraph that should have been there.
 The drafting tooling outside this tree refuses a negative-form draft without
 one since 2026-10-05.
@@ -246,7 +246,7 @@ notes are written, and refuses the positive form unless `compare` reads
 ### The build report's `spec` is a contract too
 
 `build --report` and `repack --report` write a JSON document whose `spec` is
-`build-report/1` ([#1213](https://github.com/firejune/rigc/issues/1213),
+`build-report/1` ([#1213](https://github.com/rig-c/core/issues/1213),
 `docs/AUTHORING.md` §5.3). A dependant reads its build verdict and its packing
 figures from that document instead of from the printed sentences, so the
 `spec` is a promise of the same kind as the byte-identity sentence above: a
@@ -276,23 +276,28 @@ That is what `id-token: write` in the `publish` job's permissions is for, and it
 what lets the publish carry `--provenance`. The registry side of it is
 configured — the fields are recorded below, and nothing there is outstanding.
 
-**The package name is `rig-c`, and `spine-rigc` is its alias** — do not retry
+**The package name is `rig-c`, and `spine-rigc` and `@rig-c/core` are its aliases** — do not retry
 the short one. The first publish of `rigc@0.2.0` was refused by the registry
 with `403 Package name too similar to existing packages rc,rfdc,bigi`, which is
 a registry-side rule no account setting or flag overrides, and npm support
 confirmed on 2026-10-09 that no manual exception exists; the scope `@rigc` is
 held by an existing user. So the package shipped as `spine-rigc` — `0.2.1` by
 hand, before the automation existed, and every version after it the
-workflow's — until issue [#1258](https://github.com/firejune/rigc/issues/1258)
+workflow's — until issue [#1258](https://github.com/rig-c/core/issues/1258)
 renamed it `rig-c`: the project's own name with the one hyphen the filter
-needs, and no third party's product name in it. `bin` installs the command as
-`rigc` under either name.
+needs, and no third party's product name in it. When the repository moved to
+the `rig-c` organisation as `rig-c/core`, issue
+[#1347](https://github.com/rig-c/core/issues/1347) added `@rig-c/core`: the
+same package under the toolchain's npm scope, beside `@rig-c/parts` and
+`@rig-c/play`. `rig-c` stays the name to install. `bin` installs the
+command as `rigc` under any of the three names.
 
-`spine-rigc` is **an alias, not a retirement**: every version is published
-under both names, with the same files. `rig-c@2.20.4` went up by hand from the
+`spine-rigc` is **an alias, not a retirement**, and `@rig-c/core` is an alias
+of the same kind: every version is published under every name, with the same
+files. `rig-c@2.20.4` went up by hand from the
 registry's own `spine-rigc@2.20.4` tarball with the `name` line changed and
 nothing else (213 files, the same list); every version after it is the
-workflow's, both names from one run. The two tarballs never share a
+workflow's, every name from one run. The two tarballs never share a
 `dist.shasum` — one line of one file differs by design — so "the same files"
 is read off the unpacked tarballs, path by path and byte by byte, with the
 manifest's `name` line the one permitted difference: `scripts/alias_tarball.ts
@@ -301,25 +306,32 @@ serves them it reads 213 of 213 files the same. `rig-c` also lists a
 `0.0.0-stage` version npm created while it processed that first publish; it
 is npm's, and it is left alone.
 
-**How the second name is published.** After `npm publish` has published `rig-c`
-from the checkout — gated by `prepublishOnly`, below — the next step of the same
-job runs `bun scripts/alias_tarball.ts pack --name spine-rigc --out
-"$RUNNER_TEMP/alias"`: it packs the same checkout, extracts the tarball into the
+**How the other names are published.** After `npm publish` has published `rig-c`
+from the checkout — gated by `prepublishOnly`, below — the next steps of the same
+job, one per alias, run `bun scripts/alias_tarball.ts pack --name <alias> --out
+"$RUNNER_TEMP/alias-<alias>"`: each packs the same checkout, extracts the tarball into the
 runner's temp directory, rewrites the one `"name"` line of the extracted
 `package.json`, packs that again, and prints the path only after `compare`
-reads it as the package's files. `npm publish <that tarball>` publishes it. The
+reads it as the package's files. `npm publish <that tarball> --provenance
+--access public` publishes it — `--access public` is what keeps the scoped
+`@rig-c/core` from publishing restricted, which is npm's default for a scope.
+The scoped name changes nothing else in that path: `npm pack` names its tarball
+`rig-c-core-<version>.tgz`, and neither the tool nor the smoke reads a
+tarball by its file name. The
 checkout is never modified, so the confirmation reads the tree the gate read.
 **No lifecycle script runs on the alias, by design:** `npm publish <tarball>`
 runs none, and a second `prepublishOnly` could not mean anything — renaming the
 package in the checkout leaves the tree modified, which the tally reader
 refuses (`TALLY_DIRTY`), so it would run the whole selftest again over a tree
 that is no longer the commit the gate ran at. The gate's verdict is about this
-commit, and the alias is this commit's files. `CUR122` holds `release.yml` to
-that order and to one alias name, the one `ALIAS` in
-`scripts/alias_tarball.ts` states, and `CUR121` drives the tool and the
-confirmation's reading of it over fakes that differ each way they can.
+commit, and each alias is this commit's files. `CUR122` holds `release.yml` to
+that order and to the alias names `ALIASES` in `scripts/alias_tarball.ts`
+states — one step per name, and every name in both confirmation calls, so
+dropping either alias from the publish or from a confirmation is red — and
+`CUR121` drives the tool under every name and the confirmation's reading of
+each alias over fakes that differ each way they can.
 
-**The alias is kept, and never retired by a release step** ([#1278](https://github.com/firejune/rigc/issues/1278)). It stays for as long as links from outside this repository point at it — the npm page, forum threads, articles, badges other READMEs copied — and it never gets a version of its own: every cut publishes both names from one run, or neither. Retiring it (deprecating, un-publishing, letting the name fall behind the package's version line) is not a release step and not a convention; it is a separate card that opens only after three things are written down in it: **npm history** — what is lost when the alias stops (download history, the package page, the provenance links of every version published under it); **external links** — an inventory of what points at the alias name and where each resolves after the rename and after a retirement (GitHub redirects the repository URL; nothing but the alias covers the npm page); and **what the alias says** — one sentence in the README naming the package's current name, and no `npm deprecate`, because a banner on every install is a retirement wearing an alias's name. The same policy holds for every package of the toolchain (`spine-rigc` → `rig-c`, `spine-parts` → `rig-parts`, `spine-html` → `rig-play`).
+**An alias is kept, and never retired by a release step** ([#1278](https://github.com/rig-c/core/issues/1278)). It stays for as long as links from outside this repository point at it — the npm page, forum threads, articles, badges other READMEs copied — and it never gets a version of its own: every cut publishes every name from one run, or none. Retiring it (deprecating, un-publishing, letting the name fall behind the package's version line) is not a release step and not a convention; it is a separate card that opens only after three things are written down in it: **npm history** — what is lost when the alias stops (download history, the package page, the provenance links of every version published under it); **external links** — an inventory of what points at the alias name and where each resolves after the rename and after a retirement (GitHub redirects the repository URL; nothing but the alias covers the npm page); and **what the alias says** — one sentence in the README naming the package's current name, and no `npm deprecate`, because a banner on every install is a retirement wearing an alias's name. The same policy holds for every package of the toolchain (`spine-rigc` → `rig-c`, `spine-parts` → `rig-parts` → `@rig-c/parts`, `spine-html` → `rig-play` → `@rig-c/play`).
 
 `prepublishOnly` runs `scripts/prepublish_gate.ts` before npm packs anything,
 so a tree that fails its own gates cannot be published — by the workflow or by
@@ -391,20 +403,25 @@ bun runs them.
 It cannot be done from here, since it needs the account. Recorded so the
 settings can be checked or rebuilt: **one form per name**, because npm keys a
 trusted publisher to the package. npmjs.com → **rig-c** → **Settings** →
-**Trusted Publisher** → *GitHub Actions*, and the same under **spine-rigc**,
-each filled in as
+**Trusted Publisher** → *GitHub Actions*, and the same under **spine-rigc**
+and **@rig-c/core**, each filled in as
 
-- Organization or user: `firejune`
-- Repository: `rigc`
+- Organization or user: `rig-c`
+- Repository: `core`
 - Workflow filename: `release.yml`
 - Environment name: *blank* (the workflow declares no environment; a value here
   that the workflow does not match rejects the publish)
 - Allowed actions: `npm publish`
 
-`spine-rigc`'s form has published every automated cut since v0.4.0. `rig-c`'s is
-the owner's to register; until it is, the first publish of a cut is refused on
-authentication and the alias step after it never runs, so a cut waits for that
-form rather than going out under one name.
+`spine-rigc`'s form has published every automated cut since v0.4.0, and `rig-c`'s
+every automated cut since it was registered — both from the repository's
+path under the owner's account until issue [#1347](https://github.com/rig-c/core/issues/1347). npm matches the
+repository named in the workflow's OIDC claim, so after the move each form has
+to be re-pointed at `rig-c` / `core`, and `@rig-c/core`'s exists only after
+the scoped name has been published once by hand; all three are the owner's.
+Until they are, a publish is refused on authentication — the package's own
+first, so the alias steps after it never run and a cut waits for the forms
+rather than going out under fewer names.
 
 The fields are case-sensitive and npm does not validate them on save, so a typo
 would only surface as a failed publish.
@@ -425,7 +442,7 @@ Two properties of that configuration are load-bearing in the workflow:
   publishing from self-hosted runners, so this job never moves to a private
   machine.
 
-Confirm a cut afterwards: `npm view rig-c version` and `npm view spine-rigc version`.
+Confirm a cut afterwards: `npm view rig-c version`, `npm view spine-rigc version` and `npm view @rig-c/core version`.
 
 **The exchange is proven.** **v0.4.0** and **v0.5.0** both published automatically
 over OIDC, with provenance attestations, from release runs `32944316689` and
@@ -471,7 +488,7 @@ that reason.
 #### What an install has, and which entry it runs
 
 `@esotericsoftware/spine-core` is a **devDependency** (issue
-[#1061](https://github.com/firejune/rigc/issues/1061)): `bun install` in a clone
+[#1061](https://github.com/rig-c/core/issues/1061)): `bun install` in a clone
 and in CI installs it, and an install of the package does not. Every module still
 ships — the runtime-linking ones included — so the difference is in which entry
 the installed `rigc` runs, and `bin/rigc.cjs` decides it by one fact: whether the
@@ -506,24 +523,37 @@ the tarball, `exports` decides what a dependant may import out of it. The
 **named entries are the API**, and an entry is named because a dependant was
 observed needing the module behind it — the map is the list, and this table
 adds what the map cannot say. Each entry is spelled under the package's name;
-an install of the alias carries the same map, so `spine-rigc/plate` is the same
-entry as `rig-c/plate`:
+an install of an alias carries the same map, so `spine-rigc/plate` and
+`@rig-c/core/plate` are the same entry as `rig-c/plate`:
 
 | entry | named by | needs installed beside the package |
 | --- | --- | --- |
-| `rig-c/plate` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
-| `rig-c/font5x7` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
-| `rig-c/transform` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
-| `rig-c/render` | [#1167](https://github.com/firejune/rigc/issues/1167) | `@esotericsoftware/spine-core` |
-| `rig-c/png` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
-| `rig-c/compile` | [#1167](https://github.com/firejune/rigc/issues/1167) | nothing |
-| `rig-c/rig` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
-| `rig-c/mesh` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
-| `rig-c/errors` | [#1212](https://github.com/firejune/rigc/issues/1212) | nothing |
-| `rig-c/meshcompare` | [#1230](https://github.com/firejune/rigc/issues/1230), by agreement | nothing |
-| `rig-c/core` | [#1275](https://github.com/firejune/rigc/issues/1275) | nothing |
-| `rig-c/cli` | [#859](https://github.com/firejune/rigc/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
-| `rig-c/package.json` | [#859](https://github.com/firejune/rigc/issues/859) | nothing |
+| `rig-c/plate` | [#859](https://github.com/rig-c/core/issues/859) | nothing |
+| `rig-c/font5x7` | [#859](https://github.com/rig-c/core/issues/859) | nothing |
+| `rig-c/transform` | [#859](https://github.com/rig-c/core/issues/859) | nothing |
+| `rig-c/render` | [#1167](https://github.com/rig-c/core/issues/1167) | `@esotericsoftware/spine-core` |
+| `rig-c/png` | [#1167](https://github.com/rig-c/core/issues/1167) | nothing |
+| `rig-c/compile` | [#1167](https://github.com/rig-c/core/issues/1167) | nothing |
+| `rig-c/rig` | [#1212](https://github.com/rig-c/core/issues/1212) | nothing |
+| `rig-c/mesh` | [#1212](https://github.com/rig-c/core/issues/1212) | nothing |
+| `rig-c/errors` | [#1212](https://github.com/rig-c/core/issues/1212) | nothing |
+| `rig-c/meshcompare` | [#1230](https://github.com/rig-c/core/issues/1230), by agreement | nothing |
+| `rig-c/core` | [#1275](https://github.com/rig-c/core/issues/1275) | nothing |
+| `rig-c/cli` | [#859](https://github.com/rig-c/core/issues/859) | resolved and spawned rather than imported; which entry it runs is the table in *What an install has* above |
+| `rig-c/package.json` | [#859](https://github.com/rig-c/core/issues/859) | nothing |
+
+⚠️ **Three things are spelled `rig-c/core`, and they are different things.**
+The **import** `rig-c/core` is the row above: one entry of this package, the
+posing core, the `./core` key of `exports`. The **package** `@rig-c/core` is
+the whole of this package under the toolchain's npm scope — an alias of
+`rig-c` with the same files (*Publishing* above, issue
+[#1347](https://github.com/rig-c/core/issues/1347)) — so installed under that
+name the same entry is imported as `@rig-c/core/core`; `@rig-c/core` on its
+own names no entry at all, since `exports` has no `.` key. The **repository**
+[`rig-c/core`](https://github.com/rig-c/core) is where this tree lives on
+GitHub. The entry was not renamed when the other two arrived, and nothing about
+it changed: an import is always written in code with the package name in front
+of the entry, so the first two never meet in one specifier.
 
 🔒 **The contract.** Renaming or removing a named entry, **or a symbol the
 smoke lists for it**, is a breaking change — and so is a listed symbol
@@ -569,7 +599,7 @@ package makes goes through the `./*.ts` courtesy keys, which the surface
 paragraph above already says are not promised.
 
 🤝 **One row is promised by agreement rather than observation**
-([#1224](https://github.com/firejune/rigc/issues/1224)). Through
+([#1224](https://github.com/rig-c/core/issues/1224)). Through
 `rig-c/mesh`, `measureMeshQuality`, `writeMeshQualityReport`,
 `MeshReductionError`, `MESH_QUALITY_REPORT_SPEC` and `reduceMesh` are held, and
 the report's and the reduction's types recorded, because the dependant agreed in writing to import them from
@@ -580,19 +610,19 @@ would still break. The row says so in place of an observation
 exported is not promised.
 
 `ArtFitBounds.maxOvershoot` and `maxUndercut` widened from `number` to
-`number | null` ([#1254](https://github.com/firejune/rigc/issues/1254)) is
+`number | null` ([#1254](https://github.com/rig-c/core/issues/1254)) is
 additive: a dependant that passes numbers type-checks and is read exactly as
 before, and only a caller that writes `null` gets the new meaning
 (docs/MESH_REDUCTION.md, §1 *A distance bound may be declared absent*).
 
 `measureAuthoredMeshFit`'s optional fifth argument, `connectivity: 4 | 8`
-([#1262](https://github.com/firejune/rigc/issues/1262)), is additive on a
+([#1262](https://github.com/rig-c/core/issues/1262)), is additive on a
 promised symbol: it defaults to 4, so a call with four arguments is read
 exactly as before — the install smoke's call of it is unchanged and holds the
 same values — and only a caller that passes `8` gets the rows' fill
 (docs/MESH_REDUCTION.md, §4, P12).
 
-Replay to an accepted step ([#1268](https://github.com/firejune/rigc/issues/1268))
+Replay to an accepted step ([#1268](https://github.com/rig-c/core/issues/1268))
 is additive on the agreed row's types: `ReductionChanges.acceptedAt` is a new
 key, written last in `changes`, and `MeshReductionInput.stopAfterAccepted` an
 optional input that, left out, leaves the mesh, `accepted` and every other
@@ -601,7 +631,7 @@ sets it may meet a new `Termination` reason, `replayed-to-accepted-step`
 (docs/MESH_REDUCTION.md, §7 *Mechanism 2*).
 
 Boundary runs and `acceptedAt` per operation
-([#1279](https://github.com/firejune/rigc/issues/1279)) change the shape of
+([#1279](https://github.com/rig-c/core/issues/1279)) change the shape of
 one key of the agreed row's types, agreed by its only reader
 (rig-parts#126, §8 Q10): `ReductionChanges.acceptedAt` goes from `number[]`
 to `AcceptedOperation[]`, `{ step, kind, count, sourceVertices }`, and a
@@ -616,7 +646,7 @@ measured byte-identical with the floor and with every candidate measured,
 cites 19; §7's figure is its own measurement and stays as written.
 
 The triangulation post-pass and the weight-aware removal order
-([#1283](https://github.com/firejune/rigc/issues/1283)) are additive on the
+([#1283](https://github.com/rig-c/core/issues/1283)) are additive on the
 agreed row's types, agreed by its only reader (rig-parts#126, §8 Q3, Q9 and
 Q11): two optional inputs, `MeshReductionInput.retriangulate` (`'delaunay'`)
 and `MeshReductionInput.removalOrder` (`'deformation-load'`), each echoed in
@@ -630,7 +660,7 @@ weight-aware order*). A caller that sets `retriangulate` gets triangles that
 are no longer the removals', and a report that says so.
 
 The amplitude on a reduction
-([#1287](https://github.com/firejune/rigc/issues/1287)) is additive on the
+([#1287](https://github.com/rig-c/core/issues/1287)) is additive on the
 agreed row's types: one optional input, `MeshReductionInput.motionAmplitude`
 (`MotionAmplitude | null`, the measurement's field from #1280), read by the
 result's own measurement only and echoed in `effective` only when set. A
@@ -644,7 +674,7 @@ validator it shares with the measurement, `validateMotionAmplitude`, is
 merely exported, so by the rule above it is not promised.
 
 The gradation left to the author and the comparison's amplitude
-([#1291](https://github.com/firejune/rigc/issues/1291)) are additive on the
+([#1291](https://github.com/rig-c/core/issues/1291)) are additive on the
 agreed rows' types, asked for by their only sender (rig-parts#126, its STOP
 on the rerun): `MotionAmplitude.gradation` widens from `number` to an
 optional `number | null`, so an amplitude that sets it type-checks and is
@@ -663,14 +693,14 @@ posed comparisons (docs/MESH_REDUCTION.md, §8 *G — what it derives from* and
 plants, merely exported, so by the rule above not promised.
 
 The region pixel set computed by scanline
-([#1263](https://github.com/firejune/rigc/issues/1263)) changes no promised
+([#1263](https://github.com/rig-c/core/issues/1263)) changes no promised
 symbol and no output, and what it adds to the module behind `rig-c/mesh` —
 `closedPolygonCentres` and `inClosedPolygon`, with `authoredMeshFitOf` from
 #1262 and the two plant types — is merely exported, so by the rule above it is
 not promised.
 
 The skinning-envelope residual and its helper
-([#1294](https://github.com/firejune/rigc/issues/1294)) are additive on the
+([#1294](https://github.com/rig-c/core/issues/1294)) are additive on the
 agreed row's types and add a row of their own. `MeshMeasureInput.skinning`
 (`SkinningResidualInput | null`) is a new optional input; set, the report
 gains one row, `MQ_SKINNING_RESIDUAL`, the key `MeasureRow.skinning` on that
@@ -693,7 +723,7 @@ entries (`measureMeshQualitySkinningPlanted`, `skinningEnvelopeBonePlanted`)
 are merely exported, so by the rule above they are not promised.
 
 The residual as a step condition of the reduction
-([#1295](https://github.com/firejune/rigc/issues/1295)) is additive on the
+([#1295](https://github.com/rig-c/core/issues/1295)) is additive on the
 agreed row's types: `ReductionTargets.skinning` (`ReductionSkinning | null`,
 `{ envelope, maxResidual }`) is a new optional field, measured against the
 call's own `source`; set with a number, every removal, boundary run and
@@ -719,7 +749,7 @@ promised; `carrierIn`, `resolveCarriers` and `CONTAINS` in
 `src/meshcarriers.ts` are on no entry at all.
 
 The over-bound report on a comparison
-([#1315](https://github.com/firejune/rigc/issues/1315)) is additive on the
+([#1315](https://github.com/rig-c/core/issues/1315)) is additive on the
 agreed rows' types: `MotionComparisonInput.overBound`
 (`OverBoundRequest`, `{ maxSamples, triangles }`) is a new optional input;
 set, each candidate's report gains `CandidateReport.overBound`
@@ -738,7 +768,7 @@ named one. `OverBoundPlant`, a member of `ComparePlant`, is the suite's plant,
 merely exported, so by the rule above not promised.
 
 Named lines on a reduction and a measurement
-([#1326](https://github.com/firejune/rigc/issues/1326)) are additive on the
+([#1326](https://github.com/rig-c/core/issues/1326)) are additive on the
 agreed row's types: `MeshReductionInput.lines` and `MeshMeasureInput.lines`
 (`NamedLine[]`, `{ name, vertices, closed, maxDeviation }`) are new optional
 inputs, with `MeshMeasureInput.lineSource` (`LineSource`, `{ id, mesh }`)
@@ -758,7 +788,7 @@ when one is seen importing them. `validateLines`, `lineDeviation`,
 exported, so by the rule above not promised.
 
 🤝 **The same agreement names a second entry**
-([#1230](https://github.com/firejune/rigc/issues/1230)). The contract puts the
+([#1230](https://github.com/rig-c/core/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says
 it needs nothing beside the package — the core is its only poser
 (docs/MESH_REDUCTION.md, P1 and P2). Through it `compareMeshesInMotion` and
@@ -776,7 +806,7 @@ contract's `MQ45`). Its line prints the comparison's frames, samples and wall
 time.
 
 🎞️ **An entry for the poser a browser player links**
-([#1275](https://github.com/firejune/rigc/issues/1275)). rig-play, the
+([#1275](https://github.com/rig-c/core/issues/1275)). rig-play, the
 successor of spine-html, poses `skeleton.model.json` with rigc's own core and
 links no Spine runtime; it was seen importing the core's files through the
 `./*.ts` courtesy, which promises nothing, and `rig-c/render` — the one named
@@ -790,7 +820,7 @@ their names and the entry moves with them. Observed in rig-play, issue #1275
 | `rig-c/core` | `readModel`, `underSkin`, `underNoSkin`, `CoreInputError`, `CORE_DOCUMENT_SPEC`, `CORE_DOCUMENT_SPECS`, `CORE_BLEND_MODES`, `activeBones`, `poseRawSetup`, `poseRawAnimation`, `poseRawAnimationEach`, `loopedTime`, `setupBounds`, `poseWalkSetup`, `poseLoopingWalk`, `documentPageLookup`, `drawnRegions`, `regionPageUvs`, `meshPageUvs`, `readUvSequences`, `clipThrough`, `clipShapeOf`, `convexWhy`, `REGION_UVS`, `REGION_TRIANGLES`, `eventsFired` | `CompiledDocument`, `RawPose`, `RawBone`, `RawDrawn`, `RawClip`, `RawClipped`, `RawEvent`, `RawReset`, `WalkPose`, `CoreSlotRow`, `CoreBlendMode`, `ClipShape`, `ClipResult`, `DrawnRegion`, `UvPage`, `UvRegion`, `UvSource`, `ModelPage`, `ModelPageRegion` |
 
 🤝 **A second `rig-c/core` row is promised by request**
-([#1276](https://github.com/firejune/rigc/issues/1276)): `openTrack`, with the
+([#1276](https://github.com/rig-c/core/issues/1276)): `openTrack`, with the
 types `LiveTrack` and `TrackOptions` — the live track the rig-play 1.0 plan asked
 for on that issue (a player steps once per frame by a `dt` it does not know in
 advance), before the player could be seen calling it. It is the agreement
@@ -798,7 +828,7 @@ exception above applied to this entry, and the row says so in place of an
 observation (`REQUESTED_IN_1276`).
 
 🤝 **A third, by the same exception**
-([#1336](https://github.com/firejune/rigc/issues/1336)): the types
+([#1336](https://github.com/rig-c/core/issues/1336)): the types
 `LocalAdjust`, `AdjustableLocals` and `BoneLocals` — what `TrackOptions.adjust`
 takes, a player's own bone-local value written after the animation's
 timelines and before the world transforms, the constraints and the physics
@@ -810,7 +840,7 @@ several tracks of one document, set, queued, mixed and emptied as spine-core's
 `AnimationState` does, which the player asked for with the same four shapes.
 The hook itself is an option of `openTrack` and of `openTracks`, so the row
 holds `openTracks` as its one value and `openTrack` stays the row above's.
-[#1344](https://github.com/firejune/rigc/issues/1344) widened that surface
+[#1344](https://github.com/rig-c/core/issues/1344) widened that surface
 without adding to it: an entry's `alpha` and `additive` are fields of
 `MixOptions` (and so of `QueueOptions`) and of `TrackEntryView`, and
 `setAlpha` a method of `LiveTracks` — all types the row already names, so the
@@ -885,7 +915,7 @@ What is **not** promised, so nobody reads more into an entry than is there:
 
 `rig-c/render` loads `@esotericsoftware/spine-core` when it is imported,
 and since 2.0.0 the package declares the runtime as a devDependency only
-([#1061](https://github.com/firejune/rigc/issues/1061)), so `npm install
+([#1061](https://github.com/rig-c/core/issues/1061)), so `npm install
 rig-c` does not bring it. A dependant importing that entry installs
 `@esotericsoftware/spine-core` itself, at the version the installed
 `package.json` names under `devDependencies`. Every other importable entry
@@ -928,7 +958,7 @@ node import in the core's closure, which only the browser bundle can see.
 ### Whether the tarball runs
 
 What the package *holds* and whether it *works* are two different facts, and
-until [#556](https://github.com/firejune/rigc/issues/556) only the first was
+until [#556](https://github.com/rig-c/core/issues/556) only the first was
 checked. `prepublishOnly` gates the source tree; the `ships` job reads packed
 path lists; `CUR16` resolves the relative imports of shipped modules. None of
 them starts the program. The two smokes that had been taken — v0.20.0 and
@@ -940,7 +970,7 @@ which is the `✅ applied` antipattern with a release attached to it.
 `main`. It runs `bun run smoke` — [`scripts/install_smoke.ts`](scripts/install_smoke.ts) —
 which packs a tarball out of the branch, installs it into an **empty** directory
 that has a `package.json` of its own, and runs it in three phases (issue
-[#1061](https://github.com/firejune/rigc/issues/1061)):
+[#1061](https://github.com/rig-c/core/issues/1061)):
 
 1. **As installed — no runtime.** The install must not have brought
    `@esotericsoftware/spine-core`; `rigc --version` must name `cli_core.ts`; and
@@ -949,13 +979,13 @@ that has a `package.json` of its own, and runs it in three phases (issue
    page, print no `FAIL` line, print the rules the fixture reaches, and report
    `A00_ROUNDTRIP_PARSE` as a SKIP. Anything else is `SMOKE_CORE_ENTRY_BUILDS`,
    a fault of the case with the first lines the build printed
-   ([#1178](https://github.com/firejune/rigc/issues/1178): until then a non-zero
+   ([#1178](https://github.com/rig-c/core/issues/1178): until then a non-zero
    exit here was a `HOLE`, and a `HOLE` does not move the exit code, so a package
    whose installed `build` was broken printed green). It runs with `--report` beside
    `--out`, and the document it writes must parse, say `build-report/1`, `build`
    and the `model` supplier, and carry one gate per summary line printed with
    that line's figures — anything else is `SMOKE_CORE_BUILD_WRITES_ITS_REPORT`
-   ([#1213](https://github.com/firejune/rigc/issues/1213)).
+   ([#1213](https://github.com/rig-c/core/issues/1213)).
 2. **The runtime installed beside it**, at the version the installed
    `package.json` declares as its devDependency. The same `rigc --version` must
    now name `cli.ts`, and the build runs through the round trip: compile, the
@@ -977,7 +1007,7 @@ that has a `package.json` of its own, and runs it in three phases (issue
    build from the install (*The import surface*, `MQ45`), `rig-c/core`
    poses its setup pose from the install and again from a vite browser
    bundle of the entry that resolved no node module (*The import surface*,
-   [#1275](https://github.com/firejune/rigc/issues/1275)), and `rigc render`
+   [#1275](https://github.com/rig-c/core/issues/1275)), and `rigc render`
    and `rigc check` run without it on the
    round-tripped build — the same bytes as the core entry's, by the comparison
    above, and read from that side so a broken core build goes red at one step
@@ -1020,7 +1050,7 @@ its symbols, so renaming a symbol another shipped module imports breaks that
 importer too. The plant once renamed `headerBoxNumber`, which an assertion body
 imports, and `rigc --version`, both builds, render and the skills died with it
 while the case stayed green by reading only the import surface
-([#1184](https://github.com/firejune/rigc/issues/1184)); it now renames a
+([#1184](https://github.com/rig-c/core/issues/1184)); it now renames a
 symbol nothing inside the package imports and must go red at the
 observed-symbol probe alone. A package whose own import does not resolve is
 what `src/validate.ts` out of the packed tree already shows. A plant case is
@@ -1032,7 +1062,7 @@ the first time it ran — `new URL('.', import.meta.url).pathname` is
 percent-encoded, so a generator written the way the gallery's `make_parts.ts`
 scripts were then written writes into a directory called `install%20smoke`. The
 25 sites that were written that way were repaired in
-[#558](https://github.com/firejune/rigc/issues/558) and `CUR32` now refuses a new
+[#558](https://github.com/rig-c/core/issues/558) and `CUR32` now refuses a new
 one; the fixture keeps the correct spelling, and the comment beside it, because
 this case is what found the defect in the first place.
 
@@ -1067,7 +1097,7 @@ Bun the action resolves that day. Beside it, the `installs-matrix` job in
 operating systems and the declared minimum Bun: a macOS runner, a Windows
 runner, and Linux on the Bun `engines.bun` states — 1.2.0, on which the whole
 battery, plants included, was measured green on macOS before the job existed
-([#1214](https://github.com/firejune/rigc/issues/1214)). It is not a required
+([#1214](https://github.com/rig-c/core/issues/1214)). It is not a required
 check. A red macOS or Windows leg names a platform the package does not yet
 install and run on; a red minimum leg means something in the tree now needs a
 newer Bun than `engines` promises, and either that call or the floor moves.
@@ -1106,7 +1136,7 @@ first moment its `dist.tarball` answered:
 
 ¹ **[observed, from a second machine]** — a poll of the `dist.tarball` URL taken
 by hand beside the run, recorded in
-[#833](https://github.com/firejune/rigc/issues/833); nothing in the run's own
+[#833](https://github.com/rig-c/core/issues/833); nothing in the run's own
 log times the tarball, because the script that ran then did not ask for it. What
 the run's log does carry agrees: its wait saw the packument at 09:08:37Z, its
 first `npm pack` failed a second later, and the dispatch re-run at 09:14:20Z
@@ -1118,7 +1148,7 @@ There is no constant in that and nobody has promised one, so the step passes
 printing how long it has been asking and which piece it is still missing.
 
 📦 **"Served" means the fetch a case makes has succeeded** (issue
-[#833](https://github.com/firejune/rigc/issues/833)). Each attempt asks
+[#833](https://github.com/rig-c/core/issues/833)). Each attempt asks
 `npm view <spec> dist.tarball`; once the packument answers, the same attempt
 runs `npm pack <spec>` — the fetch itself, through npm's own configuration,
 cache and integrity check — and the wait ends only on a non-empty tarball. The
@@ -1154,13 +1184,16 @@ skips all three (`CUR119`). By hand, from a checkout of the tag:
 
 ```sh
 bun run smoke -- --source registry --version <version> --case clean
-bun run smoke -- --source registry --version <version> --case clean --alias spine-rigc
+bun run smoke -- --source registry --version <version> --case clean --alias spine-rigc --alias @rig-c/core
 ```
 
 The second line is the one the workflow runs: after the case, it fetches the
-same version under the alias — within what is left of `--wait`, asked at least
-once — and holds its unpacked files to the ones the case installed
-(`SMOKE_ALIAS_CARRIES_THE_SAME_FILES`). The alias is compared rather than
+same version under each alias — within what is left of `--wait`, asked at least
+once — and holds its unpacked files to the ones the case installed, one
+`SMOKE_ALIAS_CARRIES_THE_SAME_FILES` line per alias. `--alias` is given once per
+name rather than as one list, the shape every other flag of the smoke has, so
+each name stays the one token after its own flag — which is how `CUR122` reads
+the workflow's calls back against `ALIASES`. An alias is compared rather than
 installed a second time: identical files are the stronger claim, and the
 comparison takes seconds. An alias that differs is exit `1`; one the registry
 has not served yet is exit `3` when the case itself was green.
@@ -1178,11 +1211,14 @@ git checkout vX.Y.Z              # the tagged tree
 bun install --frozen-lockfile
 bun run fetch-examples           # the corpus the selftest in prepublishOnly reads
 npm publish                      # runs prepublishOnly, then asks for the OTP
-npm publish "$(bun scripts/alias_tarball.ts pack --name spine-rigc --out ../alias)"   # the alias, from the same tree
+npm publish "$(bun scripts/alias_tarball.ts pack --name spine-rigc --out ../alias-spine-rigc)"   # each alias, from the same tree
+npm publish "$(bun scripts/alias_tarball.ts pack --name @rig-c/core --out ../alias-rig-c-core)" --access public
 ```
 
-`npm publish` takes no flags here — `publishConfig.access` in `package.json`
-already says `public`. This is how `spine-rigc@0.2.1` shipped. It authenticates
+The package's own `npm publish` takes no flags here — `publishConfig.access`
+in `package.json` already says `public`; the scoped alias passes
+`--access public` as the workflow does, because a scoped name is the one whose
+default is restricted. This is how `spine-rigc@0.2.1` shipped. It authenticates
 as a logged-in human with a one-time password, which "require two-factor
 authentication and disallow tokens" permits; what that setting rules out is
 doing this from a script, unattended. Reach for it when the automation is broken
@@ -1216,7 +1252,7 @@ GitHub App, and this repository deliberately does not use one:
 Two things that follow from this, both learned the hard way:
 
 - **How to approve, and why nothing else clears the check.** Every cut:
-  `gh api -X POST repos/firejune/rigc/actions/runs/<id>/approve`, or **Approve
+  `gh api -X POST repos/rig-c/core/actions/runs/<id>/approve`, or **Approve
   and run** in the Actions tab. A push of your own to the release branch —
   merging `main` in to resolve a conflict — changes nothing about this; it
   produces another run needing the same approval. Until one is approved and
@@ -1232,7 +1268,7 @@ Two things that follow from this, both learned the hard way:
   `gh pr view <n> --json headRefName`.
 
 If a rendered check is ever wanted anyway, it takes no edit to `release.yml`:
-create a fine-grained personal access token scoped to `firejune/rigc` with
+create a fine-grained personal access token scoped to `rig-c/core` with
 **Contents: read and write** and **Pull requests: read and write**, store it as
 the repository secret `RELEASE_PLEASE_TOKEN`, and the workflow picks it up
 (`secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN`). The cost is a

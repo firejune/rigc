@@ -454,14 +454,14 @@ export function foldPrecedes(
  * minimum alone cannot answer the question an author actually has: `degrees` is
  * the same number whether a whole band of the mesh reaches the limit together
  * or one triangle does, and those are a form and a bad texel respectively
- * ([#412](https://github.com/firejune/rigc/issues/412),
+ * ([#412](https://github.com/rig-c/core/issues/412),
  * `bench/studies/2026-09-05-noise` §6).
  *
  * ⚠️ And a band is not sufficient evidence of a form either, which is what
  * `stepShare` is here for: an OUTLINE is a band, so a mesh whose ceiling is set
  * by the occlusion edge of a cut-out reads `p1/degrees` near 1 and a `depthStep`
  * of most of the sheet's range — both of the older figures reading *healthy* on
- * the same measurement ([#448](https://github.com/firejune/rigc/issues/448)).
+ * the same measurement ([#448](https://github.com/rig-c/core/issues/448)).
  *
  * ⛔ Neither figure changes `degrees`, and neither is a threshold. rigc does not
  * have the authority to guess its input away, so nothing here filters,
@@ -499,7 +499,7 @@ export interface FoldLimit {
    * triangle that folds first.
    *
    * ⭐ The figure that tells a form from a cliff, and it is the one reading the
-   * other two cannot give ([#448](https://github.com/firejune/rigc/issues/448)).
+   * other two cannot give ([#448](https://github.com/rig-c/core/issues/448)).
    * A form has a slope, so refining the lattice halves the step and halves this
    * with it while the angle converges. A **discontinuity has no slope**: the
    * step stays the whole range however fine the lattice gets, this figure pins

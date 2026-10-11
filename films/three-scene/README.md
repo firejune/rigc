@@ -76,7 +76,7 @@ scripts:
 | `portrait-src/` is copied from `../../gallery/portrait` at the start of every run | In the scratchpad it was a copy somebody had already made. Copying it from the example it is a copy *of* keeps the art referenced rather than duplicated into `films/`, and makes the header's "unchanged, byte for byte" a fact each run re-establishes. The two were verified byte-identical when this landed. |
 | `mkdir -p probe` | Step 5's `tee probe/inkbbox.log` opens its log at pipeline start, before `measure_ink.ts` can create the directory. In the scratchpad `probe/` already existed from earlier work, so the ordering never showed. |
 | nothing else in `run.sh` | the version pin in step 0 is left at what the run used — see below |
-| `gif/assemble_gif.ts`, `gif/measure_ink.ts` and `gif/verify_gif.ts` each resolve the film's root with `fileURLToPath(new URL('../', import.meta.url))` where they used to read `new URL('../', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/firejune/rigc/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. |
+| `gif/assemble_gif.ts`, `gif/measure_ink.ts` and `gif/verify_gif.ts` each resolve the film's root with `fileURLToPath(new URL('../', import.meta.url))` where they used to read `new URL('../', import.meta.url).pathname` | `URL.pathname` is percent-encoded. Under a checkout whose path holds a space or a non-ASCII character these scripts created a sibling directory literally named `My%20Rigs`, wrote into it, and then failed with `ENOENT` on a directory that exists — so the film could not be re-run from such a checkout at all ([#558](https://github.com/rig-c/core/issues/558)). The URL each script builds is untouched; only its conversion to a path is. On an ASCII path the two spellings return the same string, trailing slash included, so no value any script computes moves and no output changes. |
 
 ## What re-ran, and what did not
 
@@ -96,11 +96,11 @@ changed, and **the output does not differ at all**: same `skeleton.json`, same
 line. So either published version cuts this film.
 
 **Not re-verified.** The trailer at the bottom of `run.sh` lists nine probe logs kept
-beside the film as evidence for claims in issue [#324](https://github.com/firejune/rigc/issues/324)'s
+beside the film as evidence for claims in issue [#324](https://github.com/rig-c/core/issues/324)'s
 landing comment. Only one of them, `probe/inkbbox.log`, is produced by a step in
 `run.sh`; the other eight came from ad-hoc commands during the film's making and there
 is no script here that regenerates them. Their conclusions are in the issues the trailer
-names — [#336](https://github.com/firejune/rigc/issues/336) (the loop seam against
-`--max`) and [#337](https://github.com/firejune/rigc/issues/337) (the last frame's time
+names — [#336](https://github.com/rig-c/core/issues/336) (the loop seam against
+`--max`) and [#337](https://github.com/rig-c/core/issues/337) (the last frame's time
 against the declared duration) — which is where they are durable. The trailer is kept as
 written so the list of what was measured is not lost.

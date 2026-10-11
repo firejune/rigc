@@ -644,7 +644,7 @@ it hands you, and every rule in them applies to a spec `ingest` wrote.
 
 A file from another Spine generation is the one case where transcription is not the
 first fallback: migrate it through the editor of its own generation first, as
-[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) §4
+[GENERATIONS.md](https://github.com/rig-c/core/blob/main/docs/GENERATIONS.md) §4
 states.
 
 ### 2.1 The workflow
@@ -707,7 +707,7 @@ the second is the one that costs a day:
   all, and then you are debugging your own incomplete work rather than the format.
 
 ⚠️ **When a kind turns out not to be expressible, stop and say so — that is a finding,
-not a blocker to route around.** [SURVEY_2026-08-22.md](https://github.com/firejune/rigc/blob/main/docs/SURVEY_2026-08-22.md) is the
+not a blocker to route around.** [SURVEY_2026-08-22.md](https://github.com/rig-c/core/blob/main/docs/SURVEY_2026-08-22.md) is the
 per-skeleton survey of exactly this. ⇒ Check the survey for your feature before
 concluding either way, and if it is genuinely absent, the shape of the answer is *"this export
 uses X, which the motion spec cannot say"* with a pointer — not a silent
@@ -869,7 +869,7 @@ catches a whole-figure scale error, and it is the only one that does.
 ### 2.4 The worked precedent, and what to take from it
 
 Three transcriptions of official Spine exports live in this repository under
-[`bench/transcriptions/`](https://github.com/firejune/rigc/tree/main/bench/transcriptions/)
+[`bench/transcriptions/`](https://github.com/rig-c/core/tree/main/bench/transcriptions/)
 — `3-timing-and-spacing` (3 bones, 2 slots, 2 animations, 69 keys, every curve raw),
 `6-arcs` (weighted meshes, mesh `edges`, four 4.3 transform constraints) and
 `spineboy` in both `ess` and `pro`. They are **worked examples you are meant to read**,
@@ -1482,7 +1482,7 @@ every directory the fetch produced.
 the per-directory terms.
 
 The transcription these recipes start from is
-[`bench/transcriptions/3-timing-and-spacing/`](https://github.com/firejune/rigc/tree/main/bench/transcriptions/3-timing-and-spacing/),
+[`bench/transcriptions/3-timing-and-spacing/`](https://github.com/rig-c/core/tree/main/bench/transcriptions/3-timing-and-spacing/),
 unmodified. The re-pivoted, renamed and extended variants in §4 were built from copies
 of it; none is committed, because each is an illustration of an edit rather than a
 transcription of anything.

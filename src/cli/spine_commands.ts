@@ -28,7 +28,7 @@ import { dirname, join, resolve } from 'node:path';
 function repositoryUrl(): string {
   const repo = readPackageMeta()?.repository;
   const url = typeof repo === 'string' ? repo : repo?.url;
-  return (url ?? 'https://github.com/firejune/rigc').replace(/^git\+/, '').replace(/\.git$/, '');
+  return (url ?? 'https://github.com/rig-c/core').replace(/^git\+/, '').replace(/\.git$/, '');
 }
 
 // ---------------------------------------------------------------------------

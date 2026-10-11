@@ -208,7 +208,7 @@ specs are excluded *on top of* item 9, not by it** — the ladder lets a success
 inherit a prior attempt's specs (owner ruling 2026-08-28), and a pilot run is not a
 successor attempt: it measures an agent authoring from zero, so the whole directory
 stays out. The prior attempt's measures are forbidden either way.
-🆕 **The second half of that rule is dated 2026-08-29** ([#174](https://github.com/firejune/rigc/issues/174)):
+🆕 **The second half of that rule is dated 2026-08-29** ([#174](https://github.com/rig-c/core/issues/174)):
 a launch prompt **names no surface the lists do not name and pastes no threshold**. Four
 recorded collisions all had that shape, and the protocol's *What a run may read* carries
 them in a table. A prompt that wants the run to know the bar points at the clause card.

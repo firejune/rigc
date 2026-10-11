@@ -334,7 +334,7 @@ function ceilingPair(axis: { positive: FoldLimit | null; negative: FoldLimit | n
  * above the minimum. A ceiling set by one bad texel has 99 % of the mesh
  * surviving to the form's angle while the reported number collapses — 64.58°
  * against 6.08° for one texel of 160,000, with the percentile unmoved at 64.80°
- * in both ([#412](https://github.com/firejune/rigc/issues/412),
+ * in both ([#412](https://github.com/rig-c/core/issues/412),
  * `bench/studies/2026-09-05-noise` §6).
  *
  * Three spellings, three different claims, for the reason `ceilingPair` prints

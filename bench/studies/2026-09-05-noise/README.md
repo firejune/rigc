@@ -451,7 +451,7 @@ see most of the sheet, which is not a defence anyone should want.
 
 🚨 **Not a filter.** The standing rule is that rigc does not have the authority
 to guess its input away, learned on this very feature the day before
-([#391](https://github.com/firejune/rigc/issues/391): a depth threshold picking
+([#391](https://github.com/rig-c/core/issues/391): a depth threshold picking
 the jiggle region was plausible, green and wrong; the fix was a hand-painted
 mask). Smoothing a depth map before measuring it would make the reported ceiling
 describe a surface **that is not the one the deform key will be built from** —

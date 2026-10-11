@@ -8,9 +8,9 @@ measured case: in August 2026 a deliberately small model — Gemini 3.7 Flash on
 the Antigravity harness — authored a benchmark rung over a **3 h 01 m** session,
 observed by the operator; the harness kept no tool transcript, so the run is
 recorded **Unverified** on honesty, with two of its four tiers *unevidenced*
-([the verdict](https://github.com/firejune/rigc/blob/main/docs/pilot/verdicts/2026-08-24-rung3-1.md)
+([the verdict](https://github.com/rig-c/core/blob/main/docs/pilot/verdicts/2026-08-24-rung3-1.md)
 states all of that). Every stumble below is one it actually made, priced by the instruments in
-[PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md)'s protocol. A large model makes fewer of these mistakes
+[PILOT.md](https://github.com/rig-c/core/blob/main/docs/PILOT.md)'s protocol. A large model makes fewer of these mistakes
 unprompted; the clauses cost you three lines and make the small model's run
 land and the large model's run land cleaner.
 
@@ -27,7 +27,7 @@ For ordinary use (not a benchmark), the whole prompt is short:
 
 Then add the clauses below. If you are running the **benchmark**, do not
 improvise a prompt at all — hand the agent
-[pilot/rung3-runner-prompt.md](https://github.com/firejune/rigc/blob/main/docs/pilot/rung3-runner-prompt.md) verbatim; it
+[pilot/rung3-runner-prompt.md](https://github.com/rig-c/core/blob/main/docs/pilot/rung3-runner-prompt.md) verbatim; it
 carries the honesty rule, and an improvised summary of that rule is how a run
 stops being scorable.
 
@@ -101,7 +101,7 @@ prompt for the six clauses above and then let the agent work.
 
 ## If you are scoring the run
 
-That is a different document: [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is the protocol,
+That is a different document: [PILOT.md](https://github.com/rig-c/core/blob/main/docs/PILOT.md) is the protocol,
 `pilot/rung3-runner-prompt.md` is the exact prompt, and the evaluator sheet it
 names is for the judge only. The one rule that reaches this page: **never put
 baseline figures, reference structure, or previous runs' measures into the

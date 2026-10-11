@@ -185,7 +185,7 @@ const SPARK = `
  * minimal case). Running the fill to `x = 0` and `x = 104` avoided it, because
  * the sampler CLAMPS at a page edge and so had nothing dark to interpolate into.
  *
- * [Issue #292](https://github.com/firejune/rigc/issues/292) fixed the sampler —
+ * [Issue #292](https://github.com/rig-c/core/issues/292) fixed the sampler —
  * it interpolates premultiplied now, and a transparent texel gets no vote in the
  * colour — so the flush sides are kept as they are rather than because they have
  * to be. ⚠️ **Do not read them as a pattern to copy.** A plate whose art wants a

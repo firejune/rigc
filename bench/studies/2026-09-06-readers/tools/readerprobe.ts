@@ -7,8 +7,8 @@
  * data.local, Slider.offsets)`. If an author states a range that includes
  * readings the runtime cannot return, that part of the dial is dead: it never
  * selects the frames it was meant to, and nothing at runtime reports it. That is
- * the defect [#405](https://github.com/firejune/rigc/issues/405) and
- * [#417](https://github.com/firejune/rigc/issues/417) each closed for ONE reader
+ * the defect [#405](https://github.com/rig-c/core/issues/405) and
+ * [#417](https://github.com/rig-c/core/issues/417) each closed for ONE reader
  * — `FromRotate` under `local: false`. This measures the other eleven cells.
  *
  * ## Measured, not derived

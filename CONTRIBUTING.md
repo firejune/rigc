@@ -268,7 +268,7 @@ the tarball runs* is the argument.
   `--work` is yours and is never removed.
   The file is written by that command and never by hand: a copy whose hashes all
   agree but whose bytes do not is refused as stale too
-  ([#930](https://github.com/firejune/rigc/issues/930)).
+  ([#930](https://github.com/rig-c/core/issues/930)).
 
 ## Commits
 
@@ -291,7 +291,7 @@ missing is that it also ships. Either remedy clears it — a type the changelog
 shows, or a `Release-As:` footer in a **commit message on the branch**, since the
 squash body is made of the commits and not of the pull request body. A change
 that touches nothing in the package is unaffected whatever its type
-([#516](https://github.com/firejune/rigc/issues/516)).
+([#516](https://github.com/rig-c/core/issues/516)).
 
 ⚠️ **A control that leaves has to be named by the change that removes it.** The
 `removals` job in CI reads the control names on your branch against the ones its

@@ -57,15 +57,15 @@ provenance for a reader of record, and following one can arrive at a stored cand
 or at the **derivation** of the gate a verdict is read against, none of which a run may
 open. ⭐ The gate's **clause statements** are a different matter and a run may read them:
 they are in
-[GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md), which is
+[GATE.md](https://github.com/rig-c/core/blob/main/docs/GATE.md), which is
 repository material and not in the published package — item 11 of the allowed list — the
 measure, the comparator, the number and the SKIP semantics, with no recorded figure in it.
 So: read the
 document, take its numbered sections as the input, and leave its footprints to whoever
 is maintaining it. The rule this states is that an **allowed-reading surface has to be
 closed under reading**; the criterion behind it is under *The honesty rule* in
-[LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md), and the enumerated allowed and forbidden lists are in
-[bench/runs/README.md](https://github.com/firejune/rigc/blob/main/bench/runs/README.md),
+[LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md), and the enumerated allowed and forbidden lists are in
+[bench/runs/README.md](https://github.com/rig-c/core/blob/main/bench/runs/README.md),
 which is also repository material and not in the published package,
 *What a run may read* — the prompt that starts a run quotes them
 outright, which is the copy that binds.
@@ -1076,7 +1076,7 @@ is a `BLOCK GENERATION_UNKNOWN`, never rounded to the nearest: a catalog that ro
 handed 19 skeletons labelled `3.8.99` a 4.2 runtime and every one of them posed as NaN
 (row 7). Reading a file with *that generation's own* defaults is not in this tool —
 re-export as 4.3, or transcribe by hand ([INGEST.md](INGEST.md) §2).
-[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) is
+[GENERATIONS.md](https://github.com/rig-c/core/blob/main/docs/GENERATIONS.md) is
 the whole policy, and the editor migration it names.
 
 📝 **Do not delete the `note`.** Both written specs carry one saying the file is
@@ -1160,7 +1160,7 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   0.000 — is what says the shot is right and the name is yours. The measures, the
   refusals and what makes the block absent instead of guessed:
   [INGEST.md](INGEST.md) §1.3.1, and *The measure inventory* in
-  [BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md),
+  [BENCHMARK.md](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md),
   which is repository material rather than part of this package.
 
   🔍 **The wiring is compared by name too, not only the rosters** (issue #1085).
@@ -1185,7 +1185,7 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   🚨 What it certifies is the **default skin** unless you pass `--skin <name>`:
   on a rig with named skins, a run with no skin draws none of their art on either
   side and reports a perfect `0.0000` about it (**§9**).
-- **`bench <rung>`** runs one rung of [the benchmark ladder](https://github.com/firejune/rigc/blob/main/docs/LADDER.md): validate
+- **`bench <rung>`** runs one rung of [the benchmark ladder](https://github.com/rig-c/core/blob/main/docs/LADDER.md): validate
   under `--profile spine`, then diff against that rung's reference export, and with
   `--frames` the `check` table as well. Unlike the three above it is a **finish
   line, not a loop**: it opens the reference export, so a run that consults it and
@@ -1840,7 +1840,7 @@ column restated beside each row here, is what to act on.
 payloads in this guide are written to illustrate a field, never copied out of a
 reference export — an example lifted from one would be handing an authoring agent an
 answer to the rung it is standing on, which is the rule §10.6 states and the honesty
-rule in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) turns on. If a snippet here matches a reference file,
+rule in [LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) turns on. If a snippet here matches a reference file,
 that is a defect in this guide: report it.
 
 ### 3.1 `skeleton` — the header
@@ -2006,7 +2006,7 @@ is the half that is read exactly as stated: omit a `width` and the header carrie
 box, which `bounds_present` is the measure of. Both are reported and gate nothing, for
 the reason every reported measure is: no reading of the rendered frames could have
 decided a setup-pose bounding box. The measure inventory that says so lives in
-[BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md), which
+[BENCHMARK.md](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md), which
 is repository material and not in the published package.
 
 ### 3.2 `bones` — Spine's bone list
@@ -2318,7 +2318,7 @@ there is nothing to measure it against.
 vertices, and an octagon's sides pass `R · cos(π/8)` from its centre — so rim
 vertices placed *on* a round silhouette leave the ink outline between the spokes
 undrawn, and every assertion passes.
-[`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)'s
+[`gallery/squash`](https://github.com/rig-c/core/tree/main/gallery/squash)'s
 README carries the inradius arithmetic, both coverage readings, and the rim move
 that fixes it.
 
@@ -3557,7 +3557,7 @@ unresolved `spacingMode` fails the `=== Length` test and spaces bones as though
 `Fixed` had been asked for; an unresolved `rotateMode` is neither `Tangent` nor
 `ChainScale`, so bones follow the curve and never turn along it.
 
-🖼️ **Worked example: [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride)** — a trolley on a drawn rail, moved
+🖼️ **Worked example: [`gallery/ride`](https://github.com/rig-c/core/tree/main/gallery/ride)** — a trolley on a drawn rail, moved
 by a `position` timeline, with `groups` + `stagger` keying the wheels.
 
 #### 3.5.2 `slider` — a value that drives an animation
@@ -3988,7 +3988,7 @@ shows at the top of it, where a 60° turn then applies at 1.00000008 s rather th
 one — pick `to`/`scale` so the endpoint lands **inside** the duration rather than
 exactly on it.
 
-🖼️ **Worked example: [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look)** — a face
+🖼️ **Worked example: [`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look)** — a face
 whose yaw and pitch are two sliders sharing one bone, both `local: true` and both
 `additive: true`, with each range derived from the turn ceiling `build` reports
 for that mesh (§3.4) rather than chosen. [`docs/FACE.md`](FACE.md) §8's *The turn
@@ -5046,7 +5046,7 @@ consumer's process, which is late. `A34_CONSTRAINT_TIMELINE_TARGETS` checks the
 same two from the other side, plus one thing the compiler cannot produce and a
 hand-edited file can: an **empty key array**, which the parser skips in silence.
 
-🖼️ **Worked example: [`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk)** — two mirrored two-bone leg chains
+🖼️ **Worked example: [`gallery/walk`](https://github.com/rig-c/core/tree/main/gallery/walk)** — two mirrored two-bone leg chains
 whose `mix`, `softness` and `bendPositive` are keyed through a stance and a swing,
 with the README's table of what each key is for.
 
@@ -5272,14 +5272,14 @@ field name twice.
 🖼️ **Worked examples, and they use a deform for four different things** — all
 four are repository material rather than part of the published package, so the
 links go to GitHub.
-[`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) — a 9-vertex ball squashed about its contact point,
+[`gallery/squash`](https://github.com/rig-c/core/tree/main/gallery/squash) — a 9-vertex ball squashed about its contact point,
 from the two affine transforms its keys **state**.
-[`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) — a 2.5D head turn, where the keys are the
+[`gallery/portrait`](https://github.com/rig-c/core/tree/main/gallery/portrait) — a 2.5D head turn, where the keys are the
 **projection of a yaw** rather than a squash: two grid meshes whose columns are
 placed to sample a cosine, and a measured account of the angle past which the
-mesh folds. [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) — a leaf whose blade bends on a
+mesh folds. [`gallery/flex`](https://github.com/rig-c/core/tree/main/gallery/flex) — a leaf whose blade bends on a
 `contour` mesh no bone can bend, and the measurement that picked the model.
-[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) — the
+[`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod) — the
 projection on the **other** axis (a `pitch`, §4.11.1), and a **travelling wave**
 whose only moving parameter is `phase`: each of its three meshes is laid out for
 the model that bends it, so the rows are the argument rather than the vertex
@@ -5599,7 +5599,7 @@ every ratio, so the two blocks can be lined up band against band instead of wors
 against worst — which on this build would have paired the inverted band with an
 untouched one and called the difference mild.
 
-📘 **[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)'s
+📘 **[`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod)'s
 README is a second reading of the same block** (repository material, hence the
 GitHub link), and it is the one where the figures are checked from two directions
 at once. Its `pitch` band ratios are *derived* from the mesh's own row table and
@@ -6256,7 +6256,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `region "00_stage" of <pack>.atlas (declared 256x256 by its offsets) is 256x256 but the manifest window for "stage" is 250x256` | R5 — the row above under `--atlas-in`, and the prefix is the whole point: it says which of the two rigc **measured**, because the remedy differs. A bare path is a loose PNG it opened and you re-export; a `region … of <pack>` was read out of the pack, and you repack or aim the part at another region. This is the size row of §0.2's table, with the message it actually prints |
 | `duplicate region name "X"` | two PNGs share a basename; one part, one page, one name |
 | `"b/X.png" and the art already atlased as region "X" are two different files — … Rename one of the PNGs.` | R5 — the region name is the basename, so only one of the two can hold it. Rename a file (not a placeholder: the placeholder is free to repeat) |
-| `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured and atlased, one per file whichever skin names it, so this says rigc skipped one. Report it on [the tracker](https://github.com/firejune/rigc/issues). The `#555` the message itself cites is the change that made one-per-file an invariant, not a place to file against |
+| `the image "X.png" was never added to the atlas, so there is no region "X" …` | nothing in the spec — every image an attachment names is measured and atlased, one per file whichever skin names it, so this says rigc skipped one. Report it on [the tracker](https://github.com/rig-c/core/issues). The `#555` the message itself cites is the change that made one-per-file an invariant, not a place to file against |
 | `motion spec names archetype "A" but the rig spec at … is called "B"` | make `archetype` equal the rig's `name` |
 | `animation "A" declares duration Ns but its last key is at Ms` | R7 — fix whichever of the two you meant |
 | `animation "A" slot "X" attachment: key at Ns is Ms past the declared duration Ds` | §4.5 — the key is past the end of the animation and nothing will sample it. Move the key onto `duration`, or raise `duration` |
@@ -6451,7 +6451,7 @@ Fix A00 and run it again.
 | `A04_MESH_TRIANGLES_AND_ENCODING` | both | authored mesh geometry: triangle count not a multiple of 3, an index out of range, or a `vertices` length that disagrees with `uvs` (the weighted/unweighted trap) **SKIP** when the skeleton carries no mesh attachment |
 | `A05_CURVE_ARRAY_LENGTH` | both | a raw `curve` with the wrong number of values, a non-finite number in one, or a curve on a timeline that cannot take one. Four numbers **per value channel**. **SKIP** when no animation carries a timeline at all. Timelines with no `curve` on any key still PASS: every timeline name is checked against the channel table whether or not a curve sits on one Under `cli_core.ts build` the same clause runs over the text the emitter wrote and prints this line in the same words (`RC28`). |
 | `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` | both ◑ | the atlas `size:` disagrees with the PNG on disk — the message names the ratio it measured on **each** axis and the header that states the same art truthfully, and §0.2 has the whole of it: a runtime maps a region as a fraction of the DECLARED size and never reads the texture's own, so such a page draws, and what it breaks is every reader that addresses the page in texels. A uniform ratio is a `size:`/`scale:` pair away from honest and the message prints it; two ratios are not, because `scale:` carries one number, and the message says so rather than offering a header that would not work. **Or** a region's rectangle is not inside the page it names — rotation honoured, so a region at `rotate: 90` or `270` occupies `height x width` of the page and a region that fits only because it is turned is inside it. The message names the region, the rectangle it occupies, the page and the page's size. That clause is **validity** and runs under both profiles: a rectangle outside its page makes `u2 > 1` and samples whatever the wrap mode returns, and `--atlas-in` already refuses the same rectangle at compile time (§0.2). Under `spine-html` also: `pma` and rotation. Two regions on one page over the same texels was a clause here until issue #1099 and is `A49`'s now, read over what the two regions draw rather than over their rectangles. **Or** the page file is not a PNG at all, and then nothing about its size is measured: the message carries the page's path and the size the atlas declares, and names what the file is by its first bytes — one of WebP, JPEG, GIF, KTX, KTX2 by its signature, or no image format rigc recognises, the bytes in hex either way — or calls it **truncated** when it begins as a PNG and runs out before its `IEND`, or names the dimension when its `IHDR` states a width or height of **0**, which the format forbids (§0.2). **Or** the file reads as a PNG and its **image data cannot be decoded** — its compressed stream is inflated (not unfiltered) and the decoder refuses it, or it inflates short of the rows the header states — and the message names the file and carries the decoder's own words (`the decoder stops with "incorrect data check"`). That clause is validity too: nothing in rigc can read such a page back — and its failure is the **one** line that names such a page: `A19` SKIPs over it and points here rather than naming it again, the way `A17` alone names a missing file. **SKIP** when the atlas declares no page — and, rather than a PASS, when a page's file is **not on disk** and nothing else here failed: that page's size was not measured, so the reason names the pages not read (or says none was, when every file is missing) and points at `A17`, which fails naming each missing file — one missing file is named once, by the rule whose subject it is. With another `A06` failure standing, the missing page is `A17`'s alone |
-| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. Three sentences are about blank lines and name three different repairs: `line 1: the file begins with a blank line` (or `with N blank lines` for a run, one finding) is a blank before the first page name — delete it; `line N: the file ends with a blank line` (or `with N blank lines`, one finding) is a blank after the last page block's final line — delete it, since rigc ends the file on one newline; `line N: consecutive blank lines` is two blank lines side by side between the first page and the last — delete one. None of the three is `the last page block declares no region`, which means a page name and its fields with no region after them. rigc writes none of the three: under `--atlas-in` the pack's blank lines are put in rigc's shape on re-emission (§0.2), so any of them means a file rigc did not write, handed to `validate`. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/firejune/rigc/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` Under `cli_core.ts build` the same clause runs over the text the emitter wrote and prints this line in the same words (`RC28`). |
+| `A07_ATLAS_TEXT_SHAPE` | both | atlas text: a region name with stray whitespace, or a blank line splitting a page block. rigc writes the atlas, so this means a hand-edited file. Three sentences are about blank lines and name three different repairs: `line 1: the file begins with a blank line` (or `with N blank lines` for a run, one finding) is a blank before the first page name — delete it; `line N: the file ends with a blank line` (or `with N blank lines`, one finding) is a blank after the last page block's final line — delete it, since rigc ends the file on one newline; `line N: consecutive blank lines` is two blank lines side by side between the first page and the last — delete one. None of the three is `the last page block declares no region`, which means a page name and its fields with no region after them. rigc writes none of the three: under `--atlas-in` the pack's blank lines are put in rigc's shape on re-emission (§0.2), so any of them means a file rigc did not write, handed to `validate`. ⚠️ An atlas with **no page block at all** — no non-blank line — is not one of those: its subject is absent, so this reports **SKIP** naming the byte count it read, and so do the four rules below whose subject is a page ([#608](https://github.com/rig-c/core/issues/608)). A rig whose skins need no art writes exactly that file (§3.4), and before #608 this row refused it with two findings naming a page block that was not there. What an empty atlas does **not** excuse is an attachment that wants a region out of it — that is `A08` Under `cli_core.ts build` the same clause runs over the text the emitter wrote and prints this line in the same words (`RC28`). |
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | three things, and the message says which: an attachment whose `path` names **no region** of this atlas; a `path` carrying **stray whitespace**, printed quoted so you can see it; an **atlas region name** carrying stray whitespace (`A07` names that same line with its line number). The first two are read off the raw file **before** the loader is asked, so the miss is named here with the skin, the slot, the placeholder and the attachment's own name — the four things `AtlasAttachmentLoader`'s own `Region not found in atlas: <path> (attachment: <name>)` does not carry. There is no `spine-html` clause here — a placeholder is free to differ from the region its `path` names **SKIP** when no attachment names a region *and* the atlas declares none — both of its subjects at once |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the loaded duration ≠ the declared one, or the two sides disagree about which animations exist (R7). Asymmetric by design: a frame of slack for an animation that ends early, and none worth the name for a key *past* the declared end, which is the same rule §4.5 states at compile time — held here against a skeleton the compiler never saw. **SKIP** when neither side has an animation at all — a static rig has no duration |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping the animation produced a pose that is not finite. It reads the **whole world transform** — all six terms `a`, `b`, `c`, `d`, `worldX`, `worldY` of every bone — then every vertex of every region and mesh the slots show, at the **setup pose** and at every stepped frame of every animation, through the same scan `render` refuses on, so the two cannot disagree. The detail names where (`the setup pose`, or `animation "x" frame i of 120 (t=…s)`), then the bone and the term (`bone "x" has a NaN`), or the slot, attachment and vertex (`vertex 3 has x Infinity`) when every bone is finite and a vertex is not — a `scaleX` chain whose product stays under the largest double does that. A bone at `rotation: 1e309` has a finite position and a `NaN` matrix, which is why the position alone is not read. Look for a number past the largest double, a degenerate curve or a zero scale. 🦴 **It also poses every bone `inherit` key at its own time**: the runtime resolves a mode by folding the case of its first letter and nothing else, and a spelling that misses is stored as **NaN** — the world position stays finite, `updateWorldTransform` matches no mode, and the bone keeps the rotation, scale and shear it had. The detail names the animation, the bone, the key's time and its spelling, beside the five. A bone whose *setup* spelling misses poses no mode at all, and is named the same way from the stepping loop. Neither is reachable from a rig spec — `build` refuses both spellings by name (§5.1) — so on a green build this clause is about files rigc did not write. Which mode a correct spelling poses is not judged here, because the lookup that resolved it is the one that would be checked. 🧍 **A skeleton with no animation is still read**: its setup pose is the whole of what it shows, so A10 reads it — the world transform and the vertices as above, and the bone's mode and the slot colours a stepped frame is read for, which on a static rig nothing else would reach — and names it `the setup pose` (`the setup pose: slot "x" colour is non-finite`). The stepping half had nothing, and a PASS row carries no detail, so the stats line says so: `nanStepping=skipped`, beside `animations=0`. `A09` does not follow — a declared duration is a fact about an animation and nothing else, so a static rig still gives it nothing. **SKIP** only when the skeleton carries **no bone and no animation**: there is then no pose to read and nothing to step |
@@ -7470,13 +7470,13 @@ that drew the reference frames, onto the same pixel grid, and reports what diffe
 you specifically: it means **you may run `check` as often as you like** without
 your run ceasing to be an honest authoring run. It is a loop, in the way `build` is
 a loop. `bench` and `diff` against a rung's export are not — they read the answer,
-and [the ladder's honesty rule](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) makes them a finish line you reach once.
+and [the ladder's honesty rule](https://github.com/rig-c/core/blob/main/docs/LADDER.md) makes them a finish line you reach once.
 
 📌 **That is also why the MAE figures quoted through this section stay.** Every one of
 them is a candidate's own reading against rendered frames — the exam question, not the
 answer key — so none of them narrows a reference-side measure, and a guide that censored
 them would be teaching less for no gain in honesty. The criterion is under *The honesty
-rule* in [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md); what it *does* seal is a score written
+rule* in [LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md); what it *does* seal is a score written
 over a reference's own count, and no such figure appears here.
 
 🚨 **If you drive the runtime yourself, a bone's local transform lives on
@@ -9350,7 +9350,7 @@ read an absent `mixY` as that same `0`. *The key before's* is a sequence key's
   the same either way.
 
 ⚠️ **Why 4.3's defaults, when they are not every generation's** (row 4 of
-[GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md)'s
+[GENERATIONS.md](https://github.com/rig-c/core/blob/main/docs/GENERATIONS.md)'s
 table).
 An omitted physics `inertia` is 0.5 to the 4.3 parser and 1 to the 4.2 one, and that
 is exactly why a key is left out only against the parser rigc links: the file states
@@ -9729,7 +9729,7 @@ two things.
   with the `visibleShare` it was computed on. ⚠️ **`visibleShare` is a per-frame
   diagnostic and not a summary statistic** — it is measured through the fitted
   placements, so a median or a mean of it is not comparable across fits. §12.3 says
-  what that costs and [the `visibleShare` study](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
+  what that costs and [the `visibleShare` study](https://github.com/rig-c/core/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
   measures it — repository material, not shipped in the package.
 - **Hierarchy and attachment geometry**, so the search collapses. A child bone
   whose parent is already placed does not have four degrees of freedom: the rig
@@ -9909,7 +9909,7 @@ the answer landed and is *less* steady, not more (p99 0.6588 against 0.5592). �
 **The field is reporting a bistable fit faithfully.** What is safe: reading it beside
 its own residual, on its own frame — which is what it exists for. What is safe as a
 corpus statistic: a **maximum**, which saturates. Full method and evidence:
-[`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md).
+[`bench/studies/2026-09-03-visibleshare`](https://github.com/rig-c/core/blob/main/bench/studies/2026-09-03-visibleshare/README.md).
 
 And per part:
 
@@ -9967,7 +9967,7 @@ simply unused; a name the directory lacks is refused `no-part-image` by name.
   floor. Read it per frame beside its own residual. If a corpus statistic is
   needed, a **maximum** is the one that survives (it saturates), and it should be
   quoted with its spread. §12.3 carries the figures;
-  [`bench/studies/2026-09-03-visibleshare`](https://github.com/firejune/rigc/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
+  [`bench/studies/2026-09-03-visibleshare`](https://github.com/rig-c/core/blob/main/bench/studies/2026-09-03-visibleshare/README.md)
   carries the method.
 - ⚠️ **Setup draw order, on one frame.** A `drawOrder` timeline reorders your slots
   at runtime and this cannot know the time, so a candidate that has one is masked in

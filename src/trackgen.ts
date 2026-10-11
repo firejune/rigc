@@ -87,7 +87,7 @@ export interface TrackDeriveTurn {
    *
    * ⚠️ That sign is the one thing here no assertion can check, and this comment
    * had it backwards until issue #350's neighbour
-   * ([#351](https://github.com/firejune/rigc/issues/351)). The closed form is
+   * ([#351](https://github.com/rig-c/core/issues/351)). The closed form is
    * the arbiter: `d = (x−about)·(cos t − 1) − (depth − carried)·sin t` gives a
    * part with `depth > carried` a **negative** residual, and FACE §3 makes
    * exactly that the nose diagnostic — *if the nose's residual is not negative,

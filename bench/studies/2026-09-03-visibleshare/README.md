@@ -1,7 +1,7 @@
 # `visibleShare` against the fit it was measured at
 
 - date: 2026-09-03
-- issue: [#323](https://github.com/firejune/rigc/issues/323)
+- issue: [#323](https://github.com/rig-c/core/issues/323)
 - subject: `chainfit`'s `visibleShare` / `visibleShareAtFit` — [`src/chainfit.ts`](../../../src/chainfit.ts)
 - corpus: all **147** committed `ess` frames of [`bench/reference/spineboy`](../../reference/spineboy/ess), 16 sets
 - candidate: the 2026-09-03 run 2's committed [`spine/skeleton.json`](../../runs/2026-09-03-spineboy-2/spine/skeleton.json)
@@ -14,7 +14,7 @@
 table (*"mean visible share 24.8 % vs floor 25 %"*, *"reads rear-bracer at 0.1 %
 visible share"*) and [`docs/LADDER.md`](../../../docs/LADDER.md)'s run-2 agreement
 table, which files 1,046 readings into five visibility bands and reads the median
-`|mine − hinge|` of each. [PR #322](https://github.com/firejune/rigc/pull/322) then
+`|mine − hinge|` of each. [PR #322](https://github.com/rig-c/core/pull/322) then
 saw the quantity move **0.36 → 0.89** on one frame when the objective under it moved
 by **0.0008** of residual — so #323 asked whether a median of it is a number yet.
 
@@ -334,7 +334,7 @@ docs edit:
 1. **A `caveats` line in the report itself.** The report's own `caveats` array is
    where a consumer reading JSON would meet this, and it is a one-line addition to
    `src/chainfit.ts`. Left out on purpose: `chainfit`'s `src` is being extended
-   concurrently ([#326](https://github.com/firejune/rigc/issues/326)), and a
+   concurrently ([#326](https://github.com/rig-c/core/issues/326)), and a
    one-line string is not worth a merge race.
 2. **A fit-independent share.** The share reported at a *stated covering placement*
    — the rig's own prediction rather than the fit — would be a different and

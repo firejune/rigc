@@ -1,19 +1,21 @@
 /**
- * The package under its second name: the same bytes as the tarball this tree
+ * The package under another name: the same bytes as the tarball this tree
  * packs, with the `name` field of `package.json` changed and nothing else.
  *
  *     bun scripts/alias_tarball.ts pack --name <alias> --out <dir> [--tarball <tgz>]
  *     bun scripts/alias_tarball.ts compare <package.tgz> <alias.tgz>
  *
  * The package is published as `name` in `package.json` and, at every version,
- * as an alias carrying the same files (issue #1258): the unscoped short name is
- * refused by the registry, and the name the package first shipped under keeps
- * being served so nobody who depends on it is stranded. RELEASING.md
- * *Publishing* says which name is which and why.
+ * under each of its aliases, carrying the same files: `spine-rigc` (issue
+ * #1258), the name the package first shipped under, kept served so nobody
+ * who depends on it is stranded — the unscoped short name is refused by the
+ * registry — and `@rig-c/core` (issue #1347), the same package under the
+ * toolchain's scope. RELEASING.md *Publishing* says which name is which and
+ * why.
  *
  * `pack` writes the alias tarball into `--out` and prints its path as the last
- * line of stdout, which is what `release.yml` hands to its second
- * `npm publish`. It packs this tree (or takes `--tarball`), extracts the
+ * line of stdout, which is what each of `release.yml`'s alias steps hands to
+ * its `npm publish`. It packs this tree (or takes `--tarball`), extracts the
  * result, rewrites the one `"name": …` line of the extracted `package.json`,
  * packs the extraction again, and refuses to print a path unless `compare`
  * then reads the two tarballs as identical but for that line. Nothing is
@@ -58,12 +60,20 @@ import { join, relative, resolve, sep } from 'node:path';
 const ROOT = resolve(import.meta.dir, '..');
 
 /**
- * The second name: the one every version up to 2.20.4 shipped under, kept as
- * an alias. Not in `package.json`, which names the package once; this is the
- * one place in the tree that names the alias for a program to read, and
- * `CUR122` holds `release.yml`'s publish and confirmation to it.
+ * The other names the package is published under, each an alias carrying the
+ * same files: `spine-rigc`, the one every version up to 2.20.4 shipped under
+ * (issue #1258), and `@rig-c/core`, the package under the toolchain's npm
+ * scope (issue #1347). Not in `package.json`, which names the package once;
+ * this is the one place in the tree that names the aliases for a program to
+ * read, and `CUR122` holds `release.yml`'s publish steps and every
+ * confirmation call to exactly this list — one dropped from either is red.
+ *
+ * ⚠️ `@rig-c/core` is the whole package under the scope, not the posing-core
+ * entry `rig-c/core` (an `exports` key of this package, which is
+ * `@rig-c/core/core` under the scope). RELEASING.md *The import surface*
+ * sets the three `rig-c/core`s side by side.
  */
-export const ALIAS = 'spine-rigc';
+export const ALIASES: readonly string[] = ['spine-rigc', '@rig-c/core'];
 
 const EXIT_SAME = 0;
 const EXIT_DIFFERENT = 1;
@@ -236,7 +246,7 @@ export function packAlias(alias: string, out: string, packageTgz?: string): { tg
   }
 }
 
-const HELP = `rigc alias tarball — the package under its second name, with nothing else changed
+const HELP = `rigc alias tarball — the package under another name, with nothing else changed
 
 usage:
   bun scripts/alias_tarball.ts pack --name <alias> --out <dir> [--tarball <tgz>]

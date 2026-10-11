@@ -37,10 +37,10 @@
   "author": "firejune",
   "repository": {
     "type": "git",
-    "url": "https://github.com/firejune/rigc.git"
+    "url": "https://github.com/rig-c/core.git"
   },
-  "homepage": "https://github.com/firejune/rigc#readme",
-  "bugs": "https://github.com/firejune/rigc/issues",
+  "homepage": "https://github.com/rig-c/core#readme",
+  "bugs": "https://github.com/rig-c/core/issues",
   "keywords": [
     "spine",
     "spine2d",

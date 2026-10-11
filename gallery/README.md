@@ -28,7 +28,7 @@ outline weight: the rule they bend is *one character*, and the rule they keep is
 | [`flex/`](flex/) | **`contour` meshes** (AUTHORING §3.4) | A swallow-tailed banner and a serrated leaf — four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
 | [`walk/`](walk/) | `ik` constraints + **`ik` timelines** (AUTHORING §3.5, §4.9) | Rigby walks on the spot. Two two-bone leg chains solved to foot targets under a `ground` bone, with the planted leg nailed down and the swinging one let go at the top of its lift |
 | [`squash/`](squash/) | **`deform` timelines** (AUTHORING §4.11) | Rigby's ball bounces. A 9-vertex mesh squashed about its contact point and stretched along its travel, from two affine transforms written out in the README |
-| [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) + **per-member group values** (§4.5.1) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, and both halves of it **state their model** — the mesh keys a `yaw` transform, the feature bones a `yaw` with a depth per member. The measured experiment for [#285](https://github.com/firejune/rigc/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
+| [`portrait/`](portrait/) | **`deform` as a projection** (AUTHORING §4.11) + **per-member group values** (§4.5.1) | Vela breathes, blinks, shifts her gaze and turns her head 12° off axis. Two grid meshes and per-part parallax, and both halves of it **state their model** — the mesh keys a `yaw` transform, the feature bones a `yaw` with a depth per member. The measured experiment for [#285](https://github.com/rig-c/core/issues/285) — see its [FINDINGS.md](portrait/FINDINGS.md) |
 | [`nod/`](nod/) | the **`pitch`** and **`wave`** transform kinds (AUTHORING §4.11.1, §4.5.1) | Lepus bows her head and her lop ears ripple. Three meshes, each laid out for the one closed form that moves it — and the two halves of *a deform model is only as good as the triangulation under it*: a fold angle the row table solves for, and a shear no amplitude can fold |
 | [`look/`](look/) | **`slider` constraints** (AUTHORING §3.5.2, §4.12) | Vela's head turns because a **value** says so: two dials drive two sliders, and the rendered animation moves the needles rather than the face. `portrait`'s subject on `portrait`'s opposite mechanism — with a **depth map** under the face mesh (§3.4), a **soft mask** on the cowlick, and a slider range derived from the **turn ceiling** `build` reports rather than picked by eye |
 
@@ -124,7 +124,7 @@ from GitHub.
 whose first line opens with a report tag — `MESH`, `DEFORM`, `MEMBER`, `PHYS`,
 `PASS`, `SKIP`, `PROF` — is read by the selftest as a transcript, and it has to
 be a **contiguous, verbatim run** of the output of a command that README states
-([#415](https://github.com/firejune/rigc/issues/415)). The margin is yours; every
+([#415](https://github.com/rig-c/core/issues/415)). The margin is yours; every
 character after it is the tool's. That means a block cannot be trimmed to its
 interesting lines or re-wrapped to fit, because both make it something the tool
 never printed — and a block quoting a run this repository cannot make (lines
@@ -149,7 +149,7 @@ quotation that opens partway into a record, on one of the indented lines under
 its head, is invisible to the check until it says so, and then it is on the
 ledger. **Regenerate a stale block; do not repair it by hand.** Two of these went
 stale in one night because they were edited by eye, and two more had been sitting
-stale since [#376](https://github.com/firejune/rigc/issues/376) — which is why the
+stale since [#376](https://github.com/rig-c/core/issues/376) — which is why the
 check exists.
 
 ⚠️ **A quotation that opens on an indented line is not checked yet**, only
@@ -158,7 +158,7 @@ an anchor that keyed on the line's own text would go quiet exactly when that lin
 went wrong. Both of the ones found stale here were that shape.
 
 **A quoted refusal states the edit that makes it.** None of the above reaches
-one ([#429](https://github.com/firejune/rigc/issues/429)): a refusal has nothing
+one ([#429](https://github.com/rig-c/core/issues/429)): a refusal has nothing
 at the gutter to anchor on, and no command a README states prints it, because
 making one needs a spec authored to be *refused* while every spec here is
 authored to be correct. So such a block names the edit on the line above its
@@ -235,7 +235,7 @@ The bar, and it is the bar the six examples above were held to:
   `nod`'s `bow` is the same case.
 
   🚨 **`--duration` is the animation's own length, and it is not optional in
-  practice** ([#337](https://github.com/firejune/rigc/issues/337)). `round(d ×
+  practice** ([#337](https://github.com/rig-c/core/issues/337)). `round(d ×
   fps)` puts the last frame *at* `d` only when `d × fps` is a whole number, and
   up to half a sampling interval either side of it when it is not — so on such a
   set the comparison is between `t = 0` and a time that is not the wrap point,
@@ -248,7 +248,7 @@ The bar, and it is the bar the six examples above were held to:
   gives 21.6 and it is measured at **15 fps**.
 
   📏 **A seam figure is a reading at one `--max`, and the README says which**
-  ([#336](https://github.com/firejune/rigc/issues/336)). A curve sampled into
+  ([#336](https://github.com/rig-c/core/issues/336)). A curve sampled into
   segments need not return its endpoint key to the last bit, and a residual below
   the art's own quantisation is invisible at one frame size and lands on a pixel
   boundary at another: `portrait`'s `idle` reads **0 px** at the `--max 640` its
@@ -265,21 +265,21 @@ The bar, and it is the bar the six examples above were held to:
 - **The README records what the authoring cost.** Every bug, every surprise,
   every default that turned out to be wrong. Writing the first four examples
   found **four** genuine tool defects
-  ([#273](https://github.com/firejune/rigc/issues/273),
-  [#274](https://github.com/firejune/rigc/issues/274),
-  [#275](https://github.com/firejune/rigc/issues/275),
-  [#277](https://github.com/firejune/rigc/issues/277)), and `portrait` found
+  ([#273](https://github.com/rig-c/core/issues/273),
+  [#274](https://github.com/rig-c/core/issues/274),
+  [#275](https://github.com/rig-c/core/issues/275),
+  [#277](https://github.com/rig-c/core/issues/277)), and `portrait` found
   **five** more — two defects
-  ([#292](https://github.com/firejune/rigc/issues/292),
-  [#293](https://github.com/firejune/rigc/issues/293)) and three instrument gaps
-  ([#294](https://github.com/firejune/rigc/issues/294),
-  [#295](https://github.com/firejune/rigc/issues/295),
-  [#296](https://github.com/firejune/rigc/issues/296)); `nod` found **three**
+  ([#292](https://github.com/rig-c/core/issues/292),
+  [#293](https://github.com/rig-c/core/issues/293)) and three instrument gaps
+  ([#294](https://github.com/rig-c/core/issues/294),
+  [#295](https://github.com/rig-c/core/issues/295),
+  [#296](https://github.com/rig-c/core/issues/296)); `nod` found **three**
   more — one unrefused degenerate model
-  ([#350](https://github.com/firejune/rigc/issues/350)) and two docs stating
+  ([#350](https://github.com/rig-c/core/issues/350)) and two docs stating
   something that is no longer, or never was, true
-  ([#351](https://github.com/firejune/rigc/issues/351),
-  [#352](https://github.com/firejune/rigc/issues/352)). That is what a gallery
+  ([#351](https://github.com/rig-c/core/issues/351),
+  [#352](https://github.com/rig-c/core/issues/352)). That is what a gallery
   is *for*, besides being read. If a tool behaves wrongly or a doc misleads you,
   file it with the reproduction and work around it in the open.
 - **`bun run selftest` covers it automatically.** Its gallery suite compiles
