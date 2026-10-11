@@ -16,7 +16,8 @@
  * browser and holds the bundle to zero `node:` strings.
  *
  * ⚠️ A symbol is listed here only because a dependant was seen using it,
- * or asked for it in writing before it could be (`openTrack`, issue #1276).
+ * or asked for it in writing before it could be (`openTrack`, issue #1276;
+ * `openTracks`, issue #1336).
  * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` rows for
  * `./core`, and a symbol added here and not there is not promised.
  */
@@ -27,6 +28,8 @@ export type { RawPose, RawBone, RawDrawn, RawClip, RawClipped, RawEvent, RawRese
 export { poseWalkSetup, poseLoopingWalk } from './walk.ts';
 export { openTrack } from './track.ts';
 export type { LiveTrack, TrackOptions, AdjustableLocals, BoneLocals, LocalAdjust } from './track.ts';
+export { openTracks } from './tracks.ts';
+export type { LiveTracks, TracksOptions, MixOptions, QueueOptions, TrackEntryView } from './tracks.ts';
 export type { WalkPose } from './walk.ts';
 export { documentPageLookup, drawnRegions, regionPageUvs, meshPageUvs, readUvSequences } from './uvs.ts';
 export type { DrawnRegion, UvPage, UvRegion, UvSource } from './uvs.ts';

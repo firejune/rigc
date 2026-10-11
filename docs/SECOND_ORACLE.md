@@ -258,6 +258,37 @@ write on a channel no timeline keys compounds frame to frame and every walk read
 off. The write made at draw time (after `updateWorldTransform`, the bone's own
 matrix alone) and pose 0 left unadjusted read off on every walk they apply to.
 
+**The live tracks** ([#1336](https://github.com/firejune/rigc/issues/1336), the
+issue's other piece) are held to spine-core directly too, because they are a
+second state machine rather than a construct the walk carries: `openTracks` in
+`src/core/tracks.ts` is `AnimationState`'s update, apply, mix, hold and queue
+ported field for field over the core's timelines, and shares the single track's
+pose path past the timelines (the adjustment, the world, the constraints and the
+physics step, the slot rows and the sliders, the draw order and the attachments).
+That path was split out of the walk without moving a bit: 18,361 poses of the
+seven gallery rows — every animation on `openTrack` looping and held, both resets,
+with and without an adjustment, the raw entry's walk and A10's — hashed the same
+before and after. The script is the player's four shapes (a looping base on track
+0; a pose held past its end, replaced over 0.2 s and replaced back before that mix
+ends, so three entries chain; a one-shot set with mix 0 and
+`addEmptyAnimation(2, 0.2, 0)`; later a track emptied and requeued, a looping
+one-shot emptied at its next completion; the adjustment on the bone the role
+animations key most), on every gallery row whose animations the tracks accept and
+an event probe: 12 walks of 220 seeded mixed steps, 2,652 poses equal at tolerance
+0 in every bone's world transform, drawn vertex, slot attachment and colour, the
+draw order and 92 events, over 568 steps mixing out, 346 holding, 182 chaining
+three entries, 62 across a mix's end, 34 across track 0's wrap and 22 starting a
+queued entry (`CO51`). The oracle's bones are reset to the setup pose before each
+`apply`, as `CO50`'s are; measured, `AnimationState` with no reset at all agrees
+on every walk when nothing but it writes the skeleton, so the reset is needed for
+the player's write alone. Each reading the runtime rejects reads off: the mix
+reversed, the tracks above 0 mixed from the setup pose, the hold faded and a
+queued delay read as "now" on 12 of 12 walks, and an entry mixing out firing its
+events until the mix is half done on the walks that cross such a key — it fires
+none, since `eventThreshold` is 0. Track 0 alone equals `openTrack` on 5,304
+poses, every field. An animation keying a constraint timeline, a sequence, the
+draw order or a path's deform is refused by name (`gallery/walk`, `gallery/ride`).
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private
