@@ -17,6 +17,11 @@
  * scan on A10's schedule and at 60 fps over three cycles — 157,771 poses, every
  * one the same bits (the PR of issue #1276 carries the table).
  *
+ * Several animations on several tracks, set, queued and mixed as spine-core's
+ * `AnimationState` mixes them, are `openTracks` (`./tracks.ts`, issue #1336):
+ * a second state machine over the same pose path past the timelines, which
+ * this track reaches with the locals its one animation posed.
+ *
  * ## The walk
  *
  * - **Held** (`loop: false`): the raw entry's walk — the track time the

@@ -824,22 +824,13 @@ export function posedSlots(
   /** Filled with each slot's placeholder once the sample's own timelines have moved it, before the sliders — what the attachments are posed from (`attachmentStates`). */
   placeholders?: Map<string, string | null>,
 ): { rows: CoreSlotRow[]; conflicts: string[] } {
-  const resolve = plant.shown ?? shownAttachment;
   const colour = plant.colour ?? readColour;
-  const blend = plant.blend ?? readBlend;
-  const round = plant.round ?? gridRound;
   const byName = new Map(timelines.slots.map((s) => [s.name, s]));
-  const rows: CoreSlotRow[] = [];
-  const conflicts: string[] = [];
-  const active = activeBones(doc);
-  const gate = plant.slotTimelines ?? slotTimelinesApply;
-  for (const slot of doc.slots) {
+  return slotRowsFrom(doc, plant, sliders, placeholders, (slot, live) => {
     let placeholder = slot.setup;
     const light = slot.color === undefined ? [1, 1, 1, 1] : colour(slot.color);
     const setupDark = slot.dark === undefined ? null : readColour(slot.dark);
     const dark = setupDark === null ? null : [setupDark[0], setupDark[1], setupDark[2]];
-    // A slot on a bone the skin leaves inactive is not animated — not by the sample's timelines, not by a slider (`./skins.ts`).
-    const live = gate(doc, slot, active);
     for (const tl of live ? (byName.get(slot.name)?.timelines ?? []) : []) {
       if (tl.kind === 'attachment') {
         const key = keyAt(tl.keys, t, plant);
@@ -855,6 +846,48 @@ export function posedSlots(
         else if (dark !== null && setupDark !== null) dark[at - 4] = v === null ? setupDark[at - 4] : clamp01(v[i]);
       });
     }
+    return { placeholder, light, dark };
+  });
+}
+
+/**
+ * What a slot holds once the timelines have posed it and before the sliders:
+ * the placeholder it shows, its light colour and its dark one (`null` where
+ * the slot states none). `posedSlots` reads it off one animation at `t`; the
+ * live tracks off their mixed entries (`./tracks.ts`, issue #1336).
+ */
+export interface SlotBase {
+  placeholder: string | null;
+  light: number[];
+  dark: number[] | null;
+}
+
+/**
+ * The slot rows from each slot's `SlotBase` — `baseOf`, called once per slot
+ * in the document's order with whether the slot is animated at all — then the
+ * sliders, the resolution and the oracle's row: `posedSlots`' body past the
+ * timelines, which the live tracks share (`./tracks.ts`).
+ */
+export function slotRowsFrom(
+  doc: CompiledDocument,
+  plant: TimelinePlant,
+  sliders: readonly SliderApplication[],
+  placeholders: Map<string, string | null> | undefined,
+  baseOf: (slot: ModelSlot, live: boolean) => SlotBase,
+): { rows: CoreSlotRow[]; conflicts: string[] } {
+  const resolve = plant.shown ?? shownAttachment;
+  const blend = plant.blend ?? readBlend;
+  const round = plant.round ?? gridRound;
+  const rows: CoreSlotRow[] = [];
+  const conflicts: string[] = [];
+  const active = activeBones(doc);
+  const gate = plant.slotTimelines ?? slotTimelinesApply;
+  for (const slot of doc.slots) {
+    // A slot on a bone the skin leaves inactive is not animated — not by the sample's timelines, not by a slider (`./skins.ts`).
+    const live = gate(doc, slot, active);
+    const base = baseOf(slot, live);
+    let placeholder = base.placeholder;
+    const { light, dark } = base;
     // The sliders, after the animation, in constraint order (`./constraints_slider.ts`).
     // What the slot shows after the sample's own timelines: the attachments' deform and sequence timelines are matched against it (`./deform.ts`, *A switch*).
     placeholders?.set(slot.name, placeholder);
@@ -953,16 +986,14 @@ function stepRows(posed: PosedStep): CoreBoneRow[] {
 
 /** `posedBoneWorld` up to its rows, refusing a bone the evaluator gave no transform (`PosedStep`). */
 function posedBoneStep(doc: CompiledDocument, timelines: CoreAnimationTimelines, t: number, plant: TimelinePlant, constraints: CoreConstraintTimelines | undefined, sliders: SliderApplication[] | undefined, step: PoseStep | undefined): PosedStep {
-  const active = activeBones(doc);
   const bones = posedBones(doc, timelines, t, plant);
+  // One step of the stepped phase (issue #956, `./constraints_physics.ts`): the physics records posed by their timelines and stepped under the walk's context; the deformed curve a path walks as above.
+  if (constraints !== undefined && step !== undefined) return steppedLocals(doc, bones, plant, () => pathDeformed(doc, posedRecords(constraintRecords(doc), constraints, t), timelines, t, plant), constraints.physicsKeyed ?? [], t, sliders, step);
+  const active = activeBones(doc);
   // The caller's adjustment, after the timelines and before anything reads the locals (`LocalAdjust`).
   if (step?.adjust !== undefined) adjustLocals(doc, bones, step.adjust);
   let world = (plant.evaluate ?? worldTransforms)(bones, active);
-  if (constraints !== undefined && step !== undefined) {
-    // One step of the stepped phase (issue #956, `./constraints_physics.ts`): the physics records posed by their timelines and stepped under the walk's context; the deformed curve a path walks as above. No previous pass: under the step it is the previous step's, and `poseAnimations` leaves such bones out.
-    const records = stepPhysicsRecords(pathDeformed(doc, posedRecords(constraintRecords(doc), constraints, t), timelines, t, plant), constraints.physicsKeyed ?? [], t, active, step.ctx, step.before);
-    world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(records) : records, null, sliders, step.ctx, undefined, solverRules(plant.solver));
-  } else if (constraints !== undefined) {
+  if (constraints !== undefined) {
     const setupRecords = constraintRecords(doc);
     // A path walks the curve the sample's deform timelines left on its slot (`./deform.ts`); a slider's deform of a walked path leaves the bones out (`pathAnimationsWhy`).
     const records = pathDeformed(doc, posedRecords(setupRecords, constraints, t), timelines, t, plant);
@@ -972,6 +1003,40 @@ function posedBoneStep(doc: CompiledDocument, timelines: CoreAnimationTimelines,
   }
   for (const b of bones) if (world.get(b.name) === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
   return { bones, world, active, round: plant.round ?? gridRound };
+}
+
+/**
+ * One step of the stepped phase from locals already posed (issue #1336): the
+ * caller's adjustment (`LocalAdjust`), the world transforms, the physics
+ * records posed by `records` and stepped under the walk's context, then every
+ * constraint. No previous pass: under the step it is the previous step's, and
+ * `poseAnimations` leaves such bones out. A single animation's walk reaches it
+ * through `posedBoneStep` with the locals `posedBones` posed; the live tracks
+ * (`./tracks.ts`) with the locals their mixed entries posed — one pose path
+ * past the timelines for both.
+ */
+function steppedLocals(doc: CompiledDocument, bones: ModelBone[], plant: TimelinePlant, records: () => CoreConstraintRecord[], physicsKeyed: NonNullable<CoreConstraintTimelines['physicsKeyed']>, t: number, sliders: SliderApplication[] | undefined, step: PoseStep): PosedStep {
+  const active = activeBones(doc);
+  // The caller's adjustment, after the timelines and before anything reads the locals (`LocalAdjust`).
+  if (step.adjust !== undefined) adjustLocals(doc, bones, step.adjust);
+  let world = (plant.evaluate ?? worldTransforms)(bones, active);
+  const stepped = stepPhysicsRecords(records(), physicsKeyed, t, active, step.ctx, step.before);
+  world = applyConstraints(bones, world, active, plant.constraints ? plant.constraints(stepped) : stepped, null, sliders, step.ctx, undefined, solverRules(plant.solver));
+  for (const b of bones) if (world.get(b.name) === undefined) throw new CoreInputError(`the evaluator returned no transform for bone "${b.name}"`);
+  return { bones, world, active, round: plant.round ?? gridRound };
+}
+
+/**
+ * `steppedLocals`' world transforms, the oracle's rows formed beside them when
+ * `rows` is set (as `posedBoneWorld` forms them and `posedBoneWorldAlone` does
+ * not): the live tracks' entry to the stepped phase (`./tracks.ts`). The
+ * document's constraint records as they stand — the live tracks mix no
+ * constraint timeline — and no physics timeline keyed.
+ */
+export function steppedLocalsWorld(doc: CompiledDocument, bones: ModelBone[], plant: TimelinePlant, sliders: SliderApplication[], step: PoseStep, rows: boolean): Map<string, CoreWorld> {
+  const posed = steppedLocals(doc, bones, plant, () => constraintRecords(doc), [], 0, sliders, step);
+  if (rows) stepRows(posed);
+  return posed.world;
 }
 
 /** Each path record with the curve its slot shows deformed by the sample's own deform timelines at `t` (`./deform.ts`), or as it was. */

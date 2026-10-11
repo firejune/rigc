@@ -803,8 +803,13 @@ observation (`REQUESTED_IN_1276`).
 takes, a player's own bone-local value written after the animation's
 timelines and before the world transforms, the constraints and the physics
 step, requested on that issue before the player could call it
-(`REQUESTED_IN_1336`). The row holds no value: the hook is an option of
-`openTrack`, which the row above holds.
+(`REQUESTED_IN_1336`). The same row holds the issue's other piece, the live
+tracks: `openTracks`, with the types `LiveTracks`, `TracksOptions`,
+`MixOptions`, `QueueOptions` and `TrackEntryView` — several animations on
+several tracks of one document, set, queued, mixed and emptied as spine-core's
+`AnimationState` does, which the player asked for with the same four shapes.
+The hook itself is an option of `openTrack` and of `openTracks`, so the row
+holds `openTracks` as its one value and `openTrack` stays the row above's.
 
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`

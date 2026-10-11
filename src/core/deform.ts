@@ -536,6 +536,14 @@ export function attachmentStates(
   sample: { timelines: CoreAnimationTimelines; t: number } | null,
   sliders: readonly AttachmentApplication[],
   plant: { deform?: DeformEvaluator; deformBlend?: DeformBlender; sequence?: SequenceEvaluator; slotTimelines?: SlotTimelineGate } = {},
+  /**
+   * The live tracks' deforms (`./tracks.ts`, issue #1336), in place of a
+   * sample's: each slot's deform array as the mixed entries left it (`null`
+   * none) and the records their deform timelines keyed on it — what the
+   * sample's own timelines would have set and seen. Absent on every other
+   * caller.
+   */
+  mixed?: ReadonlyMap<string, { deform: number[] | null; seen: readonly string[] }>,
 ): { shown: ShownGeometry[]; why: string[] } {
   const evalDeform = plant.deform ?? deformAt;
   const blendOf = plant.deformBlend ?? blendDeform;
@@ -548,9 +556,10 @@ export function attachmentStates(
     // A slot on a bone the skin leaves inactive is not animated: no deform, no frame, no slider switch (`./skins.ts`).
     const live = gate(doc, slot, active);
     let placeholder = placeholders.get(slot.name) ?? null;
-    let deform: number[] | null = null;
+    const base = live ? mixed?.get(slot.name) : undefined;
+    let deform: number[] | null = base?.deform ?? null;
     let frame: number | null = null;
-    const seen: string[] = [];
+    const seen: string[] = base === undefined ? [] : [...base.seen];
     // What the slot shows now, the record its timelines are keyed as, and what a deform or a frame is computed on.
     const state = (): { s: CoreShown; identity: string | null; vertices: ModelVertices | null; count: number | undefined } | null => {
       if (placeholder === null) return null;

@@ -86344,6 +86344,7 @@ import { poseLoopingWalk, poseWalkSetup, scanLoopingWalk, scanWalkSetup, type Wa
 import type { ScanPose } from './src/core/raw.ts';
 import { walkIn, type RawReset } from './src/core/raw.ts';
 import { openTrack, type TrackOptions } from './src/core/track.ts';
+import { mixPropertyOrder, openTracks, type TracksPlant } from './src/core/tracks.ts';
 import type { CoreSlotRow } from './src/core/index.ts';
 import { noSkinView } from './src/render_core.ts';
 import { modelRead as readModelDocument } from './src/assertions/model/parse.ts';
@@ -99019,6 +99020,386 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
             `rejected — the write carried from frame to frame ${tally.carriedRed} of ${tally.walks} walk(s) red, pose 0 not adjusted ${tally.pose0Red} of ${tally.pose0Walks}, the hook after the world ${tally.afterRed} of ${tally.walks}; ${tally.refusals} refusal(s) by name (NaN, Infinity and −Infinity written, each track refused after; an unknown bone; an adjust that is not a function; an adjust that throws, its error passed on and the track refused after); a hook reading every channel and writing nothing equal to the track without one on ${tally.silentPoses} pose(s) of ${tally.silentWalks} walk(s), every field, bit for bit`,
         ),
         'issue #1336: a player writes its own bone-local value between AnimationState.apply and updateWorldTransform so that children, deforms and physics follow it; a hook at draw time is not that, so the hook is held to spine-core on a row where all three ride on the write',
+      );
+    }
+
+    // --- CO51: the live tracks set, queue, mix and empty several tracks as spine-core's AnimationState does --
+    //
+    // Issue #1336 (a). Spine-core 4.3.13: one `AnimationState` driven by a script of calls — `setAnimation` with `entry.mixDuration`,
+    // `addAnimation` with `setMixDuration(mix, delay)`, `setEmptyAnimation`, `addEmptyAnimation` — made between steps, pose 0 as CO47 and
+    // CO50 take it, then per step `update(dt)`, `setupPoseBones()`, `apply`, `Skeleton.update(dt)`, the player's write on `Bone.pose`,
+    // `updateWorldTransform(Physics.update)`; the same calls on `openTracks` and the same write through its `adjust`. Held at tolerance 0:
+    // every bone's world transform, every drawn attachment's world vertices, every slot's attachment and colour, the draw order and the
+    // events in the listener's order. The script is the consumer's four shapes on roles chosen by structure — the pair of animations
+    // keying the most properties in common is the pose replaced on track 1 (held past its end, then mixed over 0.2 s, then mixed back
+    // before the first mix ends, so three entries chain) and the one-shot on track 2 (set with mix 0, then `addEmptyAnimation(2, 0.2, 0)`),
+    // the animation keying least in common with them loops on track 0 (later emptied over 0.25 s and queued again, and a looping one-shot
+    // queued on track 2 and emptied at its next completion); the adjustment writes the bone those animations key most. Subjects: every
+    // gallery row whose animations the tracks accept, and an event probe whose three animations fire events (no gallery row keys one).
+    //
+    // The oracle's reset is CO50's: the skeleton's bones brought back to the setup pose before each `apply`. Measured, and held: with no
+    // adjustment, spine-core with no reset at all agrees on every walk — `AnimationState` writes back every property it keyed, across
+    // mixes, holds, empties and the queue — so the reset matters only for the player's own write on a channel no entry keys, which
+    // without it carries and compounds (red on every walk); `setupPose()`, which resets the slots too, agrees as well. Each reading the
+    // brief or the runtime's source could suggest and the measurement rejects is planted (`TracksPlant`) and read red by the oracle:
+    // the mix reversed, the tracks above 0 mixed from the setup pose, the hold faded, a queued delay read as "now", and an entry mixing
+    // out firing its events until the mix passes one half. Then the positive control — a state with only track 0 set, no mix, equal to
+    // `openTrack` on the same animation, every field, bit for bit — and the refusals.
+    {
+      const probes: string[] = [];
+      const TRACK_STEPS = 220;
+      type Flat = { bones: Array<[string, number[]]>; drawn: Array<[string, string, number[]]>; slots: Array<[string, string | null, number[], number[] | null]>; order: string[]; events: string[] };
+      const flatCore = (p: RawPose): Flat => ({
+        bones: p.bones.map((b): [string, number[]] => [b.name, [b.a, b.b, b.c, b.d, b.worldX, b.worldY]]),
+        drawn: p.drawn.map((d): [string, string, number[]] => [d.slot, d.attachment, d.vertices]),
+        slots: p.slots.map((r): [string, string | null, number[], number[] | null] => [r[0], r[1], [r[2] ?? Number.NaN, r[3] ?? Number.NaN, r[4] ?? Number.NaN, r[5] ?? Number.NaN], r[6] === null ? null : r[6].map((v) => v ?? Number.NaN)]),
+        order: p.drawOrder,
+        events: p.events.map((e) => `${e[0]}@${e[1]}/${e[2]}/${e[3]}/${e[4]}`),
+      });
+      const flatSpine = (sk: Skeleton, events: readonly string[]): Flat => {
+        const drawn: Flat['drawn'] = [];
+        for (const slot of sk.drawOrder.appliedPose) {
+          const att = slot.appliedPose.attachment;
+          if (!(att instanceof MeshAttachment) && !(att instanceof RegionAttachment)) continue;
+          const world = new Array<number>(att instanceof MeshAttachment ? att.worldVerticesLength : 8).fill(0);
+          if (att instanceof MeshAttachment) att.computeWorldVertices(sk, slot, 0, att.worldVerticesLength, world, 0, 2);
+          else att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), world, 0, 2);
+          drawn.push([slot.data.name, att.name, world]);
+        }
+        return {
+          bones: sk.bones.map((b): [string, number[]] => [b.data.name, [b.appliedPose.a, b.appliedPose.b, b.appliedPose.c, b.appliedPose.d, b.appliedPose.worldX, b.appliedPose.worldY]]),
+          drawn,
+          slots: sk.slots.map((s): Flat['slots'][number] => {
+            const c = s.appliedPose.color;
+            const d = s.appliedPose.darkColor;
+            return [s.data.name, s.appliedPose.attachment?.name ?? null, [c.r, c.g, c.b, c.a], d === null ? null : [d.r, d.g, d.b]];
+          }),
+          order: sk.drawOrder.appliedPose.map((s) => s.data.name),
+          events: [...events],
+        };
+      };
+      /** The first pose two walks differ at, by exact double in any block, or −1. */
+      const firstOff = (want: readonly Flat[], got: readonly Flat[]): number => {
+        if (want.length !== got.length) return Math.min(want.length, got.length);
+        return want.findIndex((w, i) => exactly(w) !== exactly(got[i]));
+      };
+      type Call = { at: number; call: 'set' | 'add' | 'setEmpty' | 'addEmpty'; track: number; animation: string; loop: boolean; mix: number; delay: number };
+      /** The script (the comment above): the calls made before step `at` (0 before pose 0), on roles `[base, pose, other pose, one-shot]`. */
+      const scriptOf = (base: string, pose: string, other: string, shot: string): Call[] => [
+        { at: 0, call: 'set', track: 0, animation: base, loop: true, mix: 0, delay: 0 },
+        { at: 0, call: 'set', track: 1, animation: pose, loop: false, mix: 0, delay: 0 },
+        { at: 60, call: 'set', track: 1, animation: other, loop: false, mix: 0.2, delay: 0 },
+        { at: 64, call: 'set', track: 1, animation: pose, loop: false, mix: 0.2, delay: 0 },
+        { at: 80, call: 'set', track: 2, animation: shot, loop: false, mix: 0, delay: 0 },
+        { at: 80, call: 'addEmpty', track: 2, animation: '', loop: false, mix: 0.2, delay: 0 },
+        { at: 140, call: 'set', track: 1, animation: other, loop: false, mix: 0.2, delay: 0 },
+        { at: 150, call: 'add', track: 1, animation: base, loop: true, mix: 0.3, delay: 0 },
+        { at: 170, call: 'setEmpty', track: 0, animation: '', loop: false, mix: 0.25, delay: 0 },
+        { at: 175, call: 'add', track: 0, animation: base, loop: true, mix: 0.1, delay: 0.05 },
+        { at: 185, call: 'add', track: 2, animation: shot, loop: true, mix: 0.1, delay: 0 },
+        { at: 195, call: 'addEmpty', track: 2, animation: '', loop: false, mix: 0.1, delay: 0 },
+      ];
+      type Reading = 'oracle' | 'setup pose' | 'no reset';
+      type Coverage = { mixing: number; held: number; chained: number; mixEnds: number; wraps: number; queued: number; emptied: number };
+      const spineTracks = (data: SkeletonData, calls: readonly Call[], steps: readonly number[], reset: RawReset, reading: Reading, write: ((sk: Skeleton, k: number) => void) | null, cover?: Coverage): Flat[] => {
+        const sk = new Skeleton(data);
+        const st = new AnimationState(new AnimationStateData(data));
+        let events: string[] = [];
+        st.addListener({ event: (_e, ev) => events.push(`${ev.data.name}@${ev.time}/${ev.intValue}/${ev.floatValue}/${ev.stringValue}`) });
+        const callsAt = (k: number): boolean => {
+          let made = false;
+          for (const c of calls) {
+            if (c.at !== k) continue;
+            made = true;
+            if (c.call === 'set') st.setAnimation(c.track, c.animation, c.loop).mixDuration = c.mix;
+            else if (c.call === 'add') st.addAnimation(c.track, c.animation, c.loop, c.delay).setMixDuration(c.mix, c.delay);
+            else if (c.call === 'setEmpty') st.setEmptyAnimation(c.track, c.mix);
+            else st.addEmptyAnimation(c.track, c.mix, c.delay);
+          }
+          return made;
+        };
+        callsAt(0);
+        sk.setupPose();
+        if (reset === 'animation') {
+          st.apply(sk);
+          write?.(sk, 0);
+        }
+        sk.update(0);
+        sk.updateWorldTransform(Physics.reset);
+        const out = [flatSpine(sk, events)];
+        const mixBefore = new Map<object, number>();
+        steps.forEach((dt, i) => {
+          events = [];
+          const made = callsAt(i + 1);
+          const before = st.tracks.map((e) => e);
+          const baseTime = st.tracks[0]?.getAnimationTime() ?? null;
+          for (const e of st.tracks) for (let m = e; m !== null && m !== undefined; m = m.mixingFrom) mixBefore.set(m, m.mixTime);
+          st.update(dt);
+          if (cover !== undefined) {
+            if (st.tracks.some((e) => e?.mixingFrom !== null && e?.mixingFrom !== undefined)) cover.mixing++;
+            if (st.tracks.some((e) => e?.mixingFrom?.mixingFrom !== null && e?.mixingFrom?.mixingFrom !== undefined)) cover.chained++;
+            if (st.tracks.some((e) => { for (let m = e?.mixingFrom ?? null; m !== null; m = m.mixingFrom) if (m.timelineMode.some((x) => (x & 4) !== 0)) return true; return false; })) cover.held++;
+            if (st.tracks.some((e) => e !== null && e.mixDuration > 0 && (mixBefore.get(e) ?? 0) < e.mixDuration && e.mixTime >= e.mixDuration)) cover.mixEnds++;
+            const t0 = st.tracks[0];
+            if (t0 !== null && t0 !== undefined && t0 === before[0] && baseTime !== null && t0.loop && t0.getAnimationTime() < baseTime) cover.wraps++;
+            if (!made && st.tracks.some((e, k) => e !== null && e !== undefined && before[k] !== null && before[k] !== undefined && e !== before[k])) cover.queued++;
+            if (st.tracks.some((e, k) => (e === null || e === undefined) && before[k] !== null && before[k] !== undefined)) cover.emptied++;
+          }
+          if (reading === 'oracle') sk.setupPoseBones();
+          else if (reading === 'setup pose') sk.setupPose();
+          st.apply(sk);
+          sk.update(dt);
+          write?.(sk, i + 1);
+          sk.updateWorldTransform(Physics.update);
+          out.push(flatSpine(sk, events));
+        });
+        return out;
+      };
+      const coreTracks = (doc: CompiledDocument, calls: readonly Call[], steps: readonly number[], reset: RawReset, write: ((locals: Parameters<NonNullable<TrackOptions['adjust']>>[0], k: number) => void) | null, plant: TracksPlant = {}): Flat[] => {
+        let k = 0;
+        const tracks = openTracks(doc, { reset, ...(write === null ? {} : { adjust: (locals) => write(locals, k) }) }, plant);
+        const callsAt = (n: number): void => {
+          for (const c of calls) {
+            if (c.at !== n) continue;
+            if (c.call === 'set') tracks.setAnimation(c.track, c.animation, { loop: c.loop, mixDuration: c.mix });
+            else if (c.call === 'add') tracks.addAnimation(c.track, c.animation, { loop: c.loop, mixDuration: c.mix, delay: c.delay });
+            else if (c.call === 'setEmpty') tracks.setEmptyAnimation(c.track, c.mix);
+            else tracks.addEmptyAnimation(c.track, c.mix, c.delay);
+          }
+        };
+        callsAt(0);
+        const out = [flatCore(tracks.start())];
+        steps.forEach((dt, i) => {
+          callsAt(i + 1);
+          k = i + 1;
+          out.push(flatCore(tracks.step(dt)));
+        });
+        return out;
+      };
+      // The event probe: three animations on a three-bone chain firing events — one keyed every 0.05 s, so that an entry replaced early
+      // mixes out across keys in the first half of its mix, where the rejected reading would fire them.
+      const eventProbe = (): { data: SkeletonData; doc: CompiledDocument } => {
+        const bones = [{ name: 'root' }, { name: 'b1', parent: 'root', length: 10 }, { name: 'b2', parent: 'b1', length: 10, x: 10 }];
+        const anims: Array<{ name: string; keyed: Record<string, Array<{ time: number; value: number }>>; events: Array<{ time: number; name: string; int?: number }> }> = [
+          { name: 'base', keyed: { b1: [{ time: 0, value: 0 }, { time: 1, value: 90 }] }, events: [{ time: 0, name: 'e' }, { time: 0.15, name: 'g' }, { time: 0.5, name: 'f', int: 3 }, { time: 1, name: 'e' }] },
+          { name: 'pose', keyed: { b1: [{ time: 0, value: 30 }, { time: 0.5, value: -40 }], b2: [{ time: 0, value: 10 }, { time: 0.5, value: 70 }] }, events: [0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5].map((time) => ({ time, name: 'g' })) },
+          { name: 'shot', keyed: { b2: [{ time: 0.1, value: -20 }, { time: 0.8, value: 45 }] }, events: [{ time: 0, name: 'h' }, { time: 0.4, name: 'h' }, { time: 0.8, name: 'f' }] },
+        ];
+        const spineAnims: Record<string, unknown> = {};
+        for (const a of anims) spineAnims[a.name] = { bones: Object.fromEntries(Object.entries(a.keyed).map(([b, keys]) => [b, { rotate: keys }])), events: a.events };
+        const spineText = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [], skins: [{ name: 'default', attachments: {} }], events: { e: {}, f: {}, g: {}, h: {} }, animations: spineAnims });
+        const modelText = JSON.stringify({
+          spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }], constraints: [],
+          events: [{ name: 'e' }, { name: 'f' }, { name: 'g' }, { name: 'h' }],
+          animations: anims.map((a) => ({ name: a.name, duration: 0, bones: Object.entries(a.keyed).map(([b, keys]) => ({ name: b, timelines: [{ name: 'rotate', keys }] })), slots: [], constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: a.events })),
+          images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+        });
+        return { data: loadOracleData(spineText, '', 'the tracks event probe'), doc: readModel(modelText, 'the tracks event probe') };
+      };
+      type Subject = { label: string; data: SkeletonData; doc: CompiledDocument };
+      const subjects: Subject[] = [];
+      const refusedRows: string[] = [];
+      for (const b of builtGreen.filter((r) => r.name.startsWith('gallery/'))) {
+        const doc = noSkinView(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name));
+        const refused = doc.animations.filter((a) => {
+          try {
+            mixPropertyOrder(doc, a.name);
+            return false;
+          } catch (err) {
+            if (err instanceof CoreInputError) return true;
+            throw err;
+          }
+        });
+        if (refused.length > 0) {
+          refusedRows.push(`${b.name} (${refused.map((a) => `"${a.name}"`).join(', ')})`);
+          continue;
+        }
+        subjects.push({ label: b.name, data: loadOracleData(readFileSync(join(b.out, 'skeleton.json'), 'utf8'), readFileSync(join(b.out, 'skeleton.atlas'), 'utf8'), b.name), doc });
+      }
+      const probe = eventProbe();
+      subjects.push({ label: 'the event probe', ...probe });
+      /** Spine-core's property ids by name, as the state spells them (a deform's record id dropped: the runtime's is an object id). */
+      const PROPERTY_NAMES = ['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inherit', 'rgb', 'alpha', 'rgb2', 'attachment', 'deform', 'event'];
+      const spineOrder = (doc: CompiledDocument, data: SkeletonData, name: string): string => (data.findAnimation(name)?.timelines ?? []).map((t) => t.propertyIds.map((id) => {
+        const [p, i] = id.split('|');
+        const property = PROPERTY_NAMES[Number(p)] ?? `?${p}`;
+        if (property === 'event') return 'event';
+        return `${property}|${Number(p) <= 7 ? doc.bones[Number(i)]?.name : doc.slots[Number(i)]?.name}`;
+      }).join(',')).join(' ');
+      const coreOrder = (doc: CompiledDocument, name: string): string => mixPropertyOrder(doc, name).map((ids) => ids.map((id) => (id.startsWith('deform|') ? id.split('|').slice(0, 2).join('|') : id)).join(',')).join(' ');
+      const PLANTS: Array<[string, TracksPlant]> = [
+        ['the mix reversed', { mixReversed: true }],
+        ['the tracks above 0 mixed from the setup pose', { higherTracksFromSetup: true }],
+        ['the hold faded', { holdFaded: true }],
+        ['a queued delay read as now', { queueDelayNow: true }],
+        ['an entry mixing out firing its events below half the mix', { eventsUntilHalfMix: true }],
+      ];
+      const cover: Coverage = { mixing: 0, held: 0, chained: 0, mixEnds: 0, wraps: 0, queued: 0, emptied: 0 };
+      const tally = { walks: 0, poses: 0, events: 0, orders: 0, setupPoseEqual: 0, bareEqual: 0, carriedRed: 0, control: 0, controlPoses: 0, refusals: 0 };
+      const plantRed = PLANTS.map(() => 0);
+      const roles: string[] = [];
+      const rnd = seededRandom(133651);
+      const MIXED = [1 / 60, 1 / 30, 1 / 24, 0];
+      for (const s of subjects) {
+        const names = s.doc.animations.map((a) => a.name);
+        for (const name of names) {
+          tally.orders++;
+          if (spineOrder(s.doc, s.data, name) !== coreOrder(s.doc, name)) probes.push(`${s.label} "${name}": the state applies its timelines' properties in the order [${coreOrder(s.doc, name)}], spine-core's Animation.timelines in [${spineOrder(s.doc, s.data, name)}]`);
+        }
+        // The roles, by structure: the pair keying the most properties in common, and the animation keying least in common with them.
+        const props = new Map(names.map((n) => [n, new Set(mixPropertyOrder(s.doc, n).flat().filter((id) => id !== 'event'))]));
+        const shared = (x: string, y: string): number => [...(props.get(x) ?? [])].filter((p) => props.get(y)?.has(p)).length;
+        let pair: [string, string] = [names[0], names[1 % names.length]];
+        let most = -1;
+        for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) if (shared(names[i], names[j]) > most) [most, pair] = [shared(names[i], names[j]), [names[i], names[j]]];
+        if (most < 0) most = shared(pair[0], pair[1]);
+        const rest = names.filter((n) => !pair.includes(n)).sort((x, y) => shared(x, pair[0]) + shared(x, pair[1]) - shared(y, pair[0]) - shared(y, pair[1]));
+        const base = rest[0] ?? pair[0];
+        const calls = scriptOf(base, pair[0], pair[1], pair[0]);
+        // The adjusted bone: the one the role animations key most, so the write lands on mixed locals.
+        const keyedBy = new Map<string, number>();
+        for (const n of new Set([base, ...pair])) for (const id of props.get(n) ?? []) {
+          const [p, target] = id.split('|');
+          if (['rotate', 'x', 'y', 'scaleX', 'scaleY', 'shearX', 'shearY'].includes(p)) keyedBy.set(target, (keyedBy.get(target) ?? 0) + 1);
+        }
+        const bone = s.doc.bones.map((b) => b.name).sort((x, y) => (keyedBy.get(y) ?? 0) - (keyedBy.get(x) ?? 0))[0];
+        roles.push(`${s.label}: "${base}" looping on track 0, "${pair[0]}" and "${pair[1]}" (${most} propert${most === 1 ? 'y' : 'ies'} in common) on tracks 1 and 2, the write on "${bone}"`);
+        const factorAt = (k: number): number => 1 + 0.3 * Math.sin(k + 1);
+        const spineWrite = (sk: Skeleton, k: number): void => {
+          const b = sk.findBone(bone);
+          if (b === null) throw new Error(`spine-core has no bone "${bone}"`);
+          b.pose.scaleY *= factorAt(k);
+          b.pose.rotation += 5 * factorAt(k);
+        };
+        const coreWrite = (locals: Parameters<NonNullable<TrackOptions['adjust']>>[0], k: number): void => {
+          const l = locals.bone(bone);
+          l.scaleY *= factorAt(k);
+          l.rotation += 5 * factorAt(k);
+        };
+        const steps = Array.from({ length: TRACK_STEPS }, () => (rnd() < 0.2 ? rnd() * 0.08 : MIXED[Math.floor(rnd() * MIXED.length)]));
+        for (const reset of ['animation', 'setup'] as const) {
+          tally.walks++;
+          const where = `${s.label}, reset at the ${reset}`;
+          const want = spineTracks(s.data, calls, steps, reset, 'oracle', spineWrite, cover);
+          const got = coreTracks(s.doc, calls, steps, reset, coreWrite);
+          tally.poses += got.length;
+          tally.events += got.reduce((n, p) => n + p.events.length, 0);
+          const off = firstOff(want, got);
+          if (off >= 0) probes.push(`${where}: pose ${off} differs from spine-core's AnimationState under the same calls, steps and write`);
+          if (firstOff(spineTracks(s.data, calls, steps, reset, 'setup pose', spineWrite), got) < 0) tally.setupPoseEqual++;
+          else probes.push(`${where}: with setupPose() in place of setupPoseBones() before each apply, spine-core no longer agrees`);
+          const bare = coreTracks(s.doc, calls, steps, reset, null);
+          if (firstOff(spineTracks(s.data, calls, steps, reset, 'no reset', null), bare) < 0) tally.bareEqual++;
+          else probes.push(`${where}: with no adjustment and no reset before each apply, spine-core no longer agrees — AnimationState left a property it keyed unwritten`);
+          if (firstOff(spineTracks(s.data, calls, steps, reset, 'no reset', spineWrite), got) >= 0) tally.carriedRed++;
+          PLANTS.forEach(([, plant], k) => {
+            if (firstOff(want, coreTracks(s.doc, calls, steps, reset, coreWrite, plant)) >= 0) plantRed[k]++;
+          });
+          // The positive control: only track 0 set, no mix — the single live track on the same animation, every field, bit for bit.
+          for (const loop of [true, false]) {
+            const state = openTracks(s.doc, { reset });
+            state.setAnimation(0, base, { loop, mixDuration: 0 });
+            const single = openTrack(s.doc, base, { loop, reset });
+            let controlOff = exactly(state.start()) === exactly(single.first) ? -1 : 0;
+            steps.forEach((dt, i) => {
+              const a = state.step(dt);
+              const b = single.step(dt);
+              if (controlOff < 0 && exactly(a) !== exactly(b)) controlOff = i + 1;
+            });
+            tally.control++;
+            tally.controlPoses += steps.length + 1;
+            if (controlOff >= 0) probes.push(`${where}: track 0 alone on "${base}" (${loop ? 'looping' : 'held'}) differs from openTrack at pose ${controlOff}`);
+          }
+        }
+      }
+      // The refusals, each by name, on the first subject.
+      const refusal = (f: () => unknown): string => {
+        try {
+          f();
+          return '';
+        } catch (err) {
+          if (err instanceof CoreInputError) return err.message;
+          throw err;
+        }
+      };
+      const first = subjects[0];
+      if (first !== undefined) {
+        const name = first.doc.animations[0].name;
+        const fresh = (): ReturnType<typeof openTracks> => openTracks(first.doc, { reset: 'setup' });
+        const expect = (label: string, got: string, mustSay: string): void => {
+          if (got.includes(mustSay)) tally.refusals++;
+          else probes.push(`${label}: refused ${JSON.stringify(got)}, not naming ${JSON.stringify(mustSay)}`);
+        };
+        expect('an unknown animation', refusal(() => fresh().setAnimation(0, '__nope', { loop: true, mixDuration: 0 })), 'animation "__nope" is not one of this document\'s');
+        expect('a queued unknown animation', refusal(() => fresh().addAnimation(1, '__nope', { loop: true, mixDuration: 0, delay: 0 })), 'animation "__nope" is not one of this document\'s');
+        expect('a negative track', refusal(() => fresh().setAnimation(-1, name, { loop: true, mixDuration: 0 })), 'names track -1, not a whole number at or above 0');
+        expect('a fractional track', refusal(() => fresh().setEmptyAnimation(1.5, 0)), 'names track 1.5, not a whole number at or above 0');
+        expect('a non-finite mix', refusal(() => fresh().setAnimation(0, name, { loop: true, mixDuration: Number.POSITIVE_INFINITY })), 'mixDuration is Infinity, not a finite time at or above 0');
+        expect('a negative mix', refusal(() => fresh().addEmptyAnimation(0, -0.1, 0)), 'mixDuration is -0.1, not a finite time at or above 0');
+        expect('a non-finite delay', refusal(() => fresh().addAnimation(0, name, { loop: false, mixDuration: 0, delay: Number.NaN })), 'delay is NaN, not a finite number');
+        expect('a loop that is not a boolean', refusal(() => fresh().setAnimation(0, name, { mixDuration: 0 } as unknown as { loop: boolean; mixDuration: number })), 'options.loop is undefined, not true or false');
+        expect('a reset that is neither', refusal(() => openTracks(first.doc, { reset: 'never' as RawReset })), 'options.reset is "never"');
+        expect('a step before start', refusal(() => fresh().step(1 / 60)), 'step 1 comes before start()');
+        const twice = fresh();
+        twice.start();
+        expect('start twice', refusal(() => twice.start()), 'were started already');
+        const nan = fresh();
+        nan.setAnimation(0, name, { loop: true, mixDuration: 0 });
+        nan.start();
+        expect('a step of NaN', refusal(() => nan.step(Number.NaN)), 'step 1 is NaN, not a finite time at or above 0');
+        if (refusal(() => nan.step(1 / 60)) !== '') probes.push('after a refused step of NaN, which moves nothing, the next step was refused too');
+        // A refusal mid-step — the caller's own adjust throwing on the second step — refuses every later call, naming it.
+        let calls = 0;
+        const thrown = openTracks(first.doc, { reset: 'setup', adjust: () => { if (++calls === 2) throw new CoreInputError('the player refused'); } });
+        thrown.setAnimation(0, name, { loop: true, mixDuration: 0 });
+        thrown.start();
+        thrown.step(1 / 60);
+        expect('the adjust refusing mid-step', refusal(() => thrown.step(1 / 30)), 'the player refused');
+        expect('a step after a mid-step refusal', refusal(() => thrown.step(1 / 60)), 'refused at step 2 (the player refused)');
+        expect('a call after a mid-step refusal', refusal(() => thrown.setEmptyAnimation(0, 0.2)), 'refused at step 2 (the player refused)');
+      }
+      // An animation keying what the state does not mix, on the gallery row whose animations key constraint timelines.
+      const walkRow = builtGreen.find((b) => b.name === 'gallery/walk');
+      if (walkRow !== undefined) {
+        const doc = noSkinView(readModel(readFileSync(join(walkRow.out, MODEL_DOCUMENT_FILE), 'utf8'), walkRow.name));
+        const keyed = doc.animations.find((a) => a.constraints.ik.length > 0);
+        const why = keyed === undefined ? '' : refusal(() => openTracks(doc, { reset: 'setup' }).setAnimation(0, keyed.name, { loop: true, mixDuration: 0 }));
+        if (why.includes('keys ik constraint timelines, which the live tracks do not mix')) tally.refusals++;
+        else probes.push(`gallery/walk's ik-keying animation: refused ${JSON.stringify(why)}`);
+      } else probes.push('gallery/walk was not built, so the refusal of an animation keying constraint timelines was not read');
+      probes.push(
+        ...floorProbes(
+          [
+            [subjects.length, 2, `${subjects.length} subject(s)`],
+            [tally.poses, 2 * subjects.length * (TRACK_STEPS + 1), `${tally.poses} pose(s) held`],
+            [tally.events, 1, `${tally.events} event(s) fired`],
+            [cover.mixing, 1, `${cover.mixing} step(s) with an entry mixing out`],
+            [cover.held, 1, `${cover.held} step(s) with a held timeline mixing out`],
+            [cover.chained, 1, `${cover.chained} step(s) with three entries chained`],
+            [cover.mixEnds, 1, `${cover.mixEnds} step(s) across a mix's end`],
+            [cover.wraps, 1, `${cover.wraps} step(s) across track 0's wrap`],
+            [cover.queued, 1, `${cover.queued} step(s) starting a queued entry`],
+            [cover.emptied, 1, `${cover.emptied} step(s) emptying a track`],
+            [tally.carriedRed, tally.walks, `${tally.carriedRed} of ${tally.walks} walk(s) red with the write carried (no reset)`],
+            ...PLANTS.map(([label], k): [number, number, string] => [plantRed[k], 1, `${plantRed[k]} walk(s) red with ${label}`]),
+            [tally.refusals, 16, `${tally.refusals} of 16 refusal(s) by name`],
+          ],
+          'so the live tracks were not held where they decide',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        'CO51_THE_LIVE_TRACKS_SET_QUEUE_MIX_AND_EMPTY_SEVERAL_TRACKS_AS_SPINE_CORES_ANIMATIONSTATE_DOES_AND_EACH_REJECTED_READING_IS_RED',
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${subjects.length} subject(s) — ${roles.join('; ')}; refused whole: ${refusedRows.length === 0 ? 'none' : refusedRows.join(', ')} — ${tally.walks} walk(s) of ${TRACK_STEPS} seeded mixed step(s) under both resets: ${tally.poses} pose(s) equal to spine-core's AnimationState at tolerance 0 in every bone's world transform, drawn vertex, slot attachment and colour, the draw order and ${tally.events} event(s); ` +
+            `covered — ${cover.mixing} step(s) mixing out, ${cover.held} holding, ${cover.chained} with three entries chained, ${cover.mixEnds} across a mix's end, ${cover.wraps} across track 0's wrap, ${cover.queued} starting a queued entry, ${cover.emptied} emptying a track; ${tally.orders} animation(s)' timelines in spine-core's order; ` +
+            `the oracle's reset — setupPose() agreed on ${tally.setupPoseEqual} of ${tally.walks}, no reset with no adjustment on ${tally.bareEqual} of ${tally.walks}, the write carried with no reset red on ${tally.carriedRed} of ${tally.walks}; ` +
+            `rejected — ${PLANTS.map(([label], k) => `${label} red on ${plantRed[k]} of ${tally.walks}`).join(', ')}; track 0 alone equal to openTrack on ${tally.control} walk(s), ${tally.controlPoses} pose(s), every field, bit for bit; ${tally.refusals} refusal(s) by name`,
+        ),
+        'issue #1336: a player composes a character on several tracks — a looping base, a pose held and replaced over a mix, a one-shot mixed back out, its own write on the locals — and every pose of that has to be the one spine-core\'s AnimationState poses, or the player migrating from it draws a different picture',
       );
     }
   });

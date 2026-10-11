@@ -114,12 +114,12 @@
  * missing would draw a different picture in silence.
  */
 import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, underNoSkin, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
-import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type LocalAdjust, type TimelinePlant } from './animation.ts';
+import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type CoreAnimationTimelines, type LocalAdjust, type TimelinePlant } from './animation.ts';
 import { constraintsAbsentWhy, pathAnimationsWhy } from './constraints.ts';
 import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.ts';
 import { attachmentStates } from './deform.ts';
-import { drawOrderAt } from './draw_order.ts';
-import { eventsFired } from './events.ts';
+import { drawOrderAt, type CoreDrawOrderKey } from './draw_order.ts';
+import { eventsFired, type CoreEventRow } from './events.ts';
 import { REGION_TRIANGLES, REGION_UVS, type CoreClippedRow, type ShapeClipper } from './clipping.ts';
 import { poseGeometry, type CoreAttachmentRow, type CoreClipRow, type ShownGeometry } from './vertices.ts';
 import { RUNTIME_DEG, type CoreWorld } from './world.ts';
@@ -666,28 +666,105 @@ function stepWalk<P>(track: TrackState<P>, dt: number, first = false): P {
   const t = mode.loop ? (mode.time ?? loopedTime)(trackTime, duration, trackTime - dt) : trackTime < duration ? trackTime : duration;
   const before = ctx.time;
   ctx.time += mode.clock === undefined ? dt : mode.clock(dt, t - (first ? 0 : Math.max(last, 0)));
-  const sliders: SliderApplication[] = [];
-  const world = shape.rows ? posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust }).world : posedBoneWorldAlone(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust });
-  if (first) ctx.phase = 'update';
-  const placeholders = new Map<string, string | null>();
-  const slots = posedSlots(doc, anim.timelines, t, raw, sliders, placeholders);
-  if (slots.conflicts.length > 0) throw new CoreInputError(`the raw walk leaves the slots out: ${slots.conflicts.join('; ')}`);
-  const evalOrder = plant.drawOrder ?? drawOrderAt;
-  let order = evalOrder(doc.slots.length, anim.timelines.drawOrder, t) ?? doc.slots.map((_s, k) => k);
-  for (const app of sliders) order = evalOrder(doc.slots.length, app.timelines.drawOrder, app.at) ?? order;
-  const drawOrder = order.map((k) => doc.slots[k].name);
-  const states = attachmentStates(doc, resolve, placeholders, { timelines: anim.timelines, t }, sliders, plant);
-  if (states.why.length > 0) throw new CoreInputError(`the raw walk leaves the attachments out: ${states.why.join('; ')}`);
-  const rank = new Map(drawOrder.map((n, r) => [n, r]));
-  const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
   // A10's looping walk fires no event here — its one reader reads none — nor cuts its drawn attachments through a clip (`NO_CLIPPED_ROWS`), so its
   // `clipped` rows are empty. The live track's looping mode (`live`) fires its events across the wrap by the rule `./track.ts` states as measured.
   const fire = plant.events ?? eventsFired;
   const keys = anim.timelines.events;
-  const events = (): RawEvent[] => (mode.loop && mode.live !== true ? [] : (mode.loop ? fire(keys, last, t, rawNumber, t < last) : fire(keys, last, t, rawNumber)).map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]));
-  const pose = shape.step(doc, { trackTime, animationTime: t, world, slots: slots.rows, drawOrder, shown, events }, plant, mode);
+  const pose = poseStepFrom(doc, plant, resolve, shape, mode, ctx, first, trackTime, t, {
+    world: (sliders) => (shape.rows ? posedBoneWorld(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust }).world : posedBoneWorldAlone(doc, anim.timelines, t, raw, anim.constraints, sliders, { ctx, before, adjust })),
+    slots: (sliders, placeholders) => posedSlots(doc, anim.timelines, t, raw, sliders, placeholders),
+    drawOrder: anim.timelines.drawOrder,
+    at: t,
+    sample: { timelines: anim.timelines, t },
+    events: () => (mode.loop && mode.live !== true ? [] : mode.loop ? fire(keys, last, t, rawNumber, t < last) : fire(keys, last, t, rawNumber)),
+  });
   track.last = t;
   return pose;
+}
+
+/**
+ * What decides one step's pose before it is assembled (issue #1336): the bone
+ * world through the stepped phase, filling the sliders it applied; the slot
+ * rows, filling the placeholders the timelines left; the draw-order keys and
+ * the time they are read at; the deform and sequence timelines' sample, or the
+ * mixed deforms in its place; the events, computed when called. A walk's step
+ * reads every one off one animation at its time (`stepWalk`); the live tracks
+ * off their mixed entries (`./tracks.ts`). Everything past these is one body,
+ * `poseStepFrom`.
+ */
+export interface StepPosers {
+  world: (sliders: SliderApplication[]) => Map<string, CoreWorld>;
+  slots: (sliders: readonly SliderApplication[], placeholders: Map<string, string | null>) => { rows: CoreSlotRow[]; conflicts: string[] };
+  drawOrder: readonly CoreDrawOrderKey[];
+  at: number;
+  sample: { timelines: CoreAnimationTimelines; t: number } | null;
+  mixed?: ReadonlyMap<string, { deform: number[] | null; seen: readonly string[] }>;
+  events: () => CoreEventRow[];
+}
+
+/**
+ * One step's pose from what decided it (`StepPosers`): the bone world, the
+ * physics phase moved past the reset on `first`, the slot rows, the draw
+ * order (the keys' order, else the setup's, then each slider's key), the
+ * attachments drawn in it, and the pose assembled in `shape` — refused by name
+ * where the core leaves a block out, in that order. The one body a walk's step
+ * and a live tracks' step share.
+ */
+function poseStepFrom<P>(doc: CompiledDocument, plant: TimelinePlant, resolve: NonNullable<TimelinePlant['shown']>, shape: PoseShape<P>, mode: WalkMode, ctx: ReturnType<typeof freshStepContext>, first: boolean, trackTime: number, animationTime: number, posers: StepPosers): P {
+  const sliders: SliderApplication[] = [];
+  const world = posers.world(sliders);
+  if (first) ctx.phase = 'update';
+  const placeholders = new Map<string, string | null>();
+  const slots = posers.slots(sliders, placeholders);
+  if (slots.conflicts.length > 0) throw new CoreInputError(`the raw walk leaves the slots out: ${slots.conflicts.join('; ')}`);
+  const evalOrder = plant.drawOrder ?? drawOrderAt;
+  let order = evalOrder(doc.slots.length, posers.drawOrder, posers.at) ?? doc.slots.map((_s, k) => k);
+  for (const app of sliders) order = evalOrder(doc.slots.length, app.timelines.drawOrder, app.at) ?? order;
+  const drawOrder = order.map((k) => doc.slots[k].name);
+  const states = attachmentStates(doc, resolve, placeholders, posers.sample, sliders, plant, posers.mixed);
+  if (states.why.length > 0) throw new CoreInputError(`the raw walk leaves the attachments out: ${states.why.join('; ')}`);
+  const rank = new Map(drawOrder.map((n, r) => [n, r]));
+  const shown = [...states.shown].sort((a, b) => (rank.get(a.slot) ?? 0) - (rank.get(b.slot) ?? 0));
+  const events = (): RawEvent[] => posers.events().map((e): RawEvent => [e[0], finite(e[1], 'event time'), e[2], finite(e[3], 'event float'), e[4]]);
+  return shape.step(doc, { trackTime, animationTime, world, slots: slots.rows, drawOrder, shown, events }, plant, mode);
+}
+
+/**
+ * The live tracks' side of the raw pose path (issue #1336, `./tracks.ts`):
+ * the refusals a walk makes before its first pose, a fresh physics context,
+ * the plant with the raw entry's rounding, and the two ways a pose is made —
+ * the setup pose reset (`reset: 'setup'`'s pose 0) and one step from what the
+ * mixed entries decided, assembled as the raw entry's pose (`RAW_SHAPE`,
+ * `RAW_MODE`: a non-finite value refused, every clipped row cut).
+ */
+export interface RawTracksPath {
+  readonly ctx: ReturnType<typeof freshStepContext>;
+  /** `plant` with the raw entry's rounding. */
+  readonly raw: TimelinePlant;
+  setupPose(): RawPose;
+  step(first: boolean, trackTime: number, animationTime: number, posers: StepPosers): RawPose;
+}
+
+/** `RawTracksPath` opened on `doc`, refused by name where a walk on it would be (`openWalk`). */
+export function openRawTracksPath(doc: CompiledDocument, plant: TimelinePlant): RawTracksPath {
+  const why = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? steppedPreviousPassWhy(doc);
+  if (why !== null) throw new CoreInputError(`the raw walk leaves the bones out: ${why}`);
+  const ctx = freshStepContext(plant.physicsStep);
+  const raw: TimelinePlant = { ...plant, ...roundPlant(RAW_MODE) };
+  const resolve = plant.shown ?? shownAttachment;
+  return {
+    ctx,
+    raw,
+    setupPose: () => {
+      const setup = poseSetup(doc, raw, ctx);
+      const absent = setup.absent.filter(([block]) => block !== 'setup.clipped');
+      if (absent.length > 0) throw new CoreInputError(`the raw walk's reset pose leaves ${absent.map(([b, w]) => `${b} out (${w})`).join('; ')}`);
+      if (setup.world === null || setup.shown === null || setup.setup.slots === null || setup.setup.drawOrder === null) throw new CoreInputError('the raw walk\'s reset pose was not posed');
+      ctx.phase = 'update';
+      return RAW_SHAPE.setup(doc, setup.world, setup.setup.slots, setup.setup.drawOrder, setup.shown, plant, RAW_MODE);
+    },
+    step: (first, trackTime, animationTime, posers) => poseStepFrom(doc, plant, resolve, RAW_SHAPE, RAW_MODE, ctx, first, trackTime, animationTime, posers),
+  };
 }
 
 /** `walkIn`'s walk, each pose assembled in `shape` and handed to `visit` in order as it is posed (`poseRawAnimationEach`): the walk opened, then stepped over `steps`. */
