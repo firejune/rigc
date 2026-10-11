@@ -1,6 +1,6 @@
 /**
  * The bodies of the commands that reach nothing of spine-core — `explain`,
- * `ingest`, `diff`, `check`, `render`, `pose`, `chainfit` and `skills` —
+ * `ingest`, `diff`, `check`, `render`, `inspect`, `pose`, `chainfit` and `skills` —
  * moved here unchanged from `cli.ts` (issue #1052, step 4e of #380), with the
  * helpers only they call. Both entries register them (`CORE_COMMAND_RUNS`):
  * `cli.ts` beside the runtime's, `cli_core.ts` alone. And the body
@@ -30,12 +30,13 @@ import { ingest, INGEST_GUTTERS, type IngestFinding, IngestSpecRefused, type Ing
 import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
+import { type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readShowWords, readTimes, readZoom } from '../inspect.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
 import { cmdRepack } from './repack.ts';
-import { ATLAS_ABSENT, COMMANDS, type CommandRun, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
+import { ATLAS_ABSENT, COMMANDS, type CommandRun, modelTextBeside, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -646,6 +647,87 @@ export function cmdRender(flags: Record<string, string>): void {
   };
   writeFileSync(join(outRoot, FRAMES_SIDECAR), `${JSON.stringify(sidecar, null, 2)}\n`);
   console.log(`rigc: wrote ${join(outRoot, FRAMES_SIDECAR)}`);
+}
+
+/** Where `inspect` writes when `--out` is not given, and the name it takes inside a directory `--out` names. */
+export const DEFAULT_INSPECT_OUT = 'inspect.png';
+
+/**
+ * inspect — one moment of a build drawn for an agent to read, and the legend
+ * that turns its pixels back into world units (issue #1357). The view is
+ * `src/inspect.ts`'s; this reads the flags, loads the candidate the way
+ * `render` loads it and writes the two files.
+ *
+ * ⚠️ A flag this command does not take is refused by name here rather than
+ * ignored: the parser accepts any `--word value`, and a view asked for with a
+ * flag that does nothing would be a picture of something other than what the
+ * caller asked about.
+ */
+export function cmdInspect(flags: Record<string, string>): void {
+  const doc = COMMANDS.find((c) => c.name === 'inspect');
+  const accepted = [...(doc?.flags ?? []), 'help'];
+  const stray = Object.keys(flags).filter((name) => !accepted.includes(name));
+  if (stray.length > 0) {
+    throw new InspectError(`inspect takes no --${stray.join(', --')}; it takes --${accepted.filter((f) => f !== 'help').join(', --')}`);
+  }
+  if (flags.candidate === undefined) {
+    throw new UsageError('inspect needs --candidate <dir | skeleton.json> — the directory `build --out` wrote');
+  }
+  if (flags.zoom !== undefined && flags.viewport !== undefined) {
+    throw new InspectError('--zoom and --viewport both choose the box the picture is of; give one of them');
+  }
+  const show = readShowWords(flags.show);
+  const times = readTimes(flags.at);
+  const fps = readPositiveNumber(flags, 'fps', INSPECT_DEFAULT_FPS, 1);
+  const maxSide = readPositiveNumber(flags, 'max', 256, 16);
+  let frame: InspectFrame = { kind: 'shot' };
+  if (flags.zoom !== undefined) frame = { kind: 'zoom', ...readZoom(flags.zoom) };
+  if (flags.viewport !== undefined) {
+    const parts = flags.viewport.split(',').map((s) => Number(s.trim()));
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+      throw new UsageError('--viewport takes four numbers: <x>,<y>,<width>,<height> — the world box, y up');
+    }
+    if (parts[2] <= 0 || parts[3] <= 0) throw new UsageError('--viewport width and height must be positive');
+    frame = { kind: 'viewport', x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
+  }
+  const target = resolve(flags.out ?? DEFAULT_INSPECT_OUT);
+  const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_INSPECT_OUT) : target;
+  if (!out.endsWith('.png')) throw new InspectError(`--out ${flags.out}: the picture is a PNG, so --out names a .png file (its legend is written beside it as .json)`);
+  const legendPath = `${out.slice(0, -'.png'.length)}.json`;
+
+  const { skeletonPath, atlasPath, atlasText } = resolveDrawable(flags.candidate, flags.atlas);
+  const skeletonText = readSkeletonText(skeletonPath);
+  console.log('rigc inspect');
+  console.log(`  ..    skeleton ${skeletonPath}`);
+  console.log(`  ..    atlas    ${atlasPath}${atlasText === null ? ` — not there (${ATLAS_ABSENT})` : ''}`);
+  // `render`'s loading, in `render`'s order (issue #1014): the poser is chosen before anything is read off the candidate.
+  const candidate = loadCandidate(
+    { skeletonText, atlasText, atlasDir: dirname(atlasPath), label: skeletonPath },
+    { skeleton: skeletonPath, atlas: atlasPath },
+    posersAsked(flags),
+  );
+  const animation = readAnimationFlag(flags, [...candidate.facts.animations]) ?? null;
+  readPoserFlag(flags);
+  refuseUnchosen(candidate.choice);
+  const result = inspectCandidate(
+    candidate,
+    { skeletonText, modelText: modelTextBeside(skeletonPath, skeletonText) },
+    { show, dim: flags.dim !== undefined, animation, times, fps, skin: flags.skin, frame, maxSide },
+  );
+  const { legend } = result;
+  console.log(`  ..    poser    ${result.poserNote}`);
+  const when = animation === null ? 'the setup pose' : `${animation} at ${legend.tiles.map((t) => `${t.time.toFixed(4)}s (frame ${t.frame})`).join(', ')}, ${fps} fps grid`;
+  console.log(`  ..    view     ${legend.show.join(',')}${legend.dim ? ' over dimmed art' : ''} — ${when}`);
+  const v = legend.viewport;
+  // Four places for reading; the legend carries every number exactly.
+  const f = (n: number): string => String(Number(n.toFixed(4)));
+  console.log(`  ..    box      world x ${f(v.minX)}..${f(v.maxX)}, y ${f(v.minY)}..${f(v.maxY)} at ${f(v.scale)} px per unit — ${legend.tiles.length} tile(s) of ${v.width}x${v.height}px (exact in the legend)`);
+  for (const note of result.notes) console.log(`  ..    ${note}`);
+  mkdirSync(dirname(out), { recursive: true });
+  result.plate.writePng(out);
+  writeFileSync(legendPath, legendText(legend));
+  console.log(`rigc: wrote ${out}`);
+  console.log(`rigc: wrote ${legendPath}`);
 }
 
 /** `--scale 0.5,2` / `--rotation -30,30` — a pair of numbers, low first. */
@@ -1621,6 +1703,7 @@ export const CORE_COMMAND_RUNS: Readonly<Record<string, CommandRun>> = {
   diff: ({ flags, lists, positional }) => cmdDiff(flags, lists, positional),
   check: ({ flags }) => cmdCheck(flags),
   render: ({ flags }) => cmdRender(flags),
+  inspect: ({ flags }) => cmdInspect(flags),
   pose: ({ flags }) => cmdPose(flags),
   chainfit: ({ flags }) => cmdChainFit(flags),
   skills: ({ flags, positional }) => cmdSkills(flags, positional),

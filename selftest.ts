@@ -128987,6 +128987,571 @@ function runRepackSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// inspect — a picture for an agent to read, and its legend (issue #1357)
+// ---------------------------------------------------------------------------
+
+import { AXIS_PIXELS, GRID_MIN_PIXELS, INSPECT_COLOURS, inspectCandidate, type InspectLegend, type InspectPlant, type InspectRequest, legendText } from './src/inspect.ts';
+import { loadCandidate } from './src/render_shared.ts';
+
+/**
+ * The inspect probe's chosen numbers. Every pixel the controls below expect is
+ * derived from these by the one formula the legend states — never measured off
+ * a run — and the box is chosen so each bone's origin and tip lands on a pixel
+ * CENTRE (scale 2, a box corner at −20.25), so the floor that names a mark's
+ * pixel has half a pixel of room either way.
+ */
+const INSPECT_PROBE = {
+  arm: { x: 20, y: 10, length: 40 },
+  fore: { x: 30, rotation: 90, length: 20 },
+  pin: { x: -10, y: -10 },
+  box: { x: -20.25, y: -20.25, width: 100, height: 60 },
+  max: 200,
+  /** The animation's one track: `fore` turns this many degrees over one second. */
+  turn: 90,
+} as const;
+
+/** Each bone's world origin and tip at the setup pose, from the spec's numbers by hand: root at 0, arm along +x, fore turned 90° on it. */
+function inspectProbeWorld(): Map<string, { origin: [number, number]; tip: [number, number] }> {
+  const { arm, fore, pin } = INSPECT_PROBE;
+  const foreOrigin: [number, number] = [arm.x + fore.x, arm.y];
+  return new Map([
+    ['root', { origin: [0, 0], tip: [0, 0] }],
+    ['arm', { origin: [arm.x, arm.y], tip: [arm.x + arm.length, arm.y] }],
+    ['fore', { origin: foreOrigin, tip: [foreOrigin[0], foreOrigin[1] + fore.length] }],
+    ['pin', { origin: [pin.x, pin.y], tip: [pin.x, pin.y] }],
+  ]);
+}
+
+/** The probe box's transform, written out: scale = max over the longer side, y turned over at the box's top. */
+function inspectProbePixel(wx: number, wy: number): [number, number] {
+  const { box, max } = INSPECT_PROBE;
+  const scale = max / Math.max(box.width, box.height);
+  return [(wx - box.x) * scale, (box.y + box.height - wy) * scale];
+}
+
+interface InspectProbe {
+  /** The build `build --out` wrote: a model document beside it, so the core poses it. */
+  outDir: string;
+  /** The same rig built with --copy-images and its model document removed: posed by spine-core. */
+  bareDir: string;
+  work: string;
+  built: string[];
+}
+
+/** The probe rig: four bones (one of length 0 off the root), two slots — one named for its bone — one animation and one declared axis. */
+function writeInspectProbe(): InspectProbe {
+  const { arm, fore, pin, turn } = INSPECT_PROBE;
+  const dirs = writeProbeRig({
+    bones: [
+      { name: 'root' },
+      { name: 'arm', parent: 'root', x: arm.x, y: arm.y, length: arm.length },
+      { name: 'fore', parent: 'arm', x: fore.x, y: 0, rotation: fore.rotation, length: fore.length },
+      { name: 'pin', parent: 'root', x: pin.x, y: pin.y },
+    ],
+    slots: [
+      { name: 'arm', bone: 'arm', attachment: 'block' },
+      { name: 'marker', bone: 'fore', attachment: 'marker' },
+    ],
+    skins: { default: { arm: { block: { image: 'block.png' } }, marker: { marker: { image: 'marker.png' } } } },
+    invariants: { axes: [{ name: 'reach', through: ['arm', 'fore'], bones: ['arm'], tolerance: 5 }] },
+  });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      animations: { wave: { duration: 1, loop: false, tracks: [{ bone: 'fore', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [turn] }] }] } },
+    }, null, 2)}\n`,
+  );
+  const built: string[] = [];
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+  if (build.status !== 0) built.push(`the probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  const bareDir = join(dirs.dir, 'bare');
+  const bare = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', bareDir, '--copy-images']);
+  if (bare.status !== 0) built.push(`the --copy-images probe did not build (exit ${String(bare.status)}): ${(bare.stdout + bare.stderr).trim().slice(-400)}`);
+  else rmSync(join(bareDir, 'skeleton.model.json'));
+  return { outDir: dirs.outDir, bareDir, work: dirs.dir, built };
+}
+
+/** The probe's request with the probe box, overridden by `over`. */
+function inspectProbeRequest(over: Partial<InspectRequest> = {}): InspectRequest {
+  const { box, max } = INSPECT_PROBE;
+  return {
+    show: ['bones'],
+    dim: false,
+    animation: null,
+    times: [],
+    fps: PROTOCOL_FPS,
+    skin: undefined,
+    frame: { kind: 'viewport', x: box.x, y: box.y, width: box.width, height: box.height },
+    maxSide: max,
+    ...over,
+  };
+}
+
+/** The view of a build in this process, through the loading `cmdInspect` does. */
+function inspectBuildView(dir: string, request: InspectRequest, plant: InspectPlant = {}): ReturnType<typeof inspectCandidate> {
+  const skeletonPath = join(dir, 'skeleton.json');
+  const atlasPath = join(dir, 'skeleton.atlas');
+  const skeletonText = readFileSync(skeletonPath, 'utf8');
+  const candidate = loadCandidate(
+    { skeletonText, atlasText: readFileSync(atlasPath, 'utf8'), atlasDir: dir, label: skeletonPath },
+    { skeleton: skeletonPath, atlas: atlasPath },
+    undefined,
+  );
+  const modelPath = join(dir, 'skeleton.model.json');
+  return inspectCandidate(candidate, { skeletonText, modelText: existsSync(modelPath) ? readFileSync(modelPath, 'utf8') : undefined }, request, plant);
+}
+
+/** The legend against the probe's own numbers: every bone's world origin and tip, and the pixel the stated transform puts each at. */
+function inspectLegendFaults(legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const expected = inspectProbeWorld();
+  const tile = legend.tiles[0];
+  if (tile === undefined) return ['the legend has no tile'];
+  for (const [name, want] of expected) {
+    const bone = tile.bones.find((b) => b.name === name);
+    if (bone === undefined) {
+      faults.push(`legend: no bone "${name}"`);
+      continue;
+    }
+    for (const end of ['origin', 'tip'] as const) {
+      const [wx, wy] = want[end];
+      const [px, py] = inspectProbePixel(wx, wy);
+      const got = bone[end];
+      // 1e-5 world units: a 90° turn's cosine is not 0 in either poser (−2.4e-8 under the runtime's π).
+      if (Math.abs(got.world[0] - wx) > 1e-5 || Math.abs(got.world[1] - wy) > 1e-5) {
+        faults.push(`legend: bone "${name}" ${end} at world (${got.world.join(', ')}), the spec puts it at (${wx}, ${wy})`);
+      }
+      if (Math.abs(got.pixel[0] - px) > 1e-4 || Math.abs(got.pixel[1] - py) > 1e-4) {
+        faults.push(`legend: bone "${name}" ${end} at pixel (${got.pixel.join(', ')}), the probe box puts (${wx}, ${wy}) at (${px}, ${py})`);
+      }
+    }
+    if (bone.zeroLength !== (want.origin[0] === want.tip[0] && want.origin[1] === want.tip[1])) faults.push(`legend: bone "${name}" zeroLength ${bone.zeroLength}`);
+  }
+  return faults;
+}
+
+/** The pixels of one exact colour within `r` of (cx, cy): how many, and their mean column and row. */
+function inspectBlob(plate: Plate, cx: number, cy: number, rgba: readonly number[], r = 3): { count: number; x: number; y: number } {
+  let count = 0;
+  let sx = 0;
+  let sy = 0;
+  for (let y = cy - r; y <= cy + r; y++) {
+    for (let x = cx - r; x <= cx + r; x++) {
+      if (x < 0 || y < 0 || x >= plate.width || y >= plate.height) continue;
+      const p = plate.get(x, y);
+      if (p[0] === rgba[0] && p[1] === rgba[1] && p[2] === rgba[2] && p[3] === rgba[3]) {
+        count++;
+        sx += x;
+        sy += y;
+      }
+    }
+  }
+  return { count, x: count === 0 ? NaN : sx / count, y: count === 0 ? NaN : sy / count };
+}
+
+/**
+ * The picture against its legend: every drawn bone's marks centred on the
+ * pixels the legend names — a filled 3x3 origin, a hollow 3x3 tip, a hollow 5x5
+ * square around a bone of length 0 — read by colour and counted.
+ */
+function inspectPictureFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const marks: Array<[string, 'origin' | 'tip', 'origin' | 'tip' | 'zero', number]> = [];
+  for (const tile of legend.tiles) {
+    for (const bone of tile.bones) {
+      if (bone.undrawn !== null) continue;
+      marks.push([bone.name, 'origin', 'origin', 9]);
+      marks.push([bone.name, bone.zeroLength ? 'origin' : 'tip', bone.zeroLength ? 'zero' : 'tip', bone.zeroLength ? 16 : 8]);
+      for (const [name, end, kind, count] of marks.splice(0)) {
+        const at = (end === 'origin' ? bone.origin : bone.tip).pixel;
+        const cx = Math.floor(at[0]);
+        const cy = Math.floor(at[1]);
+        const found = inspectBlob(plate, cx, cy, INSPECT_COLOURS[kind].rgba);
+        if (found.count !== count || found.x !== cx || found.y !== cy) {
+          faults.push(
+            `picture: bone "${name}" ${kind} mark — ${found.count} pixel(s) centred at (${found.x}, ${found.y}) within 3 px of (${cx}, ${cy}), ` +
+              `the legend's pixel; required ${count} centred there`,
+          );
+        }
+      }
+    }
+  }
+  return faults;
+}
+
+/** The grid against the probe box: the step derived here from the scale, the lines at its multiples, each a column or row of grid colour. */
+function inspectGridFaults(plate: Plate, legend: InspectLegend): string[] {
+  const faults: string[] = [];
+  const { box, max } = INSPECT_PROBE;
+  const scale = max / Math.max(box.width, box.height);
+  // The smallest 1, 2 or 5 x 10^n world units at least GRID_MIN_PIXELS apart, walked up from 10^-3 — not the module's own search.
+  let step = NaN;
+  for (let n = -3; Number.isNaN(step) && n < 9; n++) for (const m of [1, 2, 5]) if (Number.isNaN(step) && m * 10 ** n * scale >= GRID_MIN_PIXELS) step = m * 10 ** n;
+  const grid = legend.tiles[0]?.grid;
+  if (grid === undefined) return ['legend: no grid block'];
+  if (grid.step !== step) faults.push(`legend: grid step ${grid.step} world units; at ${scale} px per unit the step is ${step} (the first 1/2/5 x 10^n at least ${GRID_MIN_PIXELS} px apart)`);
+  const xs: number[] = [];
+  for (let k = Math.ceil(box.x / step); k * step <= box.x + box.width; k++) xs.push(k * step);
+  if (JSON.stringify(grid.x) !== JSON.stringify(xs.map((v) => (v === 0 ? 0 : v)))) faults.push(`legend: grid x lines [${grid.x.join(', ')}], required [${xs.join(', ')}]`);
+  // A row no y line and no label crosses: the line's own colour, and none on the columns either side.
+  const row = Math.floor(inspectProbePixel(0, box.y + step / 2)[1]);
+  for (const x of xs) {
+    const col = Math.floor(inspectProbePixel(x, 0)[0]);
+    const want = INSPECT_COLOURS[x === 0 ? 'gridZero' : 'grid'].rgba;
+    const at = plate.get(col, row);
+    if (at.join() !== want.join()) faults.push(`picture: column ${col} (world x ${x}) at row ${row} is ${at.join(',')}, not the grid's ${want.join(',')}`);
+    for (const side of [col - 1, col + 1]) {
+      const s = plate.get(side, row);
+      if (s.join() !== BACKGROUND.join()) faults.push(`picture: column ${side}, beside world x ${x}'s line, is ${s.join(',')} at row ${row}, not the background`);
+    }
+  }
+  return faults;
+}
+
+function runInspectSuite(): number {
+  console.log('\n── inspect: a picture for an agent to read, and the legend that puts its pixels back in world units (issue #1357) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const probe = writeInspectProbe();
+  const outPng = (name: string): string => join(probe.work, `${name}.png`);
+  const inspect = (args: string[]): ReturnType<typeof runCli> => runCli(['inspect', '--candidate', probe.outDir, ...args]);
+  const boxFlag = ['--viewport', `${INSPECT_PROBE.box.x},${INSPECT_PROBE.box.y},${INSPECT_PROBE.box.width},${INSPECT_PROBE.box.height}`, '--max', String(INSPECT_PROBE.max)];
+  const legendOf = (png: string): InspectLegend => JSON.parse(readFileSync(png.replace(/\.png$/, '.json'), 'utf8')) as InspectLegend;
+
+  // IN01 — the legend puts every bone where the spec's numbers do, through the transform it states.
+  const cliSetup = probe.built.length === 0 ? inspect([...boxFlag, '--show', 'bones', '--out', outPng('setup')]) : null;
+  const setupPlate = cliSetup?.status === 0 ? readPlate(outPng('setup')) : null;
+  const setupLegend = cliSetup?.status === 0 ? legendOf(outPng('setup')) : null;
+  {
+    const probes = [...probe.built];
+    if (cliSetup !== null && cliSetup.status !== 0) probes.push(`inspect exited ${String(cliSetup.status)}: ${cliSetup.stderr.trim().slice(0, 300)}`);
+    if (setupLegend !== null) {
+      probes.push(...inspectLegendFaults(setupLegend));
+      const t = setupLegend.tiles[0].transform;
+      if (t.scale !== 2 || t.minX !== INSPECT_PROBE.box.x || t.maxY !== INSPECT_PROBE.box.y + INSPECT_PROBE.box.height) probes.push(`legend: transform ${JSON.stringify(t)}, the box states scale 2, minX -20.25, maxY 39.75`);
+      if (!cliSetup?.stdout.includes('poser    rigc core')) probes.push('the poser line does not say the core posed this build');
+    }
+    const held = probes.length === 0;
+    say(
+      'IN01_THE_LEGEND_PUTS_EVERY_BONE_WHERE_THE_SPEC_DOES_THROUGH_THE_TRANSFORM_IT_STATES',
+      held,
+      probeDetail(held, probes, `4 bones (one of length 0, one turned 90°) over the box ${INSPECT_PROBE.box.x},${INSPECT_PROBE.box.y} ${INSPECT_PROBE.box.width}x${INSPECT_PROBE.box.height} at --max ${INSPECT_PROBE.max}: every origin and tip within 1e-5 world units of the spec's chain and within 1e-4 px of (x + 20.25)·2, (39.75 − y)·2, computed here; posed by the core and said so`),
+      'issue #1357: the legend is what turns a pixel read off the picture back into a spec number, so it is held to numbers written by hand from the spec rather than to the run that drew it',
+    );
+  }
+
+  // IN02 — the picture draws each mark on the pixel the legend names.
+  {
+    const probes: string[] = [];
+    if (setupPlate === null || setupLegend === null) probes.push('no setup picture to read (IN01 says why)');
+    else probes.push(...inspectPictureFaults(setupPlate, setupLegend));
+    const held = probes.length === 0;
+    say(
+      'IN02_EVERY_BONE_MARK_IS_DRAWN_ON_THE_PIXEL_THE_LEGEND_NAMES',
+      held,
+      probeDetail(held, probes, 'every drawn bone: a filled 3x3 origin of 9 pixels and a hollow 3x3 tip of 8, or a hollow 5x5 square of 16 around a bone of length 0, each centred on the floor of the legend\'s pixel — read by exact colour, counted'),
+      'issue #1357: a legend that disagrees with its own picture sends a position read off one into the other, which is the silence this command exists to remove',
+    );
+  }
+
+  // IN03 — --zoom frames the bone or slot it names, padded by what it says.
+  {
+    const probes: string[] = [];
+    const cases: Array<[string, string, [number, number, number, number], 'stated' | 'default']> = [
+      // fore runs (50, 10) to (50, 30): a box 0 x 20, padded by 5 on every side — stated, then the default quarter of 20.
+      ['fore:5', 'fore', [45, 5, 55, 35], 'stated'],
+      ['fore', 'fore', [45, 5, 55, 35], 'default'],
+      // marker's region is 6 x 6 at fore's origin, turned with it: 47..53 x 7..13, padded by a quarter of 6.
+      ['slot:marker', 'marker', [45.5, 5.5, 54.5, 14.5], 'default'],
+    ];
+    for (const [flag, name, want, padFrom] of cases) {
+      if (probe.built.length > 0) break;
+      const run = inspect(['--zoom', flag, '--max', '120', '--out', outPng(`zoom-${name}`)]);
+      if (run.status !== 0) {
+        probes.push(`--zoom ${flag}: exit ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+        continue;
+      }
+      const legend = legendOf(outPng(`zoom-${name}`));
+      const v = legend.viewport;
+      const got = [v.minX, v.minY, v.maxX, v.maxY];
+      if (got.some((n, i) => Math.abs(n - want[i]) > 1e-5)) probes.push(`--zoom ${flag}: the box is [${got.join(', ')}], required [${want.join(', ')}]`);
+      const f = legend.framing;
+      const named = f.kind === 'zoom' ? (f.bone ?? f.slot) : undefined;
+      if (f.kind !== 'zoom' || named !== name || f.padFrom !== padFrom) probes.push(`--zoom ${flag}: framing ${JSON.stringify(f)}, required the ${name} zoom with its pad ${padFrom}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'IN03_ZOOM_FRAMES_THE_BONE_OR_SLOT_IT_NAMES_PADDED_AS_STATED',
+      held,
+      probeDetail(held, probes, '--zoom fore:5 and --zoom fore frame [45, 5, 55, 35] (fore from (50, 10) to (50, 30), padded by 5 stated and by the default quarter of its 20), --zoom slot:marker frames [45.5, 5.5, 54.5, 14.5] — boxes written here from the spec'),
+      'issue #1357: a zoom on the wrong thing is a picture of the right size about something else, so the box is held to the named object\'s own numbers',
+    );
+  }
+
+  // IN04 — a sheet's tiles: one per time, in order, on one grid, each the pose render --geometry records for that frame.
+  {
+    const probes = [...probe.built];
+    const times = [0, 0.5, 1];
+    const run = probe.built.length === 0 ? inspect([...boxFlag, '--animation', 'wave', '--at', times.join(','), '--out', outPng('sheet')]) : null;
+    const render = probe.built.length === 0 ? runCli(['render', '--candidate', probe.outDir, '--animation', 'wave', '--geometry', '--out', join(probe.work, 'render')]) : null;
+    if (run !== null && run.status !== 0) probes.push(`inspect exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    if (render !== null && render.status !== 0) probes.push(`render exited ${String(render.status)}: ${render.stderr.trim().slice(0, 300)}`);
+    if (run?.status === 0 && render?.status === 0) {
+      const legend = legendOf(outPng('sheet'));
+      const plate = readPlate(outPng('sheet'));
+      const geometry = JSON.parse(readFileSync(join(probe.work, 'render', 'wave', 'geometry.json'), 'utf8')) as GeometryFile;
+      const w = legend.viewport.width;
+      const h = legend.viewport.height;
+      if (legend.tiles.length !== times.length) probes.push(`${legend.tiles.length} tile(s) for ${times.length} time(s)`);
+      if (plate.width !== times.length * (w + SHEET_GAP) + SHEET_GAP || plate.height !== h + 2 * SHEET_GAP) probes.push(`the sheet is ${plate.width}x${plate.height}, required ${times.length * (w + SHEET_GAP) + SHEET_GAP}x${h + 2 * SHEET_GAP}`);
+      legend.tiles.forEach((tile, i) => {
+        const frame = Math.round(times[i] * PROTOCOL_FPS);
+        if (tile.frame !== frame || tile.time !== frame / PROTOCOL_FPS) probes.push(`tile ${i}: frame ${tile.frame} at ${tile.time}s, required frame ${frame}`);
+        if (tile.box.x !== SHEET_GAP + i * (w + SHEET_GAP) || tile.box.y !== SHEET_GAP) probes.push(`tile ${i}: at (${tile.box.x}, ${tile.box.y}), required (${SHEET_GAP + i * (w + SHEET_GAP)}, ${SHEET_GAP})`);
+        const posed = geometry.frames[frame];
+        for (const bone of tile.bones) {
+          const g = posed?.bones.find((b) => b.name === bone.name);
+          if (g === undefined || g.worldX !== bone.origin.world[0] || g.worldY !== bone.origin.world[1]) {
+            probes.push(`tile ${i}: bone "${bone.name}" origin (${bone.origin.world.join(', ')}), render --geometry frame ${frame} has (${g?.worldX}, ${g?.worldY})`);
+          }
+          const px = tile.box.x + (bone.origin.world[0] - INSPECT_PROBE.box.x) * 2;
+          const py = tile.box.y + (INSPECT_PROBE.box.y + INSPECT_PROBE.box.height - bone.origin.world[1]) * 2;
+          if (Math.abs(bone.origin.pixel[0] - px) > 1e-9 || Math.abs(bone.origin.pixel[1] - py) > 1e-9) probes.push(`tile ${i}: bone "${bone.name}" origin pixel (${bone.origin.pixel.join(', ')}), its tile's transform puts it at (${px}, ${py})`);
+        }
+      });
+      // fore turns 90° more by the last tile: its tip ends at arm's origin side, (50 − 20, 10).
+      const last = legend.tiles[2]?.bones.find((b) => b.name === 'fore');
+      if (last === undefined || Math.abs(last.tip.world[0] - 30) > 1e-4 || Math.abs(last.tip.world[1] - 10) > 1e-4) probes.push(`tile 2: fore's tip at (${last?.tip.world.join(', ')}), the key turns it to (30, 10)`);
+      probes.push(...inspectPictureFaults(plate, legend));
+    }
+    const held = probes.length === 0;
+    say(
+      'IN04_A_SHEET_HAS_ONE_TILE_PER_TIME_ON_ONE_GRID_EACH_THE_POSE_RENDER_RECORDS',
+      held,
+      probeDetail(held, probes, `--at ${times.join(',')} of "wave": ${times.length} tiles left to right with a ${SHEET_GAP} px rule, frames 0, 6 and 12 of the 12 fps grid; every bone origin equal to render --geometry's world numbers for that frame, at its tile's own transform, every mark on its pixel; fore's tip turned to (30, 10) by the last`),
+      'issue #1357: a time is a frame of render\'s grid, so the tile is held to what render records for that frame rather than to a second posing of the moment',
+    );
+  }
+
+  // IN05 — refusals by name, each listing what exists; exit 2 and nothing written.
+  {
+    const probes = [...probe.built];
+    const refusals: Array<[string[], string[]]> = [
+      [['--zoom', 'elbow'], ['no bone or slot of that name. Bones: [root, arm, fore, pin]; slots: [arm, marker]']],
+      [['--zoom', 'arm'], ['names both a bone and a slot; say which with --zoom bone:arm or --zoom slot:arm']],
+      [['--zoom', 'pin'], ['is one point', '--zoom pin:<pad>']],
+      [['--animation', 'jump', '--at', '0'], ['no animation "jump" in this skeleton; it has [wave]']],
+      [['--show', 'bones,mesh'], ['"mesh" is not a view inspect draws; it draws [art, grid, declared, bones, axes, names]']],
+      [['--compare', 'elsewhere'], ['inspect takes no --compare; it takes --candidate']],
+      [['--animation', 'wave', '--at', '0.3'], ['not on the 12 fps frame grid', '3 (0.2500s) and 4 (0.3333s)']],
+      [['--animation', 'wave', '--at', '2'], ['past the end of "wave": it lasts 1s']],
+      [['--at', '0.5'], ['--at needs --animation <name>']],
+      [['--animation', 'wave'], ['--animation wave needs --at']],
+      [['--skin', 'night'], ['no skin "night" in this skeleton; it declares [default]']],
+      [['--zoom', 'fore', '--viewport', '0,0,10,10'], ['--zoom and --viewport both choose the box']],
+    ];
+    for (const [args, fragments] of refusals) {
+      if (probe.built.length > 0) break;
+      const out = outPng(`refused-${refusals.findIndex((r) => r[0] === args)}`);
+      const run = inspect([...args, '--out', out]);
+      const missing = fragments.filter((f) => !run.stderr.includes(f));
+      if (run.status !== 2 || missing.length > 0) probes.push(`${args.join(' ')}: exit ${String(run.status)}, missing ${JSON.stringify(missing)} from: ${run.stderr.trim().split('\n')[0]}`);
+      if (existsSync(out)) probes.push(`${args.join(' ')}: refused and still wrote ${out}`);
+    }
+    // A build with no model document beside it is posed by spine-core, says so — and `declared`, which reads that document, is refused.
+    if (probe.built.length === 0) {
+      const spine = runCli(['inspect', '--candidate', probe.bareDir, ...boxFlag, '--out', outPng('spine')]);
+      if (spine.status !== 0 || !spine.stdout.includes('poser    spine-core')) probes.push(`the export-shaped build: exit ${String(spine.status)}, poser line ${JSON.stringify(spine.stdout.split('\n').find((l) => l.includes('poser')))}`);
+      else probes.push(...inspectLegendFaults(legendOf(outPng('spine'))));
+      const declared = runCli(['inspect', '--candidate', probe.bareDir, '--show', 'declared', '--out', outPng('spine-declared')]);
+      if (declared.status !== 2 || !declared.stderr.includes('reads invariants.axes from the skeleton.model.json')) probes.push(`--show declared with no model document: exit ${String(declared.status)}: ${declared.stderr.trim().split('\n')[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'IN05_EVERY_REFUSAL_NAMES_WHAT_EXISTS_EXITS_2_AND_WRITES_NOTHING',
+      held,
+      probeDetail(held, probes, `${refusals.length} refusals — an unknown bone or slot, a name that is both, a zoom on one point, an unknown animation, skin, view word and flag, a time off the 12 fps grid and one past the end, --at without --animation and the reverse, two boxes — each exit 2 naming what exists and leaving no file; the same rig with no model document posed by spine-core, said so, its legend held as IN01's, and --show declared refused naming the document it reads`),
+      'issue #1357: the messages are the interface, so a miss names the roster it missed, and a view this cut does not draw (mesh) is an unknown word like any other — a message promising a later cut is a claim that rots',
+    );
+  }
+
+  // IN06 — the grid: a step in world units, lines at its multiples.
+  {
+    const probes = [...probe.built];
+    const run = probe.built.length === 0 ? inspect([...boxFlag, '--show', 'grid', '--out', outPng('grid')]) : null;
+    if (run !== null && run.status !== 0) probes.push(`inspect exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    if (run?.status === 0) probes.push(...inspectGridFaults(readPlate(outPng('grid')), legendOf(outPng('grid'))));
+    const held = probes.length === 0;
+    say(
+      'IN06_THE_GRID_IS_IN_WORLD_UNITS_AT_WHOLE_MULTIPLES_OF_ITS_STEP',
+      held,
+      probeDetail(held, probes, `at 2 px per unit the step is 20 world units (the first 1/2/5 x 10^n at least ${GRID_MIN_PIXELS} px apart, derived here), x lines at 0, 20, 40 and 60, each one column of grid colour with background either side`),
+      'issue #1357: "where in rig units is this point" is answered by counting grid lines, so the lines have to be world units and the legend has to say which',
+    );
+  }
+
+  // IN07 — axes: each bone's world x and y axes, AXIS_PIXELS long at a scale of 1.
+  {
+    const probes = [...probe.built];
+    const run = probe.built.length === 0 ? inspect([...boxFlag, '--show', 'axes', '--out', outPng('axes')]) : null;
+    if (run !== null && run.status !== 0) probes.push(`inspect exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    if (run?.status === 0) {
+      const legend = legendOf(outPng('axes'));
+      const plate = readPlate(outPng('axes'));
+      const unit = AXIS_PIXELS / 2;
+      // arm points along +x; fore is turned 90°, so its x axis points up and its y axis to −x.
+      const want: Record<string, { x: [number, number]; y: [number, number] }> = {
+        arm: { x: [20 + unit, 10], y: [20, 10 + unit] },
+        fore: { x: [50, 10 + unit], y: [50 - unit, 10] },
+      };
+      for (const [name, ends] of Object.entries(want)) {
+        const bone = legend.tiles[0].bones.find((b) => b.name === name);
+        for (const axis of ['x', 'y'] as const) {
+          const got = bone?.axes?.[axis];
+          const [wx, wy] = ends[axis];
+          if (got === undefined || Math.abs(got.world[0] - wx) > 1e-5 || Math.abs(got.world[1] - wy) > 1e-5) {
+            probes.push(`bone "${name}" ${axis} axis ends at ${JSON.stringify(got?.world)}, required (${wx}, ${wy})`);
+            continue;
+          }
+          const [ox, oy] = inspectProbePixel(...inspectProbeWorld().get(name)!.origin);
+          const [ex, ey] = inspectProbePixel(wx, wy);
+          const mid = plate.get(Math.floor((ox + ex) / 2), Math.floor((oy + ey) / 2));
+          const colourWant = INSPECT_COLOURS[axis === 'x' ? 'axisX' : 'axisY'].rgba;
+          if (mid.join() !== colourWant.join()) probes.push(`bone "${name}" ${axis} axis: its midpoint pixel is ${mid.join(',')}, not ${colourWant.join(',')}`);
+        }
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'IN07_AXES_POINT_ALONG_EACH_BONES_WORLD_X_AND_Y',
+      held,
+      probeDetail(held, probes, `arm's x axis to (${20 + AXIS_PIXELS / 2}, 10) and y to (20, ${10 + AXIS_PIXELS / 2}); fore, turned 90°, x up to (50, ${10 + AXIS_PIXELS / 2}) and y to (${50 - AXIS_PIXELS / 2}, 10) — ${AXIS_PIXELS} px at 2 px per unit — each midpoint drawn in its axis's colour`),
+      'issue #1357: "which way does this bone squash" is its y axis, which is not the page\'s y once a bone is turned — the blink that squashed along the page did exactly that',
+    );
+  }
+
+  // IN08 — declared: the invariants.axes line through its two bones' origins, the held bone's angle as A51 reads it.
+  {
+    const probes = [...probe.built];
+    const run = probe.built.length === 0 ? inspect([...boxFlag, '--show', 'declared', '--out', outPng('declared')]) : null;
+    if (run !== null && run.status !== 0) probes.push(`inspect exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    if (run?.status === 0) {
+      const legend = legendOf(outPng('declared'));
+      const plate = readPlate(outPng('declared'));
+      const entry = legend.tiles[0].declared?.[0];
+      if (entry === undefined || entry.name !== 'reach' || entry.degrees === null || Math.abs(entry.degrees) > 1e-6) probes.push(`declared: ${JSON.stringify(entry)}, required "reach" at 0° (arm (20, 10) to fore (50, 10))`);
+      const armEntry = entry?.bones.find((b) => b.name === 'arm');
+      if (armEntry === undefined || armEntry.off === null || armEntry.off > 1e-6) probes.push(`declared: arm ${JSON.stringify(armEntry)}, required 0° off its line`);
+      // The line runs across the whole tile: every column of the row arm's origin is on.
+      const row = Math.floor(inspectProbePixel(20, 10)[1]);
+      const want = INSPECT_COLOURS.declared.rgba.join();
+      const off = [...Array(plate.width).keys()].filter((x) => plate.get(x, row).join() !== want);
+      if (off.length > 0) probes.push(`declared: row ${row} is not the line's colour at ${off.length} of ${plate.width} column(s), first ${off[0]}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'IN08_DECLARED_DRAWS_THE_AXIS_LINE_ACROSS_THE_TILE_AND_STATES_EACH_HELD_BONE_AS_A51_READS_IT',
+      held,
+      probeDetail(held, probes, 'invariants.axes "reach" through arm (20, 10) and fore (50, 10): 0° in the legend, arm 0° off it, and row 59 drawn in the line\'s colour across all 200 columns'),
+      'issue #1357: "is this axis declared and held" — the line A51 holds the bones to, drawn where the picture can be read against it',
+    );
+  }
+
+  // IN09 — the art is render's frame: same poser, same framing, same pixels.
+  {
+    const probes = [...probe.built];
+    const run = probe.built.length === 0 ? inspect(['--show', 'art', '--max', '64', '--animation', 'wave', '--at', '0.5', '--out', outPng('art')]) : null;
+    const render = probe.built.length === 0 ? runCli(['render', '--candidate', probe.outDir, '--animation', 'wave', '--max', '64', '--out', join(probe.work, 'render64')]) : null;
+    if (run !== null && run.status !== 0) probes.push(`inspect exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    if (render !== null && render.status !== 0) probes.push(`render exited ${String(render.status)}: ${render.stderr.trim().slice(0, 300)}`);
+    if (run?.status === 0 && render?.status === 0) {
+      const mine = readPlate(outPng('art'));
+      const theirs = readPlate(join(probe.work, 'render64', 'wave', 'f0006.png'));
+      const sidecar = JSON.parse(readFileSync(join(probe.work, 'render64', 'frames.json'), 'utf8')) as FramesSidecar;
+      const v = legendOf(outPng('art')).viewport;
+      if (mine.width !== theirs.width || mine.height !== theirs.height) probes.push(`inspect drew ${mine.width}x${mine.height}, render ${theirs.width}x${theirs.height}`);
+      else if (!Buffer.from(mine.data).equals(Buffer.from(theirs.data))) probes.push('the pixels differ from render\'s frame 6');
+      if (sidecar.viewport.x !== v.minX || sidecar.viewport.y !== v.minY || sidecar.viewport.scale !== v.scale) probes.push(`the box differs: frames.json ${JSON.stringify(sidecar.viewport)}, legend ${JSON.stringify(v)}`);
+    }
+    const held = probes.length === 0;
+    say(
+      'IN09_WITH_NOTHING_DRAWN_OVER_IT_THE_ART_IS_RENDERS_FRAME_PIXEL_FOR_PIXEL',
+      held,
+      probeDetail(held, probes, 'inspect --show art --at 0.5 --max 64 against render --max 64\'s wave/f0006.png: the same size, every decoded pixel equal, and the legend\'s world box frames.json\'s'),
+      'issue #1357: inspect poses through what render poses with and frames as render frames, so its art is render\'s frame — the positive control under every overlay',
+    );
+  }
+
+  // IN10 — determinism: two runs of every view are one byte sequence; a third with one flag changed is not.
+  {
+    const probes = [...probe.built];
+    const args = [...boxFlag, '--show', 'art,grid,declared,bones,axes,names', '--animation', 'wave', '--at', '0,0.25,1'];
+    const runs = probe.built.length === 0 ? ['det-a', 'det-b'].map((n) => inspect([...args, '--out', outPng(n)])) : [];
+    const dimmed = probe.built.length === 0 ? inspect([...args, '--dim', '--out', outPng('det-dim')]) : null;
+    for (const r of [...runs, ...(dimmed === null ? [] : [dimmed])]) if (r.status !== 0) probes.push(`inspect exited ${String(r.status)}: ${r.stderr.trim().slice(0, 300)}`);
+    if (probes.length === 0) {
+      for (const ext of ['.png', '.json']) {
+        const a = readFileSync(outPng('det-a').replace('.png', ext));
+        const b = readFileSync(outPng('det-b').replace('.png', ext));
+        if (!a.equals(b)) probes.push(`two runs wrote different ${ext} bytes`);
+      }
+      if (readFileSync(outPng('det-a')).equals(readFileSync(outPng('det-dim')))) probes.push('--dim wrote the same picture, so the comparison above could not tell two pictures apart');
+    }
+    const held = probes.length === 0;
+    say(
+      'IN10_TWO_RUNS_OF_EVERY_VIEW_WRITE_THE_SAME_BYTES',
+      held,
+      probeDetail(held, probes, 'two separate processes over every view on a three-tile sheet: the PNG and the legend byte-identical; a third with --dim differs, so the comparison sees a change'),
+      'issue #1357: the same build and flags write the same bytes, held the way A18 holds a build — a second, independent run compared byte for byte',
+    );
+  }
+
+  // IN11–IN15 — the mutants: each planted defect red by name, under the control that exists to see it.
+  if (probe.built.length === 0) {
+    const mutants: Array<[string, InspectPlant, Partial<InspectRequest>, (r: ReturnType<typeof inspectCandidate>) => string[], string]> = [
+      ['IN11_A_MARK_ONE_PIXEL_OFF_THE_LEGEND_IS_RED', { overlayShift: [1, 0] }, {}, (r) => inspectPictureFaults(r.plate, r.legend), 'IN02\'s reading'],
+      ['IN12_A_LEGEND_THAT_DISAGREES_WITH_ITS_PICTURE_IS_RED', { legendShift: [0, 1] }, {}, (r) => [...inspectLegendFaults(r.legend), ...inspectPictureFaults(r.plate, r.legend)], 'IN01\'s and IN02\'s readings'],
+      ['IN13_A_GRID_IN_PIXELS_RATHER_THAN_WORLD_UNITS_IS_RED', { gridInPixels: true }, { show: ['grid'] }, (r) => inspectGridFaults(r.plate, r.legend), 'IN06\'s reading'],
+      ['IN14_A_Y_AXIS_NOT_TURNED_OVER_IS_RED', { unflipped: true }, {}, (r) => inspectLegendFaults(r.legend), 'IN01\'s reading'],
+      [
+        'IN15_A_ZOOM_ON_THE_WRONG_BONE_IS_RED',
+        { zoomBone: 'bone:arm' },
+        { frame: { kind: 'zoom', target: 'fore', pad: 5 }, maxSide: 120 },
+        (r) => {
+          const v = r.legend.viewport;
+          const got = [v.minX, v.minY, v.maxX, v.maxY];
+          return got.some((n, i) => Math.abs(n - [45, 5, 55, 35][i]) > 1e-5) ? [`--zoom fore:5 framed [${got.join(', ')}], required [45, 5, 55, 35]`] : [];
+        },
+        'IN03\'s reading',
+      ],
+    ];
+    // The same readings over the same requests with nothing planted are clean — or a red mutant would prove nothing.
+    for (const [name, plant, over, read, by] of mutants) {
+      const clean = read(inspectBuildView(probe.outDir, inspectProbeRequest(over)));
+      const planted = read(inspectBuildView(probe.outDir, inspectProbeRequest(over), plant));
+      say(
+        name,
+        clean.length === 0 && planted.length > 0,
+        clean.length > 0 ? `the unplanted run is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${by} found nothing` : `${JSON.stringify(plant)} planted: ${by} names it — ${planted[0]}; the same request unplanted reads clean`,
+        'issue #1357: a control nobody has seen fail is not a control — each defect the card names is planted in the view and caught by name',
+      );
+    }
+  } else {
+    say('IN11_MUTANTS', false, `the probe did not build, so no mutant ran: ${probe.built.join('; ')}`, '');
+  }
+
+  rmSync(probe.work, { recursive: true, force: true });
+  return bad;
+}
+
 function main(): void {
   // `--unit` (issue #1128): this process is one of `inUnits`' units — it runs the
   // one unit its spec names, writes the value, and runs no suite.
@@ -129109,6 +129674,7 @@ function main(): void {
   tally.of('doc-script', runDocScriptSuite);
   tally.of('see-it', runSeeItSuite);
   tally.of('geometry-export', runGeometryExportSuite);
+  tally.of('inspect', runInspectSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
