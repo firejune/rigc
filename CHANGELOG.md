@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.42.0](https://github.com/rig-c/core/compare/v2.41.0...v2.42.0) (2026-10-11)
+
+
+### Features
+
+* **cli:** rigc inspect draws what a bone moves and two builds on one transform — mesh edges, hulls, one bone's weights as a heat read off skeleton.json, the draw order at the pose, --compare beside a second build, one name label per pixel with no label over another, and --bone/--hide-bone globs — held by IN16–IN35 ([#1357](https://github.com/rig-c/core/issues/1357)) ([#1362](https://github.com/rig-c/core/issues/1362)) ([00e7202](https://github.com/rig-c/core/commit/00e7202c6449c789b1d11d448b4a6420a6ce356d))
+
 ## [2.41.0](https://github.com/rig-c/core/compare/v2.40.1...v2.41.0) (2026-10-11)
 
 
