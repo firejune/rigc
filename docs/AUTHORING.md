@@ -1317,6 +1317,7 @@ that lifts them.
 | `--stage x,y,w,h` | handed to `ingest` as its own `--stage` (§0.3) — a box for a skeleton that states none, refused beside one that does |
 | `--stage-box <slot>` | handed to `ingest` as its own `--stage-box` (§0.3): the stage read from the bounding box a build writes for a rig that states `skeleton.stageBox` — the exact way to carry the stage through a repack of the three files alone (*The stage*, below). `ingest`'s refusals reach the caller in its own words |
 | `--accept-skeleton-differences` | write the rebuild even where its `skeleton.json` differs from the input's, with **every** differing path printed and both values (default: refused naming them, check (b) below). Nothing else relaxes: check (a) and the gate hold exactly as without it. Beside a skeleton that comes back byte-identical, check (b)'s line says the flag accepted nothing |
+| `--keep-pages` | write **`skeleton.model.json` alone**, for the atlas and pages as they stand — nothing lifted, nothing packed, no page and no atlas written (*Keeping the pages*, below). Takes none of the packing flags and not `--accept-skeleton-differences`, each refused by name (exit 2) |
 
 Every other flag `build` takes is refused by name, with the reason `repack` does not
 take it (`--rig`, `--motion`, `--images`, `--manifest`, `--copy-images`, `--pack`,
@@ -1449,6 +1450,71 @@ either way; the stage line is where it shows. Pass `--stage-box <slot>` for such
 build. (`--stage` adds a box only to a skeleton that states none, which is `ingest`'s
 rule.)
 
+**Keeping the pages — `--keep-pages`** (issue #1339). A player that reads
+`skeleton.model.json` needs the document for the pages it already ships, not for new
+ones: a repack's document states the repacked placement, and beside the old pages it
+describes texels that are not there. `--keep-pages` writes that document and nothing
+else:
+
+```bash
+bun cli.ts repack spine/ --out spine/ --keep-pages
+#   ..    keep   --keep-pages: the atlas and its pages are kept as they are and skeleton.model.json is the one file written; profile spine
+#   ..    stage  640 x 725 at -0.000016,-25 — read from the skeleton's header box: …
+#   ..    check  (a) pages: the document states the atlas's 1 page(s) and 10 region(s) as they stand, field for field (pagesOfAtlas of the input atlas) — no page and no atlas is written
+#   ..    check  (b) skeleton.json: byte-identical to the input's — the document's spine.sha256 names the file on disk
+#   ..    check  (c) gate: green — the report above, on the build against the atlas as it stands
+# rigc: wrote /abs/path/spine/skeleton.model.json
+```
+
+The read and the stage are the repack's — the same `ingest`, the same `--stage` and
+`--stage-box`, the same stage line. In place of the lift and `build --pack` it runs
+**`build --atlas-in`** over the input atlas (§0.1's *a pack somebody already made*),
+which resolves every part to a region of that atlas and writes no page; the atlas and
+its pages are staged as copies in the work directory, so the document's page names
+are the atlas's own. Before the one write, three things are shown: **(a)** the
+document's `pages` are the input atlas's pages and regions field for field;
+**(b)** the rebuilt `skeleton.json` is byte-identical to the input's, so
+`spine.sha256` names the file on disk — **with no acceptance**: a document whose digest
+names a skeleton other than the one beside it is exactly what this must not write, so
+`--accept-skeleton-differences` is refused here, and a build written before 2.2.0
+needs the full repack, which writes the rebuilt skeleton with its own pages; **(c)**
+the gate is green.
+
+- `--out` is usually the build's own directory. It may hold anything **except** a
+  `skeleton.model.json`, which is never written over (exit 2, naming the file): remove
+  it to have it rewritten. The atlas has to sit beside the skeleton, because the
+  document's page names are paths from the directory it sits in.
+- What the document states is accepted as it stands: a turned region, a trimmed
+  region, a page `scale:`, `pma: true`, `index:` and a name spelled twice — the
+  document has fields for each and the core reads them. Whether the skeleton still
+  rebuilds byte for byte against such an atlas is check (b)'s to say, not a
+  refusal's — and measured, it differs for a trim: `gallery/nod` laid with every
+  region turned 90 is written, its poses equal to the document over its own pack, but
+  laid turned **and trimmed** it is refused by (b) on `skeleton.y` and
+  `skeleton.height` alone, because a trimmed region's quad is its kept rectangle and
+  the setup-pose box in the header shrinks with it (`RPK23`). A line the document has **no field for** — `filter` other than
+  `Linear, Linear` (the core samples every page bilinearly), `format`, `repeat`,
+  `split`/`pad`, any other — is refused naming the page or region, because a player
+  reading only the document would draw without it.
+- ⚠️ **A texel is not seen.** Nothing in the three files records one — the atlas
+  states rectangles, not contents — so a page edited after its pack is a page the
+  atlas still describes, and the document written beside it is the same bytes
+  (`RPK24`). The document states placement only.
+
+Measured on `gallery/nod` and `gallery/flex` built `--pack` and reduced to the three
+kinds of file (`RPK20`, `RPK21`): every input file the same bytes after (sha256), the
+document the one file added, its pages `pagesOfAtlas` of the atlas on disk,
+`cli_core.ts` writing the same document byte for byte; posed through the core
+(`poseRawSetup`, `poseRawAnimation`), every pose text-equal to the one the document
+`build` wrote gives, and `render --poser core` drawing the same decoded pixels from the
+kept pages as from the build. Without `--stage-box` the stage is the header's box by
+the rules above — the document differs from `build`'s there, by design, and in the
+order `ingest` writes the animations — and neither the poses nor the frames read it;
+with the stage carried as a box and `--stage-box` given, the stage is the declared one
+too. The document's `images` section names the atlas's page and region for each part,
+where the full repack's names the lifted part in a work directory that no longer
+exists; nothing that poses or draws reads it.
+
 **What each refusal says, and what to change:**
 
 | `rigc repack: …` | exit | change |
@@ -1460,6 +1526,11 @@ rule.)
 | `ingest found N blocker(s) …` / `ingest refused the skeleton: …` | 1 / 2 | the skeleton cannot be read back exactly (§0.3's findings); `--stage` beside a stated box is `ingest`'s refusal |
 | `--out <dir> is not empty …` / `is a file …` | 2 | name a new directory |
 | `repack takes no --<flag>: …` | 2 | drop the flag |
+| `<atlas> cannot be stated by skeleton.model.json as it stands — N reason(s), and nothing was written:` then one line per reason (`page … states filter: …`, `… a line skeleton.model.json has no field for`, `page … is not on disk`, `page … declares size …`, `region … occupies … which leaves the … page`) | 1 | `--keep-pages`: the atlas states something the document cannot carry; repack without `--keep-pages`, or rebuild from the parts |
+| `the build against <atlas> as it stands refused: image "…" resolves to region "…", which the atlas at <atlas> does not have …` | 1 | `--keep-pages`: the skeleton draws a region the atlas does not name — the atlas was edited, or is another build's |
+| `no skeleton.model.json describes these files as they stand, …` then `(b) skeleton.json: …` and the paths | 1 | `--keep-pages`: the skeleton is not what this rigc writes from what it states, so no digest can name it; repack without `--keep-pages` (which writes the rebuild and its pages) |
+| `--out <dir> already holds skeleton.model.json …` | 2 | `--keep-pages`: remove the document to have it rewritten, or name another `--out` |
+| `repack --keep-pages takes no --<flag>: …` / `the atlas … is not in the skeleton's directory …` | 2 | drop the flag; keep the atlas beside the skeleton |
 
 A red gate is `build`'s own report and its `rigc: N assertion(s) failed — nothing
 written`, followed by `rigc repack: nothing was written to <out>; the work directory

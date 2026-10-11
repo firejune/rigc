@@ -125,7 +125,7 @@ export { PACKAGE_ROOT, readPackageMeta, readVersion };
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences', 'keep-pages']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -1092,6 +1092,13 @@ const FLAG_MEANINGS: Record<string, string> = {
     'with both values (default: refused naming them). It says only where the two differ, never why — a build written ' +
     'before 2.2.0, whose header box was the stage, differs in those four fields and nowhere else. Region identity and ' +
     'the gate hold exactly as without it; beside an input that needs none, the check line says it accepted nothing',
+  'keep-pages':
+    'write skeleton.model.json alone, for the atlas and pages as they stand: nothing is lifted or packed, the build ' +
+    'resolves every part against the input atlas (build --atlas-in) and the document states that atlas\'s pages and ' +
+    'regions field for field, its spine.sha256 the skeleton.json beside them. Written only when the rebuilt skeleton is ' +
+    'byte-identical to the input\'s and the gate is green; --out may be the build\'s own directory and must not already ' +
+    'hold skeleton.model.json (refused by name, never written over). A page or region line the document has no field ' +
+    'for is refused naming it. Takes none of the packing flags, nor --accept-skeleton-differences',
   'stage-box':
     'the slot whose bounding box carries the stage — what `build` writes for a rig that asks for one ' +
     '(`skeleton.stageBox`). Its four corners are read as the rebuild\'s stage in place of the header\'s box, which ' +
@@ -1308,6 +1315,7 @@ export const COMMANDS: CommandDoc[] = [
       core: {
         usage: [
           `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]   (gated without spine-core — see repack --help)`,
+          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
         ],
         notes: [
           'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
@@ -1322,15 +1330,17 @@ export const COMMANDS: CommandDoc[] = [
           'here: the model side over the document and the round trip\'s own rules restated over',
           'the emitted text, A00_ROUNDTRIP_PARSE a SKIP naming spine-core. An atlas the lift',
           'cannot read exactly is refused by name before anything is made: docs/AUTHORING.md',
-          '§0.4 lists what is accepted and what is refused, and why.',
+          '§0.4 lists what is accepted and what is refused, and why. --keep-pages writes',
+          'skeleton.model.json alone, for the atlas and pages as they stand (see repack --help).',
         ],
       },
     },
     spineFormat: true,
     usage: [
       `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]`,
+          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
     ],
-    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences', 'report'],
+    flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences', 'keep-pages', 'report'],
     overrides: {
       out: {
         value: '<dir>',
@@ -1360,6 +1370,15 @@ export const COMMANDS: CommandDoc[] = [
       'lists what is accepted and what is refused, and why. The stage line says which stage the',
       'rebuild declared and where it was read (--stage, the skeleton.model.json beside the',
       'pair, or the header\'s box).',
+      '--keep-pages writes skeleton.model.json alone, for the atlas and pages as they stand (a',
+      'player that reads the document beside pages already shipped): the same read, the same',
+      'ingest and stage rules, then build --atlas-in over the input atlas, which writes no page.',
+      '(a) the document states the atlas\'s pages and regions field for field; (b) the rebuilt',
+      'skeleton.json is byte-identical to the input\'s, so spine.sha256 names the file on disk',
+      '(no acceptance: a digest of another skeleton is the document it must not write); (c) the',
+      'gate is green. A turned, trimmed, scaled or premultiplied page is stated as it is; a line',
+      'the document has no field for is refused by name. Nothing in the three files records a',
+      'texel, so a page edited after its pack is not seen: the document states placement only.',
     ],
   },
   {

@@ -34,6 +34,14 @@
  * `runBuild` that no `finally` sees, from an `exit` listener. A process killed
  * by a signal runs neither and leaves its one directory.
  *
+ * `--keep-pages` (issue #1339) is the same read, refusals-first and stage
+ * rules included, ending in a different build: `build --atlas-in` over the
+ * input atlas, which resolves every part to a region of the pack already on
+ * disk and writes no page, and then the document alone (`keptPagesDocument`).
+ * A flag rather than a verb, because its flow is this one minus the lift and
+ * the pages — a second verb would be a second copy of every refusal above
+ * the build, free to drift from this one.
+ *
  * ⚠️ The lifted parts are not kept: the output is the input's shape, and the
  * parts are recoverable from it at any time by the same lift — keeping a
  * second copy of every texel beside the pages would be two records of one
@@ -41,9 +49,10 @@
  */
 import { parseAtlasText } from '../atlas.ts';
 import { relativeImagesPath } from '../compile.ts';
+import { CompileError } from '../errors.ts';
 import { ingest, INGEST_GUTTERS, IngestError, type IngestFinding, type IngestOptions, IngestSpecRefused, type IngestStage } from '../ingest.ts';
-import { MODEL_DOCUMENT_FILE } from '../model.ts';
-import { atlasRefusals, documentDisagreements, firstLineApart, type InputPage, liftAtlas, polygonOwnedTexels, regionDifferences, REPACK_WORK_PREFIX, RepackError, skeletonDifferences } from '../repack.ts';
+import { MODEL_DOCUMENT_FILE, pagesOfAtlas, spineFileSha256 } from '../model.ts';
+import { atlasRefusals, documentDisagreements, firstLineApart, type InputPage, keptPageRefusals, liftAtlas, polygonOwnedTexels, regionDifferences, REPACK_WORK_PREFIX, RepackError, skeletonDifferences } from '../repack.ts';
 import {
   type BuildGate,
   type BuildReport,
@@ -64,7 +73,7 @@ import {
   writeBuildReport,
 } from './shared.ts';
 import { DEFAULT_PADDING, DEFAULT_PAGE_SIZE } from '../atlas.ts';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -78,7 +87,14 @@ import { basename, dirname, join, resolve } from 'node:path';
  */
 export const ACCEPT_FLAG = 'accept-skeleton-differences';
 
-export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', ACCEPT_FLAG, 'report'] as const;
+/**
+ * The switch that writes `skeleton.model.json` alone, for the atlas and pages
+ * as they stand (issue #1339): `build --atlas-in` over the input atlas in place
+ * of the lift and `build --pack`, nothing written but the document.
+ */
+export const KEEP_PAGES_FLAG = 'keep-pages';
+
+export const REPACK_FLAGS = ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', ACCEPT_FLAG, KEEP_PAGES_FLAG, 'report'] as const;
 
 /** `build`'s flags that `repack` does not take, and why — each refused by name rather than ignored. */
 const BUILD_FLAGS_REFUSED: Readonly<Record<string, string>> = {
@@ -88,7 +104,7 @@ const BUILD_FLAGS_REFUSED: Readonly<Record<string, string>> = {
   images: 'repack lifts the parts off the pages the atlas names; it takes no parts directory',
   'copy-images': 'repack always writes self-contained pages into --out, which is what packing is',
   pack: 'repack always packs; the flag would say nothing',
-  'atlas-in': 'repack MAKES a new pack out of the regions of the old one; --atlas-in would keep the old pack — pass the build itself',
+  'atlas-in': `repack MAKES a new pack out of the regions of the old one; --atlas-in would keep the old pack — pass the build itself, and --${KEEP_PAGES_FLAG} to keep its pack`,
   cut: 'repack takes a build directory, not a cut',
   cuts: 'repack takes a build directory, not a cuts table',
 };
@@ -245,26 +261,86 @@ function pagesLine(inputAtlas: string, inputPages: readonly InputPage[], outAtla
 }
 
 /**
+ * `--keep-pages`'s flags beside the ones it makes meaningless — each refused
+ * by name rather than ignored (issue #1339).
+ */
+const KEEP_PAGES_REFUSED: Readonly<Record<string, string>> = {
+  'page-size': 'nothing is packed, so a page size says nothing',
+  padding: 'nothing is packed, so a padding says nothing',
+  'page-edges': 'nothing is packed, so the page edges say nothing',
+  'pack-shape': 'nothing is packed, so the pack shape says nothing',
+  [ACCEPT_FLAG]:
+    `a document whose spine.sha256 names a skeleton other than the skeleton.json on disk is exactly what --${KEEP_PAGES_FLAG} must not write, and --${KEEP_PAGES_FLAG} writes no skeleton — ` +
+    'repack without it writes the rebuild, its atlas and its pages together',
+};
+
+/** Every flag given that `--keep-pages` makes meaningless, refused by name. */
+function refuseKeepPagesConflicts(flags: Record<string, string>): void {
+  for (const name of Object.keys(KEEP_PAGES_REFUSED).sort()) {
+    if (flags[name] !== undefined) throw new UsageError(`repack --${KEEP_PAGES_FLAG} takes no --${name}: ${KEEP_PAGES_REFUSED[name]}`);
+  }
+}
+
+/**
+ * `--out` under `--keep-pages`: required, a directory or absent, and holding
+ * no `skeleton.model.json` — the one file the command writes is never written
+ * over (issue #1339). Any other file may be there: the input's own directory
+ * is the usual `--out`, since the document belongs beside the pair and pages
+ * it states.
+ */
+function readKeptOut(flags: Record<string, string>): string {
+  if (flags.out === undefined) throw new UsageError(`repack --${KEEP_PAGES_FLAG} needs --out <dir> — the directory ${MODEL_DOCUMENT_FILE} is written into (the build's own directory, to sit beside the pages it states)`);
+  const out = resolve(flags.out);
+  if (existsSync(out)) {
+    if (!statSync(out).isDirectory()) throw new RepackError(`--out ${out} is a file; it takes a directory — nothing was written`, 2);
+    const held = join(out, MODEL_DOCUMENT_FILE);
+    if (existsSync(held)) {
+      throw new RepackError(
+        `--out ${out} already holds ${MODEL_DOCUMENT_FILE} — --${KEEP_PAGES_FLAG} writes that file and nothing else, and never over one: ` +
+          'a document already there is a record somebody kept, and which of the two describes the pages is not this command\'s to decide. ' +
+          `Remove ${held} first to have it rewritten, or name another --out; nothing was written`,
+        2,
+      );
+    }
+  }
+  return out;
+}
+
+/** The name the input atlas is staged under in the work directory: not `skeleton.atlas`, which the build writes beside it. */
+const KEPT_ATLAS = 'kept.atlas';
+
+/**
  * repack — the command body both entries register, with the entry's own gate
  * (`build`'s). `plant` is the selftest's (`RepackPlant`).
  */
 export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, plant?: RepackPlant): void {
   refuseForeignFlags(flags);
+  const keeping = flags[KEEP_PAGES_FLAG] !== undefined;
+  if (keeping) refuseKeepPagesConflicts(flags);
   if (positional.length !== 1) throw new UsageError(`repack takes one path — the build directory, or its skeleton.json — and was given ${positional.length}`);
   // Every flag read before anything is: a typo is a usage error, never a default.
-  const packing: Record<string, string> = {
-    'page-size': String(readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE)),
-    padding: String(readIntFlag(flags, 'padding', DEFAULT_PADDING)),
-    'page-edges': readPageEdges(flags),
-    'pack-shape': readPackShape(flags),
-    profile: readProfile(flags),
-  };
+  const packing: Record<string, string> = keeping
+    ? { profile: readProfile(flags) }
+    : {
+        'page-size': String(readIntFlag(flags, 'page-size', DEFAULT_PAGE_SIZE)),
+        padding: String(readIntFlag(flags, 'padding', DEFAULT_PADDING)),
+        'page-edges': readPageEdges(flags),
+        'pack-shape': readPackShape(flags),
+        profile: readProfile(flags),
+      };
   const stage = readStageFlag(flags.stage);
-  const out = readOut(flags);
+  const out = keeping ? readKeptOut(flags) : readOut(flags);
   // `--report` (issue #1213): refused inside --out, written on a red gate by the build body and here once --out is written.
   const record = readReportFlag(flags, 'repack', out, gate.supplier);
   const input = resolveBuild(positional[0], flags.atlas);
   if (input.atlas !== 'there') throw new UsageError(input.atlasRefusal);
+  const atlasDir = dirname(input.atlasPath);
+  if (keeping && resolve(atlasDir) !== resolve(dirname(input.skeletonPath))) {
+    throw new UsageError(
+      `repack --${KEEP_PAGES_FLAG}: the atlas ${input.atlasPath} is not in the skeleton's directory ${dirname(input.skeletonPath)} — ` +
+        `${MODEL_DOCUMENT_FILE} sits beside skeleton.json and states the atlas's page names as paths from there, so beside this skeleton they would name pages that are not there`,
+    );
+  }
   const skeletonText = readSkeletonText(input.skeletonPath);
   const atlasText = readFileSync(input.atlasPath, 'utf8');
   const parsed = parseAtlasText(atlasText);
@@ -272,10 +348,15 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
   console.log(`rigc repack ${input.skeletonPath}`);
   console.log(`  ..    atlas  ${input.atlasPath}`);
   console.log(`  ..    out    ${out}`);
-  console.log(`  ..    pack   page-size ${packing['page-size']}, padding ${packing.padding}, page-edges ${packing['page-edges']}, pack-shape ${packing['pack-shape']}, profile ${packing.profile}`);
+  console.log(
+    keeping
+      ? `  ..    keep   --${KEEP_PAGES_FLAG}: the atlas and its pages are kept as they are and ${MODEL_DOCUMENT_FILE} is the one file written; profile ${packing.profile}`
+      : `  ..    pack   page-size ${packing['page-size']}, padding ${packing.padding}, page-edges ${packing['page-edges']}, pack-shape ${packing['pack-shape']}, profile ${packing.profile}`,
+  );
 
-  // What the atlas cannot carry through a repack, all of it, before anything is made.
-  const { refusals, pages } = atlasRefusals(parsed, dirname(input.atlasPath));
+  // What the atlas cannot carry — through a repack, or into the document as it stands — all of it, before anything is made.
+  const lifting = keeping ? null : atlasRefusals(parsed, atlasDir);
+  const refusals = lifting === null ? keptPageRefusals(parsed, atlasDir) : lifting.refusals;
   const modelText = modelTextBeside(input.skeletonPath, skeletonText);
   const disagreement = modelText === undefined ? null : documentDisagreements((parseJsonNamed(modelText, join(dirname(input.skeletonPath), MODEL_DOCUMENT_FILE)) as { pages?: unknown }).pages, parsed);
   if (disagreement !== null) {
@@ -287,7 +368,7 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
   }
   if (refusals.length > 0) {
     throw new RepackError(
-      `${input.atlasPath} cannot be lifted exactly — ${refusals.length} reason(s), and nothing was written:\n${refusals.map((r) => `  ${r}`).join('\n')}`,
+      `${input.atlasPath} ${keeping ? `cannot be stated by ${MODEL_DOCUMENT_FILE} as it stands` : 'cannot be lifted exactly'} — ${refusals.length} reason(s), and nothing was written:\n${refusals.map((r) => `  ${r}`).join('\n')}`,
     );
   }
   console.log(
@@ -312,12 +393,15 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
     const liftDir = join(work, 'lift');
     const specsDir = join(work, 'specs');
     const buildDir = join(work, 'build');
-    const lifted = liftAtlas(pages, liftDir);
-    console.log(
-      `  ..    lift   ${lifted.parts.size} region(s) off ${pages.length} page(s), each named once: ${lifted.turned} turned on its page, ${lifted.trimmed} trimmed of whitespace — ` +
-        'each lifted as the drawing it is (extractRegion)',
-    );
-    if (plant !== undefined) plant(liftDir);
+    // Under --keep-pages nothing is lifted: the build resolves every part against the input atlas (`--atlas-in`), which reads no loose file.
+    const lifted = lifting === null ? null : liftAtlas(lifting.pages, liftDir);
+    if (lifted !== null && lifting !== null) {
+      console.log(
+        `  ..    lift   ${lifted.parts.size} region(s) off ${lifting.pages.length} page(s), each named once: ${lifted.turned} turned on its page, ${lifted.trimmed} trimmed of whitespace — ` +
+          'each lifted as the drawing it is (extractRegion)',
+      );
+      if (plant !== undefined) plant(liftDir);
+    }
 
     let result: { rig: unknown; motion: unknown; findings: IngestFinding[] };
     try {
@@ -341,6 +425,11 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
     const motionPath = join(specsDir, 'motion.json');
     writeFileSync(rigPath, `${JSON.stringify(result.rig, null, 2)}\n`);
     writeFileSync(motionPath, `${JSON.stringify(result.motion, null, 2)}\n`);
+
+    if (lifted === null || lifting === null) {
+      keptPagesDocument({ flags, gate, record, input, skeletonText, atlasText, parsed, out, rigPath, motionPath, buildDir, profile: packing.profile });
+      return;
+    }
 
     // (c) `build --pack` through the entry's own gate. It returns only green; a red gate exits from inside it.
     stagedBuild({ rig: rigPath, motion: motionPath, out: buildDir, pack: 'true', ...packing }, gate, record);
@@ -373,10 +462,7 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
     } else {
       // Accepted, every path is printed: an accepted difference nobody is shown is the silence the check exists to remove.
       const diff = skeletonDifferences(parseJsonNamed(skeletonText, input.skeletonPath), parseJsonNamed(outSkeleton, join(buildDir, 'skeleton.json')), accepting ? Infinity : SKELETON_DIFFERENCES_SHOWN);
-      const head =
-        diff.total === 0
-          ? `skeleton.json: the rebuild states the same values in other bytes — ${firstLineApart(skeletonText, outSkeleton)}`
-          : `skeleton.json: ${diff.total} place(s) differ from the input`;
+      const head = skeletonHead(diff.total, skeletonText, outSkeleton);
       if (accepting) {
         console.log(`  ..    check  (b) ${head}, accepted by --${ACCEPT_FLAG} — the output's skeleton is this rigc's rebuild, not the input's bytes:`);
         for (const line of diff.lines) console.log(`  ..             ${line}`);
@@ -398,7 +484,7 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
     const staged = readdirSync(buildDir).sort();
     const expected = [...BUILD_TEXTS, ...outPages].sort();
     if (staged.join('\n') !== expected.join('\n')) throw new Error(`internal: the staged build holds [${staged.join(', ')}], not [${expected.join(', ')}]`);
-    console.log(pagesLine(atlasText, pages, outAtlas, buildDir, outPages));
+    console.log(pagesLine(atlasText, lifting.pages, outAtlas, buildDir, outPages));
 
     mkdirSync(out, { recursive: true });
     for (const name of [...outPages, ...BUILD_TEXTS]) {
@@ -410,5 +496,111 @@ export function cmdRepack({ flags, positional }: CommandArgs, gate: BuildGate, p
   } finally {
     removeWork();
     process.off('exit', onExit);
+  }
+}
+
+/** Check (b)'s head: how many places differ, or — values equal, bytes not — the first line apart. */
+function skeletonHead(total: number, skeletonText: string, outSkeleton: string): string {
+  return total === 0
+    ? `skeleton.json: the rebuild states the same values in other bytes — ${firstLineApart(skeletonText, outSkeleton)}`
+    : `skeleton.json: ${total} place(s) differ from the input`;
+}
+
+/**
+ * `--keep-pages`' tail (issue #1339): `build --atlas-in` over the input atlas
+ * — the build that resolves every part against a pack somebody already made
+ * and writes no page — then the two checks that say the document it spelled
+ * describes the files on disk, then the one write.
+ *
+ * The input atlas and its pages are staged as copies in the build's own
+ * directory, so `--atlas-in`'s re-anchored page names (`relative(outDir, …)`)
+ * are the atlas's own spellings and the document's `pages` names what sits
+ * beside the input skeleton. Nothing under the input is opened for writing.
+ *
+ *   (a) the document's `pages` are `pagesOfAtlas` of the input atlas text,
+ *       field for field — what `build` would have stated had it written this
+ *       atlas itself;
+ *   (b) the rebuilt `skeleton.json` is byte-identical to the input's, so the
+ *       document's `spine.sha256` names the file it will sit beside. There is
+ *       no acceptance here: a digest of a skeleton that is not on disk is the
+ *       document the command exists not to write;
+ *   (c) the gate is green — `runBuild` returns only then.
+ */
+function keptPagesDocument(c: {
+  flags: Record<string, string>;
+  gate: BuildGate;
+  record: BuildReport | null;
+  input: { skeletonPath: string; atlasPath: string };
+  skeletonText: string;
+  atlasText: string;
+  parsed: ReturnType<typeof parseAtlasText>;
+  out: string;
+  rigPath: string;
+  motionPath: string;
+  buildDir: string;
+  profile: string;
+}): void {
+  const atlasDir = dirname(c.input.atlasPath);
+  mkdirSync(c.buildDir, { recursive: true });
+  const keptAtlas = join(c.buildDir, KEPT_ATLAS);
+  writeFileSync(keptAtlas, c.atlasText);
+  for (const page of c.parsed.pages) {
+    const to = join(c.buildDir, page.name);
+    mkdirSync(dirname(to), { recursive: true });
+    copyFileSync(resolve(atlasDir, page.name), to);
+  }
+
+  // (c) `build --atlas-in` through the entry's own gate. It returns only green; a red gate exits from inside it.
+  // A compile refusal names the staged copy of the atlas, so it is restated naming the input's own.
+  try {
+    stagedBuild({ rig: c.rigPath, motion: c.motionPath, out: c.buildDir, 'atlas-in': keptAtlas, profile: c.profile }, c.gate, c.record);
+  } catch (err) {
+    if (!(err instanceof CompileError)) throw err;
+    throw new RepackError(`the build against ${c.input.atlasPath} as it stands refused: ${err.message.split(keptAtlas).join(c.input.atlasPath)} — nothing was written`);
+  }
+
+  const lost: string[] = [];
+  const documentText = readFileSync(join(c.buildDir, MODEL_DOCUMENT_FILE), 'utf8');
+  const doc = parseJsonNamed(documentText, join(c.buildDir, MODEL_DOCUMENT_FILE)) as { pages?: unknown; spine?: { sha256?: unknown } };
+  const stated = skeletonDifferences(pagesOfAtlas(c.atlasText), doc.pages, SKELETON_DIFFERENCES_SHOWN);
+  const regionCount = c.parsed.pages.reduce((n, p) => n + p.regions.length, 0);
+  if (stated.total > 0) {
+    lost.push(
+      `(a) pages: ${stated.total} place(s) where the document would not state the atlas as it stands${stated.total > stated.lines.length ? ` (the first ${stated.lines.length})` : ''} — "the input" is the atlas read, "the rebuild" the document:`,
+      ...stated.lines.map((d) => `  pages${d.startsWith('[') ? '' : '.'}${d}`),
+    );
+  } else {
+    console.log(
+      `  ..    check  (a) pages: the document states the atlas's ${c.parsed.pages.length} page(s) and ${regionCount} region(s) as they stand, field for field (pagesOfAtlas of the input atlas) — ` +
+        'no page and no atlas is written',
+    );
+  }
+  const outSkeleton = readFileSync(join(c.buildDir, 'skeleton.json'), 'utf8');
+  if (outSkeleton === c.skeletonText) {
+    console.log("  ..    check  (b) skeleton.json: byte-identical to the input's — the document's spine.sha256 names the file on disk");
+  } else {
+    const diff = skeletonDifferences(parseJsonNamed(c.skeletonText, c.input.skeletonPath), parseJsonNamed(outSkeleton, join(c.buildDir, 'skeleton.json')), SKELETON_DIFFERENCES_SHOWN);
+    lost.push(
+      `(b) ${skeletonHead(diff.total, c.skeletonText, outSkeleton)}${diff.total > diff.lines.length ? ` (the first ${diff.lines.length})` : ''}:`,
+      ...diff.lines.map((d) => `  ${d}`),
+      `  the document's spine.sha256 would name this rebuild, not the skeleton.json beside it — the one thing --${KEEP_PAGES_FLAG} must not write, so it takes no --${ACCEPT_FLAG}. ` +
+        'repack without it writes the rebuild together with its own atlas and pages, every difference listed under that flag; a build written before 2.2.0, whose header was the stage, differs here in its header box and nowhere else',
+    );
+  }
+  if (lost.length > 0) throw new RepackError(`no ${MODEL_DOCUMENT_FILE} describes these files as they stand, so nothing was written to ${c.out}:\n${lost.map((l) => `  ${l}`).join('\n')}`);
+  if (doc.spine?.sha256 !== spineFileSha256(c.skeletonText)) throw new Error(`internal: the staged ${MODEL_DOCUMENT_FILE}'s spine.sha256 is not the digest of the skeleton.json it was built from`);
+  console.log('  ..    check  (c) gate: green — the report above, on the build against the atlas as it stands');
+
+  mkdirSync(c.out, { recursive: true });
+  // `readKeptOut` refused an existing document; one appearing since is refused here rather than written over.
+  copyFileSync(join(c.buildDir, MODEL_DOCUMENT_FILE), join(c.out, MODEL_DOCUMENT_FILE), constants.COPYFILE_EXCL);
+  console.log(`rigc: wrote ${join(c.out, MODEL_DOCUMENT_FILE)}`);
+  if (c.record !== null) writeBuildReport(c.record);
+  if (resolve(c.out) === resolve(dirname(c.input.skeletonPath))) console.log(c.gate.look(c.out));
+  else {
+    console.log(
+      `rigc: ${MODEL_DOCUMENT_FILE} names the atlas's pages as paths from ${dirname(c.input.skeletonPath)} and the digest of the skeleton.json there; ` +
+        'it is read beside those files',
+    );
   }
 }
