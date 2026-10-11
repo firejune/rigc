@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.40.0](https://github.com/rig-c/core/compare/v2.39.1...v2.40.0) (2026-10-11)
+
+
+### Features
+
+* **validate:** A51 holds the bones a rig declares to share an axis to the line through two named bones' setup-pose origins — invariants.axes, refused by name at read, validity under the default profile, equal on both suppliers (AX01–AX06), and declared on gallery/look, nod and portrait at 0.0000° off with no emitted byte moved ([#1351](https://github.com/rig-c/core/issues/1351)) ([#1353](https://github.com/rig-c/core/issues/1353)) ([ef0921a](https://github.com/rig-c/core/commit/ef0921aea81c45d74414aa9656ea5a65c1e448ed))
+
 ## [2.39.1](https://github.com/rig-c/core/compare/v2.39.0...v2.39.1) (2026-10-11)
 
 
