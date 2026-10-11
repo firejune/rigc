@@ -295,13 +295,16 @@ that touches nothing in the package is unaffected whatever its type
 ([#516](https://github.com/rig-c/core/issues/516)).
 
 ⚠️ **A control that leaves has to be named by the change that removes it.** The
-`removals` job in CI reads the control names on your branch against the ones its
+`removals` job in the `squash-text` workflow reads the control names on your branch against the ones its
 merge base carried, and every name that went has to be declared. What counts as
 a declaration is derived per run rather than listed: the code's **first
 segment** where that segment names one control in the base, and the **whole
 name** where it names several — the job prints which, and prints the name it
 wants. The remedy is that line: write the code it names **in a commit message on
-this branch, or in the pull request title or body**. A rename takes the old name
+this branch, or in the pull request title or body**. Editing the title or body
+runs the job again, with no new push and no selftest run
+([#1368](https://github.com/rig-c/core/issues/1368)); only a commit message
+reaches `main`, since the squash body is made of the commits. A rename takes the old name
 out of the tree, so it is declared exactly like any other removal.
 
 ⚠️ **The squash text has to parse, or the landing is never released.**
