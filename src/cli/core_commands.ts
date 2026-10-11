@@ -680,6 +680,12 @@ export function cmdInspect(flags: Record<string, string>): void {
   const include = readBonePatterns('bone', flags.bone);
   const exclude = readBonePatterns('hide-bone', flags['hide-bone']);
   const boneFilter = include === undefined && exclude === undefined ? undefined : { ...(include === undefined ? {} : { include }), ...(exclude === undefined ? {} : { exclude }) };
+  const slotInclude = readBonePatterns('overlay-slot', flags['overlay-slot'], 'neck,hair_*');
+  const slotExclude = readBonePatterns('hide-overlay-slot', flags['hide-overlay-slot'], 'neck,hair_*');
+  const slotFilter =
+    slotInclude === undefined && slotExclude === undefined
+      ? undefined
+      : { ...(slotInclude === undefined ? {} : { include: slotInclude }), ...(slotExclude === undefined ? {} : { exclude: slotExclude }) };
   const times = readTimes(flags.at);
   const fps = readPositiveNumber(flags, 'fps', INSPECT_DEFAULT_FPS, 1);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
@@ -733,6 +739,7 @@ export function cmdInspect(flags: Record<string, string>): void {
       show,
       ...(weightsBone === undefined ? {} : { weightsBone }),
       ...(boneFilter === undefined ? {} : { boneFilter }),
+      ...(slotFilter === undefined ? {} : { slotFilter }),
       dim: flags.dim !== undefined,
       animation,
       times,

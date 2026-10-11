@@ -1088,6 +1088,15 @@ const FLAG_MEANINGS: Record<string, string> = {
   'hide-bone':
     "draw none of the bones these globs match — `--bone` the other way round, applied after it, so `--bone 'bang_*' " +
     "--hide-bone '*_ctl'` is the fringe chains without their control bones",
+  'overlay-slot':
+    "draw the per-slot views — mesh, hull, weights:<bone> and slots — only for the slots these globs match (`*` any run of " +
+    "characters, `?` one, the whole name; comma-separated); the art is every slot's still, since it is what the geometry is read " +
+    "against. Not `--slot`: that flag draws a subset of the art on `render`, by exact name. The legend's meshes[] and slots[] list " +
+    'only the slots kept, a slot number stays its place in the whole draw order, and a pattern that matches no slot is refused ' +
+    'naming the slots there are',
+  'hide-overlay-slot':
+    "draw none of the per-slot views for the slots these globs match — `--overlay-slot` the other way round, applied after it, " +
+    "so `--overlay-slot 'hair_*' --hide-overlay-slot hair_back` is the hair but its back layer",
   compare:
     'a second build to draw beside --candidate, the same view at the same times on one world box and one transform — the union ' +
     'of both framings unless --zoom or --viewport pins it — each half labelled with its build and the poser that posed it. A ' +
@@ -1194,6 +1203,8 @@ const FLAG_VALUES: Record<string, string> = {
   zoom: '<name>[:<pad>]',
   bone: '<glob[,glob…]>',
   'hide-bone': '<glob[,glob…]>',
+  'overlay-slot': '<glob[,glob…]>',
+  'hide-overlay-slot': '<glob[,glob…]>',
   compare: '<dir|skeleton.json>',
   record: '<result.json>',
   ballot: '<ballot.html>',
@@ -1582,9 +1593,10 @@ export const COMMANDS: CommandDoc[] = [
       'rigc inspect … --animation <name> --at <s[,s…]> [--fps 12] [--skin <name>]   (one time, or a sheet of several on one grid)',
       'rigc inspect … --zoom <bone|slot>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
       "rigc inspect … --bone 'bang_*' --hide-bone '*_ctl'   (which bones bones, axes and names draw)",
+      'rigc inspect … --overlay-slot neck --hide-overlay-slot <glob>   (which slots mesh, hull, weights and slots draw; the art stays whole)',
       'rigc inspect … --compare <dir | skeleton.json>   (a second build beside the first, on one transform)',
     ],
-    flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'bone', 'hide-bone', 'compare', 'max', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'bone', 'hide-bone', 'overlay-slot', 'hide-overlay-slot', 'compare', 'max', 'poser', 'out'],
     overrides: {
       animation: { meaning: 'the animation --at reads its times from (default: the setup pose, with no --at)' },
       fps: { meaning: `the frame grid --at is read on, which is the grid \`render --fps\` draws (default ${INSPECT_DEFAULT_FPS})` },
