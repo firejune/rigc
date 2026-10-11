@@ -25,13 +25,27 @@
  * refused naming the two grid times either side rather than posed some other
  * way — a second recipe for one moment would be a second opinion about the pose.
  *
+ * ⭐ **What a bone moves is read where it is written** (cut 2). Mesh edges and
+ * hulls are the topology the poser's own rest table states (`Poser.rest`, the
+ * table `render --geometry` writes), drawn through the posed vertices the frame
+ * carries; a bone's weights are read off the build's `skeleton.json`, the file
+ * both posers derive their skinning from, never re-derived from a pose.
+ *
+ * ⭐ **Two builds share one transform** (`--compare`). Both are posed at the
+ * same times; the world box is the union of what each would be framed to (or
+ * the one a viewport pins), so a mark that sits on a different pixel in the two
+ * halves sits at a different place in the two rigs.
+ *
  * Links nothing from the runtime: the poser is handed in.
  */
+import { createHash } from 'node:crypto';
 import { drawText, GLYPH_H, textWidth } from '../tools/font5x7.ts';
 import { Plate, type RGBA } from '../tools/plate.ts';
 import { lineGap, worldAxisDegrees } from './assertions/bodies/a51.ts';
 import {
   BACKGROUND,
+  type AttachmentPose,
+  type AttachmentRest,
   type BoneSnapshot,
   type Candidate,
   type Frame,
@@ -54,9 +68,12 @@ import {
 /** The legend's format tag. */
 export const INSPECT_SPEC = 'rigc-inspect/1';
 
-/** Every word `--show` takes, in the order the picture draws them (bottom first). */
-export const SHOW_WORDS = ['art', 'grid', 'declared', 'bones', 'axes', 'names'] as const;
+/** Every word `--show` takes, in the order the picture draws them (bottom first). `weights` is spelled `weights:<bone>`. */
+export const SHOW_WORDS = ['art', 'grid', 'weights', 'mesh', 'hull', 'declared', 'bones', 'axes', 'slots', 'names'] as const;
 export type ShowWord = (typeof SHOW_WORDS)[number];
+
+/** The words as a refusal lists them — `weights` with the bone it needs. */
+export const SHOW_SPELLINGS: readonly string[] = SHOW_WORDS.map((w) => (w === 'weights' ? 'weights:<bone>' : w));
 
 /** What `--show` draws when it is not given. */
 export const DEFAULT_SHOW: readonly ShowWord[] = ['art', 'bones'];
@@ -84,21 +101,53 @@ export const AXIS_PIXELS = 24;
 /** `--dim`: every art pixel is moved toward white, keeping this share of its distance from white. */
 export const DIM_KEEP = 0.4;
 
+/**
+ * The weight heat's colour ramp: piecewise linear between these stops, each
+ * channel rounded to the nearest whole value. A pixel whose weight is below
+ * `WEIGHT_FLOOR` is not painted, so the art shows where the bone does not reach.
+ */
+export const WEIGHT_RAMP: ReadonlyArray<{ weight: number; rgba: readonly [number, number, number, number] }> = [
+  { weight: 0, rgba: [40, 80, 230, 255] },
+  { weight: 0.5, rgba: [250, 205, 0, 255] },
+  { weight: 1, rgba: [215, 20, 20, 255] },
+];
+
+/** Below this weight a heat pixel is not painted. Not a rounding of any weight: it only keeps a weight of 0 that a barycentric sum spelled as 1e-17 off the picture. */
+export const WEIGHT_FLOOR = 1e-6;
+
+/**
+ * How many lines down a label is moved, one text line at a time, looking for a
+ * place no earlier label holds. Past this it stays where it began and the
+ * legend says it overlaps.
+ */
+export const LABEL_TRIES = 16;
+
 /** What each colour the picture draws means — the legend repeats this table. */
 export const INSPECT_COLOURS = {
   bone: { rgba: [0, 110, 255, 255], meaning: "a bone's line, from its origin to its tip (origin + length along its world x axis)" },
   origin: { rgba: [235, 0, 190, 255], meaning: "a bone's origin: a filled 3x3 square centred on the origin's pixel" },
   tip: { rgba: [255, 140, 0, 255], meaning: "a bone's tip: a hollow 3x3 square centred on the tip's pixel" },
   zero: { rgba: [255, 210, 0, 255], meaning: 'a bone of length 0: a hollow 5x5 square around its origin, which is also its tip' },
-  name: { rgba: [25, 25, 25, 255], meaning: "a bone's name, starting 4 px right of and 3 px below its origin's pixel; bones sharing that pixel list their names one per line under it, in declaration order" },
+  name: {
+    rgba: [25, 25, 25, 255],
+    meaning:
+      "a name label, starting 4 px right of and 3 px below its origin's pixel: one per pixel, so bones whose origins share a pixel " +
+      'are one label, the first by declaration order and "+N" for the rest (the legend\'s labels list every bone in it); a label ' +
+      'that would overprint an earlier one is moved down a line at a time, with a leader back to its origin',
+  },
+  leader: { rgba: [120, 120, 120, 255], meaning: "a label's leader, from its anchor pixel to the label — drawn where the label was moved to clear an earlier one" },
   axisX: { rgba: [215, 30, 30, 255], meaning: `a bone's world x axis from its origin, ${AXIS_PIXELS} px long at a world scale of 1` },
   axisY: { rgba: [20, 160, 40, 255], meaning: `a bone's world y axis from its origin, ${AXIS_PIXELS} px long at a world scale of 1` },
   grid: { rgba: [150, 150, 150, 255], meaning: 'a grid line at a whole multiple of the step, in world units, with its value at the edge' },
   gridZero: { rgba: [70, 70, 70, 255], meaning: 'the grid line at world x = 0 or y = 0' },
   declared: { rgba: [0, 190, 190, 255], meaning: 'an invariants.axes line, through its two bones\' origins, across the whole tile' },
   held: { rgba: [0, 95, 95, 255], meaning: 'the line of a bone an invariants.axes entry holds to its line, in place of the bone colour' },
-  label: { rgba: [...SHEET_LABEL], meaning: "a sheet tile's time and frame, at its bottom-left corner" },
-  rule: { rgba: [...SHEET_RULE], meaning: 'the gap between two tiles of a sheet' },
+  mesh: { rgba: [90, 30, 160, 255], meaning: "a mesh's triangle edge between two posed vertices — meshes only; a region is not drawn" },
+  hull: { rgba: [0, 150, 90, 255], meaning: "a mesh's hull, vertex 0 to 1 to … to hull−1 and back, drawn over its triangle edges — meshes only" },
+  slot: { rgba: [150, 0, 120, 255], meaning: "a slot's place in the posed draw order (0 is drawn first), from the centre of its attachment's box, on a white box" },
+  slotBack: { rgba: [255, 255, 255, 255], meaning: 'the box under a slot number' },
+  label: { rgba: [...SHEET_LABEL], meaning: "a tile's build and poser (with --compare), time and frame (on a sheet), at its bottom-left corner" },
+  rule: { rgba: [...SHEET_RULE], meaning: 'the gap between two tiles' },
 } as const satisfies Record<string, { rgba: readonly number[]; meaning: string }>;
 
 type ColourName = keyof typeof INSPECT_COLOURS;
@@ -113,9 +162,21 @@ export type InspectFrame =
   | { kind: 'zoom'; target: string; pad: number | null }
   | { kind: 'viewport'; x: number; y: number; width: number; height: number };
 
+/** `--bone` / `--hide-bone`: which bones the bone views draw, by glob. */
+export interface BoneFilter {
+  /** Draw only the bones some pattern matches; absent draws every bone. */
+  include?: readonly string[];
+  /** Draw none of the bones a pattern matches — applied after `include`. */
+  exclude?: readonly string[];
+}
+
 /** One `rigc inspect` invocation, its flags read but not yet checked against the build. */
 export interface InspectRequest {
   show: readonly ShowWord[];
+  /** The bone `weights:<bone>` names — present exactly when `show` holds `weights`. */
+  weightsBone?: string;
+  /** Which bones `bones`, `axes` and `names` draw; absent is every one. */
+  boneFilter?: BoneFilter;
   dim: boolean;
   /** `null` is the setup pose. */
   animation: string | null;
@@ -129,10 +190,16 @@ export interface InspectRequest {
 
 /** What the picture is made from besides the poser: the build's own texts. */
 export interface InspectTexts {
-  /** `skeleton.json` — read for each bone's `length`, which no pose carries. */
+  /** `skeleton.json` — read for each bone's `length`, which no pose carries, and for each attachment's weights. */
   skeletonText: string;
   /** The `skeleton.model.json` that is this skeleton's, or `undefined` — what `declared` reads `rig.axes` from. */
   modelText: string | undefined;
+}
+
+/** The second build `--compare` draws beside the first. */
+export interface InspectCompare {
+  candidate: Candidate;
+  texts: InspectTexts;
 }
 
 /**
@@ -151,6 +218,22 @@ export interface InspectPlant {
   unflipped?: boolean;
   /** Zoom to this bone, whatever the request named. */
   zoomBone?: string;
+  /** Draw every mesh edge this many pixels off the vertices the legend states. */
+  meshShift?: [number, number];
+  /** Paint (and state) this bone's weights, whatever `weights:<bone>` named. */
+  weightsOf?: string;
+  /** Number the slots in the reverse of the posed draw order. */
+  slotsReversed?: boolean;
+  /** Draw every triangle edge in the hull's colour. */
+  hullAllEdges?: boolean;
+  /** One label per bone, stacked under a shared pixel as cut 1 printed them. */
+  noFold?: boolean;
+  /** Place every label where it begins, over whatever is there. */
+  noAvoid?: boolean;
+  /** Draw every bone whatever `--bone`/`--hide-bone` say. */
+  ignoreFilter?: boolean;
+  /** Draw the first build in both halves of a `--compare`. */
+  compareFirstTwice?: boolean;
 }
 
 /** A point in both spaces. */
@@ -169,12 +252,68 @@ export interface LegendBone {
   length: number;
   /** `length` is 0: origin and tip are one point, marked by the `zero` square. */
   zeroLength: boolean;
-  /** `null` when the bone is drawn; otherwise why it is not (its world matrix is 0). */
+  /** `null` when the bone is drawn; otherwise why it is not (its world matrix is 0, or a bone filter left it out). */
   undrawn: string | null;
   origin: LegendPoint;
   tip: LegendPoint;
   /** The ends of its drawn world x and y axes — present when `axes` is shown and the bone is drawn. */
   axes?: { x: LegendPoint; y: LegendPoint };
+}
+
+/** A box of picture pixels: columns `x .. x+width-1`, rows `y .. y+height-1`. */
+export interface PixelBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** One name label in one tile. */
+export interface LegendLabel {
+  text: string;
+  /** Every bone the label stands for, in declaration order — the first is the one named, the rest are the "+N". */
+  bones: string[];
+  /** The origin pixel the bones share. */
+  anchor: [number, number];
+  /** Where the text is drawn. */
+  box: PixelBox;
+  /** It was moved down to clear an earlier label, and a leader joins it to `anchor`. */
+  moved: boolean;
+  /** No place within `LABEL_TRIES` lines was clear, so it stays where it began, over an earlier label. */
+  overlaps: boolean;
+}
+
+/** One region or mesh the frame shows, when `mesh`, `hull` or `weights` is drawn. */
+export interface LegendMesh {
+  slot: string;
+  attachment: string;
+  kind: 'region' | 'mesh';
+  vertexCount: number;
+  triangleCount: number;
+  /** A mesh's hull vertex count (vertices 0..hull−1); `null` for a region. */
+  hull: number | null;
+  /** Its unique triangle edges, each `[i, j]` with `i < j`, in the order the triangles first name them. */
+  edges: Array<[number, number]>;
+  /** Posed vertices, `x, y` per vertex: world units, and the picture's pixels. */
+  world: number[];
+  pixel: number[];
+  /** With `weights:<bone>`: that bone's weight at each vertex. */
+  weights?: number[];
+}
+
+/** One slot that shows a region or mesh at this tile's pose. */
+export interface LegendSlot {
+  /** Its place in the posed draw order among the slots that show a region or mesh — 0 is drawn first. */
+  order: number;
+  slot: string;
+  attachment: string;
+  bone: string;
+  /** The centre of its posed vertices' box, where its number is drawn from. */
+  anchor: LegendPoint;
+  /** Where the number is drawn: the white box under it, text 1 px inside. */
+  box: PixelBox;
+  moved: boolean;
+  overlaps: boolean;
 }
 
 /** One `invariants.axes` entry in one tile. */
@@ -192,6 +331,8 @@ export interface LegendDeclared {
 }
 
 export interface LegendTile {
+  /** With `--compare`: which build this tile is — `A` is `--candidate`, `B` is `--compare`. */
+  build?: 'A' | 'B';
   /** `null` for the setup pose. */
   animation: string | null;
   /** The frame of `render --fps <fps>` this pose is, and its time `frame / fps`. */
@@ -201,15 +342,21 @@ export interface LegendTile {
   box: { x: number; y: number; width: number; height: number };
   /** The tile's transform. `px = x0 + (x - minX)·scale`, `py = y0 + (maxY - y)·scale`; back: `x = minX + (px - x0)/scale`, `y = maxY - (py - y0)/scale`. */
   transform: { minX: number; maxY: number; scale: number; x0: number; y0: number };
+  /** On a sheet or a compare: the tile's label and the box it is drawn on. */
+  label?: { text: string; box: PixelBox };
   bones: LegendBone[];
+  labels?: LegendLabel[];
+  meshes?: LegendMesh[];
+  slots?: LegendSlot[];
   declared?: LegendDeclared[];
   grid?: { step: number; x: number[]; y: number[] };
 }
 
 export interface InspectLegend {
   spec: typeof INSPECT_SPEC;
+  /** The poser that posed `--candidate`; with `--compare`, `builds` names both. */
   poser: 'core' | 'spine';
-  show: ShowWord[];
+  show: string[];
   dim: boolean;
   skin?: string;
   animation: string | null;
@@ -218,8 +365,14 @@ export interface InspectLegend {
     | { kind: 'shot'; note: string }
     | { kind: 'zoom'; bone?: string; slot?: string; pad: number; padFrom: 'stated' | 'default' }
     | { kind: 'viewport' };
+  /** `--bone` / `--hide-bone` as given — each bone they leave out says so in its `undrawn`. */
+  boneFilter?: { include: string[] | null; exclude: string[] | null };
+  /** With `weights:<bone>`: the bone, the ramp a weight is painted with, and how a pixel's weight is read. */
+  weights?: { bone: string; ramp: Array<{ weight: number; rgba: number[] }>; floor: number; reading: string };
+  /** With `--compare`: each build, the poser that posed it and its `skeleton.json`'s sha256; a tile names its own in `build`. */
+  builds?: Array<{ build: 'A' | 'B'; poser: 'core' | 'spine'; skeletonSha256: string }>;
   coordinates: { world: string; image: string; toPixel: string; toWorld: string };
-  /** The world box every tile is a picture of, and its pixels — one for the whole picture. */
+  /** The world box every tile is a picture of, and its pixels — one for the whole picture, both builds of a compare included. */
   viewport: { minX: number; minY: number; maxX: number; maxY: number; scale: number; width: number; height: number };
   size: { width: number; height: number };
   colours: Record<ColourName, { rgba: number[]; meaning: string }>;
@@ -231,6 +384,8 @@ export interface InspectResult {
   plate: Plate;
   legend: InspectLegend;
   poserNote: string;
+  /** With `--compare`: the second build's poser line. */
+  comparePoserNote?: string;
   /** Lines worth printing beside the picture: what a view drew nothing for, and why. */
   notes: string[];
 }
@@ -239,20 +394,58 @@ export interface InspectResult {
 // reading the request against the build
 // ---------------------------------------------------------------------------
 
-/** `--show`'s words, refused by name — a word this command does not draw lists every one it does. */
-export function readShowWords(raw: string | undefined): ShowWord[] {
-  if (raw === undefined) return [...DEFAULT_SHOW];
+/**
+ * `--show`'s words, refused by name — a word this command does not draw lists
+ * every one it does — and the bone `weights:<bone>` names. The bone is checked
+ * against the build later, where its roster is known.
+ */
+export function readShow(raw: string | undefined): { show: ShowWord[]; weightsBone?: string } {
+  if (raw === undefined) return { show: [...DEFAULT_SHOW] };
   const words = raw.split(',').map((w) => w.trim()).filter((w) => w !== '');
-  if (words.length === 0) throw new InspectError(`--show ${JSON.stringify(raw)} names no view; it takes [${SHOW_WORDS.join(', ')}]`);
+  if (words.length === 0) throw new InspectError(`--show ${JSON.stringify(raw)} names no view; it takes [${SHOW_SPELLINGS.join(', ')}]`);
   const out: ShowWord[] = [];
-  for (const word of words) {
+  let weightsBone: string | undefined;
+  for (const spelled of words) {
+    let word = spelled;
+    if (spelled === 'weights' || spelled.startsWith('weights:')) {
+      const bone = spelled.slice('weights:'.length);
+      if (spelled === 'weights' || bone === '') {
+        throw new InspectError(`--show ${JSON.stringify(spelled)} needs the bone whose weights it paints: weights:<bone>`);
+      }
+      word = 'weights';
+      weightsBone = bone;
+    }
     const known = SHOW_WORDS.find((w) => w === word);
-    if (known === undefined) throw new InspectError(`--show ${JSON.stringify(word)} is not a view inspect draws; it draws [${SHOW_WORDS.join(', ')}]`);
+    if (known === undefined) throw new InspectError(`--show ${JSON.stringify(spelled)} is not a view inspect draws; it draws [${SHOW_SPELLINGS.join(', ')}]`);
     if (out.includes(known)) throw new InspectError(`--show names ${JSON.stringify(word)} twice`);
     out.push(known);
   }
   // In the drawing order, so two spellings of one set are one picture and one legend.
-  return SHOW_WORDS.filter((w) => out.includes(w));
+  return { show: SHOW_WORDS.filter((w) => out.includes(w)), ...(weightsBone === undefined ? {} : { weightsBone }) };
+}
+
+/** `--show` as the legend spells it: the words in drawing order, `weights` with its bone. */
+function showSpelled(request: InspectRequest, weightsBone: string | undefined): string[] {
+  return request.show.map((w) => (w === 'weights' ? `weights:${weightsBone ?? ''}` : w));
+}
+
+/**
+ * `--bone` / `--hide-bone`'s patterns: comma-separated globs, `*` any run of
+ * characters and `?` one, matched against a bone's whole name. Checked against
+ * the build later, where a pattern that matches no bone is refused.
+ */
+export function readBonePatterns(flag: string, raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const patterns = raw.split(',').map((p) => p.trim());
+  if (patterns.some((p) => p === '')) throw new InspectError(`--${flag} ${JSON.stringify(raw)}: an empty pattern; it takes globs, comma-separated, e.g. --${flag} 'bang_*,*_ctl'`);
+  return patterns;
+}
+
+/** A glob as the regular expression it means: `*` any run, `?` one character, everything else itself, the whole name. */
+export function globMatcher(pattern: string): (name: string) => boolean {
+  const body = [...pattern].map((c) => (c === '*' ? '.*' : c === '?' ? '.' : c.replace(/[.+^${}()|[\]\\/]/g, '\\$&'))).join('');
+  const re = new RegExp(`^${body}$`, 'su');
+  return (name) => re.test(name);
 }
 
 /** `--at`'s seconds. Their grid frames are checked against the animation later, where its length is known. */
@@ -400,6 +593,190 @@ function multiples(lo: number, hi: number, step: number): number[] {
 }
 
 // ---------------------------------------------------------------------------
+// what a bone moves: the build's weights, the poser's topology
+// ---------------------------------------------------------------------------
+
+/** Per vertex, the bones that move it and by how much. */
+export type VertexWeights = Array<Array<[string, number]>>;
+
+type SkinFileAttachment = Record<string, unknown>;
+
+/**
+ * Each region's and mesh's per-vertex bone weights, read off the build's
+ * `skeleton.json` — the file both posers derive their skinning from — under
+ * `skin` and then the default skin, which is the order the runtime resolves an
+ * attachment in. A weighted mesh's runs name bones by their index in the file's
+ * `bones` array; an unweighted mesh and a region are moved whole by their slot's
+ * bone. A linked mesh reads its parent's. What cannot be read is answered with
+ * the sentence saying why, for the caller to refuse by.
+ */
+export function weightsReader(skeletonText: string, skin: string | undefined): (slot: string, attachment: string) => VertexWeights | string {
+  const doc = JSON.parse(skeletonText) as {
+    bones?: Array<{ name?: unknown }>;
+    slots?: Array<{ name?: unknown; bone?: unknown }>;
+    skins?: unknown;
+  };
+  const boneNames = (doc.bones ?? []).map((b) => (typeof b.name === 'string' ? b.name : ''));
+  const slotBone = new Map<string, string>();
+  for (const s of doc.slots ?? []) if (typeof s.name === 'string' && typeof s.bone === 'string') slotBone.set(s.name, s.bone);
+  const skins = Array.isArray(doc.skins) ? (doc.skins as Array<{ name?: unknown; attachments?: Record<string, Record<string, SkinFileAttachment>> }>) : [];
+  const find = (skinName: string, slot: string, attachment: string): SkinFileAttachment | undefined => {
+    const entries = skins.find((k) => k.name === skinName)?.attachments?.[slot];
+    if (entries === undefined) return undefined;
+    // Keyed by its name; an entry may also rename itself with a `name` field, which is what the posers report.
+    return entries[attachment] ?? Object.values(entries).find((a) => a.name === attachment);
+  };
+  const order = skin === undefined ? ['default'] : skin === 'default' ? ['default'] : [skin, 'default'];
+  return (slot, attachment) => {
+    let found: SkinFileAttachment | undefined;
+    for (const k of order) {
+      found = find(k, slot, attachment);
+      if (found !== undefined) break;
+    }
+    const where = `slot "${slot}" attachment "${attachment}"`;
+    if (found === undefined) return `${where}: skeleton.json has no such attachment under skin ${order.map((k) => JSON.stringify(k)).join(' or ')}`;
+    const bone = slotBone.get(slot);
+    if (bone === undefined) return `${where}: skeleton.json declares no slot "${slot}" with a bone`;
+    const type = typeof found.type === 'string' ? found.type : 'region';
+    if (type === 'region') return [[[bone, 1]], [[bone, 1]], [[bone, 1]], [[bone, 1]]];
+    let mesh = found;
+    if (type === 'linkedmesh') {
+      const parentSkin = typeof found.skin === 'string' ? found.skin : 'default';
+      const parent = typeof found.parent === 'string' ? find(parentSkin, slot, found.parent) : undefined;
+      if (parent === undefined) return `${where}: its parent mesh ${JSON.stringify(found.parent)} is not in skin "${parentSkin}"`;
+      mesh = parent;
+    } else if (type !== 'mesh') {
+      return `${where} is a ${type}, which poses no vertices`;
+    }
+    const uvs = mesh.uvs;
+    const vertices = mesh.vertices;
+    if (!Array.isArray(uvs) || !Array.isArray(vertices)) return `${where}: its mesh states no uvs or vertices`;
+    const count = uvs.length / 2;
+    if (vertices.length === uvs.length) return Array.from({ length: count }, (): Array<[string, number]> => [[bone, 1]]);
+    const out: VertexWeights = [];
+    let i = 0;
+    for (let v = 0; v < count; v++) {
+      const n = Number(vertices[i++]);
+      const run: Array<[string, number]> = [];
+      for (let k = 0; k < n; k++, i += 4) {
+        const name = boneNames[Number(vertices[i])];
+        if (name === undefined) return `${where}: vertex ${v} names bone index ${String(vertices[i])}, and skeleton.json has ${boneNames.length} bones`;
+        run.push([name, Number(vertices[i + 3])]);
+      }
+      out.push(run);
+    }
+    return out;
+  };
+}
+
+/** A triangle list's unique edges, `[i, j]` with `i < j`, in the order the triangles first name them. */
+export function edgesOf(triangles: ArrayLike<number>): Array<[number, number]> {
+  const seen = new Set<string>();
+  const out: Array<[number, number]> = [];
+  for (let t = 0; t + 2 < triangles.length; t += 3) {
+    const [a, b, c] = [triangles[t], triangles[t + 1], triangles[t + 2]];
+    for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+      const e: [number, number] = p < q ? [p, q] : [q, p];
+      const key = `${e[0]},${e[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+/** The ramp's colour at `weight` (clamped to 0..1): linear between the two stops either side, each channel rounded. */
+export function rampColour(weight: number): RGBA {
+  const w = Math.min(1, Math.max(0, weight));
+  for (let i = 0; i + 1 < WEIGHT_RAMP.length; i++) {
+    const lo = WEIGHT_RAMP[i];
+    const hi = WEIGHT_RAMP[i + 1];
+    if (w > hi.weight) continue;
+    const t = (w - lo.weight) / (hi.weight - lo.weight);
+    return [0, 1, 2, 3].map((c) => Math.round(lo.rgba[c] + (hi.rgba[c] - lo.rgba[c]) * t)) as RGBA;
+  }
+  return [...WEIGHT_RAMP[WEIGHT_RAMP.length - 1].rgba] as RGBA;
+}
+
+/**
+ * The heat over one triangle: every pixel whose centre the triangle holds,
+ * painted the ramp's colour at the barycentric blend of its corners' weights —
+ * so a pixel whose centre is a vertex is that vertex's weight exactly.
+ */
+function heatTriangle(plate: Plate, p: ReadonlyArray<[number, number]>, w: readonly number[]): void {
+  const [[x0, y0], [x1, y1], [x2, y2]] = p;
+  const area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+  if (area === 0 || w.every((v) => v < WEIGHT_FLOOR)) return;
+  const left = Math.max(0, Math.floor(Math.min(x0, x1, x2)));
+  const right = Math.min(plate.width - 1, Math.floor(Math.max(x0, x1, x2)));
+  const top = Math.max(0, Math.floor(Math.min(y0, y1, y2)));
+  const bottom = Math.min(plate.height - 1, Math.floor(Math.max(y0, y1, y2)));
+  // A pixel centre ON a vertex or an edge is inside: posed vertices carry float noise of ~1e-7 world units, which
+  // must not leave the pixel under a vertex unpainted. In barycentric units, so it is the same share of every triangle.
+  const inside = -1e-6;
+  for (let py = top; py <= bottom; py++) {
+    for (let px = left; px <= right; px++) {
+      const cx = px + 0.5;
+      const cy = py + 0.5;
+      const b0 = ((x1 - cx) * (y2 - cy) - (x2 - cx) * (y1 - cy)) / area;
+      const b1 = ((x2 - cx) * (y0 - cy) - (x0 - cx) * (y2 - cy)) / area;
+      const b2 = 1 - b0 - b1;
+      if (b0 < inside || b1 < inside || b2 < inside) continue;
+      const weight = b0 * w[0] + b1 * w[1] + b2 * w[2];
+      if (weight < WEIGHT_FLOOR) continue;
+      put(plate, px, py, rampColour(weight));
+    }
+  }
+}
+
+/** Two pixel boxes overlap, or sit with no clear pixel between them. */
+function crowds(a: PixelBox, b: PixelBox): boolean {
+  return a.x < b.x + b.width + 1 && b.x < a.x + a.width + 1 && a.y < b.y + b.height + 1 && b.y < a.y + a.height + 1;
+}
+
+/**
+ * Where a label goes: `first`, or the first place below it, a text line at a
+ * time, that no earlier label crowds — in the order labels are placed, which is
+ * declaration order, so one build and one request place every label alike.
+ */
+function placeLabel(first: PixelBox, taken: PixelBox[], avoid: boolean): { box: PixelBox; moved: boolean; overlaps: boolean } {
+  if (avoid) {
+    for (let step = 0; step <= LABEL_TRIES; step++) {
+      const box = { ...first, y: first.y + step * (GLYPH_H + 2) };
+      if (!taken.some((t) => crowds(t, box))) {
+        taken.push(box);
+        return { box, moved: step > 0, overlaps: false };
+      }
+    }
+  }
+  const overlaps = taken.some((t) => crowds(t, first));
+  taken.push(first);
+  return { box: first, moved: false, overlaps };
+}
+
+/** `--bone` / `--hide-bone` against one build's bones: the bones they leave out, each with why. A pattern matching no bone is refused naming the bones there are. */
+function filterOut(bones: ReadonlyArray<{ name: string }>, filter: BoneFilter | undefined, apply: boolean): Map<string, string> {
+  const out = new Map<string, string>();
+  if (filter === undefined) return out;
+  const names = bones.map((b) => b.name);
+  const matchers = (flag: string, patterns: readonly string[]): Array<(name: string) => boolean> =>
+    patterns.map((p) => {
+      const m = globMatcher(p);
+      if (!names.some(m)) throw new InspectError(`--${flag} ${JSON.stringify(p)} matches no bone; the bones are [${names.join(', ')}]`);
+      return m;
+    });
+  const include = filter.include === undefined ? null : matchers('bone', filter.include);
+  const exclude = filter.exclude === undefined ? null : matchers('hide-bone', filter.exclude);
+  if (!apply) return out;
+  for (const name of names) {
+    if (include !== null && !include.some((m) => m(name))) out.set(name, `not matched by --bone ${filter.include?.join(',')}`);
+    else if (exclude !== null && exclude.some((m) => m(name))) out.set(name, `left out by --hide-bone ${filter.exclude?.join(',')}`);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // the view
 // ---------------------------------------------------------------------------
 
@@ -421,13 +798,15 @@ function posesOf(poser: Poser, request: InspectRequest, needAttachments: boolean
   return indices.map((index) => ({ frame: frames[index], index }));
 }
 
+type WorldBox = [number, number, number, number];
+
 /** The world box of what `--zoom` names, over every pose of the picture. */
 function zoomBox(
   poser: Poser,
   poses: ReadonlyArray<{ frame: Frame }>,
   target: string,
   lengths: Map<string, number>,
-): { box: [number, number, number, number]; bone?: string; slot?: string } {
+): { box: WorldBox; bone?: string; slot?: string } {
   const isBone = poser.bones.some((b) => b.name === target);
   const isSlot = poser.slots.some((s) => s.name === target);
   if (isBone && isSlot) {
@@ -451,7 +830,7 @@ function zoomBox(
         `slots: [${poser.slots.map((s) => s.name).join(', ')}]`,
     );
   }
-  const box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+  const box: WorldBox = [Infinity, Infinity, -Infinity, -Infinity];
   const take = (x: number, y: number): void => {
     box[0] = Math.min(box[0], x);
     box[1] = Math.min(box[1], y);
@@ -483,40 +862,115 @@ function zoomBox(
   return kind === 'bone' ? { box, bone: name } : { box, slot: name };
 }
 
+/** One build as the drawing reads it: everything taken off its poser while the poser ran, so drawing poses nothing. */
+interface Gathered {
+  tag: 'A' | 'B';
+  poser: 'core' | 'spine';
+  note: string;
+  bones: ReadonlyArray<{ name: string; parent: string | null }>;
+  slots: ReadonlyArray<{ name: string; bone: string }>;
+  poses: Array<{ frame: Frame; index: number }>;
+  /** `render`'s framing of the build — taken only when the picture is framed as a shot. */
+  shot: Viewport | null;
+  zoom: { box: WorldBox; bone?: string; slot?: string } | null;
+  /** The rest table's topology for every attachment a pose shows, by `slot\0attachment` — taken only when a mesh view is drawn. */
+  rest: Map<string, AttachmentRest> | null;
+  pages: Map<string, Plate>;
+  lengths: Map<string, number>;
+  axes: readonly DeclaredAxis[];
+  weights: ((slot: string, attachment: string) => VertexWeights | string) | null;
+  sha: string;
+}
+
+const MESH_VIEWS: readonly ShowWord[] = ['mesh', 'hull', 'weights'];
+const restKey = (slot: string, attachment: string): string => `${slot}\u0000${attachment}`;
+
+/** A refusal about the second build says so: the same sentence, under the name of the build it is about. */
+function aboutBuild<T>(tag: 'A' | 'B', run: () => T): T {
+  if (tag === 'A') return run();
+  try {
+    return run();
+  } catch (err) {
+    if (err instanceof InspectError) throw new InspectError(`the --compare build: ${err.message}`);
+    throw err;
+  }
+}
+
+/** Everything a picture needs off one build, posed through the poser `render` would pose it with. */
+function gather(tag: 'A' | 'B', candidate: Candidate, texts: InspectTexts, request: InspectRequest, plant: InspectPlant): Gathered {
+  return aboutBuild(tag, () => {
+    const { facts, pages } = candidate;
+    if (request.skin !== undefined && !facts.skins.includes(request.skin)) {
+      throw new InspectError(`no skin ${JSON.stringify(request.skin)} in this skeleton; it declares [${facts.skins.join(', ') || 'none'}]`);
+    }
+    const axes = request.show.includes('declared') ? declaredAxes(texts.modelText) : [];
+    const lengths = boneLengths(texts.skeletonText);
+    const meshViews = request.show.some((w) => MESH_VIEWS.includes(w));
+    const needAttachments = request.frame.kind === 'zoom' || meshViews || request.show.includes('slots');
+    const posed = throughPoser(candidate.choice, (poser, roster) => {
+      const poses = posesOf(poser, request, needAttachments);
+      const shot =
+        request.frame.kind === 'shot' ? framingViewport(poser, request.maxSide, request.skin === undefined ? undefined : { skin: request.skin }, roster) : null;
+      if (request.frame.kind === 'shot' && shot === null) {
+        throw new InspectError('this skeleton poses no drawable attachment in any animation or in its setup pose — there is nothing to frame; name a box with --viewport');
+      }
+      const zoom = request.frame.kind === 'zoom' ? zoomBox(poser, poses, plant.zoomBone ?? request.frame.target, lengths) : null;
+      const rest = meshViews
+        ? new Map(poser.rest(request.skin, poses.map((p) => p.frame.attachments ?? [])).map((r) => [restKey(r.slot, r.attachment), r]))
+        : null;
+      return { poses, shot, zoom, rest, bones: poser.bones, slots: poser.slots };
+    });
+    return {
+      tag,
+      poser: posed.poser,
+      note: posed.note,
+      ...posed.value,
+      pages,
+      lengths,
+      axes,
+      weights: request.show.includes('weights') ? weightsReader(texts.skeletonText, request.skin) : null,
+      sha: createHash('sha256').update(texts.skeletonText).digest('hex'),
+    };
+  });
+}
+
 /**
  * The picture and its legend, posed through `candidate`'s chosen poser — the
- * one `render` would pose it with (`throughPoser`), named in the result.
+ * one `render` would pose it with (`throughPoser`), named in the result — and,
+ * with `compare`, the same view of a second build beside it on one transform.
  */
-export function inspectCandidate(candidate: Candidate, texts: InspectTexts, request: InspectRequest, plant: InspectPlant = {}): InspectResult {
-  const { facts, pages } = candidate;
-  if (request.skin !== undefined && !facts.skins.includes(request.skin)) {
-    throw new InspectError(`no skin ${JSON.stringify(request.skin)} in this skeleton; it declares [${facts.skins.join(', ') || 'none'}]`);
-  }
+export function inspectCandidate(candidate: Candidate, texts: InspectTexts, request: InspectRequest, plant: InspectPlant = {}, compare?: InspectCompare): InspectResult {
   if (request.animation === null && request.times.length > 0) {
     throw new InspectError('--at needs --animation <name>: the setup pose has no time. Without --at the picture is the setup pose');
   }
   if (request.animation !== null && request.times.length === 0) {
     throw new InspectError(`--animation ${request.animation} needs --at <s[,s…]>: the times of it to draw, on the ${request.fps} fps grid render draws it on`);
   }
-  const axes = request.show.includes('declared') ? declaredAxes(texts.modelText) : [];
-  const lengths = boneLengths(texts.skeletonText);
-  const posed = throughPoser(candidate.choice, (poser, roster) => view(poser, roster, pages, lengths, axes, request, plant));
-  return { ...posed.value, legend: { ...posed.value.legend, poser: posed.poser }, poserNote: posed.note };
+  if (request.show.includes('weights') !== (request.weightsBone !== undefined)) {
+    throw new InspectError('--show weights needs the bone whose weights it paints: weights:<bone>');
+  }
+  const a = gather('A', candidate, texts, request, plant);
+  const builds = [a];
+  if (compare !== undefined) builds.push(plant.compareFirstTwice ? { ...a, tag: 'B' } : gather('B', compare.candidate, compare.texts, request, plant));
+  const drawn = view(builds, request, plant);
+  return { ...drawn, poserNote: a.note, ...(compare === undefined ? {} : { comparePoserNote: builds[1].note }) };
 }
 
-function view(
-  poser: Poser,
-  roster: SkinRoster,
-  pages: Map<string, Plate>,
-  lengths: Map<string, number>,
-  axes: readonly DeclaredAxis[],
-  request: InspectRequest,
-  plant: InspectPlant,
-): Omit<InspectResult, 'poserNote'> {
+function view(builds: readonly Gathered[], request: InspectRequest, plant: InspectPlant): Omit<InspectResult, 'poserNote' | 'comparePoserNote'> {
   const notes: string[] = [];
-  const zooming = request.frame.kind === 'zoom';
-  const poses = posesOf(poser, request, zooming);
-  // The world box and its pixels: one for every tile, so a sheet's tiles overlay.
+  const compare = builds.length > 1;
+  const weightsBone = plant.weightsOf ?? request.weightsBone;
+  if (weightsBone !== undefined) {
+    for (const b of builds) {
+      if (!b.bones.some((bone) => bone.name === weightsBone)) {
+        aboutBuild(b.tag, () => {
+          throw new InspectError(`--show weights:${weightsBone}: no bone of that name; the bones are [${b.bones.map((bone) => bone.name).join(', ')}]`);
+        });
+      }
+    }
+  }
+  const filtered = builds.map((b) => aboutBuild(b.tag, () => filterOut(b.bones, request.boneFilter, plant.ignoreFilter !== true)));
+  // The world box and its pixels: one for every tile of both builds, so a sheet's tiles and a compare's halves overlay.
   let viewport: Viewport;
   let framing: InspectLegend['framing'];
   if (request.frame.kind === 'viewport') {
@@ -524,9 +978,11 @@ function view(
     viewport = viewportFor(f.x, f.y, f.x + f.width, f.y + f.height, request.maxSide);
     framing = { kind: 'viewport' };
   } else if (request.frame.kind === 'zoom') {
-    const target = plant.zoomBone ?? request.frame.target;
-    const found = zoomBox(poser, poses, target, lengths);
-    const [x0, y0, x1, y1] = found.box;
+    const found = builds.map((b) => b.zoom).filter((z): z is NonNullable<Gathered['zoom']> => z !== null);
+    const [x0, y0, x1, y1] = found.reduce<WorldBox>(
+      (u, z) => [Math.min(u[0], z.box[0]), Math.min(u[1], z.box[1]), Math.max(u[2], z.box[2]), Math.max(u[3], z.box[3])],
+      [Infinity, Infinity, -Infinity, -Infinity],
+    );
     const longer = Math.max(x1 - x0, y1 - y0);
     const pad = request.frame.pad ?? longer * DEFAULT_ZOOM_PAD_SHARE;
     if (longer + 2 * pad === 0) {
@@ -536,195 +992,87 @@ function view(
       );
     }
     viewport = viewportFor(x0 - pad, y0 - pad, x1 + pad, y1 + pad, request.maxSide);
-    framing = { kind: 'zoom', ...(found.bone === undefined ? {} : { bone: found.bone }), ...(found.slot === undefined ? {} : { slot: found.slot }), pad, padFrom: request.frame.pad === null ? 'default' : 'stated' };
+    const first = found[0];
+    framing = { kind: 'zoom', ...(first?.bone === undefined ? {} : { bone: first.bone }), ...(first?.slot === undefined ? {} : { slot: first.slot }), pad, padFrom: request.frame.pad === null ? 'default' : 'stated' };
   } else {
-    const shot = framingViewport(poser, request.maxSide, request.skin === undefined ? undefined : { skin: request.skin }, roster);
-    if (shot === null) throw new InspectError('this skeleton poses no drawable attachment in any animation or in its setup pose — there is nothing to frame; name a box with --viewport');
-    viewport = shot;
-    framing = { kind: 'shot', note: "render's own framing: every animation's posed box at 60 fps, padded — the grid render draws this build on at the same --max" };
+    const shots = builds.map((b) => b.shot).filter((v): v is Viewport => v !== null);
+    if (!compare) {
+      viewport = shots[0];
+      framing = { kind: 'shot', note: "render's own framing: every animation's posed box at 60 fps, padded — the grid render draws this build on at the same --max" };
+    } else {
+      viewport = viewportFor(
+        Math.min(...shots.map((v) => v.minX)),
+        Math.min(...shots.map((v) => v.minY)),
+        Math.max(...shots.map((v) => v.maxX)),
+        Math.max(...shots.map((v) => v.maxY)),
+        request.maxSide,
+      );
+      framing = {
+        kind: 'shot',
+        note:
+          "the union of render's own framing of each build (every animation's posed box at 60 fps, padded), so both halves share one " +
+          "transform — a half is render's frame of its build only where the two boxes agree",
+      };
+    }
   }
   const { width, height, scale } = viewport;
-  const sheet = poses.length > 1;
-  const columns = sheet ? Math.min(SHEET_COLUMNS, poses.length) : 1;
-  const rows = Math.ceil(poses.length / columns);
-  const gap = sheet ? SHEET_GAP : 0;
+  const count = builds[0].poses.length;
+  const sheet = count > 1;
+  // One build: tiles left to right, eight to a row. Two: each time's pair side by side, four pairs to a row.
+  const pairs = compare ? Math.min(SHEET_COLUMNS / 2, count) : 0;
+  const columns = compare ? pairs * 2 : sheet ? Math.min(SHEET_COLUMNS, count) : 1;
+  const rows = compare ? Math.ceil(count / pairs) : Math.ceil(count / columns);
+  const gap = sheet || compare ? SHEET_GAP : 0;
   const plate = new Plate(columns * (width + gap) + gap, rows * (height + gap) + gap);
   for (let i = 0; i < plate.data.length; i += 4) plate.data.set(colour('rule'), i);
-  const [shiftX, shiftY] = plant.overlayShift ?? [0, 0];
-  const [lieX, lieY] = plant.legendShift ?? [0, 0];
   const tiles: LegendTile[] = [];
-  for (const [i, { frame, index }] of poses.entries()) {
-    const x0 = gap + (i % columns) * (width + gap);
-    const y0 = gap + Math.floor(i / columns) * (height + gap);
-    // ⭐ The one projection both the picture and the legend read: continuous pixels in the whole picture.
-    const toPixel = (wx: number, wy: number): [number, number] => [
-      x0 + (wx - viewport.minX) * scale,
-      y0 + (plant.unflipped ? wy - viewport.minY : viewport.maxY - wy) * scale,
-    ];
-    const point = (wx: number, wy: number): LegendPoint => {
-      const [px, py] = toPixel(wx, wy);
-      return { world: [wx, wy], pixel: [px + lieX, py + lieY] };
-    };
-    const tile = request.show.includes('art') ? renderFrame(frame, pages, viewport, BACKGROUND) : filled(width, height, BACKGROUND);
-    if (request.dim) {
-      for (let p = 0; p < tile.data.length; p += 4) {
-        for (let c = 0; c < 3; c++) tile.data[p + c] = Math.round(255 - (255 - tile.data[p + c]) * DIM_KEEP);
-      }
+  const weighted = builds.map(() => false);
+  let anyMesh = false;
+  for (let k = 0; k < count; k++) {
+    for (const [bi, build] of builds.entries()) {
+      const column = compare ? (k % pairs) * 2 + bi : k % columns;
+      const row = compare ? Math.floor(k / pairs) : Math.floor(k / columns);
+      const x0 = gap + column * (width + gap);
+      const y0 = gap + row * (height + gap);
+      const drawnTile = drawTile(build, build.poses[k], filtered[bi], { x0, y0, viewport, sheet, compare, weightsBone, first: k === 0 && bi === 0 }, request, plant, notes);
+      if (drawnTile.weighted) weighted[bi] = true;
+      if (drawnTile.anyMesh) anyMesh = true;
+      for (let y = 0; y < height; y++) plate.data.set(drawnTile.tile.data.subarray(y * width * 4, (y + 1) * width * 4), ((y0 + y) * plate.width + x0) * 4);
+      tiles.push(drawnTile.legend);
     }
-    // Drawn on the tile in tile pixels; `tx`/`ty` take a picture pixel back to the tile's.
-    const tx = (px: number): number => px - x0;
-    const ty = (py: number): number => py - y0;
-    const legendTile: LegendTile = {
-      animation: request.animation,
-      frame: index,
-      time: request.animation === null ? 0 : index / request.fps,
-      box: { x: x0, y: y0, width, height },
-      transform: { minX: viewport.minX, maxY: viewport.maxY, scale, x0, y0 },
-      bones: [],
-    };
-    if (request.show.includes('grid')) {
-      const step = plant.gridInPixels ? gridStep(scale) / scale : gridStep(scale);
-      const xs = multiples(viewport.minX, viewport.maxX, step);
-      const ys = multiples(viewport.minY, viewport.maxY, step);
-      for (const gx of xs) {
-        const col = Math.floor(tx(toPixel(gx, 0)[0]));
-        for (let y = 0; y < height; y++) put(tile, col, y, colour(gx === 0 ? 'gridZero' : 'grid'));
-      }
-      for (const gy of ys) {
-        const row = Math.floor(ty(toPixel(0, gy)[1]));
-        for (let x = 0; x < width; x++) put(tile, x, row, colour(gy === 0 ? 'gridZero' : 'grid'));
-      }
-      for (const gx of xs) text(tile, gridLabel(gx, step), Math.floor(tx(toPixel(gx, 0)[0])) + 2, 2, colour('gridZero'));
-      for (const gy of ys) text(tile, gridLabel(gy, step), 2, Math.floor(ty(toPixel(0, gy)[1])) + 2, colour('gridZero'));
-      legendTile.grid = { step, x: xs, y: ys };
-    }
-    const snapshots = new Map<string, BoneSnapshot>((frame.bones ?? []).map((b) => [b.name, b]));
-    const isPosed = (b: BoneSnapshot | undefined): b is BoneSnapshot => b !== undefined && !(b.a === 0 && b.b === 0 && b.c === 0 && b.d === 0);
-    const held = new Set<string>();
-    if (request.show.includes('declared')) {
-      legendTile.declared = [];
-      for (const axis of axes) {
-        const a = snapshots.get(axis.through[0]);
-        const b = snapshots.get(axis.through[1]);
-        const entry: LegendDeclared = { name: axis.name, through: axis.through, tolerance: axis.tolerance, degrees: null, why: null, from: null, to: null, bones: [] };
-        if (!isPosed(a) || !isPosed(b)) {
-          entry.why = `${!isPosed(a) ? axis.through[0] : axis.through[1]} is not posed at this time (its world matrix is 0), so the line has no point there`;
-        } else if (a.worldX === b.worldX && a.worldY === b.worldY) {
-          entry.why = `"${axis.through[0]}" and "${axis.through[1]}" share the world origin (${a.worldX}, ${a.worldY}), so they draw no line`;
-        } else {
-          const degrees = (Math.atan2(b.worldY - a.worldY, b.worldX - a.worldX) * 180) / Math.PI;
-          entry.degrees = degrees;
-          entry.from = point(a.worldX, a.worldY);
-          entry.to = point(b.worldX, b.worldY);
-          // Across the whole tile: extend the line past both ends by the tile's diagonal, in world units.
-          const reach = Math.hypot(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY);
-          const ux = (b.worldX - a.worldX) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
-          const uy = (b.worldY - a.worldY) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
-          const [p0x, p0y] = toPixel(a.worldX - ux * reach, a.worldY - uy * reach);
-          const [p1x, p1y] = toPixel(a.worldX + ux * reach, a.worldY + uy * reach);
-          line(tile, tx(p0x) + shiftX, ty(p0y) + shiftY, tx(p1x) + shiftX, ty(p1y) + shiftY, colour('declared'));
-          for (const name of axis.bones) {
-            const s = snapshots.get(name);
-            if (!isPosed(s) || (s.a === 0 && s.c === 0)) {
-              entry.bones.push({ name, degrees: null, off: null });
-              continue;
-            }
-            const found = worldAxisDegrees(s);
-            entry.bones.push({ name, degrees: found, off: lineGap(found, degrees) });
-            held.add(name);
-          }
-        }
-        if (entry.why !== null && i === 0) notes.push(`declared: axis "${axis.name}" — ${entry.why}`);
-        legendTile.declared.push(entry);
-      }
-      if (axes.length === 0 && i === 0) notes.push('declared: the rig declares no invariants.axes — nothing drawn for it');
-    }
-    // Every bone, in declaration order — drawn or not, so the legend names each.
-    const drawn: Array<{ bone: LegendBone; o: [number, number]; t: [number, number] }> = [];
-    for (const declared of poser.bones) {
-      const s = snapshots.get(declared.name);
-      const length = lengths.get(declared.name) ?? 0;
-      const posedBone = isPosed(s);
-      const ox = s?.worldX ?? 0;
-      const oy = s?.worldY ?? 0;
-      const bone: LegendBone = {
-        name: declared.name,
-        parent: declared.parent,
-        length,
-        zeroLength: length === 0,
-        undrawn: posedBone ? null : 'its world matrix is 0 at this time — unposed by the skin, or a scale of 0',
-        origin: point(ox, oy),
-        tip: point(ox + length * (s?.a ?? 0), oy + length * (s?.c ?? 0)),
-      };
-      if (posedBone && request.show.includes('axes')) {
-        const unit = AXIS_PIXELS / scale;
-        bone.axes = { x: point(ox + s.a * unit, oy + s.c * unit), y: point(ox + s.b * unit, oy + s.d * unit) };
-      }
-      legendTile.bones.push(bone);
-      if (posedBone) drawn.push({ bone, o: toPixel(ox, oy), t: toPixel(bone.tip.world[0], bone.tip.world[1]) });
-    }
-    // Lines, then axes, then names, then the marks — so a mark is never covered.
-    const at = (p: [number, number]): [number, number] => [tx(p[0]) + shiftX, ty(p[1]) + shiftY];
-    if (request.show.includes('bones')) {
-      for (const { bone, o, t } of drawn) {
-        if (bone.zeroLength) continue;
-        const [ax, ay] = at(o);
-        const [bx, by] = at(t);
-        line(tile, ax, ay, bx, by, colour(held.has(bone.name) ? 'held' : 'bone'));
-      }
-    }
-    if (request.show.includes('axes')) {
-      for (const { bone, o } of drawn) {
-        if (bone.axes === undefined) continue;
-        const [ax, ay] = at(o);
-        for (const [end, name] of [[bone.axes.y, 'axisY'], [bone.axes.x, 'axisX']] as const) {
-          const [ex, ey] = at(toPixel(end.world[0], end.world[1]));
-          line(tile, ax, ay, ex, ey, colour(name));
-        }
-      }
-    }
-    if (request.show.includes('names')) {
-      // Bones whose origins share a pixel — a `_ctl` parent and its child, a chain's joint — list their names one per
-      // line under it, in declaration order, rather than printing them over each other.
-      const below = new Map<string, number>();
-      for (const { bone, o } of drawn) {
-        const [ax, ay] = at(o);
-        const key = `${Math.floor(ax)},${Math.floor(ay)}`;
-        const line = below.get(key) ?? 0;
-        below.set(key, line + 1);
-        text(tile, bone.name, Math.floor(ax) + 4, Math.floor(ay) + 3 + line * (GLYPH_H + 2), colour('name'));
-      }
-    }
-    if (request.show.includes('bones')) {
-      for (const { bone, t } of drawn) {
-        if (bone.zeroLength) continue;
-        const [bx, by] = at(t);
-        square(tile, Math.floor(bx), Math.floor(by), 1, true, colour('tip'));
-      }
-      for (const { bone, o } of drawn) {
-        const [ax, ay] = at(o);
-        if (bone.zeroLength) square(tile, Math.floor(ax), Math.floor(ay), 2, true, colour('zero'));
-        square(tile, Math.floor(ax), Math.floor(ay), 1, false, colour('origin'));
-      }
-    }
-    if (sheet) {
-      const label = request.animation === null ? 'setup' : `t=${legendTile.time.toFixed(3)} f${index}`;
-      const ly = height - GLYPH_H - 2;
-      for (let y = ly - 1; y < ly + GLYPH_H + 1; y++) for (let x = 1; x < textWidth(label, 1) + 3; x++) put(tile, x, y, BACKGROUND);
-      text(tile, label, 2, ly, colour('label'));
-    }
-    for (let y = 0; y < height; y++) plate.data.set(tile.data.subarray(y * width * 4, (y + 1) * width * 4), ((y0 + y) * plate.width + x0) * 4);
-    tiles.push(legendTile);
   }
+  if (weightsBone !== undefined) {
+    for (const [bi, b] of builds.entries()) {
+      if (!weighted[bi]) notes.push(`weights: bone "${weightsBone}" weights no vertex of any region or mesh ${compare ? `build ${b.tag} ` : ''}shows here — nothing painted`);
+    }
+  }
+  if ((request.show.includes('mesh') || request.show.includes('hull')) && !anyMesh) notes.push('mesh/hull: no slot shows a mesh here — nothing drawn for it');
   const legend: InspectLegend = {
     spec: INSPECT_SPEC,
-    poser: 'core',
-    show: [...request.show],
+    poser: builds[0].poser,
+    show: showSpelled(request, weightsBone),
     dim: request.dim,
     ...(request.skin === undefined ? {} : { skin: request.skin }),
     animation: request.animation,
     fps: request.fps,
     framing,
+    ...(request.boneFilter === undefined
+      ? {}
+      : { boneFilter: { include: request.boneFilter.include === undefined ? null : [...request.boneFilter.include], exclude: request.boneFilter.exclude === undefined ? null : [...request.boneFilter.exclude] } }),
+    ...(weightsBone === undefined
+      ? {}
+      : {
+          weights: {
+            bone: weightsBone,
+            ramp: WEIGHT_RAMP.map((s) => ({ weight: s.weight, rgba: [...s.rgba] })),
+            floor: WEIGHT_FLOOR,
+            reading:
+              "a pixel is painted when its centre lies in a triangle of a region or mesh: the ramp's colour at the barycentric blend of " +
+              "the triangle's corners' weights for the bone, each channel rounded, linear between the stops; below floor it is not painted. " +
+              "Each vertex's weight is in its tile's meshes[].weights, read off skeleton.json",
+          },
+        }),
+    ...(compare ? { builds: builds.map((b) => ({ build: b.tag, poser: b.poser, skeletonSha256: b.sha })) } : {}),
     coordinates: {
       world: 'spine world: y up, world units',
       image: 'the picture: y down, from its top-left corner; pixel (i, j) covers [i, i+1) x [j, j+1), so a position\'s pixel is its floor',
@@ -737,6 +1085,331 @@ function view(
     tiles,
   };
   return { plate, legend, notes };
+}
+
+interface TilePlace {
+  x0: number;
+  y0: number;
+  viewport: Viewport;
+  sheet: boolean;
+  compare: boolean;
+  weightsBone: string | undefined;
+  /** The picture's first tile — the one whose notes are printed, so a sheet says a thing once. */
+  first: boolean;
+}
+
+/** One tile: one build at one pose, drawn on its own plate in tile pixels, and its legend in picture pixels. */
+function drawTile(
+  build: Gathered,
+  pose: { frame: Frame; index: number },
+  filtered: Map<string, string>,
+  place: TilePlace,
+  request: InspectRequest,
+  plant: InspectPlant,
+  notes: string[],
+): { tile: Plate; legend: LegendTile; weighted: boolean; anyMesh: boolean } {
+  const { frame, index } = pose;
+  const { x0, y0, viewport } = place;
+  const { width, height, scale } = viewport;
+  const first = place.first;
+  const [shiftX, shiftY] = plant.overlayShift ?? [0, 0];
+  const [lieX, lieY] = plant.legendShift ?? [0, 0];
+  // ⭐ The one projection both the picture and the legend read: continuous pixels in the whole picture.
+  const toPixel = (wx: number, wy: number): [number, number] => [
+    x0 + (wx - viewport.minX) * scale,
+    y0 + (plant.unflipped ? wy - viewport.minY : viewport.maxY - wy) * scale,
+  ];
+  const point = (wx: number, wy: number): LegendPoint => {
+    const [px, py] = toPixel(wx, wy);
+    return { world: [wx, wy], pixel: [px + lieX, py + lieY] };
+  };
+  const tile = request.show.includes('art') ? renderFrame(frame, build.pages, viewport, BACKGROUND) : filled(width, height, BACKGROUND);
+  if (request.dim) {
+    for (let p = 0; p < tile.data.length; p += 4) {
+      for (let c = 0; c < 3; c++) tile.data[p + c] = Math.round(255 - (255 - tile.data[p + c]) * DIM_KEEP);
+    }
+  }
+  // Drawn on the tile in tile pixels; `tx`/`ty` take a picture pixel back to the tile's.
+  const tx = (px: number): number => px - x0;
+  const ty = (py: number): number => py - y0;
+  const legendTile: LegendTile = {
+    ...(place.compare ? { build: build.tag } : {}),
+    animation: request.animation,
+    frame: index,
+    time: request.animation === null ? 0 : index / request.fps,
+    box: { x: x0, y: y0, width, height },
+    transform: { minX: viewport.minX, maxY: viewport.maxY, scale, x0, y0 },
+    bones: [],
+  };
+  if (request.show.includes('grid')) {
+    const step = plant.gridInPixels ? gridStep(scale) / scale : gridStep(scale);
+    const xs = multiples(viewport.minX, viewport.maxX, step);
+    const ys = multiples(viewport.minY, viewport.maxY, step);
+    for (const gx of xs) {
+      const col = Math.floor(tx(toPixel(gx, 0)[0]));
+      for (let y = 0; y < height; y++) put(tile, col, y, colour(gx === 0 ? 'gridZero' : 'grid'));
+    }
+    for (const gy of ys) {
+      const row = Math.floor(ty(toPixel(0, gy)[1]));
+      for (let x = 0; x < width; x++) put(tile, x, row, colour(gy === 0 ? 'gridZero' : 'grid'));
+    }
+    for (const gx of xs) text(tile, gridLabel(gx, step), Math.floor(tx(toPixel(gx, 0)[0])) + 2, 2, colour('gridZero'));
+    for (const gy of ys) text(tile, gridLabel(gy, step), 2, Math.floor(ty(toPixel(0, gy)[1])) + 2, colour('gridZero'));
+    legendTile.grid = { step, x: xs, y: ys };
+  }
+  // ── what a bone moves: weights under the edges, the edges under the hull ──
+  let weighted = false;
+  let anyMesh = false;
+  if (build.rest !== null) {
+    legendTile.meshes = [];
+    const [mx, my] = plant.meshShift ?? [0, 0];
+    for (const shown of frame.attachments ?? []) {
+      const rest = build.rest.get(restKey(shown.slot, shown.attachment));
+      const vertexCount = shown.vertices.length / 2;
+      if (rest === undefined || rest.vertices.length !== shown.vertices.length) {
+        throw new Error(
+          `slot "${shown.slot}" attachment "${shown.attachment}": the rest table ${rest === undefined ? 'has no entry for it' : `states ${rest.vertices.length / 2} vertices`}, the pose ${vertexCount} — the poser disagrees with itself`,
+        );
+      }
+      const pixel: number[] = [];
+      for (let v = 0; v < shown.vertices.length; v += 2) pixel.push(...toPixel(shown.vertices[v], shown.vertices[v + 1]));
+      const at = (v: number): [number, number] => [tx(pixel[2 * v]), ty(pixel[2 * v + 1])];
+      const edges = edgesOf(rest.triangles);
+      const entry: LegendMesh = {
+        slot: shown.slot,
+        attachment: shown.attachment,
+        kind: rest.kind,
+        vertexCount,
+        triangleCount: rest.triangles.length / 3,
+        hull: rest.kind === 'mesh' ? (rest.hull ?? null) : null,
+        edges,
+        world: [...shown.vertices],
+        pixel,
+      };
+      if (place.weightsBone !== undefined && build.weights !== null) {
+        const read = build.weights(shown.slot, shown.attachment);
+        if (typeof read === 'string') throw new InspectError(`--show weights:${place.weightsBone}: ${read}`);
+        if (read.length !== vertexCount) {
+          throw new InspectError(`--show weights:${place.weightsBone}: slot "${shown.slot}" attachment "${shown.attachment}" — skeleton.json weights ${read.length} vertices, the pose has ${vertexCount}`);
+        }
+        const bone = place.weightsBone;
+        const weights = read.map((run) => run.reduce((sum, [name, w]) => (name === bone ? sum + w : sum), 0));
+        entry.weights = weights;
+        if (weights.some((w) => w >= WEIGHT_FLOOR)) weighted = true;
+        for (let t = 0; t + 2 < rest.triangles.length; t += 3) {
+          const corners = [rest.triangles[t], rest.triangles[t + 1], rest.triangles[t + 2]];
+          heatTriangle(tile, corners.map(at), corners.map((v) => weights[v]));
+        }
+      }
+      legendTile.meshes.push(entry);
+    }
+    for (const entry of legendTile.meshes) {
+      if (entry.kind !== 'mesh') continue;
+      anyMesh = true;
+      const at = (v: number): [number, number] => [tx(entry.pixel[2 * v]) + mx, ty(entry.pixel[2 * v + 1]) + my];
+      if (request.show.includes('mesh')) {
+        for (const [p, q] of entry.edges) line(tile, ...at(p), ...at(q), colour('mesh'));
+      }
+      if (request.show.includes('hull')) {
+        const hull = entry.hull ?? 0;
+        const ring: Array<[number, number]> = plant.hullAllEdges ? entry.edges : Array.from({ length: hull }, (_, i): [number, number] => [i, (i + 1) % hull]);
+        for (const [p, q] of ring) line(tile, ...at(p), ...at(q), colour('hull'));
+      }
+    }
+  }
+  const snapshots = new Map<string, BoneSnapshot>((frame.bones ?? []).map((b) => [b.name, b]));
+  const isPosed = (b: BoneSnapshot | undefined): b is BoneSnapshot => b !== undefined && !(b.a === 0 && b.b === 0 && b.c === 0 && b.d === 0);
+  const held = new Set<string>();
+  if (request.show.includes('declared')) {
+    legendTile.declared = [];
+    for (const axis of build.axes) {
+      const a = snapshots.get(axis.through[0]);
+      const b = snapshots.get(axis.through[1]);
+      const entry: LegendDeclared = { name: axis.name, through: axis.through, tolerance: axis.tolerance, degrees: null, why: null, from: null, to: null, bones: [] };
+      if (!isPosed(a) || !isPosed(b)) {
+        entry.why = `${!isPosed(a) ? axis.through[0] : axis.through[1]} is not posed at this time (its world matrix is 0), so the line has no point there`;
+      } else if (a.worldX === b.worldX && a.worldY === b.worldY) {
+        entry.why = `"${axis.through[0]}" and "${axis.through[1]}" share the world origin (${a.worldX}, ${a.worldY}), so they draw no line`;
+      } else {
+        const degrees = (Math.atan2(b.worldY - a.worldY, b.worldX - a.worldX) * 180) / Math.PI;
+        entry.degrees = degrees;
+        entry.from = point(a.worldX, a.worldY);
+        entry.to = point(b.worldX, b.worldY);
+        // Across the whole tile: extend the line past both ends by the tile's diagonal, in world units.
+        const reach = Math.hypot(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY);
+        const ux = (b.worldX - a.worldX) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
+        const uy = (b.worldY - a.worldY) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
+        const [p0x, p0y] = toPixel(a.worldX - ux * reach, a.worldY - uy * reach);
+        const [p1x, p1y] = toPixel(a.worldX + ux * reach, a.worldY + uy * reach);
+        line(tile, tx(p0x) + shiftX, ty(p0y) + shiftY, tx(p1x) + shiftX, ty(p1y) + shiftY, colour('declared'));
+        for (const name of axis.bones) {
+          const s = snapshots.get(name);
+          if (!isPosed(s) || (s.a === 0 && s.c === 0)) {
+            entry.bones.push({ name, degrees: null, off: null });
+            continue;
+          }
+          const found = worldAxisDegrees(s);
+          entry.bones.push({ name, degrees: found, off: lineGap(found, degrees) });
+          held.add(name);
+        }
+      }
+      if (entry.why !== null && first) notes.push(`declared: axis "${axis.name}" — ${entry.why}`);
+      legendTile.declared.push(entry);
+    }
+    if (build.axes.length === 0 && first) notes.push('declared: the rig declares no invariants.axes — nothing drawn for it');
+  }
+  // Every bone, in declaration order — drawn or not, so the legend names each.
+  const drawn: Array<{ bone: LegendBone; o: [number, number]; t: [number, number] }> = [];
+  for (const declared of build.bones) {
+    const s = snapshots.get(declared.name);
+    const length = build.lengths.get(declared.name) ?? 0;
+    const posedBone = isPosed(s);
+    const left = filtered.get(declared.name);
+    const ox = s?.worldX ?? 0;
+    const oy = s?.worldY ?? 0;
+    const bone: LegendBone = {
+      name: declared.name,
+      parent: declared.parent,
+      length,
+      zeroLength: length === 0,
+      undrawn: !posedBone ? 'its world matrix is 0 at this time — unposed by the skin, or a scale of 0' : (left ?? null),
+      origin: point(ox, oy),
+      tip: point(ox + length * (s?.a ?? 0), oy + length * (s?.c ?? 0)),
+    };
+    const shows = posedBone && left === undefined;
+    if (shows && request.show.includes('axes')) {
+      const unit = AXIS_PIXELS / scale;
+      bone.axes = { x: point(ox + s.a * unit, oy + s.c * unit), y: point(ox + s.b * unit, oy + s.d * unit) };
+    }
+    legendTile.bones.push(bone);
+    if (shows) drawn.push({ bone, o: toPixel(ox, oy), t: toPixel(bone.tip.world[0], bone.tip.world[1]) });
+  }
+  // Lines, then axes, then slot numbers and names, then the marks — so a mark is never covered.
+  const at = (p: [number, number]): [number, number] => [tx(p[0]) + shiftX, ty(p[1]) + shiftY];
+  if (request.show.includes('bones')) {
+    for (const { bone, o, t } of drawn) {
+      if (bone.zeroLength) continue;
+      const [ax, ay] = at(o);
+      const [bx, by] = at(t);
+      line(tile, ax, ay, bx, by, colour(held.has(bone.name) ? 'held' : 'bone'));
+    }
+  }
+  if (request.show.includes('axes')) {
+    for (const { bone, o } of drawn) {
+      if (bone.axes === undefined) continue;
+      const [ax, ay] = at(o);
+      for (const [end, name] of [[bone.axes.y, 'axisY'], [bone.axes.x, 'axisX']] as const) {
+        const [ex, ey] = at(toPixel(end.world[0], end.world[1]));
+        line(tile, ax, ay, ex, ey, colour(name));
+      }
+    }
+  }
+  // ── labels: slot numbers, then names, placed in one pass so neither overprints the other ──
+  const taken: PixelBox[] = [];
+  const avoid = plant.noAvoid !== true;
+  const toPicture = (b: PixelBox): PixelBox => ({ x: b.x + x0, y: b.y + y0, width: b.width, height: b.height });
+  const writes: Array<() => void> = [];
+  const leader = (ax: number, ay: number, box: PixelBox): void => line(tile, ax + 0.5, ay + 0.5, box.x - 0.5, box.y + Math.floor(box.height / 2) + 0.5, colour('leader'));
+  if (request.show.includes('slots')) {
+    legendTile.slots = [];
+    const shown = frame.attachments ?? [];
+    for (const [i, att] of shown.entries()) {
+      const order = plant.slotsReversed ? shown.length - 1 - i : i;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let v = 0; v + 1 < att.vertices.length; v += 2) {
+        minX = Math.min(minX, att.vertices[v]);
+        maxX = Math.max(maxX, att.vertices[v]);
+        minY = Math.min(minY, att.vertices[v + 1]);
+        maxY = Math.max(maxY, att.vertices[v + 1]);
+      }
+      const anchor = point((minX + maxX) / 2, (minY + maxY) / 2);
+      const [apx, apy] = toPixel((minX + maxX) / 2, (minY + maxY) / 2);
+      const [ax, ay] = [Math.floor(tx(apx)), Math.floor(ty(apy))];
+      const label = String(order);
+      const w = textWidth(label, 1) + 2;
+      const h = GLYPH_H + 2;
+      const placed = placeLabel({ x: ax - Math.floor(w / 2), y: ay - Math.floor(h / 2), width: w, height: h }, taken, avoid);
+      writes.push(() => {
+        if (placed.moved) leader(ax, ay, placed.box);
+      });
+      writes.push(() => {
+        for (let y = placed.box.y; y < placed.box.y + h; y++) for (let x = placed.box.x; x < placed.box.x + w; x++) put(tile, x, y, colour('slotBack'));
+        text(tile, label, placed.box.x + 1, placed.box.y + 1, colour('slot'));
+      });
+      const slotBone = build.slots.find((s) => s.name === att.slot)?.bone;
+      if (slotBone === undefined) throw new Error(`slot "${att.slot}" shows an attachment and is not in the poser's slot list — the poser disagrees with itself`);
+      legendTile.slots.push({
+        order,
+        slot: att.slot,
+        attachment: att.attachment,
+        bone: slotBone,
+        anchor,
+        box: toPicture(placed.box),
+        moved: placed.moved,
+        overlaps: placed.overlaps,
+      });
+    }
+    legendTile.slots.sort((p, q) => p.order - q.order);
+  }
+  if (request.show.includes('names')) {
+    // ⭐ One label per pixel. What overprints is two labels starting on one pixel — a `_ctl` and its child, a chain's
+    // joint — and the pixel is the unit of that, not the world origin: two origins 0.3 px apart overprint as surely as
+    // two that coincide, and two that coincide always share a pixel.
+    legendTile.labels = [];
+    const groups = new Map<string, { anchor: [number, number]; bones: string[] }>();
+    for (const { bone, o } of drawn) {
+      const [ax, ay] = at(o);
+      const anchor: [number, number] = [Math.floor(ax), Math.floor(ay)];
+      const key = plant.noFold ? `${anchor[0]},${anchor[1]},${bone.name}` : `${anchor[0]},${anchor[1]}`;
+      const group = groups.get(key) ?? { anchor, bones: [] };
+      group.bones.push(bone.name);
+      groups.set(key, group);
+    }
+    for (const { anchor, bones } of groups.values()) {
+      const label = bones.length > 1 ? `${bones[0]} +${bones.length - 1}` : bones[0];
+      const placed = placeLabel({ x: anchor[0] + 4, y: anchor[1] + 3, width: textWidth(label, 1), height: GLYPH_H }, taken, avoid);
+      writes.push(() => {
+        if (placed.moved) leader(anchor[0], anchor[1], placed.box);
+      });
+      writes.push(() => text(tile, label, placed.box.x, placed.box.y, colour('name')));
+      legendTile.labels.push({
+        text: label,
+        bones,
+        anchor: [anchor[0] + x0, anchor[1] + y0],
+        box: toPicture(placed.box),
+        moved: placed.moved,
+        overlaps: placed.overlaps,
+      });
+    }
+  }
+  // Every leader first, then every label, so no leader crosses a label's text.
+  for (const w of writes.filter((_, i) => i % 2 === 0)) w();
+  for (const w of writes.filter((_, i) => i % 2 === 1)) w();
+  if (request.show.includes('bones')) {
+    for (const { bone, t } of drawn) {
+      if (bone.zeroLength) continue;
+      const [bx, by] = at(t);
+      square(tile, Math.floor(bx), Math.floor(by), 1, true, colour('tip'));
+    }
+    for (const { bone, o } of drawn) {
+      const [ax, ay] = at(o);
+      if (bone.zeroLength) square(tile, Math.floor(ax), Math.floor(ay), 2, true, colour('zero'));
+      square(tile, Math.floor(ax), Math.floor(ay), 1, false, colour('origin'));
+    }
+  }
+  if (place.sheet || place.compare) {
+    const when = request.animation === null ? 'setup' : `t=${legendTile.time.toFixed(3)} f${index}`;
+    const label = place.compare ? `${build.tag} ${build.poser}${place.sheet ? ` ${when}` : ''}` : when;
+    const ly = height - GLYPH_H - 2;
+    const box: PixelBox = { x: 1, y: ly - 1, width: textWidth(label, 1) + 2, height: GLYPH_H + 2 };
+    for (let y = box.y; y < box.y + box.height; y++) for (let x = box.x; x < box.x + box.width; x++) put(tile, x, y, BACKGROUND);
+    text(tile, label, 2, ly, colour('label'));
+    legendTile.label = { text: label, box: toPicture(box) };
+  }
+  return { tile, legend: legendTile, weighted, anyMesh };
 }
 
 function filled(width: number, height: number, rgba: RGBA): Plate {
