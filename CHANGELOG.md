@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.43.0](https://github.com/rig-c/core/compare/v2.42.0...v2.43.0) (2026-10-11)
+
+
+### Features
+
+* **cli:** rigc inspect draws one part's mesh, hull, weights and number over the whole painting — --overlay-slot/--hide-overlay-slot globs, meshes[] and slots[] listing only the slots kept, slotFilter in the legend, a pattern matching no slot refused naming the slots, no flag drawing what it drew — held by IN36–IN40 ([#1363](https://github.com/rig-c/core/issues/1363)) ([#1365](https://github.com/rig-c/core/issues/1365)) ([d9fb3b3](https://github.com/rig-c/core/commit/d9fb3b3cebbdcdb66a42cb994619c61a7cde02fd))
+
 ## [2.42.0](https://github.com/rig-c/core/compare/v2.41.0...v2.42.0) (2026-10-11)
 
 
