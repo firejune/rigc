@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.40.1](https://github.com/rig-c/core/compare/v2.40.0...v2.40.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **release:** a pull request whose squash text release-please cannot parse is refused before the merge — release-please's own parser pinned at 0.4.1, 1c04a03 refused at the release log's 20:23, 49 of the last 50 on main parsing, on every edit (CUR124, CUR125) ([#1354](https://github.com/rig-c/core/issues/1354)) ([#1356](https://github.com/rig-c/core/issues/1356)) ([0012363](https://github.com/rig-c/core/commit/0012363321e10728ca08397fdade1caf58d3b224))
+
 ## [2.40.0](https://github.com/rig-c/core/compare/v2.39.1...v2.40.0) (2026-10-11)
 
 
