@@ -50,7 +50,7 @@
 > neither revision and neither of the two spineboy attempts. It settles one thing:
 > **which hand holds the gun.** Revision 2 said the *near* hand twice while its own
 > `death` paragraph established the opposite rule on evidence
-> ([#111](https://github.com/firejune/rigc/issues/111)); both could not hold, and a
+> ([#111](https://github.com/rig-c/core/issues/111)); both could not hold, and a
 > contradiction is not a measurement, so the arm was re-derived rather than chosen.
 > The answer is **the far hand**, and `idle` and `walk` now say so. Method, controls
 > and margins are in *Verification notes — revision 2 → 3*. Nothing else in the brief
@@ -963,7 +963,7 @@ neither of the two spineboy attempts, working from `bench/reference/spineboy/` a
 `examples/spineboy/images/` only. `examples/spineboy/export/`, `bench/transcriptions/`
 and both runs' rig and motion specs were **not** opened.
 
-**The one question.** [#111](https://github.com/firejune/rigc/issues/111): revision 2
+**The one question.** [#111](https://github.com/rig-c/core/issues/111): revision 2
 said the gun is in the **near** hand in `idle` and in `walk`, while its own `death`
 paragraph established on evidence that a fist means the near arm — and both attempts
 found `gun.png` carrying its own gripping hand with a *second*, separate fist drawn

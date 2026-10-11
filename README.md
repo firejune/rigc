@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/banner.svg" alt="rigc — AI-authored 2D rigging and animation, verified before it is written" width="100%" />
+  <img src="https://raw.githubusercontent.com/rig-c/core/main/assets/banner.svg" alt="rigc — AI-authored 2D rigging and animation, verified before it is written" width="100%" />
 </p>
 
 <p align="center">
@@ -15,12 +15,13 @@ gated by a list of named assertions before a byte is written — rigc's own vali
 the published package, held to a `spine-core` round trip's verdicts in this
 repository's CI. Built so AI agents can author rigs and check their own work; it ships
 as an agent skill. On npm it is `rig-c` — the same package as `spine-rigc`, the name it
-first shipped under, which is published beside it with the same files at every version.
+first shipped under, and as `@rig-c/core`, its name under the toolchain's scope, both
+published beside it with the same files at every version.
 
 ## What you get
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-demo.gif" alt="Loose part PNGs assembling themselves into a character that breathes, blinks and waves" width="600" />
+  <img src="https://raw.githubusercontent.com/rig-c/core/main/assets/rigc-demo.gif" alt="Loose part PNGs assembling themselves into a character that breathes, blinks and waves" width="600" />
 </p>
 
 <p align="center"><em>Fourteen part PNGs drawn from scratch for this repo, one rig spec, one motion spec — the assembly,
@@ -114,7 +115,7 @@ there by the render script rather than left to memory. The same file's
 and art, not this material. `7-anticipation` publishes no `license.txt` upstream, so
 no such grant exists for it and its frames are never committed — they render only
 into a gitignored directory, enforced by `git check-ignore`. Full reasoning:
-[`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md)
+[`bench/reference/README.md`](https://github.com/rig-c/core/blob/main/bench/reference/README.md)
 (repository material, not in the npm package).
 
 The problem rigc is aimed at is narrow. An agent asked to author a rig has no way
@@ -141,18 +142,18 @@ repository it was cut from. What is measured is the install itself — pack,
 install into an empty directory, build, render — on Linux, macOS and Windows
 runners and on Linux at the declared minimum, Bun 1.2.0 (the `installs` and
 `installs-matrix` jobs in
-[`ci.yml`](https://github.com/firejune/rigc/blob/main/.github/workflows/ci.yml),
+[`ci.yml`](https://github.com/rig-c/core/blob/main/.github/workflows/ci.yml),
 repository material, not in the npm package); a platform
 whose leg is red there is not one the package is known to run on.
 
 **The npm package is `rig-c`; the command it installs is `rigc`.** npm
 refuses the name `rigc` as too similar to packages that already exist, so the
-project, this repository and the executable keep their name and the registry
-entry carries one hyphen. **`spine-rigc` is the same package**: it is the name
+project and the executable keep their name and the registry entry carries one
+hyphen; the repository is [`rig-c/core`](https://github.com/rig-c/core). **`spine-rigc` is the same package**: it is the name
 every version up to 2.20.4 shipped under, and it stays published as an alias —
 every version from 2.20.4 on is on both names, with the same files — so a
 project that depends on `spine-rigc` keeps receiving every release. A new
-project installs `rig-c`.
+project installs `rig-c`; `@rig-c/core` is the same package under the scope.
 
 ```bash
 bunx rig-c --help    # run it without installing
@@ -177,7 +178,7 @@ against Spine's official example projects — fetched, never committed — and a
 reference frames this project renders from them, which **are** committed, each
 example's own `license.txt` beside them under the redistribution grant those files
 carry; the images stay **non-commercial only**. The reasoning is in
-[`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md)
+[`bench/reference/README.md`](https://github.com/rig-c/core/blob/main/bench/reference/README.md)
 and the terms in [NOTICE.md](NOTICE.md). It needs a clone and `bun run
 fetch-examples`, and says so by name when the corpus is absent. `check` is not one
 of them: it reads whatever frames you point it at, so it runs from the installed
@@ -196,7 +197,7 @@ a rule keeps living in exactly one place. The repository is also a Claude Code
 plugin marketplace:
 
 ```shell
-/plugin marketplace add firejune/rigc
+/plugin marketplace add rig-c/core
 /plugin install rigc@rigc
 ```
 
@@ -228,7 +229,7 @@ symlinked skill folder, which is not measured here, and Antigravity CLI 1.1.9 ha
 way to list skills without starting a session, so what it does with a link is not
 measured either; `--copy` is the shape that asks nothing of a host. Gemini CLI can
 also fetch a skill itself, one folder at a time:
-`gemini skills install https://github.com/firejune/rigc.git --path skills/rigc --scope workspace`.
+`gemini skills install https://github.com/rig-c/core.git --path skills/rigc --scope workspace`.
 The routers are named `rigc-rigging`, `rigc-motion`, `rigc-face` and `rigc-ingest`
 because that directory is flat — beside another tool's `motion`, a bare name is
 whichever one the host picked — and under the Claude Code plugin they read
@@ -243,7 +244,7 @@ files, one `build`, one `validate`. No clone, no art pipeline, nothing fetched.
 nowhere else in this repository. That is [AUTHORING.md](docs/AUTHORING.md) §3's
 rule applied here: no example value in these documents is copied out of a
 reference export, so nothing you read in a quickstart is an answer to anything
-[the ladder](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) measures.
+[the ladder](https://github.com/rig-c/core/blob/main/docs/LADDER.md) measures.
 
 **1. Install the command.**
 
@@ -370,7 +371,7 @@ rigc: look at it: rigc preview --candidate …/buoy/spine
 ```
 
 `profile=spine` is the rulebook that judged it: *is this valid Spine 4.3 that any
-runtime plays correctly?* That is the default, and the [Profiles](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md#profiles--wrong-versus-not-how-we-do-it-here)
+runtime plays correctly?* That is the default, and the [Profiles](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md#profiles--wrong-versus-not-how-we-do-it-here)
 section of the benchmark dossier is where the other one lives. `validate` then re-reads those
 artifacts from disk and ends `rigc: green`. That is a rig. `spine/skeleton.json`
 is Spine 4.3 skeleton data — it loads in a Spine runtime and it imports into the
@@ -448,7 +449,7 @@ The voter picks a winner or says "tie / no preference"; the page hands them a
 small JSON file to save; `--record` checks that file against the ballot's own
 hashes and appends one line to an append-only ledger, refusing by name anything
 that does not belong to it. See
-[Letting someone choose](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md#letting-someone-choose--rigc-vote).
+[Letting someone choose](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md#letting-someone-choose--rigc-vote).
 
 **Where to go next.**
 
@@ -476,8 +477,8 @@ that does not belong to it. See
   it, so a figure is read against that rather than against a number from a page;
   AUTHORING.md §9.2 says what the two halves of that bound are and why the floor
   is not zero.
-- [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the benchmark: the same job, from a brief
-  and rendered frames, scored. [docs/PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) is how to run an
+- [docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) is the benchmark: the same job, from a brief
+  and rendered frames, scored. [docs/PILOT.md](https://github.com/rig-c/core/blob/main/docs/PILOT.md) is how to run an
   agent through it and score what comes back.
 - 🤖 **Handing the authoring to an AI agent?**
   [docs/PROMPTING.md](docs/PROMPTING.md) is the operator's page — the six prompt
@@ -493,7 +494,7 @@ four candidates in one page and takes a human's answer back. Reach for them the 
 a rig compiles green, because green says nothing at all about the picture.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-keypose.gif" alt="Two key poses read back by rigc pose, two candidate in-between motions compiled from them, and a rigc vote ballot picking one" width="600" />
+  <img src="https://raw.githubusercontent.com/rig-c/core/main/assets/rigc-keypose.gif" alt="Two key poses read back by rigc pose, two candidate in-between motions compiled from them, and a rigc vote ballot picking one" width="600" />
 </p>
 
 <p align="center"><em>The whole loop on one character: two key poses are the given
@@ -526,7 +527,7 @@ something is drawn over them are `rigc chainfit`'s, once a candidate exists —
 
 ## The gallery — seven complete rigs over art that ships with them
 
-Each directory in [`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) is
+Each directory in [`gallery/`](https://github.com/rig-c/core/tree/main/gallery) is
 one rig spec, one motion spec and the PNGs they name, small enough to read in one
 sitting. Each stars a single feature, so *how do I do X* has a working answer rather
 than a field table, and each README carries the frame rate it was authored at, what
@@ -535,16 +536,16 @@ was verified, and what writing it cost. Repository material: a clone and
 
 | Example | Stars | What it is |
 | --- | --- | --- |
-| [`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk) | `ik` constraints + **`ik` timelines** | Two two-bone leg chains solved to foot targets — the planted leg nailed down, the swinging one let go at the top of its lift |
-| [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms the keys state rather than tabulate |
-| [`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
-| [`gallery/ride`](https://github.com/firejune/rigc/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
-| [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait) | **deform `transform`** + `derive` group tracks | A 2.5D head turn: two meshes and six feature bones all keyed from one stated expression, `dx = x(cos t − 1) − z·sin t`, with the depths in the spec rather than a README |
-| [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) | the **`pitch`** and **`wave`** transform kinds | A head bowing and two lop ears rippling, on three meshes each laid out for the closed form that moves it — a fold angle solved for before authoring, and a shear whose winding no amplitude can reverse |
-| [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) | **`slider` constraints** | A head that turns because a **value** says so: two dials drive two sliders, and the rendered animation moves the needles rather than the face — with a depth map under the face mesh, a soft mask on the cowlick, and a slider range derived from the turn ceiling `build` reports rather than picked by eye |
+| [`gallery/walk`](https://github.com/rig-c/core/tree/main/gallery/walk) | `ik` constraints + **`ik` timelines** | Two two-bone leg chains solved to foot targets — the planted leg nailed down, the swinging one let go at the top of its lift |
+| [`gallery/squash`](https://github.com/rig-c/core/tree/main/gallery/squash) | **`deform` timelines** | A ball squashed about its contact point and stretched along its travel, from two affine transforms the keys state rather than tabulate |
+| [`gallery/flex`](https://github.com/rig-c/core/tree/main/gallery/flex) | **`contour` meshes** | A swallow-tailed banner and a serrated leaf: four meshes traced off their own alpha, waved by bone timelines and rippled by a `deform` |
+| [`gallery/ride`](https://github.com/rig-c/core/tree/main/gallery/ride) | `path` attachments + **path constraints** | A trolley coasting down a drawn rail and rolling back, driven by a `position` timeline, with `groups` + `stagger` keying the wheels and the ears |
+| [`gallery/portrait`](https://github.com/rig-c/core/tree/main/gallery/portrait) | **deform `transform`** + `derive` group tracks | A 2.5D head turn: two meshes and six feature bones all keyed from one stated expression, `dx = x(cos t − 1) − z·sin t`, with the depths in the spec rather than a README |
+| [`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod) | the **`pitch`** and **`wave`** transform kinds | A head bowing and two lop ears rippling, on three meshes each laid out for the closed form that moves it — a fold angle solved for before authoring, and a shear whose winding no amplitude can reverse |
+| [`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look) | **`slider` constraints** | A head that turns because a **value** says so: two dials drive two sliders, and the rendered animation moves the needles rather than the face — with a depth map under the face mesh, a soft mask on the cowlick, and a slider range derived from the turn ceiling `build` reports rather than picked by eye |
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/firejune/rigc/main/assets/rigc-scene.gif" alt="A portrait rig breathing, glancing aside, then turning its head in 2.5D — hair and features sliding at different depths" width="600" />
+  <img src="https://raw.githubusercontent.com/rig-c/core/main/assets/rigc-scene.gif" alt="A portrait rig breathing, glancing aside, then turning its head in 2.5D — hair and features sliding at different depths" width="600" />
 </p>
 
 <p align="center"><em>The portrait rig playing its three animations in one take — the turn is
@@ -557,7 +558,7 @@ and that cost is one stated expression per key. Compiled and rendered entirely b
 published package.</em></p>
 
 🎞️ **How the three films on this page were made** is kept with them, one directory per
-film in [`films/`](https://github.com/firejune/rigc/tree/main/films) — a `run.sh` that
+film in [`films/`](https://github.com/rig-c/core/tree/main/films) — a `run.sh` that
 names every step, the assembler that cuts the shots and draws the type, and a README
 saying what the film claims and which tool printed each figure on screen. Repository
 material, like the gallery: a clone runs them.
@@ -592,7 +593,7 @@ commands take it and what its default is.
 `diff`, `bonedist`, `check` and `bench` measure against something you were given; the
 first three work on any reference you have, and `bench` is a repository workflow that needs a clone
 and `bun run fetch-examples`. The reasoning behind them is in
-[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
+[the benchmark dossier](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md).
 
 `build` and `validate` both default to `--profile spine` — the 34 validity rules, which
 ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
@@ -609,7 +610,7 @@ Several cuts can also be registered in a `cuts.json` and built by name
 (`build --cut my_cut --cuts path/to/cuts.json`); every path in that table resolves
 relative to the `cuts.json` file itself, so the table lives with the project that owns
 the art. Its shape is under
-[Usage](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md#usage).
+[Usage](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md#usage).
 
 ### Starting from a skeleton you already have
 
@@ -758,13 +759,13 @@ letting `A17` blame the editor for the harness's own doing.
 | 📥 **[docs/INGEST.md](docs/INGEST.md)** | **working with a skeleton you did not author.** What every command can and cannot do with a foreign `skeleton.json`, reading it with the toolchain, transcription as the route that makes it yours, what each validator complaint means on an export, and the re-pivot/rename/extend recipes. Ships in the package too |
 | 🤖 **[docs/PROMPTING.md](docs/PROMPTING.md)** | **handing the authoring to an AI agent** — the prompt clauses a measured pilot run paid for, and what you can leave unsaid. Ships in the package too |
 | 🔬 **[docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md)** | **the Spine 4.3 format, field by field.** Every key the 4.3 JSON parser and atlas reader take, what each defaults to, and the parser line it comes from — the rows rigc's refusals cite by part number. Ships in the package too |
-| 🎓 **[the benchmark dossier](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 50 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
-| 📋 [LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/firejune/rigc/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
-| 🔬 [SURVEY_2026-08-22.md](https://github.com/firejune/rigc/blob/main/docs/SURVEY_2026-08-22.md) | the survey the ladder was climbed by: rigc and the official examples as measured on 2026-08-22, and the gap list ordered by rung. A dated record, not kept current. Repository material |
-| 🧬 [GENERATIONS.md](https://github.com/firejune/rigc/blob/main/docs/GENERATIONS.md) | **Spine data from another generation.** Why a 3.8–4.2 file read as 4.3 fails in silence, the policy that follows (detect from `skeleton.spine`, never guess, play on the matching runtime), what `A16` and `ingest` do with such a file, and the editor as the migration path. Repository material |
-| 📓 [CASES.md](https://github.com/firejune/rigc/blob/main/docs/CASES.md) | **converting a Live2D model to Spine, and verifying the conversion.** The method — the source's own player headless, parts from its texture along the drawables, motion baked as deform keys, reference frames first, `check` — run once end to end on two Live2D sample models with no editor and no converter, and verified against the source's renderer and Spine's own runtime: the three instruments, the two rigc defects verifying it led to and v1.2.1 fixed, and where the method stops. Figures only — the models' licence keeps every asset out. Repository material |
-| 🗺️ [ROADMAP.md](https://github.com/firejune/rigc/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 had to mean before the number was claimed, and what it was claimed on — conditions rather than a feature list, because direction here comes from what users hit |
-| 📐 [CLAUDE.md](https://github.com/firejune/rigc/blob/main/CLAUDE.md) | **the doctrine** — why the validator's messages are the product, why nothing reaches disk before green, why no number is ever invented, and what a change has to keep. [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) calls it worth ten minutes before a first patch. Repository material |
+| 🎓 **[the benchmark dossier](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md)** | **why you can trust the output.** The yardstick, `diff` and `check` and what neither can see, the eight-rung ladder and the spineboy graduation exam, the run viewer, the 50 named assertions with their profiles, and the selftest that has watched every one of them fire. Repository material — it is not in the npm package |
+| 📋 [LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) · [GATE.md](https://github.com/rig-c/core/blob/main/docs/GATE.md) · [PILOT.md](https://github.com/rig-c/core/blob/main/docs/PILOT.md) | the live rung ledger, the clause statements a candidate is graded against, and how to run an agent through the ladder and score what comes back |
+| 🔬 [SURVEY_2026-08-22.md](https://github.com/rig-c/core/blob/main/docs/SURVEY_2026-08-22.md) | the survey the ladder was climbed by: rigc and the official examples as measured on 2026-08-22, and the gap list ordered by rung. A dated record, not kept current. Repository material |
+| 🧬 [GENERATIONS.md](https://github.com/rig-c/core/blob/main/docs/GENERATIONS.md) | **Spine data from another generation.** Why a 3.8–4.2 file read as 4.3 fails in silence, the policy that follows (detect from `skeleton.spine`, never guess, play on the matching runtime), what `A16` and `ingest` do with such a file, and the editor as the migration path. Repository material |
+| 📓 [CASES.md](https://github.com/rig-c/core/blob/main/docs/CASES.md) | **converting a Live2D model to Spine, and verifying the conversion.** The method — the source's own player headless, parts from its texture along the drawables, motion baked as deform keys, reference frames first, `check` — run once end to end on two Live2D sample models with no editor and no converter, and verified against the source's renderer and Spine's own runtime: the three instruments, the two rigc defects verifying it led to and v1.2.1 fixed, and where the method stops. Figures only — the models' licence keeps every asset out. Repository material |
+| 🗺️ [ROADMAP.md](https://github.com/rig-c/core/blob/main/ROADMAP.md) | where this is going, and where it has been. What 1.0 had to mean before the number was claimed, and what it was claimed on — conditions rather than a feature list, because direction here comes from what users hit |
+| 📐 [CLAUDE.md](https://github.com/rig-c/core/blob/main/CLAUDE.md) | **the doctrine** — why the validator's messages are the product, why nothing reaches disk before green, why no number is ever invented, and what a change has to keep. [CONTRIBUTING.md](https://github.com/rig-c/core/blob/main/CONTRIBUTING.md) calls it worth ten minutes before a first patch. Repository material |
 
 ## Why you can trust the output
 
@@ -786,7 +787,7 @@ attributability is **measured** to be capped below the bar reads down when every
 observable about it is independently verified strict. Every other rung and the
 graduation exam pass on the clause itself. Recompiling a stored candidate reproduces its
 record **to the digit within one gate**; across an instrument change the digits move,
-and [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) records
+and [docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) records
 where. The standing figures quoted above are from its *gate-v2.4 re-inspection*, which
 is the current sweep.
 
@@ -805,19 +806,19 @@ a from-zero run is a tooling-progress measurement rather than a re-climb, which 
 why the certification above is scoped to tool + guide + protocol. One of those
 attempts states the residual in its own words: *"in motion it is not at editor
 quality."* All six, with their verdicts, are in
-[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
+[docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md).
 
 The whole dossier — the yardstick, `diff` and `check` and what neither of them can
 see, every rung, the run viewer, the 50 assertions and the selftest behind them — is
-[docs/BENCHMARK.md](https://github.com/firejune/rigc/blob/main/docs/BENCHMARK.md).
+[docs/BENCHMARK.md](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md).
 Live rung status is
-[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
+[docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md).
 
 ## Contributing
 
-Issues are the ledger; see [CONTRIBUTING.md](https://github.com/firejune/rigc/blob/main/CONTRIBUTING.md) for what a change
+Issues are the ledger; see [CONTRIBUTING.md](https://github.com/rig-c/core/blob/main/CONTRIBUTING.md) for what a change
 has to clear before it lands. Releases are cut by release-please —
-[RELEASING.md](https://github.com/firejune/rigc/blob/main/RELEASING.md).
+[RELEASING.md](https://github.com/rig-c/core/blob/main/RELEASING.md).
 
 ## Licence
 

@@ -105,7 +105,7 @@ and each fails in its own way rather than merely reading oddly:**
 ⭐ **What is still this page's job is whatever moves the dial**, and that is an
 ordinary animation with §3 applying to it unchanged. The split is visible in the
 worked example: in
-[`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) the two
+[`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look) the two
 lookup tables `turn` and `tilt` carry **no easing at all**, and `sweep` — the one
 animation there meant to be played — carries every `ease` in the file.
 
@@ -751,7 +751,7 @@ What *is* real: every command line below was run, and every figure printed in an
 output block is what the command actually printed.
 
 🖼️ **For the same recipe on art that ships, the
-[`gallery/`](https://github.com/firejune/rigc/tree/main/gallery) examples are worked
+[`gallery/`](https://github.com/rig-c/core/tree/main/gallery) examples are worked
 in-betweening material** — `walk` is §3.5's arcs and §3.7's phase offsets on two leg
 chains, `ride` puts the same offsets in `groups` + `stagger`, and `squash` is §3.9's
 pivot written as a `deform` about a contact point. Each README says what every key is

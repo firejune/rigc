@@ -16,11 +16,11 @@ arithmetic that this README derives.
 
 🆕 **And both halves of the turn now STATE that line instead of listing its
 results.** The **mesh** keys did first
-([#294](https://github.com/firejune/rigc/issues/294),
+([#294](https://github.com/rig-c/core/issues/294),
 [AUTHORING §4.11.1](../../docs/AUTHORING.md)): this example shipped with **160
 hand-transcribed floats** across its 8 deform keys, and the same artifact now
 comes out of four `transform` keys. The **bone** tracks followed
-([#295](https://github.com/firejune/rigc/issues/295),
+([#295](https://github.com/rig-c/core/issues/295),
 [AUTHORING §4.5.1](../../docs/AUTHORING.md)): `turn` was **20 tracks and 81
 keys**, sixteen of them the same two properties on six sibling bones, and it is
 now **8 tracks and 33 keys** — two group tracks whose keys state a `yaw` and a
@@ -34,7 +34,7 @@ the turn uses it. `rigc explain` prints the results — the offsets per vertex
 ([§4.5.2](../../docs/AUTHORING.md)) — beside the model that produced them.
 
 📐 It is also the measured experiment for
-[issue #285](https://github.com/firejune/rigc/issues/285). What it cost, where
+[issue #285](https://github.com/rig-c/core/issues/285). What it cost, where
 it stops working and which tools were missing are in
 **[FINDINGS.md](FINDINGS.md)** beside this file.
 
@@ -85,7 +85,7 @@ regenerate the rest. The frames to look at:
 the seam figure.** Every pixel count in *What was verified* below is a reading at
 the size it was taken at, `--max 640` unless the row says otherwise, and the
 seam rows are the ones where that matters
-([#336](https://github.com/firejune/rigc/issues/336)) — `idle`'s reads 0 px at
+([#336](https://github.com/rig-c/core/issues/336)) — `idle`'s reads 0 px at
 640 and 1 974 px at 57/255 at 1782. `loop_seam.ts` prints the `--max` it
 measured for exactly this reason; quote it beside any figure taken from it.
 
@@ -254,7 +254,7 @@ makes it read as a turn instead of a slide.
 
 📌 **The two ends of that table are `explain`'s own output now** — the `DEFORM`
 block ([AUTHORING §4.11.2](../../docs/AUTHORING.md), issue
-[#316](https://github.com/firejune/rigc/issues/316)) measures the posed
+[#316](https://github.com/rig-c/core/issues/316)) measures the posed
 triangles at each key, so the ratios above are re-derivable by running the tool
 rather than by hand:
 
@@ -281,7 +281,7 @@ vertices after it. rigc reads the number off the triangles and refuses a
 row-major list with that walk printed as the fix
 ([AUTHORING §3.4](../../docs/AUTHORING.md), [FACE §4.3](../../docs/FACE.md)). It
 used to write `hull: 0` here, which the editor's import repaired by making every
-vertex a hull vertex — [#368](https://github.com/firejune/rigc/issues/368)
+vertex a hull vertex — [#368](https://github.com/rig-c/core/issues/368)
 records that round trip; the frames are byte-identical either way.
 
 ⚠️ **The `MESH` line reports a large overshoot and it is not a defect.** A
@@ -336,7 +336,7 @@ exactly how much further left it goes than the cheek it sits on. That is the
 single most turn-diagnostic number in the file.
 
 🆕 **And the `z` column of that table is now in `motion.json`, which is the point
-of [#295](https://github.com/firejune/rigc/issues/295) rather than a side effect
+of [#295](https://github.com/rig-c/core/issues/295) rather than a side effect
 of it.** One group track states the model and a depth per member; `carried` is
 the shared shift above, stated:
 
@@ -477,7 +477,7 @@ reads as a wink.
 The lid's own drawing has two constraints, both stated in `make_parts.ts`: its
 **top 30 pixels** fade to transparent (so a translated plate of flat skin has no
 edge on the brow), and its **sides run flush to the window edge** — that one is
-a workaround for [issue #292](https://github.com/firejune/rigc/issues/292), the
+a workaround for [issue #292](https://github.com/rig-c/core/issues/292), the
 dark rim `rigc render` draws at every atlas-region edge.
 
 ### The follow-through
@@ -521,7 +521,7 @@ of yaw here was a third pair of `deform` keys — 80 more hand-written numbers �
 for a motion the viewer reads as "her head moved a little", so `gaze` slid the
 head rigidly and said so. 🆕 **That price is gone**: a third pair of keys is now
 `{ "kind": "yaw", "radius": 170, "degrees": 3 }` twice
-([#294](https://github.com/firejune/rigc/issues/294)). The slide still ships,
+([#294](https://github.com/rig-c/core/issues/294)). The slide still ships,
 because changing what `gaze` looks like is an art decision this example has not
 re-made and not a transcription it was forced into — which is exactly the
 distinction [FINDINGS.md](FINDINGS.md) argued an instrument would buy.
@@ -547,8 +547,8 @@ of the two profiles the gallery bar asks for.
 | the band ratios | **0.637 / 0.892 / 1.064 / 1.319**, measured on the posed mesh, matching the table above |
 | the blink, as pixels | at the shut hold (`f0028`, `f0029`), hiding `eye_l`, `eye_r`, `iris_l`, `iris_r`, `spark_l`, `spark_r` entirely changes **0 pixels of 305 920** (worst channel difference 2) — the lid occludes the whole assembly. Positive control: at `f0000` the same substitution moves **8 183** pixels |
 | `rigc render` | 81 + 39 + 56 frames at 25 fps, 478×640. Contact sheets **looked at** for all three, plus 1:1 crops of the turn extreme, the blink and the gaze — which is where four of the five art defects in the notes below were caught |
-| loop seams | **at `--max 640`** — the size the commands above render: **0 / 255**, 0 pixels differing of 305 920, for **all three**: `idle` because it loops, and `gaze` and `turn` because a one-shot that returns to rest lands back on its opening pose exactly. 📏 The `--max` is part of the figure and not decoration — see the row below. ⚠️ Two of the three are read off the 25 fps sets above and the third is not, and the reason is arithmetic rather than art: `render` samples `i = 0..round(d × fps)`, so a set's last frame is at the duration only when `d × fps` is whole. `idle` (3.2 × 25 = 80) and `turn` (2.2 × 25 = 55) are; `gaze` (1.5 × 25 = **37.5**) is not, and its 25 fps last frame sits 0.02 s *past* 1.5 s — so `loop_seam.ts` refuses that pair rather than reporting it ([#337](https://github.com/firejune/rigc/issues/337)). Re-rendered at **20 fps**, where all three products are whole, `gaze` reads **0 / 255, 0 pixels differing** too — and so do the other two (65 / 31 / 45 frames) |
-| **the loop-seam figure does not survive a change of `--max`** | same build, same `--fps 25`, `idle` f0000 against f0080, one column per render scale: **320** → 5 px at 1/255 · **640** → **0 px at 0/255** · **1024** → 1 px at 1/255 · **1440** → 46 px at 1/255 · **1782** → **1974 px at 57/255**, worst pixel at (549,673), a sliver at one eye's lower lash. `turn` behaves the same way — 0 px at 640, **135 px at 57/255** at 1782 ([#336](https://github.com/firejune/rigc/issues/336)) |
+| loop seams | **at `--max 640`** — the size the commands above render: **0 / 255**, 0 pixels differing of 305 920, for **all three**: `idle` because it loops, and `gaze` and `turn` because a one-shot that returns to rest lands back on its opening pose exactly. 📏 The `--max` is part of the figure and not decoration — see the row below. ⚠️ Two of the three are read off the 25 fps sets above and the third is not, and the reason is arithmetic rather than art: `render` samples `i = 0..round(d × fps)`, so a set's last frame is at the duration only when `d × fps` is whole. `idle` (3.2 × 25 = 80) and `turn` (2.2 × 25 = 55) are; `gaze` (1.5 × 25 = **37.5**) is not, and its 25 fps last frame sits 0.02 s *past* 1.5 s — so `loop_seam.ts` refuses that pair rather than reporting it ([#337](https://github.com/rig-c/core/issues/337)). Re-rendered at **20 fps**, where all three products are whole, `gaze` reads **0 / 255, 0 pixels differing** too — and so do the other two (65 / 31 / 45 frames) |
+| **the loop-seam figure does not survive a change of `--max`** | same build, same `--fps 25`, `idle` f0000 against f0080, one column per render scale: **320** → 5 px at 1/255 · **640** → **0 px at 0/255** · **1024** → 1 px at 1/255 · **1440** → 46 px at 1/255 · **1782** → **1974 px at 57/255**, worst pixel at (549,673), a sliver at one eye's lower lash. `turn` behaves the same way — 0 px at 640, **135 px at 57/255** at 1782 ([#336](https://github.com/rig-c/core/issues/336)) |
 | what that column is, and is not | ⚠️ Three of the five scales read **1/255**, which is rounding. **1782** is `scale = 1.875` **exactly** — `loop_seam.ts` prints it — the one sampled scale at which the plates' integer art coordinates land on whole pixel boundaries, so this is an *amplification at a boundary-aligned scale* rather than a growing error. And the residual behind it has a measured bound: strip `idle` to the one track the issue isolates (`chest.translatey`, three keys, the middle one moving) and f0080 reads **353 px at 57/255** at `--max 1782`; add **one redundant key** so the final segment is *constant*, changing nothing else, and every frame from **f0075 (t = 3.00) through f0080 (t = 3.20)** is **0 pixels, 0/255** from f0000 — against 78 403 / 73 553 / 68 516 / 60 474 / 46 522 / 353 px for the same six frames of the moving version. ⇒ the rasteriser is exact for a pose it has already drawn, and what the column shows is a sub-quantisation curve residual crossing a pixel boundary. ⇒ **quote the `--max` beside any seam figure**; `loop_seam.ts` now prints it and says outright that the reading is scale-relative |
 | `rigc preview` | boots in the official Spine Web Player 4.3 and draws all 3 animations — headless chromium over CDP, **0 console errors, 0 page exceptions, 0 log-level errors** |
 | `bun run selftest` | includes `GALLERY_EXAMPLE_IS_GREEN[portrait]`, green with the example corpus fetched |
@@ -561,7 +561,7 @@ of the two profiles the gallery bar asks for.
 it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
 commands and compares them line for line: the figures here are read off the run
 instead of being kept by hand
-([#609](https://github.com/firejune/rigc/issues/609)).
+([#609](https://github.com/rig-c/core/issues/609)).
 
 `rigc build`:
 
@@ -582,14 +582,14 @@ SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_co
 ## What this cost — the authoring notes
 
 **Two tool defects, both filed with reproductions.**
-[#292](https://github.com/firejune/rigc/issues/292) — `rigc render`'s
+[#292](https://github.com/rig-c/core/issues/292) — `rigc render`'s
 `bilinear` interpolates RGB in **straight**-alpha space, so every atlas-region
 edge draws a one-pixel dark rim over what is behind it. Measured at −31/255 down
 the forehead here and −60/255 in a minimal case of two parts that share one
 colour. It has been invisible for four examples because every part in them has an
 ink outline at its edge, and a dark rim on a dark line cannot be seen; a portrait
 is the first rig whose plates are *supposed* to overlap invisibly.
-[#293](https://github.com/firejune/rigc/issues/293) — `setup: { "slot": null }`
+[#293](https://github.com/rig-c/core/issues/293) — `setup: { "slot": null }`
 crashes with a raw `TypeError` instead of a named refusal. Found by the probe
 that isolated #292, which needed to hide one slot at a time.
 
@@ -649,7 +649,7 @@ one was a group (`axis`, for the nose and mouth, both on the axis and therefore
 both `cos t`), plus the two reciprocal groups the iris fix needs.
 
 ⇒ **What cut the track count was a group entry that stops keying identically**
-([#295](https://github.com/firejune/rigc/issues/295)): **8 tracks, 33 keys, 2
+([#295](https://github.com/rig-c/core/issues/295)): **8 tracks, 33 keys, 2
 deform entries, 8 deform keys, 0 hand-written vertex offsets** for one held yaw,
 against 20 and 81 before it.
 

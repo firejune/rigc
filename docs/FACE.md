@@ -33,11 +33,11 @@ hold its results.
   breath's `chest` is a **sibling** of the plate it must not scale, and §4.4 is the
   artless-parent pattern the shared-shift split is one instance of
 - The worked example every number below comes from:
-  [`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait),
+  [`gallery/portrait`](https://github.com/rig-c/core/tree/main/gallery/portrait),
   and its measurement half,
-  [`FINDINGS.md`](https://github.com/firejune/rigc/tree/main/gallery/portrait/FINDINGS.md)
+  [`FINDINGS.md`](https://github.com/rig-c/core/tree/main/gallery/portrait/FINDINGS.md)
 - **The same closed forms on the other axis**:
-  [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) is a
+  [`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod) is a
   worked `pitch`, and this page stays written for a **yaw**. It re-derives §4.2's
   fold angle on uneven *rows* and brackets it against `A39` at 33°/34°, and it
   measures §5's foreshortening at **0.863–1.176** against the yaw's 0.892–1.064
@@ -46,7 +46,7 @@ hold its results.
 - **The turn driven by a value instead of played as a time** — the same keys, on
   an axis: §8's *The turn as a value rather than a time* derives the range,
   **AUTHORING §3.5.2** is the `slider` constraint that does it, and
-  [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) is
+  [`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look) is
   the worked case. Read it when the angle has to follow something outside the
   animation — a pointer, a gaze target, a game value
 
@@ -402,7 +402,7 @@ authority to say what it measured, and the step share is that.
 
 📐 Method, harness and the full ladders live in the repository rather than in
 this package, as
-[`bench/studies/2026-09-05-density`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-density) —
+[`bench/studies/2026-09-05-density`](https://github.com/rig-c/core/tree/main/bench/studies/2026-09-05-density) —
 the same study also measures why `contour` is the wrong generator for a turn: it
 saturates at 868 vertices however fine the tolerance, its vertices all sit on the
 silhouette so it samples **2 %** of the depth range, and its ear-clipped interior
@@ -424,7 +424,7 @@ step. ⇒ **Author the sheet so it changes by at least ~8 levels across one mesh
 cell**, and spend its whole 0–255 range on the part — a map using an eighth of
 the range describes the same surface and reports 5.8° less of it. Method and
 ladders:
-[`bench/studies/2026-09-05-noise`](https://github.com/firejune/rigc/tree/main/bench/studies/2026-09-05-noise).
+[`bench/studies/2026-09-05-noise`](https://github.com/rig-c/core/tree/main/bench/studies/2026-09-05-noise).
 
 ⭐ **And you do not have to guess which of the three you are looking at.** The
 lines under the ceiling say it: the **1st percentile over
@@ -736,7 +736,7 @@ practical shape is checkable: **key the fade to 0 at or before
 the last angle that gates green, and let the fold happen after it.**
 
 📘 **The identity above, used forwards on a `pitch`.**
-[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
+[`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod)
 (repository material) picks its ceiling first and solves the *rows* out of it —
 `|y|outer = R·cos θmax` with θmax chosen at 21° giving 140.037 — and then
 brackets the fold this section predicts against `A39` itself: **33° gates green
@@ -793,7 +793,7 @@ The far eye narrows to 89%, the near eye widens to 106% (**derived**: 0.8922 and
 
 📘 **How much this is worth depends on the axis, and there is a worked case for
 the other one.** The same closed form on the `pitch` of
-[`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod)
+[`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod)
 (repository material) spans **0.863 … 1.176** across its five features, against
 the **0.892 … 1.064** above — a wider span at the *identical* angle, because
 `α = atan2(coordinate, depth)` grows with the coordinate and a face is taller
@@ -883,7 +883,7 @@ are all timing:
   is a third drawing.
 - **A swap has to dodge the frame grid.** A stepped key exactly on a sample time
   can be missed by a player accumulating `1/fps`, which is why
-  [`gallery/squash`](https://github.com/firejune/rigc/tree/main/gallery/squash)'s
+  [`gallery/squash`](https://github.com/rig-c/core/tree/main/gallery/squash)'s
   blink key sits at `0.399999` (AUTHORING §4.5). **A continuous channel does not
   care where the samples land.**
 
@@ -1112,7 +1112,7 @@ duration   2 x range x scale
 time       to + (degrees - from) x scale    the slider's own mapping
 ```
 
-📐 **Worked, on [`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look)**,
+📐 **Worked, on [`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look)**,
 whose face is a 21 × 9 `grid` over one depth sheet:
 
 ```bash
@@ -1323,7 +1323,7 @@ exactly as they do above. Write `"additive": true` on all of them.
 
 ✅ **The editor half, measured.** The round trip was taken with
 `tools/editor_roundtrip.ts` on a licensed editor (data version 4.3.26) against a 4.3.13 build of
-[`gallery/look`](https://github.com/firejune/rigc/tree/main/gallery/look) — this
+[`gallery/look`](https://github.com/rig-c/core/tree/main/gallery/look) — this
 subsection's worked case, not the `gallery/portrait` this page names at the top,
 which declares no constraints at all and so can carry no slider. What it found:
 
@@ -1784,16 +1784,16 @@ substitute for looking at three scales.
 
 ## 10. The worked example
 
-[`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait)
+[`gallery/portrait`](https://github.com/rig-c/core/tree/main/gallery/portrait)
 is this page on real art — **22 parts, 27 bones, 22 slots, 2 meshes, 40
 vertices**, three animations, and a README that derives every number rather than
 listing it. Its
-[`FINDINGS.md`](https://github.com/firejune/rigc/tree/main/gallery/portrait/FINDINGS.md)
+[`FINDINGS.md`](https://github.com/rig-c/core/tree/main/gallery/portrait/FINDINGS.md)
 is the measurement half: what it cost, the seven-angle sweep, the five tool gaps
 it filed.
 
 📘 **The `pitch` has its own worked case**, and this page deliberately stays a
-yaw: [`gallery/nod`](https://github.com/firejune/rigc/tree/main/gallery/nod) is
+yaw: [`gallery/nod`](https://github.com/rig-c/core/tree/main/gallery/nod) is
 the same two closed forms on the other axis, plus a travelling `wave` (AUTHORING
 §4.11.1). §4.2 and §5 above point at the two places its figures are worth
 reading beside these — the fold angle bracketed against `A39`, and a

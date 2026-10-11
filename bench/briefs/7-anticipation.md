@@ -7,7 +7,7 @@
 > both findings below were re-derived from frames rendered locally at this brief's own
 > flags, and the reference export was not opened. The run's own figures, the
 > adjudication's, and anything reference-side stay where they belong, on
-> [#14](https://github.com/firejune/rigc/issues/14).
+> [#14](https://github.com/rig-c/core/issues/14).
 >
 > **1. The panel's draw-order edge is now measured, not hedged.** Revision 2 called it
 > *"the weaker of the two readings"* on the grounds that *"a panel in front that happens
@@ -64,7 +64,7 @@
 > frames were fetched and rendered from scratch at the exact flags in *The reference
 > frames* below, every claim re-measured against them, and no frame was committed —
 > `git ls-files bench/reference-local` reports 0. The verdict is on
-> [#14](https://github.com/firejune/rigc/issues/14).
+> [#14](https://github.com/rig-c/core/issues/14).
 >
 > **The method held up, which is why so much of this reproduced.** The `g − b` split,
 > the 8/255 subject mask and the three-rate duration argument were reproduced
@@ -167,7 +167,7 @@
 > **This is the first brief on the ladder written from frames that are not in this
 > repository and never will be.** `7-anticipation` ships no upstream `license.txt`,
 > so its images carry no redistribution grant and a rendered frame of them cannot be
-> committed ([#3](https://github.com/firejune/rigc/issues/3), and *Licence, per rung*
+> committed ([#3](https://github.com/rig-c/core/issues/3), and *Licence, per rung*
 > in [docs/LADDER.md](../../docs/LADDER.md)). The owner's ruling of **2026-08-26**
 > opened the one path that leaves the rung attemptable: the frames may be rendered
 > **locally, to a path git ignores**, by whoever needs them. So *The reference frames*
@@ -309,7 +309,7 @@ Notes on the shape of the deliverable:
 🚫 **This example ships no `license.txt` upstream**, so its images carry no
 redistribution grant and rendered frames of them must never be committed, published
 or shipped. Under the owner's ruling of 2026-08-26
-([#3](https://github.com/firejune/rigc/issues/3)) they may be rendered **locally, to
+([#3](https://github.com/rig-c/core/issues/3)) they may be rendered **locally, to
 a path this repository ignores**, and `bench/render_reference.ts` refuses any other
 destination:
 

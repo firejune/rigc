@@ -20,7 +20,7 @@ value, while the derivation quotes previous candidates' measured figures and doe
 this file carries **no recorded figure, no per-rung anything and no derivation**. Where
 each number came from is in the ladder's *Operating rules* — named here rather than
 linked, because a run does not open it. Owner ruling 2026-08-29,
-[#174](https://github.com/firejune/rigc/issues/174).
+[#174](https://github.com/rig-c/core/issues/174).
 
 🚫 **A run does not follow references out of this file**, exactly as
 [AUTHORING.md](AUTHORING.md) says about itself: an allowed-reading surface has to be closed

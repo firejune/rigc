@@ -144,4 +144,4 @@ licence file that does not exist.
 `bench/reference/` is repository material — it is not in `package.json`'s `files`
 list, so it is not part of the published npm package. The full reasoning, and the
 per-rung framing behind it, is in
-[`bench/reference/README.md`](https://github.com/firejune/rigc/blob/main/bench/reference/README.md).
+[`bench/reference/README.md`](https://github.com/rig-c/core/blob/main/bench/reference/README.md).

@@ -122,10 +122,10 @@ import {
  * rather than a flag on purpose.
  *
  * ⚖️ Ruled by the owner on **2026-08-26**, on
- * [issue #3](https://github.com/firejune/rigc/issues/3) (*"Rung 7
+ * [issue #3](https://github.com/rig-c/core/issues/3) (*"Rung 7
  * (`7-anticipation`) has no upstream license.txt — local-only, never
  * redistribute"*), after the brief-verification pass on
- * [issue #14](https://github.com/firejune/rigc/issues/14) found that this
+ * [issue #14](https://github.com/rig-c/core/issues/14) found that this
  * script's refusal, not the licence, was what made rung 7 unattemptable: with no
  * frames obtainable there is no honest input for either the writing pass or the
  * verifying pass, and a brief written from `sack-pro.json` would be a
@@ -166,7 +166,7 @@ const LOCAL_ONLY_TEXT = `LOCAL ONLY — DO NOT COMMIT, PUBLISH, SHIP OR REDISTRI
 
 These frames are rendered from a Spine example that ships NO license.txt upstream,
 so its images carry no redistribution grant of any kind. They were written here
-under the owner's ruling of 2026-08-26 on https://github.com/firejune/rigc/issues/3,
+under the owner's ruling of 2026-08-26 on https://github.com/rig-c/core/issues/3,
 which allows a LOCAL render — reading and drawing on this disk — and nothing more.
 
   - never commit them, and never include them in a released artefact;

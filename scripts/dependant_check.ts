@@ -25,8 +25,9 @@
  *    imports, say), verified here before it is theirs to land.
  * 4. Installs each copy's dependencies with `bun install`, then this package
  *    into it, under the name the dependant declares — the package's own,
- *    `rig-c`, or the alias it is also published as, `spine-rigc` (issue
- *    #1258): the candidate tarball into one (repacked under the alias by
+ *    `rig-c`, or one of the aliases it is also published as, `ALIASES` in
+ *    `scripts/alias_tarball.ts` (`spine-rigc`, issue #1258; `@rig-c/core`,
+ *    issue #1347): the candidate tarball into one (repacked under the alias by
  *    `scripts/alias_tarball.ts` when that is the name declared, the files
  *    unchanged), and `<name>@<baseline>` from the registry into the other. The baseline is `--baseline <version>`, or
  *    `latest` — the registry's own answer to "the last release", read at the
@@ -60,7 +61,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, 
 import { tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 
-import { ALIAS, packAlias } from './alias_tarball.ts';
+import { ALIASES, packAlias } from './alias_tarball.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 /** The package's own name, read from the tree this packs rather than written here. */
@@ -203,7 +204,7 @@ function main(): number {
   // dependant declaring neither is measured under the package's own name, and
   // its type check is what then says so.
   const declares = (name: string): string | undefined => manifest.dependencies?.[name] ?? manifest.devDependencies?.[name];
-  const NAME = [PACKAGE, ALIAS].find((name) => declares(name) !== undefined) ?? PACKAGE;
+  const NAME = [PACKAGE, ...ALIASES].find((name) => declares(name) !== undefined) ?? PACKAGE;
 
   const work = realpathSync(mkdtempSync(join(tmpdir(), 'rigc-dependant-')));
   if (`${work}${sep}`.startsWith(`${dependant}${sep}`)) {

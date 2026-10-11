@@ -5,7 +5,7 @@
 > cites were released under the old name).
 >
 > **Revision 2.** Agreed against
-> [rig-parts#126, comment 6041707537](https://github.com/firejune/rig-parts/issues/126#issuecomment-6041707537),
+> [rig-parts#126, comment 6041707537](https://github.com/rig-c/parts/issues/126#issuecomment-6041707537),
 > which answers P1–P20 and lists five contract corrections, read at parts
 > `836ffb1` and rigc `2af8693`. Revision 1 (PR #1222) asked the questions; this
 > revision records the answers, folds each into the interface it changes, and
@@ -13,17 +13,17 @@
 > settles the requested consumer behaviour; it does not assert that either
 > repository has implemented it, and neither does this page.
 
-Stage A of [#1221](https://github.com/firejune/rigc/issues/1221), the upstream
-half of [rig-parts#126](https://github.com/firejune/rig-parts/issues/126).
+Stage A of [#1221](https://github.com/rig-c/core/issues/1221), the upstream
+half of [rig-parts#126](https://github.com/rig-c/parts/issues/126).
 It is the contract both repositories agree on *before* any of stages B–D is
-written. **Stage B1 ([#1224](https://github.com/firejune/rigc/issues/1224))
+written. **Stage B1 ([#1224](https://github.com/rig-c/core/issues/1224))
 implements the geometry measurement** — `measureMeshQuality` and the
 `mesh-quality-report/1` document, in `src/meshquality.ts`, re-exported through
 `rig-c/mesh` — and **stage B2 implements the reduction**: `reduceMesh`,
 in `src/meshreduce.ts`, re-exported through the same entry. Every clause the
 tree now does is marked **[implemented, #1224]** and says what the tree does,
 cited by path and symbol; *The reduction as implemented* gathers the choices B2
-had to make. **Stage C1 ([#1230](https://github.com/firejune/rigc/issues/1230))
+had to make. **Stage C1 ([#1230](https://github.com/rig-c/core/issues/1230))
 implements the motion comparison** — `compareMeshesInMotion`, in
 `src/meshcompare.ts`, writing the `motion` section of the same document, and
 **stage C2** gives it its named entry, `rig-c/meshcompare`, held from an
@@ -1664,7 +1664,7 @@ midpoint landing on the line of an existing edge) while its termination named
 a later P16 stop; it now stops at the first, by name. Every other call of §9's
 population was unchanged byte for byte (*Stage controls*: `MQ156`–`MQ158`).
 
-**Changed since v2.19.0** ([#1229](https://github.com/firejune/rigc/issues/1229),
+**Changed since v2.19.0** ([#1229](https://github.com/rig-c/core/issues/1229),
 rig-parts#126 comment 6045645512, option 1). Which edges `MQ_MAX_EDGE` and
 `MQ_TRANSITION` hold is the only row semantics that moved; no emitted byte
 moves, and no edge that 2.19.0 left free is held now. An edge held in 2.19.0
@@ -1735,7 +1735,7 @@ redoes only what its mesh changed — below); bounding it is stage D's, and thes
 figures are one machine's reading, not a claim about another.
 
 **The art's rasters, taken once per call**
-([#1240](https://github.com/firejune/rigc/issues/1240)). What a measurement
+([#1240](https://github.com/rig-c/core/issues/1240)). What a measurement
 reads from the art alone — the art bits at the threshold, the filled
 silhouette at both background connectivities and each one's distance
 transform, the 4-connected island labels, and the traced outline in drawing
@@ -1806,7 +1806,7 @@ outputs, the same in order). These figures are one loaded machine's reading,
 not a claim about another; no wall-time threshold is set here.
 
 **Each step carried from the last one**
-([#1246](https://github.com/firejune/rigc/issues/1246)). After the cache, a
+([#1246](https://github.com/rig-c/core/issues/1246)). After the cache, a
 step's cost was the candidate's own coverage raster, its distance transform and
 the two Hausdorff readings, and almost all of it was redone for nothing: on
 `demo/bottomwear` a measurement's triangles differ from the previous
@@ -1880,7 +1880,7 @@ coverage (`StepRasters.coverage`), 32.0 % in the outline readings and 9.8 % in
 reading, not a claim about another; no wall-time threshold is set here.
 
 **A region's rows, carried from the last step too**
-([#1253](https://github.com/firejune/rigc/issues/1253)). After #1246 a step
+([#1253](https://github.com/rig-c/core/issues/1253)). After #1246 a step
 over a mesh with no region cost about 2.6 ms; with one region it cost about
 1.8 s. The subject is rig-parts's `demo/bottomwear` (536 source vertices, a
 661 × 693 plate with 350,983 art pixels) with one declared region `hem`: a
@@ -1977,7 +1977,7 @@ once, 12.3 % in the carried coverage and 11.5 % in the outline readings; before,
 machine's reading, not a claim about another; no wall-time threshold is set here.
 
 **The region's pixel set, by scanline**
-([#1263](https://github.com/firejune/rigc/issues/1263)). After #1253 the one
+([#1263](https://github.com/rig-c/core/issues/1263)). After #1253 the one
 thing a region still cost once per call was its pixel set: every art pixel
 centre tested against every side of the polygon — for `hem`, 350,983 × 287 ≈
 100.7 million side tests. That is the algorithm, not the polygon, so it is
@@ -2377,17 +2377,17 @@ wall time — the seven readings and their loads are the claim.
 
 ## 7. Motion-valid reduction (#1266)
 
-> **Mechanism 2 is implemented** ([#1268](https://github.com/firejune/rigc/issues/1268),
+> **Mechanism 2 is implemented** ([#1268](https://github.com/rig-c/core/issues/1268),
 > *Mechanism 2 — implemented* below), and **mechanism 1's measurement half**
-> ([#1294](https://github.com/firejune/rigc/issues/1294), *Mechanism 1 —
+> ([#1294](https://github.com/rig-c/core/issues/1294), *Mechanism 1 —
 > implemented, the measurement half*): the residual as a row of
 > `measureMeshQuality` and the helper that derives an envelope entry — and its
-> **reducer half** ([#1295](https://github.com/firejune/rigc/issues/1295),
+> **reducer half** ([#1295](https://github.com/rig-c/core/issues/1295),
 > *Mechanism 1 — implemented, the reducer half*): `targets.skinning`, the
 > residual as a step condition of `reduceMesh`, carried per sample.
 > Nothing else in this section is. The
 > rest is Stage A of
-> [#1266](https://github.com/firejune/rigc/issues/1266): a public reproducer
+> [#1266](https://github.com/rig-c/core/issues/1266): a public reproducer
 > (`MQ79`, `MQ80`, `mesh-compare`), the measurements made on it, and a proposal
 > settled with parts (rig-parts#126, comment 6072801422). #1268 adds one
 > report key and one optional input; `compareMeshesInMotion`, every row, bound,
@@ -2789,11 +2789,11 @@ export interface MeshReductionInput {
 
 ### Mechanism 1 — implemented, the measurement half [implemented, #1294]
 
-[#1294](https://github.com/firejune/rigc/issues/1294) lands the residual as a
+[#1294](https://github.com/rig-c/core/issues/1294) lands the residual as a
 **measurement** and the helper that turns declared ranges into an envelope
 entry. Using it as a step condition of `reduceMesh` — the veto, carried
 per-step state, replay under it — is
-[#1295](https://github.com/firejune/rigc/issues/1295): `reduceMesh` neither
+[#1295](https://github.com/rig-c/core/issues/1295): `reduceMesh` neither
 reads nor echoes anything below, and its loop is unchanged. The proposal
 further down is kept as written; this subsection departs from it in the places
 it names, each with its reason.
@@ -3072,7 +3072,7 @@ its values are the lever term's own, so it is a field of the residual's detail
 
 ### Mechanism 1 — implemented, the reducer half [implemented, #1295]
 
-[#1295](https://github.com/firejune/rigc/issues/1295) makes the residual a
+[#1295](https://github.com/rig-c/core/issues/1295) makes the residual a
 step condition of `reduceMesh`, reading the measurement half above — the same
 envelope, the same samples, the same per-sample arithmetic
 (`sampleResidual`), the same contract and refusal codes — and carries it from
@@ -3499,7 +3499,7 @@ exactly J*, and the rest wait for mechanism 1's card. The questions as asked:
 > of allocation, as `undeclared` rows, and the amplitude declaration two of
 > them read — [agreed, rig-parts#126] by parts's answers to Q2 and Q7,
 > [implemented, #1280] in *Implemented — the allocation rows* below. The rest
-> is Stage A of [#1271](https://github.com/firejune/rigc/issues/1271): a
+> is Stage A of [#1271](https://github.com/rig-c/core/issues/1271): a
 > public reproducer (`MQ85`–`MQ90`, `mesh-compare`), the measurements made on
 > it and on the inputs recorded for stage D1, and the questions for parts at
 > the end. The reproducer holds today's behaviour; no bound, order,
@@ -4743,7 +4743,7 @@ rig-c 2.28.0 under its stated policy, unchanged — bound 1 rig px,
 ## 9. Cost — the reduction and the comparison, profiled by phase and by row (#1304)
 
 [measured, #1304] Stage A of
-[#1304](https://github.com/firejune/rigc/issues/1304): where a `reduceMesh`
+[#1304](https://github.com/rig-c/core/issues/1304): where a `reduceMesh`
 call under the dependant's trial policy spends its time and memory, and what
 `compareMeshesInMotion` spends at the trial's schedule — **measured, nothing
 changed**. No bound, budget, threshold, frame rate or sample count moves in
@@ -5318,7 +5318,7 @@ bash batch.sh time                          # 3 main + 3 cut runs per T and TS c
 
 ## 10. Mesh economy against the authored rig (#1302)
 
-> **Stage A of [#1302](https://github.com/firejune/rigc/issues/1302): measurement only.** No bound, budget, order,
+> **Stage A of [#1302](https://github.com/rig-c/core/issues/1302): measurement only.** No bound, budget, order,
 > termination, base or emitted byte changes here. Four controls hold the decomposition's checkable claims on the
 > public fixture (`MQ144`–`MQ147`, `mesh-compare`, *Stage A controls*). Marks as in §7 and §8:
 > **[observed, rigc#1271]** is the consumer's figure as its card and follow-up state it, or a share derived from
@@ -5649,7 +5649,7 @@ Numbered afresh for #1302; cited as "§10 Q1" and so on.
 
 ### Measured — relocation [measured, #1318]
 
-> **The relocating boundary operation of [#1318](https://github.com/firejune/rigc/issues/1318) is on hold, and only
+> **The relocating boundary operation of [#1318](https://github.com/rig-c/core/issues/1318) is on hold, and only
 > its first measurement is written here.** The consumer raised its declared source tolerance from 1 to 2 px, with the
 > margin and the deviation bound alongside, and its two parts' hulls went from 108/102 to 40/38 against the authored
 > 39/40, every cell passing motion **[observed, rig HQ]**. Most of what a relocation inside a 1 px bound was to buy
@@ -5728,13 +5728,13 @@ largest search, Ls2 on demo/bottomwear, tested 574,280 chords in 26 s.
 
 ## 11. Interior feature lines (#1326)
 
-> **Stage B ([#1326](https://github.com/firejune/rigc/issues/1326), released by the HQ comment of 2026-10-10 with a
+> **Stage B ([#1326](https://github.com/rig-c/core/issues/1326), released by the HQ comment of 2026-10-10 with a
 > narrower scope: no builder, nothing on `SourceMesh`) implements *The contract* below** — each clause marked
 > **[implemented, #1326]** with what the tree does, controls `MQ166`–`MQ175`. Left out, `lines` changes no byte:
 > measured against `d0f289b` on the 18 inputs of the stage-D1 record (as recorded, under the three opt-ins together,
 > and each source measured — 54 of 54) and on Stage A's ten fixture calls (10 of 10), identical.
 >
-> **Stage A of [#1326](https://github.com/firejune/rigc/issues/1326): measurement and contract, no mechanism.** No
+> **Stage A of [#1326](https://github.com/rig-c/core/issues/1326): measurement and contract, no mechanism.** No
 > row, refusal, bound, budget, order, termination or emitted byte changes here. Four controls hold the current API's
 > readings on a fixture built from rig-c alone (`MQ162`–`MQ165`, `mesh-quality`, *Stage A controls*). Marks as in
 > §10: **[observed, rig-parts#160]** is the consumer's figure as its survey prints it (rig-parts PR #164,
@@ -6302,7 +6302,7 @@ The two composed operations of stage B2, each with the other idle
   `MQ47_CONTROL_REFINEMENT_ALONE_INSERTS_ONLY_INSIDE_THE_REGION_AND_ITS_BAND_UNTIL_L_OF_R_HOLDS_AND_A_BOUND_UNDER_ONE_TEXEL_IS_REFUSED`
 
 The exemption agreed on rig-parts#126 (comment 6045645512) and built in
-[#1229](https://github.com/firejune/rigc/issues/1229), [implemented]:
+[#1229](https://github.com/rig-c/core/issues/1229), [implemented]:
 
 - `MQ48_THE_COARSE_QUAD_THAT_2_19_0_STOPPED_ON_CONVERGES_AND_IS_ACCEPTED`
 - `MQ49_AN_EDGE_TOUCHING_THE_BAND_OUTER_BOUNDARY_AT_ONE_POINT_FROM_OUTSIDE_IS_EXEMPT_IN_THE_MEASUREMENT_AND_LEFT_ALONE_BY_THE_REFINEMENT`
@@ -6313,7 +6313,7 @@ The exemption agreed on rig-parts#126 (comment 6045645512) and built in
 - `MQ54_A_REFINEMENT_LIMITED_BY_ITS_BUDGET_OR_A_MINIMUM_ANGLE_IS_NOT_ACCEPTED_AND_NAMES_WHICH`
 
 No degenerate triangle written by the refinement
-([#1311](https://github.com/firejune/rigc/issues/1311), [implemented]) — an
+([#1311](https://github.com/rig-c/core/issues/1311), [implemented]) — an
 8 × 8 lattice under a square whose band passes 1/64 px beyond a lattice row,
 the same shifted 1/256 px and turned 2°, and the coarse 12 px lattice under a
 4 px square:
@@ -6331,7 +6331,7 @@ the same shifted 1/256 px and turned 2°, and the coarse 12 px lattice under a
   `degenerate-band-widened` changes all three)
 
 A sample within the slack of a shared edge, a sliver beside it
-([#1323](https://github.com/firejune/rigc/issues/1323), [implemented]) — the
+([#1323](https://github.com/rig-c/core/issues/1323), [implemented]) — the
 `mesh-compare` suite's strip with a column one pixel wide beside one 16.5 px
 wide, the shared edge on a pixel-centre column, nudged in UV only by half the
 slack the wide triangle allows (unit `MQ159-MQ161`, plants `CarrierPlant` in
@@ -6350,7 +6350,7 @@ slack the wide triangle allows (unit `MQ159-MQ161`, plants `CarrierPlant` in
   `any-shared-vertex` takes it)
 
 An interior feature line under the current API
-([#1326](https://github.com/firejune/rigc/issues/1326), stage A, nothing implemented) — `fixtures/blink.ts`'s
+([#1326](https://github.com/rig-c/core/issues/1326), stage A, nothing implemented) — `fixtures/blink.ts`'s
 synthetic blink, the readings §11 tabulates:
 
 - `MQ162_THE_BLINK_FIXTURE_IS_THREE_VALID_SOURCES_A_LINE_OF_SOURCE_EDGES_AND_A_DENSE_REFERENCE_THAT_READS_THE_LATTICE_ERROR_DERIVED_BY_HAND`
@@ -6364,7 +6364,7 @@ synthetic blink, the readings §11 tabulates:
 - `MQ165_A_LINE_THINNED_THROUGH_PROTECT_VERTICES_IS_BOUNDED_BY_NOTHING_BUT_THE_SKINNING_VETO`
   (reading (c); one corner left out, within the bound with the veto and over it, accepted, without)
 
-Named lines ([#1326](https://github.com/firejune/rigc/issues/1326), stage B, [implemented]) — the blink's lined source
+Named lines ([#1326](https://github.com/rig-c/core/issues/1326), stage B, [implemented]) — the blink's lined source
 and lines over its 8 px lattice found by walking the grid; plants `LinePlant` in `ReductionPlant`:
 
 - `MQ166_A_MALFORMED_LINE_IS_REFUSED_REDUCE_INPUT_LINE_NAMING_THE_LINE_THE_INDEX_OR_PAIR_AND_THE_RULE_BEFORE_ANY_WORK`

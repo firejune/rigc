@@ -7,7 +7,7 @@
  * **silently**: 4.3 takes constraints from the top-level `constraints` array
  * alone, so a 4.0–4.2 file parses clean with none of them — measured across
  * 1,302 shipped skeletons that loaded 0 of 8,672 constraints
- * ([#706](https://github.com/firejune/rigc/issues/706) row 1). rigc is where
+ * ([#706](https://github.com/rig-c/core/issues/706) row 1). rigc is where
  * that knowledge lives for the tools around it (#706 *Ownership*), and living
  * in one place means one reader of `skeleton.spine`:
  * `A16_SKELETON_VERSION_4_3` asks this function for its verdict, and `ingest`

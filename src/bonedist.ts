@@ -9,7 +9,7 @@
  * a rotation of 300° are one key each. Stage 3 is the measure for that, and
  * until this file it did not exist: *"None of it exists. Do not report a
  * per-frame figure until it does"*
- * ([issue #8](https://github.com/firejune/rigc/issues/8)).
+ * ([issue #8](https://github.com/rig-c/core/issues/8)).
  *
  * `rigc check` is the other neighbour and it is **not** this. It measures a
  * candidate against **pictures** — the rendered reference frames — which is

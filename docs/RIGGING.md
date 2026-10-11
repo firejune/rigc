@@ -105,7 +105,7 @@ beside the offsets it exists to make visible:
 > *"Every limb attachment is OFFSET from its bone, and that is what makes the hinge
 > visible: art centred on its own pivot turns in place, so a search over one angle
 > would move nothing and a wrong hinge would cost nothing either."*
-> — [`selftest.ts`](https://github.com/firejune/rigc/blob/main/selftest.ts), the chain-fit fixture
+> — [`selftest.ts`](https://github.com/rig-c/core/blob/main/selftest.ts), the chain-fit fixture
 
 ⇒ **A correctly placed pivot also collapses the spec.** A pendulum whose bone sits
 on its hinge needs one `rotate` track and no translate at all; the same part with
@@ -144,7 +144,7 @@ never:
   it**, so the bone points at its own mass — at the cost of two emitted fields.
 
 > *"Neither is checkable from the frames."* — rung 3's first attempt
-> ([`2026-08-23-rung3-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-rung3-1/LOOP.md) §11)
+> ([`2026-08-23-rung3-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-rung3-1/LOOP.md) §11)
 
 ⇒ Pick one, and say in your log that you picked it. AUTHORING §10.1's naming
 convention is the same shape of decision and is worth far more (it decides five of
@@ -162,7 +162,7 @@ rigid.
 > bone you scale-key must sit at that bone's origin, or the offset rides the
 > scale."*
 > — spineboy attempt 4
-> ([`2026-08-28-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-spineboy-1/LOOP.md) §8)
+> ([`2026-08-28-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-spineboy-1/LOOP.md) §8)
 
 ⇒ This is the one exception to §1's rule, and it is not a contradiction: a bone
 whose **scale** is the animated property is not a hinge, so there is no hinge to
@@ -184,10 +184,10 @@ None of them is an error message. Each one is a number that reads as ordinary.
 
 | Signature | What it actually is | Record |
 | --- | --- | --- |
-| **A gap that letting the parts off the hierarchy closes.** `idle` fitted to 10.3 union MAE on the frame the setup pose came from and **23.9** eight frames later; a short relax off the hierarchy recovered it to **14.6** | *"A gap that a relax closes is not a pose the rig cannot reach; it is a pivot in the wrong place."* | spineboy attempt 1 ([`2026-08-23-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-spineboy-1/LOOP.md) §8.2) |
-| **A fitted centre that drifts monotonically with the fitted scale.** The per-frame fits wanted each shadow's centre 8–12 units lower whenever the shadow was small | a part scaling about a pivot below its own centre — *"a pivot you have not modelled, not motion you have measured"* | rung 1 second attempt ([`2026-08-26-rung1-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-26-rung1-1/LOOP.md) §2.3) |
-| **A knob resting exactly on its bound, on one orientation only.** `torso.x` pinned at −35.0 against a ±35 box on the lying frames and nowhere else | the optimum is outside the box, because a pivot error `e` needs a compensation `−R(θ)·e` that grows with the local angle — *"invisible upright, saturating in the lying poses"* | spineboy attempt 5 ([`2026-08-28-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-spineboy-2/LOOP.md) §3) |
-| **An exact fit with no angular spread.** Two ankle joints solved at **rms 0.00 px** with a relative-angle spread of **0° and 2°** | a perfect fit to a system with no unique answer | spineboy, 2026-09-03 first attempt ([`2026-09-03-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-09-03-spineboy-1/LOOP.md) §3.3) |
+| **A gap that letting the parts off the hierarchy closes.** `idle` fitted to 10.3 union MAE on the frame the setup pose came from and **23.9** eight frames later; a short relax off the hierarchy recovered it to **14.6** | *"A gap that a relax closes is not a pose the rig cannot reach; it is a pivot in the wrong place."* | spineboy attempt 1 ([`2026-08-23-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-spineboy-1/LOOP.md) §8.2) |
+| **A fitted centre that drifts monotonically with the fitted scale.** The per-frame fits wanted each shadow's centre 8–12 units lower whenever the shadow was small | a part scaling about a pivot below its own centre — *"a pivot you have not modelled, not motion you have measured"* | rung 1 second attempt ([`2026-08-26-rung1-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-26-rung1-1/LOOP.md) §2.3) |
+| **A knob resting exactly on its bound, on one orientation only.** `torso.x` pinned at −35.0 against a ±35 box on the lying frames and nowhere else | the optimum is outside the box, because a pivot error `e` needs a compensation `−R(θ)·e` that grows with the local angle — *"invisible upright, saturating in the lying poses"* | spineboy attempt 5 ([`2026-08-28-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-spineboy-2/LOOP.md) §3) |
+| **An exact fit with no angular spread.** Two ankle joints solved at **rms 0.00 px** with a relative-angle spread of **0° and 2°** | a perfect fit to a system with no unique answer | spineboy, 2026-09-03 first attempt ([`2026-09-03-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-09-03-spineboy-1/LOOP.md) §3.3) |
 
 🚨 **The last one is the trap in its purest form: a zero residual reads as success
 in every other context on this toolchain.** Here it means the estimator was handed
@@ -219,7 +219,7 @@ across all eight shots:
 > 21-unit-different answer that fits the upright frames just as well. The joint is
 > ill-conditioned without the lying poses, which is how the inherited triangulation
 > (idle zoom-read) went wrong without any frame saying so."*
-> — [`2026-08-28-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-spineboy-2/LOOP.md) §5
+> — [`2026-08-28-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-spineboy-2/LOOP.md) §5
 
 Two answers 21 art units apart, at residuals that do not separate them. That is
 what *ill-conditioned* means with a picture attached.
@@ -296,7 +296,7 @@ found that **every one of them measured a basin at the sweep's own cap** — ±4
 > *"On this figure the joint offsets are **weakly identified at the scale a frame
 > can see**, and the honest reading is that they are a prior with a measured width
 > rather than a measurement."*
-> — [`2026-09-03-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-09-03-spineboy-2/LOOP.md) §3.5
+> — [`2026-09-03-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-09-03-spineboy-2/LOOP.md) §3.5
 
 ⇒ That sentence is the deliverable when the pixels are silent. It is not a hedge:
 a width is a number, and the next attempt can tell whether its own change is inside
@@ -463,7 +463,7 @@ The failure, watched happening:
 > rear-thigh −199.8°`, whose net world rotations are −3°, +31° and −19°: the picture
 > was right and the numbers were unusable. A rotate series that swings 180° between
 > two keys does not interpolate, it spins the figure through a whole turn."*
-> — spineboy attempt 1 ([`2026-08-23-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-spineboy-1/LOOP.md) §8.4)
+> — spineboy attempt 1 ([`2026-08-23-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-spineboy-1/LOOP.md) §8.4)
 
 ### 4.1 ⚠️ The exact fold has a precondition, and it is easy to miss
 
@@ -474,7 +474,7 @@ AUTHORING §10.3 prescribes is not a null operation — it costs pixels:
 > *"the hip's three children sit 9–13 units off it, so turning the hip moves their
 > origins and the render. Folding cost MAE on every frame it touched (`idle` mean
 > 23.0 with the fold against 19.9 without, same search)."*
-> — spineboy attempt 2 ([`2026-08-23-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-spineboy-2/LOOP.md) §5)
+> — spineboy attempt 2 ([`2026-08-23-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-spineboy-2/LOOP.md) §5)
 
 ⇒ **Test the precondition before folding.** Children at the origin ⇒ exact gauge,
 fold it (the L1 optimum is the *median* of the children's deltas, which is one line).
@@ -521,10 +521,10 @@ that it is *keyed for a reason the arithmetic states*, not left free for a solve
 
 | Bone | Carries | Its children then key |
 | --- | --- | --- |
-| `faceshift` ([`gallery/portrait`](https://github.com/firejune/rigc/tree/main/gallery/portrait/)) | `−R·sin t`, the shift every feature shares in a yaw | only their residual — FACE §3 |
+| `faceshift` ([`gallery/portrait`](https://github.com/rig-c/core/tree/main/gallery/portrait/)) | `−R·sin t`, the shift every feature shares in a yaw | only their residual — FACE §3 |
 | `comet` (rung 6, rung 8) | the whole travel of a ball and its trail | the squash, and the trail's bend |
 | `body` (rung 7, second attempt) | **translation only** — *"it holds no attachment, so keying its rotation as well would be a gauge"* | their own rotations |
-| `ground` ([`gallery/walk`](https://github.com/firejune/rigc/tree/main/gallery/walk/)) | the contact line | the foot targets — §9.1 |
+| `ground` ([`gallery/walk`](https://github.com/rig-c/core/tree/main/gallery/walk/)) | the contact line | the foot targets — §9.1 |
 
 ⭐ **FACE §3's argument for it is an auditing one before it is a rigging one**: a
 residual is 1–6 units where a total is 30–40, *"nobody can eyeball an error in the
@@ -548,13 +548,13 @@ invisible in the numbers.
 > and takes a `translatey` (0 → 3.4). Parent the head chain to the bone that scales
 > and the whole face inflates 1.4% every breath — visible, and invisible in the
 > spec."*
-> — [`gallery/portrait/README.md`](https://github.com/firejune/rigc/blob/main/gallery/portrait/README.md)
+> — [`gallery/portrait/README.md`](https://github.com/rig-c/core/blob/main/gallery/portrait/README.md)
 
 The same decision, on a ball and its trail:
 
 > *"`ball` is a **sibling** of `tail0` under `comet`, not its parent, so squashing
 > the ball does not squash the trail."*
-> — rung 6 ([`2026-08-23-rung6-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-rung6-1/README.md))
+> — rung 6 ([`2026-08-23-rung6-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-rung6-1/README.md))
 
 ⇒ **The construction is always the same three bones**: an artless parent that
 carries what both share (§4.4), and two children — one that takes the scale and one
@@ -565,7 +565,7 @@ that takes the chain.
 > *"the neck plate has to take a *fraction* of the head's shift, so it cannot be an
 > ancestor of the head. `neckbase` is the shared parent; `neck` carries the plate and
 > `headroll` carries the head"*
-> — [`gallery/portrait/README.md`](https://github.com/firejune/rigc/blob/main/gallery/portrait/README.md), the part table
+> — [`gallery/portrait/README.md`](https://github.com/rig-c/core/blob/main/gallery/portrait/README.md), the part table
 
 ⭐ **And the pivot goes one link up, which is the same edit for a second reason.**
 The same rig keys `headroll` and never `head`: *"a head rotates about the top of the
@@ -638,7 +638,7 @@ The record that named it:
 > setup render is unchanged. walk 0.176 → 0.150, run 0.232 → 0.201, aim 0.212 →
 > 0.186 after refit."*
 > — spineboy attempt 4
-> ([`2026-08-28-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-spineboy-1/LOOP.md) §6)
+> ([`2026-08-28-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-spineboy-1/LOOP.md) §6)
 
 ⭐ **The tie-break is on the frames' side.** *"the shot's own extremes are a
 measurement, while segment lengths taken off a folded pose are an estimate — so when
@@ -659,7 +659,7 @@ fits converge, every residual is ordinary, and the figure splays.**
 > leg overshoots the floor by about 90 units and the fitter has to bend it sideways
 > to land … Re-seeding the leg joints inset from the art's ends — thigh 86 units,
 > shin 94 — put the ankle at world y **53.5** against the boot's own 54."*
-> — [`2026-09-03-spineboy-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-09-03-spineboy-1/LOOP.md) §4.4
+> — [`2026-09-03-spineboy-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-09-03-spineboy-1/LOOP.md) §4.4
 
 ⭐ **Why the art misled it, and this generalises:** the art's outer ends are not the
 joints. A rounded cap's centroid sits at the plate's *tip*, while the joint two
@@ -686,7 +686,7 @@ frames put the standing leg at about 233 — a 79-unit excess with a plausible c
 > better rig, and the 79 units are a real knee bend in the reference's own stance
 > rather than an error in this rig. The surgery §8.1 warns about … was therefore not
 > performed, and the per-frame fitting budget was not spent twice."*
-> — [`2026-09-03-spineboy-2/evidence/limb-reach.txt`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-09-03-spineboy-2/evidence/limb-reach.txt)
+> — [`2026-09-03-spineboy-2/evidence/limb-reach.txt`](https://github.com/rig-c/core/blob/main/bench/runs/2026-09-03-spineboy-2/evidence/limb-reach.txt)
 
 ⇒ **The reach check tells you a chain and a shot disagree. It does not tell you
 which one is wrong.** A bent limb and a long limb produce the same excess. One
@@ -736,7 +736,7 @@ form: **is each frame's silhouette an affine image of the part's own drawing?**
 > freedom the mesh was built with — a four-bone chain, weights blended by height
 > only."*
 > — rung 7, first attempt
-> ([`2026-08-28-rung7-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-rung7-1/LOOP.md) §5)
+> ([`2026-08-28-rung7-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-rung7-1/LOOP.md) §5)
 
 ⇒ Two controls are what make that quotable and they are worth copying: the art
 through a **known affine** read 0.0044 → 0.0007 (the floor), and the art plus a
@@ -772,10 +772,10 @@ not fail — it degenerates:
 > *"The first candidate lifted the foot 56 units on a 130-unit leg: the chain has to
 > fold to a 70-unit span, and a two-bone solve does that by throwing the knee
 > sideways. 28 units — a fifth of the leg — is the version that reads as a step."*
-> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
+> — [`gallery/walk/README.md`](https://github.com/rig-c/core/blob/main/gallery/walk/README.md)
 
 The same arithmetic on the other side of the chain, from
-[`gallery/flex`](https://github.com/firejune/rigc/tree/main/gallery/flex/): rotating a rigid panel about a seam opens a wedge
+[`gallery/flex`](https://github.com/rig-c/core/tree/main/gallery/flex/): rotating a rigid panel about a seam opens a wedge
 of `halfHeight × tan(angle)` — about 22 px at 20° on that cloth — so *"the bend
 angles in `motion.json` are chosen against that overlap, not the other way round."*
 
@@ -801,7 +801,7 @@ differ by exactly the bone's own setup `x`/`y`:
 > *"the first spec moved the figure by the setup offset a second time. Rotation and
 > scale needed no correction: their setups are 0 and 1."*
 > — rung 7, second attempt
-> ([`2026-08-28-rung7-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-28-rung7-2/LOOP.md) §5)
+> ([`2026-08-28-rung7-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-28-rung7-2/LOOP.md) §5)
 
 The same confusion one attempt earlier, from the other end: *"The first fitter used
 0 as every knob's neutral value. `bone.pose.x` is the bone's whole local
@@ -817,7 +817,7 @@ the diff names it in one line."*
 
 ⚠️ **A bone under a rotated parent is not at the parent's position plus its own
 numbers, and a leg chain is exactly that case.** That sentence is a comment in
-[`gallery/stage.ts`](https://github.com/firejune/rigc/blob/main/gallery/stage.ts), which exists because a drawing script
+[`gallery/stage.ts`](https://github.com/rig-c/core/blob/main/gallery/stage.ts), which exists because a drawing script
 needed setup-pose world positions and *"writing them a second time in the drawing
 script is the defect that produces a shadow under nobody's feet, and it is
 invisible in both files — each is internally consistent."*
@@ -993,7 +993,7 @@ designed around it:
 > the chest and the legs as siblings. Chosen for identifiability, not anatomy …
 > Under a pelvis the legs sit above the only reliable anchor and every leg comes back
 > `no-anchor` on every frame — measured, not predicted."*
-> — [`2026-09-03-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-09-03-spineboy-2/README.md)
+> — [`2026-09-03-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-09-03-spineboy-2/README.md)
 
 That is the only place in the corpus where a tree was chosen for what could be
 measured through it rather than for anatomy or for the art, and it is worth knowing
@@ -1014,7 +1014,7 @@ backwards:
 `bendPositive` combinations were indistinguishable at 4× zoom on the frame where the
 difference is largest. `shin_f.worldX` separated them immediately. Look at frames
 for whether it reads; read bone positions for what it is doing."*
-([`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md))
+([`gallery/walk/README.md`](https://github.com/rig-c/core/blob/main/gallery/walk/README.md))
 
 ### 8.4 ⚠️ And `pose` can be confident about the wrong twin
 
@@ -1041,7 +1041,7 @@ list of structural rules and a list of refusals.
 > at the contact line; `foot_f` and `foot_b` are children of `ground`. Parent a foot
 > target to `hip` and the hip carries its own feet up with it, **the solver reports
 > success, and the figure hovers.**"*
-> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
+> — [`gallery/walk/README.md`](https://github.com/rig-c/core/blob/main/gallery/walk/README.md)
 
 Measured on that build, over the stance where `foot_f` is planted: the hip travels
 **7.9 units up and 2.9 sideways** while the foot reads `382.0, 68.0` on every
@@ -1067,15 +1067,15 @@ reaches the target. So:
 ⭐ **This is where the art and the hierarchy stop being two decisions.** Both plates
 have to be **drawn from their own joint**, and the joint's coordinates *inside each
 drawing* are what every `length` and every attachment offset is measured from —
-[`gallery/rigby.ts`](https://github.com/firejune/rigc/blob/main/gallery/rigby.ts) names all four points for one leg, and
-[`gallery/walk/rig.json`](https://github.com/firejune/rigc/blob/main/gallery/walk/rig.json) states them.
+[`gallery/rigby.ts`](https://github.com/rig-c/core/blob/main/gallery/rigby.ts) names all four points for one leg, and
+[`gallery/walk/rig.json`](https://github.com/rig-c/core/blob/main/gallery/walk/rig.json) states them.
 
 ### 9.3 A constraint carries the whole subtree, and that is the point
 
 > *"`cart` is the constrained bone; `wheel_b`/`wheel_f` and `hip` are its children,
 > so the constraint carries the wheels and the whole figure with it and the tangent
 > rotation tilts all three."*
-> — [`gallery/ride/README.md`](https://github.com/firejune/rigc/blob/main/gallery/ride/README.md)
+> — [`gallery/ride/README.md`](https://github.com/rig-c/core/blob/main/gallery/ride/README.md)
 
 📌 Two placement conveniences from the same paragraph, both of the form *put the
 bone where the numbers become trivial*: `root` is at the world origin, *"which is why
@@ -1104,7 +1104,7 @@ default failure mode**, because it drives bones rather than drawing anything.
 > `true`, so any IK timeline that did not restate it overwrote the constraint's value
 > for the whole animation, with the field still in the file and the gate green either
 > way."*
-> — [`gallery/walk/README.md`](https://github.com/firejune/rigc/blob/main/gallery/walk/README.md)
+> — [`gallery/walk/README.md`](https://github.com/rig-c/core/blob/main/gallery/walk/README.md)
 > (rigc stamps the rig's value onto every emitted ik key)
 
 ⇒ **A structural fact stated in the rig can be overwritten by a per-key default in
@@ -1121,7 +1121,7 @@ all**, unanimously, and paid for it in a measure:
 > point at if asked why there are four rather than one … that measure is the price of
 > the rule, and it is worth paying rather than winning by guessing."*
 > — rung 8, first attempt
-> ([`2026-08-23-rung8-1`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-rung8-1/LOOP.md) §13)
+> ([`2026-08-23-rung8-1`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-rung8-1/LOOP.md) §13)
 
 ⭐ **The cleanest demonstration that the rule costs something real and is still the
 right rule** is in that same run, which authored two rigs against two references:
@@ -1171,7 +1171,7 @@ the draw order"* — which is what lets one part sit in front of its own parent:
 > arrangement that satisfies both things the frames measure: the gun reads unoccluded
 > in `idle`, and the near leg covers it in `walk`."*
 > — spineboy attempt 2
-> ([`2026-08-23-spineboy-2`](https://github.com/firejune/rigc/blob/main/bench/runs/2026-08-23-spineboy-2/README.md))
+> ([`2026-08-23-spineboy-2`](https://github.com/rig-c/core/blob/main/bench/runs/2026-08-23-spineboy-2/README.md))
 
 ⚖️ **But parentage is a real question with a real answer, and the evidence for it is
 smoothness.** Rung 4 modelled a chain's top as a *sibling* of the disc it hangs

@@ -1,7 +1,7 @@
 # The turn a depth map supports, against the density it is meshed at
 
 - date: 2026-09-05
-- issue: [#381](https://github.com/firejune/rigc/issues/381) stage 2 — *"the contour generator at density, with A39 and the DEFORM report holding at that scale (their cost is per triangle; measure it)"*
+- issue: [#381](https://github.com/rig-c/core/issues/381) stage 2 — *"the contour generator at density, with A39 and the DEFORM report holding at that scale (their cost is per triangle; measure it)"*
 - subject: the `grid` and `contour` generators ([`src/mesh.ts`](../../../src/mesh.ts)), the depth model ([`src/depth.ts`](../../../src/depth.ts)), `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and the survey it shares with the DEFORM report ([`src/deformmeasure.ts`](../../../src/deformmeasure.ts))
 - corpus: **none** — the harness generates its own part, its own depth sheets and its own specs
 - harness: [`tools/densprobe.ts`](tools/densprobe.ts)
@@ -13,7 +13,7 @@
 **lowers** the angle it can turn through — 5 columns fold at 31.38°, 9 at
 20.95°, the continuous limit 17.65° — and read it as the cylinder model's error
 showing up sooner. Stage 1's conclusion was therefore that *"each vertex needs
-its own depth, not a radius shared by a column"*, and [#383](https://github.com/firejune/rigc/issues/383)
+its own depth, not a radius shared by a column"*, and [#383](https://github.com/rig-c/core/issues/383)
 built that: a depth map, sampled per vertex, consumed by the same closed form.
 
 So the question stage 2 actually has to answer is not only *what does density
@@ -78,7 +78,7 @@ its uv pair and its share of the triangle list, and a key carries only two
 offsets. The per-vertex figure is a per-*part* cost paid once. `keyLadder` in the
 harness exists so this cannot be re-derived by arithmetic again.
 
-⇒ [#380](https://github.com/firejune/rigc/issues/380)'s premise, measured on
+⇒ [#380](https://github.com/rig-c/core/issues/380)'s premise, measured on
 this repository's own emitter rather than argued: a dense turn stated as a
 closed form is one line, and the same turn baked is **14.7 MB for the part plus
 1.77 MB for every key of every animation that touches it**. The eight keys
@@ -108,7 +108,7 @@ closed form is one line, and the same turn baked is **14.7 MB for the part plus
 
 ⇒ Stage 2 as written asked for the contour generator at density. The measured
 answer is that the generator for a turn is [`grid`](../../../src/mesh.ts)
-([#386](https://github.com/firejune/rigc/issues/386)), and `contour` stays what
+([#386](https://github.com/rig-c/core/issues/386)), and `contour` stays what
 its own header says it is: geometry cut to a silhouette, not a deformation mesh.
 
 ## 4. The fold angle belongs to the depth map, not to the mesh

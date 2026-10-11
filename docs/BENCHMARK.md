@@ -14,9 +14,9 @@ It is **repository material rather than package material** — most of what it n
 in the npm tarball, and the README links it by URL. The arriving user's document is
 [the README](../README.md); the guide an agent authors from is
 [AUTHORING.md](AUTHORING.md); the live rung ledger is
-[LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) and the clauses a
+[LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) and the clauses a
 candidate is graded against are in
-[GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md).
+[GATE.md](https://github.com/rig-c/core/blob/main/docs/GATE.md).
 
 > 📎 The sections below are the README's own prose, **moved rather than rewritten**.
 > Only link paths were re-pointed for this document's location, and the `docs/` line of
@@ -99,7 +99,7 @@ Three properties the measures are built to have:
   candidate written from a brief that withholds the animation name read `count`
   1/1 and **0.000 on every other animation measure** — including the `duration`
   and `key_counts` it had got exactly right
-  ([#720](https://github.com/firejune/rigc/issues/720)).
+  ([#720](https://github.com/rig-c/core/issues/720)).
 
 An assertion or measure with nothing to compare reports its `total` as 0 and says
 so, exactly as the validator's SKIP does — a vacuous 1.000 that looks earned is
@@ -155,7 +155,7 @@ column the answer is no, whatever the frames are:
   (`SkeletonJson.js:526`). A name draws no pixel, and it is a value a consumer
   reads off `slot.attachment.name`, which is why it is measured at all: two
   production rebuilds renamed attachments under every key while every other
-  measure here read 1.000 ([#796](https://github.com/firejune/rigc/issues/796)).
+  measure here read 1.000 ([#796](https://github.com/rig-c/core/issues/796)).
   Scored over the keys **both** sides hold, so a key one side lacks moves
   `names` and `count` and not this.
 - **`animations.key_density`** and **`animations.keys_per_timeline`** — two
@@ -184,7 +184,7 @@ reason: they are not in a section at all.
 Every measure in that table reads *presence*, *names*, *counts*, *order* and
 *kinds* — never the numbers inside them. So a decompiler that halved every
 rotation, dropped every bone's `length` or mirrored every vertex reads **1.000 on
-all 54 measures**, which is what [issue #615](https://github.com/firejune/rigc/issues/615)
+all 54 measures**, which is what [issue #615](https://github.com/rig-c/core/issues/615)
 was opened about. `diffSkeletonValues` is the answer and it is a **separate call**
 with a report of its own:
 
@@ -223,7 +223,7 @@ Three properties, and each is the reason for the one after it:
   name. Over the twelve editor exports in `examples/` the widest gap between a
   rebuild and the file it was read from is **0**: not one of 189,699 numeric
   values differs, because the rebuild spells every number as the editor did
-  (`IG73`). (188,339 until [#1084](https://github.com/firejune/rigc/issues/1084) let
+  (`IG73`). (188,339 until [#1084](https://github.com/rig-c/core/issues/1084) let
   1,360 more numbers into the walk — the colour channels, the transform offsets and
   property maps — and the gap over them is 0 as well.) It was **0.81** of the bound, over 56,951 values that differed,
   while rigc wrote six fixed decimals (issue #716).
@@ -242,8 +242,8 @@ reason, the same one that makes it gate `mesh_edges` there.
 
 Two cards asked the same question from two sides: *which field or order does the
 format write that nothing here compares, and does a difference there reach a pose?*
-[#1084](https://github.com/firejune/rigc/issues/1084) for the value walk,
-[#1085](https://github.com/firejune/rigc/issues/1085) for the names `diff` reads.
+[#1084](https://github.com/rig-c/core/issues/1084) for the value walk,
+[#1085](https://github.com/rig-c/core/issues/1085) for the names `diff` reads.
 Every row below was **planted** — one change to one field of a public build, an
 editor export or a gallery rig — and read four ways: the value walk, `diff`'s
 structural measures, the pose (`tools/pose_oracle.ts`'s document, the one
@@ -325,7 +325,7 @@ carry a bounding box, the stage is the model document's, and a measure named for
 the stage would send a reader to change a value that no longer moves it. The
 history below is the measure's, under its old name.
 
-[Issue #578](https://github.com/firejune/rigc/issues/578). `build` refused a rig
+[Issue #578](https://github.com/rig-c/core/issues/578). `build` refused a rig
 spec without a `skeleton.width`/`height`, and **no instrument in this repository
 read one**: `validate`, `check` and `render` all ignore the stage, and `diff` had
 no header measure at all. A sweep that handed a deliberately absurd unit stage
@@ -353,7 +353,7 @@ and `height`. An `x`/`y` with no extent is an origin for a box that is not there
 box on its own.
 
 **Inside a stated box, an omitted `x`/`y` is read as `0`**
-([#620](https://github.com/firejune/rigc/issues/620)) — *exactly* is about the
+([#620](https://github.com/rig-c/core/issues/620)) — *exactly* is about the
 comparison, not about the spelling. The editor's writer omits a header field at
 its default, so a stage at the origin exports with a `width` and a `height` and
 no origin at all, and three rigc builds sitting at `0,0` each read their own
@@ -375,7 +375,7 @@ and answer the question `bounds_present` exists to ask.
 authored geometry, and **mesh `edges`**. `bench` could see the first two and not
 the third at all: the section measured nine things and none read `edges`, so a
 candidate that dropped one of the rung's own gating features scored a clean 1.000
-for the meshes it kept ([issue #46](https://github.com/firejune/rigc/issues/46)).
+for the meshes it kept ([issue #46](https://github.com/rig-c/core/issues/46)).
 
 **Present-vs-absent, and not the list**, keyed on the name-matched mesh pairs.
 `edges` has no runtime effect, so two candidates can carry different-but-equivalent
@@ -393,7 +393,7 @@ on `spineboy-pro`, and vacuous `0/0` where neither side has a mesh.
 
 ##### Key density — measured, and why neither of #20's routes was taken
 
-[Issue #20](https://github.com/firejune/rigc/issues/20) reported rung 3's one real
+[Issue #20](https://github.com/rig-c/core/issues/20) reported rung 3's one real
 gap as `key_counts` 42/69 and proposed making key density **observable**: render
 the reference frames at 24 or 30 fps, or state a key-density hint in the brief.
 Both were measured before either was built, on rung 3's own export, with the
@@ -439,14 +439,14 @@ for two to three times the committed frame bytes.
 
 🚫 **And the brief-side hint is refused, on the honesty rule rather than on
 cost.** `docs/LADDER.md` lists **key counts** among what a brief may *not* carry,
-and [#158](https://github.com/firejune/rigc/issues/158)'s sealing test states the
+and [#158](https://github.com/rig-c/core/issues/158)'s sealing test states the
 general form: text is forbidden in an allowed-reading surface **iff it states or
 constrains a reference-side value of a scored measure**. `animations.key_counts`
 and `animations.curve_kinds` are scored rows, so a key-density hint is exactly
 that text. It would also not make density *observable* — it would make it
 **told**, which converts a measure into an input and then measures whether an
 author can copy a number. Nothing needs it as an input either: gate v2.3
-([#153](https://github.com/firejune/rigc/issues/153)) settled that no clause
+([#153](https://github.com/rig-c/core/issues/153)) settled that no clause
 reads a figure the authoring loop cannot see, which is the question #20's own
 follow-up sharpened it into. ⇒ **No brief-format field was added and no brief was
 rewritten.** The convention stands as it was: a brief states each animation's
@@ -485,7 +485,7 @@ bun cli.ts bench 6 --candidate path/to/spine --bones identity   # folded into a 
 ⭐ `docs/LADDER.md`'s *How a rung is scored* names three stages, and the third had
 never been built: *"per-frame bone world-transform distance … **None of it
 exists.** Do not report a per-frame figure until it does"*
-([issue #8](https://github.com/firejune/rigc/issues/8)). The structural diff
+([issue #8](https://github.com/rig-c/core/issues/8)). The structural diff
 compares what the two files *say*, and two structurally identical rigs can pose
 completely differently — a rotation of 30° and a rotation of 300° are one key
 each. `bonedist` steps both skeletons through the paired animation at a fixed
@@ -718,8 +718,8 @@ the scale for a run.
 
 There is no pass mark **in the tool**, for the same reason `diff` has none. The
 ladder's pass definition and its thresholds are a document read by a person over
-the whole table — [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md) states the clauses and
-[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md)'s *Operating rules* derives them — and not an
+the whole table — [docs/GATE.md](https://github.com/rig-c/core/blob/main/docs/GATE.md) states the clauses and
+[docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md)'s *Operating rules* derives them — and not an
 exit code either command could produce.
 
 ### Benchmark ladder — the rungs, and where they stand
@@ -733,7 +733,7 @@ different session reproduced every field of the measurement record **to the digi
 The rungs stay in place as regression gates.
 
 🗓️ **One rung's pass was withdrawn and restored on 2026-09-02, and both are dated
-facts.** `check`'s extent tolerance ([PR #254](https://github.com/firejune/rigc/pull/254))
+facts.** `check`'s extent tolerance ([PR #254](https://github.com/rig-c/core/pull/254))
 changed which box a set is measured in, and rung 7's stored candidate failed **G2**
 under it — `cape-back` draws in all twelve sets, is attributable in none, and no
 read-down ground survived the framing change. **Gate v2.3** then answered the two
@@ -761,11 +761,11 @@ predecessor's specs under the run protocol's inheritance clause. It is **not**
 that an agent authors a spineboy-scale rig from the brief alone in one run: the
 ladder has not demonstrated that, and each row records which of the two it is.
 
-**[docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md) is the live ledger**: the rung order
+**[docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md) is the live ledger**: the rung order
 (blockers → rung 3 first → 1 · 2 · 4 · 5 → 6 → 8 → 7 → spineboy), what each
 rung gates on, how a rung is scored, the honesty rule that keeps the reference
 export away from the authoring agent, the operating rules — what a pass is, and
-the numbered thresholds of the current gate (**gate v2.4**, stated in [docs/GATE.md](https://github.com/firejune/rigc/blob/main/docs/GATE.md)) that decide one — and a status table. Run
+the numbered thresholds of the current gate (**gate v2.4**, stated in [docs/GATE.md](https://github.com/rig-c/core/blob/main/docs/GATE.md)) that decide one — and a status table. Run
 one with:
 
 ```bash
@@ -791,7 +791,7 @@ emitter half closed on 2026-09-03 (issue #4): `build --pack` packs the loose par
 and `build --atlas-in` resolves them against a pack somebody else made — both opt-in, both narrow
 (no trimming, no rotation, no scaling), with the limits in
 [AUTHORING §0.1–§0.2](AUTHORING.md). Ordered gap list in Part 4 of that document;
-live status, and B1's proof, in [docs/LADDER.md](https://github.com/firejune/rigc/blob/main/docs/LADDER.md).
+live status, and B1's proof, in [docs/LADDER.md](https://github.com/rig-c/core/blob/main/docs/LADDER.md).
 
 ## Looking at a rig — `rigc render` and `rigc preview`
 
@@ -910,18 +910,18 @@ above are a trim: the `head`, `blank` and `toobig` parts, the anchor-grid lines 
 the trailing alternates are cut for width, and the two refusals those two parts
 carry are the last bullet below. The `ambiguous:` lines and the tail of the
 `no-match:` line are the reading `pose` has given every refused or ambiguous part
-since [#857](https://github.com/firejune/rigc/issues/857) — the part's size, texture
+since [#857](https://github.com/rig-c/core/issues/857) — the part's size, texture
 and candidate spread against the floor [AUTHORING §11.5](AUTHORING.md) measures; no
 residual above moved with them.
 
-📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/firejune/rigc/issues/306).**
+📏 **Instrument re-baseline, 2026-09-03 — [#306](https://github.com/rig-c/core/issues/306).**
 `pose`'s objective now interpolates its frame premultiplied, so a tap across a
 silhouette no longer charges a part for the ground's colour. Three separate
 changes have moved this block since it was first printed and only the last is
 #306's, which is exactly why it is dated: the fixture's arm plate grew from 10×26
-to 10×30 with `chainfit` ([#286](https://github.com/firejune/rigc/pull/286)) and
+to 10×30 with `chainfit` ([#286](https://github.com/rig-c/core/pull/286)) and
 that re-framed the whole picture, `bilinear` moved to premultiplied for the
-*renderer* ([#301](https://github.com/firejune/rigc/pull/301)) and re-rendered it,
+*renderer* ([#301](https://github.com/rig-c/core/pull/301)) and re-rendered it,
 and #306 moved the objective that reads it. ⚠️ **A residual from either side of
 those dates is not the same measurement.** #306's own contribution here is small
 and one-directional: `arm.png` 0.0240 → 0.0227 — it is the part that crosses the
@@ -966,7 +966,7 @@ bun run viewer      # http://localhost:5173
 ```
 
 Pick a run, a candidate and an animation. The left pane plays the candidate's
-emitted `skeleton.json` — rendered by **[spine-html](https://github.com/firejune/spine-html)**,
+emitted `skeleton.json` — rendered by **[spine-html](https://github.com/rig-c/play)**,
 plain DOM, one CSS matrix per slot — and the right pane shows the reference
 frames for the same animation from `bench/reference/`, indexed by the scrubber's
 time at the frame set's own fps. Both panes use the world box the run was
@@ -1103,7 +1103,7 @@ The **Profile** column below says which is which — `both` = validity, `rendere
 `archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
 half always runs while its policy clauses are gated (A06's `pma`/rotation/full-page
 clauses and A20's "a mesh must be weighted at all"; A08 carried "the two names must be
-identical" until [#574](https://github.com/firejune/rigc/issues/574) retired it as a
+identical" until [#574](https://github.com/rig-c/core/issues/574) retired it as a
 rule no renderer performed). A report always names the profile it ran and lists what that profile left
 out, on `PROF` lines: a `--profile spine` green means *valid Spine*, never *passes
 the renderer policy*.
@@ -1129,7 +1129,7 @@ the renderer policy*.
 | `A16_SKELETON_VERSION_4_3` | both | the `skeleton.spine` version label is on the 4.3 line (the parser never checks it) |
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | every page the atlas declares is a file on disk |
 | `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
-| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay part draws a transparent pixel somewhere, and the **texels** say so on both routes ([#777](https://github.com/firejune/rigc/issues/777)): a loose page is read whole, a region on a shared page over its own rectangle. The header is the fast negative — a file with no alpha channel (colour type 4 or 6) **and** no `tRNS` chunk, which is where indexed and greyscale PNGs keep theirs, is refused unopened. A file that could be transparent and is not is refused by its texels — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it` — so an RGBA part at full alpha everywhere fails loose exactly as it fails packed. Only the base plate may be opaque: the one the build names (a cut manifest's part whose window is the crop), or, when it names none, the region covering the stage. With neither — a stageless rig-spec build — an opaque part is refused with *"the build names no base plate. Either would decide it"*, and the sentence names both ([#770](https://github.com/firejune/rigc/issues/770)) |
+| `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay part draws a transparent pixel somewhere, and the **texels** say so on both routes ([#777](https://github.com/rig-c/core/issues/777)): a loose page is read whole, a region on a shared page over its own rectangle. The header is the fast negative — a file with no alpha channel (colour type 4 or 6) **and** no `tRNS` chunk, which is where indexed and greyscale PNGs keep theirs, is refused unopened. A file that could be transparent and is not is refused by its texels — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it` — so an RGBA part at full alpha everywhere fails loose exactly as it fails packed. Only the base plate may be opaque: the one the build names (a cut manifest's part whose window is the crop), or, when it names none, the region covering the stage. With neither — a stageless rig-spec build — an opaque part is refused with *"the build names no base plate. Either would decide it"*, and the sentence names both ([#770](https://github.com/rig-c/core/issues/770)) |
 | `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put; a contour's outline — which is every vertex it has — is pinned. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
@@ -1158,8 +1158,8 @@ the renderer policy*.
 | `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` | both | a numbered image series the runtime does not show as the file states it — a `sequence` block with no `count` or a `setup` past the end, a key whose `mode` is outside the seven (loads as `hold`), whose `index` is fractional or past the end, whose advancing mode runs at an effective delay of 0 (`Infinity \| 0` is 0: it never advances), or that steps an attachment with no block — and then the pose: every key sampled mid-frame and the region shown held to the frame the file's statement gives, the arithmetic of `SequenceTimeline.applyToSlot` transcribed rather than read back. Measured on forged skeletons through spine-core 4.3.13, every one of those loads without a word (issue #729). `validity`: the arithmetic is the runtime's. SKIPs when no attachment carries a `sequence` and no animation keys one |
 | `A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every ik constraint is either mixed in at setup or keyed away from 0 by an animation — a `mix` timeline keying 0 only is no rescue, a lifted Bezier between two keys of 0 is (#765). `IkConstraint.update` returns on `mix === 0`, so a constraint resting there that nothing keys loads, sits in the update cache and moves nothing. SKIPs when the skeleton declares no ik constraint |
 | `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | every transform constraint drives some property, and a mix of a property it drives is away from 0 at setup or on a value an animation poses (#765). The mixes of properties it does not drive are never read, which matters because a key that omits a mix reads it as 1. A negative mix runs, and the editor's own example exports rest five transforms at −1, so live is `!== 0`. SKIPs when the skeleton declares no transform constraint |
-| `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` | renderer | no two regions on one page draw over each other: a pair is refused where the rectangles overlap **and** the footprints do — a mesh region's hull, from its UVs over the region's bounds, and every other region's rectangle — so a `--pack-shape polygon` page whose rectangles overlap outside the hulls passes ([#1099](https://github.com/firejune/rigc/issues/1099)). For two rectangles it is the tiling clause `A06` held until then. SKIPs when no page carries two regions |
-| `A50_STAGE_BOX_IS_THE_STAGE` | both | a rig that asks for its stage as a bounding box (`skeleton.stageBox`) carries one whose stored vertices are the stage's corners exactly and whose world vertices at the setup pose are those corners on the header's grid, read through spine-core's loaded skeleton and through the model document and rigc's core alike ([#1168](https://github.com/firejune/rigc/issues/1168)). The header carries the setup-pose bounding box since 2.2.0, so this is how the stage travels in the files a consumer ships. SKIPs when nothing asks — every build without the field, and every export |
+| `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` | renderer | no two regions on one page draw over each other: a pair is refused where the rectangles overlap **and** the footprints do — a mesh region's hull, from its UVs over the region's bounds, and every other region's rectangle — so a `--pack-shape polygon` page whose rectangles overlap outside the hulls passes ([#1099](https://github.com/rig-c/core/issues/1099)). For two rectangles it is the tiling clause `A06` held until then. SKIPs when no page carries two regions |
+| `A50_STAGE_BOX_IS_THE_STAGE` | both | a rig that asks for its stage as a bounding box (`skeleton.stageBox`) carries one whose stored vertices are the stage's corners exactly and whose world vertices at the setup pose are those corners on the header's grid, read through spine-core's loaded skeleton and through the model document and rigc's core alike ([#1168](https://github.com/rig-c/core/issues/1168)). The header carries the setup-pose bounding box since 2.2.0, so this is how the stage travels in the files a consumer ships. SKIPs when nothing asks — every build without the field, and every export |
 
 ## Usage
 
@@ -1254,7 +1254,7 @@ bun run selftest     # the validator's own negative controls (next section)
 ```
 
 All three run on every push and pull request —
-[`.github/workflows/ci.yml`](https://github.com/firejune/rigc/blob/main/.github/workflows/ci.yml). Bun runs the sources
+[`.github/workflows/ci.yml`](https://github.com/rig-c/core/blob/main/.github/workflows/ci.yml). Bun runs the sources
 directly, so the first two are not on the path of anything; they exist because a
 convention nothing checks is a convention. `tsconfig.json` is full `strict`
 since 2026-10-02 and says in place what was measured before raising it;
@@ -1274,7 +1274,7 @@ for each. Two further edits are *tolerance* controls the gate must let through,
 because a widened assertion can fail by firing too often as easily as by firing too
 rarely.
 
-**The rigs it breaks are generated.** [`fixtures/public.ts`](https://github.com/firejune/rigc/blob/main/fixtures/public.ts)
+**The rigs it breaks are generated.** [`fixtures/public.ts`](https://github.com/rig-c/core/blob/main/fixtures/public.ts)
 writes three synthetic cuts into a temp directory on every run, and between them
 they carry every structure the assertions have an opinion about — region
 attachments, attachment swaps, rgba fades, a ring mesh on a control bone, a ribbon

@@ -27,7 +27,7 @@ bun cli.ts preview --candidate gallery/flex/build --out gallery/flex/preview.htm
 `build` gates green under both profiles — `--profile spine` (the default) and
 `--profile spine-html` — with **no declared exemption**: this example carried the
 repository's only `invariants.deformMayFold` until
-[#313](https://github.com/firejune/rigc/issues/313), and *The deform* below is
+[#313](https://github.com/rig-c/core/issues/313), and *The deform* below is
 what removing it took. Nothing built is committed; the three output paths above
 are in `.gitignore`.
 
@@ -122,7 +122,7 @@ you did not know you had — a gap in the art, a soft interior you expected the
 threshold to close. So:
 
 ✅ **The hole size is on the `MESH` line** — `enclosing 848px of hole`, above.
-[Issue #275](https://github.com/firejune/rigc/issues/275), **fixed**. It was
+[Issue #275](https://github.com/rig-c/core/issues/275), **fixed**. It was
 measured all along (`holePixels` is a field of the report the generator builds)
 and printed nowhere, while coverage and overshoot are both *unaffected* by a hole
 (the overshoot is measured against the **filled** silhouette) — so an unintended
@@ -209,7 +209,7 @@ where the silhouette actually is.
 
 ⭐ **Both keys state a model rather than a table**
 ([AUTHORING §4.11.1](../../docs/AUTHORING.md),
-[#294](https://github.com/firejune/rigc/issues/294)) — a `bend`, which
+[#294](https://github.com/rig-c/core/issues/294)) — a `bend`, which
 displaces one coordinate as a power of how far along the leaf a vertex is:
 
 ```json
@@ -243,7 +243,7 @@ because a contour pins every vertex to one bone, and that is also what makes the
 model's own coordinates the attachment's own: one bone means **one coordinate
 space**, and the offsets below are in it. Had any vertex carried two bones it
 would occupy two pairs, and since
-[#389](https://github.com/firejune/rigc/issues/389) the model would still be
+[#389](https://github.com/rig-c/core/issues/389) the model would still be
 evaluated — at each vertex's setup **world** position, pushed into every
 influence through that bone's inverse — so the numbers here would be world ones
 rather than these ([AUTHORING §4.11.1](../../docs/AUTHORING.md)). And every pair
@@ -269,7 +269,7 @@ the artifact are the same numbers:
 ### 🚨 This mesh folded, and the amplitude was never the reason
 
 `A39_DEFORM_KEEPS_TRIANGLE_WINDING`
-([#296](https://github.com/firejune/rigc/issues/296)) found, on its first run
+([#296](https://github.com/rig-c/core/issues/296)) found, on its first run
 over this gallery, that three of the leaf's eight keys swept boundary vertices
 **past the fan's apex vertex 76**, reversing the winding of the triangle there:
 
@@ -284,7 +284,7 @@ upper-right edge, the ink outline vanishing across one of them and reappearing
 displaced, and the vein pattern torn into offset blocks. The rig carried this
 repository's only `invariants.deformMayFold` entry, whose `why` said outright
 that it was a defect being tracked
-([#313](https://github.com/firejune/rigc/issues/313)) rather than art that folds
+([#313](https://github.com/rig-c/core/issues/313)) rather than art that folds
 on purpose. **That entry is gone**, A39 gates this example green, and the
 measurement that got there is the part worth keeping:
 
@@ -370,7 +370,7 @@ that is **not optional for a generator**: a rig that declares no
 contour build without it is refused before the gate with
 `4 mesh slot(s) emitted but the rig "flex" allows 0`. That requirement is
 deliberate — geometry rigc built is geometry it will not ship unmeasured — and
-[issue #274](https://github.com/firejune/rigc/issues/274) was that nothing said
+[issue #274](https://github.com/rig-c/core/issues/274) was that nothing said
 so: AUTHORING.md's own contour example did not carry one and did not compile as
 written. **Fixed**: the example carries it, §3.7 states the exception, §5.1 lists
 the refusal, and the refusal itself now names the field.

@@ -18,7 +18,7 @@ and `wave` is the half with a **proof**. Splitting them would have produced two
 READMEs each making half an argument, and a second drawing of the same character
 to make it with.
 
-That sentence is the inverse of [#313](https://github.com/firejune/rigc/issues/313),
+That sentence is the inverse of [#313](https://github.com/rig-c/core/issues/313),
 which `flex` records from the other side: a leaf whose mesh was traced for its
 *outline* could not carry a ripple at **0.5 px**, and the repair was to change the
 model rather than the amplitude. Here the model came first and the mesh was drawn
@@ -457,7 +457,7 @@ triangle moved), and the only thing in the toolchain that said so was `explain`'
 `{ "t": … }` key with no run at all, a deliberate construct. A key that stated a
 model and lost it is not the same event.
 
-⭐ **It is a refusal now** ([#350](https://github.com/firejune/rigc/issues/350)),
+⭐ **It is a refusal now** ([#350](https://github.com/rig-c/core/issues/350)),
 and the row above is what the compiler says instead:
 
 Its own path to the patched motion spec sits between `error:` and `animation`
@@ -618,7 +618,7 @@ feature.
 it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
 commands and compares them line for line: the figures here are read off the run
 instead of being kept by hand
-([#609](https://github.com/firejune/rigc/issues/609)).
+([#609](https://github.com/rig-c/core/issues/609)).
 
 `rigc build`:
 
@@ -664,9 +664,9 @@ rebuild.
 
 | | |
 | --- | --- |
-| [#350](https://github.com/firejune/rigc/issues/350) | ✅ **fixed** — a `deform` `transform` that evaluated to an **all-zero run** was not refused: a stated 10-unit `wave` at `wavelength 80` on 40-unit rows emitted nothing and gated green under both profiles. It is a `CompileError` now, and a key that *means* the identity states it in its own parameters |
-| [#351](https://github.com/firejune/rigc/issues/351) | `src/trackgen.ts`'s `depth` doc comment says *"Deeper is further from the viewer"*, which is the **wrong sign**: FACE §1 has `z` toward the viewer, and `portrait`'s own nose at `depth 192` against a surface at `170` is in front |
-| [#352](https://github.com/firejune/rigc/issues/352) | AUTHORING §4.11.1's and §4.5.1's *Worked case* columns still read `—` for `pitch` and `wave`, and the worked-example lists in §4.11, §4.11.2 and FACE.md do not mention this example |
+| [#350](https://github.com/rig-c/core/issues/350) | ✅ **fixed** — a `deform` `transform` that evaluated to an **all-zero run** was not refused: a stated 10-unit `wave` at `wavelength 80` on 40-unit rows emitted nothing and gated green under both profiles. It is a `CompileError` now, and a key that *means* the identity states it in its own parameters |
+| [#351](https://github.com/rig-c/core/issues/351) | `src/trackgen.ts`'s `depth` doc comment says *"Deeper is further from the viewer"*, which is the **wrong sign**: FACE §1 has `z` toward the viewer, and `portrait`'s own nose at `depth 192` against a surface at `170` is in front |
+| [#352](https://github.com/rig-c/core/issues/352) | AUTHORING §4.11.1's and §4.5.1's *Worked case* columns still read `—` for `pitch` and `wave`, and the worked-example lists in §4.11, §4.11.2 and FACE.md do not mention this example |
 
 Nothing in the compiler misbehaved. Both refusals this example leaned on —
 `transform pitch has radius 150, and vertex N sits at y=…, which is … past it`
@@ -677,8 +677,8 @@ and `A39`'s named triangle pairs — said exactly what to change, which is the b
 
 ⚠️ **A seam figure is a figure at one `--max` and at one frame rate**, and
 `loop_seam.ts` now says both out loud
-([#336](https://github.com/firejune/rigc/issues/336),
-[#337](https://github.com/firejune/rigc/issues/337)). So:
+([#336](https://github.com/rig-c/core/issues/336),
+[#337](https://github.com/rig-c/core/issues/337)). So:
 
 ```sh
 bun cli.ts render --candidate gallery/nod/build --out gallery/nod/render --fps 12 --max 640

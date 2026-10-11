@@ -23,7 +23,7 @@
 
 ## Why this run exists
 
-Issue [#291](https://github.com/firejune/rigc/issues/291): a second from-zero attempt at the
+Issue [#291](https://github.com/rig-c/core/issues/291): a second from-zero attempt at the
 same brief, under the same protocol, with **exactly one change in the toolbox** — `rigc
 chainfit` now exists. The run prices the instrument.
 

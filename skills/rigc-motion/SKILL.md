@@ -10,7 +10,7 @@ compatibility: Requires Bun 1.2 or later and the npm package rig-c.
 Load this when the request is a **movement rather than a skeleton**: a sentence of
 intent, between zero and N pictures of what the movement passes through, and a
 Spine animation somebody would choose coming back. Every rule below is owned by
-[MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md); this file says when to open it and what it will
+[MOTION.md](https://github.com/rig-c/core/blob/main/docs/MOTION.md); this file says when to open it and what it will
 not do for you.
 
 ## Non-negotiables
@@ -31,16 +31,16 @@ thing that judges a movement is a person's eye through `rigc vote` — MOTION §
 
 ## Read, in this order
 
-1. [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) — the motion spec field by field (§4),
+1. [AUTHORING.md](https://github.com/rig-c/core/blob/main/docs/AUTHORING.md) — the motion spec field by field (§4),
    the failure map (§5–§6), reading reference frames (§8) and checking against
    them (§9), what the editor does when nobody tells it otherwise (§10), and
    reading a pose out of a picture (§11–§12).
-2. [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) — the normal form every motion request
+2. [MOTION.md](https://github.com/rig-c/core/blob/main/docs/MOTION.md) — the normal form every motion request
    reduces to (§0), timing, easing and the per-bone offset table (§3), and how to
    spread candidates so a ballot informs (§4–§5).
-3. Then [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) if the skeleton itself is what you have
-   to decide; [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md) if the movement is a blink, a gaze or a
-   head turn; [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) if the rig arrived as a compiled
+3. Then [RIGGING.md](https://github.com/rig-c/core/blob/main/docs/RIGGING.md) if the skeleton itself is what you have
+   to decide; [FACE.md](https://github.com/rig-c/core/blob/main/docs/FACE.md) if the movement is a blink, a gaze or a
+   head turn; [INGEST.md](https://github.com/rig-c/core/blob/main/docs/INGEST.md) if the rig arrived as a compiled
    skeleton rather than loose parts.
 
 Every guide linked here is in the installed package at `node_modules/rig-c/docs/`,

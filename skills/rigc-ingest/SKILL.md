@@ -10,7 +10,7 @@ compatibility: Requires Bun 1.2 or later and the npm package rig-c.
 Load this when what you were handed is **already a skeleton**: a `skeleton.json`
 with its `.atlas` and page images, and a request to understand it, answer a
 complaint about it, re-express it, or extend it. Every rule below is owned by
-[INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md); this file says when to open it and what it will
+[INGEST.md](https://github.com/rig-c/core/blob/main/docs/INGEST.md); this file says when to open it and what it will
 not do for you.
 
 ## Non-negotiables
@@ -61,14 +61,14 @@ thing to reach for; transcription by hand is what you fall back on for a constru
 
 ## Read, in this order
 
-1. [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) — what every command will and will not do with
+1. [INGEST.md](https://github.com/rig-c/core/blob/main/docs/INGEST.md) — what every command will and will not do with
    a foreign file (§0), `ingest` and transcription (§2), what each validator
    complaint means on an export (§3), and the re-pivot, rename and extend
    recipes (§4).
-2. [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) — the two spec files the transcription
+2. [AUTHORING.md](https://github.com/rig-c/core/blob/main/docs/AUTHORING.md) — the two spec files the transcription
    targets (§3–§4), the failure map (§5–§6), and the coordinate contract (§11.2).
-3. Then [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) for why the re-pivot edit has the shape
-   it has, and [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) for the animation you are adding.
+3. Then [RIGGING.md](https://github.com/rig-c/core/blob/main/docs/RIGGING.md) for why the re-pivot edit has the shape
+   it has, and [MOTION.md](https://github.com/rig-c/core/blob/main/docs/MOTION.md) for the animation you are adding.
 
 Every guide linked here is in the installed package at `node_modules/rig-c/docs/`,
 which is the copy that matches the rigc you run; the links go to the repository's

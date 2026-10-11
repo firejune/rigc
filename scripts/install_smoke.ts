@@ -2544,7 +2544,7 @@ usage:
   bun run smoke -- --case clean          one case by name
   bun run smoke -- --source registry --version 0.21.0
   bun run smoke -- --source registry --version 0.21.0 --wait 15
-  bun run smoke -- --source registry --version 2.20.4 --alias spine-rigc
+  bun run smoke -- --source registry --version 2.39.0 --alias spine-rigc --alias @rig-c/core
   bun run smoke -- --installer bun       install the tarball with \`bun add\` instead of \`npm install\`
   bun run smoke -- --keep                leave the install directories where they are
 
@@ -2552,17 +2552,18 @@ usage:
 before the registry serves what it published, so this is how long to keep asking
 before giving up. Default ${DEFAULT_WAIT_MINUTES}; \`--wait 0\` asks once and does not sleep.
 
---alias <name> is for \`--source registry\` too: after the cases, the same version
-under the second name the package is published as is fetched — within what is
-left of --wait, asked at least once — and its unpacked files are held to the
-ones the cases installed, byte for byte but for the name line of package.json.
-The alias is compared, not installed: identical files are the stronger claim,
-and they take seconds.
+--alias <name> is for \`--source registry\` too, and is given once per alias: after
+the cases, the same version under each other name the package is published as is
+fetched — within what is left of --wait, asked at least once — and its unpacked
+files are held to the ones the cases installed, byte for byte but for the name
+line of package.json. Each alias is read on its own line, so one that differs or
+has not arrived is named while the others still pass. The aliases are compared,
+not installed: identical files are the stronger claim, and they take seconds.
 
 exit codes:
   0  every case passed
   1  a case went red — against \`--source registry\`, the published artifact does not build —
-     or the --alias tarball carries other files or other bytes than the package's
+     or an --alias tarball carries other files or other bytes than the package's
   2  no case ran, so this run measured nothing
   3  the registry did not serve the version — its packument, or the tarball behind it, under
      the name or under --alias — within --wait, so the confirmation was NOT taken; nothing
@@ -2628,24 +2629,41 @@ function main(): number {
     console.log(`  FAIL  SMOKE_WAIT_IS_MINUTES_ON_THE_REGISTRY_PATH: --wait ${JSON.stringify(waitFlag)} is not a number of minutes`);
     return EXIT_RED;
   }
-  // The same rule for the alias: there is no second name to compare against
+  // The same rule for the aliases: there is no second name to compare against
   // in a tarball this tree packs, so a run that was given one and read none
   // would print a confirmation nobody took.
-  const alias = flag('alias');
-  if (argv.includes('--alias') && (alias === null || alias.startsWith('--'))) {
-    console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs the second name the package is published as');
-    return EXIT_RED;
+  //
+  // ⚖️ `--alias` is repeated, once per name, rather than one flag holding a
+  // list (issue #1347). Every other flag here is `--name value`, read by the
+  // same index walk, and a repeated flag keeps that shape: each alias stays
+  // the one token after its own `--alias`, which is how release.yml's calls
+  // are read back by CUR122 and how the by-hand line below is spelled, and a
+  // call written before the second alias existed still means what it meant.
+  const aliases: string[] = [];
+  for (let at = argv.indexOf('--alias'); at !== -1; at = argv.indexOf('--alias', at + 1)) {
+    const value = argv[at + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.log('  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias needs another name the package is published as');
+      return EXIT_RED;
+    }
+    aliases.push(value);
   }
-  if (alias !== null && sourceKind !== 'registry') {
+  if (aliases.length > 0 && sourceKind !== 'registry') {
     console.log(
       '  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias is for `--source registry`. A tarball this tree packs ' +
         `carries one name, ${NAME}, so there is no second tarball here to hold to it`,
     );
     return EXIT_RED;
   }
-  if (alias === NAME) {
-    console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is the name this tree publishes, not a second one`);
-    return EXIT_RED;
+  for (const alias of aliases) {
+    if (alias === NAME) {
+      console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is the name this tree publishes, not a second one`);
+      return EXIT_RED;
+    }
+    if (aliases.indexOf(alias) !== aliases.lastIndexOf(alias)) {
+      console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: --alias ${alias} is given twice, so one of the names it was meant to confirm was not given at all`);
+      return EXIT_RED;
+    }
   }
 
   console.log(`rigc install smoke — ${registrySpec === null ? `a tarball packed from ${ROOT}` : `${registrySpec} from the registry`}, installed with ${installer}`);
@@ -2665,7 +2683,7 @@ function main(): number {
   let source: Source = { kind: 'tree' };
   const waitStarted = Date.now();
   let fetchDir = '';
-  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${alias === null ? '' : ` --alias ${alias}`}`;
+  const byHand = `bun run smoke -- --source registry --version ${wanted} --case clean${aliases.map((alias) => ` --alias ${alias}`).join('')}`;
   if (registrySpec !== null) {
     fetchDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'rigc-smoke-fetch-')));
     LEFT_BEHIND.push(fetchDir);
@@ -2785,20 +2803,25 @@ function main(): number {
     console.log('  FAIL  SMOKE_PREREQ_TOOLS_ON_PATH: no case ran, so this run measured nothing');
     return EXIT_NOTHING_RAN;
   }
-  // 🪞 The alias (issue #1258): the same version under the package's second
-  // name, fetched after the cases so it has had their minutes to arrive, and
-  // held to the tarball the cases installed. A difference is a fault of what
-  // was published, exit 1 like a red case; an alias the registry has not
-  // served yet is a confirmation not taken, exit 3 — but only when nothing
-  // above went red, because a red case is a fact and a late alias is not.
-  let aliasRed = false;
-  let aliasLate = false;
-  if (alias !== null && served !== null) {
+  // 🪞 The aliases (issues #1258, #1347): the same version under each of the
+  // package's other names, fetched after the cases so it has had their minutes
+  // to arrive, and held to the tarball the cases installed. A difference is a
+  // fault of what was published, exit 1 like a red case; an alias the registry
+  // has not served yet is a confirmation not taken, exit 3 — but only when
+  // nothing above went red, because a red case is a fact and a late alias is
+  // not. Each alias is read on its own, in the order given, within what is
+  // left of the one wait, and each prints its own line.
+  const redAliases: string[] = [];
+  const lateAliases: string[] = [];
+  const sameAliases: string[] = [];
+  const fetched = served;
+  for (const [index, alias] of aliases.entries()) {
+    if (fetched === null) break;
     const aliasSpec = `${alias}@${wanted}`;
     const left = Math.max(0, waitMinutes - (Date.now() - waitStarted) / 60_000);
-    const got = waitForRegistry(aliasSpec, left, ROOT, join(fetchDir, 'alias'));
+    const got = waitForRegistry(aliasSpec, left, ROOT, join(fetchDir, `alias-${index}`));
     if (!got.served) {
-      aliasLate = true;
+      lateAliases.push(alias);
       console.log(
         `  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry did not serve ${aliasSpec} within what was left of the ` +
           `${waitMinutes} min wait (${got.attempts} attempt(s), ${elapsedText(got.ms)}; ` +
@@ -2808,26 +2831,33 @@ function main(): number {
       );
     } else {
       try {
-        const reading = compareTarballs(served.tgz, got.tgz);
+        const reading = compareTarballs(fetched.tgz, got.tgz);
         if (reading.faults.length === 0) {
+          sameAliases.push(alias);
           console.log(
             `  PASS  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and its ${reading.files} file(s) are ` +
               `${registrySpec}'s, byte for byte but for the name line of package.json`,
           );
         } else {
-          aliasRed = true;
+          redAliases.push(alias);
           console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it is not ${registrySpec} under another name:`);
           for (const fault of reading.faults) console.log(`          ${fault}`);
         }
       } catch (error) {
         if (!(error instanceof AliasTarballError)) throw error;
-        aliasRed = true;
+        redAliases.push(alias);
         console.log(`  FAIL  SMOKE_ALIAS_CARRIES_THE_SAME_FILES: the registry served ${aliasSpec} and it could not be read as a package: ${error.message}`);
       }
     }
   }
 
-  const aliasNote = alias === null ? '' : aliasRed ? `; the alias ${alias} differs` : aliasLate ? `; the alias ${alias} was NOT confirmed` : `; the alias ${alias} carries the same files`;
+  const aliasRed = redAliases.length > 0;
+  const aliasLate = lateAliases.length > 0;
+  const aliasNote = [
+    ...redAliases.map((alias) => `; the alias ${alias} differs`),
+    ...lateAliases.map((alias) => `; the alias ${alias} was NOT confirmed`),
+    ...sameAliases.map((alias) => `; the alias ${alias} carries the same files`),
+  ].join('');
   console.log(
     bad === 0 && !aliasRed && !aliasLate ? `rigc install smoke: green — ${ran} case(s)${aliasNote}` : `rigc install smoke: ${bad} of ${ran} case(s) failed${aliasNote}`,
   );

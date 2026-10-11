@@ -17,17 +17,17 @@ in whatever moves the dial.
 
 It is also where six things measured in the week of 2026-09-05 first stand up
 together: a **depth map** giving every mesh vertex its own `z`
-([#383](https://github.com/firejune/rigc/issues/383)), the **`grid`** generator
-([#386](https://github.com/firejune/rigc/issues/386)), the reported **turn
+([#383](https://github.com/rig-c/core/issues/383)), the **`grid`** generator
+([#386](https://github.com/rig-c/core/issues/386)), the reported **turn
 ceiling** that the slider's range is derived from
-([#393](https://github.com/firejune/rigc/issues/393)), a **painted soft mask**
-answering an impact ([#391](https://github.com/firejune/rigc/issues/391)),
+([#393](https://github.com/rig-c/core/issues/393)), a **painted soft mask**
+answering an impact ([#391](https://github.com/rig-c/core/issues/391)),
 `A39` reading a slot's **alpha** so a part can fade out past its own ceiling
-([#404](https://github.com/firejune/rigc/issues/404)), and `A40` on **two
-sliders sharing a bone** ([#405](https://github.com/firejune/rigc/issues/405)).
+([#404](https://github.com/rig-c/core/issues/404)), and `A40` on **two
+sliders sharing a bone** ([#405](https://github.com/rig-c/core/issues/405)).
 The seventh arrived because of this example rather than before it: `A39` posing a
 slider-applied animation **at the slider's own mapping**
-([#407](https://github.com/firejune/rigc/issues/407)), which is what lets the two
+([#407](https://github.com/rig-c/core/issues/407)), which is what lets the two
 above run on one rig.
 
 ⚠️ **The art is generated, like every gallery example's** — Vela is drawn in
@@ -52,7 +52,7 @@ slider — but the answer no longer depends on one. What came back
 - ⚠️ **The animation each slider *names* did not, until rigc changed its emit.**
   The editor re-keys the `animations` object and a slider's animation is an
   ordinal in the format's binary half, so `yaw -> "turn"` came back
-  `yaw -> "sweep"` ([#535](https://github.com/firejune/rigc/issues/535)). rigc now
+  `yaw -> "sweep"` ([#535](https://github.com/rig-c/core/issues/535)). rigc now
   emits animations in the editor's order; on the same rig through the same editor
   that restored `yaw -> "turn"` and took the re-rendered mean absolute error from
   10.4655 / 8.4961 / 8.7140 to 0.3035 / 0.0769 / 0.0588.
@@ -61,11 +61,11 @@ slider — but the answer no longer depends on one. What came back
   editor's export drops a physics constraint's `rotate`, `scaleX` and `shearX`
   **only on a zero-length bone** — on any bone with a length all three come back
   (measured on Spine 4.3.23 and 4.3.26,
-  [#1196](https://github.com/firejune/rigc/issues/1196); #540 had read the same
+  [#1196](https://github.com/rig-c/core/issues/1196); #540 had read the same
   loss as *"the editor holds `x` and `y` only"*). So the export stated *drives
   nothing* and `A23_PHYSICS_CONSTRAINT_EFFECTIVE` refused it by name
-  ([#536](https://github.com/firejune/rigc/issues/536)). ⇒ With `ahoge_whip`
-  given a length ([#1195](https://github.com/firejune/rigc/issues/1195)), the
+  ([#536](https://github.com/rig-c/core/issues/536)). ⇒ With `ahoge_whip`
+  given a length ([#1195](https://github.com/rig-c/core/issues/1195)), the
   cowlick survives the round trip.
 
 ```
@@ -344,7 +344,7 @@ colour overwrite each other whatever their flags say. The fade belongs inside
 the one animation one slider applies.
 
 🚨 **The alpha-0 key lands at +13°, one key BEFORE the +19° key that folds**
-([#403](https://github.com/firejune/rigc/issues/403)). `A39` measures keys and
+([#403](https://github.com/rig-c/core/issues/403)). `A39` measures keys and
 the runtime interpolates between them, so a fade that finished *on* the folding
 key would leave every frame just before it drawn, nearly folded and unmeasured.
 13° is inside 17.04°, so the key that is still visible is also still sound, and
@@ -368,7 +368,7 @@ the run above it is at alpha exactly 0 the whole way:
 ```
 
 ⭐ The `frame` line is the point of
-[#407](https://github.com/firejune/rigc/issues/407) (see below): `turn` is applied
+[#407](https://github.com/rig-c/core/issues/407) (see below): `turn` is applied
 by the slider, so `A39` measures it with the dial where the mapping puts it rather
 than on a track — which is what lets those alpha-0 keys BE alpha 0 at the moment
 they are read.
@@ -394,7 +394,7 @@ ladder at `--max 880` (10 frames, so the last sample is at 1.8 s = +17°):
 | `f0007` | +9° | 173 | 121 |
 | `f0009` | +17° | **0** | 88 |
 
-⚠️ **That reading is from before [#407](https://github.com/firejune/rigc/issues/407)
+⚠️ **That reading is from before [#407](https://github.com/rig-c/core/issues/407)
 and `render/turn` no longer reproduces it** — the sliders are live at setup now, so
 playing `turn` on a track holds both locks at alpha 1 and the zeros above are gone
 from that set (measured: the whole difference between the two builds' `turn` frames
@@ -470,7 +470,7 @@ setup bought that back, and it cost `A40`, which correctly excludes a slider bel
 full authority: the composition this example is *about* was verified by
 measurement and not by the gate.
 
-🚨 **[#407](https://github.com/firejune/rigc/issues/407) is that the frame was
+🚨 **[#407](https://github.com/rig-c/core/issues/407) is that the frame was
 wrong, not the alpha rule.** `turn` is never played on a track — the dial selects
 its time, so **the key's time and the applied time are the same number by
 construction**, and A39 was measuring the two independently. It now inverts the
@@ -550,7 +550,7 @@ of its world `x` between the two builds times the frames' 0.673401 px per unit.
 That is the whole claim; it is a small part and a small impulse.
 
 📐 **`ahoge_whip` has a `length`, and the number is measured rather than
-chosen** ([#1195](https://github.com/firejune/rigc/issues/1195)). A physics
+chosen** ([#1195](https://github.com/rig-c/core/issues/1195)). A physics
 constraint driving `rotate` steps off the bone's tip, `length` along its own x
 axis, so a bone with no length has no tip — and with nothing to aim at, the
 solver aims the bone at world angle 0, which `A23_PHYSICS_CONSTRAINT_EFFECTIVE`
@@ -580,7 +580,7 @@ paragraph used to state is not reproduced by it.
 🗒️ **A soft mesh could not also take a turn key when this example was built**,
 which is why the cowlick has no depth sheet and the face has no mask — a carried
 vertex has two bones, and a `transform` key was refused on any attachment that
-did. [#389](https://github.com/firejune/rigc/issues/389) removed that: the model
+did. [#389](https://github.com/rig-c/core/issues/389) removed that: the model
 is now evaluated at each vertex's setup world position and pushed into every
 influence through that bone's own inverse, and
 [`SF03`](../../selftest.ts) measures the combination rather than the refusal.
@@ -656,7 +656,7 @@ gauge read backwards while both files stayed self-consistent.
 | deterministic | `A18`, plus the suite compiling it three times | byte-identical |
 | the far lock folds and draws nothing when it does | `A39` + the stats line | 4 keys not drawn, 8 reversed triangles among them, 17 keys still measured |
 | `turn` is measured in the frame the slider puts it in | `A39` + the `DEFORM` block | `deformFrames=turn:slider/yaw`, and each key line names the dial value its mapping inverts to |
-| the two sliders compose | posed through `spine-core`, **and gated** | 1.90 + 5.00 = **6.90°** on `headroll`; `A40` PASSes since [#407](https://github.com/firejune/rigc/issues/407) let both sliders sit at `mix: 1` |
+| the two sliders compose | posed through `spine-core`, **and gated** | 1.90 + 5.00 = **6.90°** on `headroll`; `A40` PASSes since [#407](https://github.com/rig-c/core/issues/407) let both sliders sit at `mix: 1` |
 | the `local: false` refusal fires on this rig | flipping the flag and building | refused at compile, message quoted above |
 | `sweep` closes on its opening pose | `loop_seam.ts --duration 3.2` at `--max 640` | **160 / 255**, 565 px of 375 040 — see below |
 | …with the spring inert | the same, on a control build with `inertia: 0` | **1 / 255**, 1 px |
@@ -667,7 +667,7 @@ gauge read backwards while both files stayed self-consistent.
 it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
 commands and compares them line for line: the figures here are read off the run
 instead of being kept by hand
-([#609](https://github.com/firejune/rigc/issues/609)).
+([#609](https://github.com/rig-c/core/issues/609)).
 
 `rigc build`:
 
@@ -686,12 +686,12 @@ SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_co
 🚨 **The loop does not close, and the reason is the spring, not the timeline.**
 `loop_seam.ts` reads **160 / 255** over 565 pixels, worst at `(321, 45)` — the
 cowlick's tip (169 / 255 over 941 pixels, worst at `(311, 41)`, before
-`ahoge_whip` had a length — [#1195](https://github.com/firejune/rigc/issues/1195)). A physics constraint's state is not a function of time: the first
+`ahoge_whip` had a length — [#1195](https://github.com/rig-c/core/issues/1195)). A physics constraint's state is not a function of time: the first
 frame is rendered from `Physics.reset` and the last carries 3.2 s of accumulated
 motion. The control makes that exact: the same cycle with `inertia: 0` reads
 **1 / 255** at one pixel, so the *keyed* pose closes and what does not is the
 spring. 📏 Both figures are readings at `--max 640`
-([#336](https://github.com/firejune/rigc/issues/336)); re-measure before
+([#336](https://github.com/rig-c/core/issues/336)); re-measure before
 carrying either to another size.
 
 ## What was NOT verified
@@ -700,7 +700,7 @@ carrying either to another size.
   nothing here showed the editor preserves two sliders, their flags or their array
   order; the round trip at the top of this page now shows exactly that, and shows
   the cowlick's physics `rotate` being dropped on the same trip
-  ([#544](https://github.com/firejune/rigc/issues/544) is the card for both
+  ([#544](https://github.com/rig-c/core/issues/544) is the card for both
   statements having stood side by side). What is still unverified is narrower and
   is not about this rig: no editor export **in this repository** carries a slider
   at all, so `A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET`'s "could correct editor
@@ -728,7 +728,7 @@ carrying either to another size.
   example was first built (above). Found by hitting it: the first build with both
   sliders at `mix: 1` was red on `A39`, at an alpha the animation had keyed to 0.
   It shipped muted at setup, the tension went to
-  [#407](https://github.com/firejune/rigc/issues/407) as an issue, and the answer
+  [#407](https://github.com/rig-c/core/issues/407) as an issue, and the answer
   turned out to be that **A39 was posing the wrong frame** — not that either rule
   was too strict. This README is the before and after of that.
 - **A slider-applied animation is a lookup table and wants linear keys.** Not a

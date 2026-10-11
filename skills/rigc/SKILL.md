@@ -109,25 +109,25 @@ model space, its UVs, its triangles — which is a mesh attachment with those th
 (AUTHORING §3.4, *Mesh attachment*); a region at the drawable's bounding-box centre
 keeps only the box. rigc reads none of those formats — FACE §11, the paragraph
 that opens *No Live2D file is read or written*
-([FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md#11-non-goals--stated-so-nobody-proposes-them-as-gaps)) —
+([FACE.md](https://github.com/rig-c/core/blob/main/docs/FACE.md#11-non-goals--stated-so-nobody-proposes-them-as-gaps)) —
 only the pictures they produce. The rule, the background those frames need and
 what a wrong one costs: AUTHORING §0, *When the source is a foreign player*.
 
 ## Which guide, for which need
 
-Read [AUTHORING.md](https://github.com/firejune/rigc/blob/main/docs/AUTHORING.md) first, whatever the need: the two
+Read [AUTHORING.md](https://github.com/rig-c/core/blob/main/docs/AUTHORING.md) first, whatever the need: the two
 spec files field by field, the emission rules, the loop, and the failure map. Then:
 
 | The request is… | Open | Skill |
 | --- | --- | --- |
-| a **skeleton** — how many bones, where each pivot sits, what hangs off what | [RIGGING.md](https://github.com/firejune/rigc/blob/main/docs/RIGGING.md) | `rigc-rigging` |
-| a **movement** — an idle, a loop, from this pose to that one | [MOTION.md](https://github.com/firejune/rigc/blob/main/docs/MOTION.md) | `rigc-motion` |
-| a **face** — a blink, a gaze, a head turn a few degrees off axis | [FACE.md](https://github.com/firejune/rigc/blob/main/docs/FACE.md) | `rigc-face` |
-| a **skeleton.json somebody else authored** — read it, repair it, extend it | [INGEST.md](https://github.com/firejune/rigc/blob/main/docs/INGEST.md) | `rigc-ingest` |
-| you are the **person operating** the agent rather than the agent | [PROMPTING.md](https://github.com/firejune/rigc/blob/main/docs/PROMPTING.md) | — |
+| a **skeleton** — how many bones, where each pivot sits, what hangs off what | [RIGGING.md](https://github.com/rig-c/core/blob/main/docs/RIGGING.md) | `rigc-rigging` |
+| a **movement** — an idle, a loop, from this pose to that one | [MOTION.md](https://github.com/rig-c/core/blob/main/docs/MOTION.md) | `rigc-motion` |
+| a **face** — a blink, a gaze, a head turn a few degrees off axis | [FACE.md](https://github.com/rig-c/core/blob/main/docs/FACE.md) | `rigc-face` |
+| a **skeleton.json somebody else authored** — read it, repair it, extend it | [INGEST.md](https://github.com/rig-c/core/blob/main/docs/INGEST.md) | `rigc-ingest` |
+| you are the **person operating** the agent rather than the agent | [PROMPTING.md](https://github.com/rig-c/core/blob/main/docs/PROMPTING.md) | — |
 
 Every guide linked here is in the installed package at `node_modules/rig-c/docs/`,
 which is the copy that matches the rigc you run; the links go to the repository's
 `main`. Inside the Claude Code plugin the same files are at `${CLAUDE_PLUGIN_ROOT}/docs/`.
 Formats, the CLI reference and the licence chain:
-[README.md](https://github.com/firejune/rigc/blob/main/README.md), installed at `node_modules/rig-c/README.md`.
+[README.md](https://github.com/rig-c/core/blob/main/README.md), installed at `node_modules/rig-c/README.md`.

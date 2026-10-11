@@ -164,7 +164,7 @@ named easing, so any re-timing moves them together.
 [`curve.ts`](curve.ts)'s own polyline measures, because how far a wheel turns is
 a fact about the curve. The artifact's `lengths` answers a different question —
 where along the path a `position` lands, in the runtime's own parameterisation —
-and since [#560](https://github.com/firejune/rigc/issues/560) it is 0.50 % below
+and since [#560](https://github.com/rig-c/core/issues/560) it is 0.50 % below
 the arc by construction. Deriving this number from it instead would put the
 wheels 9.6° out over one traversal.
 

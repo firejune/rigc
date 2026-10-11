@@ -82,7 +82,7 @@ twice** — once name-matched, once name-agnostic (issue #21, 2026-08-23).
 beside it.** The rung-3 attempts on disk do not answer alike, so a `bench` line
 standing on its own cannot be re-taken: a reader compares against it, gets a
 different number and reads drift where there is none — which is what happened
-([#538](https://github.com/firejune/rigc/issues/538)). What is quoted below is
+([#538](https://github.com/rig-c/core/issues/538)). What is quoted below is
 rung 3's **second** attempt, compiled from the specs committed with it
 ([`bench/runs/2026-08-23-rung3-2/`](../bench/runs/2026-08-23-rung3-2/)) and
 benched, after `bun run fetch-examples` — `examples/` is gitignored and absent
@@ -99,7 +99,7 @@ bun cli.ts bench 3 --candidate <attempt2>
 
 The first five lines of that report, verbatim and uncut — a contiguous window of
 the run, so the selftest's docs-transcript gate
-([#468](https://github.com/firejune/rigc/issues/468)) compares it line for line
+([#468](https://github.com/rig-c/core/issues/468)) compares it line for line
 instead of a reader noticing:
 
 ```
@@ -111,7 +111,7 @@ instead of a reader noticing:
 ```
 
 ⭐ **`bounds_box 0.000` is this rung's oldest invisible finding, and it is one line
-old** ([#578](https://github.com/firejune/rigc/issues/578)). It read `stage_box
+old** ([#578](https://github.com/rig-c/core/issues/578)). It read `stage_box
 0.000` then: `build` required a `skeleton.width`/`height`, copied it into the
 header, and nothing in the tree measured it, so this transcription's header carried
 a stage its author had to invent — and the reference's carried a different box.
@@ -172,16 +172,16 @@ run on this page.
 the page.** A measure can be added and move no recorded figure at all:
 [`src/diff.ts`](../src/diff.ts) means a section over its gated measures alone and
 gives `reported` no mean at all, so the three `(reported)` measures of
-[PR #269](https://github.com/firejune/rigc/pull/269) landed with nothing to
+[PR #269](https://github.com/rig-c/core/pull/269) landed with nothing to
 recompute and the silence here was right. What went stale instead was a **quoted
 transcript**. `bench 3` began printing `(reported)` subsections and a summary
 line, the fences quoting it under *B1's proof* below did not follow, and no
 figure in this register moved with them
-([#475](https://github.com/firejune/rigc/issues/475), re-quoted in
-[#480](https://github.com/firejune/rigc/issues/480)). ⇒ A different failure with
+([#475](https://github.com/rig-c/core/issues/475), re-quoted in
+[#480](https://github.com/rig-c/core/issues/480)). ⇒ A different failure with
 a mechanism of its own, so what belongs here is that mechanism's name rather than
 a wider promise: the selftest's **docs-transcript** gate
-([#468](https://github.com/firejune/rigc/issues/468)) re-runs the commands a page
+([#468](https://github.com/rig-c/core/issues/468)) re-runs the commands a page
 states and matches each quoted block against a **contiguous** window of the
 output, so a subsection inserted *inside* a quoted range breaks the match and is
 a `DQ02` fault naming the line it diverged at.
@@ -208,7 +208,7 @@ claim, deliberately.** It used to carry one — *168 regions* — and nothing de
 the figure: the plainest reading — every `region` attachment under `skins` in the
 twelve `export/*.json` skeletons — does not reach it, and neither does counting by
 skin, by slot, by attachment name, by atlas path or by atlas region
-([#490](https://github.com/firejune/rigc/issues/490)). The claim carries the
+([#490](https://github.com/rig-c/core/issues/490)). The claim carries the
 argument without one, because it is universal and a single counterexample would
 refute it: after `bun run fetch-examples`, read the region attachments of those
 twelve files and check that each states both `width` and `height`. It now asks,
@@ -235,14 +235,14 @@ so what the shortfall names is a region one rig has and the other has not:
 a part the candidate builds as a region where the reference meshes it — which is
 the reading *Operating rules* already gives that row. ⚠️ This sentence read *four
 rigs out of nine* and called the shortfall *a real disagreement about a size*, and
-both are wrong ([#490](https://github.com/firejune/rigc/issues/490)): the count is
+both are wrong ([#490](https://github.com/rig-c/core/issues/490)): the count is
 derivable off the table above — the rows whose `n/m` has `n` short of `m` — and the
 same reading is what refutes the characterisation. What the old measure could never
 do still stands, and the first row is where to see it: it read `0/8` on `balls`,
 whose eight regions agree on every size.
 
 **2026-08-25 — gate v1 introduced** (issue
-[#153](https://github.com/firejune/rigc/issues/153)). **No measure's definition
+[#153](https://github.com/rig-c/core/issues/153)). **No measure's definition
 changed and no recorded figure moves**: what arrived is a *pass definition* over the
 measures already listed above — which of them decide a rung and which are reported
 without deciding anything — and the version label `gate v1` for that set. It is
@@ -254,7 +254,7 @@ run made before #28 is read through the recompute table above rather than throug
 own file.
 
 **2026-08-25 — `check` gained an MAE-refined final framing pass** (issue
-[#146](https://github.com/firejune/rigc/issues/146)). A **fitted** framing now takes
+[#146](https://github.com/rig-c/core/issues/146)). A **fitted** framing now takes
 one further pass that searches whole-pixel offsets within ±2 px for the lowest MAE
 over the reference's own drawn pixels and moves the box to the best one when the
 gain clears 1 % of the figure; a box that is not an estimate — `frames.json`'s own,
@@ -272,15 +272,15 @@ an estimate, so it is searched and never moved (every set framed by
 or the gain it finds does not clear 1 %. ⛔ The three are not broken out, and not
 for brevity: this sentence split them *52* unchanged against *33* moved over 86,
 which leaves one set unaccounted for
-([#490](https://github.com/firejune/rigc/issues/490)), and the split cannot be
+([#490](https://github.com/rig-c/core/issues/490)), and the split cannot be
 re-taken — by the sentence that follows, the re-read that produced it was never
 written to disk. `bench.json` files are **not** rewritten, and the re-read figures
 belong to the adjudication pass rule 3 requires after an instrument change, not
 here. Nothing about `bench`'s own measures changed.
 
 **2026-08-25 — `check` compares contact sheets, and stopped calling a merged blob a
-part** (issues [#36](https://github.com/firejune/rigc/issues/36) and
-[#37](https://github.com/firejune/rigc/issues/37)). Two additions in the same pass
+part** (issues [#36](https://github.com/rig-c/core/issues/36) and
+[#37](https://github.com/rig-c/core/issues/37)). Two additions in the same pass
 as #146 above, and only one of them moves a recorded figure.
 
 - **The sheet.** A set that commits a couple of stills and folds every sampled frame
@@ -301,14 +301,14 @@ Both are gating-relevant — G2 reads the drift, and the sheet is a new observab
 which is why they land before the adjudication pass and not during it.
 
 **2026-08-25 — the first gate-v1 adjudication, on the post-#159 instruments** (issue
-[#153](https://github.com/firejune/rigc/issues/153), phase 2). **No measure's
+[#153](https://github.com/rig-c/core/issues/153), phase 2). **No measure's
 definition changed here either**: this entry records that the pass rule 3 requires
 after an instrument change has been *taken*, once, over every stored candidate — and
 against which instruments, because that is the fact a later reader needs. The panel it
 used is the one the three entries above describe: `check` with the MAE-refined framing
 pass (#146), the contact-sheet comparison (#36) and the component matcher that no
 longer calls a merged blob one slot's own (#37), at
-[`d850a4e`](https://github.com/firejune/rigc/commit/d850a4e).
+[`d850a4e`](https://github.com/rig-c/core/commit/d850a4e).
 
 Sixteen candidates, 86 compared sets, **zero builds and zero authoring**. 🚫 **No
 `bench.json` and no run directory was rewritten** — every figure the pass measured
@@ -325,7 +325,7 @@ written before it existed; the rungs whose verdict would turn on it are listed w
 verdicts, as input to a gate v2 decision rather than as a finding of this pass.
 
 **2026-08-25 — gate v2 introduced** (issue
-[#160](https://github.com/firejune/rigc/issues/160), with the duration clause's
+[#160](https://github.com/rig-c/core/issues/160), with the duration clause's
 reformulation answering the first ambiguity the pass above recorded). **No measure's
 definition changed and no recorded figure moves** — like gate v1 this is a *pass
 definition* over the measures already listed here, and every `bench.json` on disk stays
@@ -336,7 +336,7 @@ as its run wrote it. Two clauses differ from v1 and the rest are v1's:
   measure is unchanged and still reported at its own 1/60 s agreement; what changed is
   what the gate reads off it, because the frames are a grid and an author reading them
   cannot resolve a length finer than one. The derivation is in *Operating rules* rule 2.
-- **G7** joins, on the contact-sheet observable [#36](https://github.com/firejune/rigc/issues/36)
+- **G7** joins, on the contact-sheet observable [#36](https://github.com/rig-c/core/issues/36)
   added — a flatness clause (worst tile against that sheet's own mean), not a level, so
   that the 🚫 against MAE thresholds still holds.
 
@@ -346,12 +346,12 @@ the case rule 5 calls integrity rather than opportunity, so v2's re-inspection i
 the same pass rather than deferred to the next bump — it is the entry below.
 
 **2026-08-25 — the gate-v2 re-inspection** (issue
-[#160](https://github.com/firejune/rigc/issues/160)). The bump's own re-inspection, taken
+[#160](https://github.com/rig-c/core/issues/160)). The bump's own re-inspection, taken
 immediately for the reason rule 5 gives. **No measure's definition changed here either**:
 this entry records that the pass rule 3 requires has been *taken* against gate v2, over
 every stored candidate, and that it reused the sweep the first adjudication ran — the same
 sixteen candidates over the same 86 compared sets, at
-[`1c6740d`](https://github.com/firejune/rigc/commit/1c6740d), reproducing that pass's
+[`1c6740d`](https://github.com/rig-c/core/commit/1c6740d), reproducing that pass's
 figures to the digit. 🚫 **No `bench.json` and no run directory was rewritten.** Two
 verdicts moved and both moved on a clause rather than a number: **rung 2 passes** (G4's
 reformulation, plus four flat sheets discharging G3's hole) and **rung 4 fails G7** on an
@@ -361,7 +361,7 @@ each verdict was read against and five recorded ambiguities are in *The gate-v2
 re-inspection* under **Status** below.
 
 **2026-08-26 — gate v2.1 introduced** (the owner's ruling on the clause gap
-[#10](https://github.com/firejune/rigc/issues/10) and the 2026-08-26 batch adjudication
+[#10](https://github.com/rig-c/core/issues/10) and the 2026-08-26 batch adjudication
 both recorded). **No measure's definition changed, no threshold moved and no recorded
 figure moves** — this is a *reading* of one existing clause, and every `bench.json` on disk
 stays as its run wrote it. One change from v2, and the rest of the clause set is v2's:
@@ -394,9 +394,9 @@ and the clause each verdict was read against are in *The gate-v2.1 re-inspection
 **Status** below.
 
 **2026-08-29 — gate v2.2 introduced** (the owner's rulings on
-[#198](https://github.com/firejune/rigc/issues/198),
-[#193](https://github.com/firejune/rigc/issues/193) and
-[#207](https://github.com/firejune/rigc/issues/207)). **No measure's definition changed, no
+[#198](https://github.com/rig-c/core/issues/198),
+[#193](https://github.com/rig-c/core/issues/193) and
+[#207](https://github.com/rig-c/core/issues/207)). **No measure's definition changed, no
 threshold moved and no recorded figure moves** — every `bench.json` on disk stays as its run
 wrote it. One clause gains a limb and the rest of the clause set is v2's:
 
@@ -434,10 +434,10 @@ margins they feed are in *The gate-v2.2 re-inspection* and *The clause margins* 
 **Status** below.
 
 **2026-08-29 — `check` attributes the texture floor, substitutes texture only, and stops the
-extent test punishing a silhouette** ([PR #254](https://github.com/firejune/rigc/pull/254),
-issues [#171](https://github.com/firejune/rigc/issues/171),
-[#199](https://github.com/firejune/rigc/issues/199) and
-[#194](https://github.com/firejune/rigc/issues/194)). Three changes to `check`'s scoring
+extent test punishing a silhouette** ([PR #254](https://github.com/rig-c/core/pull/254),
+issues [#171](https://github.com/rig-c/core/issues/171),
+[#199](https://github.com/rig-c/core/issues/199) and
+[#194](https://github.com/rig-c/core/issues/194)). Three changes to `check`'s scoring
 semantics, which rule 3 names as the instrument panel. Two of them add figures and move
 nothing; the third moves figures.
 
@@ -482,8 +482,8 @@ Figures, the itemised read-down and the margins they feed are in *The PR #254 in
 re-inspection* and *The clause margins* under **Status** below.
 
 **2026-09-02 — gate v2.3 introduced** (the owner-delegate's rulings on
-[#256](https://github.com/firejune/rigc/issues/256) and
-[#258](https://github.com/firejune/rigc/issues/258), the two clause questions the entry above
+[#256](https://github.com/rig-c/core/issues/256) and
+[#258](https://github.com/rig-c/core/issues/258), the two clause questions the entry above
 and the attempt-3 adjudication filed). **No measure's definition changed, no threshold moved,
 no clause was renumbered and no recorded figure moves** — every `bench.json` on disk stays as
 its run wrote it, and `src/` is untouched. What changes is **G2's read-down**, in three ways:
@@ -499,7 +499,7 @@ its run wrote it, and `src/` is untouched. What changes is **G2's read-down**, i
   A ceiling on its own does not read down.
 
 The statements are on the card, [GATE.md](GATE.md); the derivation, the grounds in rule 1's
-founding reading ([#153](https://github.com/firejune/rigc/issues/153)) and the mandated sweep
+founding reading ([#153](https://github.com/rig-c/core/issues/153)) and the mandated sweep
 are in *Operating rules* rule 2, under *Gate v2.3*. By rule 5's asymmetry two of the three can
 make a standing pass **fail**, so the re-inspection is taken in the same pass. It is the entry
 below.
@@ -514,10 +514,10 @@ rendered locally at its brief's exact flags first, and **no frame of it was comm
 was not re-run, because nothing v2.3 changes can reach G4's lengths or G5's counts. 🚫 **No
 `bench.json` and no run directory was rewritten.** ⭐ **Exactly one verdict moves, and it is the
 one the ruling predicted**: rung 7's attempt 3 goes **FAIL → PASS**, its `cape-back` reaching
-the new kind on evidence [#259](https://github.com/firejune/rigc/pull/259) had already
+the new kind on evidence [#259](https://github.com/rig-c/core/pull/259) had already
 reproduced and this pass reproduced again. **No other slot on the ladder reaches that kind**, no
 standing read-down used kind 4, and the 188 blank (set, slot) pairs still read down on kinds 1,
-2 and 3. The rung closes, [#14](https://github.com/firejune/rigc/issues/14) closes, and the
+2 and 3. The rung closes, [#14](https://github.com/rig-c/core/issues/14) closes, and the
 ladder is complete again. Figures, the sweep table and the re-adjudication are in *The gate-v2.3
 re-inspection* and *The clause margins* under **Status** below.
 
@@ -536,7 +536,7 @@ the full linear part — **never combined into a score and never gating**: the
 figures land in `sections[].reported`, beside and never inside the gated table.
 
 **2026-10-02 — five measures that read names, and a constraint's order**
-([#1085](https://github.com/firejune/rigc/issues/1085)). Five name-matched measures
+([#1085](https://github.com/rig-c/core/issues/1085)). Five name-matched measures
 join three sections: `attachments.refs` (the region an attachment draws, a clipping
 polygon's `end`, a linked mesh's `source`, `skin` and `slot`), `attachments.skin_members`
 (what each skin activates), `constraints.order` (the order the one constraint array is
@@ -684,7 +684,7 @@ Practically:
   recorded at all.
 
 ⭐ **What seals a text: answer-derivability, not provenance.** Decided 2026-08-25, issue
-[#158](https://github.com/firejune/rigc/issues/158). The question a sweep of an
+[#158](https://github.com/rig-c/core/issues/158). The question a sweep of an
 allowed-reading surface asks is not *where did this fact come from?* but **can the
 answer be produced from this text?** Provenance alone does not seal — a figure an author
 could have measured off an allowed input is not an answer however it was arrived at, and
@@ -710,7 +710,7 @@ raised by a later pass, follows them:
   it, and a citation into a stored run's directory — which holds that attempt's measures
   — is written as a name rather than as a path.
   - ➡️ **Amended 2026-08-28 by owner ruling**, on the spineboy attempt-4 verdict
-    ([#16](https://github.com/firejune/rigc/issues/16)). This reading used to give its
+    ([#16](https://github.com/rig-c/core/issues/16)). This reading used to give its
     reason as *"a spec that scores well **is** the answer key"*, and that half is
     withdrawn: **a successor attempt at the same rung may inherit the prior attempt's rig
     spec, motion specs and fitting harness**, because a spec authored under honest
@@ -723,11 +723,11 @@ raised by a later pass, follows them:
     about what an attempt may start from, not about how one is scored.
 
 🆕 **A fifth reading, ruled 2026-08-26** — raised by the brief-verification pass over
-rungs 1, 3, 4 and 5 ([#10](https://github.com/firejune/rigc/issues/10),
-[#12](https://github.com/firejune/rigc/issues/12),
-[#17](https://github.com/firejune/rigc/issues/17),
-[#18](https://github.com/firejune/rigc/issues/18)) and settled against the criterion
-[#158](https://github.com/firejune/rigc/issues/158) fixed above:
+rungs 1, 3, 4 and 5 ([#10](https://github.com/rig-c/core/issues/10),
+[#12](https://github.com/rig-c/core/issues/12),
+[#17](https://github.com/rig-c/core/issues/17),
+[#18](https://github.com/rig-c/core/issues/18)) and settled against the criterion
+[#158](https://github.com/rig-c/core/issues/158) fixed above:
 
 - **An observable-by-construction structural fact is the exam question, not a leak.**
   What a client watching the shot would report — how many things are drawn, and what
@@ -786,7 +786,7 @@ of the ladder needs them; what changes is that an authoring run does not read th
 file except for *How a rung is scored* and *The honesty rule* above.
 
 🆕 **A sixth reading, ruled 2026-08-29** — the surface split
-[#174](https://github.com/firejune/rigc/issues/174) asked for, and the one the four
+[#174](https://github.com/rig-c/core/issues/174) asked for, and the one the four
 recorded collisions were waiting on:
 
 - **A clause statement is not answer-bearing; its derivation is.** Apply the test to the
@@ -826,8 +826,8 @@ The written form of all this, per rung and per run:
 
 ## Operating rules
 
-**Decided 2026-08-25**, issues [#153](https://github.com/firejune/rigc/issues/153) and
-— for gate v2 and the cadence rule — [#160](https://github.com/firejune/rigc/issues/160).
+**Decided 2026-08-25**, issues [#153](https://github.com/rig-c/core/issues/153) and
+— for gate v2 and the cadence rule — [#160](https://github.com/rig-c/core/issues/160).
 *How a rung is scored* above says what is measured; this section says what a
 measurement is allowed to decide. Five rules: what a pass is, the numbers it is
 made of, what closes a rung and what reopens one, the order the rungs are
@@ -838,7 +838,7 @@ above for the reason the status table is: the **derivations** below quote previo
 candidates' measures, and a number reaches an agent the same way whichever file it is in.
 
 ✅ **What a run may read is the bar itself — [GATE.md](GATE.md), the clause statements.**
-Owner ruling 2026-08-29 ([#174](https://github.com/firejune/rigc/issues/174)), and the
+Owner ruling 2026-08-29 ([#174](https://github.com/rig-c/core/issues/174)), and the
 sixth reading of *The honesty rule* above is the criterion it rests on: a threshold is the
 exam's grading policy and states no reference-side value, while a derivation quotes the
 scores it was calibrated against. ⇒ **That card is the canonical statement of every clause,
@@ -864,7 +864,7 @@ decided it?"** Key density is hard *and* undecidable; a wrong region size is eas
 middle kind is allowed to fail a rung. This is the honesty rule's own line — *what a
 client watching the finished animation could tell you* — applied to the verdict
 instead of to the inputs, and it resolves the question left open around
-[#20](https://github.com/firejune/rigc/issues/20) and the `ball` residual under
+[#20](https://github.com/rig-c/core/issues/20) and the `ball` residual under
 *Rung 8, attempt 2*.
 
 **What is unobservable by construction — reported, never gating.** Each row is a
@@ -876,12 +876,12 @@ finding this ladder already recorded, not a new claim:
 | `bones.length_present`, `bones.inherit_present` | AUTHORING §9.3 lists both as invisible in frames, and §10 has no public page to read a default off. 1/3 in both rung 3 attempts |
 | `attachments.mesh_vertices`, `mesh_triangles`, `mesh_hull`, `mesh_weighted`, `attachments.type_counts`, `attachments.region_size` | §9.3: a hull moved by a bone chain and the same hull moved by deform keys render to the same pixels, and it names these four measures **and the bone count** as the ones that move on that invisible decision. A mesh states no region size, so `region_size` moves with it — rung 6 reads 2/3 there for having one mesh where the reference has two. Rung 8 `ball`'s mesh topology is invented and the frames cannot see any of it |
 | `slots.agnostic.attachment_types_by_position` | positional, but the *type* at each position is the region-versus-mesh choice above |
-| `animations.key_counts` | §10.6 says outright that no public page gives a density, and [#112](https://github.com/firejune/rigc/issues/112) shows the shot's own acceleration pins the knob. Missed from **both** sides on this ladder — a third short at rung 3, twice as dense at rung 8 |
+| `animations.key_counts` | §10.6 says outright that no public page gives a density, and [#112](https://github.com/rig-c/core/issues/112) shows the shot's own acceleration pins the knob. Missed from **both** sides on this ladder — a third short at rung 3, twice as dense at rung 8 |
 | `animations.curve_kinds` | §10.4 moved it and cannot finish it: a curve split *between* two reference frames leaves no trace at the rate the frames were rendered, so the residual is a split below the sampling rate |
 | `animations.timeline_kinds` | Separate-versus-combined is a checkbox, not a picture: `translate` with a flat y channel and `translatex` alone render identically. The cleared `pendulum` posts **0.625** here |
 | `animations.event_keys`, `events.names`, `events.payloads` | a firing is not a pixel, and the briefs decline to spell the names. spineboy has paid `events` 0.500 for that refusal twice, deliberately |
 | every name-keyed measure — `bones.names`, `parent_by_name`, `order`, `slots.names`, `slots.bone`, `attachments.names` | unwinnable by design: the brief grants the author its own names. This is what the name-agnostic pair exists for, and it is why no *section mean* is gated |
-| `skeleton.bounds_present`, `skeleton.bounds_box` | the setup-pose bounding box is a number in a header: it draws no pixel, `render` frames from the posed bounds instead, and no reading of the frames recovers it. Unwinnable a second way as well — the author does not write it (`build` computes it since [#907](https://github.com/firejune/rigc/issues/907)), and the editor's own box is its arithmetic, so even the transcription below that reads 1.000 on every section reads `bounds_box` **0.250**. Both measures arrived with [#578](https://github.com/firejune/rigc/issues/578) as `stage_present`/`stage_box`, which is also when this ladder could first see that rung 3's attempt-2 transcription reads that box **0.000** against its reference |
+| `skeleton.bounds_present`, `skeleton.bounds_box` | the setup-pose bounding box is a number in a header: it draws no pixel, `render` frames from the posed bounds instead, and no reading of the frames recovers it. Unwinnable a second way as well — the author does not write it (`build` computes it since [#907](https://github.com/rig-c/core/issues/907)), and the editor's own box is its arithmetic, so even the transcription below that reads 1.000 on every section reads `bounds_box` **0.250**. Both measures arrived with [#578](https://github.com/rig-c/core/issues/578) as `stage_present`/`stage_box`, which is also when this ladder could first see that rung 3's attempt-2 transcription reads that box **0.000** against its reference |
 | any measure reading 1.000 at `0/0` | vacuous, and the document has said so since B1's proof. A gate that counted these would pass a rung for having nothing |
 
 ⚠️ **`attachments.region_size_present` must not be cited as the unwinnable measure it
@@ -921,7 +921,7 @@ Gate v2 is judged **per skeleton**, on `validate --profile spine`, on `bench`'s
 measure table, and on `check` over every committed frame set of that candidate.
 
 🆕 **v2 supersedes gate v1 as of 2026-08-25** (issue
-[#160](https://github.com/firejune/rigc/issues/160)). Two clauses move and the rest are
+[#160](https://github.com/rig-c/core/issues/160)). Two clauses move and the rest are
 v1's, unchanged and unrenumbered:
 
 - **G4's duration limb is reformulated.** v1 asked for `animations.duration` **1.000**,
@@ -942,7 +942,7 @@ versioned**: a rung that met gate v1 met gate v1, and the v2 re-inspection says
 separately whether it also meets this.
 
 🆕 **v2.1 supersedes v2 as of 2026-08-26** (owner's ruling; the gap
-[#10](https://github.com/firejune/rigc/issues/10) and the 2026-08-26 batch adjudication
+[#10](https://github.com/rig-c/core/issues/10) and the 2026-08-26 batch adjudication
 both recorded). **No threshold moves and no clause is renumbered** — every row of the
 table below is v2's, unchanged. What v2.1 settles is one *reading*: what G3 does with a
 set that is a **single pose**. The clause statement and its precedents are the dated
@@ -950,9 +950,9 @@ block at the end of this rule, and the re-inspection it owes is under *Status*, 
 gate-v2.1 re-inspection*.
 
 🆕 **v2.2 supersedes v2.1 as of 2026-08-29** (owner's rulings on
-[#198](https://github.com/firejune/rigc/issues/198),
-[#193](https://github.com/firejune/rigc/issues/193) and
-[#207](https://github.com/firejune/rigc/issues/207)). **No threshold moves and no clause is
+[#198](https://github.com/rig-c/core/issues/198),
+[#193](https://github.com/rig-c/core/issues/193) and
+[#207](https://github.com/rig-c/core/issues/207)). **No threshold moves and no clause is
 renumbered** — every row of the table below is still v2's. One clause gains a limb: **G2 is
 read per slot as well as per set**, and a slot that draws in a set while attributing in no
 frame of it is read down explicitly or the clause fails for that set. Released with it and
@@ -962,8 +962,8 @@ The dated block is at the end of this rule; the re-inspection it owes is under *
 *The gate-v2.2 re-inspection*.
 
 🆕 **v2.3 supersedes v2.2 as of 2026-09-02** (owner-delegate's rulings on
-[#256](https://github.com/firejune/rigc/issues/256) and
-[#258](https://github.com/firejune/rigc/issues/258), the two clause questions the rung-7
+[#256](https://github.com/rig-c/core/issues/256) and
+[#258](https://github.com/rig-c/core/issues/258), the two clause questions the rung-7
 re-inspection and its attempt-3 adjudication filed). **No threshold moves, no clause is
 renumbered, and no measure's definition or recorded figure changes** — every row of the table
 below is still v2's. What moves is **G2's read-down**: it now states the framing of the figures
@@ -974,8 +974,8 @@ it is independently verified strict. The dated block is at the end of this rule;
 re-inspection it owes is under *Status*, in *The gate-v2.3 re-inspection*.
 
 🆕 **v2.4 supersedes v2.3 as of 2026-09-03** (the rulings on
-[#309](https://github.com/firejune/rigc/issues/309), the deliberation the
-[PR #308](https://github.com/firejune/rigc/pull/308) re-inspection opened and the run-2 adjudication
+[#309](https://github.com/rig-c/core/issues/309), the deliberation the
+[PR #308](https://github.com/rig-c/core/pull/308) re-inspection opened and the run-2 adjudication
 extended). **No threshold moves, no clause is renumbered, and no measure's definition or recorded
 figure changes** — every row of the table below is still v2's. ⭐ **What moves is the corpus.** The
 committed reference frames are **re-rendered under the post-#301 sampler and adopted as the standing
@@ -996,7 +996,7 @@ read it as *how this version's number was arrived at*, never as *what the clause
 | --- | --- | ---: |
 | **G1** | [validity](GATE.md#g1-validity) | stage 1, unchanged. Twelve honest runs have posted 0 FAILs, so this clause has never yet decided anything — it stays because a candidate that is not valid Spine 4.3 has cleared nothing |
 | **G2** | [worst attributable slot drift](GATE.md#g2-worst-attributable-slot-drift), in **every** measured set | cleared candidates post **0.74–0.85 px** (rung 3 attempt 2, both sets) and **3.3 px** (rung 8 `pendulum`). Above them sit **4.1 px** (rung 6, at the frames' own box) and **4.2 px** (rung 8 `ball` attempt 2, **5.3 px** at attempt 1), the two highest figures any entry here describes as faithful motion. spineboy attempt 3 posts **14.6 px**, which its own entry calls a visible error on a 100 × 146 px figure. 6.0 clears the highest of those by ~1.8 px and refuses the open one by 2.4×. Deliberately **absolute** and not a fraction of the figure: `check`'s drift is in the frames' own pixels, and a relative bar would license a large rig the visible error a small one is refused |
-| **G3** | [per-frame motion](GATE.md#g3-per-frame-motion), in **every** set | `pendulum` is attributed in every frame of both sets; `ball` attempt 2 posts agreement on all 44 and all 87 adjacent pairs. spineboy posts **14** disagreements at attempt 2 and **3** at attempt 3 — a limb that teleports, a hold that is not held, a one-frame event that never fires. The overdraw half is not leniency but a hole plugged: `mae`'s denominator is the union, so drawing more buys a better mean ([#119](https://github.com/firejune/rigc/issues/119)), and `OVERDRAW_RATIO` is already 1.5 in [`src/check.ts`](../src/check.ts) against a corpus that spans 0.852–1.069 on 62 of 64 sets |
+| **G3** | [per-frame motion](GATE.md#g3-per-frame-motion), in **every** set | `pendulum` is attributed in every frame of both sets; `ball` attempt 2 posts agreement on all 44 and all 87 adjacent pairs. spineboy posts **14** disagreements at attempt 2 and **3** at attempt 3 — a limb that teleports, a hold that is not held, a one-frame event that never fires. The overdraw half is not leniency but a hole plugged: `mae`'s denominator is the union, so drawing more buys a better mean ([#119](https://github.com/rig-c/core/issues/119)), and `OVERDRAW_RATIO` is already 1.5 in [`src/check.ts`](../src/check.ts) against a corpus that spans 0.852–1.069 on 62 of 64 sets |
 | **G4** | [the shot inventory](GATE.md#g4-the-shot-inventory) | count and names are the least deniable facts here and both are granted outright: the brief describes each shot the author is to build. The length is granted too, but only *to the grid it was rendered on*, which is why the limb is a tolerance and not a ratio — the 🧾 derivation below, and 1/12 s is the figure in practice everywhere on this ladder. v1 read `animations.duration` **1.000** instead, and that number is `bench`'s own 1/60 s agreement: finer than the frames can resolve at every rate the ladder commits, so it failed two rungs on a residual no reading of the frames could have decided |
 | **G5** | [the drawn inventory, name-agnostically](GATE.md#g5-the-drawn-inventory-name-agnostically) | a part the reference draws and the candidate does not is the one structural fact a client watching the shot reports. These are the only two structural measures in `bench`'s table that a *count* alone decides — every other one is keyed on a name, on an attachment kind, on a key density or on a constraint. Cleared candidates post **1.000** on both (rung 3, `pendulum`), and so does `ball` attempt 2; the floor is set from the largest rig measured, spineboy attempt 3's **0.952 / 0.931**, so that a character-scale rig clears on the structure its own entry calls *the editor's skeleton* and the rung is decided on motion, which is the half that entry says is open |
 | **G7** | [the whole shot, on a set whose frames are a contact sheet](GATE.md#g7-the-whole-shot-on-a-set-whose-frames-are-a-contact-sheet) | new in v2, from the observable #36 added. A **ratio inside one sheet** rather than a level, because a sheet MAE is an MAE and *the MAE decides nothing across rungs or framings* — numerator and denominator here are the same measurement in the same box on the same plate, so the clause asks the only question that survives the doctrine: **is the sheet flat?** §9.2 already reads it that way — *"flat is framing or art, a spike is timing at that moment"*. The 🧾 derivation below carries the corpus |
@@ -1094,7 +1094,7 @@ on the widest of those three separations, and **a second candidate landing betwe
 the argument for revisiting the number.**
 
 ➡️ **That trigger fired, and the ruling of 2026-08-29 is that the number stands** —
-[#193](https://github.com/firejune/rigc/issues/193), under *Gate v2.2* below. 📌 **Which
+[#193](https://github.com/rig-c/core/issues/193), under *Gate v2.2* below. 📌 **Which
 candidate a tightening would find first is a fact about the corpus and not about this
 clause, so it is no longer asserted here**: the ranking is in *The clause margins* under
 **Status**, which every adjudication updates. Two sentences of that kind used to close this
@@ -1241,10 +1241,10 @@ re-inspection is taken in the same pass, under *Status*.
 #### Gate v2.2 — G2's per-slot limb, and two rulings released beside it (2026-08-29)
 
 🆕 **The owner's rulings of 2026-08-29**, on the three items the graduation milestone left in
-the decision queue: [#198](https://github.com/firejune/rigc/issues/198), the per-slot gap
+the decision queue: [#198](https://github.com/rig-c/core/issues/198), the per-slot gap
 rung 7 attempt 2 recorded as its owner item 2;
-[#193](https://github.com/firejune/rigc/issues/193), G7's own revisit trigger, fired; and
-[#207](https://github.com/firejune/rigc/issues/207), the *finds-X-first* lines.
+[#193](https://github.com/rig-c/core/issues/193), G7's own revisit trigger, fired; and
+[#207](https://github.com/rig-c/core/issues/207), the *finds-X-first* lines.
 **Exactly one of the three is a clause change** — (a). The other two are a threshold **held**
 and a bookkeeping rule, recorded here because all three were decided in one deliberation and
 released together. **No threshold moves, no clause is renumbered, and no measure's definition
@@ -1319,7 +1319,7 @@ clause — so it is the first half of the asymmetry and re-inspects immediately 
 waiting for a bump. The milestone is the same one rule 5 point 3 names for a release: the
 ladder closing.
 
-**(b) G7's 3.5× stands — [#193](https://github.com/firejune/rigc/issues/193) closes.** The
+**(b) G7's 3.5× stands — [#193](https://github.com/rig-c/core/issues/193) closes.** The
 trigger G7's 🧾 wrote for itself — *a second candidate landing between them* — has fired
 twice: rung 7 attempt 1's `fall-in@24fps` at **3.041**, on a candidate that then failed G2,
 and attempt 2's `fall-in@30fps` at **2.923**, on a candidate that holds a **PASS**. The
@@ -1349,7 +1349,7 @@ every reading available. What would move the number is a candidate a reading cal
 *inside* the bar, or a **sheet-scale change measure** — and the second is an instrument
 question, which rule 3 keeps out of a gate version.
 
-**(c) A margin is a table, not a sentence — [#207](https://github.com/firejune/rigc/issues/207)
+**(c) A margin is a table, not a sentence — [#207](https://github.com/rig-c/core/issues/207)
 closes.** Rule 2 used to close G7's derivation with *"a tightening of G7 finds rung 6 first,
 the way a tightening of G2 finds rung 5 first."* **Both halves went false within three days,**
 and neither failure was a mistake in the sentence: G7's when rung 7 attempt 2 landed at 2.923
@@ -1369,15 +1369,15 @@ draws between a clause statement and its derivation: one is live, one is dated.
 #### Gate v2.3 — the read-down's framing, and the measured-unobservable kind (2026-09-02)
 
 🆕 **The owner-delegate's rulings of 2026-09-02**, on the two clause questions rung 7's records
-filed hours apart: [#256](https://github.com/firejune/rigc/issues/256) — **kind 4 does not name
+filed hours apart: [#256](https://github.com/rig-c/core/issues/256) — **kind 4 does not name
 the framing its control is measured at** — raised by the PR #254 instrument re-inspection; and
-[#258](https://github.com/firejune/rigc/issues/258) — **the four kinds cannot credit a slot the
+[#258](https://github.com/rig-c/core/issues/258) — **the four kinds cannot credit a slot the
 frames cannot make attributable** — raised by the attempt-3 adjudication. **Four rulings: three
 are clause text and the fourth is the re-inspection they owe.** **No threshold moves, no clause
 is renumbered, and no measure's definition or recorded figure changes.** The statements are on
 the card, [GATE.md](GATE.md#g2-worst-attributable-slot-drift); what follows is their derivation.
 
-⭐ **All four rest on one sentence of rule 1, which is [#153](https://github.com/firejune/rigc/issues/153)'s
+⭐ **All four rest on one sentence of rule 1, which is [#153](https://github.com/rig-c/core/issues/153)'s
 founding reading of what a pass is.** *"The test is not is this measure hard? but could any
 reading of the frames have decided it?"* — structure that is **unobservable by construction** is
 reported as figures and **never blocks a pass**, and the leniency that buys is **for
@@ -1396,7 +1396,7 @@ attempts** on one slot, and attempt 3 measured what attempts 1 and 2 rediscovere
 the part has no reading here. ⇒ **Same shape as `drop` before v2.1** — a rung whose queue item
 is a clause decision rather than a fourth attempt.
 
-**(a) Kind 4 names its framing — [#256](https://github.com/firejune/rigc/issues/256) closes.**
+**(a) Kind 4 names its framing — [#256](https://github.com/rig-c/core/issues/256) closes.**
 ⭐ **A read-down that rests on another instance of the same part requires that instance to be
 attributable at the framing the verdict is read in — the declared box, which is the framing the
 instrument now takes by itself wherever a set can be measured in it.**
@@ -1414,7 +1414,7 @@ a cross-framing control — was refused on *What never gates*' own ground: kind 
 so a cross-framing kind 4 would compare two figures the gate has already declared
 incomparable.
 
-**(b) A fifth kind — the measured-unobservable slot — [#258](https://github.com/firejune/rigc/issues/258)
+**(b) A fifth kind — the measured-unobservable slot — [#258](https://github.com/rig-c/core/issues/258)
 closes.** ⭐ **A slot that draws in a measured set and is attributable in no frame of any set
 reads down by name when BOTH halves hold, each measured and each quoted:**
 
@@ -1494,9 +1494,9 @@ becomes the habit.
 
 #### Gate v2.4 — the sampler basis adopted, and G3's one-pixel edge (2026-09-03)
 
-🆕 **The rulings of 2026-09-03**, on the deliberation [#309](https://github.com/firejune/rigc/issues/309)
-opened by the [PR #308](https://github.com/firejune/rigc/pull/308) re-inspection and extended by the
-run-2 adjudication ([PR #311](https://github.com/firejune/rigc/pull/311)). **Six inputs, and they are
+🆕 **The rulings of 2026-09-03**, on the deliberation [#309](https://github.com/rig-c/core/issues/309)
+opened by the [PR #308](https://github.com/rig-c/core/pull/308) re-inspection and extended by the
+run-2 adjudication ([PR #311](https://github.com/rig-c/core/pull/311)). **Six inputs, and they are
 one deliberation rather than six, because the first decides the ground the rest are read on.** Four of
 the rulings are clause or fixture text, one is a sequencing confirmation, and the sixth is the
 re-inspection they owe. **No threshold moves, no clause is renumbered, and no measure's definition or
@@ -1514,7 +1514,7 @@ re-rendered under the post-#301 sampler and committed, so the reference and the 
 one instrument again.** Three grounds, and the third is why *"leave it alone"* was not available.
 
 - ⭐ **The post-#301 sampler is the more faithful instrument, and an honest instrument is allowed to
-  cost standing records.** That is the [PR #255](https://github.com/firejune/rigc/pull/255) precedent
+  cost standing records.** That is the [PR #255](https://github.com/rig-c/core/pull/255) precedent
   in its own words: an instrument that decides a verdict at its own noise floor is reported in full
   and the verdict is not quietly moved underneath it. #301 fixed a real defect — a region edge drew a
   dark rim because `bilinear` interpolated in straight-alpha space — and the corpus the ladder scores
@@ -1546,7 +1546,7 @@ checkout that then reads them. **And the upstream examples stay fetched and neve
 adoption replaces rendered PNGs of the examples, not the examples.
 
 **(b) G3's categorical limb gains a quantisation guard, and the branch that fired is B —
-[#309](https://github.com/firejune/rigc/issues/309) input 2.** The deliberation was instructed to find
+[#309](https://github.com/rig-c/core/issues/309) input 2.** The deliberation was instructed to find
 the **derivation** of the tolerance before touching anything, and to repair the clause only on the
 ground that derivation supports. ⇒ **The search came back empty, which is itself the finding.**
 
@@ -1636,7 +1636,7 @@ only within the tolerance and whose moving side clears it by 20 px — such a pa
 clause whose verdict a resample can flip in either direction.
 
 **(c) Kind 5's ceiling admits a second quantity, and the form of the bar is now stated per quantity —
-[#309](https://github.com/firejune/rigc/issues/309) input 5.** ⭐ **A measured ceiling may be stated in
+[#309](https://github.com/rig-c/core/issues/309) input 5.** ⭐ **A measured ceiling may be stated in
 **visibility share** (as v2.3 wrote it) or in **`check`'s own contrast against required confidence**,
 whichever the evidence actually measures. **Both halves of kind 5 stay mandatory.**
 
@@ -1684,7 +1684,7 @@ across the basis change the way a geometric one is: spineboy's `rear-thigh` has 
 moves with the reach the matcher's best offset lands at. ⇒ **A verdict quoting this quantity states
 its basis**, exactly as v2.3's ruling (c) makes it state its framing, and for the same reason.
 
-**(d) G2's per-slot limb gains a declared per-chain rollup — [#309](https://github.com/firejune/rigc/issues/309)
+**(d) G2's per-slot limb gains a declared per-chain rollup — [#309](https://github.com/rig-c/core/issues/309)
 input 6. A reporting form, and not a bar.** ⭐ **A verdict may declare a rollup once per bone chain and
 let the itemised blanks on that chain cite it, instead of restating chain-level facts one blank at a
 time.** **Kind 2's bounding is the model** — what a rollup carries is exactly what a kind-2 read-down
@@ -1704,8 +1704,8 @@ evidence stated elsewhere in the same verdict. And it does not shorten what half
 for: an independent sweep, a known-answer control and a draw order settled by the frames are per-slot
 facts and no rollup carries them.
 
-**(e) `errBilinear` ([#306](https://github.com/firejune/rigc/issues/306)) lands after this release, and
-v2.4 does not include it — [#309](https://github.com/firejune/rigc/issues/309) input 3.** Its own
+**(e) `errBilinear` ([#306](https://github.com/rig-c/core/issues/306)) lands after this release, and
+v2.4 does not include it — [#309](https://github.com/rig-c/core/issues/309) input 3.** Its own
 sequencing constraint — *not before the from-zero run 2 and its adjudication conclude* — is now met,
 and its direction was already decided: premultiply it, **with the re-baseline of every figure quoting
 a pose or chainfit residual in the same PR**. ⇒ **It lands on the basis (a) adopts**, which is the one
@@ -1713,7 +1713,7 @@ thing #309 had to settle for it, and it changes no ladder clause: no gated measu
 residual, and this sweep leaves pose and chainfit untouched.
 
 **(f) The reference README's cancellation claim is repaired alongside adoption —
-[#309](https://github.com/firejune/rigc/issues/309) input 4.**
+[#309](https://github.com/rig-c/core/issues/309) input 4.**
 [`bench/reference/README.md`](../bench/reference/README.md) told a reader that *"the reference and the
 candidate go through the same code, so the filter cancels out of every number `check` reports"* — true
 when written, false from #301 until (a). ⇒ It is rewritten to say **what cancels, what does not, and
@@ -1759,8 +1759,8 @@ stays true of gate v1.
 ⇒ **So the instruments are finished before the adjudicating starts, not after.**
 Fixing a measure after a verdict reopens the verdict, which is why gate v1 is written
 down before the pass over the existing runs rather than during it, and why
-[#146](https://github.com/firejune/rigc/issues/146), [#36](https://github.com/firejune/rigc/issues/36)
-and [#37](https://github.com/firejune/rigc/issues/37) are landed before it. Each gate
+[#146](https://github.com/rig-c/core/issues/146), [#36](https://github.com/rig-c/core/issues/36)
+and [#37](https://github.com/rig-c/core/issues/37) are landed before it. Each gate
 version is recorded under *Measure changes*, and 🚫 **no `bench.json` is ever
 rewritten** — a run's file is that run's own record, and a re-inspection that
 disagrees with it says so in prose beside the recomputation.
@@ -1770,7 +1770,7 @@ disagrees with it says so in prose beside the recomputation.
 The order in *The order* above is unchanged; what follows is the sequence the
 remaining work is taken in.
 
-1. **Guide debt first** — [#138](https://github.com/firejune/rigc/issues/138)–[#142](https://github.com/firejune/rigc/issues/142),
+1. **Guide debt first** — [#138](https://github.com/rig-c/core/issues/138)–[#142](https://github.com/rig-c/core/issues/142),
    the five defects spineboy attempt 3 filed. They change no stored score, so they can
    run alongside the instrument fixes: different files, no interaction.
 2. **The cheap rungs, bottom-up, on the matured guide and the finished instruments** —
@@ -1809,7 +1809,7 @@ remaining work is taken in.
    > pass over that brief.
    > **Nothing on this ladder is now open on a gate question.** Verdicts in *The gate-v2.1
    > re-inspection*.
-   > ➡️ **That second pass landed on 2026-08-27** ([#14](https://github.com/firejune/rigc/issues/14)):
+   > ➡️ **That second pass landed on 2026-08-27** ([#14](https://github.com/rig-c/core/issues/14)):
    > the brief is **revision 2, verified by a third party**, and rung 7 is **runnable** —
    > the queue is one unattempted rung with nothing procedural left in front of it. Its
    > status stays ⬜ because no candidate exists, not because anything is blocked.
@@ -1829,9 +1829,9 @@ remaining work is taken in.
    > the failing drift was placement rather than mechanism. ⇒ **What remains of this rule is
    > item 3, the graduation exam.** Verdicts in *Rung 7, attempt 2*.
    > ➡️ **And the list is not empty any more — 2026-09-02.** The
-   > [#254](https://github.com/firejune/rigc/pull/254) instrument re-inspection fails
+   > [#254](https://github.com/rig-c/core/pull/254) instrument re-inspection fails
    > `2026-08-28-rung7-2` on **G2**, so **rung 7 is queued again** and
-   > [#14](https://github.com/firejune/rigc/issues/14) is re-opened. ⚠️ **This one is a
+   > [#14](https://github.com/rig-c/core/issues/14) is re-opened. ⚠️ **This one is a
    > re-climb on a clause reading rather than on a number**: the drift figure is *inside* the
    > bar at 3.94 px, and what fails is `cape-back`'s read-down, whose kind-4 control does not
    > exist once the frames' own box is taken. By item 2's test the residual is still
@@ -1849,7 +1849,7 @@ remaining work is taken in.
    > unobservable is adjudicated, not re-run."* It has now been adjudicated three times and fails
    > each time, because the clause asks for a read-down the four kinds cannot supply for a slot
    > the frames will not let the matcher read. **The queue item is a clause decision —
-   > [#258](https://github.com/firejune/rigc/issues/258) — not a fourth attempt**, which is the
+   > [#258](https://github.com/rig-c/core/issues/258) — not a fourth attempt**, which is the
    > shape rung 1's `drop` had before v2.1 took its clause decision. 🚫 The FAIL stands
    > meanwhile; a rung is not cleared by the reason it cannot be cleared. Verdict in *Rung 7,
    > attempt 3*, and in *The attempt-3 adjudication* under **Status**.
@@ -1858,7 +1858,7 @@ remaining work is taken in.
    > 4 must have its control at the framing the verdict is read in (#256), and a **fifth kind**
    > credits a slot whose attributability is **measured** to be capped below the bar when
    > everything observable about it is independently verified strict (#258). `2026-09-02-rung7-3`
-   > satisfies both halves of that kind on evidence [#259](https://github.com/firejune/rigc/pull/259)
+   > satisfies both halves of that kind on evidence [#259](https://github.com/rig-c/core/pull/259)
    > had already reproduced — ceiling **5–19 %** against a **66 %** bar, placement pinned to
    > **≤ 2–3 px** with a known-answer control, draw order separating **×8.44–15.30** — so its
    > `cape-back` reads down, its `sack` already read down under kind 1, and with the other six
@@ -1868,10 +1868,10 @@ remaining work is taken in.
    > this rule is item 4** — the ladder is complete again and the project's question changes.
    > Verdicts in *Rung 7, attempt 3* and in *The gate-v2.3 re-inspection* under **Status**.
 3. **spineboy `ess` is the graduation exam**, taken last, on the matured guide.
-   `pro`'s tool gate is gone — [#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)
+   `pro`'s tool gate is gone — [#87](https://github.com/rig-c/core/issues/87)–[#89](https://github.com/rig-c/core/issues/89)
    shipped 2026-08-29 (PR #233, in v0.7.0) and the transcription reads 1.000 on every measure
    (#239) — but authoring `pro` stays **not** a graduation requirement
-   ([#16](https://github.com/firejune/rigc/issues/16)):
+   ([#16](https://github.com/rig-c/core/issues/16)):
    it promotes when a user's rig needs those timelines, not to finish a ladder.
    > ➡️ **Taken on 2026-08-28, on the matured guide and brief revision 4, and not passed.**
    > `2026-08-28-spineboy-1` meets **G1, G3, G4, G5 and G7** and fails **G2 alone**, at 7.86
@@ -1893,7 +1893,7 @@ remaining work is taken in.
 4. **Then the project's question changes.** Once the graduation gate passes, *does it
    match the editor?* — a reference-bound question, and the only kind this ladder can
    ask — gives way to *is it usable without a reference?* The usability track
-   ([#151](https://github.com/firejune/rigc/issues/151), [#152](https://github.com/firejune/rigc/issues/152))
+   ([#151](https://github.com/rig-c/core/issues/151), [#152](https://github.com/rig-c/core/issues/152))
    is that phase's backlog, and the ladder's rungs stay as regression gates for tool
    and method changes.
 
@@ -1904,7 +1904,7 @@ a rung when somebody's actual rig needs something else. The ladder measures the 
 
 ### 5. Cadence — a gate is released, not drifted
 
-Decided 2026-08-25, issue [#160](https://github.com/firejune/rigc/issues/160). Rule 3
+Decided 2026-08-25, issue [#160](https://github.com/rig-c/core/issues/160). Rule 3
 says a gate change re-inspects; this rule says **when**, and it exists because
 re-inspection is cheap while *verdict flapping* is not. Re-scoring the stored candidates
 costs about a minute and never a re-authoring; what a drifting gate actually spends is
@@ -1993,7 +1993,7 @@ references were.
 | 5 | **5** | `5-squash-and-stretch` | `ess` | **`drawOrder` timeline**; `inherit: onlyTranslation`; non-unit setup scale | ✅ *gate v2, 2026-08-26* — re-climbed on `2026-08-26-rung5-1`. ⚠️ **Re-inspected under gate v2.4 on the adopted reference basis, 2026-09-03, and the pass holds on the clause**: its `ball` f0075→f0076 pair is the other **G3** flip, the mirror of rung 3's — the candidate there is exactly still and the re-rendered reference moves **one pixel by 9/255**, one quantisation step past the tolerance, which is the other edge of v2.4 (b)'s guard |
 | 6 | **6** | `6-arcs` | `pro` | **transform constraints** (static); **weighted meshes from authored geometry**; mesh `edges` | ✅ *gate v2, 2026-08-25* — re-inspected, holds |
 | 7 | **8** | `8-follow-through` | `ball`, `pendulum` | nothing — both features arrived at rung 6 | ✅ *gate v2, 2026-08-25* — both skeletons, re-inspected |
-| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.3, 2026-09-02* — on **attempt 3** (`2026-09-02-rung7-3`), G2 **3.94 px** at 1.53×, `cape-back`'s blank read down under v2.3's **fifth kind** (measured ceiling **5–19 %** against a **66 %** bar; placement pinned **≤ 2–3 px** with a known-answer control; draw order **×8.44–15.30**). ⚠️ Its `fall-in@30fps` sheet is G7's **closest standing figure** — **3.226×** as read that day, **3.228×** at a **1.0842×** margin under the post-#301 sampler (*The PR #301 instrument re-inspection*, 2026-09-03); *The clause margins* carries the current one. 🗓️ Dated history: passed *gate v2.1/v2.2* on `2026-08-28-rung7-2` (G2 7.33 → 2.76 px), **withdrawn 2026-09-02** under the [#254](https://github.com/firejune/rigc/pull/254) instrument, and attempt 3 **FAILed gate v2.2** the same day on the read-down enumeration — each verdict stays true of the gate it was read against. Frames **local-only** |
+| 8 | **7** | `7-anticipation` | `sack-pro` | **physics timelines**; a **keyed** transform timeline; **deform**; 20 physics constraints | ✅ *gate v2.3, 2026-09-02* — on **attempt 3** (`2026-09-02-rung7-3`), G2 **3.94 px** at 1.53×, `cape-back`'s blank read down under v2.3's **fifth kind** (measured ceiling **5–19 %** against a **66 %** bar; placement pinned **≤ 2–3 px** with a known-answer control; draw order **×8.44–15.30**). ⚠️ Its `fall-in@30fps` sheet is G7's **closest standing figure** — **3.226×** as read that day, **3.228×** at a **1.0842×** margin under the post-#301 sampler (*The PR #301 instrument re-inspection*, 2026-09-03); *The clause margins* carries the current one. 🗓️ Dated history: passed *gate v2.1/v2.2* on `2026-08-28-rung7-2` (G2 7.33 → 2.76 px), **withdrawn 2026-09-02** under the [#254](https://github.com/rig-c/core/pull/254) instrument, and attempt 3 **FAILed gate v2.2** the same day on the read-down enumeration — each verdict stays true of the gate it was read against. Frames **local-only** |
 | 9 | **spineboy** | `spineboy` | `ess` (+ `pro`, stretch) | **IK**, **events**, **bounding box**, **clipping**, **unweighted meshes**, and scale (`ess`: 18 bones, 20 slots, 8 animations · `pro`: 67 bones, 52 slots, 11 animations) | 🎓 ✅ *gate v2.1, 2026-08-28* — `ess` cleared on `2026-08-28-spineboy-2`, every clause PASS/SKIP; worst drift **5.55 px** (⚠️ 1.08×, the ladder's thinnest **G2** margin; *The clause margins* holds the current sweep's figure and the ranking, in which **G5's 1.038× is thinner still**). ⚠️ **Inherited attempt** under protocol item 10 — its figures measure the lever; the **from-zero trajectory is attempts 1–4** (18.8 → 14.6 → 7.86 px; 14 → 3 → 0 disagreements) · `pro` ⬜, not a graduation requirement |
 
 ### The gate-v2.2 re-inspection — 2026-08-29
@@ -2083,11 +2083,11 @@ all seven read as above over 78 pairs. A blank on the sampled set of a shot read
 at another rate carries no information at all.
 
 ⭐ **Class B — the slot is attributable in no set** (12 slots, 12 of the pairs' distinct
-subjects). These are the case [#198](https://github.com/firejune/rigc/issues/198) named, and
+subjects). These are the case [#198](https://github.com/rig-c/core/issues/198) named, and
 each is written out.
 
 **Rung 7 `sack` — `cape-back`, and it is the limb's worked example.** The read-down is
-[PR #197](https://github.com/firejune/rigc/pull/197)'s, reproduced here to the digit by this
+[PR #197](https://github.com/rig-c/core/pull/197)'s, reproduced here to the digit by this
 pass and now standing as the pattern rather than as one adjudicator's diligence:
 
 - **It is drawn and it is scored.** `cape-back` draws on **all 118** compared frames of all
@@ -2187,7 +2187,7 @@ for a large part owes a third ground**, the way `muzzle` does here.
 ### The PR #254 instrument re-inspection — rung 7 — 2026-09-02
 
 🔴 **A standing pass flips.** The re-inspection rule 3 requires after an instrument-panel
-change ([PR #254](https://github.com/firejune/rigc/pull/254), recorded under *Measure
+change ([PR #254](https://github.com/rig-c/core/pull/254), recorded under *Measure
 changes*), taken over the eleven standing candidates. Ten hold their verdict and one does not:
 **rung 7 `sack` fails G2 and the rung re-opens.** 🚫 **Zero builds and zero authoring, and no run
 directory and no `bench.json` was touched.** Rung 7's frames were rendered again for this pass
@@ -2399,7 +2399,7 @@ rather than merely unhelpful.
 | **G6** the rung | one skeleton, and it does not meet G2 | ❌ |
 
 ⇒ 🔴 **FAIL on G2 alone, and rung 7's status goes ✅ → 🟨.** Issue
-[#14](https://github.com/firejune/rigc/issues/14) **re-opens** on G2, per rule 3's *only the
+[#14](https://github.com/rig-c/core/issues/14) **re-opens** on G2, per rule 3's *only the
 rungs that fail the new gate reopen*. 📌 **A pass is versioned and this does not rewrite one**:
 the gate-v2.1 verdict of 2026-08-28 and the gate-v2.2 re-inspection of 2026-08-29 stay true of
 the instrument they were measured on, and both sections keep their figures and their dates.
@@ -2436,7 +2436,7 @@ and rung 7 is open again.
 2. ⚠️ **G7's guarded margin is now the thinnest on the ladder at 1.085× — but on a candidate
    that no longer holds a pass**, so *The clause margins* does not name it. Rung 7's
    `fall-in@30fps` moves 2.923 → **3.226**, which is **1.085×** inside a bar
-   [#193](https://github.com/firejune/rigc/issues/193) held three days ago partly *because*
+   [#193](https://github.com/rig-c/core/issues/193) held three days ago partly *because*
    tightening it would flip rung 7's and rung 6's passes 0.031 apart. Both halves of that
    reasoning have moved: rung 7 holds no pass to flip, and had it kept one the two would sit
    **0.334** apart rather than 0.031. 🚫 **No threshold is touched and #193 is not re-opened** —
@@ -2470,8 +2470,8 @@ and rung 7 is open again.
 
 🔴 **FAIL on G2 alone, and the rung stays open.** The adjudication of
 [`bench/runs/2026-09-02-rung7-3/`](../bench/runs/2026-09-02-rung7-3/)
-([PR #257](https://github.com/firejune/rigc/pull/257), `8f1f996`), the first attempt authored
-under the [#254](https://github.com/firejune/rigc/pull/254) instrument, against **gate v2.2**.
+([PR #257](https://github.com/rig-c/core/pull/257), `8f1f996`), the first attempt authored
+under the [#254](https://github.com/rig-c/core/pull/254) instrument, against **gate v2.2**.
 Six clauses read PASS or SKIP, every figure the run reported reproduces, and one blank does not
 reach any read-down kind the clause has. 🚫 **Zero authoring: nothing in the run directory,
 no brief, no gate rule and no `src/` was touched, and `bench.json` was not rewritten.**
@@ -2498,7 +2498,7 @@ repository root with **no `--atlas` and no `--viewport` override**:
 | `check` — twelve sets | reproduces [`check.txt`](../bench/runs/2026-09-02-rung7-3/check.txt) **digit for digit**; the only differing lines are the three path lines in the header |
 | `check --all-frames` | reproduces [`check-all-frames.txt`](../bench/runs/2026-09-02-rung7-3/check-all-frames.txt) digit for digit, same three lines |
 | `check --texture-from …/7-anticipation.atlas` | reproduces [`check-texture-from.txt`](../bench/runs/2026-09-02-rung7-3/check-texture-from.txt) digit for digit, same three lines |
-| `bench 7` | matches [`bench.json`](../bench/runs/2026-09-02-rung7-3/bench.json) in **all 10,036 leaves but 133 path strings** — 0 numeric differences. Neither file carries a gate string ([#137](https://github.com/firejune/rigc/issues/137)) |
+| `bench 7` | matches [`bench.json`](../bench/runs/2026-09-02-rung7-3/bench.json) in **all 10,036 leaves but 133 path strings** — 0 numeric differences. Neither file carries a gate string ([#137](https://github.com/rig-c/core/issues/137)) |
 | `validate --profile spine` | **15 PASS, 0 FAIL, 10 SKIP, 14 PROF** |
 | the run's own harness, re-run from `tools/`: `panel-ceiling.ts`, `pin.ts` (`panel`), `draw-order.ts`, `probe-slot.ts` ×2 | all five reproduce `evidence/` **byte for byte**, 0 diff lines each |
 
@@ -2578,7 +2578,7 @@ this rung**, as the #254 re-inspection found: there is no sibling on any chain t
   quotes a **drift**, which *What never gates* calls *"per slot and framing-independent in a way
   the means are not"*, while kind 4 quotes a **per-pixel MAE**, which the same passage says is
   *"not comparable across rungs or across framings"*. That asymmetry is the sharpest thing this
-  pass can add to [#256](https://github.com/firejune/rigc/issues/256).
+  pass can add to [#256](https://github.com/rig-c/core/issues/256).
 
 ⇒ ✅ **`sack`'s blank reads down under kind 1 in both sets.**
 
@@ -2662,7 +2662,7 @@ error here is the rig; `bones.count` 8/31 · all five `constraints.*` **0/24** �
 0.260 · `key_counts` 0.528 (672/1,273) · `curve_kinds` 0.645 · `deform` 0.750.
 
 ⇒ 🔴 **FAIL on G2 alone. Rung 7's status stays 🟨 and issue
-[#14](https://github.com/firejune/rigc/issues/14) stays open on G2.** 📌 **The rung is closer than
+[#14](https://github.com/rig-c/core/issues/14) stays open on G2.** 📌 **The rung is closer than
 it was**: G2's set-level 🕳️ is closed, the blank surface is down from three slots to two, and one
 of the two remaining reads down cleanly. What is left is the single slot both previous attempts
 also left, and it is left for the same reason.
@@ -2671,7 +2671,7 @@ also left, and it is left for the same reason.
 
 1. 🔴 **The clause cannot credit a measured-ceiling slot pinned by independent evidence, and this
    is the candidate that shows what that costs** — filed as
-   [#258](https://github.com/firejune/rigc/issues/258). Attempt 3 supplies, for a slot the
+   [#258](https://github.com/rig-c/core/issues/258). Attempt 3 supplies, for a slot the
    matcher will never name a distance for, (a) a measured ceiling showing **no** rig choice
    attributes it, (b) a placement bound of ≤ 2–3 px from a non-matcher instrument **calibrated on
    a slot whose answer the clause does print**, and (c) build-side proof of its depth. The four
@@ -2679,7 +2679,7 @@ also left, and it is left for the same reason.
    follow from evidence of any quality, which is the shape of an under-specified clause rather
    than of a bad candidate. 🚫 **Not decided here**, and deliberately: a fifth kind is rule 5's
    to batch, and this adjudication would be deciding it on the one reading that turns on it.
-   Same family as [#256](https://github.com/firejune/rigc/issues/256) and, before it, the two
+   Same family as [#256](https://github.com/rig-c/core/issues/256) and, before it, the two
    gaps v2.1 and v2.2 closed.
    > ➡️ **Decided 2026-09-02 as gate v2.3 (b), in the direction this item's second option
    > named. #258 closes.** A **fifth kind** admits a slot whose attributability has a **measured
@@ -2835,7 +2835,7 @@ one slot on this corpus**, which is what a kind written from a single worked cas
 **The candidate is `2026-09-02-rung7-3`, unchanged** — no build, no edit, no re-render beyond
 this pass's own local frames, and nothing in the run directory touched. What changed is the
 clause. ⭐ **Its evidence was already reproduced once**, by
-[PR #259](https://github.com/firejune/rigc/pull/259) on the day it landed; this pass reproduced
+[PR #259](https://github.com/rig-c/core/pull/259) on the day it landed; this pass reproduced
 it **again, independently**, in this worktree:
 
 | The run's own instrument | Re-run here | Result |
@@ -2874,7 +2874,7 @@ reading down under kind 1 G2's per-slot limb is satisfied on all twelve sets.** 
 itself is met at **3.9352 px**, **1.53×** inside; **no set is a 🕳️ HOLE**; and G1, G3, G4, G5 and
 G7 read exactly as the attempt-3 adjudication read them — PR #259's reproduction, re-reproduced
 here. ⇒ 🏁 **The rung's verdict is PASS**, G6 follows, and
-[#14](https://github.com/firejune/rigc/issues/14) closes.
+[#14](https://github.com/rig-c/core/issues/14) closes.
 
 📌 **What this verdict does not rest on.** Not on the ceiling alone — half 2 is what makes it a
 read-down, and a ceiling with an unpinned placement would fail exactly as an unexplained blank
@@ -2892,19 +2892,19 @@ at the file rather than at the sentence about it.
 
 ⚠️ **And what a re-climb inherits, stated because it is now a standing pass's margin.** Rung 7's
 `fall-in@30fps` sheet reads **3.226×**, a **1.085×** margin inside G7 — the closest any standing
-candidate sits to that bar. 🚫 **No threshold is touched and [#193](https://github.com/firejune/rigc/issues/193)
+candidate sits to that bar. 🚫 **No threshold is touched and [#193](https://github.com/rig-c/core/issues/193)
 is not re-opened**: that ruling refused a tightening for want of evidence of unfaithfulness, and
 none has arrived. What has changed is which candidate a future deliberation would read first,
 and *The clause margins* below carries it.
 
 ### The PR #301 instrument re-inspection — the premultiplied sampler — 2026-09-03
 
-**Every standing candidate re-read under the sampler [PR #301](https://github.com/firejune/rigc/pull/301)
+**Every standing candidate re-read under the sampler [PR #301](https://github.com/rig-c/core/pull/301)
 landed, and the committed references' status as a basis settled by measurement.** The
 re-inspection rule 3 requires of an instrument-panel change, taken under rule 5 point 2's
 integrity half: `bilinear` now interpolates in premultiplied space, so what `rigc render` — and
 therefore `check` — computes on a **mixed-alpha tap** moved, and G7's margin was 1.085× when the
-fix landed. Issue [#305](https://github.com/firejune/rigc/issues/305) is the mandate. 🚫 **Zero
+fix landed. Issue [#305](https://github.com/rig-c/core/issues/305) is the mandate. 🚫 **Zero
 builds and zero authoring, no run directory and no `bench.json` touched, and no reference frame
 committed or re-committed** — the sweep's own renders live outside this repository.
 
@@ -3086,7 +3086,7 @@ reasons, and the third is the one that decides it.
    of **one** sampler. A reference rendered by one instrument and a candidate by another is a
    corpus where "exactly" is no longer a property of the rig. ⇒ **That is a clause question, and it
    goes to a deliberation with this measurement attached** — not to an adjudicator's fixture commit.
-   The [PR #255](https://github.com/firejune/rigc/pull/255) precedent is the shape: an instrument
+   The [PR #255](https://github.com/rig-c/core/pull/255) precedent is the shape: an instrument
    that decides a verdict at its own noise floor is reported in full and the verdict is not quietly
    moved underneath it.
 
@@ -3151,7 +3151,7 @@ deliberation.
 
 #### What this pass leaves open
 
-📌 Three items, all of them named in [#305](https://github.com/firejune/rigc/issues/305) so a
+📌 Three items, all of them named in [#305](https://github.com/rig-c/core/issues/305) so a
 deliberation inherits them rather than rediscovering them.
 
 1. **Whether to adopt re-rendered references as the standing basis** — with the measured
@@ -3170,7 +3170,7 @@ release. Item 2: **G3's categorical limb gains a quantisation guard** rather tha
 finding that the 8/255 tolerance **has no derivation** anywhere in the card, the rule or the git
 history; and the margins row **stays a bar at zero** with the ratio-regime figure in a note beside the
 table. Item 3: **`errBilinear` lands after that release, on the adopted basis**, with the re-baseline
-[#306](https://github.com/firejune/rigc/issues/306) already requires of it. ⇒ Verdicts and the sweep
+[#306](https://github.com/rig-c/core/issues/306) already requires of it. ⇒ Verdicts and the sweep
 are under *The gate-v2.4 re-inspection*, and 🚫 **nothing in this section is edited** — every figure
 above stays true of the basis it was read on, which is the point of naming the basis.
 
@@ -3178,7 +3178,7 @@ above stays true of the basis it was read on, which is the point of naming the b
 
 ⭐ **The re-inspection gate v2.4 owes, taken in the same pass that releases it**, under rule 5 point 2's
 integrity half: ruling (a) replaces the reference fixture, which can flip a standing pass — and on the
-raw clause text it flips two. Deliberation and mandate: [#309](https://github.com/firejune/rigc/issues/309).
+raw clause text it flips two. Deliberation and mandate: [#309](https://github.com/rig-c/core/issues/309).
 🚫 **Zero builds and zero authoring, no run directory touched and no `bench.json` rewritten** — every
 figure below is `check` and `validate` re-reading **stored** candidates, which is what rule 3 defines a
 re-inspection to be. What is *not* a re-read is the fixture itself, and that is why it took a ruling.
@@ -3346,7 +3346,7 @@ sentences that used to sit in rule 2.** Those were snapshots written into a rule
 them went false within three days**: G7's when rung 7 attempt 2 landed at 2.923 above rung 6's
 2.892, and G2's when spineboy's 5.55 px displaced rung 5's 5.12. A margin is a fact about the
 **corpus**, which moves whenever a candidate lands; a sentence inside a rule does not.
-Owner ruling 2026-08-29, [#207](https://github.com/firejune/rigc/issues/207); the reasoning is
+Owner ruling 2026-08-29, [#207](https://github.com/rig-c/core/issues/207); the reasoning is
 in *Operating rules* rule 2, under *Gate v2.2* (c).
 
 📌 **Every adjudication updates this table.** It is a named part of *After a run* step 1 in
@@ -3407,14 +3407,14 @@ pair to a disagreement is rung 3 `heavy` f0061 at 19 px against 0 px, excess 19 
 the **1.3333×** it held on `new / old`, because the reference on that pair went still. 📌 **The
 question #308 handed to a deliberation is answered**: the row stays a bar at zero, and the ratio-regime
 figure lives in this note beside it rather than inside the table, on the same reasoning
-[#207](https://github.com/firejune/rigc/issues/207) used to move the others out of rule 2 — it is a
+[#207](https://github.com/rig-c/core/issues/207) used to move the others out of rule 2 — it is a
 fact about the corpus, recomputed, and not a sentence inside a clause.
 
 📌 **The corpus fact a tightening would meet first, stated here and nowhere else.** A tightening
 of **G7** finds **rung 7** first, at 3.2311×, with rung 6's 2.9006× behind it; a tightening of
 **G2** finds **spineboy** at 5.5550 px; a tightening of **G5** finds **rung 2** at 0.882; and a
 tightening of **G3**'s excess floor would find **rung 3** at **19 of 24**. ⇒ This is the claim
-[#207](https://github.com/firejune/rigc/issues/207) deleted from rule 2 and moved here, and its
+[#207](https://github.com/rig-c/core/issues/207) deleted from rule 2 and moved here, and its
 third reversal in five days is the argument for the move: *rung 6 first* was true, then false when
 rung 7 attempt 2 landed, then true again when rung 7 was withdrawn, and went false again on
 2026-09-03. A sentence inside a rule cannot track that; a recomputed table can. ⭐ **Two readings in
@@ -3426,7 +3426,7 @@ panel list does not name.
 📌 **G5's 1.038× is still the thinnest margin on the ladder and still the least discussed.**
 Rung 2's `ess` draws 15 of the reference's 17 slots and attachments and takes no deduction, so
 the clause clears by two parts. G2's has two owner items written about it, G7's has
-[#193](https://github.com/firejune/rigc/issues/193), and G5's has none.
+[#193](https://github.com/rig-c/core/issues/193), and G5's has none.
 
 ⚠️ **And G7's row is now a figure that used to sit outside this table.** The #254 re-inspection
 recorded rung 7's **3.226×** precisely so *"a re-climb inherits it rather than rediscovering
@@ -3486,7 +3486,7 @@ v2.1's (a) and (b).
   the set, (b) leaves G3 with no object and reads SKIP on G7's precedent. `drop` is
   **PASS · PASS · SKIP · PASS · PASS · SKIP** across G1–G5 and G7, `balls` clears every
   clause outright, so **G6 is met on both skeletons and issue
-  [#10](https://github.com/firejune/rigc/issues/10) closes.** ⚠️ **A pass is versioned**:
+  [#10](https://github.com/rig-c/core/issues/10) closes.** ⚠️ **A pass is versioned**:
   this is a **gate-v2.1** pass, and the 2026-08-26 verdict that read *not adjudicable*
   stays true of gate v2 — it is not withdrawn and its section is not rewritten.
 - **Nothing else moves.** Rungs 2, 3, 4, 5, 6 and 8 are re-inspected and hold; spineboy
@@ -3513,7 +3513,7 @@ therefore unchanged **and unchanged by the same route** — the four sheets flat
 candidates were re-read **from the repository root with no `--atlas` override** and all ten
 load. The 2026-08-26 batch could not say that: the rung-5 candidate's atlas named its pages
 relative to its author's worktree and had to be measured through an override
-([#181](https://github.com/firejune/rigc/issues/181), repaired as a labelled amendment the
+([#181](https://github.com/rig-c/core/issues/181), repaired as a labelled amendment the
 same day). ⇒ Rule 3's *"a re-read of stored candidates"* is now literally executable on
 every candidate that holds a verdict.
 
@@ -3528,7 +3528,7 @@ every candidate that holds a verdict.
    distinguish rung 4 from rung 6 are the same defect at two magnitudes. Both are recorded
    under *The gate-v2 re-inspection* and neither is touched here.
    > ➡️ **The first of the two is ruled, 2026-08-29: the 3.5× stands**
-   > ([#193](https://github.com/firejune/rigc/issues/193), closed) — the trigger fired on rung 7
+   > ([#193](https://github.com/rig-c/core/issues/193), closed) — the trigger fired on rung 7
    > attempt 2's 2.923× and the deliberation held the number, because a tightening would flip
    > two standing passes 0.031 apart and nothing on the corpus has been read as unfaithful
    > inside the bar. The **second** — a tile-level change measure that would separate the
@@ -3544,7 +3544,7 @@ every candidate that holds a verdict.
 
 **The four candidates authored on 2026-08-26 — rungs 1, 3, 4 and 5 — judged clause by
 clause against gate v2, unchanged.** This is the closing step of the phase-3 worklist
-([#153](https://github.com/firejune/rigc/issues/153)) and it is the third pass of this
+([#153](https://github.com/rig-c/core/issues/153)) and it is the third pass of this
 kind, after *The first gate-v1 adjudication* and *The gate-v2 re-inspection* below.
 🚫 **Zero builds and zero authoring**, and **no run directory and no `bench.json` was
 touched.** `check` re-read the five stored candidates over all 16 committed sets and the
@@ -3568,9 +3568,9 @@ verdicts are therefore this pass's, not theirs.
 
 **G6, and what it decides.** Rungs 3, 4 and 5 are one skeleton each and each meets G1–G5
 with G7 met or skipped, so rule 3's *close on pass* applies and **issues
-[#12](https://github.com/firejune/rigc/issues/12),
-[#17](https://github.com/firejune/rigc/issues/17) and
-[#18](https://github.com/firejune/rigc/issues/18) close with this pass.** **Rung 1 does
+[#12](https://github.com/rig-c/core/issues/12),
+[#17](https://github.com/rig-c/core/issues/17) and
+[#18](https://github.com/rig-c/core/issues/18) close with this pass.** **Rung 1 does
 not close, and `balls` is not why**: `balls` clears every clause outright, and the rung
 turns on `drop`'s G3, which this gate cannot read either way. G6 does not care which of a
 rung's two skeletons is the one it cannot pass.
@@ -3679,7 +3679,7 @@ of cracked dry earth, in two layers"*, licensed by the fifth reading of the seal
 `balls`'s **3.250 s** is what both its `frames.json` sidecars state, with the committed
 frame counts bounding the reference to `[3.2292, 3.2708]` without the leak. ⇒ **No figure
 in this rung's row carries a caveat, and the fix is the one the run asks for** —
-[#174](https://github.com/firejune/rigc/issues/174), splitting the clause statements from
+[#174](https://github.com/rig-c/core/issues/174), splitting the clause statements from
 the derivations that quote measured figures. Contrast the 2026-08-23 spineboy leak, which
 did carry a reference-side `events` block and does caveat that run's name-matched figures.
 
@@ -3707,7 +3707,7 @@ did carry a reference-side `events` block and does caveat that run's name-matche
    directory**, per rule 3's 🚫. Every figure quoted for rung 5 is from that read and matches
    the run's own record to the digit. A run's artifact that only its author's directory
    layout can load is a reproducibility defect in the record rather than in the candidate.
-   > ➡️ **Repaired the same day**, as [#181](https://github.com/firejune/rigc/issues/181)
+   > ➡️ **Repaired the same day**, as [#181](https://github.com/rig-c/core/issues/181)
    > and a labelled amendment commit under the owner's ruling of 2026-08-26 — the page paths
    > only, verified from the repository root against every figure above, and recorded as an
    > *Amendment* in that run's README. The protocol rule that licenses this narrow class of
@@ -3819,7 +3819,7 @@ left two clause readings open; v2 answers one and a half, and adds two of its ow
 ### The first gate-v1 adjudication — 2026-08-25
 
 **Every stored candidate re-scored on the instruments finished in
-[#159](https://github.com/firejune/rigc/pull/159), and every rung judged against gate
+[#159](https://github.com/rig-c/core/pull/159), and every rung judged against gate
 v1 clause by clause.** Zero builds: `check` re-read the sixteen committed candidates
 over all 86 compared sets, `bench` re-ran `validate --profile spine` and the measure
 table on each, and **no `bench.json` and no run directory was touched**. Where a
@@ -3861,8 +3861,8 @@ stored candidate to re-score, and an unattempted rung is not a failing one.
 > exception in *Licence, per rung*, and the rung now has a brief — revision 1,
 > **unverified**, so still no run and still ⬜. What this pass recorded stays true of
 > the day it was taken: on 2026-08-25 the rung was **unattemptable**, and that is the
-> state the exception was ruled against ([#3](https://github.com/firejune/rigc/issues/3),
-> [#14](https://github.com/firejune/rigc/issues/14)).
+> state the exception was ruled against ([#3](https://github.com/rig-c/core/issues/3),
+> [#14](https://github.com/rig-c/core/issues/14)).
 
 ⚠️ **Rung 3's ✅ does not survive gate v1, and that is the pass's largest finding.**
 The rung was cleared on 2026-08-23 by a commander's reading, two days before a pass
@@ -4021,7 +4021,7 @@ runs found a brief claim wrong that a client watching the shot could have caught
 and the fix each time was to re-measure the pixels, not to trust the prose. The
 second attempts add a fourth and a worse kind — spineboy's revision 2, which
 *carries* a third-party pass, contradicted itself on which hand holds the gun
-([#111](https://github.com/firejune/rigc/issues/111)) — so a verification pass
+([#111](https://github.com/rig-c/core/issues/111)) — so a verification pass
 catches wrong claims and does not yet catch inconsistent ones. That one took a
 *second* third-party pass to close: revision 3 (2026-08-24) re-derived the arm from
 the frames rather than choosing a side, and the gun is in the **far** hand, as both
@@ -4279,7 +4279,7 @@ the 2026-08-24 pilot posts **5** and **1**. So the rung has no stored candidate 
 meets gate v1, and a re-climb — not a re-reading — is what would clear it.
 
 ⚠️ **None of this is an artefact of the instrument change.** Re-run at
-[`53a57e9`](https://github.com/firejune/rigc/commit/53a57e9), the commit before #159,
+[`53a57e9`](https://github.com/rig-c/core/commit/53a57e9), the commit before #159,
 attempt 2 reads the same **7** and the same 0.84 px, attempt 1 the same **9** and
 **2**. What changed on 2026-08-25 is that a pass definition exists and this column is
 inside it; the figures were on disk all along, and *Operating rules* derived G3's floor
@@ -4453,7 +4453,7 @@ slots ambiguous` and the run had an MAE and nothing else for that measure. Rough
 half of the reported error was `check`'s own framing, not the rig's motion — pinning
 the viewport so both sides shared one grid took `wave-by-hand` from 49.45 to 22.96.
 Both findings fed directly into #34, closed the same day by
-[#39](https://github.com/firejune/rigc/pull/39) — the new framing fits drawn pixels
+[#39](https://github.com/rig-c/core/pull/39) — the new framing fits drawn pixels
 instead of quad corners, and the new slot matcher's own description names this
 rung's drift table as one of the two cases it fixes. The author also over-keyed
 against the rung's own gate line — 639 keys against the 470 the gate line
@@ -4550,7 +4550,7 @@ scaling, limb lengthening, centroid alignment — all tried, all measured worse 
 better, all reverted). The often-quoted "48 px ball drift" was a matcher artefact,
 not a rig defect: the ball has no connected component of its own on 29 of 79
 frames (touching a ledge, or nearest to the floating girder instead), and on the
-50 frames where it does have one, mean drift is 0.35 px — [#39](https://github.com/firejune/rigc/pull/39)'s
+50 frames where it does have one, mean drift is 0.35 px — [#39](https://github.com/rig-c/core/pull/39)'s
 own description names this exact number as gone under the new matcher.
 
 **Reading — the commander's call, 2026-08-23.** Residual: key density (387 vs
@@ -4721,7 +4721,7 @@ unchanged.** 📌 This rung also holds the ladder's **thinnest margin on any cla
 ### Rung 6 — attempted, not cleared (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung6-1/`](../bench/runs/2026-08-23-rung6-1/), clean
-(PR #51, merged [`32dda40`](https://github.com/firejune/rigc/commit/32dda40540efcda72f22f8225957a91cc1a0ea35))
+(PR #51, merged [`32dda40`](https://github.com/rig-c/core/commit/32dda40540efcda72f22f8225957a91cc1a0ea35))
 — ~14 builds, one red (`A00_ROUNDTRIP_PARSE`: a mesh/atlas name mismatch — the
 placeholder was named `trail`, its image `tail.png`, and R5's auto-`path` fill
 turns out to be region-only, not mesh-aware). Authored by Claude Opus 5 (1M
@@ -4744,7 +4744,7 @@ transform constraints leave no trace in rendered pixels, so none were guessed.
 4 passes); pinned to `frames.json`'s own box, MAE **3.50**, worst attributable
 slot drift 4.1 px. (Those are the figures the run reported and they stand as its
 record. The gap between them was `check`'s own, not the rig's: it is
-[issue #52](https://github.com/firejune/rigc/issues/52), and since it closed the
+[issue #52](https://github.com/rig-c/core/issues/52), and since it closed the
 same artifacts read **3.50 unpinned** — the frames' own box is now used whenever
 the candidate is measured to land in it.)
 
@@ -4852,7 +4852,7 @@ keep their dates. ① *"The narrowest G7 margin on the page is still this one"* 
 7's**, by 0.031. ② *"a tightening of G7 finds rung 6 first, and rule 2 names it there"* — **rule
 2 no longer names it, or any other ranking**: those lines were deleted on 2026-08-29 under gate
 v2.2 (c), because a margin is a fact about the corpus and a sentence inside a rule cannot stay
-current with it ([#207](https://github.com/firejune/rigc/issues/207)). ⇒ **The live ranking is
+current with it ([#207](https://github.com/rig-c/core/issues/207)). ⇒ **The live ranking is
 *The clause margins* under *Status***, updated by every adjudication — and it is where a reader
 sent here by either sentence should go.
 
@@ -4861,7 +4861,7 @@ sent here by either sentence should go.
 Re-read on the stored candidate: every figure above to the digit. ✅ **v2.2's per-slot limb
 finds no blank here** — all four slots are attributed in both sets. This rung's `arcs@24fps` is
 the **second**-closest standing pass to G7's bar at **1.21×**, 0.031 behind rung 7's, and
-[#193](https://github.com/firejune/rigc/issues/193)'s ruling of 2026-08-29 holds the 3.5×
+[#193](https://github.com/rig-c/core/issues/193)'s ruling of 2026-08-29 holds the 3.5×
 where it is; a tightening would take this rung and rung 7 together or neither. ⇒ **Verdict
 unchanged.**
 
@@ -4869,9 +4869,9 @@ unchanged.**
 ### Rung 8 — attempted, not cleared: `pendulum` cleared, `ball` not (2026-08-23)
 
 Run [`bench/runs/2026-08-23-rung8-1/`](../bench/runs/2026-08-23-rung8-1/), clean
-(PR [#75](https://github.com/firejune/rigc/pull/75), merged
-[`f4b01c0`](https://github.com/firejune/rigc/commit/f4b01c0); wording follow-up
-[#76](https://github.com/firejune/rigc/pull/76), `aa621db`) — two skeletons, two
+(PR [#75](https://github.com/rig-c/core/pull/75), merged
+[`f4b01c0`](https://github.com/rig-c/core/commit/f4b01c0); wording follow-up
+[#76](https://github.com/rig-c/core/pull/76), `aa621db`) — two skeletons, two
 candidates, `bench` run once per candidate at the end with neither spec touched
 after. About 40 builds for the `pendulum` and 25 for the `ball`, nearly all of them
 structure and tolerance sweeps rather than fixes; one red all run, and it was a
@@ -4900,7 +4900,7 @@ ball       bones=0.466  slots=0.929  attachments=0.444  constraints=0.000  anima
 ```
 
 `check`: both candidates report `frames.json's own box — the candidate measured into
-it`, which is the case [#52](https://github.com/firejune/rigc/issues/52) added, so
+it`, which is the case [#52](https://github.com/rig-c/core/issues/52) added, so
 **none of the MAE below is framing**. `pendulum` — fit `x1.000902`, rms 0.34 px, MAE
 mean **12.52** / worst 17.62 over 45 frames at 12 fps and **12.56** / 21.22 over 88
 at 24 fps, worst slot drift **3.3 px**, attributed in every frame of both sets.
@@ -4991,33 +4991,33 @@ their measures is how much of each reference's structure the frames could show.
 `validate` or `check`, two of which cost the run a loop each. Each is filed:
 
 1. **spine-core 4.3 keeps a bone's local transform on `bone.pose`, not on the bone**
-   ([#77](https://github.com/firejune/rigc/issues/77)). `bone.rotation = …` is
+   ([#77](https://github.com/rig-c/core/issues/77)). `bone.rotation = …` is
    neither an error nor a rotation — every frame renders as the setup pose. §9 tells
    a run to render its candidate back; this is the first thing it hits doing so, and
    it cost a loop and a plausible MAE (17.3) that did not move for any parameter.
 2. **A tolerance on a rotation is not a number of degrees**
-   ([#78](https://github.com/firejune/rigc/issues/78)). A quarter degree on the last
+   ([#78](https://github.com/rig-c/core/issues/78)). A quarter degree on the last
    link moves the chain's end 0.15 px; the same quarter degree on the first moves it
    0.69 px. One tolerance, in pixels at the end of what the bone swings, divided by
    its lever arm.
 3. **Fitting a curve and then writing a different one is a silent 4× loss**
-   ([#79](https://github.com/firejune/rigc/issues/79)). Fitting each span's own
+   ([#79](https://github.com/rig-c/core/issues/79)). Fitting each span's own
    handles and substituting the nearest entry of a named table took the shot from
    1.07 to 4.65 MAE with a green gate and an unmoved `diff`. §10.4 asks for a small
    named table and does not say the table has to be **in hand while the keys are
    chosen**. It does — rung 6's clamp note in another suit.
 4. **§9.3's "a mesh or a bone renders the same" has a measurable cost**
-   ([#80](https://github.com/firejune/rigc/issues/80)). Following it on the `ball`
+   ([#80](https://github.com/rig-c/core/issues/80)). Following it on the `ball`
    cost `attachments` 0.444 and `bones` 9/12. Not an argument for guessing — an
    argument for §9.3 saying that this invisible choice is one `bench` *does* see, so
    a run records it as a decision instead of discovering it in the measures.
 5. **§8's draw-order paragraph is written entirely about reading the reference**
-   ([#81](https://github.com/firejune/rigc/issues/81)). The like-for-like version —
+   ([#81](https://github.com/rig-c/core/issues/81)). The like-for-like version —
    render your own candidate both ways and measure the same interior feature on both
    sides — settled three more edges here, and correctly declined to settle the
    `ball`'s.
 6. **`bench` prints a confident line for the skeleton you did not build**
-   ([#82](https://github.com/firejune/rigc/issues/82)). The protocol's warning is
+   ([#82](https://github.com/rig-c/core/issues/82)). The protocol's warning is
    load-bearing and needs a second home where the output is read.
 
 **Two more things the run recorded about itself, neither of them a defect in the
@@ -5076,12 +5076,12 @@ finds no blank here** — all six slots are attributed in both sets. ⇒ **Verdi
 ### spineboy — attempted, not cleared: `ess` authored under a leak caveat, `pro` not built (2026-08-23)
 
 Run [`bench/runs/2026-08-23-spineboy-1/`](../bench/runs/2026-08-23-spineboy-1/),
-clean (PR [#96](https://github.com/firejune/rigc/pull/96), merged
-[`5e02159`](https://github.com/firejune/rigc/commit/5e02159)) — `bench spineboy` run
+clean (PR [#96](https://github.com/rig-c/core/pull/96), merged
+[`5e02159`](https://github.com/rig-c/core/commit/5e02159)) — `bench spineboy` run
 once at the end, with the brief's own command line, and neither spec touched after. `pro` was not attempted: rigc's motion spec has no `ik`,
-`transform` or `deform` timelines yet ([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)),
+`transform` or `deform` timelines yet ([#87](https://github.com/rig-c/core/issues/87)–[#89](https://github.com/rig-c/core/issues/89)),
 so a `pro` candidate could not be complete, and the rung does not clear on it
-([#16](https://github.com/firejune/rigc/issues/16)). Authored by Claude Opus 5 (1M
+([#16](https://github.com/rig-c/core/issues/16)). Authored by Claude Opus 5 (1M
 context), Claude Code / Agent SDK, from the brief (revision 2, third-party verified)
 and the rendered reference frames alone, with [AUTHORING.md §10](AUTHORING.md) in
 hand. The gate was green on the first compile of both specs and no compile error was
@@ -5118,7 +5118,7 @@ ladder; `pro` was not built at all, and neither of those is why the rung stays o
 the answer into the run while it was being authored** — the guide's §3.6 events
 example and this document's own status row — so the name-matched half of the figures
 below cannot be read as a measurement of authoring. They are recorded, they are
-caveated, and **a second attempt after the seal (PR [#97](https://github.com/firejune/rigc/pull/97))
+caveated, and **a second attempt after the seal (PR [#97](https://github.com/rig-c/core/pull/97))
 comes before clearing is discussed.** Nothing here is withdrawn; what is withheld is
 the pass mark.
 
@@ -5199,14 +5199,14 @@ timeline: 7/8, above — the reference has one and neither the brief's search no
 run's sweeps could find it in the frames. Clipping: nothing in `ess` is masked, and
 the row's *clipping* is almost certainly `pro`'s. And **`pro` itself**, which is not a
 judgement call: rigc's motion spec has no `ik`, `transform` or `deform` timeline
-([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89)),
+([#87](https://github.com/rig-c/core/issues/87)–[#89](https://github.com/rig-c/core/issues/89)),
 so a complete `pro` candidate is not expressible today. The rung does not clear on it
-([#16](https://github.com/firejune/rigc/issues/16)) and it is a stretch skeleton, so
+([#16](https://github.com/rig-c/core/issues/16)) and it is a stretch skeleton, so
 this costs the attempt nothing — but the ladder cannot say a word about IK, weighted
 meshes at scale or clipping until those three land.
 
-⚠️ **The leaks, and what was done about them** (PR [#97](https://github.com/firejune/rigc/pull/97),
-merged [`0263774`](https://github.com/firejune/rigc/commit/0263774)). The run named
+⚠️ **The leaks, and what was done about them** (PR [#97](https://github.com/rig-c/core/pull/97),
+merged [`0263774`](https://github.com/rig-c/core/commit/0263774)). The run named
 all three rather than using any of them, which is the only reason this entry can say
 what it says. [AUTHORING.md](AUTHORING.md) §3.6 stated the reference's `events` block
 outright, in the document the protocol requires an authoring agent to read **in
@@ -5223,8 +5223,8 @@ and a requirement that the prompt quote it.
 ### Rung 8, attempt 2 — `ball` re-authored: attempted, not cleared (2026-08-24)
 
 Run [`bench/runs/2026-08-23-rung8-2/`](../bench/runs/2026-08-23-rung8-2/), clean
-(PR [#109](https://github.com/firejune/rigc/pull/109), merged
-[`792c5b3`](https://github.com/firejune/rigc/commit/792c5b3)) — **the `ball`
+(PR [#109](https://github.com/rig-c/core/pull/109), merged
+[`792c5b3`](https://github.com/rig-c/core/commit/792c5b3)) — **the `ball`
 skeleton only**. `pendulum` cleared on attempt 1 and was not re-authored, so the
 `pendulum` line this run's `bench` prints is a comet rig measured against a pendulum
 export; it is noise and it is quoted nowhere. Eleven loop turns, nine of them builds,
@@ -5272,14 +5272,14 @@ same wall; a third would spend a session to re-measure that wall.
 would be a protocol change, not an authoring improvement.** It would put in the
 brief a fact the frames cannot carry, which is a different bargain from the one
 every rung on this ladder has been run under, and it belongs to whoever revises the
-protocol rather than to a run. [#20](https://github.com/firejune/rigc/issues/20) is
+protocol rather than to a run. [#20](https://github.com/rig-c/core/issues/20) is
 the same shape of question for key density.
 
 > ➡️ **That question was decided on 2026-08-25, and the answer was the other one.**
 > The protocol change is not a hint in the brief but a pass definition that stops
 > asking: *Operating rules* rule 1 reports unobservable structure and never gates on
 > it, so neither the four constraints nor the key density above can fail a rung
-> ([#153](https://github.com/firejune/rigc/issues/153)). **Whether this candidate
+> ([#153](https://github.com/rig-c/core/issues/153)). **Whether this candidate
 > meets gate v1 is the adjudication pass's verdict and not this entry's** — nothing
 > recorded above is withdrawn or restated, and the figures stay as the run measured
 > them.
@@ -5290,8 +5290,8 @@ rung's reference structure outright, in a document the protocol requires an
 authoring agent to read **in full**. `attachments.mesh_weighted` reads 1.000 because
 of that sentence and not because the frames said so — the run says as much in its
 own §1 and again beside the build choice. §9.3's example is now synthetic
-(PR [#120](https://github.com/firejune/rigc/pull/120), merged
-[`9ad2dff`](https://github.com/firejune/rigc/commit/9ad2dff)), the way §3.6's was
+(PR [#120](https://github.com/rig-c/core/pull/120), merged
+[`9ad2dff`](https://github.com/rig-c/core/commit/9ad2dff)), the way §3.6's was
 after the first spineboy run. The `attachments` figure above carries the caveat; the
 rest of the section does not depend on it.
 
@@ -5306,17 +5306,17 @@ own arithmetic says the knob was pinned: the ball's median frame-to-frame
 acceleration is 6.4 px, so a linear span across one skipped 24 fps sample already
 deviates about 1.6 px, and **any** tolerance under roughly 1.5 px keys nearly every
 frame. That is a fact about the shot, not a choice by the author, and it is
-[#112](https://github.com/firejune/rigc/issues/112).
+[#112](https://github.com/rig-c/core/issues/112).
 
 **Where §10 paid, and what it still cannot reach.** `curve_kinds` **0.691** from an
 eight-shape `easings` table planned in §10.4's two passes, with the table in hand
 while the keys were chosen — no fitted-then-snapped handles anywhere
-([#79](https://github.com/firejune/rigc/issues/79) applied). The one gap §10.4 left
+([#79](https://github.com/rig-c/core/issues/79) applied). The one gap §10.4 left
 was the single-frame span, where no shape is constrained by the samples at all: the
 run took Spine's own automatic handles from the neighbouring keys rather than the
 linear a "no information" default writes, which moved nothing at the samples
 (17.34 → 17.26) and everything in `curve_kinds`
-([#113](https://github.com/firejune/rigc/issues/113)).
+([#113](https://github.com/rig-c/core/issues/113)).
 
 **And the run read three null results as null**, which is the finding worth carrying
 off this attempt. Trail length scale, trail width scale and draw order each produced
@@ -5325,7 +5325,7 @@ have shipped a wrong number with a measurement's authority. Two were re-decided 
 direct measurement of the art, and the third shipped on stated reasoning. The
 sentence that saved it was buried in §8's draw-order paragraph; it is now a
 paragraph of its own governing every render-back sweep
-([#114](https://github.com/firejune/rigc/issues/114)).
+([#114](https://github.com/rig-c/core/issues/114)).
 
 **Known-wrong, in the run's own words:** mesh topology is invented and the frames
 cannot see any of it; MAE 17–18 is this rig's structural floor rather than the fit's
@@ -5351,7 +5351,7 @@ once.** The whole of this rig's recorded gap is on rule 1's unobservable table:
 `constraints` **0.000** (0 of 4), `bones.count` **8/12** — the four bones those
 constraints drive, which draw nothing of their own — name-agnostic `bones` 0.517 and
 `slots` 0.750, which inherit the same hole, `attachments` 0.667 with the mesh topology
-the run itself calls invented, and `key_counts` 0.589, a density [#112](https://github.com/firejune/rigc/issues/112)
+the run itself calls invented, and `key_counts` 0.589, a density [#112](https://github.com/rig-c/core/issues/112)
 shows the shot's own acceleration pins. **Not one of them is a clause of gate v1**, and
 the block this entry recorded — *"further `ball` attempts are not warranted without a
 new observable input"* — is answered by a pass rather than by a run.
@@ -5390,8 +5390,8 @@ finds no blank on either skeleton of this rung** — both of `ball`'s slots and 
 ### spineboy, attempt 2 — the first after the seal: attempted, not cleared (2026-08-24)
 
 Run [`bench/runs/2026-08-23-spineboy-2/`](../bench/runs/2026-08-23-spineboy-2/),
-clean (PR [#110](https://github.com/firejune/rigc/pull/110), merged
-[`ee5ea9c`](https://github.com/firejune/rigc/commit/ee5ea9c)) — **`ess` only**, in a
+clean (PR [#110](https://github.com/rig-c/core/pull/110), merged
+[`ee5ea9c`](https://github.com/rig-c/core/commit/ee5ea9c)) — **`ess` only**, in a
 fresh session and its own worktree. **This is the attempt after the seal, and this
 one counts**: the reading list in its [`LOOP.md`](../bench/runs/2026-08-23-spineboy-2/LOOP.md)
 §1 records both sides of what was and was not opened, and neither this document nor
@@ -5400,7 +5400,7 @@ first compile of the real rig spec and on every compile after it, and no
 `CompileError` was hit all run. Authored by Claude Opus 5 (1M context), Claude Code /
 Agent SDK, from the brief (revision 2, third-party verified), the frames, the art
 and [AUTHORING.md §10](AUTHORING.md). `pro` was not attempted and does not gate the
-rung ([#16](https://github.com/firejune/rigc/issues/16)); the `pro` line `bench`
+rung ([#16](https://github.com/rig-c/core/issues/16)); the `pro` line `bench`
 prints from an `ess` candidate is noise and is quoted nowhere.
 
 **No breach, and two things declared rather than tidied away.** `bench` was invoked
@@ -5456,13 +5456,13 @@ was green from the first compile of the real spec and never went red; the leak s
 held and this run read nothing it should not have. **The limit is pose-fitting
 method** — and the evidence is that every guide defect this run filed is about
 obtaining a pose: the `bone.data.setupPose` twin of §9.1's trap
-([#115](https://github.com/firejune/rigc/issues/115)), region attachment offsets
-cached until `updateSequence()` ([#116](https://github.com/firejune/rigc/issues/116)),
+([#115](https://github.com/rig-c/core/issues/115)), region attachment offsets
+cached until `updateSequence()` ([#116](https://github.com/rig-c/core/issues/116)),
 §10.3's gauge fold and the precondition that makes it exact
-([#117](https://github.com/firejune/rigc/issues/117)), and the missing section on
+([#117](https://github.com/rig-c/core/issues/117)), and the missing section on
 how to *get* a pose for a many-joint figure at all — reduced-resolution compare
 before full, and a full-range scan per knob rather than a line search
-([#118](https://github.com/firejune/rigc/issues/118)). That last pair alone took
+([#118](https://github.com/rig-c/core/issues/118)). That last pair alone took
 `run` from a mean of 50.2 to 45.8 and stopped the fitter producing figures with
 their legs folded under them. **That is where the next lever is.**
 
@@ -5500,7 +5500,7 @@ and cannot hide across frames. **The gun hangs off the rear arm, against the bri
 on art evidence** — the brief says *near hand* twice while its own `death` paragraph
 establishes that a fist means the near arm, and the art draws a second fist free of
 the gun in `idle`, `aim` and `death`. The run reported the defect rather than using
-it; it became [#111](https://github.com/firejune/rigc/issues/111), and the brief's
+it; it became [#111](https://github.com/rig-c/core/issues/111), and the brief's
 **revision 3** (2026-08-24) settled it by measurement in the run's favour — the gun is
 in the far hand, `idle` and `walk` now say so, and the attemptability row in
 [`bench/runs/README.md`](../bench/runs/README.md) no longer carries a caveat. **A ten-entry `easings` table planned in
@@ -5523,7 +5523,7 @@ walked its scale to **13×**, and it pushed this candidate's union 32 px wider t
 the reference's — costing **every** set in `check` its framing (shared-fit rms
 13.98 px → 7.08 px once fixed). That denominator is the right one for comparing two
 builds and the wrong one to optimise against, and `check` publishes it without
-saying so: [#119](https://github.com/firejune/rigc/issues/119).
+saying so: [#119](https://github.com/rig-c/core/issues/119).
 
 ⇒ **spineboy stays 🟨.** The skeleton half of the graduation question is answered and
 answered well; the motion half is not, and no amount of further authoring convention
@@ -5532,15 +5532,15 @@ closes it. It closes with a better fitter.
 ### spineboy, attempt 3 — the measure-first loop works: attempted, not cleared (2026-08-24)
 
 Run [`bench/runs/2026-08-24-spineboy-3/`](../bench/runs/2026-08-24-spineboy-3/), clean
-(PR [#136](https://github.com/firejune/rigc/pull/136), merged
-[`53acfe7`](https://github.com/firejune/rigc/commit/53acfe7)) — **`ess` only**, in its
+(PR [#136](https://github.com/rig-c/core/pull/136), merged
+[`53acfe7`](https://github.com/rig-c/core/commit/53acfe7)) — **`ess` only**, in its
 own worktree, from the brief's **revision 3**, the one the second third-party pass
 settled the gun hand on. About the same shape of loop as attempt 2: the gate was green
 on every compile and finished **18 PASS, 0 FAIL**, 2 SKIP, 14 PROF under
 `--profile spine`, both SKIPs argued in the run's README as decisions rather than gaps.
 Authored by Claude Opus 5 (1M context), Claude Code / Agent SDK, with
 [AUTHORING.md §10](AUTHORING.md) in hand. `pro` was not attempted and does not gate the
-rung ([#16](https://github.com/firejune/rigc/issues/16)); the `pro` line `bench` prints
+rung ([#16](https://github.com/rig-c/core/issues/16)); the `pro` line `bench` prints
 from an `ess` candidate is noise and is quoted nowhere.
 
 **One attempt, four sessions, and the chain is recorded because the artifacts survived
@@ -5634,19 +5634,19 @@ was built, frozen and measured before the file existed. The run committed `bench
 **with that one field redacted by hand**, the redaction saying what it replaced and how to
 regenerate the original, every measure untouched. Hand-redaction is a run doing the
 emitter's job; the fix belongs at the emitter and is filed as
-[#137](https://github.com/firejune/rigc/issues/137).
+[#137](https://github.com/rig-c/core/issues/137).
 
 **Five guide defects, and unlike attempt 2's they are no longer all about obtaining a
 pose.** Two are: §8.1's two-chains-share-a-minimum case and multi-start, including
 cross-shot starts, as the cheap fix
-([#139](https://github.com/firejune/rigc/issues/139)), and §10.3's hold rule needing its
+([#139](https://github.com/rig-c/core/issues/139)), and §10.3's hold rule needing its
 other half — the key reducer has to key the plateau, because a tolerance is not a hold
-([#138](https://github.com/firejune/rigc/issues/138)). **Three are about reading a
+([#138](https://github.com/rig-c/core/issues/138)). **Three are about reading a
 measurement**: §8's like-for-like test must state its denominator
-([#140](https://github.com/firejune/rigc/issues/140)), a control that fails may be a
-wrong control ([#141](https://github.com/firejune/rigc/issues/141)), and §9.2's per-frame
+([#140](https://github.com/rig-c/core/issues/140)), a control that fails may be a
+wrong control ([#141](https://github.com/rig-c/core/issues/141)), and §9.2's per-frame
 column deserves naming in §0's loop
-([#142](https://github.com/firejune/rigc/issues/142)). That shift is itself a finding:
+([#142](https://github.com/rig-c/core/issues/142)). That shift is itself a finding:
 attempt 2's limit was getting a pose at all, and this one's was believing the wrong number
 about a pose it already had.
 
@@ -5660,8 +5660,8 @@ sake.** A rigid pre-alignment probe refuted the hypothesis this section left sta
 that `death`'s lying passage wants a whole-body pre-alignment: the candidate **already
 lies at the right angle**, and **81 % of what any rigid transform could still win there
 is one constant pixel** — `check`'s own framing floor rather than an authoring defect,
-filed as [#146](https://github.com/firejune/rigc/issues/146) with the measurement
-recorded on [#139](https://github.com/firejune/rigc/issues/139). The residual is
+filed as [#146](https://github.com/rig-c/core/issues/146) with the measurement
+recorded on [#139](https://github.com/rig-c/core/issues/139). The residual is
 intra-chain, and the move that reaches it — the multi-start refit over `death`'s long
 tail, which attempt 3's *Known wrong* already names — is incremental. Incremental does
 not earn a full run.
@@ -5673,7 +5673,7 @@ figures** — `bones` **0.924** name-matched / **0.967** name-agnostic, `slots` 
 **54.31** reference-denominator MAE — **together with the floors the cleared candidates
 post**, `pendulum` and rung 3 at **0.7–3.3 px** of worst slot drift. A claim that does not
 beat them is not an improvement, and a run is not owed to it.
-[#16](https://github.com/firejune/rigc/issues/16) stays open: a gate is not a clearing.
+[#16](https://github.com/rig-c/core/issues/16) stays open: a gate is not a clearing.
 
 > ➡️ **Those same floors became gate v1's G2 on 2026-08-25** — *Operating rules* rule
 > 2 turns the 0.7–3.3 px band this paragraph names into a written threshold, and rule
@@ -5685,7 +5685,7 @@ beat them is not an improvement, and a run is not owed to it.
 #### Gate v1 verdict, 2026-08-25 — **FAIL on G2 and G3**, and the freeze stands
 
 Adjudicated on **attempt 3**, the rung's best stored candidate; `pro` was never built
-and does not gate the rung ([#16](https://github.com/firejune/rigc/issues/16)).
+and does not gate the rung ([#16](https://github.com/rig-c/core/issues/16)).
 
 | Clause | Reading over all 16 sets | |
 | --- | --- | :---: |
@@ -5841,7 +5841,7 @@ authoring could produce a pair to read; the verdict above is right that *no cand
 move it*. v2.1 states the scope instead: a single-pose set is out of G3's reach (the reading
 rung 5's and spineboy's verdicts already rested on), and a skeleton left with no readable
 set reads SKIP on G7's own *no observable ⇒ SKIP*. ⇒ **Issue
-[#10](https://github.com/firejune/rigc/issues/10) closes**, and rule 4's queue is down to
+[#10](https://github.com/rig-c/core/issues/10) closes**, and rule 4's queue is down to
 the untried rung 7.
 
 ⚠️ **A pass is versioned, and this history is not rewritten.** This is a **gate-v2.1**
@@ -5897,7 +5897,7 @@ not animation**: on the identical skeleton, sampling the supplied packed atlas (
 0.5`) instead of the loose PNGs moves `heavy`/`light` from **6.13/6.01 to 2.25/2.30**. The
 first row is the graded artifact and the second says where its error lives; the finding is
 now in AUTHORING.md §9, and it is the reason MAE is not comparable across rungs
-([#171](https://github.com/firejune/rigc/issues/171)).
+([#171](https://github.com/rig-c/core/issues/171)).
 
 #### Gate v2 verdict, 2026-08-26 — **PASS**, and the rung closes
 
@@ -5926,7 +5926,7 @@ is now closed on the frames themselves.
 2026-08-23 commander's call because `heavy` posted 7 disagreements, and no stored candidate
 met G3 — attempt 1 posted 9+2, attempt 2 posted 7, the 2026-08-24 pilot 5+1. Nothing
 recorded under the earlier attempts is withdrawn by this; what is restored is the mark, on
-a candidate that clears every clause. **Issue [#12](https://github.com/firejune/rigc/issues/12)
+a candidate that clears every clause. **Issue [#12](https://github.com/rig-c/core/issues/12)
 closes.**
 
 #### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, unchanged
@@ -6007,7 +6007,7 @@ the withdrawn 4.00, and this candidate lands well below both.
 📌 **This is the first rung on the ladder to fail a clause and then clear it by
 re-authoring** rather than by a gate change, which is the sequence rule 4 item 2 predicts
 for a residual that is observable. Its gate-v1 pass stands as a gate-v1 pass, and every
-clause that cleared then clears now. **Issue [#17](https://github.com/firejune/rigc/issues/17)
+clause that cleared then clears now. **Issue [#17](https://github.com/rig-c/core/issues/17)
 closes.**
 
 #### Gate v2.1 re-inspection, 2026-08-26 — **PASS**, unchanged
@@ -6103,7 +6103,7 @@ longest lever arms, and a distance-transform penalty already took the worst drif
 **wrong** way (5.1 → 5.6 px, and 2.2 → 4.4 px on `speedy@24fps`), which is §8's null
 result, so it was dropped and the earlier variant reproduced to the digit.
 
-⇒ **Issue [#18](https://github.com/firejune/rigc/issues/18) closes.** Two findings from this
+⇒ **Issue [#18](https://github.com/rig-c/core/issues/18) closes.** Two findings from this
 run are not about rung 5 and are folded into the guide: **a stepped key on a sample time
 already on the 1e-6 grid can be missed entirely** (the grid rigc emitted key times on then;
 since issue #716 the same holds for a time that already names a float32) — 13 of this shot's 78 sample times are
@@ -6115,7 +6115,7 @@ affected, `sampleAnimation` accumulating `1/12` can land a few ULPs below a time
 
 Re-read on the stored candidate **from the repository root with no `--atlas` override**,
 which the 2026-08-26 verdict could not do — see the *Amendment* in that run's README and
-[#181](https://github.com/firejune/rigc/issues/181). Every figure above to the digit:
+[#181](https://github.com/rig-c/core/issues/181). Every figure above to the digit:
 **5.12 px** `hood-end1` at `speedy` f0023, 2.16 px `head` on `speedy@24fps`, 1.30 px
 `course` on the four `ball`-family sets, `framesWithoutDrift` 0 on all six; **0 of 78** on
 `ball` and **0 of 78** on `speedy`; `drawnRatio` 0.9881–0.9907; the sheets at **1.081×** and
@@ -6153,20 +6153,20 @@ it is not zero.
 
 Run [`bench/runs/2026-08-28-rung7-1/`](../bench/runs/2026-08-28-rung7-1/) — **5 builds**,
 all green, 0 validator FAILs. Authored by Claude Opus 5 (1M context) on Claude Code / Agent
-SDK from **brief revision 2** (third-party verified 2026-08-27, [#14](https://github.com/firejune/rigc/issues/14)),
+SDK from **brief revision 2** (third-party verified 2026-08-27, [#14](https://github.com/rig-c/core/issues/14)),
 the frames the run rendered itself, and the three `.atlas` header lines *What a run may
 read* item 4 allows. The reference export was never opened. One skeleton, `sack`: **7 bones
 · 3 slots · 3 attachments · 0 constraints · 4 animations · 1,326 keys over 60 tracks**,
 against a reference of **31 bones · 3 slots · 3 attachments · 24 constraints**.
 
 🔒 **The first rung whose frames may not be committed, and the protocol held.** The run
-rendered all four shots at three rates under the local-only exception ([#3](https://github.com/firejune/rigc/issues/3),
+rendered all four shots at three rates under the local-only exception ([#3](https://github.com/rig-c/core/issues/3),
 owner's ruling 2026-08-26), reproduced all twelve of the brief's frame counts exactly
 (21/41/51 · 35/70/87 · 9/17/21 · 37/73/91), and committed no pixel of any of them:
 `git ls-files bench/reference-local` reports **0**. ⚠️ **Re-inspecting this candidate needs
 `bun run fetch-examples` and a local render first** — the frames are not in the repository
 and its `spine/skeleton.atlas` names its pages under `examples/`, which is gitignored.
-That is inherent to the rung, not the portability defect [#181](https://github.com/firejune/rigc/issues/181)
+That is inherent to the rung, not the portability defect [#181](https://github.com/rig-c/core/issues/181)
 was about: the art cannot be committed either.
 
 ```
@@ -6211,9 +6211,9 @@ carries the same `scale: 0.5` warning rungs 3 and 1 carry.
 > ➡️ **Superseded 2026-09-02 — the floor *is* measurable now, and it is small.** What the
 > 2026-08-28 correction says about `--atlas` stays true and is why the 4.42 was wrong; what is
 > no longer true is *"the recipe does not isolate a texture floor here"*. **`check
-> --texture-from`**, landed by [PR #254](https://github.com/firejune/rigc/pull/254) on
-> 2026-08-29 ([#171](https://github.com/firejune/rigc/issues/171),
-> [#199](https://github.com/firejune/rigc/issues/199)), substitutes **texture only** — every
+> --texture-from`**, landed by [PR #254](https://github.com/rig-c/core/pull/254) on
+> 2026-08-29 ([#171](https://github.com/rig-c/core/issues/171),
+> [#199](https://github.com/rig-c/core/issues/199)), substitutes **texture only** — every
 > world vertex is copied across and only `page` and `uvs` change, remapped through the
 > drawing's own coordinates, so a `rotate: 270` trimmed pack re-seats nothing. Measured on
 > attempt 2's candidate, the floor is **1.45–1.85 MAE(ref)** across the twelve sets (1.58–1.94
@@ -6256,7 +6256,7 @@ of the text as written:
    executed exactly that: *The gate-v2.1 re-inspection* re-read ten candidates **"from the
    repository root, with no `--atlas` override on any of them"**, and *The gate-v2 batch
    adjudication* the same, its one override a page-path repair that changes no measured
-   figure ([#181](https://github.com/firejune/rigc/issues/181)). **No pass on this page has
+   figure ([#181](https://github.com/rig-c/core/issues/181)). **No pass on this page has
    ever passed `--viewport`.**
 3. [`src/check.ts`](../src/check.ts) refuses to treat a pin as a measurement: a `pinned`
    framing is *"a claim by the author and is not checked"*, and the report prints so above
@@ -6378,7 +6378,7 @@ own instruction to close it that way.
 ⇒ **What a second attempt has to move is one number in one place.** Every clause but G2
 clears, G2 clears on eleven of twelve sets, and the run names its own next step: a mesh for
 the cape on a short chain, checked against the frame where the crimson spans twice the
-sack's width and a region at scale 1.87 cannot reach. **Issue [#14](https://github.com/firejune/rigc/issues/14)
+sack's width and a region at scale 1.87 cannot reach. **Issue [#14](https://github.com/rig-c/core/issues/14)
 stays open on G2**, and the rung's status goes **⬜ → 🟨**.
 
 > 🔴 **Correction, 2026-08-28 — the named next step was the wrong hypothesis.** Attempt 2
@@ -6462,7 +6462,7 @@ reference components, and 15 PASS / 0 FAIL / 5 SKIP / 14 PROF.
 | **G6** the rung | one skeleton, and it meets G1–G5 and G7 | ✅ |
 
 ⇒ **Every clause reads PASS or SKIP. Rule 3's *close on pass* applies, issue
-[#14](https://github.com/firejune/rigc/issues/14) closes, and rung 7's status goes 🟨 → ✅.**
+[#14](https://github.com/rig-c/core/issues/14) closes, and rung 7's status goes 🟨 → ✅.**
 🏁 **That is the last numbered rung**: rungs 1 through 8 are now all ✅, and what remains before
 the graduation exam is spineboy alone.
 
@@ -6477,8 +6477,8 @@ sides.
 
 > ➡️ **Superseded 2026-09-02 — the box is now *taken*, and the diagnostic became the record.**
 > The ruling itself stands: the gate reads `check`'s own unaided reading, never a reader's
-> flags. What changed is what that reading *is*. [PR #254](https://github.com/firejune/rigc/pull/254)
-> gave the extent test a tolerance ([#194](https://github.com/firejune/rigc/issues/194)), so
+> flags. What changed is what that reading *is*. [PR #254](https://github.com/rig-c/core/pull/254)
+> gave the extent test a tolerance ([#194](https://github.com/rig-c/core/issues/194)), so
 > `frames.json`'s box is now **taken on ten of the twelve sets** under `extent-spread` —
 > `walk@24fps` and `walk@30fps` are still **refused**, on `coordinates` — and *"refused on all
 > twelve sets"* is false in both directions. ⇒ **`check-declared-box.txt` is no longer a pinned
@@ -6532,7 +6532,7 @@ item 2 below rather than something this pass invents a condition for.
 > 🔴 **The quantitative bound above did not survive the instrument — corrected 2026-09-02.**
 > The middle bullet's control is attempt 1's `cape-back` *"was attributed, and read 1.0 px
 > worst / 1.0 px mean"*. That attribution exists **only in the fitted framing, and only on
-> frame f0021 of one set**. Under the [PR #254](https://github.com/firejune/rigc/pull/254)
+> frame f0021 of one set**. Under the [PR #254](https://github.com/rig-c/core/pull/254)
 > instrument, where `frames.json`'s box is taken rather than fitted, attempt 1's `cape-back` is
 > attributable on **none** of its 118 frames — which that run's own
 > [`check-pinned.txt`](../bench/runs/2026-08-28-rung7-1/check-pinned.txt) already recorded as
@@ -6573,7 +6573,7 @@ posed the cape.
 > 📌 **The table above is a comparison of the two attempts as each was graded, on the fitted
 > instrument both were graded on, and it stays that way** — a like-for-like row is worth more
 > than a row half re-measured. For the record, the same six rows under the
-> [#254](https://github.com/firejune/rigc/pull/254) instrument, read 2026-09-02: worst drift
+> [#254](https://github.com/rig-c/core/pull/254) instrument, read 2026-09-02: worst drift
 > **6.94 px ❌** against **3.94 px** (still inside the bar, but 🔴 **G2 fails on the read-down**,
 > not on the figure); disagreements 0 of 98 both; worst sheet 3.485× against **3.226×**; the
 > framing cost is **zero on ten of twelve sets**, because the box is taken rather than fitted;
@@ -6605,13 +6605,13 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
    thin, and that is recorded rather than smoothed over"*) now has two candidates inside it.
    🚫 **No threshold is touched here** — this is the argument arriving where rule 2 says it
    starts, with the ranking it changes stated.
-   > ➡️ **Ruled 2026-08-29: the 3.5× stands** ([#193](https://github.com/firejune/rigc/issues/193),
+   > ➡️ **Ruled 2026-08-29: the 3.5× stands** ([#193](https://github.com/rig-c/core/issues/193),
    > closed). The trigger fired and the deliberation was held; what refused the tightening is
    > the quality-gate posture — nothing on this corpus has been read as unfaithful at a ratio
    > the clause admits, and a tightening below 2.923 would flip **two** standing passes 0.031
    > apart. The stale *ranking* is fixed a different way: rule 2's *finds-X-first* lines are
    > **deleted** and *The clause margins* under **Status** carries the ranking, updated by every
-   > adjudication ([#207](https://github.com/firejune/rigc/issues/207), closed). Both in
+   > adjudication ([#207](https://github.com/rig-c/core/issues/207), closed). Both in
    > *Operating rules* rule 2, under *Gate v2.2*.
 2. ⚖️ **G2's 🕳️ is written per set, and this candidate is the first to show the per-*slot*
    gap.** One of three slots contributes no drift sample anywhere in the corpus, so G2's
@@ -6625,7 +6625,7 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
    attribution is what it means and the unattributable case is covered by the unreached-component
    count instead.
    > ➡️ **Closed 2026-08-29 as gate v2.2's one content change**
-   > ([#198](https://github.com/firejune/rigc/issues/198)), and by neither of the two options
+   > ([#198](https://github.com/rig-c/core/issues/198)), and by neither of the two options
    > this item offered. The limb is a **disclosure** requirement rather than a HOLE or a
    > silence: *a slot that draws in a set and is attributable in no frame of it is read down
    > explicitly in the verdict, or the clause fails for that set.* ⭐ **The read-down above is
@@ -6643,9 +6643,9 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
    Whether `check` should offer a texture-only substitution is an **instrument** question, and
    rule 3 keeps instruments out of a gate version.
    > ➡️ **Answered 2026-08-29 — the instrument exists and is `--texture-from`**
-   > ([PR #254](https://github.com/firejune/rigc/pull/254),
-   > [#171](https://github.com/firejune/rigc/issues/171) and
-   > [#199](https://github.com/firejune/rigc/issues/199), both closed). It was taken up as an
+   > ([PR #254](https://github.com/rig-c/core/pull/254),
+   > [#171](https://github.com/rig-c/core/issues/171) and
+   > [#199](https://github.com/rig-c/core/issues/199), both closed). It was taken up as an
    > instrument question exactly as this item framed it — outside a gate version, changing no
    > clause. The substitution is texture-only **by construction**: every world vertex is copied
    > across untouched and only `page` and `uvs` change, remapped through the drawing's own
@@ -6672,7 +6672,7 @@ wrong, and what settled it was a like-for-like fit rather than an argument.
 committed reference frames at all**, and the protocol held on both attempts — rendered locally,
 never committed, reproduced digit for digit by an adjudicator who rendered them again. It is
 also the first rung where an attempt's own *stated* next step was the wrong hypothesis and a
-like-for-like fit said so. **Issue [#14](https://github.com/firejune/rigc/issues/14) closes.**
+like-for-like fit said so. **Issue [#14](https://github.com/rig-c/core/issues/14) closes.**
 
 #### Gate v2.2 re-inspection, 2026-08-29 — **PASS**, and this rung is the limb's worked case
 
@@ -6694,12 +6694,12 @@ and `sack` in the two `walk` stills sets, both attributed in **ten** other sets 
 ⇒ **Verdict unchanged.** 📌 And the coverage statement the attempt-2 verdict made informally —
 *"honestly 2 of 3 slots"* — is now what the clause obliges every verdict to say. This rung's
 `fall-in@30fps` is also the **closest standing pass to G7's bar**, at **2.923×**, **1.20×**
-inside; [#193](https://github.com/firejune/rigc/issues/193)'s ruling of 2026-08-29 holds the
+inside; [#193](https://github.com/rig-c/core/issues/193)'s ruling of 2026-08-29 holds the
 3.5× where it is.
 
 #### PR #254 instrument re-inspection, 2026-09-02 — 🔴 **FAIL on G2, and the rung re-opens**
 
-Re-read on the stored candidate under the [#254](https://github.com/firejune/rigc/pull/254)
+Re-read on the stored candidate under the [#254](https://github.com/rig-c/core/pull/254)
 instrument — `check` from the repository root with **no `--atlas` and no `--viewport`
 override** — with the frames rendered again for this pass at the brief's exact flags and **no
 frame committed** (`git ls-files bench/reference-local` → 0). 🚫 **Zero builds and zero
@@ -6707,7 +6707,7 @@ authoring, and nothing in this run directory was touched.**
 
 ⭐ **The re-read reproduces this run's own `check-declared-box.txt` digit for digit on all
 twelve sets** — which is the whole of what changed: the extent tolerance
-([#194](https://github.com/firejune/rigc/issues/194)) means `frames.json`'s box is now **taken**
+([#194](https://github.com/rig-c/core/issues/194)) means `frames.json`'s box is now **taken**
 on ten of the twelve sets instead of refused, so the diagnostic this run filed beside its record
 *is* the record the unaided instrument now prints.
 
@@ -6730,7 +6730,7 @@ instance to compare against). The two standing columns read cleanly — `(unattr
 not sufficient. ⇒ *"A blank that cannot be read down fails the clause for that set."*
 
 ⇒ 🔴 **G2 is unmet on all twelve sets. G1, G3, G4, G5 and G7 all still read PASS; G6 follows
-G2.** Issue [#14](https://github.com/firejune/rigc/issues/14) **re-opens** on G2 and this rung's
+G2.** Issue [#14](https://github.com/rig-c/core/issues/14) **re-opens** on G2 and this rung's
 status goes ✅ → 🟨, per rule 3's *only the rungs that fail the new gate reopen*. 📌 **The gate
 v2.1 and v2.2 passes above are not rewritten** — a pass is versioned, and both stay true of the
 instrument they were measured on. The worked reading, the itemised read-down, the refused
@@ -6751,7 +6751,7 @@ or the candidate has to give `panel` a second drawn slot so kind 2 becomes avail
 > attributed, so *"placed well enough that the matcher will name a distance"* has no rig behind
 > it. **The second half stands** — a second drawn slot on `panel` would make kind 2 available —
 > and it is now the only route the four kinds leave open. See *Rung 7, attempt 3* below and
-> [#258](https://github.com/firejune/rigc/issues/258).
+> [#258](https://github.com/rig-c/core/issues/258).
 > ➡️ **And on 2026-09-02 there are five kinds.** Gate v2.3 (b) admits the measured-unobservable
 > slot, so the second half is **no longer the only route**: attempt 3 clears G2 on the candidate
 > it already had, with no second drawn slot and no fourth attempt. **#258 closes.** See *Gate
@@ -6840,7 +6840,7 @@ digit for digit or byte for byte.
 | **G6** the rung | one skeleton, and it does not meet G2 | ❌ |
 
 ⇒ 🔴 **G2 is unmet on all twelve sets; G1, G3, G4, G5 and G7 read PASS or SKIP; G6 follows G2.**
-Issue [#14](https://github.com/firejune/rigc/issues/14) **stays open** and the status cell stays
+Issue [#14](https://github.com/rig-c/core/issues/14) **stays open** and the status cell stays
 🟨. The figures, both read-downs in full, the refused counter-reading and the owner items are in
 *The attempt-3 adjudication* under **Status**.
 
@@ -6890,7 +6890,7 @@ under **kind 1** as before, quoting a drift.
 
 ⇒ 🟢 **G2 is met on all twelve sets — 3.9352 px at 1.53× inside the bar, no 🕳️, both blanks read
 down — and G1, G3, G4, G5 and G7 read PASS or SKIP unchanged. G6 follows.** Issue
-[#14](https://github.com/firejune/rigc/issues/14) **closes** and the status cell goes 🟨 → ✅.
+[#14](https://github.com/rig-c/core/issues/14) **closes** and the status cell goes 🟨 → ✅.
 ⚠️ **Two things this verdict records rather than buries**: it is the **same candidate** the gate
 v2.2 verdict above failed, so what the pass measures is a clause decision and not an authoring
 improvement; and this rung's `fall-in@30fps` sheet at **3.226×** is now G7's **closest standing
@@ -6911,7 +6911,7 @@ builds**, `--profile spine` green. Authored by Claude Fable 5 on Claude Code / A
 from the brief's **revision 4** (third-party verified ×3, 2026-08-27 — the pass that found
 the D1–D3 brief defects which had been telling authors to put motion into `death`'s middle
 that is not there). **`ess` alone**; `pro` was not attempted and does not gate the rung
-([#16](https://github.com/firejune/rigc/issues/16)). The reference export was never opened,
+([#16](https://github.com/rig-c/core/issues/16)). The reference export was never opened,
 and **the three earlier spineboy attempts were sealed and unread** as attempts at the rung
 being authored. `bench` run once, at the end — the loop ran on `check` and on a
 candidate-side change-column instrument.
@@ -6953,7 +6953,7 @@ reference components, and 16 PASS / 0 FAIL / 4 SKIP / 14 PROF.
 | **G6** the rung | ❌ the graduating skeleton does not meet G2 | ❌ |
 
 ⇒ **Five clauses clear, G2 does not, and G6 follows it.** The freeze of 2026-08-24 stands,
-**issue [#16](https://github.com/firejune/rigc/issues/16) stays open on G2 alone**, and
+**issue [#16](https://github.com/rig-c/core/issues/16) stays open on G2 alone**, and
 spineboy's status stays 🟨.
 
 🎯 **Against the frozen bar — which dimensions moved, and by how much.** The bar this
@@ -7059,7 +7059,7 @@ shoulder/chest geometry through the *lying* poses as well as the upright ones, w
    of the move is the brief and not only the fitter — the rev-4 verification pass predicted
    exactly that (*"an author working from rev 3 was told to put motion into f13–f26 that is
    not there"*).
-3. 🧹 **A process cost worth an owner call, filed as [#201](https://github.com/firejune/rigc/issues/201).**
+3. 🧹 **A process cost worth an owner call, filed as [#201](https://github.com/rig-c/core/issues/201).**
    `tsconfig.json` includes `bench/**/*.ts`, so a run directory's throwaway fitting harness
    lands inside the repository's CI typecheck surface — **227 committed `.ts` files across 12
    run directories today**, 22 of them (3,014 lines) from this run. One run directory is
@@ -7133,7 +7133,7 @@ figure the run recorded reproduces to the digit.
 | **G6** the rung | ✅ the graduating skeleton meets G1–G5 and G7 | ✅ |
 
 ⇒ 🎓 **Every clause reads PASS or SKIP. Rule 3's *close on pass* applies, issue
-[#16](https://github.com/firejune/rigc/issues/16) closes, spineboy goes 🟨 → ✅, and every
+[#16](https://github.com/rig-c/core/issues/16) closes, spineboy goes 🟨 → ✅, and every
 rung on this ladder is now cleared.** The 2026-08-24 freeze is lifted by being met.
 
 ⚠️ **The margin, stated rather than smoothed over: 0.45 px, and it is the ladder's
@@ -7282,7 +7282,7 @@ its task was defined by #16's public verdict. ⇒ **No figure in this entry carr
 ⚠️ **One structural note beside it, and it is not the run's fault.** This attempt's mandate
 handed it **the 6.0 px bar** — a figure that lives in *Operating rules*, which the reading
 list seals. The run did not open that file and its header says so; the bar arrived in the
-prompt. That is the fourth instance of the shape [#174](https://github.com/firejune/rigc/issues/174)
+prompt. That is the fourth instance of the shape [#174](https://github.com/rig-c/core/issues/174)
 exists to fix — *split the clause statements from the derivations that quote measured
 figures* — and the same shape *The gate-v2 batch adjudication of the four re-climbs* above
 recorded on rung 1. 📌 It narrows nothing on the reference side: a drift threshold is derived
@@ -7304,12 +7304,12 @@ honesty rule's sixth reading above.
    of this verdict; it finds spineboy first**, and by rule 5 point 2 a tightening could now
    flip **the graduation pass itself**, which re-inspects immediately rather than waiting for
    a bump. 🚫 **No threshold is touched here.** This is the same shape as the G7 finding from
-   rung 7 attempt 2 ([#193](https://github.com/firejune/rigc/issues/193)) — the corpus has
+   rung 7 attempt 2 ([#193](https://github.com/rig-c/core/issues/193)) — the corpus has
    moved under a clause's derivation and the derivation's stated ordering is now stale — and
    the two together suggest rule 2's *"a tightening finds X first"* lines want a rule for
    staying current rather than individual repairs.
    > ➡️ **Ruled 2026-08-29, and the suggestion in the last sentence is what was adopted**
-   > ([#207](https://github.com/firejune/rigc/issues/207), closed). The lines are **deleted from
+   > ([#207](https://github.com/rig-c/core/issues/207), closed). The lines are **deleted from
    > the gate text**, and *The clause margins* under **Status** carries the ranking per clause —
    > bar, closest standing pass, figure, ratio — updated by **every** adjudication as a named
    > part of *After a run* step 1. G2's bar is **not** touched: this candidate's 1.08× stands as
@@ -7341,11 +7341,11 @@ honesty rule's sixth reading above.
 as the graduation exam under gate v2.1 and re-inspected under **v2.2**.
 
 > 🔴 **Withdrawn 2026-09-02 — rung 7 re-opened and the ladder was not complete.** Under the
-> [PR #254](https://github.com/firejune/rigc/pull/254) instrument that rung's stored candidate
+> [PR #254](https://github.com/rig-c/core/pull/254) instrument that rung's stored candidate
 > failed **G2**: `cape-back` draws in all twelve sets, is attributable in none, and no read-down
 > kind survived the framing change. **Rungs 1–6 and 8 held, and spineboy `ess`'s graduation pass
 > held** — every one of the ten reproduced its gated figures to the digit — so what changed was
-> one rung, not the ladder's result. [#14](https://github.com/firejune/rigc/issues/14) was open
+> one rung, not the ladder's result. [#14](https://github.com/rig-c/core/issues/14) was open
 > again; see *The PR #254 instrument re-inspection* under **Status**. 📌 The completion is left
 > stated as a dated fact because it was one: rule 3's *a pass is versioned* is exactly the case
 > that a later instrument can unmake a standing pass without making the earlier verdict wrong.
@@ -7361,26 +7361,26 @@ as the graduation exam under gate v2.1 and re-inspected under **v2.2**.
 > attempt. See *The gate-v2.3 re-inspection*.
 
 `pro` remains unauthored and is not a graduation
-requirement ([#16](https://github.com/firejune/rigc/issues/16)); its former tool gate
-([#87](https://github.com/firejune/rigc/issues/87)–[#89](https://github.com/firejune/rigc/issues/89))
+requirement ([#16](https://github.com/rig-c/core/issues/16)); its former tool gate
+([#87](https://github.com/rig-c/core/issues/87)–[#89](https://github.com/rig-c/core/issues/89))
 closed 2026-08-29 with PR #233, and its transcription reads 1.000 on every measure (#239).
 By rule 4 item 4 the project's question now changes: *does it match the editor?* — the only
 question a reference-bound ladder can ask — gives way to *is it usable without a reference?*.
-Of that backlog, [#151](https://github.com/firejune/rigc/issues/151) shipped 2026-08-29
+Of that backlog, [#151](https://github.com/rig-c/core/issues/151) shipped 2026-08-29
 (`rigc vote`, PR #232, in v0.7.0) and
-[#152](https://github.com/firejune/rigc/issues/152) awaits demand. The rungs stay as
+[#152](https://github.com/rig-c/core/issues/152) awaits demand. The rungs stay as
 regression gates for tool and method changes.
 
 ### spineboy — the 2026-09-03 from-zero measurement run: 🔴 **FAIL on G2**, and no rung moves
 
 🧪 **Read the label first: this is a TOOLING-PROGRESS MEASUREMENT, not a graduation
 challenge.** Run [`bench/runs/2026-09-03-spineboy-1/`](../bench/runs/2026-09-03-spineboy-1/)
-(PR [#281](https://github.com/firejune/rigc/pull/281)) — **24 builds**, `--profile spine`
+(PR [#281](https://github.com/rig-c/core/pull/281)) — **24 builds**, `--profile spine`
 green. Authored by Claude Opus 5 (1M context) on Claude Code / Agent SDK, a **fresh
 session**, from brief **revision 4** and gate **v2.3**, against the toolchain as it stands
 at **v0.10.0** (2026-09-02) — `rigc pose`, `check --texture-from`, `docs/MOTION.md` and the
 extent-spread framing all landed. **`ess` alone**; `pro` was not built and does not gate the
-rung ([#16](https://github.com/firejune/rigc/issues/16)). The reference export was never
+rung ([#16](https://github.com/rig-c/core/issues/16)). The reference export was never
 opened as an authoring input, and no prior attempt at this rung was opened for any purpose —
 not a spec, not a harness, not a `README.md` or `LOOP.md` for process.
 
@@ -7604,7 +7604,7 @@ which is what the run claims, reached by the wrong labels. And *"~23 per attempt
 
 ⚠️ **The one caveat the record needs and the run does not carry: the comparison is
 cross-instrument.** Of the graduation series, only attempt 5's **5.5491 px** has been re-read
-on the panel this run was measured on — the post-[#254](https://github.com/firejune/rigc/pull/254)
+on the panel this run was measured on — the post-[#254](https://github.com/rig-c/core/pull/254)
 instrument, in *The gate-v2.3 re-inspection* above. Attempts 1–4 hold pre-#254 figures, and
 this rung's own history is the worked example of why that matters: attempt 3's `death` moved
 **14.6 → 19.57 px** on nothing but an instrument change. ⇒ **The ordering is safe and the
@@ -7644,7 +7644,7 @@ counts this candidate authored — it has **17** bones and **21** slots, so `bon
 **17/18** and `slots.count` **20/21**, both sitting *away* from the leaked field rather than
 on it. 📌 It is the
 second run to meet this field at the same place, and the structural cause is
-[#137](https://github.com/firejune/rigc/issues/137): `bench.json` does not carry the banner
+[#137](https://github.com/rig-c/core/issues/137): `bench.json` does not carry the banner
 but the console does.
 
 #### The clause margins — nothing moves, and the reason is the table's own rule
@@ -7678,7 +7678,7 @@ that candidate, its run directory or that reading**. Rule 3's *a pass is version
 versions a pass: **the gate**, in a re-inspection of the stored candidate. A **later
 attempt's** verdict is not one of those instruments, and a from-zero measurement run is not a
 re-climb. ⇒ **This entry adds one data point to the from-zero series and reopens nothing** —
-not this rung, not [#16](https://github.com/firejune/rigc/issues/16), and no other rung.
+not this rung, not [#16](https://github.com/rig-c/core/issues/16), and no other rung.
 spineboy's status cell stays **🎓 ✅**, the ladder stays complete under gate v2.3, and every
 verdict above this section keeps its date and its reading.
 
@@ -7712,12 +7712,12 @@ verdict above this section keeps its date and its reading.
 
 🧪 **Read the label first: this is a TOOLING-PROGRESS MEASUREMENT, not a graduation
 challenge.** Run [`bench/runs/2026-09-03-spineboy-2/`](../bench/runs/2026-09-03-spineboy-2/)
-(PR [#310](https://github.com/firejune/rigc/pull/310), merged as `e89848f`) — **16 builds**,
+(PR [#310](https://github.com/rig-c/core/pull/310), merged as `e89848f`) — **16 builds**,
 `--profile spine` green, **3 h 20 min** wall clock. Authored by Claude Opus 5 (1M context) on
 Claude Code / Agent SDK, a **fresh session**, from brief **revision 4** and gate **v2.3**, with
 **exactly one change in the toolbox against run 1**: `rigc chainfit` now exists (#286/#287).
 **`ess` alone**; `pro` was not built and does not gate the rung
-([#16](https://github.com/firejune/rigc/issues/16)). The reference export was never opened, and
+([#16](https://github.com/rig-c/core/issues/16)). The reference export was never opened, and
 no prior attempt at this rung was opened for any purpose.
 
 ⚠️ **So it is a from-zero attempt and it is not a re-climb.** ⇒ **Nothing below reopens
@@ -7726,7 +7726,7 @@ spineboy's status cell stays 🎓 ✅, and *The clause margins* is unedited — 
 last two subsections.
 
 ⭐ **The basis, first, because it is what makes this run comparable to anything.** The run's
-worktree forked from `origin/main` at **`5d00e4f`** — *before* [#301](https://github.com/firejune/rigc/pull/301)
+worktree forked from `origin/main` at **`5d00e4f`** — *before* [#301](https://github.com/rig-c/core/pull/301)
 (the premultiplied sampler) merged at `c7dfe81`. This pass verified that from the history: the
 only two `src/` commits between the fork and the record are #301 and #303 (a compile guard that
 cannot reach `check`). ⇒ **Every figure in this record is on the `old / old` basis**, and so is
@@ -7883,7 +7883,7 @@ one blob 499 times and made 121 of the 291 pairs attributable**, including `rear
 ⇒ **170 blanks is a property of this candidate's placement accuracy, not of the corpus's
 connectivity, and the clause is handling it exactly as designed** — a blank drift row is the
 loudest signal `check` prints, and here it is signalling correctly. 🚫 **This is not a gap in the
-[#258](https://github.com/firejune/rigc/issues/258) sense.** #258's shape was that the same FAIL
+[#258](https://github.com/rig-c/core/issues/258) sense.** #258's shape was that the same FAIL
 followed from evidence of *any* quality, because `cape-back` was **measured unobservable** — no
 placement, scale, pivot or region choice could attribute it, and the run held a matcher-free
 placement bound *with* a known-answer control that the enumeration had nowhere to put. Here
@@ -8161,7 +8161,7 @@ and the adjudicator carries whatever it says into the verdict.**
    20, so `bones.count` reads 16/18 and `slots.count` 21/20, sitting *away* from the leaked field on
    both and in opposite directions. The animation count matches at 8/8 and is handed to the author
    by the brief outright. 📌 It is the **third** run to meet this field at the same place, and the
-   structural cause is [#137](https://github.com/firejune/rigc/issues/137): `bench.json` does not
+   structural cause is [#137](https://github.com/rig-c/core/issues/137): `bench.json` does not
    carry the banner but the console does.
    - ⚠️ **One hazard this run leaves that its two predecessors did not, and it is a divergence worth
      recording.** `2026-08-24-spineboy-3` and run 1 both **redacted** the string in their committed
@@ -8271,7 +8271,7 @@ those readings.** Rule 3's *a pass is versioned* says what versions a pass: **th
 re-inspection of the stored candidate. A **later attempt's** verdict is not one of those
 instruments, and a from-zero measurement run is not a re-climb. ⇒ **This entry adds one data point
 to the from-zero series and reopens nothing** — not this rung, not
-[#16](https://github.com/firejune/rigc/issues/16), and no other rung. spineboy's status cell stays
+[#16](https://github.com/rig-c/core/issues/16), and no other rung. spineboy's status cell stays
 **🎓 ✅**, the ladder stays complete under gate v2.3, and every verdict above this section keeps its
 date and its reading.
 
@@ -8330,8 +8330,8 @@ bun cli.ts bench 3 --candidate <dir>
 `bench 3`, verbatim. ⛔ **No date on it, deliberately.** A hand-written date records
 that somebody was careful once and cannot say whether they were careful last week —
 this block carried *re-run 2026-08-23* and went stale anyway
-([#475](https://github.com/firejune/rigc/issues/475)), which is the case
-[#441](https://github.com/firejune/rigc/issues/441) settled against version stamps.
+([#475](https://github.com/rig-c/core/issues/475)), which is the case
+[#441](https://github.com/rig-c/core/issues/441) settled against version stamps.
 What is worth stating is how to check it instead: run the two commands above — after
 `bun run fetch-examples`, because `examples/` is gitignored and absent from a fresh
 clone — and every line of the two blocks below is in that output, verbatim. They are
@@ -8339,12 +8339,12 @@ excerpts: the `validate` roll-call, the `── diff ──` header, the `check`
 `bonedist` rows and the closing explanation are left out, and the blank separator
 lines are stripped of the two spaces the tool prints on them. Visible in what is
 quoted: `bones`/`slots`'s name-agnostic figures
-([#21](https://github.com/firejune/rigc/issues/21)), `region_size_present` as
-`region_size` ([#28](https://github.com/firejune/rigc/issues/28)), the two
+([#21](https://github.com/rig-c/core/issues/21)), `region_size_present` as
+`region_size` ([#28](https://github.com/rig-c/core/issues/28)), the two
 `(reported)` subsections — unobservable from the frames, so reported and folded into
 no mean — and, on the summary line, the `skeleton` header block's two bounding-box
-measures ([#578](https://github.com/firejune/rigc/issues/578), renamed by
-[#907](https://github.com/firejune/rigc/issues/907)), which are reported for the same
+measures ([#578](https://github.com/rig-c/core/issues/578), renamed by
+[#907](https://github.com/rig-c/core/issues/907)), which are reported for the same
 reason and gate for neither. `bounds_box 0.250` on a transcription that reads 1.000
 everywhere else is the editor's arithmetic: rigc writes spine-core's `getBounds` at
 float32, the editor its own numbers, and one of the four agrees here.
@@ -8446,7 +8446,7 @@ and `animations.keyed_names`, because this skeleton keys no attachment, no draw 
 and no event. The event figure outside `events` is why this sentence once read
 *eleven* while the block already held twelve: the count was taken off the section
 headings. It read *thirteen* until `constraints.order` and `animations.keyed_names`
-arrived ([#1085](https://github.com/firejune/rigc/issues/1085)). A rung with meshes or
+arrived ([#1085](https://github.com/rig-c/core/issues/1085)). A rung with meshes or
 constraints will not get them for free.
 
 The two name-agnostic blocks are 1.000 here for the least interesting reason
@@ -8499,8 +8499,8 @@ right by construction; rung 7 is the case where a one-off "just this once" copy
 would be a licence problem rather than a tidiness problem.
 
 🔓 **The local-render exception, ruled 2026-08-26** — issue
-[#3](https://github.com/firejune/rigc/issues/3), raised by the brief-verification pass
-on [#14](https://github.com/firejune/rigc/issues/14). The rule above does not forbid a
+[#3](https://github.com/rig-c/core/issues/3), raised by the brief-verification pass
+on [#14](https://github.com/rig-c/core/issues/14). The rule above does not forbid a
 render that never leaves the local disk, and reading it as though it did was what made
 this rung **unattemptable rather than unattempted**: the honesty rule says a brief is
 written by somebody *watching the frames*, so with no frames obtainable neither the
