@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.38.0](https://github.com/firejune/rigc/compare/v2.37.0...v2.38.0) (2026-10-11)
+
+
+### Features
+
+* **repack:** `--keep-pages` writes skeleton.model.json alone for the atlas and pages as they stand — build --atlas-in over the input atlas reproduces nod's and flex's skeleton.json byte for byte, the document's pages equal the atlas, poses equal build's document at tolerance 0 and render draws build's pixels from the untouched pages; a renamed region, a differing skeleton, a line the document cannot state and an existing document each refused by name ([#1339](https://github.com/firejune/rigc/issues/1339)) ([#1342](https://github.com/firejune/rigc/issues/1342)) ([6252b70](https://github.com/firejune/rigc/commit/6252b707d737ea3500877c615a6a3f0c620ecf8b))
+
 ## [2.37.0](https://github.com/firejune/rigc/compare/v2.36.0...v2.37.0) (2026-10-11)
 
 
