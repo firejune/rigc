@@ -233,7 +233,7 @@ What the flags mean:
 | `--manifest` | a cut manifest. Only for a rig with **measured art** behind it; a foreign skeleton has none |
 | `--cut` | `build`, `explain` and `validate`: look up a named cut in `--cuts <cuts.json>`, **instead of** `--rig`/`--motion`/`--out` — the two spellings are one build stated two ways and are refused together. A `cuts.json` is `{ "<name>": { "rig": …, "motion": …, "out": …, "manifest"?: … } }`, every path in it relative to the table's own file, so the table lives with the project that owns the art |
 | `--cuts` | the `cuts.json` `--cut` names. Required beside it — `--cut` alone is refused, with no guess at where the table lives |
-| `--profile` | `spine` = the 34 validity rules (**the default**) · `spine-html` = all 50, opt-in |
+| `--profile` | `spine` = the 35 validity rules (**the default**) · `spine-html` = all 51, opt-in |
 | `--report` | `build` and `repack`: also write the gate's report as a JSON document (`build-report/1`) to this file — every gate's `PASS`, `SKIP` and `FAIL` rows, its summary figures and stats line, which supplier judged it, and every `pack:` line's figures. Written when the command writes `--out` and when a gate is red, before the exit; a file already at the path is removed first, so a compile error or a refused repack leaves none. Never inside `--out`, refused by name. The printed lines are byte-identical with it and without it — **§5.3** |
 | `--candidate` | `check`, `bench`, `render`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. A directory holding no `skeleton.json`, or a path with nothing at it, is refused `nothing at <path>`, exit 2, nothing written, by every command that takes a build — `validate <dir>` and a directory given to `diff` included (`RC27`). `--atlas <path>` names the atlas when it does not sit beside the skeleton. On `render` and `check` a rigc build whose `skeleton.model.json` is `rigc-compiled/3` or `/2` needs no atlas at all: with no `--atlas` and no atlas beside it, it is drawn from the document's `pages`, the same frames, geometry and figures as with it, and the `atlas` line says `— not there`. An atlas that is there is still read, and held to `pages`: one that differs (edited after the build) is drawn through spine-core, and the `poser` line names the first difference. A build drawn through an atlas that is not there — a `rigc-compiled/1` document, or a build the core refuses — is refused `nothing at <the atlas>: … is drawn through its atlas (<why>)`, exit 2, nothing written; a Spine export without its atlas is refused `nothing at <the atlas>` as it always was. A directory whose files are not one build — a `skeleton.json` or a `skeleton.atlas` from another build beside this one's `skeleton.model.json` — is drawn through spine-core where the runtime can load the pair, the `poser` line naming the two digests or the atlas's first difference; where it cannot, it is refused `<skeleton> does not load against <the atlas>: spine-core draws this pair (<the poser line's why>) and could not resolve it — "<the runtime's own words>". <dir> is not one build: …`, exit 2, nothing written (`RC18`) — another build's skeleton beside this build's atlas typically ends `"Region not found in atlas: <region> (attachment: <name>)"`. Rebuild, or put the build's own three files back beside each other. A Spine export beside an atlas it was not exported with is refused in the same words, ending `The skeleton and the atlas are not one pair`. An atlas copied from another build's directory usually stops earlier, at its pages — their paths are relative to the directory it was written in — and is refused naming the first one: `nothing at <the page>: <the atlas> names it as a page, and spine-core draws this pair through that atlas (<why>). … <dir> is not one build: …`, exit 2, nothing written (`RC18`); an export whose atlas names a page that is not there is refused the same way, ending `and the page has to be there`. A build moved or copied whole away from the directory it was built in stops at the same place, on either poser, and is refused naming the page and the file that names it: `nothing at <the page>: <the skeleton.model.json> names it as a page, and the core draws this build from it. A page path is relative to the build's directory, so a build moved or copied away from the directory it was built in names pages that are not here — build it again where it is, or build it with --copy-images, which writes its pages beside it` (under `--poser spine`, `<the atlas> names it as a page, and spine-core draws this pair through that atlas (--poser spine)` with the same ending), exit 2, nothing written (`RC21`); only where the core refused the files does a page refusal say the directory is not one build. `bench --bones` and `rigc bonedist` — on its `--candidate` and on its `--reference` — refuse a pair the runtime cannot load in the words above with `spine-core poses this pair (bonedist's candidate: …)` or `(bonedist's reference: …)`, exit 2, nothing written (`RC20`); they read no page image, so a build whose pages are elsewhere is measured as it is in place. A `skeleton.json` that is not JSON is refused `rigc: cannot read <the file>: <the parser's words> (line N, column N)`, exit 2, by `render`, `check`, `bench` and `bonedist` as by every other command that reads one (`RC22`). With the atlas gone, `check` on a `rigc-compiled/3` build reads its pages' `scale:` lines off the document, so its texture note and `check.json`'s `textureFrom.candidateScales` are what they are with the atlas; on a `/2` build its texture note says whether the atlas declares a `scale:` line is not read (that document does not state one), and `candidateScales` is `null` (`RC13`). **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
@@ -4031,7 +4031,7 @@ is not an array. Every field is optional and each is the payload a firing
 Optional with one exception, and only meaningful for rigc's own formations:
 `meshSlots` and `meshTriangles` (the two halves of the mesh budget `A13` measures
 against), `axisBone`, `massBone`, `detached`, `deformMayFold`,
-`consumerDrivenMix`, `idleDrivesMeshes`.
+`consumerDrivenMix`, `idleDrivesMeshes`, `axes`.
 Nothing in skeleton
 JSON records that a
 bone carries a cut's axis or that a parentage is forbidden, so the rig spec says it
@@ -4153,6 +4153,61 @@ onto it: on the first such rig that was 42 extra bones for an identical pose.
   exempts nothing reads exactly like one that worked.
 - ⚠️ A15 is a renderer rule, so under `--profile spine` it reports `PROF` and the
   declaration is not read at all, stale or not.
+
+📐 **`axes` holds bones to a line the rig declares.** A `scaleY` key squashes along
+the bone's own y axis, a `translateY` key moves along it — and so does whatever a
+consumer writes to the bone at run time. On a face painted upright with every bone
+at rotation 0, that is the face's axis. On a face painted **tilted** it is the
+page's: a blink squashes the eye along the page's vertical instead of across the
+eye line, a brow rises toward the page's top instead of the forehead, a mouth
+opens toward the page's bottom instead of the chin, an iris slides off the lid.
+The file loads, every other rule passes, and the picture is wrong. Measured on one
+seated rig: the line through the two eye bones sat 23.7° off the page's
+horizontal, all five face bones were at rotation 0, and the closed eyes came out
+level on a tilted face.
+
+```json
+"invariants": {
+  "axes": [
+    { "name": "face", "through": ["eye_r", "eye_l"],
+      "bones": ["eye_r", "eye_l", "brow_r", "brow_l", "mouth"], "tolerance": 5 }
+  ]
+}
+```
+
+For each entry the **line** runs through the setup-pose world origins of the two
+`through` bones, first to second, and every bone in `bones` must have its
+setup-pose **world x axis** within `tolerance` degrees of it — as a line, so a bone
+pointing the other way along it (turned 180°, or mirrored by a world scaleX of −1)
+lies along it too. The setup pose is the one `A50` reads: constraints applied, no
+physics, no skin set. `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` holds it (§5.2).
+
+- **Held whether or not an animation keys the bone.** A consumer writes these bones
+  at run time — `openTrack({ adjust })` on the core entry — which no animation in
+  the file shows.
+- **The fix** for a bone that fails: rotate it in the rig spec onto the line (its
+  `rotation`, so its world x axis lands on the axis angle the failure prints) and
+  counter-rotate its attachments by the same angle, so the setup pose stays where
+  it is. Its children inherit the rotation, so restate their `x`, `y` and
+  `rotation` in its new frame too.
+- Compile errors, each naming `invariants.axes` and the entry: a missing `name`,
+  a `name` twice, a `through` that is not two bone names, a bone in `through` or
+  `bones` the rig does not declare, `through` naming one bone twice, an empty
+  `bones`, a bone twice in `bones`, and a `tolerance` that is missing or not
+  above 0 and below 90. **There is no default tolerance** — rigc does not invent
+  one. Two lines meet at 0° to 90°, so 90 or more admits every orientation and
+  could never fail; 0 would refuse a bone rotated exactly onto the line whenever
+  the posed arithmetic rounds.
+- ⛔ **Two `through` bones on one world origin** draw no line. The rig spec cannot
+  show that — a constraint can put them there — so it is the gate's refusal, not
+  the compiler's: `axis "face": "eye_r" and "eye_l" share the world origin (…) at
+  the setup pose, so they draw no line`.
+- Undeclared, `A51` reports **SKIP** — *the rig "X" declares no axes
+  (invariants.axes)* — never a pass. It is a **validity** rule, unlike the
+  archetype rules above: it can fire only on a declaration, so it never fires on
+  foreign data, and it runs under the default `--profile spine`, where a
+  declaration the profile did not read would be one nothing reads. The
+  declaration is a statement to the gate and changes no emitted Spine byte.
 
 ---
 
@@ -6427,9 +6482,9 @@ prints six rows and is one failure here.
 `A00_MODEL_READ` and `A00_MODEL_REGIONS_ON_PAGES` — the first two rows of the
 table below — which stand where `A00_ROUNDTRIP_PARSE`'s parse stands and have no
 round-trip counterpart, so they are not in the registry. That is the whole of the
-difference between the two totals: `<N>` is 52 on the core entry and 50 on `cli.ts build`,
-and the core report's last line states the split — 43 rules on the model side,
-which are the 41 registry assertions the model side runs and those two; the 8 restated over the emitted text;
+difference between the two totals: `<N>` is 53 on the core entry and 51 on `cli.ts build`,
+and the core report's last line states the split — 44 rules on the model side,
+which are the 42 registry assertions the model side runs and those two; the 8 restated over the emitted text;
 and `A00_ROUNDTRIP_PARSE`, which it reports as a SKIP.
 
 🚨 **When `A00_ROUNDTRIP_PARSE` fails, read the report as a report about A00 and
@@ -6494,6 +6549,7 @@ Fix A00 and run it again.
 | `A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT` | both | a transform constraint none of whose mixes **for a property it drives** is away from 0 at setup or on any value an animation poses (§4.10, §4.12), or one whose `properties` name no `to` at all. A property is applied only when its own mix `!== 0`, and a key that omits a mix reads it as 1, so the six-mix early return of `TransformConstraint.update` would take a key of `mixRotate: 0` alone as a rescue — [measured] that key, and one keying `mixX` 1 on a rotate-only constraint, pose every bone exactly where no constraint does. A negative mix runs, and five transforms in the editor's example exports rest at −1. `transform constraint "C" drives rotate and has mixRotate 0 at setup, and none of the 1 animation keys its mix above 0; a mix is read only for a property the constraint drives, and update() skips each one at 0, so nothing ever moves "follower" — rest mixRotate above 0, or key its mix above 0 in an animation, or declare that the consumer drives its mix, in the rig spec as invariants.consumerDrivenMix: [{ "constraint": "C", "type": "transform", "why": … }]`. A constraint the rig spec declares in `invariants.consumerDrivenMix` (§3.7) is not measured, and one the file also switches on is refused as `A47`'s is; one that drives no property is refused with its own sentence declared or not, since no mix it carries is read by anybody. **SKIP** when the skeleton declares no transform constraint, and **SKIP by name** when every transform constraint it declares is declared consumer-driven: `every transform constraint here is declared in the rig spec as invariants.consumerDrivenMix, so its mix is the consumer's to set and nothing in this file shows it moving — "C" (why: …): it rests muted and none of the 1 animation keys its mix above 0`. With a live one beside it the stats line names the declared (`transformConsumerDriven`) |
 | `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` | renderer | two regions on one page whose rectangles overlap **and** whose footprints overlap — so one drawing samples texels that are the other's. A region's **footprint** is what samples it: a region a mesh names (its `path`, else its name, every frame of a `sequence` included) draws the mesh's hull loop and its triangles, its UVs placed on the page as `MeshAttachment.computeUVs` places them (a **linked mesh** draws its source's); a region a region attachment names, or that nothing names, draws its whole rectangle — and so does a mesh region whose UVs leave 0..1, whose hull or triangles do not index its vertices, or that is turned by `rotate:`, and every region when a `sequence` cannot be read. For two rectangles that is exactly the clause `A06` held until issue #1099 — an editor alias, a sequence frame, two rectangles moved over the same texels are refused as they were — and it accepts what `--pack-shape polygon` writes: a neighbour inside a mesh's rectangle where the hull is not (§0.1). **Touching is not overlapping**: interiors are compared, every comparison `FOOTPRINT_SLACK` (1e-6 texels) in favour of apart. `regions "ear_l" (341,696 112x420) and "mouth" (332,709 96x48) overlap on page "skeleton.png", and so do their footprints — "ear_l" draws the hull of mesh "ear_l" (skin "default", slot "ear_l"), "mouth" draws its whole rectangle, which region attachment "mouth" (skin "default", slot "mouth") draws; what they draw overlaps by 1916.5512 texel(s) of area inside 347,709 81x48. One drawing samples texels that are the other's: move one region clear of the other's footprint, or pack the page again` — `gallery/nod`'s polygon pack with `mouth` moved onto a triangle of the `ear_l` mesh (`PK88`). Nothing about the **padding** is read — the atlas and the model document do not state it — and the `2 · padding` the packer keeps is the packer's own (`PK81`). A renderer rule because two regions over the same texels is what an editor's packer writes for an alias or a sequence: 49 pairs on four of the ten atlases in `examples/`. **SKIP** when the atlas declares no page or no region, and when no page carries two regions — every unpacked build |
 | `A50_STAGE_BOX_IS_THE_STAGE` | both | the stage box a rig asked for (`skeleton.stageBox`, §3.1) is not the stage the model document states. Read on the data a consumer reads and on the pose it reads: the slot carries, in the `default` skin under the asked name, an unweighted bounding box of four vertices whose **stored** vertices are the stage's corners exactly — `(x, y)`, `(x + w, y)`, `(x + w, y + h)`, `(x, y + h)`, as the float32 the runtime loads — and whose **world** vertices at the setup pose (constraints applied, no physics, no skin set) are those corners as the runtime poses them on an unrotated root, compared on the header's 1e-6 grid at float32. `the stage box (slot "stage", attachment "stage"): vertex 1 is stored as (65, 0) and the stage's corner is (64, 0) — the stage 0,0 64x48, bottom-left first and counter-clockwise`; a root moved at setup reads *vertex 0 poses at (1, 0) at the setup pose and the stage's corner poses at (0, 0) on an unrotated root, on the header's grid — something moves the box's bone at setup (a constraint, or a pose the root does not state)*; a slot the skeleton lacks, no attachment of that name, another type, or a weighted box are each named too. Through spine-core it reads `findSlot`, `defaultSkin.getAttachment` and `computeWorldVertices` on a fresh skeleton after `setupPose()` and `updateWorldTransform(Physics.none)`; on the model side the document's record and rigc's core poser, held to spine-core's poses at tolerance 0 (`PG06`, `PG07`). **SKIP** where nothing asks: *nothing asks for a stage box: no rigc-compiled/3 model document beside this skeleton states one …* — a rig without the field, and any skeleton with no `/3` document beside it, an export among them |
+| `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` | both | a bone the rig holds to a line (`invariants.axes`, §3.7) whose world x axis at the setup pose — constraints applied, no physics, no skin set, the pose `A50` reads — is more than the entry's `tolerance` off the line through its two `through` bones' world origins, compared as lines (0° to 90°): `axis "face" (through "eye_r"→"eye_l", 30.0000°): bone "brow_l" world x axis at 36.0000°, 6.0000° off, tolerance 5° — rotate the bone in the rig spec onto the line and counter-rotate its attachments so the setup pose stays put`. Every angle is Spine world degrees (y up), counter-clockwise from +x. **Fix it in the rig spec**: set the bone's `rotation` so its world x axis lands on the axis angle the line prints, counter-rotate its attachments by the same angle so the setup pose does not move, and restate its children in its new frame. Also fails, by the entry's name: two `through` bones on one world origin (*share the world origin (x, y) at the setup pose, so they draw no line* — move one, or name another pair); a bone with no world x axis (a scale of 0); a bone inactive with no skin set (*so the setup pose places it nowhere*); a bone the skeleton does not have. Held whether or not an animation keys the bone: a consumer writes it at run time. Through spine-core it reads `appliedPose` on a fresh skeleton after `setupPose()` and `updateWorldTransform(Physics.none)`; on the model side rigc's core poser, held to spine-core's poses at tolerance 0 (`AX01`–`AX05`). **SKIP** when the rig declares no axes — *the rig "X" declares no axes (invariants.axes)* — and on a bare directory with no rig |
 
 `both ◑` marks a mixed assertion: its validity half always runs and its policy
 clauses are gated by profile.

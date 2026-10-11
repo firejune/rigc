@@ -97,6 +97,7 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT: 'validity',
   A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP: 'renderer',
   A50_STAGE_BOX_IS_THE_STAGE: 'validity',
+  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: 'validity',
 };
 
 /** Whether `profile` runs a rule of `kind`: `spine` runs validity alone, `spine-html` every kind. */

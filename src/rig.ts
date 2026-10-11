@@ -1757,6 +1757,51 @@ export interface RigInvariants {
    * refused at the gate: it would switch off nothing while reading like it did.
    */
   idleDrivesMeshes?: RigIdleDrivesMeshes;
+  /**
+   * Lines some of the rig's bones are held to: for each entry, the line
+   * through the setup-pose world origins of the two `through` bones, and every
+   * bone in `bones` with its setup-pose world x axis within `tolerance` degrees
+   * of it, as a line — `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` (issue #1351).
+   *
+   * 🔑 **Why a bone's axes are the rig's business.** A `scaleY` key squashes
+   * along the bone's own y axis and a `translateY` key moves along it. On a face
+   * painted upright with every bone at rotation 0 that is the face's axis; on a
+   * face painted tilted it is the page's, so a blink squashes the eye along the
+   * page's vertical rather than across the eye line, a brow rises toward the
+   * page's top rather than the forehead — and the parser, the round trip and
+   * every other rule accept it. The author cannot see it. Rotating the bones to
+   * the face's line (their attachments counter-rotated, so the setup pose is
+   * unmoved) is the fix, and this is the declaration that holds it.
+   *
+   * 🚨 **Held whether or not any animation keys the bones.** A consumer writes
+   * them at run time (`openTrack({ adjust })` on the core entry), which no
+   * animation in the file shows, so "nothing keys it" is not "nothing reads it".
+   *
+   * ⚠️ `tolerance` is **required**, finite, above 0 and below 90 — the compiler
+   * does not invent one. Two lines meet at 0° to 90°, so a tolerance of 90 or
+   * more admits every orientation and could never fail; and a bone's world
+   * angle is read off a posed matrix in floating point, so 0 would refuse a
+   * bone rotated exactly onto the line whenever the arithmetic rounds.
+   *
+   * Every name resolves or is refused by name: an unknown bone in `through` or
+   * `bones`, `through` naming one bone twice, a repeated entry `name`. Two
+   * `through` bones that land on one world origin draw no line, and that is
+   * known only once the setup pose is posed — constraints included — so the
+   * gate refuses it, by the entry's name, rather than this parser.
+   */
+  axes?: RigAxis[];
+}
+
+/** One line some bones are held to — `invariants.axes` (`A51`). */
+export interface RigAxis {
+  /** Names the entry in every failure; unique among the rig's axes. */
+  name: string;
+  /** The two bones whose setup-pose world origins draw the line, first to second. Two different bones. */
+  through: string[];
+  /** The bones whose setup-pose world x axis must lie along it. */
+  bones: string[];
+  /** Degrees, required: above 0 and below 90 — see `RigInvariants.axes`. */
+  tolerance: number;
 }
 
 /** The rig's `idle` is meant to deform meshes — `invariants.idleDrivesMeshes` (`A15`). */
@@ -1869,7 +1914,8 @@ export const RIG_KEYS = {
   RigBoneFrom: ['anchor', 'slotWindow', 'meshCenter', 'rotation'],
   RigSlot: ['name', 'bone', 'attachment', 'color', 'dark', 'blend'],
   RigEvent: ['int', 'float', 'string', 'audio', 'volume', 'balance'],
-  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'consumerDrivenMix', 'idleDrivesMeshes'],
+  RigInvariants: ['meshSlots', 'meshTriangles', 'axisBone', 'massBone', 'detached', 'deformMayFold', 'consumerDrivenMix', 'idleDrivesMeshes', 'axes'],
+  RigAxis: ['name', 'through', 'bones', 'tolerance'],
   RigIdleDrivesMeshes: ['why'],
   RigDetachedRule: ['bone', 'notUnder', 'why'],
   RigDeformFoldExemption: ['slot', 'why'],
@@ -1977,8 +2023,9 @@ export const RIG_TYPES = {
   RigEvent: { int: 'number', float: 'number', string: 'string', audio: 'string', volume: 'number', balance: 'number' },
   RigInvariants: {
     meshSlots: 'number', meshTriangles: 'number', axisBone: 'string', massBone: 'string', detached: 'object[]',
-    deformMayFold: 'object[]', consumerDrivenMix: 'object[]', idleDrivesMeshes: 'object',
+    deformMayFold: 'object[]', consumerDrivenMix: 'object[]', idleDrivesMeshes: 'object', axes: 'object[]',
   },
+  RigAxis: { name: 'string', through: 'string[]', bones: 'string[]', tolerance: 'number' },
   RigIdleDrivesMeshes: { why: 'string' },
   RigDetachedRule: { bone: 'string', notUnder: 'string', why: 'string' },
   RigDeformFoldExemption: { slot: 'string', why: 'string' },
@@ -2312,6 +2359,9 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
       at(rule, 'RigConsumerDrivenMix', `invariants.consumerDrivenMix[${i}]`, ['invariants', 'consumerDrivenMix', i]);
     }
     at(raw.invariants.idleDrivesMeshes, 'RigIdleDrivesMeshes', 'invariants.idleDrivesMeshes', ['invariants', 'idleDrivesMeshes']);
+    for (const [i, rule] of (Array.isArray(raw.invariants.axes) ? raw.invariants.axes : []).entries()) {
+      at(rule, 'RigAxis', `invariants.axes[${i}]`, ['invariants', 'axes', i]);
+    }
   }
 
   for (const [skinName, skin] of Object.entries(isObj(raw.skins) ? raw.skins : {})) {
@@ -2774,6 +2824,58 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
           `${idleDrives.why === undefined ? 'none' : JSON.stringify(idleDrives.why)} — expected ${shape}. This field switches ` +
           'A15_IDLE_NO_MESH_BONE_KEYS off, and an exemption nobody can date or justify is how a defect ships as a decision',
       );
+    }
+  }
+
+  // `invariants.axes` (issue #1351) — a field that TURNS A CHECK ON, and every
+  // way an entry could check nothing while reading like it did is refused by
+  // name: a bone that resolves to nothing, a line through one bone, a repeated
+  // name, a tolerance that is missing or admits every orientation. What it
+  // cannot refuse is two `through` bones landing on one world origin: that is
+  // a fact about the posed setup pose, constraints included, which this parser
+  // does not pose — `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` refuses it by the
+  // entry's name.
+  const axes = spec.invariants?.axes;
+  if (axes !== undefined) {
+    const shape = 'an array of { "name": …, "through": [<bone>, <bone>], "bones": [<bone>, …], "tolerance": <degrees> }';
+    if (!Array.isArray(axes)) throw new CompileError(`${where}: invariants.axes is ${JSON.stringify(axes)}, expected ${shape}`);
+    const named = new Set<string>();
+    for (const [i, entry] of axes.entries()) {
+      const field = `invariants.axes[${i}]`;
+      if (!isObj(entry) || typeof entry.name !== 'string' || entry.name.length === 0) {
+        throw new CompileError(`${where}: ${field} needs a "name" — ${shape}`);
+      }
+      const axis = `${field} "${entry.name}"`;
+      if (named.has(entry.name)) throw new CompileError(`${where}: ${field}: invariants.axes names "${entry.name}" twice — a failure names its entry, and two entries of one name could not be told apart`);
+      named.add(entry.name);
+      const through: unknown = entry.through;
+      if (!Array.isArray(through) || through.length !== 2 || !through.every((b): b is string => typeof b === 'string')) {
+        throw new CompileError(`${where}: ${axis}: "through" is ${JSON.stringify(through)}, expected two bone names — the line is drawn through their setup-pose world origins`);
+      }
+      for (const [k, bone] of through.entries()) {
+        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: through[${k}] names bone "${bone}", which this rig does not declare — a line through nothing holds nothing`);
+      }
+      if (through[0] === through[1]) {
+        throw new CompileError(`${where}: ${axis}: "through" names bone "${through[0]}" twice — one bone's origin is a point, and a point draws no line`);
+      }
+      const bones: unknown = entry.bones;
+      if (!Array.isArray(bones) || bones.length === 0 || !bones.every((b): b is string => typeof b === 'string')) {
+        throw new CompileError(`${where}: ${axis}: "bones" is ${JSON.stringify(bones)}, expected a non-empty array of bone names — the bones held to the line`);
+      }
+      const held = new Set<string>();
+      for (const [k, bone] of bones.entries()) {
+        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: bones[${k}] names bone "${bone}", which this rig does not declare — a name that resolves to nothing is held to nothing, and reads like it was`);
+        if (held.has(bone)) throw new CompileError(`${where}: ${axis}: "bones" names bone "${bone}" twice`);
+        held.add(bone);
+      }
+      const tolerance: unknown = entry.tolerance;
+      if (typeof tolerance !== 'number' || !Number.isFinite(tolerance) || !(tolerance > 0) || !(tolerance < 90)) {
+        throw new CompileError(
+          `${where}: ${axis}: "tolerance" is ${tolerance === undefined ? 'absent' : JSON.stringify(tolerance)}; it must be a number of degrees above 0 and below 90, ` +
+            'and there is no default — two lines meet at 0° to 90°, so 90 or more admits every orientation and can never fail, ' +
+            'and 0 refuses a bone rotated exactly onto the line whenever the posed arithmetic rounds',
+        );
+      }
     }
   }
 

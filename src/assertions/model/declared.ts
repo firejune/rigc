@@ -75,6 +75,7 @@ const RIG_FIELDS: Readonly<Record<keyof RigInfo, Check>> = {
   deformMayFold: list(str),
   consumerDrivenMix: list(shape({ type: oneOf(['ik', 'transform']), constraint: str, why: str })),
   idleDrivesMeshes: nullable(str),
+  axes: list(shape({ name: str, through: list(str, 2), bones: list(str), tolerance: num })),
   basePlates: list(str),
   meshSlotBudget: nullable(num),
   meshTriangleBudget: nullable(num),

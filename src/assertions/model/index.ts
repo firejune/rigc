@@ -64,6 +64,9 @@ import { a06AtlasPageSizeMatchesPng } from '../bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from '../bodies/a19.ts';
 import { a49PackedFootprintsDoNotOverlap } from '../bodies/a49.ts';
 import { a50StageBoxIsTheStage } from '../bodies/a50.ts';
+import { a51BonesLieAlongTheirDeclaredAxis } from '../bodies/a51.ts';
+import { modelSetupWorld } from './setup_world.ts';
+import type { SetupWorldFacts } from '../facts/setup_world.ts';
 import { modelStageBox } from './stage_box.ts';
 import type { StageBoxFacts } from '../facts/stage_box.ts';
 import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
@@ -197,6 +200,8 @@ export interface ModelSupply {
   steppedPoses: (read: ReadDocument) => SteppedPoseFacts;
   /** The stage box the document asks for and what its default skin holds there (issue #1168, `./stage_box.ts`). */
   stageBox: (read: ReadDocument) => StageBoxFacts;
+  /** Each bone's world frame at the setup pose, A50's pose (issue #1351, `./setup_world.ts`). */
+  setupWorld: (read: ReadDocument) => SetupWorldFacts;
   /** The rig info the document declares (issue #1054, `./declared.ts`); a caller's `rig` beside it is refused by name. */
   rigInfo: (read: ReadDocument, input: ModelValidateInput) => RigInfo;
   /** Each animation's declared duration as the document states it (issue #1054); a caller's `declaredDurations` beside it is refused by name. */
@@ -228,6 +233,7 @@ export const MODEL_SUPPLY: ModelSupply = {
   constraintTargets: modelConstraintTargets,
   steppedPoses: modelSteppedPoses,
   stageBox: modelStageBox,
+  setupWorld: modelSetupWorld,
   rigInfo: (read, input) => {
     refuseDeclaredBeside(read, input, 'rig');
     return modelRigInfo(read);
@@ -318,6 +324,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
+  { code: 'A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS', run: (v, read, input, supply) => a51BonesLieAlongTheirDeclaredAxis(v, supply.setupWorld(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
 ];
 
 /** The codes the model side prints: its two parse rules, then the moved assertions. */
