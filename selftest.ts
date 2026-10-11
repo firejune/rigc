@@ -75679,7 +75679,7 @@ function runCurrencySuite(): number {
       }
       const held = standing.length === 0 && probes.length === 0;
       say(
-        'CUR126_SHIPS_JUDGES_THE_SUBJECT_THE_SQUASH_WRITES_READ_FROM_THE_ONE_ASSEMBLY_AND_RERUNS_ON_A_TITLE_EDIT',
+        'CUR126_DEMO_RENAMED_FOR_THE_REMOVALS_EDIT_PROOF',
         held,
         probeDetail(
           held,
