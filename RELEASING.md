@@ -41,14 +41,20 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   always visible carries no information.
 
   ✅ **What does the noticing is the `ships` job in
-  [`.github/workflows/ci.yml`](.github/workflows/ci.yml)**
-  ([#516](https://github.com/rig-c/core/issues/516)). It runs on
+  [`.github/workflows/squash-text.yml`](.github/workflows/squash-text.yml)**
+  ([#516](https://github.com/rig-c/core/issues/516); in that workflow since
+  [#1359](https://github.com/rig-c/core/issues/1359), so a title edit re-runs it
+  without re-running the selftest). It runs on
   every pull request, extracts both ends of the landing and asks **`npm pack
   --dry-run`** what each one publishes — not the `files` array, because npm adds
   `package.json`, `README.md` and `LICENSE` on top of it, so a literal reading of
   the array is blind to the second most edited file in the package. If a path
-  inside the pack changes and the pull request title carries a type
-  release-please hides, the job names the paths and refuses.
+  inside the pack changes and the **subject the squash will write** carries a
+  type release-please hides, the job names the paths and refuses. That subject
+  is read by `scripts/commit_parse.ts subject`, the same assembly the `parses`
+  job judges: **a branch of one commit squashes to that commit's own subject**,
+  and only a branch of several to the pull request title — so retype the commit
+  (amend it) on a one-commit branch, and the title on a longer one.
 
   🔒 **Its verdict is not "you used the wrong type".** A doc correction really is
   a `docs` change; what is missing is that it also ships. Either remedy clears
@@ -57,14 +63,16 @@ Every push to `main` runs `release.yml`, which hands the new commits to
   not of the pull request body.
 
   🕳️ **What it still cannot see**, and the reason the release-time half of #516
-  is worth keeping on the table: the job reads the pull request TITLE, because
-  that is what the squash writes onto `main`, and GitHub lets that subject be
-  rewritten in the merge box **after** the check has reported. Measured over the
-  newest 100 merged pull requests, 86 subjects are exactly the title plus
-  ` (#N)`, thirteen differ only by issue references the title has since lost, and
-  [#353](https://github.com/rig-c/core/pull/353) is the one that was genuinely
-  rewritten at merge. So when a cut looks overdue, the old manual reading still
-  settles it: **look at what changed inside `files`, not at the commit types.**
+  is worth keeping on the table: GitHub lets the squash subject be rewritten in
+  the merge box **after** the check has reported. Over the 100 newest merged
+  pull requests (#1211–#1364, 97 of one commit) the subject the job reads is the
+  one on `main` on all 100; the pull request title is on 49. Until #1359 the
+  job read the title, and this paragraph cited
+  [#353](https://github.com/rig-c/core/pull/353) as a merge-box rewrite — it is
+  one commit, and `main` carries that commit's subject, which is the merge
+  setting working as documented rather than an edit. So when a cut looks
+  overdue, the old manual reading still settles it: **look at what changed
+  inside `files`, not at the commit types.**
 - **Something releasable** → it opens, or updates, a pull request titled
   `release: vX.Y.Z` containing exactly three generated changes: the
   `package.json` version, `CHANGELOG.md`, and `.release-please-manifest.json`.

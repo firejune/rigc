@@ -288,7 +288,8 @@ somebody*. The `ships` job in CI compares what your branch changed against that
 list and refuses a landing the release cannot see. Its verdict is **not** that
 your type is wrong: a doc correction really is a `docs` change, and what is
 missing is that it also ships. Either remedy clears it — a type the changelog
-shows, or a `Release-As:` footer in a **commit message on the branch**, since the
+shows, in the subject the squash will write (the one commit's own subject on a
+one-commit branch, the pull request title on a longer one), or a `Release-As:` footer in a **commit message on the branch**, since the
 squash body is made of the commits and not of the pull request body. A change
 that touches nothing in the package is unaffected whatever its type
 ([#516](https://github.com/rig-c/core/issues/516)).
