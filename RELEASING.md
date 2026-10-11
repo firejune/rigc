@@ -79,6 +79,45 @@ Every push to `main` runs `release.yml`, which hands the new commits to
 Squash-merge the release pull request, so the commit on `main` keeps its
 `release: vX.Y.Z` subject.
 
+### A commit release-please cannot parse is a release that does not happen
+
+release-please hands every commit to `@conventional-commits/parser`, and a
+commit the parser throws on is logged at debug level and **counted as
+nothing** — the run concludes success. The squash of
+[#1352](https://github.com/rig-c/core/pull/1352) (1c04a03) went that way: line
+20 of its body opened with a code span holding a nested call, the parser read
+the line's start as a footer token and stopped at `20:23`, and the run opened no
+release pull request ([#1354](https://github.com/rig-c/core/issues/1354); #1353
+recovered it with an empty commit restating the subject).
+
+✅ **What catches it is
+[`.github/workflows/squash-text.yml`](.github/workflows/squash-text.yml)**,
+which runs [`scripts/commit_parse.ts`](scripts/commit_parse.ts) on every pull
+request when it is opened, pushed to, reopened or **edited**. It assembles the
+text the squash will write and parses it with the parser release-please runs —
+the version the action's lockfile pins, pinned exactly as a devDependency — and
+refuses by line, column and the line itself. Which text that is follows the
+repository's merge settings (`COMMIT_OR_PR_TITLE`, `COMMIT_MESSAGES`): **one
+commit squashes to its own subject and body**, so the pull request title is not
+read at all; **several squash to the pull request title** over every commit
+message. The pull request body never reaches `main`; it is read only for a
+`BEGIN_COMMIT_OVERRIDE` block, which release-please reads in place of the
+commit. So the fix for a refusal is in the commit message (or, for a branch of
+several commits, the title), never in the body.
+
+What the grammar trips on, measured on the pinned parser: a line that opens
+with a word and an open parenthesis is read as the start of a footer token, and
+it fails when another parenthesis or the end of the line comes before the
+closing one — a line opening with a code span around a nested call, or
+`name(` left open. The same text later in the line parses. Over the whole of
+`main` (`bun scripts/commit_parse.ts history 1000 main`), 7 commits are ones
+release-please skipped: three bodies of that shape, and four subjects that are
+not conventional (one of them GitHub's own `Revert "…"` title — retitle a
+revert `revert: …`).
+
+🕳️ The merge box can still rewrite the title and body after the check has run,
+and nothing a pull request check can read sees that edit.
+
 ## One-time setup (owner, GitHub)
 
 **Settings → Actions → General → Workflow permissions → tick "Allow GitHub

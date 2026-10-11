@@ -1,0 +1,66 @@
+# Whether release-please can read the commit a pull request will squash into
+# (issue #1354).
+#
+# 🚨 **The incident.** The squash of #1352 (1c04a03) opened no release. Line 20
+# of its body began with a code span holding a call, release-please's commit
+# parser threw `unexpected token '(' at 20:23`, and release-please logged that
+# at debug level, counted zero commits and concluded **success** — the release
+# run was green and shipped nothing. That run cannot be made to fail without
+# replacing release-please, which is out of scope; this reads the same text
+# before the merge, where the author can still change it.
+#
+# ⭐ The parser is release-please's own: `@conventional-commits/parser` at the
+# version the action's lockfile pins, a devDependency pinned exactly, so the
+# verdict here is the release run's verdict and not a look-alike of it.
+# `scripts/commit_parse.ts` carries the measurement, and which text the squash
+# writes — read from the repository settings (`COMMIT_OR_PR_TITLE`,
+# `COMMIT_MESSAGES`): the branch's commit messages, and the pull request title
+# only when the branch carries more than one commit.
+#
+# 🔁 **A workflow of its own, not a job in ci.yml, and the reason is
+# `edited`.** Fixing a title is an `edited` event, and this check has to run
+# again on it. ci.yml's `pull_request` takes the default activity types, so
+# adding `edited` there would run the six selftest shards again on every title
+# or body edit — and holding those jobs back on an edit with an `if:` would
+# report the required `test` as skipped on that run, and GitHub's documentation
+# of required checks states that a skipped job reports success. Here, an edit
+# re-runs this one job and nothing else.
+#
+# ⛔ Not a required check until somebody makes it one in the repository's
+# settings, which is not a thing a file in the tree can assert.
+name: squash-text
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  parses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Full history, stated rather than inherited: the squash body is every
+      # commit between the merge base and the head, and the default depth is
+      # one commit.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+
+      - name: release-please parses the text the squash will write
+        # 🔒 Through the environment and never interpolated into the script. A
+        # pull request title and body are written by whoever opened it, so
+        # `${{ }}` inside `run:` would be executing a stranger's text. The body
+        # never reaches the squash; it is read for one thing, the
+        # BEGIN_COMMIT_OVERRIDE block release-please reads from it instead.
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bun scripts/commit_parse.ts pr

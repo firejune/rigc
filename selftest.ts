@@ -671,6 +671,7 @@ import { compareCut4c5Facts, comparePosedFacts, sumPosedTallies, CUT_4C5_FAMILIE
 import { compareSteppedPoses, coreRefusalOf, documentedCoreRefusal, STEPPED_FACT_FAMILIES, type SteppedFactFamily } from './tools/verdict_gate.ts';
 import { MERGED_TALLY_SPEC, PREPUBLISH_TALLY_VARIABLE, tallyDecision, treeHead, type MergedTally, type TallyTree } from './scripts/prepublish_gate.ts';
 import { ALIASES } from './scripts/alias_tarball.ts';
+import { judgeSquash, parseFaults, squashText } from './scripts/commit_parse.ts';
 import { rigFactsDerivationsOf, modelRigFacts, RIG_FACT_FAMILIES, rigFactsDerivations, rigFactsSpelling, sumTallies, type DerivationTally, type RigFactFamily, type RigFacts } from './tools/rig_facts.ts';
 import {
   articulatedFixture,
@@ -75364,6 +75365,214 @@ function runCurrencySuite(): number {
             `runs a shard or a merge of its own, and ci.yml's \`test\` reads the merge's verdict — over ${cases.length} plant(s): ${cases.join('; ')}`,
         ),
         'issue #1249: release.yml reading a gate that is not the one CI reads would be #1003 again — two environments, one name',
+      );
+    }
+
+    // --- CUR124–CUR125: the squash text release-please reads (issue #1354) ----
+    //
+    // The squash of #1352 (1c04a03) shipped nothing: line 20 of its body opened
+    // with a code span holding a call, release-please's commit parser threw
+    // `unexpected token '(' at 20:23`, and the release run logged it at debug
+    // level, counted zero commits and concluded success. `scripts/commit_parse.ts`
+    // reads the squash text with that parser before the merge, and
+    // `squash-text.yml` runs it on every pull request event that can change the
+    // text. CUR124 holds the judgement on fixtures, through the same
+    // `judgeSquash` the pull request job calls; CUR125 holds the job and the pin.
+    {
+      // The first 21 lines of 1c04a03 as they stood on the branch — the one
+      // commit of #1352, its subject without the ` (#1352)` the squash appends.
+      const incident = [
+        'feat(validate): A51 holds the bones a rig declares to share an axis to the line through two named bones\' setup-pose origins — invariants.axes, refused by name at read, validity under the default profile, equal on both suppliers (AX01–AX06), and declared on gallery/look, nod and portrait at 0.0000° off with no emitted byte moved (#1351)',
+        '',
+        'An agent keys `scaleY` on an eye bone to blink. On a face painted tilted,',
+        'bones written at rotation 0 squash along the page\'s vertical rather than',
+        'across the eye line — the parser accepts it, the gate was green, the',
+        'picture is wrong. Measured on HQ\'s trailer rig: the eye line 23.7° off the',
+        'page, five face bones at 0; the first production consumer reports the same',
+        'root behind four defects (eye scaleY, brow translateY, mouth scaleY, iris',
+        'translateX). The build-side fix for generated rigs is rig-c/parts#239; this',
+        'is the rule that holds any rig, hand-authored included.',
+        '',
+        'What is built: `invariants.axes: [{ name, through: [a, b], bones, tolerance }]`',
+        'and `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS`. The axis is the line through',
+        'the two `through` bones\' setup-pose world origins; every bone in `bones`',
+        'must have its world x axis within `tolerance` degrees of it, as a line (the',
+        'gap folded mod 180° into 0–90°, so a bone turned 180° or mirrored lies on',
+        'it). The pose is A50\'s, measured rather than chosen: constraints applied,',
+        'no physics, no skin set — spine-core `setupPose()` +',
+        '`updateWorldTransform(Physics.none)` read off `appliedPose`, the model side',
+        '`poseSetup(underNoSkin(doc))` + `activeBones`. A bone\'s angle is',
+        '`atan2(c, a)`, what `getWorldRotationX` reports. Held whether or not an',
+      ];
+      // What the release log of run 38147112861 printed for it, verbatim.
+      const RELEASE_LOG = "unexpected token '(' at 20:23, valid tokens [)]";
+      const badLine = incident.findIndex((line) => line.startsWith('`poseSetup('));
+      // The positive control: the same words, the code span moved off the start of the line.
+      const reflowed = incident.map((line, i) =>
+        i === badLine - 1 ? `${line} ${incident[badLine].slice(0, incident[badLine].indexOf(' + '))}` : i === badLine ? incident[badLine].slice(incident[badLine].indexOf(' + ') + 1) : line,
+      );
+      const message = (lines: readonly string[]): string => `${lines.join('\n')}\n`;
+      const notConventional = 'A sixth gallery example: nod';
+      const conventional = 'feat(gallery): nod, a sixth example';
+      const clean = 'test(selftest): a second commit on the branch\n\nNothing in this body opens a line the grammar reads as a footer.\n';
+      const override = (text: string): string => `What the squash says is replaced.\n\nBEGIN_COMMIT_OVERRIDE\n${text}\nEND_COMMIT_OVERRIDE\n`;
+      const probes: string[] = [];
+      const rows: string[] = [];
+      const expect = (
+        what: string,
+        input: { title: string; commits: string[]; body?: string },
+        want: { exit: 0 | 1; line?: number; column?: number; error?: string },
+      ): void => {
+        const verdict = judgeSquash({ title: input.title, number: '1352', commits: input.commits, body: input.body ?? '' });
+        const first = verdict.faults[0];
+        const at = first === undefined ? 'parses' : `line ${first.line ?? '?'}:${first.partColumn ?? '?'}`;
+        rows.push(`${what} -> ${verdict.exit === 0 ? 'parses' : at}`);
+        if (verdict.exit !== want.exit) {
+          probes.push(`${what}: wanted ${want.exit === 0 ? 'a parse' : 'a refusal'} and got ${verdict.exit === 0 ? 'a parse' : `a refusal at ${at} (${first?.error ?? 'no fault'})`}`);
+          return;
+        }
+        if (want.line !== undefined && (first === undefined || first.line !== want.line)) probes.push(`${what}: refused at ${at}, where line ${want.line} is the line at fault`);
+        if (want.column !== undefined && (first === undefined || first.partColumn !== want.column)) probes.push(`${what}: refused at ${at}, where column ${want.column} is the release log's`);
+        if (want.error !== undefined && (first === undefined || first.error !== want.error)) probes.push(`${what}: the parser said ${JSON.stringify(first?.error ?? null)} where the release log printed ${JSON.stringify(want.error)}`);
+        if (verdict.exit === 1 && !verdict.lines.some((line) => first !== undefined && first.lineText !== null && line === `  | ${first.lineText}`)) {
+          probes.push(`${what}: the refusal does not print the offending line`);
+        }
+      };
+      // The incident: one commit, so the squash is its subject and body, and the line and column are the release log's.
+      expect('the body of 1c04a03', { title: notConventional, commits: [message(incident)] }, { exit: 1, line: badLine + 1, column: 23, error: RELEASE_LOG });
+      expect('the same body with the code span moved off the start of its line', { title: notConventional, commits: [message(reflowed)] }, { exit: 0 });
+      // The title is read only where the squash writes it: one commit's subject is its own, several take the pull request title.
+      expect('one commit, the title not conventional', { title: notConventional, commits: [message(reflowed)] }, { exit: 0 });
+      expect('two commits, the title not conventional', { title: notConventional, commits: [message(reflowed), clean] }, { exit: 1, line: 1 });
+      expect('two commits, the title conventional', { title: conventional, commits: [message(reflowed), clean] }, { exit: 0 });
+      // In a squash of several, the incident line sits below the title, a blank line and its `* `.
+      const several = squashText({ title: conventional, number: '1352', commits: [clean, message(incident)] }).split('\n');
+      expect('two commits, the second carrying the incident line', { title: conventional, commits: [clean, message(incident)] }, { exit: 1, line: several.indexOf(incident[badLine]) + 1, column: 23 });
+      // The pull request body is read for the override release-please reads instead, and for nothing else.
+      expect('the incident line in the pull request body alone', { title: conventional, commits: [message(reflowed), clean], body: incident[badLine] }, { exit: 0 });
+      expect('the incident body as a commit override', { title: conventional, commits: [message(reflowed), clean], body: override(message(incident)) }, { exit: 1, line: badLine + 1, column: 23 });
+      expect('a clean override over the incident commit', { title: conventional, commits: [message(incident)], body: override(clean) }, { exit: 0 });
+      // The parser itself, outside the assembly: what release-please's own splitting hands it.
+      const direct = parseFaults(message(incident));
+      if (direct.length !== 1 || direct[0].error !== RELEASE_LOG) probes.push(`parseFaults on the raw 1c04a03 lines answered ${JSON.stringify(direct.map((fault) => fault.error))}, where the release log printed one fault, ${RELEASE_LOG}`);
+      rows.push(`the raw 1c04a03 lines -> ${direct.length} fault(s)`);
+      const held = probes.length === 0;
+      say(
+        'CUR124_A_SQUASH_RELEASE_PLEASE_CANNOT_PARSE_IS_REFUSED_BY_ITS_OWN_PARSER_AT_THE_LINE_AND_COLUMN_ITS_RELEASE_LOG_PRINTS',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `the squash text is judged by @conventional-commits/parser as release-please splits it, and the body of 1c04a03 is refused with the ` +
+            `release log's own words (${RELEASE_LOG}) — over ${rows.length} case(s): ${rows.join('; ')}`,
+        ),
+        'issue #1354: the squash of #1352 shipped nothing and its release run concluded success, because release-please skips a commit its parser throws on',
+      );
+    }
+
+    {
+      const FILE = 'squash-text.yml';
+      const PARSER = '@conventional-commits/parser';
+      const STEP_RUN = 'bun scripts/commit_parse.ts pr';
+      const ENV_WANT: Record<string, string> = {
+        PR_TITLE: 'github.event.pull_request.title',
+        PR_BODY: 'github.event.pull_request.body',
+        PR_NUMBER: 'github.event.pull_request.number',
+        BASE_SHA: 'github.event.pull_request.base.sha',
+        HEAD_SHA: 'github.event.pull_request.head.sha',
+      };
+      const STRANGER = /\$\{\{\s*github\.(event\.pull_request\.(title|body|head\.ref|head\.label)|head_ref)\b/;
+      const installedVersion = ((): string | null => {
+        try {
+          return (JSON.parse(readFileSync(join(root, 'node_modules', '@conventional-commits', 'parser', 'package.json'), 'utf8')) as { version?: string }).version ?? null;
+        } catch {
+          return null;
+        }
+      })();
+      const squashFaults = (edited: Record<string, string>): string[] => {
+        const faults: string[] = [];
+        const { 'package.json': manifestText, ...workflows } = edited;
+        const all = parseAll(workflows, faults);
+        if (all === null) return faults;
+        // No workflow hands a stranger's text to a shell by interpolation.
+        for (const [file, flow] of Object.entries(all)) {
+          for (const [name, job] of Object.entries(flow.jobs ?? {})) {
+            for (const step of job.steps ?? []) {
+              if (STRANGER.test(step.run ?? '')) faults.push(`${file} job "${name}" interpolates pull request text into \`run:\`, which executes it; pass it through \`env:\``);
+            }
+          }
+        }
+        const flow = all[FILE];
+        if (flow === undefined) return [...faults, `there is no .github/workflows/${FILE}`];
+        const pr = (flow.on ?? {}).pull_request as { types?: string[] } | null | undefined;
+        const types = pr?.types ?? [];
+        for (const type of ['opened', 'edited', 'synchronize', 'reopened']) {
+          if (!types.includes(type)) faults.push(`${FILE}: \`pull_request\` does not list "${type}", so ${type === 'edited' ? 'fixing a title or body is not checked again' : `a ${type} pull request is not checked`}`);
+        }
+        const steps = Object.values(flow.jobs ?? {}).flatMap((job) => job.steps ?? []);
+        const checking = steps.filter((step) => runLines(step).includes(STEP_RUN));
+        if (checking.length !== 1) faults.push(`${FILE}: ${checking.length} step(s) run \`${STEP_RUN}\`, where one does`);
+        else {
+          for (const [variable, field] of Object.entries(ENV_WANT)) {
+            const value = checking[0].env?.[variable] ?? '';
+            if (!new RegExp(`^\\$\\{\\{\\s*${field.replace(/\./g, '\\.')}\\s*\\}\\}$`).test(value)) faults.push(`${FILE}: the checking step's env ${variable} is ${JSON.stringify(value)}, where it reads \${{ ${field} }}`);
+          }
+        }
+        const checkout = steps.find((step) => /actions\/checkout/.test(step.uses ?? ''));
+        if (String(checkout?.with?.['fetch-depth'] ?? '') !== '0') faults.push(`${FILE}: the checkout is not \`fetch-depth: 0\`, so the commits between the merge base and the head are not there to read`);
+        if (!steps.some((step) => runLines(step).includes('bun install --frozen-lockfile'))) faults.push(`${FILE}: nothing runs \`bun install --frozen-lockfile\`, so the parser the lockfile pins is not the one that runs`);
+        // The parser is pinned to one version, and that version is the one installed.
+        const declared = (JSON.parse(manifestText ?? '{}') as { devDependencies?: Record<string, string> }).devDependencies?.[PARSER] ?? null;
+        if (declared === null || !/^\d+\.\d+\.\d+$/.test(declared)) faults.push(`package.json: devDependencies["${PARSER}"] is ${JSON.stringify(declared)}, where an exact version pins the parser release-please runs`);
+        else if (installedVersion !== declared) faults.push(`package.json pins ${PARSER} ${declared} and node_modules carries ${JSON.stringify(installedVersion)}`);
+        return faults;
+      };
+      const manifestText = readFileSync(join(root, 'package.json'), 'utf8');
+      const base = { ...texts, 'package.json': manifestText };
+      const standing = squashFaults(base);
+      const fileText = texts[FILE] ?? '';
+      // Each plant names the fault it has to raise, so a plant that trips some other row is not counted as caught.
+      const plants: Array<{ what: string; edit: Record<string, string | null>; at?: string; quiet?: boolean }> = [
+        {
+          what: 'the body interpolated into run:',
+          edit: { [FILE]: once(fileText, `        run: ${STEP_RUN}\n`, `        run: |\n          echo "\${{ github.event.pull_request.body }}"\n          ${STEP_RUN}\n`) },
+          at: `${FILE} job "`,
+        },
+        { what: 'edited dropped from the triggers', edit: { [FILE]: once(fileText, 'types: [opened, edited, synchronize, reopened]', 'types: [opened, synchronize, reopened]') }, at: `${FILE}: \`pull_request\` does not list "edited"` },
+        { what: 'the title read from the branch name', edit: { [FILE]: once(fileText, 'PR_TITLE: ${{ github.event.pull_request.title }}', 'PR_TITLE: ${{ github.event.pull_request.head.ref }}') }, at: `${FILE}: the checking step's env PR_TITLE` },
+        { what: 'the step stops running the check', edit: { [FILE]: once(fileText, `run: ${STEP_RUN}`, 'run: echo skipped') }, at: `${FILE}: 0 step(s) run` },
+        { what: 'a shallow checkout', edit: { [FILE]: once(fileText, '          fetch-depth: 0\n', '          fetch-depth: 1\n') }, at: `${FILE}: the checkout is not` },
+        { what: 'the parser as a range', edit: { 'package.json': once(manifestText, `"${PARSER}": "${installedVersion ?? ''}"`, `"${PARSER}": "^${installedVersion ?? ''}"`) }, at: 'package.json: devDependencies' },
+        { what: 'the step renamed', edit: { [FILE]: once(fileText, '- name: release-please parses the text the squash will write', '- name: the squash text parses') }, quiet: true },
+      ];
+      const probes: string[] = [];
+      const cases: string[] = [];
+      for (const plant of plants) {
+        if (Object.values(plant.edit).some((text) => text === null)) {
+          probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+          continue;
+        }
+        const raised = raisedBy(squashFaults({ ...base, ...(plant.edit as Record<string, string>) }), { at: plant.at, was: standing });
+        if (plant.quiet === true) {
+          if (raised.length > 0) probes.push(`"${plant.what}" changes nothing this gate is about and ${raised.length} fault(s) fired: ${raised[0].slice(0, 160)}`);
+          cases.push(`${plant.what} -> quiet`);
+          continue;
+        }
+        if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+        cases.push(`${plant.what} -> ${raised.length}`);
+      }
+      const held = standing.length === 0 && probes.length === 0;
+      say(
+        'CUR125_EVERY_PULL_REQUEST_EVENT_THAT_CAN_CHANGE_THE_SQUASH_TEXT_RUNS_THE_PINNED_PARSER_OVER_IT_THROUGH_THE_ENVIRONMENT',
+        held,
+        probeDetail(
+          held,
+          [...standing, ...probes],
+          `${FILE} runs \`${STEP_RUN}\` on opened, edited, synchronize and reopened, reads the pull request through \`env:\` with full history, ` +
+            `no workflow among ${Object.keys(texts).length} interpolates pull request text into \`run:\`, and ${PARSER} is pinned at ${installedVersion} and installed at it — ` +
+            `over ${cases.length} plant(s): ${cases.join('; ')}`,
+        ),
+        'issue #1354: a check that a title edit does not re-run, or that executes the title it reads, is not the check the card asked for',
       );
     }
   }

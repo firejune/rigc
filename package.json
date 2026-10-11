@@ -100,6 +100,7 @@
     "prepublishOnly": "bun scripts/prepublish_gate.ts"
   },
   "devDependencies": {
+    "@conventional-commits/parser": "0.4.1",
     "@esotericsoftware/spine-core": "4.3.13",
     "@types/bun": "^1.4.0",
     "eslint": "^10.9.0",
