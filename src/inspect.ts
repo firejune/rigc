@@ -170,6 +170,18 @@ export interface BoneFilter {
   exclude?: readonly string[];
 }
 
+/**
+ * `--overlay-slot` / `--hide-overlay-slot`: which slots the per-slot views
+ * (`mesh`, `hull`, `weights:<bone>`, `slots`) draw, by glob. The art is not
+ * filtered — it is what the geometry is read against.
+ */
+export interface SlotFilter {
+  /** Draw only the slots some pattern matches; absent draws every slot. */
+  include?: readonly string[];
+  /** Draw none of the slots a pattern matches — applied after `include`. */
+  exclude?: readonly string[];
+}
+
 /** One `rigc inspect` invocation, its flags read but not yet checked against the build. */
 export interface InspectRequest {
   show: readonly ShowWord[];
@@ -177,6 +189,8 @@ export interface InspectRequest {
   weightsBone?: string;
   /** Which bones `bones`, `axes` and `names` draw; absent is every one. */
   boneFilter?: BoneFilter;
+  /** Which slots `mesh`, `hull`, `weights` and `slots` draw; absent is every one. */
+  slotFilter?: SlotFilter;
   dim: boolean;
   /** `null` is the setup pose. */
   animation: string | null;
@@ -232,6 +246,8 @@ export interface InspectPlant {
   noAvoid?: boolean;
   /** Draw every bone whatever `--bone`/`--hide-bone` say. */
   ignoreFilter?: boolean;
+  /** Draw every slot's geometry whatever `--overlay-slot`/`--hide-overlay-slot` say. */
+  ignoreSlotFilter?: boolean;
   /** Draw the first build in both halves of a `--compare`. */
   compareFirstTwice?: boolean;
 }
@@ -283,7 +299,7 @@ export interface LegendLabel {
   overlaps: boolean;
 }
 
-/** One region or mesh the frame shows, when `mesh`, `hull` or `weights` is drawn. */
+/** One region or mesh the frame shows, when `mesh`, `hull` or `weights` is drawn — and, with a slot filter, that it keeps. */
 export interface LegendMesh {
   slot: string;
   attachment: string;
@@ -367,6 +383,8 @@ export interface InspectLegend {
     | { kind: 'viewport' };
   /** `--bone` / `--hide-bone` as given — each bone they leave out says so in its `undrawn`. */
   boneFilter?: { include: string[] | null; exclude: string[] | null };
+  /** `--overlay-slot` / `--hide-overlay-slot` as given — `meshes[]` and `slots[]` then list only the slots they keep. */
+  slotFilter?: { include: string[] | null; exclude: string[] | null };
   /** With `weights:<bone>`: the bone, the ramp a weight is painted with, and how a pixel's weight is read. */
   weights?: { bone: string; ramp: Array<{ weight: number; rgba: number[] }>; floor: number; reading: string };
   /** With `--compare`: each build, the poser that posed it and its `skeleton.json`'s sha256; a tile names its own in `build`. */
@@ -434,10 +452,10 @@ function showSpelled(request: InspectRequest, weightsBone: string | undefined): 
  * characters and `?` one, matched against a bone's whole name. Checked against
  * the build later, where a pattern that matches no bone is refused.
  */
-export function readBonePatterns(flag: string, raw: string | undefined): string[] | undefined {
+export function readBonePatterns(flag: string, raw: string | undefined, example = 'bang_*,*_ctl'): string[] | undefined {
   if (raw === undefined) return undefined;
   const patterns = raw.split(',').map((p) => p.trim());
-  if (patterns.some((p) => p === '')) throw new InspectError(`--${flag} ${JSON.stringify(raw)}: an empty pattern; it takes globs, comma-separated, e.g. --${flag} 'bang_*,*_ctl'`);
+  if (patterns.some((p) => p === '')) throw new InspectError(`--${flag} ${JSON.stringify(raw)}: an empty pattern; it takes globs, comma-separated, e.g. --${flag} '${example}'`);
   return patterns;
 }
 
@@ -776,6 +794,31 @@ function filterOut(bones: ReadonlyArray<{ name: string }>, filter: BoneFilter | 
   return out;
 }
 
+/**
+ * `--overlay-slot` / `--hide-overlay-slot` against one build's slots: the slots
+ * whose geometry is not drawn. A pattern matching no slot is refused naming the
+ * slots there are — checked even when `apply` is off, so a mutant that ignores
+ * the filter still refuses a typo.
+ */
+function slotsLeftOut(slots: ReadonlyArray<{ name: string }>, filter: SlotFilter | undefined, apply: boolean): Set<string> {
+  const out = new Set<string>();
+  if (filter === undefined) return out;
+  const names = slots.map((s) => s.name);
+  const matchers = (flag: string, patterns: readonly string[]): Array<(name: string) => boolean> =>
+    patterns.map((p) => {
+      const m = globMatcher(p);
+      if (!names.some(m)) throw new InspectError(`--${flag} ${JSON.stringify(p)} matches no slot; the slots are [${names.join(', ')}]`);
+      return m;
+    });
+  const include = filter.include === undefined ? null : matchers('overlay-slot', filter.include);
+  const exclude = filter.exclude === undefined ? null : matchers('hide-overlay-slot', filter.exclude);
+  if (!apply) return out;
+  for (const name of names) {
+    if ((include !== null && !include.some((m) => m(name))) || (exclude !== null && exclude.some((m) => m(name)))) out.add(name);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // the view
 // ---------------------------------------------------------------------------
@@ -970,6 +1013,7 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
     }
   }
   const filtered = builds.map((b) => aboutBuild(b.tag, () => filterOut(b.bones, request.boneFilter, plant.ignoreFilter !== true)));
+  const slotsOut = builds.map((b) => aboutBuild(b.tag, () => slotsLeftOut(b.slots, request.slotFilter, plant.ignoreSlotFilter !== true)));
   // The world box and its pixels: one for every tile of both builds, so a sheet's tiles and a compare's halves overlay.
   let viewport: Viewport;
   let framing: InspectLegend['framing'];
@@ -1034,19 +1078,20 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
       const row = compare ? Math.floor(k / pairs) : Math.floor(k / columns);
       const x0 = gap + column * (width + gap);
       const y0 = gap + row * (height + gap);
-      const drawnTile = drawTile(build, build.poses[k], filtered[bi], { x0, y0, viewport, sheet, compare, weightsBone, first: k === 0 && bi === 0 }, request, plant, notes);
+      const drawnTile = drawTile(build, build.poses[k], filtered[bi], slotsOut[bi], { x0, y0, viewport, sheet, compare, weightsBone, first: k === 0 && bi === 0 }, request, plant, notes);
       if (drawnTile.weighted) weighted[bi] = true;
       if (drawnTile.anyMesh) anyMesh = true;
       for (let y = 0; y < height; y++) plate.data.set(drawnTile.tile.data.subarray(y * width * 4, (y + 1) * width * 4), ((y0 + y) * plate.width + x0) * 4);
       tiles.push(drawnTile.legend);
     }
   }
+  // With a slot filter the sentence says the filter is part of why: the same build unfiltered may paint.
   if (weightsBone !== undefined) {
     for (const [bi, b] of builds.entries()) {
-      if (!weighted[bi]) notes.push(`weights: bone "${weightsBone}" weights no vertex of any region or mesh ${compare ? `build ${b.tag} ` : ''}shows here — nothing painted`);
+      if (!weighted[bi]) notes.push(`weights: bone "${weightsBone}" weights no vertex of any region or mesh${request.slotFilter === undefined ? '' : ' of the slots the filter keeps'} ${compare ? `build ${b.tag} ` : ''}shows here — nothing painted`);
     }
   }
-  if ((request.show.includes('mesh') || request.show.includes('hull')) && !anyMesh) notes.push('mesh/hull: no slot shows a mesh here — nothing drawn for it');
+  if ((request.show.includes('mesh') || request.show.includes('hull')) && !anyMesh) notes.push(`mesh/hull: no slot${request.slotFilter === undefined ? '' : ' the filter keeps'} shows a mesh here — nothing drawn for it`);
   const legend: InspectLegend = {
     spec: INSPECT_SPEC,
     poser: builds[0].poser,
@@ -1059,6 +1104,9 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
     ...(request.boneFilter === undefined
       ? {}
       : { boneFilter: { include: request.boneFilter.include === undefined ? null : [...request.boneFilter.include], exclude: request.boneFilter.exclude === undefined ? null : [...request.boneFilter.exclude] } }),
+    ...(request.slotFilter === undefined
+      ? {}
+      : { slotFilter: { include: request.slotFilter.include === undefined ? null : [...request.slotFilter.include], exclude: request.slotFilter.exclude === undefined ? null : [...request.slotFilter.exclude] } }),
     ...(weightsBone === undefined
       ? {}
       : {
@@ -1103,6 +1151,7 @@ function drawTile(
   build: Gathered,
   pose: { frame: Frame; index: number },
   filtered: Map<string, string>,
+  slotsOut: ReadonlySet<string>,
   place: TilePlace,
   request: InspectRequest,
   plant: InspectPlant,
@@ -1164,6 +1213,7 @@ function drawTile(
     legendTile.meshes = [];
     const [mx, my] = plant.meshShift ?? [0, 0];
     for (const shown of frame.attachments ?? []) {
+      if (slotsOut.has(shown.slot)) continue;
       const rest = build.rest.get(restKey(shown.slot, shown.attachment));
       const vertexCount = shown.vertices.length / 2;
       if (rest === undefined || rest.vertices.length !== shown.vertices.length) {
@@ -1314,6 +1364,8 @@ function drawTile(
     legendTile.slots = [];
     const shown = frame.attachments ?? [];
     for (const [i, att] of shown.entries()) {
+      // A left-out slot keeps its place: a number is the slot's place in the whole draw order, filtered or not.
+      if (slotsOut.has(att.slot)) continue;
       const order = plant.slotsReversed ? shown.length - 1 - i : i;
       let minX = Infinity;
       let minY = Infinity;

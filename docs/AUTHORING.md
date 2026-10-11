@@ -10094,6 +10094,7 @@ pixel (`IN09`).
 | Is this axis declared, and held? | `--show art,declared,bones` | each `invariants.axes` line (§3.7) through its two bones' origins, drawn across the whole tile, and the bones it holds drawn in their own colour; the legend states each held bone's world x axis and how far off the line it lies, as `A51` measures it, at the pose drawn |
 | Did it break during the move? | any of the above `--animation <name> --at <s,s,…>` | one tile per time, left to right on one grid, each labelled with its time and frame |
 | What does this bone move? | `--show art,mesh,weights:<bone> --dim` | the bone's weight over every region and mesh it moves, as a heat: a pixel whose centre lies in a triangle is painted the ramp's colour at the blend of its corners' weights — blue near 0, yellow at 0.5, red at 1 (the stops are in the legend) — and a weight of 0 is not painted, so the art shows where the bone does not reach. A region and an unweighted mesh are moved whole by their slot's bone. The weights are read off `skeleton.json`, the file both posers skin from; a bone that weights nothing paints nothing and the run says so on a line of its own |
+| Does this part's edge follow that bone? | `--show art,weights:<bone>,mesh --overlay-slot <part> --zoom slot:<part>` | the part's own triangles and the bone's weight over them alone, over the whole painting. Where slots stack — a neck under the face, the hair, a collar — every mesh crossing the box is drawn and the heat is the union of every slot the bone moves, so the part's edge has no pixel of its own until the others are left out. The legend's `meshes[]` gives the part's weight for the bone at every vertex, so "does the top row follow the head" is read as numbers as well as colour |
 | How is this part triangulated? | `--show art,mesh,hull --zoom slot:<slot>` | each mesh's triangle edges, and over them its hull — vertex 0 to 1 to … to `hull − 1` and back. Regions are not drawn: a region is not a mesh. The legend lists every vertex in world units and in pixels |
 | Which is drawn over which? | `--show art,slots` | each slot that shows a region or mesh numbered by its place in the draw order **at the pose drawn** (0 is drawn first), on a white box at the centre of its attachment's box — so a `drawOrder` key (§4.7) shows from the first frame `render` draws it on |
 | Did this change move anything? | `--compare <dir>` beside any view | the same view of a second build beside the first, at the same times, on **one** world box and one transform, each half labelled `A`/`B` with the poser that posed it. A mark on a different pixel in the two halves is at a different place in the two rigs |
@@ -10128,7 +10129,7 @@ pixel (`IN09`).
 - `--dim` fades the art toward white (each channel keeps 0.4 of its distance from
   white) so what is drawn over it reads.
 
-### 13.3 Labels, and which bones are drawn
+### 13.3 Labels, and which bones and slots are drawn
 
 - **One label per pixel.** Bones whose origins land on one pixel — a `_ctl` bone and
   its identity child, a chain's joint — are one label: the first by declaration
@@ -10149,6 +10150,16 @@ pixel (`IN09`).
   the shell. The filter is on `bones`, `axes` and `names`; every bone stays in the
   legend, and a left-out one says which flag left it out in `undrawn`. A pattern
   that matches no bone is refused naming the bones there are.
+- **`--overlay-slot <glob[,glob…]>`** draws the per-slot views — `mesh`, `hull`,
+  `weights:<bone>` and `slots` — only for the slots a pattern matches, and
+  **`--hide-overlay-slot <glob[,glob…]>`** for none of the ones it matches, applied
+  after `--overlay-slot`; the patterns are globs, as `--bone`'s are. The **art is not
+  filtered**: the painting is what the edge is read against, and `--dim` already
+  quiets it. A slot left out is absent from `meshes[]` and `slots[]`, and a slot kept
+  keeps its number — its place in the whole draw order, not among the slots drawn. A
+  pattern that matches no slot is refused naming the slots there are. It is not
+  `--slot`: on `render` that flag draws a subset of the *art*, by exact name, which is
+  the opposite of what this keeps whole.
 
 ### 13.4 The legend
 
@@ -10186,6 +10197,8 @@ pixel (`IN09`).
 - `weights` — with `weights:<bone>`: the bone, the ramp's stops as RGBA, the floor
   below which nothing is painted, and how a pixel's weight is read.
 - `boneFilter` — `--bone` and `--hide-bone` as given.
+- `slotFilter` — `--overlay-slot` and `--hide-overlay-slot` as given; with it,
+  `meshes[]` and `slots[]` list only the slots it keeps.
 - `builds` — with `--compare`: each build (`A`, `B`), the poser that posed it, and
   its `skeleton.json`'s sha256. `poser` is build `A`'s.
 
@@ -10201,7 +10214,9 @@ or past the end, `--at` without `--animation` and the reverse, `--zoom` beside
 `--viewport`, `--show declared` on a skeleton with no `skeleton.model.json`
 beside it whose `spine.sha256` is its own — a Spine export states no rig invariants —
 `weights` with no bone or with a bone the build lacks (the bones listed), a
-`--bone`/`--hide-bone` pattern that matches no bone (the bones listed), and, with
+`--bone`/`--hide-bone` pattern that matches no bone (the bones listed), an
+`--overlay-slot`/`--hide-overlay-slot` pattern that matches no slot (the slots
+listed), and, with
 `--compare`, any of these that holds of the second build, said as `the --compare
 build: …`.
 A rig that declares no `invariants.axes` is not refused: the picture draws nothing

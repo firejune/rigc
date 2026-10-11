@@ -129579,13 +129579,20 @@ const INSPECT_MESH_PROBE = {
   near: { x: -7, y: 30 },
   /** A bone no attachment weights; the moved copy lowers it this far. */
   idle: { x: 60, y: 30, movedY: 20 },
+  /**
+   * The slot-filter probe's third slot (issue #1363): a mesh on `b`, drawn after
+   * the others, crossing the strip as the slots stacked at a seam do. World
+   * units; `b` sits at (20, 0) unrotated, so `b`-local is x − 20. Its x span
+   * keeps it off every strip vertex, so a strip vertex pixel is the strip's alone.
+   */
+  patch: [[30, -12], [36, -12], [36, 12], [30, 12]] as Array<[number, number]>,
 } as const;
 
 const INSPECT_MESH_BONES = ['root', 'a', 'b', 'knot', 'knot_a', 'knot_b', 'near', 'idle'];
 
 /** The mesh probe, and its copy with `idle` lowered — the one change a compare of the two may show. */
-function writeInspectMeshProbe(idleY: number): { outDir: string; work: string; built: string[] } {
-  const { strip, weightA, triangles, tagY, knot, near, idle } = INSPECT_MESH_PROBE;
+function writeInspectMeshProbe(idleY: number, withPatch = false): { outDir: string; work: string; built: string[] } {
+  const { strip, weightA, triangles, tagY, knot, near, idle, patch } = INSPECT_MESH_PROBE;
   const dirs = writeProbeRig({
     bones: [
       { name: 'root' },
@@ -129600,6 +129607,7 @@ function writeInspectMeshProbe(idleY: number): { outDir: string; work: string; b
     slots: [
       { name: 'strip', bone: 'a', attachment: 'strip' },
       { name: 'tag', bone: 'b', attachment: 'tag' },
+      ...(withPatch ? [{ name: 'patch', bone: 'b', attachment: 'patch' }] : []),
     ],
     skins: {
       default: {
@@ -129619,6 +129627,20 @@ function writeInspectMeshProbe(idleY: number): { outDir: string; work: string; b
           },
         },
         tag: { tag: { image: 'marker.png', y: tagY } },
+        ...(withPatch
+          ? {
+              patch: {
+                patch: {
+                  type: 'mesh',
+                  image: 'block.png',
+                  uvs: [0, 1, 1, 1, 1, 0, 0, 0],
+                  triangles: [0, 1, 2, 0, 2, 3],
+                  hull: patch.length,
+                  weights: patch.map(([x, y]) => [{ bone: 'b', x: x - 20, y, weight: 1 }]),
+                },
+              },
+            }
+          : {}),
       },
     },
   });
@@ -129635,7 +129657,7 @@ function writeInspectMeshProbe(idleY: number): { outDir: string; work: string; b
   );
   const built: string[] = [];
   const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
-  if (build.status !== 0) built.push(`the mesh probe (idle at y ${idleY}) did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  if (build.status !== 0) built.push(`the mesh probe (idle at y ${idleY}${withPatch ? ', with the patch' : ''}) did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
   return { outDir: dirs.outDir, work: dirs.dir, built };
 }
 
@@ -129871,6 +129893,38 @@ function inspectFilterFaults(plate: Plate, legend: InspectLegend): string[] {
   if (knot?.text !== 'knot' || knot.bones.length !== 1) faults.push(`legend: knot's label is ${JSON.stringify(knot?.text)} for [${knot?.bones.join(', ')}], required "knot" alone`);
   else if (inkIn(plate, knot.box, INSPECT_COLOURS.name.rgba) !== glyphInk('knot')) faults.push('picture: knot\'s label is not "knot" in the font');
   if (JSON.stringify(legend.boneFilter) !== JSON.stringify({ include: null, exclude: ['knot_*'] })) faults.push(`legend: boneFilter ${JSON.stringify(legend.boneFilter)}`);
+  return faults;
+}
+
+/** Every pixel of one exact colour in the picture, as `x,y` keys. */
+function inkSet(plate: Plate, rgba: readonly number[]): Set<string> {
+  const out = new Set<string>();
+  for (let y = 0; y < plate.height; y++) for (let x = 0; x < plate.width; x++) if (plate.get(x, y).join() === rgba.join()) out.add(`${x},${y}`);
+  return out;
+}
+
+/**
+ * IN36's reading, for `--show mesh --overlay-slot strip` over the patch probe:
+ * the legend lists the strip alone, its entry is the strip of the probe that has
+ * no patch, and the mesh-colour pixels are exactly that probe's — counted pixel
+ * by pixel against the picture of the strip with nothing else in the rig, so the
+ * patch crossing it left no edge behind.
+ */
+function inspectSlotFilterFaults(plate: Plate, legend: InspectLegend, alone: { plate: Plate; legend: InspectLegend }): string[] {
+  const faults: string[] = [];
+  const meshes = legend.tiles[0]?.meshes ?? [];
+  if (meshes.map((m) => m.slot).join() !== 'strip') faults.push(`legend: meshes[] lists [${meshes.map((m) => m.slot).join(', ')}], the filter keeps [strip]`);
+  const strip = JSON.stringify(meshes.find((m) => m.slot === 'strip'));
+  const want = JSON.stringify(alone.legend.tiles[0]?.meshes?.find((m) => m.slot === 'strip'));
+  if (strip !== want) faults.push('legend: the strip entry is not the strip of the probe without the patch');
+  if (JSON.stringify(legend.slotFilter) !== JSON.stringify({ include: ['strip'], exclude: null })) faults.push(`legend: slotFilter ${JSON.stringify(legend.slotFilter)}, required {"include":["strip"],"exclude":null}`);
+  const mesh = INSPECT_COLOURS.mesh.rgba;
+  const got = inkSet(plate, mesh);
+  const ref = inkSet(alone.plate, mesh);
+  const extra = [...got].filter((k) => !ref.has(k));
+  const missing = [...ref].filter((k) => !got.has(k));
+  if (ref.size === 0) faults.push('picture: the strip alone draws no mesh-colour pixel, so there is nothing to count against');
+  if (extra.length > 0 || missing.length > 0) faults.push(`picture: ${got.size} mesh-colour pixels, the strip alone draws ${ref.size} — ${extra.length} not the strip's (first ${extra[0] ?? '-'}), ${missing.length} of the strip's missing (first ${missing[0] ?? '-'})`);
   return faults;
 }
 
@@ -130132,6 +130186,172 @@ function runInspectCut2(cut1: InspectProbe): number {
     }
   } else {
     say('IN28_MUTANTS', false, `the mesh probe did not build, so no mutant ran: ${built.join('; ')}`, '');
+  }
+
+  // IN36–IN40 — the slot filter (issue #1363): `--overlay-slot` / `--hide-overlay-slot` over the per-slot views.
+  {
+    const patched = writeInspectMeshProbe(INSPECT_MESH_PROBE.idle.y, true);
+    const prereq = [...built, ...patched.built];
+    const slotsOf = (dir: string): string[] => (JSON.parse(readFileSync(join(dir, 'skeleton.json'), 'utf8')) as { slots: Array<{ name: string }> }).slots.map((s) => s.name);
+    const viewP = (name: string, args: string[]): { plate: Plate; legend: InspectLegend; stdout: string } | string => {
+      if (prereq.length > 0) return prereq.join('; ');
+      const run = runCli(['inspect', '--candidate', patched.outDir, ...boxFlag, ...args, '--out', outPng(name)]);
+      if (run.status !== 0) return `inspect ${args.join(' ')} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`;
+      return { plate: readPlate(outPng(name)), legend: legendOf(outPng(name)), stdout: run.stdout };
+    };
+    const mesh = INSPECT_COLOURS.mesh.rgba;
+    const pixelAt = (p: [number, number]): [number, number] => {
+      const [x, y] = meshPixel(...p);
+      return [Math.floor(x), Math.floor(y)];
+    };
+    {
+      const probes: string[] = [];
+      let counts = '';
+      const alone = viewOf('sf-alone', ['--show', 'mesh']);
+      const full = viewP('sf-full', ['--show', 'mesh']);
+      const kept = viewP('sf-keep', ['--show', 'mesh', '--overlay-slot', 'strip']);
+      for (const v of [alone, full, kept]) if (typeof v === 'string') probes.push(v);
+      if (typeof alone !== 'string' && typeof full !== 'string' && typeof kept !== 'string') {
+        probes.push(...inspectSlotFilterFaults(kept.plate, kept.legend, alone));
+        const fullInk = inkSet(full.plate, mesh).size;
+        const keptInk = inkSet(kept.plate, mesh).size;
+        counts = `${keptInk} of the unfiltered ${fullInk}`;
+        if (fullInk <= keptInk) probes.push(`the unfiltered picture draws ${fullInk} mesh-colour pixels, the filtered ${keptInk} — the patch drew nothing to leave out`);
+        if (full.legend.slotFilter !== undefined) probes.push('the unfiltered legend states a slotFilter');
+      }
+      // weights: the tag is a region on b, painted for b unfiltered; the filter keeping the strip leaves it unpainted.
+      const [tx, ty] = pixelAt([20, INSPECT_MESH_PROBE.tagY]);
+      const heatAll = viewP('sf-heat-all', ['--show', 'weights:b']);
+      const heatKept = viewP('sf-heat-keep', ['--show', 'weights:b', '--overlay-slot', 'strip']);
+      if (typeof heatAll === 'string') probes.push(heatAll);
+      else if (heatAll.plate.get(tx, ty).join() === BACKGROUND.join()) probes.push('weights:b unfiltered leaves the tag unpainted, so its absence below would prove nothing');
+      if (typeof heatKept === 'string') probes.push(heatKept);
+      else {
+        if (heatKept.plate.get(tx, ty).join() !== BACKGROUND.join()) probes.push(`weights:b --overlay-slot strip paints the tag at (${tx}, ${ty})`);
+        if ((heatKept.legend.tiles[0]?.meshes ?? []).map((m) => m.slot).join() !== 'strip') probes.push('weights:b --overlay-slot strip: meshes[] is not [strip]');
+      }
+      // slots: a glob, and a kept slot keeps its place in the whole draw order.
+      const numbered = viewP('sf-slots', ['--show', 'slots', '--overlay-slot', 'pa*']);
+      if (typeof numbered === 'string') probes.push(numbered);
+      else {
+        const place = slotsOf(patched.outDir).indexOf('patch');
+        const slots = numbered.legend.tiles[0]?.slots ?? [];
+        if (slots.length !== 1 || slots[0].slot !== 'patch' || slots[0].order !== place) probes.push(`--overlay-slot pa*: slots[] ${JSON.stringify(slots.map((s) => [s.slot, s.order]))}, required [["patch",${place}]]`);
+        else {
+          const ink = inkSet(numbered.plate, INSPECT_COLOURS.slot.rgba).size;
+          const want = glyphInk(String(place));
+          if (inkIn(numbered.plate, slots[0].box, INSPECT_COLOURS.slot.rgba) !== want || ink !== want) probes.push(`--overlay-slot pa*: ${ink} slot-colour pixels in the picture, the one number "${place}" in its box is ${want}`);
+        }
+      }
+      say(
+        'IN36_THE_SLOT_FILTER_DRAWS_ONLY_THE_SLOTS_ITS_GLOBS_KEEP',
+        held(probes),
+        probeDetail(held(probes), probes, `--show mesh --overlay-slot strip over the probe with a patch crossing the strip: meshes[] is [strip], that entry is the strip of the probe without the patch, and the mesh-colour pixels are exactly that probe's, pixel for pixel (${counts}); weights:b leaves unpainted the tag region it paints unfiltered; --overlay-slot 'pa*' numbers the patch alone, at its place in the whole draw order; slotFilter states the patterns`),
+        'issue #1363: where slots stack, "does this part\'s edge follow that bone" has no pixel to read until the part is drawn alone — and the art stays whole, being what the edge is read against',
+      );
+    }
+    {
+      const probes: string[] = [];
+      const full = viewP('sf-full2', ['--show', 'mesh']);
+      const kept = viewP('sf-keep2', ['--show', 'mesh', '--overlay-slot', 'strip']);
+      const hidden = viewP('sf-hide', ['--show', 'mesh', '--hide-overlay-slot', 'strip']);
+      const both = viewP('sf-both', ['--show', 'mesh', '--overlay-slot', '*', '--hide-overlay-slot', 'strip']);
+      for (const v of [full, kept, hidden, both]) if (typeof v === 'string') probes.push(v);
+      if (typeof full !== 'string' && typeof kept !== 'string' && typeof hidden !== 'string' && typeof both !== 'string') {
+        const listed = (hidden.legend.tiles[0]?.meshes ?? []).map((m) => m.slot);
+        const others = slotsOf(patched.outDir).filter((s) => s !== 'strip');
+        if (listed.join() !== others.join()) probes.push(`legend: meshes[] lists [${listed.join(', ')}], the complement of strip is [${others.join(', ')}]`);
+        if (JSON.stringify(hidden.legend.slotFilter) !== JSON.stringify({ include: null, exclude: ['strip'] })) probes.push(`legend: slotFilter ${JSON.stringify(hidden.legend.slotFilter)}`);
+        for (const [v, p] of INSPECT_MESH_PROBE.strip.entries()) {
+          const [x, y] = pixelAt(p);
+          if (hidden.plate.get(x, y).join() === mesh.join()) probes.push(`picture: strip vertex ${v}'s pixel (${x}, ${y}) is in the mesh colour with the strip hidden`);
+        }
+        for (const [v, p] of INSPECT_MESH_PROBE.patch.entries()) {
+          const [x, y] = pixelAt(p);
+          if (hidden.plate.get(x, y).join() !== mesh.join()) probes.push(`picture: patch vertex ${v}'s pixel (${x}, ${y}) is not in the mesh colour`);
+        }
+        const all = inkSet(full.plate, mesh);
+        const union = new Set([...inkSet(kept.plate, mesh), ...inkSet(hidden.plate, mesh)]);
+        const off = [...all].filter((k) => !union.has(k)).length + [...union].filter((k) => !all.has(k)).length;
+        if (off !== 0) probes.push(`picture: the kept and the hidden pictures' mesh pixels together differ from the unfiltered picture's in ${off} pixel(s)`);
+        if (!readFileSync(outPng('sf-hide')).equals(readFileSync(outPng('sf-both')))) probes.push("--overlay-slot '*' --hide-overlay-slot strip wrote a different picture from --hide-overlay-slot strip");
+      }
+      say(
+        'IN37_THE_HIDDEN_SLOTS_ARE_THE_COMPLEMENT',
+        held(probes),
+        probeDetail(held(probes), probes, "--hide-overlay-slot strip lists every other slot, draws no strip vertex and every patch vertex; the kept and the hidden pictures' mesh pixels together are the unfiltered picture's exactly; --overlay-slot '*' before it draws the same bytes"),
+        'issue #1363: the two flags are one statement each way round, so each draws what the other leaves out and nothing else',
+      );
+    }
+    {
+      const probes: string[] = [...prereq, ...cut1.built];
+      if (probes.length === 0) {
+        const slots = slotsOf(patched.outDir).join(', ');
+        const refusals: Array<[string[], string]> = [
+          [['--overlay-slot', 'zz*'], `--overlay-slot "zz*" matches no slot; the slots are [${slots}]`],
+          [['--hide-overlay-slot', 'strip,neck'], `--hide-overlay-slot "neck" matches no slot; the slots are [${slots}]`],
+          [['--overlay-slot', 'strip,'], '--overlay-slot "strip,": an empty pattern'],
+          [['--overlay-slot', 'strip', '--compare', cut1.outDir], `the --compare build: --overlay-slot "strip" matches no slot; the slots are [${slotsOf(cut1.outDir).join(', ')}]`],
+        ];
+        for (const [i, [args, want]] of refusals.entries()) {
+          const out = outPng(`sf-refused-${i}`);
+          const run = runCli(['inspect', '--candidate', patched.outDir, ...boxFlag, '--show', 'mesh', ...args, '--out', out]);
+          if (run.status !== 2 || !run.stderr.includes(want)) probes.push(`${args.join(' ')}: exit ${String(run.status)}, wanted "${want}" in: ${run.stderr.trim().split('\n')[0]}`);
+          if (existsSync(out)) probes.push(`${args.join(' ')}: refused and still wrote ${out}`);
+        }
+      }
+      say(
+        'IN38_A_SLOT_PATTERN_THAT_MATCHES_NOTHING_IS_REFUSED_NAMING_THE_SLOTS',
+        held(probes),
+        probeDetail(held(probes), probes, '--overlay-slot zz*, --hide-overlay-slot strip,neck (the one pattern of two that misses), an empty pattern, and a pattern the --compare build lacks: each exit 2, the miss named with the slots there are (the second build\'s under "the --compare build:"), nothing written'),
+        'issue #1363: a slot pattern that matches nothing is a typo; refused with the roster, rather than a picture with nothing drawn on it that reads as "this part has no mesh"',
+      );
+    }
+    {
+      // ⚠️ What this holds: with no slot flag the views are what a filter keeping every slot draws, and the legend
+      // gains no field. The picture cut 2 wrote BEFORE this change is not in this tree to compare against; that half
+      // was measured by hand at the landing (the PR carries it), and IN27 holds the no-flag run to itself across processes.
+      const probes = [...prereq];
+      const args = ['--compare', moved.outDir, ...boxFlag, '--show', 'art,weights:b,mesh,hull,slots,bones,names', '--animation', 'swap', '--at', '0,0.5'];
+      if (probes.length === 0) {
+        const plain = runCli(['inspect', '--candidate', patched.outDir, ...args, '--out', outPng('sf-plain')]);
+        const every = runCli(['inspect', '--candidate', patched.outDir, ...args, '--overlay-slot', '*', '--out', outPng('sf-every')]);
+        for (const r of [plain, every]) if (r.status !== 0) probes.push(`inspect exited ${String(r.status)}: ${r.stderr.trim().slice(0, 300)}`);
+        if (probes.length === 0) {
+          if (!readFileSync(outPng('sf-plain')).equals(readFileSync(outPng('sf-every')))) probes.push("--overlay-slot '*' wrote a different PNG from no slot flag");
+          const a = legendOf(outPng('sf-plain'));
+          const b = legendOf(outPng('sf-every'));
+          if ('slotFilter' in a) probes.push('the legend with no slot flag states a slotFilter');
+          if (JSON.stringify(b.slotFilter) !== JSON.stringify({ include: ['*'], exclude: null })) probes.push(`--overlay-slot '*': slotFilter ${JSON.stringify(b.slotFilter)}`);
+          delete b.slotFilter;
+          if (legendText(a) !== legendText(b)) probes.push("--overlay-slot '*' wrote a legend that differs from no slot flag's beyond slotFilter");
+        }
+      }
+      say(
+        'IN39_NO_SLOT_FLAG_DRAWS_WHAT_A_FILTER_KEEPING_EVERY_SLOT_DRAWS',
+        held(probes),
+        probeDetail(held(probes), probes, "a compare of every per-slot view at two times over the patch probe, with no slot flag and with --overlay-slot '*': one PNG byte for byte, one legend once slotFilter is set aside, and no slotFilter field without the flag"),
+        'issue #1363: the filter is opt-in — a run that names none draws what a filter keeping everything draws, and states no filter',
+      );
+    }
+    if (prereq.length === 0) {
+      const box = { kind: 'viewport' as const, x: INSPECT_PROBE.box.x, y: INSPECT_PROBE.box.y, width: INSPECT_PROBE.box.width, height: INSPECT_PROBE.box.height };
+      const request = inspectProbeRequest({ frame: box, show: ['mesh'], slotFilter: { include: ['strip'] } });
+      const alone = inspectView2(probe.outDir, inspectProbeRequest({ frame: box, show: ['mesh'] }));
+      const unplanted = inspectView2(patched.outDir, request);
+      const clean = inspectSlotFilterFaults(unplanted.plate, unplanted.legend, alone);
+      const plantedView = inspectView2(patched.outDir, request, { ignoreSlotFilter: true });
+      const planted = inspectSlotFilterFaults(plantedView.plate, plantedView.legend, alone);
+      say(
+        'IN40_A_SLOT_FILTER_IGNORED_IS_RED',
+        clean.length === 0 && planted.length > 0,
+        clean.length > 0 ? `the unplanted run is already red: ${clean[0]}` : planted.length === 0 ? '{"ignoreSlotFilter":true} planted and IN36\'s reading found nothing' : `{"ignoreSlotFilter":true} planted: IN36's reading names it — ${planted[0]}; the same request unplanted reads clean`,
+        'issue #1363: a control nobody has seen fail is not a control — a filter that checks its patterns and then draws every slot anyway is planted and caught by name',
+      );
+    } else {
+      say('IN40_A_SLOT_FILTER_IGNORED_IS_RED', false, `a probe did not build, so the mutant did not run: ${prereq.join('; ')}`, '');
+    }
+    rmSync(patched.work, { recursive: true, force: true });
   }
   rmSync(probe.work, { recursive: true, force: true });
   rmSync(moved.work, { recursive: true, force: true });
