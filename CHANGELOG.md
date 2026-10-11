@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.37.0](https://github.com/firejune/rigc/compare/v2.36.0...v2.37.0) (2026-10-11)
+
+
+### Features
+
+* **core:** the live tracks — `openTracks` sets, queues, mixes and empties several animations as spine-core 4.3.13's AnimationState does, sharing the single track's pose path: 2,652 of 2,652 poses equal at tolerance 0 over 12 walks on five gallery rows and an event probe; the mix reversed, higher tracks from setup, the hold faded and a queued delay read as now each red on 12 of 12 ([#1336](https://github.com/firejune/rigc/issues/1336)) ([#1340](https://github.com/firejune/rigc/issues/1340)) ([0da9e22](https://github.com/firejune/rigc/commit/0da9e2206d2b462e30ae20a73d0ebcd15552534b))
+
 ## [2.36.0](https://github.com/firejune/rigc/compare/v2.35.1...v2.36.0) (2026-10-10)
 
 
