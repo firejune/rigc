@@ -105,6 +105,8 @@ import { a06AtlasPageSizeMatchesPng } from './assertions/bodies/a06.ts';
 import { a19OverlayPngsHaveAlpha } from './assertions/bodies/a19.ts';
 import { a49PackedFootprintsDoNotOverlap } from './assertions/bodies/a49.ts';
 import { a50StageBoxIsTheStage } from './assertions/bodies/a50.ts';
+import { a51BonesLieAlongTheirDeclaredAxis } from './assertions/bodies/a51.ts';
+import { inactiveAtSetup, type SetupWorldFacts } from './assertions/facts/setup_world.ts';
 import { SKIP_NO_STAGE_BOX, type StageBoxFacts } from './assertions/facts/stage_box.ts';
 import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
 import type { MeshEntry as MeshAttachmentEntry, MeshFacts } from './assertions/facts/mesh_attachments.ts';
@@ -1307,6 +1309,31 @@ export function spineStageBox(data: ReturnType<SkeletonJson['readSkeletonData']>
     world = out;
   }
   return { asked, why: '', slot: true, held: { type: 'boundingbox', weighted, stored, world } };
+}
+
+/**
+ * The runtime's supply of `SetupWorldFacts` (issue #1351): each bone's world
+ * frame on a fresh skeleton at the setup pose — `setupPose()`,
+ * `updateWorldTransform(Physics.none)`, no skin set, the pose `spineStageBox`
+ * reads for A50 — posed once, on the first question.
+ */
+export function spineSetupWorld(data: ReturnType<SkeletonJson['readSkeletonData']>): SetupWorldFacts {
+  let skeleton: Skeleton | null = null;
+  return {
+    frameOf: (name) => {
+      if (data.findBone(name) === null) return null;
+      if (skeleton === null) {
+        skeleton = new Skeleton(data);
+        skeleton.setupPose();
+        skeleton.updateWorldTransform(Physics.none);
+      }
+      const bone = skeleton.findBone(name);
+      if (bone === null) return null;
+      if (!bone.active) return inactiveAtSetup(name);
+      const { a, c, worldX, worldY } = bone.appliedPose;
+      return { worldX, worldY, a, c };
+    },
+  };
 }
 
 /** The box a `rigc-compiled/3` document's stage asks for, with that stage — or the SKIP's reason where nothing asks (`spineStageBox`). */
@@ -3421,6 +3448,28 @@ export function validate(input: ValidateInput): ValidateReport {
   // the deformation. A cut that wants squash under a declared ceiling has to
   // re-measure containment for the scaled contour and say so.
   check('A30_STROKE_WITHIN_CAP_CONTAINMENT', () => a30StrokeWithinCapContainment(verdicts, rawBoneTimelines(raw), input));
+
+  // --- A51: the bones a rig declares to share an axis lie along it ---------
+  //
+  // ⭐ A `scaleY` key squashes along the bone's own y axis and a `translateY`
+  // key moves along it, so on a face painted tilted with its bones at rotation
+  // 0 a blink squashes the eye along the page's vertical rather than across the
+  // eye line — measured on a seated rig whose eye line is 23.7° off the page,
+  // where all five face bones sat at 0 and the closed eyes came out level on a
+  // tilted face (issue #1351). The file loads, every other rule passes, and the
+  // picture is wrong: the author cannot see it, which is the case this gate is
+  // for. The rig declares the line (`invariants.axes`) and the bones held to
+  // it; this measures their setup-pose world x axes against it, as A50 poses
+  // the setup pose.
+  //
+  // 🔒 **Validity, not archetype.** It fires only on a declaration, so it
+  // cannot fire on foreign data — the reason archetype rules leave the default
+  // profile — and a declaration the default profile never read would be one
+  // nothing reads. And it holds every declared bone, keyed or not: a consumer
+  // writes them at run time (`openTrack({ adjust })`), which no animation shows.
+  check('A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS', () =>
+    skeletonData === null ? skip('A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS', SKIP_NO_SKELETON) : a51BonesLieAlongTheirDeclaredAxis(verdicts, spineSetupWorld(skeletonData), input),
+  );
 
   // --- A18: determinism ----------------------------------------------------
   // The body is `./assertions/bodies/a18.ts` (issue #1060): the model document's clause, which the model side

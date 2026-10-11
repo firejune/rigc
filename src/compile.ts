@@ -7555,6 +7555,8 @@ function buildRigInfo(
     consumerDrivenMix: (rig.invariants?.consumerDrivenMix ?? []).map((e) => ({ type: e.type, constraint: e.constraint, why: e.why })),
     // `parseRigSpec` refused every shape but a non-blank `why`.
     idleDrivesMeshes: rig.invariants?.idleDrivesMeshes?.why ?? null,
+    // `parseRigSpec` resolved every name and refused every shape (issue #1351).
+    axes: (rig.invariants?.axes ?? []).map((e) => ({ name: e.name, through: [e.through[0], e.through[1]] as [string, string], bones: [...e.bones], tolerance: e.tolerance })),
     // `isBase` is set on the manifest route only; every other image says false.
     basePlates: images.filter((img) => img.isBase).map((img) => img.region),
     meshSlotBudget: rig.invariants?.meshSlots ?? null,

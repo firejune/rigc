@@ -69,7 +69,11 @@
 
   "invariants": {
     "meshSlots": 2,
-    "meshTriangles": 32
+    "meshTriangles": 32,
+    "axes": [
+      { "name": "face", "through": ["eye_l", "eye_r"],
+        "bones": ["eye_l", "eye_r", "iris_l", "iris_r", "spark_l", "spark_r", "lid_l", "lid_r", "brow_l", "brow_r", "nose", "mouth"], "tolerance": 5 }
+    ]
   },
 
   "skins": {

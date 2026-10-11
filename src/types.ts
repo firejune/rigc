@@ -1496,6 +1496,15 @@ export interface RigInfo {
    */
   idleDrivesMeshes: string | null;
   /**
+   * The lines the rig declares some of its bones to lie along, from
+   * `invariants.axes`, in the rig spec's order — each with the two bones whose
+   * setup-pose world origins draw it, the bones held to it and the tolerance in
+   * degrees. Empty is the ordinary case, and `A51` SKIPs on it. `parseRigSpec`
+   * resolved every name and refused every shape before this was built (issue
+   * #1351).
+   */
+  axes: Array<{ name: string; through: [string, string]; bones: string[]; tolerance: number }>;
+  /**
    * The atlas region(s) the build names as its base plate — the one image
    * `A19_OVERLAY_PNGS_HAVE_ALPHA` lets be opaque — in compile order.
    *

@@ -35245,6 +35245,9 @@ function runPolygonSuite(): number {
   // the root, so every number below is read off the probe, not written here.
   runStageBoxCases(say);
 
+  // --- AX01..AX06: bones declared to share an axis (issue #1351) -----------
+  runAxesCases(say);
+
   return bad;
 }
 
@@ -35391,6 +35394,216 @@ function runStageBoxCases(sayHere: (name: string, ok: boolean, detail: string, w
       missed.length === 0,
       probeDetail(missed.length === 0, missed, `${named.length} refusal(s), each naming skeleton.stageBox: ${named.join('; ')}`),
       'the compiler never invents a value: a box on a moving bone, in a shared slot or around no stage would be a number nobody can reason about',
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AX01..AX06: bones declared to share an axis are held to it (issue #1351)
+// ---------------------------------------------------------------------------
+//
+// An inline probe rather than a generated fixture: none of the four generated
+// rigs has a face, and the rule is about one — two eyes drawing a line, a brow
+// and a mouth that belong on it. Every number the cases assert is derived from
+// the two constants below, which are choices, not measurements: the tilt the
+// face is painted at and the declared tolerance.
+
+/** The tilt the probe face is painted at, in degrees counter-clockwise (Spine world). */
+const AXES_TILT = 30;
+/** The tolerance the probe declares, in degrees. */
+const AXES_TOLERANCE = 5;
+/** The code every case below reads. */
+const A51 = 'A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS';
+
+/** The probe's declaration, with `over` merged into its one entry. */
+function axesEntry(over: Record<string, unknown> = {}): Array<Record<string, unknown>> {
+  return [{ name: 'face', through: ['eye_r', 'eye_l'], bones: ['eye_r', 'eye_l', 'brow_l', 'mouth'], tolerance: AXES_TOLERANCE, ...over }];
+}
+
+/**
+ * The probe face. `rotated` true: a `head` bone carries the tilt and the face
+ * bones sit on it at rotation 0, so every one of them lies along the eye line —
+ * the fixed rig. `rotated` false: the head is level and the face bones are
+ * placed along the tilted line at rotation 0 — the shape the card measured,
+ * the page's axes on a tilted face. `edit` changes the bones after they are
+ * built; `axes` is the declaration (`null` declares none).
+ */
+function writeAxesProbe(rotated: boolean, edit: (bones: Array<Record<string, unknown>>) => void = () => {}, axes: unknown[] | null = axesEntry()): ProbeDirs {
+  // Each face bone's place on the face: along the eye line, and across it.
+  const parts: Array<[string, number, number]> = [['eye_r', -10, 0], ['eye_l', 10, 0], ['brow_l', 10, 8], ['mouth', 0, -12]];
+  const rad = (AXES_TILT * Math.PI) / 180;
+  const bones: Array<Record<string, unknown>> = [{ name: 'root' }, { name: 'block', parent: 'root', x: 0, y: 0, length: 12 }, { name: 'head', parent: 'root', ...(rotated ? { rotation: AXES_TILT } : {}) }];
+  for (const [name, u, v] of parts) {
+    const [x, y] = rotated ? [u, v] : [u * Math.cos(rad) - v * Math.sin(rad), u * Math.sin(rad) + v * Math.cos(rad)];
+    bones.push({ name, parent: 'head', x, y });
+  }
+  edit(bones);
+  return writeProbeRig({ name: 'axes_probe', bones, ...(axes === null ? {} : { invariants: { axes } }) });
+}
+
+const AXES_MOTION = { spec: 'rigc-motion/1', archetype: 'axes_probe', cut: 'axes_probe', easings: {}, animations: {} };
+
+/** AX01..AX06 (issue #1351), reported through the polygon suite's own `say`, which counts them. */
+function runAxesCases(sayHere: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const build = (dirs: ProbeDirs): CompileResult => {
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(AXES_MOTION, null, 2)}\n`);
+    return compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+  };
+  // The default profile, on purpose: the rule is validity, so a declaration is read where an author builds without a flag.
+  const gate = (built: CompileResult, outDir: string, withRig: boolean): ValidateReport =>
+    validate({
+      skeletonText: built.skeletonText,
+      atlasText: built.atlasText,
+      atlasDir: outDir,
+      declaredDurations: built.declaredDurations,
+      ...(withRig ? { rig: built.rig, modelText: modelDocument(built.model, built.skeletonText, built.atlasText) } : {}),
+      profile: 'spine',
+    });
+  /** Both suppliers' lines of A51 on one build. */
+  const both = (dirs: ProbeDirs): { spine: string[]; model: string[]; built: CompileResult; outDir: string } => {
+    const built = build(dirs);
+    const model = linesOfCode(validateModel({ modelText: modelDocument(built.model, built.skeletonText, built.atlasText), atlasDir: dirs.outDir, profile: 'spine' }), A51);
+    return { spine: linesOfCode(gate(built, dirs.outDir, true), A51), model, built, outDir: dirs.outDir };
+  };
+  /** The degrees a FAIL line prints a bone off the line by, or null. */
+  const offOf = (line: string, bone: string): number | null => {
+    const m = new RegExp(`bone "${bone}" world x axis at -?[0-9.]+°, ([0-9.]+)° off`).exec(line);
+    return m === null ? null : Number(m[1]);
+  };
+  const turnBone = (name: string, rotation: number) => (bones: Array<Record<string, unknown>>): void => {
+    const bone = bones.find((b) => b.name === name);
+    if (bone !== undefined) bone.rotation = rotation;
+  };
+  const pass = [`  PASS  ${A51}`];
+
+  // AX01 — the fixed face: every declared bone on the eye line, PASS on both suppliers under the default profile; and a turned bone lies along it too.
+  {
+    const probes: string[] = [];
+    const fixed = both(writeAxesProbe(true));
+    if (JSON.stringify(fixed.spine) !== JSON.stringify(pass)) probes.push(`the face rotated onto its eye line printed ${JSON.stringify(fixed.spine)} through spine-core`);
+    if (JSON.stringify(fixed.model) !== JSON.stringify(fixed.spine)) probes.push(`the model side printed ${JSON.stringify(fixed.model)}`);
+    // The brow turned end for end: its x axis points the other way along the same line.
+    const turned = both(writeAxesProbe(true, turnBone('brow_l', 180)));
+    if (JSON.stringify(turned.spine) !== JSON.stringify(pass)) probes.push(`the brow turned 180° printed ${JSON.stringify(turned.spine)}; a line has no direction`);
+    if (JSON.stringify(turned.model) !== JSON.stringify(turned.spine)) probes.push(`the model side printed ${JSON.stringify(turned.model)} on the turned brow`);
+    const held = probes.length === 0;
+    sayHere(
+      'AX01_A_FACE_ROTATED_ONTO_ITS_EYE_LINE_PASSES_A51_ON_BOTH_SUPPLIERS_AND_A_TURNED_BONE_LIES_ALONG_IT',
+      held,
+      probeDetail(held, probes, `a face tilted ${AXES_TILT}° with its bones on the head: ${fixed.spine[0]?.trim()} on both suppliers under profile spine; the brow turned 180° PASS too`),
+      "issue #1351: the positive control — a rig whose bones carry the face's axis is green, and \"along a line\" admits either direction",
+    );
+  }
+
+  // AX02 — the card's defect: the face tilted, its bones at the page's rotation 0 — FAIL for every held bone, by name, on both suppliers.
+  {
+    const probes: string[] = [];
+    const page = both(writeAxesProbe(false));
+    const fails = page.spine.filter((l) => l.startsWith(`  FAIL  ${A51}`));
+    for (const bone of ['eye_r', 'eye_l', 'brow_l', 'mouth']) {
+      const line = fails.find((l) => l.includes(`bone "${bone}"`));
+      const off = line === undefined ? null : offOf(line, bone);
+      if (off === null || Math.abs(off - AXES_TILT) > 1e-3) probes.push(`bone "${bone}": ${line === undefined ? 'no FAIL line' : `off ${off} on ${line.trim()}, not ${AXES_TILT}`}`);
+    }
+    if (JSON.stringify(page.model) !== JSON.stringify(page.spine)) probes.push(`the model side printed ${JSON.stringify(page.model)} against spine-core's ${JSON.stringify(page.spine)}`);
+    const held = probes.length === 0;
+    sayHere(
+      'AX02_A_TILTED_FACE_WITH_ITS_BONES_AT_THE_PAGES_ROTATION_FAILS_A51_FOR_EACH_BONE_BY_NAME',
+      held,
+      probeDetail(held, probes, `${fails.length} FAIL line(s), each ${AXES_TILT}° off, identical on both suppliers: ${fails[0]?.trim().slice(0, 260)}`),
+      "issue #1351: the trailer rig's eye line sat 23.7° off the page with five face bones at rotation 0, and a blink squashed the eyes along the page — green on every other rule",
+    );
+  }
+
+  // AX03 — the mutant and its near miss: one declared bone turned tolerance + 1° off fires, by name; tolerance − 1° passes.
+  {
+    const probes: string[] = [];
+    const over = both(writeAxesProbe(true, turnBone('brow_l', AXES_TOLERANCE + 1)));
+    const under = both(writeAxesProbe(true, turnBone('brow_l', AXES_TOLERANCE - 1)));
+    const fail = over.spine.find((l) => l.startsWith(`  FAIL  ${A51}`)) ?? '';
+    const off = offOf(fail, 'brow_l');
+    if (over.spine.length !== 1 || off === null || Math.abs(off - (AXES_TOLERANCE + 1)) > 1e-3 || !fail.includes(`tolerance ${AXES_TOLERANCE}°`) || !fail.includes('axis "face" (through "eye_r"→"eye_l"')) {
+      probes.push(`the brow turned ${AXES_TOLERANCE + 1}° printed ${JSON.stringify(over.spine)}`);
+    }
+    if (JSON.stringify(over.model) !== JSON.stringify(over.spine)) probes.push(`the model side printed ${JSON.stringify(over.model)} on the turned brow`);
+    if (JSON.stringify(under.spine) !== JSON.stringify(pass) || JSON.stringify(under.model) !== JSON.stringify(under.spine)) {
+      probes.push(`the brow turned ${AXES_TOLERANCE - 1}° printed ${JSON.stringify(under.spine)} through spine-core and ${JSON.stringify(under.model)} on the model side`);
+    }
+    const held = probes.length === 0;
+    sayHere(
+      'AX03_ONE_BONE_TURNED_PAST_THE_TOLERANCE_FAILS_A51_BY_NAME_AND_ONE_DEGREE_INSIDE_IT_PASSES',
+      held,
+      probeDetail(held, probes, `${fail.trim()} | turned ${AXES_TOLERANCE - 1}°: ${under.spine[0]?.trim()} — both suppliers alike`),
+      'a gate nobody has seen fail is not a gate, and one that fails a bone inside its tolerance refuses correct work',
+    );
+  }
+
+  // AX04 — two `through` bones on one world origin: no line, refused by the gate by the entry's name (the parser does not pose).
+  {
+    const probes: string[] = [];
+    // The left eye put on the right eye's place: the spec names two bones, the setup pose places them at one point.
+    const shared = both(writeAxesProbe(true, (bones) => {
+      const right = bones.find((b) => b.name === 'eye_r');
+      const left = bones.find((b) => b.name === 'eye_l');
+      if (right !== undefined && left !== undefined) Object.assign(left, { x: right.x, y: right.y });
+    }));
+    const line = shared.spine[0] ?? '';
+    if (shared.spine.length !== 1 || !line.startsWith(`  FAIL  ${A51}: axis "face": "eye_r" and "eye_l" share the world origin`) || !line.includes('draw no line')) {
+      probes.push(`two eyes at one origin printed ${JSON.stringify(shared.spine)}`);
+    }
+    if (JSON.stringify(shared.model) !== JSON.stringify(shared.spine)) probes.push(`the model side printed ${JSON.stringify(shared.model)}`);
+    const held = probes.length === 0;
+    sayHere(
+      'AX04_TWO_THROUGH_BONES_AT_ONE_WORLD_ORIGIN_FAIL_A51_NAMING_THE_ENTRY',
+      held,
+      probeDetail(held, probes, line.trim()),
+      'a line through one point has no direction, and an angle read off it would be atan2(0, 0) = 0 — a measurement of nothing that prints like one',
+    );
+  }
+
+  // AX05 — nothing declared: SKIP, never a pass, on both suppliers; and with no rig at all.
+  {
+    const plain = both(writeAxesProbe(false, () => {}, null));
+    const bare = linesOfCode(gate(plain.built, plain.outDir, false), A51);
+    const want = [`  SKIP  ${A51}: the rig "axes_probe" declares no axes (invariants.axes)`];
+    const wantBare = [`  SKIP  ${A51}: no rig info (validating a bare directory)`];
+    const ok = JSON.stringify(plain.spine) === JSON.stringify(want) && JSON.stringify(plain.model) === JSON.stringify(want) && JSON.stringify(bare) === JSON.stringify(wantBare);
+    sayHere(
+      'AX05_A_RIG_THAT_DECLARES_NO_AXES_SKIPS_A51_NEVER_PASSES',
+      ok,
+      ok ? `${want[0].trim()} on both suppliers — the tilted face, undeclared; with no rig: ${wantBare[0].trim()}` : `printed ${JSON.stringify([plain.spine, plain.model, bare])}`,
+      'an assertion with nothing to measure reports SKIP: the tilted face undeclared is unmeasured, not certified',
+    );
+  }
+
+  // AX06 — every refusal names the field, before anything is built.
+  {
+    const without = (key: string): unknown[] => axesEntry().map((e) => Object.fromEntries(Object.entries(e).filter(([k]) => k !== key)));
+    const cases: Array<[string, unknown[], string]> = [
+      ['an unknown bone in through', axesEntry({ through: ['eye_r', 'nose'] }), 'through[1] names bone "nose", which this rig does not declare'],
+      ['an unknown bone in bones', axesEntry({ bones: ['eye_r', 'chin'] }), 'bones[1] names bone "chin", which this rig does not declare'],
+      ['through naming one bone twice', axesEntry({ through: ['eye_r', 'eye_r'] }), '"through" names bone "eye_r" twice'],
+      ['through of three bones', axesEntry({ through: ['eye_r', 'eye_l', 'mouth'] }), '"through" is ["eye_r","eye_l","mouth"], expected two bone names'],
+      ['a repeated entry name', [...axesEntry(), ...axesEntry({ bones: ['mouth'] })], 'invariants.axes names "face" twice'],
+      ['no tolerance', without('tolerance'), '"tolerance" is absent; it must be a number of degrees above 0 and below 90'],
+      ['a tolerance of 0', axesEntry({ tolerance: 0 }), '"tolerance" is 0; it must be a number of degrees above 0 and below 90'],
+      ['a tolerance of 90', axesEntry({ tolerance: 90 }), '"tolerance" is 90; it must be a number of degrees above 0 and below 90'],
+      ['no name', without('name'), 'invariants.axes[0] needs a "name"'],
+      ['no bones', axesEntry({ bones: [] }), '"bones" is [], expected a non-empty array of bone names'],
+    ];
+    const missed: string[] = [];
+    const named: string[] = [];
+    for (const [label, axes, expected] of cases) {
+      const message = refusal(writeAxesProbe(true, () => {}, axes), AXES_MOTION);
+      if (message === null || !message.includes(expected) || !message.includes('invariants.axes')) missed.push(`${label}: ${message === null ? 'the compile went through' : `refused with: ${message.slice(0, 240)}`}`);
+      else named.push(label);
+    }
+    sayHere(
+      'AX06_AN_AXIS_DECLARATION_THAT_COULD_HOLD_NOTHING_IS_REFUSED_NAMING_THE_FIELD',
+      missed.length === 0,
+      probeDetail(missed.length === 0, missed, `${named.length} refusal(s), each naming invariants.axes: ${named.join('; ')}`),
+      'the compiler never invents a value, and a name that resolves to nothing is held to nothing while reading like it was',
     );
   }
 }
