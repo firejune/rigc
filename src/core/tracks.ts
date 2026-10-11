@@ -88,14 +88,65 @@
  * compounds without it. The state carries nothing from one step to the next
  * but its entries, so a write lasts one pose, as on the single track.
  *
+ * ## Alpha and additive entries (issue #1344)
+ *
+ * An entry carries spine-core's `TrackEntry.alpha` (`MixOptions.alpha`, 1 when
+ * absent, changed while it plays by `setAlpha`) and `TrackEntry.additive`
+ * (`MixOptions.additive`). 4.3.13 has no `MixBlend` on an entry — `additive` is
+ * a boolean fixed before the next apply — so the option carries that name and
+ * that type. What the runtime does with them, ported and measured (`CO52`):
+ *
+ * - **Alpha is a weight, multiplied in**: the current entry applies at
+ *   `alpha · mix`; one mixing out at `from.alpha · fromMix · (1 − mix)`, its
+ *   held timelines at that over `1 − mix · to.alpha`. Track 0 below alpha 1
+ *   leaves the setup-pose shortcut and mixes as a higher track does.
+ * - **Events ignore alpha**: the current entry fires its events at any alpha,
+ *   0 included; an entry mixing out fires none (`eventThreshold` 0, above).
+ * - **Attachments ignore alpha**: `alphaAttachmentThreshold` is 0, so the
+ *   current entry keeps its attachments at any alpha, 0 included;
+ *   `mixAttachmentThreshold` is 0, so an entry mixing out keeps none. The draw
+ *   order stays refused, so `mixDrawOrderThreshold` has nothing to act on.
+ * - **Additive adds what the runtime marks additive** (`Timeline.additive`):
+ *   every bone timeline keying numbers and the deform. On a property a lower
+ *   track or an older entry keyed, the keyed value (a rotation's, a
+ *   translation's, a shear's) is added times alpha — `current + value · alpha`
+ *   — a scale's offset from the setup scale is added, and a deform's offset
+ *   from the setup vertices (weighted: the offsets themselves). From the setup
+ *   pose it is the same as replacing. A rotation is added as it stands, with
+ *   no shortest-angle wrap and no remembered direction (`shortestRotation` is
+ *   `additive || …`). Colour, attachment, inherit and event timelines do not
+ *   read `add`: under an additive entry they apply as under a replacing one.
+ *   Track 0 at alpha 1 with no mix adds nothing — the runtime passes `add`
+ *   false on that shortcut.
+ * - **An additive entry is never held**, and does not hold what it mixes in
+ *   over: its additive timelines take their mode with no `HOLD` bit, and a
+ *   timeline of an entry it replaces is not held for it. Mixing out, an
+ *   additive entry adds at its faded alpha, so its offset fades to nothing.
+ *
+ * `CO52`'s oracle resets bones and slots (`setupPose()`) before every apply,
+ * not the bones alone as `CO51`'s does: on its blend probe a two-colour key at
+ * a partial alpha over track 0's `rgba` mixes the dark colour from what the
+ * previous frame left, which carries in a runtime whose slots are not reset —
+ * measured off with the bones-only reset, equal with the full one. The state
+ * poses every frame from the setup pose, slots included, as it always has.
+ *
+ * Each rejected reading is planted (`TracksPlant`) and read red by `CO52`:
+ * alpha inverted, alpha ignored, additive as replace, an additive rotation
+ * through the remembered direction, an additive entry's attachments as a
+ * plain timeline, the hold blind to the entry mixing in, the holds as if no
+ * entry were additive, and an alpha threshold of one half on attachments.
+ *
  * ## What is left out, by name
  *
  * An animation is refused when it is set or queued if it keys what the state
  * does not mix: a constraint timeline (ik, transform, path, physics, slider),
  * a sequence timeline, the draw order, or a deform of a path attachment (a
  * path's deformed curve reaches the constraints, which this state poses from
- * their records as they stand). Additive entries, `timeScale`, an entry's own
- * `alpha` and the listeners are not offered.
+ * their records as they stand). `timeScale`, `holdPrevious`, `reverse`,
+ * `shortestRotation` on a replacing entry, the thresholds as options, per-pair
+ * mix tables and the listeners are not offered. An additive entry is refused
+ * nothing more: every timeline the state accepts is defined under it (*Alpha
+ * and additive entries* below).
  *
  * ⛔ **A state refused part-way stays refused**, as a live track does: a step
  * is checked before anything moves, and a refusal past that — a construct the
@@ -117,10 +168,18 @@ export interface TracksOptions {
   adjust?: LocalAdjust;
 }
 
-/** How `setAnimation` starts an entry: whether it loops, and over how many seconds the entry it replaces mixes out (0 cuts). */
+/**
+ * How `setAnimation` starts an entry: whether it loops, over how many seconds
+ * the entry it replaces mixes out (0 cuts), and — issue #1344 — how strongly
+ * it applies and whether it adds (the header's *Alpha and additive entries*).
+ */
 export interface MixOptions {
   loop: boolean;
   mixDuration: number;
+  /** `TrackEntry.alpha`: from 0 to 1, multiplied into every timeline's weight; 1 when absent. Changed while the entry plays with `LiveTracks.setAlpha`. */
+  alpha?: number;
+  /** `TrackEntry.additive`: the entry's bone and deform timelines add their keyed values to what the tracks below posed rather than replacing it; `false` when absent. Fixed when the entry is set or queued, as the runtime fixes it before the next apply. */
+  additive?: boolean;
 }
 
 /** How `addAnimation` queues an entry: `MixOptions`, and its delay — at or below 0 relative to when the entry before it completes, above 0 seconds after the entry before starts. */
@@ -136,6 +195,10 @@ export interface TrackEntryView {
   /** The animation time the entry applies at now (`getAnimationTime`): the track time wrapped or held at the duration. */
   animationTime: number;
   duration: number;
+  /** The entry's alpha as it stands (`MixOptions.alpha`, `LiveTracks.setAlpha`). */
+  alpha: number;
+  /** Whether the entry adds (`MixOptions.additive`). */
+  additive: boolean;
 }
 
 /** The live tracks (`openTracks`). */
@@ -148,6 +211,8 @@ export interface LiveTracks {
   addAnimation(track: number, animation: string, options: QueueOptions): void;
   /** Queues a mix out to nothing after the last entry on `track`; `delay` 0 ends the mix when that entry completes. */
   addEmptyAnimation(track: number, mixDuration: number, delay: number): void;
+  /** Sets the alpha of `track`'s current entry (`TrackEntry.alpha`), from the next pose on; an entry it mixes from keeps its own. A track playing nothing is refused. */
+  setAlpha(track: number, alpha: number): void;
   /** Pose 0, the reset (the header's *What a step is*): once, before the first `step`. */
   start(): RawPose;
   /** The next pose: every entry moved by `dt`, a finite time at or above 0. */
@@ -174,6 +239,22 @@ export interface TracksPlant extends TimelinePlant {
   queueDelayNow?: boolean;
   /** An entry mixing out fires its events while the mix is below one half — the reading the issue's brief stated, which the runtime's `eventThreshold` of 0 contradicts. */
   eventsUntilHalfMix?: boolean;
+  /** `CO52`'s, issue #1344: every entry's alpha read as `1 − alpha`. */
+  alphaInverted?: boolean;
+  /** Every entry's alpha read as 1 — the option ignored. */
+  alphaIgnored?: boolean;
+  /** An additive entry applied, and its modes computed, as a replacing one. */
+  additiveAsReplace?: boolean;
+  /** An additive entry's rotations mixed through the remembered direction (`applyRotateTimeline`) as a replacing entry's are, rather than added through the timeline itself. */
+  additiveRotateRemembered?: boolean;
+  /** An additive entry's attachment timelines applied as a plain timeline (`AttachmentTimeline.apply`, no attachment state) rather than under the threshold rule (`applyAttachmentTimeline`). */
+  additiveAttachmentsDirect?: boolean;
+  /** The hold alpha computed as if the entry mixing in were at alpha 1 (`keep = 1 − mix`, not `1 − mix·to.alpha`). */
+  holdIgnoresEntryAlpha?: boolean;
+  /** The holds computed as if no entry were additive: an additive entry's own timelines held, and a timeline held under an additive entry mixing in. */
+  additiveHeld?: boolean;
+  /** An entry applied below alpha one half keeps none of its attachments — a threshold the runtime's `alphaAttachmentThreshold` of 0 does not have. */
+  attachmentsBelowHalfAlpha?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +286,11 @@ interface MixAnimation {
 
 /** The empty animation (`AnimationState.emptyAnimation`): no timeline, duration 0 — one object, so setting it on an entry never applied replaces that entry. */
 const EMPTY: MixAnimation = { name: null, duration: 0, timelines: [], ids: new Set() };
+
+/** `Timeline.additive`: the timelines the runtime adds under an additive entry — every bone timeline that keys numbers, and the deform. Colour, attachment, inherit and event timelines do not read `add`. */
+function addable(tl: MixTimeline): boolean {
+  return tl.type === 'deform' || (tl.type === 'bone' && tl.kind !== 'inherit');
+}
 
 /** The properties a bone timeline keys, spine-core's `propertyIds` by bone name. */
 const BONE_PROPERTIES: Record<BoneTimelineKind, readonly string[]> = {
@@ -289,6 +375,10 @@ interface Entry {
   mixTime: number;
   mixDuration: number;
   totalAlpha: number;
+  /** `TrackEntry.alpha`. */
+  alpha: number;
+  /** `TrackEntry.additive`. */
+  additive: boolean;
   keepHold: boolean;
   timelineMode: number[];
   timelineHoldMix: Array<Entry | null | undefined>;
@@ -296,12 +386,12 @@ interface Entry {
   timelinesRotation: number[];
 }
 
-/** A new entry (`AnimationState.trackEntry`): every field the runtime's default; the mix duration 0, `AnimationStateData`'s default mix. */
+/** A new entry (`AnimationState.trackEntry`): every field the runtime's default; the mix duration 0, `AnimationStateData`'s default mix, alpha 1, not additive. */
 function newEntry(anim: MixAnimation, loop: boolean): Entry {
   return {
     anim, loop, previous: null, next: null, mixingFrom: null, mixingTo: null,
     delay: 0, trackTime: 0, trackLast: -1, nextTrackLast: -1, trackEnd: Number.MAX_VALUE,
-    animationLast: -1, nextAnimationLast: -1, mixTime: 0, mixDuration: 0, totalAlpha: 0, keepHold: false,
+    animationLast: -1, nextAnimationLast: -1, mixTime: 0, mixDuration: 0, totalAlpha: 0, alpha: 1, additive: false, keepHold: false,
     timelineMode: [], timelineHoldMix: [], timelinesRotation: [],
   };
 }
@@ -535,6 +625,22 @@ class Mixer {
     return this.plant.mixReversed === true ? 1 - m : m;
   }
 
+  /** `TrackEntry.alpha` — inverted or ignored under the plants. */
+  alphaOf(e: Entry): number {
+    if (this.plant.alphaIgnored === true) return 1;
+    return this.plant.alphaInverted === true ? 1 - e.alpha : e.alpha;
+  }
+
+  /** `TrackEntry.additive` — never under the plant that applies an additive entry as a replacing one. */
+  additiveOf(e: Entry): boolean {
+    return e.additive && this.plant.additiveAsReplace !== true;
+  }
+
+  /** Whether `computeHold` reads an entry as additive — never under the plant that holds as if none were. */
+  private holdsAdditive(e: Entry | null): boolean {
+    return e !== null && this.additiveOf(e) && this.plant.additiveHeld !== true;
+  }
+
   update(delta: number): void {
     const tracks = this.tracks;
     for (let i = 0, n = tracks.length; i < n; i++) {
@@ -612,7 +718,7 @@ class Mixer {
       const current = tracks[i];
       if (current === null || current.delay > 0) continue;
       // Apply mixing from entries first.
-      let alpha = 1;
+      let alpha = this.alphaOf(current);
       if (current.mixingFrom !== null) alpha *= this.applyMixingFrom(current, pose, i);
       else if (current.trackTime >= current.trackEnd && current.next === null) alpha = 0;
       // Apply the current entry.
@@ -621,20 +727,27 @@ class Mixer {
       const timelines = current.anim.timelines;
       const count = timelines.length;
       if (i === 0 && alpha === 1) {
+        // Track 0 at full weight poses from the setup pose and adds nothing, additive or not — the runtime passes `add` false here.
         for (const tl of timelines) {
           if (tl.type === 'attachment') this.applyAttachment(pose, tl, animationTime, SETUP, true);
-          else this.applyTimeline(pose, tl, animationLast, animationTime, true, 1, SETUP, false);
+          else this.applyTimeline(pose, tl, animationLast, animationTime, true, 1, SETUP, false, false);
         }
       } else {
         const modes = current.timelineMode;
-        const retain = alpha >= 0;
-        const firstFrame = current.timelinesRotation.length !== count << 1;
+        // `alphaAttachmentThreshold` is 0: an entry keeps its attachments at any alpha, 0 included.
+        const retain = this.plant.attachmentsBelowHalfAlpha === true ? alpha >= 0.5 : alpha >= 0;
+        const add = this.additiveOf(current);
+        // `shortestRotation = add || …`: an additive entry's rotations go through the timeline itself, never the remembered direction.
+        const shortest = add && this.plant.additiveRotateRemembered !== true;
+        const firstFrame = !shortest && current.timelinesRotation.length !== count << 1;
         if (firstFrame) current.timelinesRotation.length = count << 1;
         timelines.forEach((tl, ii) => {
           const from = this.fromOf(modes[ii] & MODE, i);
-          if (tl.type === 'bone' && tl.kind === 'rotate') this.applyRotate(pose, tl, animationTime, alpha, from, current.timelinesRotation, ii << 1, firstFrame);
-          else if (tl.type === 'attachment') this.applyAttachment(pose, tl, animationTime, from, retain);
-          else this.applyTimeline(pose, tl, animationLast, animationTime, true, alpha, from, false);
+          if (!shortest && tl.type === 'bone' && tl.kind === 'rotate') this.applyRotate(pose, tl, animationTime, alpha, from, current.timelinesRotation, ii << 1, firstFrame);
+          else if (tl.type === 'attachment') {
+            if (add && this.plant.additiveAttachmentsDirect === true) this.applyAttachmentDirect(pose, tl, animationTime, from, false);
+            else this.applyAttachment(pose, tl, animationTime, from, retain);
+          } else this.applyTimeline(pose, tl, animationLast, animationTime, true, alpha, from, false, add);
         });
       }
       if (i === 0) base = animationTime;
@@ -657,15 +770,17 @@ class Mixer {
     const from = to.mixingFrom as Entry;
     const fromMix = from.mixingFrom !== null ? this.applyMixingFrom(from, pose, track) : 1;
     const mix = this.mixOf(to);
-    const a = 1 * fromMix;
-    const keep = 1 - mix * 1;
+    const a = this.alphaOf(from) * fromMix;
+    const keep = 1 - mix * (this.plant.holdIgnoresEntryAlpha === true ? 1 : this.alphaOf(to));
     const alphaMix = a * (1 - mix);
     const alphaHold = keep > 0 ? alphaMix / keep : a;
     const timelines = from.anim.timelines;
     const count = timelines.length;
     const modes = from.timelineMode;
     const holdMix = from.timelineHoldMix;
-    const firstFrame = from.timelinesRotation.length !== count << 1;
+    const add = this.additiveOf(from);
+    const shortest = add && this.plant.additiveRotateRemembered !== true;
+    const firstFrame = !shortest && from.timelinesRotation.length !== count << 1;
     if (firstFrame) from.timelinesRotation.length = count << 1;
     const animationLast = from.animationLast;
     const animationTime = animationTimeOf(from);
@@ -680,10 +795,15 @@ class Mixer {
         alpha = h === null || h === undefined ? alphaHold : alphaHold * (1 - this.mixOf(h));
       } else alpha = alphaMix;
       from.totalAlpha += alpha;
-      if (tl.type === 'bone' && tl.kind === 'rotate') this.applyRotate(pose, tl, animationTime, alpha, mixFrom, from.timelinesRotation, i << 1, firstFrame);
-      else if (tl.type === 'attachment') this.applyAttachment(pose, tl, animationTime, mixFrom, false);
+      if (!shortest && tl.type === 'bone' && tl.kind === 'rotate') this.applyRotate(pose, tl, animationTime, alpha, mixFrom, from.timelinesRotation, i << 1, firstFrame);
+      else if (tl.type === 'attachment') {
+        // `mixAttachmentThreshold` is 0: an entry mixing out never keeps an attachment, whatever its alpha.
+        if (add && this.plant.additiveAttachmentsDirect === true) this.applyAttachmentDirect(pose, tl, animationTime, mixFrom, true);
+        else this.applyAttachment(pose, tl, animationTime, mixFrom, false);
+      }
       // An entry mixing out fires no event: `eventThreshold` is 0 and its events are applied only while the mix is below it.
-      else this.applyTimeline(pose, tl, animationLast, animationTime, fire, alpha, mixFrom, true);
+      // An additive one mixing out adds at the faded alpha — its additive timelines are never held (`computeHold`).
+      else this.applyTimeline(pose, tl, animationLast, animationTime, fire, alpha, mixFrom, true, add);
     });
     from.nextAnimationLast = animationTime;
     from.nextTrackLast = from.trackTime;
@@ -712,16 +832,23 @@ class Mixer {
     const holdMix = entry.timelineHoldMix;
     holdMix.length = 0;
     const to = entry.mixingTo;
+    const add = this.holdsAdditive(entry);
+    const toAdds = this.holdsAdditive(to);
     timelines.forEach((tl, i) => {
       const from = this.propertyFrom(track, tl.ids);
+      // An additive entry's additive timelines are never held, and the entry's keepHold does not reach them.
+      if (add && addable(tl)) {
+        modes[i] = from;
+        return;
+      }
       let mode: number;
-      // Hold if the next entry will overwrite this property.
-      if (to === null || tl.instant || !hasAny(to.anim, tl.ids)) mode = from;
+      // Hold if the next entry will overwrite this property — an additive one adding to it does not.
+      if (to === null || tl.instant || (toAdds && addable(tl)) || !hasAny(to.anim, tl.ids)) mode = from;
       else {
         mode = from | HOLD;
         // Find the next entry that doesn't overwrite this property. Its mix fades out the hold, instead of it ending abruptly.
         for (let next = to.mixingTo; next !== null; next = next.mixingTo) {
-          if (!hasAny(next.anim, tl.ids)) {
+          if ((this.holdsAdditive(next) && addable(tl)) || !hasAny(next.anim, tl.ids)) {
             if (next.mixDuration > 0) holdMix[i] = next;
             break;
           }
@@ -761,12 +888,12 @@ class Mixer {
     return keys[index].values.map((_v, c) => channel(keys, index, c, t));
   }
 
-  /** `Timeline.apply` for every timeline but an attachment's and a rotation mixed below full weight. */
-  private applyTimeline(pose: Pose, tl: MixTimeline, lastTime: number, time: number, fire: boolean, alpha: number, from: number, out: boolean): void {
+  /** `Timeline.apply` for every timeline but an attachment's and a rotation mixed below full weight; `add` is the entry's, read only by the timelines the runtime adds (`addable`). */
+  private applyTimeline(pose: Pose, tl: MixTimeline, lastTime: number, time: number, fire: boolean, alpha: number, from: number, out: boolean, add: boolean): void {
     switch (tl.type) {
-      case 'bone': return this.applyBone(pose, tl, time, alpha, from, out);
+      case 'bone': return this.applyBone(pose, tl, time, alpha, from, out, add);
       case 'colour': return this.applyColour(pose, tl, time, alpha, from);
-      case 'deform': return this.applyDeform(pose, tl, time, alpha, from);
+      case 'deform': return this.applyDeform(pose, tl, time, alpha, from, add);
       case 'events':
         if (fire) pose.events.push(...eventsFired(tl.keys, lastTime, time, rawNumber, time < lastTime));
         return;
@@ -774,7 +901,7 @@ class Mixer {
     }
   }
 
-  private applyBone(pose: Pose, tl: Extract<MixTimeline, { type: 'bone' }>, time: number, alpha: number, from: number, out: boolean): void {
+  private applyBone(pose: Pose, tl: Extract<MixTimeline, { type: 'bone' }>, time: number, alpha: number, from: number, out: boolean, add: boolean): void {
     const bone = pose.bone(tl.bone);
     if (bone === null) return;
     const setup = this.doc.bones[tl.bone];
@@ -797,7 +924,8 @@ class Mixer {
     const relative = (field: 'x' | 'y' | 'rotation' | 'shearX' | 'shearY', i: number): void => {
       const s = setup[field] ?? 0;
       const c = bone[field] ?? 0;
-      bone[field] = v === null ? beforeFirstKey(from, alpha, c, s) : from === SETUP ? s + v[i] * alpha : c + (v[i] + s - c) * alpha;
+      // `getRelativeValue`: from the setup pose the same either way; else the keyed value added, or the value over the setup mixed in.
+      bone[field] = v === null ? beforeFirstKey(from, alpha, c, s) : from === SETUP ? s + v[i] * alpha : c + (add ? v[i] : v[i] + s - c) * alpha;
     };
     const pair = (fx: 'x' | 'shearX', fy: 'y' | 'shearY'): void => {
       const sx = setup[fx] ?? 0;
@@ -815,6 +943,9 @@ class Mixer {
       if (from === SETUP) {
         bone[fx] = sx + v[0] * alpha;
         bone[fy] = sy + v[1] * alpha;
+      } else if (add) {
+        bone[fx] = (bone[fx] ?? 0) + v[0] * alpha;
+        bone[fy] = (bone[fy] ?? 0) + v[1] * alpha;
       } else {
         bone[fx] = (bone[fx] ?? 0) + (sx + v[0] - (bone[fx] ?? 0)) * alpha;
         bone[fy] = (bone[fy] ?? 0) + (sy + v[1] - (bone[fy] ?? 0)) * alpha;
@@ -823,7 +954,7 @@ class Mixer {
     const scale = (field: 'scaleX' | 'scaleY', i: number): void => {
       const s = setup[field] ?? 1;
       const c = bone[field] ?? 1;
-      bone[field] = v === null ? beforeFirstKey(from, alpha, c, s) : scaleValue(v[i] * s, alpha, from, out, c, s);
+      bone[field] = v === null ? beforeFirstKey(from, alpha, c, s) : scaleValue(v[i] * s, alpha, from, out, add, c, s);
     };
     switch (tl.kind) {
       case 'rotate': relative('rotation', 0); break;
@@ -845,8 +976,8 @@ class Mixer {
             bone.scaleY = (bone.scaleY ?? 1) + (sy - (bone.scaleY ?? 1)) * alpha;
           }
         } else {
-          bone.scaleX = scaleValue(v[0] * (setup.scaleX ?? 1), alpha, from, out, bone.scaleX ?? 1, setup.scaleX ?? 1);
-          bone.scaleY = scaleValue(v[1] * (setup.scaleY ?? 1), alpha, from, out, bone.scaleY ?? 1, setup.scaleY ?? 1);
+          bone.scaleX = scaleValue(v[0] * (setup.scaleX ?? 1), alpha, from, out, add, bone.scaleX ?? 1, setup.scaleX ?? 1);
+          bone.scaleY = scaleValue(v[1] * (setup.scaleY ?? 1), alpha, from, out, add, bone.scaleY ?? 1, setup.scaleY ?? 1);
         }
         break;
       case 'scalex': scale('scaleX', 0); break;
@@ -858,7 +989,7 @@ class Mixer {
   private applyRotate(pose: Pose, tl: Extract<MixTimeline, { type: 'bone' }>, time: number, alpha: number, from: number, rotations: number[], i: number, firstFrame: boolean): void {
     if (firstFrame) rotations[i] = 0;
     if (alpha === 1) {
-      this.applyBone(pose, tl, time, 1, from, false);
+      this.applyBone(pose, tl, time, 1, from, false, false);
       return;
     }
     const bone = pose.bone(tl.bone);
@@ -932,6 +1063,15 @@ class Mixer {
     pose.setAttachment(tl.slot, name);
     if (retain) s.attachmentState = ATTACH_RETAIN;
     else if (!setup) s.attachmentState = ATTACH_SETUP;
+  }
+
+  /** `AttachmentTimeline.apply` — the plain timeline, writing no attachment state: only `additiveAttachmentsDirect` reaches it, the reading `CO52` rejects. */
+  private applyAttachmentDirect(pose: Pose, tl: Extract<MixTimeline, { type: 'attachment' }>, time: number, from: number, out: boolean): void {
+    if (!pose.slotLive(tl.slot)) return;
+    const index = (this.plant.search ?? keyIndexAt)(tl.keys, time);
+    if (out || index < 0) {
+      if (from !== CURRENT) pose.setAttachment(tl.slot, this.doc.slots[tl.slot].setup);
+    } else pose.setAttachment(tl.slot, tl.keys[index].name ?? null);
   }
 
   private applyColour(pose: Pose, tl: Extract<MixTimeline, { type: 'colour' }>, time: number, alpha: number, from: number): void {
@@ -1030,7 +1170,7 @@ class Mixer {
   }
 
   /** `DeformTimeline.apply`: every live slot showing the record the timeline keys, its deform array mixed. */
-  private applyDeform(pose: Pose, tl: Extract<MixTimeline, { type: 'deform' }>, time: number, alpha: number, from: number): void {
+  private applyDeform(pose: Pose, tl: Extract<MixTimeline, { type: 'deform' }>, time: number, alpha: number, from: number, add: boolean): void {
     const keys = tl.timeline.deform;
     if (keys === null) return;
     pose.slots.forEach((s, k) => {
@@ -1061,13 +1201,27 @@ class Mixer {
         }
         return;
       }
-      // `applyToSlot`, never additive.
-      if (alpha === 1) s.deform = [...target];
-      else if (mixFrom === SETUP) {
+      // `applyToSlot`: added only over a deform already there — over none it is the setup pose's branch, additive or not.
+      const fromSetup = mixFrom === SETUP;
+      if (alpha === 1) {
+        if (add && !fromSetup) {
+          const current = s.deform as number[];
+          if (!vertices.weighted) {
+            const setup = setupArray(vertices);
+            s.deform = current.map((c, i) => c + (target[i] - setup[i]));
+          } else s.deform = current.map((c, i) => c + target[i]);
+        } else s.deform = [...target];
+      } else if (fromSetup) {
         if (!vertices.weighted) {
           const setup = setupArray(vertices);
           s.deform = target.map((v, i) => setup[i] + (v - setup[i]) * alpha);
         } else s.deform = target.map((v) => v * alpha);
+      } else if (add) {
+        const current = s.deform as number[];
+        if (!vertices.weighted) {
+          const setup = setupArray(vertices);
+          s.deform = current.map((c, i) => c + (target[i] - setup[i]) * alpha);
+        } else s.deform = current.map((c, i) => c + target[i] * alpha);
       } else {
         const current = s.deform as number[];
         s.deform = current.map((c, i) => c + (target[i] - c) * alpha);
@@ -1083,10 +1237,11 @@ function beforeFirstKey(from: number, alpha: number, current: number, setup: num
   return current;
 }
 
-/** `CurveTimeline1.getScaleValue` past the first key, `value` the curve times the setup scale, never additive. */
-function scaleValue(value: number, alpha: number, from: number, out: boolean, current: number, setup: number): number {
-  if (alpha === 1) return value;
+/** `CurveTimeline1.getScaleValue` past the first key, `value` the curve times the setup scale; added, its offset from the setup scale is added to the base. */
+function scaleValue(value: number, alpha: number, from: number, out: boolean, add: boolean, current: number, setup: number): number {
+  if (alpha === 1 && !add) return value;
   let base = from === SETUP ? setup : current;
+  if (add) return base + (value - setup) * alpha;
   if (out) return base + (Math.abs(value) * Math.sign(base) - base) * alpha;
   base = Math.abs(base) * Math.sign(value);
   return base + (value - base) * alpha;
@@ -1115,6 +1270,20 @@ function finiteAtOrAbove0(v: number, what: string, call: string): number {
 function loopOf(options: MixOptions | undefined, call: string): boolean {
   if (typeof options !== 'object' || options === null || typeof options.loop !== 'boolean') throw new CoreInputError(`the live tracks' ${call} options.loop is ${JSON.stringify((options as Partial<MixOptions> | null | undefined)?.loop)}, not true or false`);
   return options.loop;
+}
+
+/** An alpha: a finite number from 0 to 1, or the call refused naming it — the runtime clamps nothing and defines no weight outside it. */
+function alphaValue(v: unknown, what: string, call: string): number {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) throw new CoreInputError(`the live tracks' ${call} ${what} is ${typeof v === 'number' ? String(v) : JSON.stringify(v)}, not a number from 0 to 1`);
+  return v;
+}
+
+/** `options.alpha` and `options.additive`: 1 and `false` when absent, else refused by name where they are not a weight and a boolean. */
+function blendOf(options: MixOptions, call: string): { alpha: number; additive: boolean } {
+  const alpha = options.alpha === undefined ? 1 : alphaValue(options.alpha, 'options.alpha', call);
+  const additive: unknown = options.additive;
+  if (additive !== undefined && typeof additive !== 'boolean') throw new CoreInputError(`the live tracks' ${call} options.additive is ${JSON.stringify(additive)}, not true or false — an entry adds or it does not`);
+  return { alpha, additive: additive === true };
 }
 
 function delayOf(v: number, call: string): number {
@@ -1163,8 +1332,11 @@ class Tracks implements LiveTracks {
     const i = trackIndex(track, 'setAnimation');
     const loop = loopOf(options, 'setAnimation');
     const mix = finiteAtOrAbove0(options.mixDuration, 'mixDuration', 'setAnimation');
+    const blend = blendOf(options, 'setAnimation');
     const entry = this.mixer.setAnimation(i, this.mixer.animation(animation), loop);
     entry.mixDuration = mix;
+    entry.alpha = blend.alpha;
+    entry.additive = blend.additive;
   }
 
   setEmptyAnimation(track: number, mixDuration: number): void {
@@ -1182,8 +1354,11 @@ class Tracks implements LiveTracks {
     const loop = loopOf(options, 'addAnimation');
     const mix = finiteAtOrAbove0(options.mixDuration, 'mixDuration', 'addAnimation');
     const delay = delayOf(options.delay, 'addAnimation');
+    const blend = blendOf(options, 'addAnimation');
     const entry = this.mixer.addAnimation(i, this.mixer.animation(animation), loop, delay);
     this.mixer.setMixDuration(entry, mix, delay);
+    entry.alpha = blend.alpha;
+    entry.additive = blend.additive;
   }
 
   addEmptyAnimation(track: number, mixDuration: number, delay: number): void {
@@ -1197,10 +1372,19 @@ class Tracks implements LiveTracks {
     entry.trackEnd = mix;
   }
 
+  setAlpha(track: number, alpha: number): void {
+    this.live('setAlpha');
+    const i = trackIndex(track, 'setAlpha');
+    const a = alphaValue(alpha, 'alpha', 'setAlpha');
+    const e = this.mixer.tracks[i] ?? null;
+    if (e === null) throw new CoreInputError(`the live tracks' setAlpha names track ${i}, which plays nothing — there is no entry to weigh`);
+    e.alpha = a;
+  }
+
   current(track: number): TrackEntryView | null {
     const e = this.mixer.tracks[trackIndex(track, 'current')] ?? null;
     if (e === null) return null;
-    return { animation: e.anim.name, loop: e.loop, trackTime: e.trackTime, animationTime: animationTimeOf(e), duration: e.anim.duration };
+    return { animation: e.anim.name, loop: e.loop, trackTime: e.trackTime, animationTime: animationTimeOf(e), duration: e.anim.duration, alpha: e.alpha, additive: e.additive };
   }
 
   start(): RawPose {

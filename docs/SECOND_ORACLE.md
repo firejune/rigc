@@ -289,6 +289,39 @@ none, since `eventThreshold` is 0. Track 0 alone equals `openTrack` on 5,304
 poses, every field. An animation keying a constraint timeline, a sequence, the
 draw order or a path's deform is refused by name (`gallery/walk`, `gallery/ride`).
 
+**An entry's alpha and additive blending**
+([#1344](https://github.com/firejune/rigc/issues/1344)) are held the same way:
+`MixOptions.alpha` and `MixOptions.additive` are spine-core's `TrackEntry.alpha`
+and `TrackEntry.additive` (4.3.13 has no `MixBlend` on an entry — `additive` is a
+boolean), and `setAlpha` changes the current entry's alpha while it plays. One
+script per subject — a layer over a looping base at alpha 0.6, changed to 0.85, 0
+and 1 mid-entry and mixed out; the layer additive, mixed in, at 0.6, mixed out
+and in again; an additive entry replaced by a replacing one and back; an
+additive one-shot emptied; track 0 itself below alpha 1 and finally additive —
+with roles by structure (the pair sharing the most bone rotate channels: on
+`gallery/look`, `tilt` under `turn`, sharing `headroll`), on CO51's subjects and
+a blend probe keying every bone timeline kind, an inherit and three colour
+kinds, plus a second script where an attachment-keying animation is mixed into
+itself additive: 18 walks, 3,978 poses equal to `AnimationState` at tolerance 0
+in every field CO51 holds, over 1,582 steps adding over a lower track, 1,212
+mixing an additive entry in and 366 mixing one out (`CO52`). Measured, not
+recalled: the current entry fires its events and keeps its attachments at any
+alpha, 0 included (`alphaAttachmentThreshold` 0; `eventThreshold` and
+`mixAttachmentThreshold` 0 leave an entry mixing out with neither); an additive
+entry adds what the runtime marks additive — every bone timeline that keys
+numbers and the deform — with no shortest-angle wrap, is never held and does not
+hold what it replaces, and mixing out adds at its faded alpha; colour,
+attachment, inherit and event timelines under it apply as under a replacing
+entry, so nothing more is refused. The oracle here resets bones and slots
+(`setupPose()`): `setupPoseBones()` alone disagrees on the blend probe, where a
+two-colour key at a partial alpha over track 0's `rgba` mixes the dark colour
+from what the previous frame left. Each rejected reading reads off on at least
+4 of 18 walks — alpha inverted or ignored, additive as replace, an additive
+rotation through the remembered direction, an additive entry's attachments as a
+plain timeline, the hold blind to the alpha mixing in, the holds as if no entry
+added, an alpha threshold on attachments — and CO51's script with alpha 1 and
+additive false stated equals it unstated on 3,094 poses, bit for bit.
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private

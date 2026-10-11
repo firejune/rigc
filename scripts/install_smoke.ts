@@ -420,7 +420,9 @@ const REQUESTED_IN_1276 = 'rig-play 1.0 plan, requested on issue #1276';
  * types of `TrackOptions.adjust` (piece (b), an option of `openTrack`, which
  * that row holds), and the live tracks over several animations, `openTracks`,
  * with the types of its options, its state and a track's current entry
- * (piece (a)).
+ * (piece (a)). Issue #1344's entry alpha and additive blending are fields and
+ * a method of those same types, so they ride on this row (RELEASING.md *The
+ * import surface*).
  */
 const REQUESTED_IN_1336 = 'rig-play player migration, requested on issue #1336';
 

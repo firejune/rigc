@@ -99401,6 +99401,335 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
         ),
         'issue #1336: a player composes a character on several tracks — a looping base, a pose held and replaced over a mix, a one-shot mixed back out, its own write on the locals — and every pose of that has to be the one spine-core\'s AnimationState poses, or the player migrating from it draws a different picture',
       );
+
+      // --- CO52: an entry's alpha and additive blending on the live tracks, as spine-core's TrackEntry weighs and adds them --
+      //
+      // Issue #1344. Spine-core 4.3.13 has no `MixBlend` on a track entry: an entry adds when `TrackEntry.additive` is set (the
+      // option is named after that field, a boolean), and weighs by `TrackEntry.alpha`, multiplied into the mix (`current.alpha ·
+      // mix`, and `from.alpha` and `1 − mix·to.alpha` in `applyMixingFrom`'s hold). One script per subject, the same calls on
+      // `AnimationState` (alpha and additive written on the entry the call returns, `getTrack(i).alpha` changed between steps) and on
+      // `openTracks` (`MixOptions.alpha`/`additive`, `setAlpha`), held at tolerance 0 as CO51 holds it. Roles by structure: the pair
+      // sharing the most bone rotate channels (then the most properties) is the base on track 0 and the layer on track 1 — the
+      // one keying more properties layered, so the most timeline kinds are added — and a third animation (else the layer) is a
+      // one-shot on track 2. The script: the layer at alpha 0.6 over the looping base, changed to 0.85, 0 and 1 mid-entry, back to
+      // 0.6 and mixed out (`setEmptyAnimation`, 0.2 s); the layer set additive, mixing in over 0.2 s, then at alpha 0.6, mixed out
+      // and set again additive at 0.85 while the empty mixes; an additive entry replaced by a replacing one and back over 0.2 s; an
+      // additive one-shot at alpha 0.6 emptied by `addEmptyAnimation`; track 0 itself at 0.85 and back; a queued entry carrying
+      // an alpha; and finally an additive entry on track 0, at alpha 1 (the runtime adds nothing there) and at 0.6. On a subject
+      // with an animation keying an attachment, a second script plays it on track 0 and sets it again over itself additive, mixed
+      // in over the rest of the walk: measured, in the first script a lower track's or a later entry's retained attachment always
+      // decides the slot, so the reading that applies an additive entry's attachments as a plain timeline read green there on
+      // every walk — it is read red only where the additive entry is all that keys the slot over the entry mixing out.
+      //
+      // Subjects: CO51's, and a blend probe (no gallery row keys a pair translate, scale or shear, an inherit or a two-colour
+      // timeline, so the probe keys every bone timeline kind and rgba, rgba2 and alpha over setup values that are not the
+      // identity). The oracle's reset is `setupPose()` — bones and slots: measured, `setupPoseBones()` alone agrees on every walk
+      // but the blend probe's, where the layer's rgba2 at a partial alpha over track 0's rgba mixes the dark colour from what the
+      // previous frame left, which carries in a runtime whose slots are not reset; the core poses every frame from the setup pose.
+      {
+        type BlendCall = { at: number; call: 'set' | 'add' | 'setEmpty' | 'addEmpty' | 'alpha'; track: number; animation: string; loop: boolean; mix: number; delay: number; alpha?: number; additive?: boolean };
+        type SpineEntry = ReturnType<AnimationState['setAnimation']>;
+        const blendProbes: string[] = [];
+        const blendScript = (base: string, layer: string, shot: string): BlendCall[] => {
+          const c = (at: number, call: BlendCall['call'], track: number, rest: Partial<BlendCall> = {}): BlendCall => ({ at, call, track, animation: '', loop: false, mix: 0, delay: 0, ...rest });
+          return [
+            c(0, 'set', 0, { animation: base, loop: true }),
+            c(0, 'set', 1, { animation: layer, loop: true, alpha: 0.6 }),
+            c(30, 'alpha', 1, { alpha: 0.85 }),
+            c(45, 'alpha', 1, { alpha: 0 }),
+            c(55, 'alpha', 1, { alpha: 1 }),
+            c(58, 'alpha', 1, { alpha: 0.6 }),
+            c(60, 'setEmpty', 1, { mix: 0.2 }),
+            c(75, 'set', 1, { animation: layer, loop: true, mix: 0.2, additive: true }),
+            c(100, 'alpha', 1, { alpha: 0.6 }),
+            c(120, 'setEmpty', 1, { mix: 0.2 }),
+            c(125, 'set', 1, { animation: layer, loop: true, mix: 0.2, additive: true, alpha: 0.85 }),
+            c(140, 'set', 1, { animation: base, loop: true, mix: 0.2, alpha: 0.85 }),
+            c(150, 'set', 1, { animation: layer, loop: true, mix: 0.2, additive: true }),
+            c(160, 'set', 2, { animation: shot, loop: false, additive: true, alpha: 0.6 }),
+            c(160, 'addEmpty', 2, { mix: 0.2 }),
+            c(170, 'alpha', 0, { alpha: 0.85 }),
+            c(180, 'add', 1, { animation: base, loop: true, mix: 0.3, alpha: 0.6 }),
+            c(190, 'alpha', 0, { alpha: 1 }),
+            c(195, 'set', 0, { animation: layer, loop: true, mix: 0.2, additive: true }),
+            c(205, 'alpha', 0, { alpha: 0.6 }),
+          ];
+        };
+        type BlendCoverage = { alphas: Set<number>; alphaSteps: number; alphaMixingOut: number; addingOverLower: number; additiveMixingIn: number; additiveMixingOut: number; additiveAndAlpha: number; additiveTrack0: number; eventsAtPartialAlpha: number; eventsAtZeroAlpha: number };
+        const spineBlend = (data: SkeletonData, calls: readonly BlendCall[], steps: readonly number[], reset: RawReset, bonesOnly: boolean, cover?: BlendCoverage): Flat[] => {
+          const sk = new Skeleton(data);
+          const st = new AnimationState(new AnimationStateData(data));
+          let events: string[] = [];
+          st.addListener({
+            event: (entry, ev) => {
+              events.push(`${ev.data.name}@${ev.time}/${ev.intValue}/${ev.floatValue}/${ev.stringValue}`);
+              if (cover !== undefined && entry.alpha === 0) cover.eventsAtZeroAlpha++;
+              else if (cover !== undefined && entry.alpha < 1) cover.eventsAtPartialAlpha++;
+            },
+          });
+          const weigh = (e: SpineEntry, c: BlendCall): void => {
+            if (c.alpha !== undefined) e.alpha = c.alpha;
+            if (c.additive !== undefined) e.additive = c.additive;
+          };
+          const callsAt = (k: number): void => {
+            for (const c of calls) {
+              if (c.at !== k) continue;
+              if (c.call === 'set') {
+                const e = st.setAnimation(c.track, c.animation, c.loop);
+                e.mixDuration = c.mix;
+                weigh(e, c);
+              } else if (c.call === 'add') {
+                const e = st.addAnimation(c.track, c.animation, c.loop, c.delay);
+                e.setMixDuration(c.mix, c.delay);
+                weigh(e, c);
+              } else if (c.call === 'setEmpty') st.setEmptyAnimation(c.track, c.mix);
+              else if (c.call === 'addEmpty') st.addEmptyAnimation(c.track, c.mix, c.delay);
+              else {
+                const e = st.getTrack(c.track);
+                if (e === null) throw new Error(`spine-core's track ${c.track} plays nothing at step ${k}`);
+                e.alpha = c.alpha ?? 1;
+              }
+            }
+          };
+          callsAt(0);
+          sk.setupPose();
+          if (reset === 'animation') st.apply(sk);
+          sk.update(0);
+          sk.updateWorldTransform(Physics.reset);
+          const out = [flatSpine(sk, events)];
+          steps.forEach((dt, i) => {
+            events = [];
+            callsAt(i + 1);
+            st.update(dt);
+            if (cover !== undefined) {
+              const live = st.tracks.filter((e): e is SpineEntry => e !== null && e !== undefined);
+              const chain = (e: SpineEntry): SpineEntry[] => {
+                const l: SpineEntry[] = [];
+                for (let m: SpineEntry | null = e.mixingFrom; m !== null; m = m.mixingFrom) l.push(m);
+                return l;
+              };
+              for (const e of live) if (e.alpha < 1) cover.alphas.add(e.alpha);
+              if (live.some((e) => e.alpha < 1)) cover.alphaSteps++;
+              if (live.some((e) => chain(e).some((m) => m.alpha < 1))) cover.alphaMixingOut++;
+              if (live.some((e) => e.additive && e.timelineMode.some((m) => (m & 3) === 0))) cover.addingOverLower++;
+              if (live.some((e) => e.additive && e.mixingFrom !== null)) cover.additiveMixingIn++;
+              if (live.some((e) => chain(e).some((m) => m.additive))) cover.additiveMixingOut++;
+              if (live.some((e) => e.additive && e.alpha < 1)) cover.additiveAndAlpha++;
+              if (st.tracks[0]?.additive === true) cover.additiveTrack0++;
+            }
+            if (bonesOnly) sk.setupPoseBones();
+            else sk.setupPose();
+            st.apply(sk);
+            sk.update(dt);
+            sk.updateWorldTransform(Physics.update);
+            out.push(flatSpine(sk, events));
+          });
+          return out;
+        };
+        const coreBlend = (doc: CompiledDocument, calls: readonly BlendCall[], steps: readonly number[], reset: RawReset, plant: TracksPlant = {}): Flat[] => {
+          const tracks = openTracks(doc, { reset }, plant);
+          const weights = (c: BlendCall): { alpha?: number; additive?: boolean } => ({ ...(c.alpha === undefined ? {} : { alpha: c.alpha }), ...(c.additive === undefined ? {} : { additive: c.additive }) });
+          const callsAt = (n: number): void => {
+            for (const c of calls) {
+              if (c.at !== n) continue;
+              if (c.call === 'set') tracks.setAnimation(c.track, c.animation, { loop: c.loop, mixDuration: c.mix, ...weights(c) });
+              else if (c.call === 'add') tracks.addAnimation(c.track, c.animation, { loop: c.loop, mixDuration: c.mix, delay: c.delay, ...weights(c) });
+              else if (c.call === 'setEmpty') tracks.setEmptyAnimation(c.track, c.mix);
+              else if (c.call === 'addEmpty') tracks.addEmptyAnimation(c.track, c.mix, c.delay);
+              else tracks.setAlpha(c.track, c.alpha ?? 1);
+            }
+          };
+          callsAt(0);
+          const out = [flatCore(tracks.start())];
+          steps.forEach((dt, i) => {
+            callsAt(i + 1);
+            out.push(flatCore(tracks.step(dt)));
+          });
+          return out;
+        };
+        // The blend probe: every bone timeline kind, an inherit and three colour kinds, over setup values off the identity.
+        const blendProbe = (): Subject => {
+          const bones = [
+            { name: 'root' },
+            { name: 'b1', parent: 'root', length: 10, rotation: 10, scaleX: 1.2 },
+            { name: 'b2', parent: 'b1', length: 10, x: 10, shearY: 5, scaleY: -0.9 },
+            { name: 'b3', parent: 'root', length: 8, x: -10, y: 4, scaleY: 0.8, shearX: -3 },
+          ];
+          type K = Record<string, number | string>;
+          const anims: Array<{ name: string; bones: Record<string, Record<string, K[]>>; slots: Record<string, Record<string, K[]>> }> = [
+            {
+              name: 'base',
+              bones: {
+                b1: { rotate: [{ time: 0, value: 0 }, { time: 1, value: 60 }], translate: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 10, y: -5 }] },
+                b2: { scale: [{ time: 0, x: 1, y: 1 }, { time: 1, x: 1.5, y: 0.8 }], shear: [{ time: 0, x: 0, y: 0 }, { time: 1, x: 10, y: 5 }] },
+                b3: { translatex: [{ time: 0, value: 2 }, { time: 1, value: -6 }], scaley: [{ time: 0, value: 1 }, { time: 1, value: 1.4 }], shearx: [{ time: 0, value: 0 }, { time: 1, value: 12 }] },
+              },
+              slots: { s1: { rgba: [{ time: 0, color: 'ffffffff' }, { time: 1, color: '80ff40c0' }] } },
+            },
+            {
+              name: 'layer',
+              bones: {
+                b1: { rotate: [{ time: 0.1, value: -30 }, { time: 0.6, value: 45 }], translate: [{ time: 0, x: 5, y: 5 }, { time: 0.6, x: -5, y: 10 }] },
+                b2: { scale: [{ time: 0, x: 0.5, y: 2 }, { time: 0.6, x: -1.2, y: 1.1 }], shear: [{ time: 0.2, x: -8, y: 3 }, { time: 0.6, x: 4, y: -6 }] },
+                b3: { translatey: [{ time: 0, value: 3 }, { time: 0.6, value: -3 }], scalex: [{ time: 0, value: 0.7 }, { time: 0.6, value: 1.3 }], sheary: [{ time: 0, value: 5 }, { time: 0.6, value: -5 }], translatex: [{ time: 0.05, value: 4 }, { time: 0.5, value: -2 }], inherit: [{ time: 0, inherit: 'noScale' }, { time: 0.3, inherit: 'normal' }] },
+              },
+              slots: { s1: { rgba2: [{ time: 0, light: 'ff0000ff', dark: '00ff00' }, { time: 0.6, light: '0000ff80', dark: '404040' }] } },
+            },
+            {
+              name: 'shot',
+              bones: { b2: { rotate: [{ time: 0, value: 20 }, { time: 0.8, value: -70 }] }, b3: { rotate: [{ time: 0.1, value: -15 }, { time: 0.7, value: 40 }] } },
+              slots: { s1: { alpha: [{ time: 0, value: 1 }, { time: 0.8, value: 0.2 }] } },
+            },
+          ];
+          const spineText = JSON.stringify({ skeleton: { spine: '4.3.13' }, bones, slots: [{ name: 's1', bone: 'b1', color: 'ff8080ff', dark: '102030' }], skins: [{ name: 'default', attachments: {} }], animations: Object.fromEntries(anims.map((a) => [a.name, { bones: a.bones, slots: a.slots }])) });
+          const modelText = JSON.stringify({
+            spec: 'rigc-compiled/1', referenceScale: UNSTATED_REFERENCE_SCALE, bones, slots: [{ name: 's1', bone: 'b1', setup: null, color: 'ff8080ff', dark: '102030' }], skins: [{ name: 'default', bones: [], constraints: {}, attachments: {} }], constraints: [], events: [],
+            animations: anims.map((a) => ({
+              name: a.name, duration: 0,
+              bones: Object.entries(a.bones).map(([b, tls]) => ({ name: b, timelines: Object.entries(tls).map(([name, keys]) => ({ name, keys })) })),
+              slots: Object.entries(a.slots).map(([s, tls]) => ({ name: s, timelines: Object.entries(tls).map(([name, keys]) => ({ name, keys })) })),
+              constraints: { ik: [], transform: [], path: [], physics: [], slider: [] }, attachments: [], drawOrder: [], events: [],
+            })),
+            images: [], pageGrids: [], droppedStates: [], absentParts: [], meshBones: {}, meshes: {}, physics: [], deformTransforms: [], trackDerivations: [], rig: {}, spine: { sha256: FORGED_SPINE_SHA256 },
+          });
+          return { label: 'the blend probe', data: loadOracleData(spineText, '', 'the tracks blend probe'), doc: readModel(modelText, 'the tracks blend probe') };
+        };
+        const blendSubjects: Subject[] = [...subjects, blendProbe()];
+        const BLEND_PLANTS: Array<[string, TracksPlant]> = [
+          ['alpha read as 1 − alpha', { alphaInverted: true }],
+          ['alpha ignored', { alphaIgnored: true }],
+          ['an additive entry applied as a replacing one', { additiveAsReplace: true }],
+          ['an additive rotation mixed through the remembered direction', { additiveRotateRemembered: true }],
+          ["an additive entry's attachments applied as a plain timeline rather than under the threshold rule", { additiveAttachmentsDirect: true }],
+          ['the hold alpha blind to the alpha of the entry mixing in', { holdIgnoresEntryAlpha: true }],
+          ['the holds computed as if no entry were additive', { additiveHeld: true }],
+          ['an entry below alpha one half keeping no attachment', { attachmentsBelowHalfAlpha: true }],
+        ];
+        const bc: BlendCoverage = { alphas: new Set(), alphaSteps: 0, alphaMixingOut: 0, addingOverLower: 0, additiveMixingIn: 0, additiveMixingOut: 0, additiveAndAlpha: 0, additiveTrack0: 0, eventsAtPartialAlpha: 0, eventsAtZeroAlpha: 0 };
+        const bt = { walks: 0, attachmentWalks: 0, poses: 0, events: 0, sharedRotate: 0, bonesOnlyEqual: 0, control: 0, controlPoses: 0, refusals: 0 };
+        const bonesOnlyOff: string[] = [];
+        const blendRed = BLEND_PLANTS.map(() => 0);
+        const blendRoles: string[] = [];
+        const brnd = seededRandom(134452);
+        for (const s of blendSubjects) {
+          const names = s.doc.animations.map((a) => a.name);
+          const props = new Map(names.map((n) => [n, new Set(mixPropertyOrder(s.doc, n).flat().filter((id) => id !== 'event'))]));
+          const sharedOf = (x: string, y: string, only?: string): number => [...(props.get(x) ?? [])].filter((p) => props.get(y)?.has(p) === true && (only === undefined || p.startsWith(`${only}|`))).length;
+          // The roles, by structure: the pair sharing the most rotate channels, then the most properties; one animation alone pairs with itself.
+          let pair: [string, string] = [names[0], names[0]];
+          let best: [number, number] = [sharedOf(names[0], names[0], 'rotate'), sharedOf(names[0], names[0])];
+          if (names.length > 1) best = [-1, -1];
+          for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+            const score: [number, number] = [sharedOf(names[i], names[j], 'rotate'), sharedOf(names[i], names[j])];
+            if (score[0] > best[0] || (score[0] === best[0] && score[1] > best[1])) [best, pair] = [score, [names[i], names[j]]];
+          }
+          const [layer, base] = (props.get(pair[1])?.size ?? 0) > (props.get(pair[0])?.size ?? 0) ? [pair[1], pair[0]] : pair;
+          const shot = names.find((n) => n !== base && n !== layer) ?? layer;
+          if (best[0] > 0) bt.sharedRotate++;
+          blendRoles.push(`${s.label}: "${base}" on track 0, "${layer}" layered on track 1 (${best[0]} rotate channel(s) in common), "${shot}" the one-shot`);
+          const steps = Array.from({ length: TRACK_STEPS }, () => (brnd() < 0.2 ? brnd() * 0.08 : MIXED[Math.floor(brnd() * MIXED.length)]));
+          // A second script where an animation keys an attachment: it plays on track 0 and is set again over itself, additive, mixed in
+          // over the rest of the walk — the one shape where nothing below keeps the slot, so the threshold rule's state decides what shows.
+          const scripts: Array<[string, BlendCall[]]> = [['', blendScript(base, layer, shot)]];
+          const keyer = names.find((n) => [...(props.get(n) ?? [])].some((p) => p.startsWith('attachment|')));
+          if (keyer !== undefined) {
+            bt.attachmentWalks += 2;
+            scripts.push([`, "${keyer}" mixed into itself additive`, [
+              { at: 0, call: 'set', track: 0, animation: keyer, loop: true, mix: 0, delay: 0 },
+              { at: 5, call: 'set', track: 0, animation: keyer, loop: true, mix: 1000, delay: 0, additive: true },
+            ]]);
+          }
+          for (const [scriptLabel, calls] of scripts) for (const reset of ['animation', 'setup'] as const) {
+            bt.walks++;
+            const where = `${s.label}${scriptLabel}, reset at the ${reset}`;
+            const want = spineBlend(s.data, calls, steps, reset, false, bc);
+            const got = coreBlend(s.doc, calls, steps, reset);
+            bt.poses += got.length;
+            bt.events += got.reduce((n, p) => n + p.events.length, 0);
+            const off = firstOff(want, got);
+            if (off >= 0) blendProbes.push(`${where}: pose ${off} differs from spine-core's AnimationState under the same calls, alphas and additive entries`);
+            if (firstOff(spineBlend(s.data, calls, steps, reset, true), got) < 0) bt.bonesOnlyEqual++;
+            else bonesOnlyOff.push(where);
+            BLEND_PLANTS.forEach(([, plant], k) => {
+              if (firstOff(want, coreBlend(s.doc, calls, steps, reset, plant)) >= 0) blendRed[k]++;
+            });
+            // The positive control: CO51's script with alpha 1 and additive false stated on every entry is today's openTracks, bit for bit.
+            if (scriptLabel !== '') continue;
+            const plainCalls = scriptOf(base, layer, layer, shot);
+            const stated = coreBlend(s.doc, plainCalls.map((c): BlendCall => ({ ...c, ...(c.call === 'set' || c.call === 'add' ? { alpha: 1, additive: false } : {}) })), steps, reset);
+            const plain = coreTracks(s.doc, plainCalls, steps, reset, null);
+            bt.control++;
+            bt.controlPoses += plain.length;
+            const controlOff = firstOff(plain, stated);
+            if (controlOff >= 0) blendProbes.push(`${where}: CO51's script with alpha 1 and additive false stated differs from it unstated at pose ${controlOff}`);
+          }
+        }
+        // The refusals, each by name, on the first subject.
+        const firstSubject = blendSubjects[0];
+        const anim = firstSubject.doc.animations[0].name;
+        const freshTracks = (): ReturnType<typeof openTracks> => openTracks(firstSubject.doc, { reset: 'setup' });
+        const expectBlend = (label: string, got: string, mustSay: string): void => {
+          if (got.includes(mustSay)) bt.refusals++;
+          else blendProbes.push(`${label}: refused ${JSON.stringify(got)}, not naming ${JSON.stringify(mustSay)}`);
+        };
+        expectBlend('an alpha above 1', refusal(() => freshTracks().setAnimation(0, anim, { loop: true, mixDuration: 0, alpha: 1.5 })), 'setAnimation options.alpha is 1.5, not a number from 0 to 1');
+        expectBlend('an alpha below 0', refusal(() => freshTracks().addAnimation(1, anim, { loop: true, mixDuration: 0, delay: 0, alpha: -0.1 })), 'addAnimation options.alpha is -0.1, not a number from 0 to 1');
+        expectBlend('an alpha of NaN', refusal(() => freshTracks().setAnimation(0, anim, { loop: true, mixDuration: 0, alpha: Number.NaN })), 'options.alpha is NaN, not a number from 0 to 1');
+        expectBlend('an infinite alpha', refusal(() => freshTracks().setAnimation(0, anim, { loop: true, mixDuration: 0, alpha: Number.POSITIVE_INFINITY })), 'options.alpha is Infinity, not a number from 0 to 1');
+        expectBlend('a blend named rather than a boolean', refusal(() => freshTracks().setAnimation(0, anim, { loop: true, mixDuration: 0, additive: 'add' as unknown as boolean })), 'options.additive is "add", not true or false');
+        expectBlend('setAlpha on a track playing nothing', refusal(() => freshTracks().setAlpha(3, 0.5)), 'setAlpha names track 3, which plays nothing');
+        expectBlend('setAlpha out of range', refusal(() => {
+          const t = freshTracks();
+          t.setAnimation(0, anim, { loop: true, mixDuration: 0 });
+          t.setAlpha(0, 2);
+        }), 'setAlpha alpha is 2, not a number from 0 to 1');
+        expectBlend('setAlpha on a negative track', refusal(() => freshTracks().setAlpha(-1, 0.5)), 'setAlpha names track -1, not a whole number at or above 0');
+        const untouched = freshTracks();
+        refusal(() => untouched.setAnimation(0, anim, { loop: true, mixDuration: 0, alpha: 7 }));
+        if (untouched.current(0) === null) bt.refusals++;
+        else blendProbes.push('a setAnimation refused for its alpha set the entry anyway');
+        const viewed = freshTracks();
+        viewed.setAnimation(1, anim, { loop: true, mixDuration: 0, alpha: 0.6, additive: true });
+        viewed.setAlpha(1, 0.85);
+        const view = viewed.current(1);
+        if (view !== null && view.alpha === 0.85 && view.additive) bt.refusals++;
+        else blendProbes.push(`current(1) after alpha 0.6, additive and setAlpha(1, 0.85) read ${JSON.stringify(view)}`);
+        blendProbes.push(
+          ...floorProbes(
+            [
+              [bt.poses, 2 * blendSubjects.length * (TRACK_STEPS + 1), `${bt.poses} pose(s) held`],
+              [bt.sharedRotate, 1, `${bt.sharedRotate} subject(s) layering over a shared rotate channel`],
+              [bt.attachmentWalks, 1, `${bt.attachmentWalks} walk(s) of an attachment-keying animation mixed into itself additive`],
+              [[0, 0.6, 0.85].filter((a) => bc.alphas.has(a)).length, 3, `alphas 0, 0.6 and 0.85 seen: [${[...bc.alphas].sort().join(', ')}]`],
+              [bc.alphaMixingOut, 1, `${bc.alphaMixingOut} step(s) mixing out an entry below alpha 1`],
+              [bc.addingOverLower, 1, `${bc.addingOverLower} step(s) adding over a lower track`],
+              [bc.additiveMixingIn, 1, `${bc.additiveMixingIn} step(s) mixing an additive entry in`],
+              [bc.additiveMixingOut, 1, `${bc.additiveMixingOut} step(s) mixing an additive entry out`],
+              [bc.additiveAndAlpha, 1, `${bc.additiveAndAlpha} step(s) additive below alpha 1`],
+              [bc.additiveTrack0, 1, `${bc.additiveTrack0} step(s) additive on track 0`],
+              [bc.eventsAtPartialAlpha, 1, `${bc.eventsAtPartialAlpha} event(s) fired below alpha 1`],
+              [bc.eventsAtZeroAlpha, 1, `${bc.eventsAtZeroAlpha} event(s) fired at alpha 0`],
+              ...BLEND_PLANTS.map(([label], k): [number, number, string] => [blendRed[k], 1, `${blendRed[k]} walk(s) red with ${label}`]),
+              [bt.refusals, 10, `${bt.refusals} of 10 refusal(s) and readings by name`],
+            ],
+            'so alpha and additive entries were not held where they decide',
+          ),
+        );
+        const blendOk = blendProbes.length === 0;
+        say(
+          'CO52_THE_LIVE_TRACKS_WEIGH_AN_ENTRY_BY_ITS_ALPHA_AND_ADD_AN_ADDITIVE_ONE_AS_SPINE_CORES_TRACKENTRY_DOES_AND_EACH_REJECTED_READING_IS_RED',
+          blendOk,
+          probeDetail(
+            blendOk,
+            blendProbes.slice(0, 12),
+            `${blendSubjects.length} subject(s) — ${blendRoles.join('; ')} — ${bt.walks} walk(s) of ${TRACK_STEPS} seeded mixed step(s) under both resets (${bt.attachmentWalks} of them an attachment-keying animation mixed into itself additive): ${bt.poses} pose(s) equal to spine-core's AnimationState at tolerance 0 in every bone's world transform, drawn vertex, slot attachment and colour, the draw order and ${bt.events} event(s); ` +
+              `covered — alphas [${[...bc.alphas].sort().join(', ')}] on ${bc.alphaSteps} step(s), ${bc.alphaMixingOut} mixing out below alpha 1, ${bc.addingOverLower} adding over a lower track, ${bc.additiveMixingIn} mixing an additive entry in, ${bc.additiveMixingOut} mixing one out, ${bc.additiveAndAlpha} additive below alpha 1, ${bc.additiveTrack0} additive on track 0; ` +
+              `measured — the current entry fires its events at any alpha (${bc.eventsAtPartialAlpha} below 1, ${bc.eventsAtZeroAlpha} at 0; eventThreshold 0 leaves an entry mixing out firing none, CO51), keeps its attachments at any alpha (alphaAttachmentThreshold 0; mixAttachmentThreshold 0 leaves one mixing out keeping none), and an additive entry mixing out adds at its faded alpha, never held; the oracle's reset — setupPoseBones() alone agreed on ${bt.bonesOnlyEqual} of ${bt.walks}${bonesOnlyOff.length === 0 ? '' : ` (not on ${bonesOnlyOff.join(', ')})`}; ` +
+              `rejected — ${BLEND_PLANTS.map(([label], k) => `${label} red on ${blendRed[k]} of ${bt.walks}`).join(', ')}; CO51's script with alpha 1 and additive false stated equal to it unstated on ${bt.control} walk(s), ${bt.controlPoses} pose(s), every field, bit for bit; ${bt.refusals} refusal(s) and readings by name`,
+          ),
+          'issue #1344: a player plays the same clip at 0.6 and 0.85 of its amplitude and layers a head turn that adds to the idle\'s neck sway rather than replacing it; spine-core says both on the TrackEntry, and every pose of them has to be the one it poses',
+        );
+      }
     }
   });
 
