@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.45.2](https://github.com/rig-c/core/compare/v2.45.1...v2.45.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **render:** a render's physics clock runs 2^-30 ahead of its frames, so no frame ends on a physics step's tie and a looping spring closes — held by LS05 and LS06 ([#1380](https://github.com/rig-c/core/issues/1380)) ([#1381](https://github.com/rig-c/core/issues/1381)) ([c3876b5](https://github.com/rig-c/core/commit/c3876b51b4c3dfd0c2cbdb8f4a727091cf5cdd8e))
+
 ## [2.45.1](https://github.com/rig-c/core/compare/v2.45.0...v2.45.1) (2026-10-12)
 
 
