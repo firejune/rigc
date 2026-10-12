@@ -999,7 +999,8 @@ const FLAG_MEANINGS: Record<string, string> = {
     'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
   folds:
     `also read which mesh triangles fold — turn over against the setup pose — and write ${FOLDS_FILE} into each frame ` +
-    'directory: per mesh, the frames with a folded triangle, the worst frame\'s count and which triangles, by index. ' +
+    'directory: per mesh, the frames with a folded triangle, the worst frame\'s count and which triangles, by index, ' +
+    'with where they are (the world box of their posed vertices) and how big (their setup-pose area, and its share of the mesh\'s). ' +
     'One line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. ' +
     'A reading, not a gate. Not with --slot/--hide: it reads every mesh the pose shows',
   poser:
@@ -1089,7 +1090,9 @@ const FLAG_MEANINGS: Record<string, string> = {
   zoom:
     'frame the picture to one bone (origin to tip) or one slot (its attachment\'s vertices) over every time drawn, padded ' +
     'by <pad> world units on every side (default: a quarter of the box\'s longer side). A name that is both a bone and a ' +
-    'slot is refused until written bone:<name> or slot:<name>; a name that is neither lists both rosters. Not with --viewport',
+    'slot is refused until written bone:<name> or slot:<name>; a name that is neither lists both rosters. `folds` frames it to ' +
+    'every folded triangle of every mesh --overlay-slot keeps, at the times drawn — refused, naming the frames that do fold, ' +
+    'when none is folded there. Not with --viewport',
   bone:
     "draw only the bones these globs match (`*` any run of characters, `?` one, the whole name; comma-separated) — on `inspect`, " +
     "for bones, axes and names; every bone stays in the legend, a left-out one saying why in `undrawn`. A pattern that matches no " +
@@ -1209,7 +1212,7 @@ const FLAG_VALUES: Record<string, string> = {
   max: '<px>',
   show: '<view[,view…]>',
   at: '<s[,s…]>',
-  zoom: '<name>[:<pad>]',
+  zoom: '<name|folds>[:<pad>]',
   bone: '<glob[,glob…]>',
   'hide-bone': '<glob[,glob…]>',
   'overlay-slot': '<glob[,glob…]>',
@@ -1600,7 +1603,7 @@ export const COMMANDS: CommandDoc[] = [
     usage: [
       'rigc inspect --candidate <dir | skeleton.json> [--show art,bones,…] [--dim] [--max 256] [--poser core|spine] [--out inspect.png]   (the setup pose)',
       'rigc inspect … --animation <name> --at <s[,s…]> [--fps 12] [--skin <name>]   (one time, or a sheet of several on one grid)',
-      'rigc inspect … --zoom <bone|slot>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
+      'rigc inspect … --zoom <bone|slot|folds>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
       "rigc inspect … --bone 'bang_*' --hide-bone '*_ctl'   (which bones bones, axes and names draw)",
       'rigc inspect … --overlay-slot neck --hide-overlay-slot <glob>   (which slots mesh, hull, weights, density, folds and slots draw; the art stays whole)',
       'rigc inspect … --compare <dir | skeleton.json>   (a second build beside the first, on one transform)',

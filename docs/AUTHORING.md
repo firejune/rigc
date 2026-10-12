@@ -243,9 +243,9 @@ What the flags mean:
 | `--report` | `build` and `repack`: also write the gate's report as a JSON document (`build-report/1`) to this file — every gate's `PASS`, `SKIP` and `FAIL` rows, its summary figures and stats line, which supplier judged it, and every `pack:` line's figures. Written when the command writes `--out` and when a gate is red, before the exit; a file already at the path is removed first, so a compile error or a refused repack leaves none. Never inside `--out`, refused by name. The printed lines are byte-identical with it and without it — **§5.3** |
 | `--candidate` | `check`, `bench`, `render`, `inspect`, `preview`, `chainfit` and `vote` only: a **compiled** artifact — the directory `build --out` wrote, or a `skeleton.json` path. A directory holding no `skeleton.json`, or a path with nothing at it, is refused `nothing at <path>`, exit 2, nothing written, by every command that takes a build — `validate <dir>` and a directory given to `diff` included (`RC27`). `--atlas <path>` names the atlas when it does not sit beside the skeleton. On `render` and `check` a rigc build whose `skeleton.model.json` is `rigc-compiled/3` or `/2` needs no atlas at all: with no `--atlas` and no atlas beside it, it is drawn from the document's `pages`, the same frames, geometry and figures as with it, and the `atlas` line says `— not there`. An atlas that is there is still read, and held to `pages`: one that differs (edited after the build) is drawn through spine-core, and the `poser` line names the first difference. A build drawn through an atlas that is not there — a `rigc-compiled/1` document, or a build the core refuses — is refused `nothing at <the atlas>: … is drawn through its atlas (<why>)`, exit 2, nothing written; a Spine export without its atlas is refused `nothing at <the atlas>` as it always was. A directory whose files are not one build — a `skeleton.json` or a `skeleton.atlas` from another build beside this one's `skeleton.model.json` — is drawn through spine-core where the runtime can load the pair, the `poser` line naming the two digests or the atlas's first difference; where it cannot, it is refused `<skeleton> does not load against <the atlas>: spine-core draws this pair (<the poser line's why>) and could not resolve it — "<the runtime's own words>". <dir> is not one build: …`, exit 2, nothing written (`RC18`) — another build's skeleton beside this build's atlas typically ends `"Region not found in atlas: <region> (attachment: <name>)"`. Rebuild, or put the build's own three files back beside each other. A Spine export beside an atlas it was not exported with is refused in the same words, ending `The skeleton and the atlas are not one pair`. An atlas copied from another build's directory usually stops earlier, at its pages — their paths are relative to the directory it was written in — and is refused naming the first one: `nothing at <the page>: <the atlas> names it as a page, and spine-core draws this pair through that atlas (<why>). … <dir> is not one build: …`, exit 2, nothing written (`RC18`); an export whose atlas names a page that is not there is refused the same way, ending `and the page has to be there`. A build moved or copied whole away from the directory it was built in stops at the same place, on either poser, and is refused naming the page and the file that names it: `nothing at <the page>: <the skeleton.model.json> names it as a page, and the core draws this build from it. A page path is relative to the build's directory, so a build moved or copied away from the directory it was built in names pages that are not here — build it again where it is, or build it with --copy-images, which writes its pages beside it` (under `--poser spine`, `<the atlas> names it as a page, and spine-core draws this pair through that atlas (--poser spine)` with the same ending), exit 2, nothing written (`RC21`); only where the core refused the files does a page refusal say the directory is not one build. `bench --bones` and `rigc bonedist` — on its `--candidate` and on its `--reference` — refuse a pair the runtime cannot load in the words above with `spine-core poses this pair (bonedist's candidate: …)` or `(bonedist's reference: …)`, exit 2, nothing written (`RC20`); they read no page image, so a build whose pages are elsewhere is measured as it is in place. A `skeleton.json` that is not JSON is refused `rigc: cannot read <the file>: <the parser's words> (line N, column N)`, exit 2, by `render`, `check`, `bench` and `bonedist` as by every other command that reads one (`RC22`). With the atlas gone, `check` on a `rigc-compiled/3` build reads its pages' `scale:` lines off the document, so its texture note and `check.json`'s `textureFrom.candidateScales` are what they are with the atlas; on a `/2` build its texture note says whether the atlas declares a `scale:` line is not read (that document does not state one), and `candidateScales` is `null` (`RC13`). **`vote` and `preview` take it more than once**: `vote` 2–4 times, one per pane, labelled A, B, C, D in the order given; `preview` any number of times, one pane per candidate in the order given, each headed by its path and its gate line, and the same skeleton twice (a directory and its `skeleton.json` are one) is refused by name. `--atlas` goes with one candidate only. Everywhere else a repeat is a typo and is refused |
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
-| `--show`, `--dim`, `--at`, `--zoom` | `inspect` only — what it draws, whether the art is faded, which times of `--animation` it poses and the bone or slot it frames to; §13 says each, with the refusals |
+| `--show`, `--dim`, `--at`, `--zoom` | `inspect` only — what it draws, whether the art is faded, which times of `--animation` it poses and the bone, slot or folds it frames to; §13 says each, with the refusals |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
-| `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
+| `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index, with their world box and setup-pose area. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
@@ -7297,8 +7297,24 @@ and nothing in a report says so. `--folds` reads it off the frames `render` draw
 bun cli.ts render --candidate path/to/spine --folds [--animation …] [--skin …] [--fps 12]
 # rigc render
 #   ..    show             321 frame(s), 16.000s + contact.png + folds.json (2 of 11 mesh(es) fold) -> …/show@20fps
-#   ..    folds    "show": mesh "hair_long" (slot "hair_long") folds on 88 frame(s) [33-54, 113-134, 194-215, 273-294] at 20 fps; worst frame 40 (t=2.0000s): 3 of 459 triangle(s) [137, 139, 140]; 3 triangle(s) fold on some frame [137, 139, 140]
+#   ..    folds    "show": mesh "hair_long" (slot "hair_long") folds on 88 frame(s) [33-54, 113-134, 194-215, 273-294] at 20 fps; worst frame 40 (t=2.0000s): 3 of 459 triangle(s) [137, 139, 140] in world box x [112.04, 133.28] y [323.01, 339.19] (21.22 × 16.16), setup-pose area 122.00 units² = 0.0686% of the mesh's; 3 triangle(s) fold on some frame [137, 139, 140]
 ```
+
+**Where and how big.** The line says, for the worst frame, where the folded
+triangles are — the **world box** of their vertices as posed at that frame, every
+vertex of each and nothing else, printed rounded *outward* to hundredths so the
+printed box still holds every one (the file states it exactly) — and how big they
+are: their summed **setup-pose area**, each triangle's unsigned area in `rest`, in
+world units², and that as a share of the mesh's own setup-pose area (every
+triangle's, summed). "3 of 459 triangles" reads the same for three slivers at a
+hair tip and three panels of a skirt; the share does not.
+
+⭐ The box is the frame's and the area is the setup pose's, on purpose. The box is
+where to look, so it is where the triangles are drawn. The area is how much of the
+art is turned over, and a folded triangle's *posed* area cannot say that: it passes
+through 0 at the frame the triangle turns, so one triangle reads a different size on
+every frame it is folded — on the film above, `hair_long`'s three range from 0.09 to
+24.2 units² posed across their 88 frames against 122.00 at the setup pose.
 
 **What folded means.** A mesh triangle is folded at a frame when its orientation
 there — the sign of its signed area in world space — is the opposite of its
@@ -7329,9 +7345,13 @@ on a `setup` line the first time a set shows its mesh, and never counted:
 `skin` (absent when none was set), `fps`, `reading` (these definitions, stated in
 the file), and `meshes[]` — every mesh any frame of the set shows, in `rest`'s
 order — each with `slot`, `attachment`, `triangleCount`, `setup` (`degenerate` and
-`inverted`, triangle indices), `frames[]` (only the frames with a folded triangle:
-`index`, `time`, `triangles`), `worst` (the frame with the most, the earliest on a
-tie; `null` when it never folds) and `folded` (every triangle folded on some frame).
+`inverted`, triangle indices), `area` (the mesh's setup-pose area, world units²),
+`frames[]` (only the frames with a folded triangle: `index`, `time`, `triangles`,
+and that frame's `box` — `[minX, minY, maxX, maxY]`, world units, y up — `area` and
+`share`, as above), `worst` (the frame with the most, the earliest on a tie, with the
+same fields; `null` when it never folds) and `folded` (every triangle folded on some
+frame). `area`, `box` and `share` arrived in 2.47 (issue #1386) as added fields:
+every field 2.46 wrote means what it meant, so the tag is still `rigc-folds/1`.
 A triangle is named by its index `i` in `rest`'s `triangles`: vertices
 `triangles[3i]`, `triangles[3i+1]`, `triangles[3i+2]`. A mesh that never folds is in
 the file and on no printed line.
@@ -7346,9 +7366,11 @@ reading derived from it is computed from it — `foldsOf` over `geometry.json`'s
 shows.
 
 **A reading, not a gate.** Whether a fold is acceptable is yours: a tassel that swings
-past 90° folds honestly. To look at one, draw the worst frame:
-`inspect --show art,folds,mesh --animation <name> --at <worst time>` fills the folded
-triangles at that pose and lists them in its legend (§13).
+past 90° folds honestly, and no size is too small to print. To look at one, draw the
+worst frame framed to it:
+`inspect --show art,folds,mesh --animation <name> --at <worst time> --zoom folds`
+fills the folded triangles at that pose, frames the picture to their box, and lists
+them with the same box and area in its legend (§13).
 
 ---
 
@@ -10176,7 +10198,7 @@ pixel (`IN09`).
 | What does this bone move? | `--show art,mesh,weights:<bone> --dim` | the bone's weight over every region and mesh it moves, as a heat: a pixel whose centre lies in a triangle is painted the ramp's colour at the blend of its corners' weights — blue near 0, yellow at 0.5, red at 1 (the stops are in the legend) — and a weight of 0 is not painted, so the art shows where the bone does not reach. A region and an unweighted mesh are moved whole by their slot's bone. The weights are read off `skeleton.json`, the file both posers skin from; a bone that weights nothing paints nothing and the run says so on a line of its own |
 | Does this part's edge follow that bone? | `--show art,weights:<bone>,mesh --overlay-slot <part> --zoom slot:<part>` | the part's own triangles and the bone's weight over them alone, over the whole painting. Where slots stack — a neck under the face, the hair, a collar — every mesh crossing the box is drawn and the heat is the union of every slot the bone moves, so the part's edge has no pixel of its own until the others are left out. The legend's `meshes[]` gives the part's weight for the bone at every vertex, so "does the top row follow the head" is read as numbers as well as colour |
 | Is this rig's density where its motion is? | `--show art,density --dim` | each region and mesh filled by its **ratio** — its triangles per world unit² over the figure's — on one ramp, log-scaled and centred on 1×: grey is as dense as the figure, pink to magenta denser (4×, 16×), light to dark green sparser (1/4×, 1/16×), clamped past the end stops (the stops are in the legend). A part's area is its posed mesh's own, the sum of its triangles' areas at the pose drawn, not the image's box; a region is two triangles over its quad. Where parts overlap the pixel is the part drawn last, as in the art, so a part under others is read with `--overlay-slot <part>`. The figure's totals are always over every slot the pose shows — the filter picks what is drawn and listed, never what the figure is — and the legend's `density` gives each slot's attachment, kind, vertices, triangles, hull, area, triangles per area, ratio and the bones it is weighted to, in draw order. A measurement, not a verdict: no bar is drawn, and `A13_MESH_BUDGET` stays the one gate on counts |
-| Does anything fold in this animation? | `render --folds --animation <name>` (§8.3), then `inspect --show art,folds,mesh --dim --animation <name> --at <the worst frame's time>` | `render --folds` prints one line per mesh with a triangle turned over against the setup pose: the frames, the worst frame's count and which triangles. The view fills those triangles at the pose drawn — every pixel whose centre a folded triangle holds — in the colour the legend's `folds` states, and the legend's `folds[]` names, per mesh, the folded triangles by index and the setup pose's degenerate and inverted ones, which are never counted. A fold is usually a sliver a few units across: `--viewport` around the vertices the legend's `meshes[]` gives is how it becomes visible. A reading, not a verdict |
+| Does anything fold in this animation? | `render --folds --animation <name>` (§8.3), then `inspect --show art,folds,mesh --animation <name> --at <the worst frame's time> --zoom folds` | `render --folds` prints one line per mesh with a triangle turned over against the setup pose: the frames, the worst frame's count, which triangles, their world box at that frame and their setup-pose area. The view fills those triangles at the pose drawn — every pixel whose centre a folded triangle holds — in the colour the legend's `folds` states, and the legend's `folds[]` names, per mesh, the folded triangles by index with the same box and area, and the setup pose's degenerate and inverted ones, which are never counted. A fold is usually a sliver a few units across, invisible in a picture of the whole mesh: `--zoom folds` frames the picture to the folded triangles' box. A thin sliver still needs pixels — raise `--max` when the fill is a line. A reading, not a verdict |
 | How is this part triangulated? | `--show art,mesh,hull --zoom slot:<slot>` | each mesh's triangle edges, and over them its hull — vertex 0 to 1 to … to `hull − 1` and back. Regions are not drawn: a region is not a mesh. The legend lists every vertex in world units and in pixels |
 | Which is drawn over which? | `--show art,slots` | each slot that shows a region or mesh numbered by its place in the draw order **at the pose drawn** (0 is drawn first), on a white box at the centre of its attachment's box — so a `drawOrder` key (§4.7) shows from the first frame `render` draws it on |
 | Did this change move anything? | `--compare <dir>` beside any view | the same view of a second build beside the first, at the same times, on **one** world box and one transform, each half labelled `A`/`B` with the poser that posed it. A mark on a different pixel in the two halves is at a different place in the two rigs |
@@ -10199,7 +10221,16 @@ pixel (`IN09`).
   vertices over every time drawn, padded by `<pad>` world units on every side
   (default a quarter of the box's longer side). A name that is both a bone and a slot
   is refused until it is written `bone:<name>` or `slot:<name>`; a bone of length 0
-  with no pad is one point, and is refused asking for one.
+  with no pad is one point, and is refused asking for one. **The folds** —
+  `--zoom folds[:<pad>]`: the box of every triangle folded over (§8.3) at the times
+  drawn, in every mesh `--overlay-slot`/`--hide-overlay-slot` keep — the union of
+  the legend's `folds[].box` over the tiles — padded as above. With nothing folded at
+  those times it is refused, naming the meshes that fold on the animation's grid and
+  their frames (`--zoom folds: nothing to frame — no mesh has a triangle folded over
+  at t=1s of "turn" — at 12 fps these do: "hair_lock_l" on frame(s) [22-23], worst
+  frame 22 (t=1.8333s); …`); at the setup pose — what a fold is read against —
+  nothing folds, and it says so. A rig with a bone or slot named `folds` is refused
+  until the name is written `bone:folds` or `slot:folds`.
 - **Two builds** — `--compare <dir | skeleton.json>`. The second build is loaded as
   the first is (its own poser, chosen by what it carries, on a `poser    B:` line),
   posed at the same times, and drawn beside it: one time is two halves side by side,
@@ -10276,7 +10307,10 @@ pixel (`IN09`).
   `why`; it is not painted. With `folds`, `folds[]`: every kept mesh with a
   triangle folded at this tile's pose or a setup fault, in draw order — `slot`,
   `attachment`, `triangleCount`, `folded` (the triangles filled, by index),
-  `degenerate` and `inverted` (the setup pose's, never counted); empty when none.
+  `degenerate` and `inverted` (the setup pose's, never counted), `box` (the folded
+  triangles' world box at this pose, `[minX, minY, maxX, maxY]`; `null` when none is
+  folded), `area` (their setup-pose area, world units²) and `share` (that over the
+  mesh's setup-pose area) — §8.3's numbers; empty when none.
   With `mesh`, `hull`, `weights`, `density` or `folds`,
   `meshes[]`: every region and mesh the pose shows, in draw order, with its `kind`,
   `vertexCount`, `triangleCount`, `hull` (a mesh's hull vertex count), its unique
@@ -10287,8 +10321,8 @@ pixel (`IN09`).
   `build` — `A` or `B`.
 - `colours` — every colour the picture draws, as RGBA, with what it means.
 - `poser`, `show`, `dim`, `skin`, `animation`, `fps` and `framing` — what was drawn
-  and how it was framed (`shot`, `zoom` with the bone or slot, the pad and whether it
-  was stated, or `viewport`).
+  and how it was framed (`shot`, `zoom` with the bone or slot — or with `folds`, what
+  the box is of — the pad and whether it was stated, or `viewport`).
 - `weights` — with `weights:<bone>`: the bone, the ramp's stops as RGBA, the floor
   below which nothing is painted, and how a pixel's weight is read.
 - `density` — with `density`: the ramp's stops (`ratio`, RGBA), the `scale` it is
@@ -10296,7 +10330,8 @@ pixel (`IN09`).
   the figure's `totals` and the `ratio` are and how a pixel is painted.
 - `folds` — with `folds`: the colour a folded triangle is filled with, as RGBA, and
   what it means; `degenerateShare` (2⁻³⁰, §8.3); and in words what `folded`,
-  `degenerate` and `inverted` are and how a triangle is named by `index`. Its colour
+  `degenerate` and `inverted` are, how a triangle is named by `index`, and what
+  `box` and `area` are. Its colour
   is stated here rather than in `colours`, which every legend lists whole, so a legend
   drawn without `folds` is the bytes it was before the view existed.
 - `boneFilter` — `--bone` and `--hide-bone` as given.
@@ -10319,9 +10354,11 @@ beside it whose `spine.sha256` is its own — a Spine export states no rig invar
 `weights` with no bone or with a bone the build lacks (the bones listed), a
 `--bone`/`--hide-bone` pattern that matches no bone (the bones listed), an
 `--overlay-slot`/`--hide-overlay-slot` pattern that matches no slot (the slots
-listed), and, with
+listed), `--zoom folds` with no triangle folded over at the times drawn (the meshes
+that fold on the grid and their frames listed), and, with
 `--compare`, any of these that holds of the second build, said as `the --compare
-build: …`.
+build: …` — except `--zoom folds`, which frames to whichever build folds and is
+refused only when neither does, each build's frames named.
 A rig that declares no `invariants.axes` is not refused: the picture draws nothing
 for `declared` and the run says so on a line of its own.
 
