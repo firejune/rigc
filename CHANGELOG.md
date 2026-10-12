@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.45.0](https://github.com/rig-c/core/compare/v2.44.0...v2.45.0) (2026-10-12)
+
+
+### Features
+
+* **mesh:** reduceMesh names what refused each kept vertex in the last removal pass — opt-in explainKept writes changes.kept, per-reason counts split boundary / interior and, by-vertex, each vertex's refusal — held to the attempt observer by MQ176 and MQ177 ([#1374](https://github.com/rig-c/core/issues/1374)) ([#1375](https://github.com/rig-c/core/issues/1375)) ([d85ea01](https://github.com/rig-c/core/commit/d85ea011a5a72143f60fb2dcf49ea6ec535883b6))
+
 ## [2.44.0](https://github.com/rig-c/core/compare/v2.43.0...v2.44.0) (2026-10-11)
 
 
