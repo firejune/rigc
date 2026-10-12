@@ -31,6 +31,7 @@ import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
 import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
+import { FOLDS_FILE, foldLine, foldsFileOf, foldsOf, foldsText, setupFaultLine } from '../folds.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
@@ -488,6 +489,10 @@ export function cmdRender(flags: Record<string, string>): void {
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
   const outRoot = resolve(flags.out ?? 'render');
   const geometry = flags.geometry !== undefined;
+  // The fold reading (issue #1383) is its own flag rather than a part of --geometry, so a caller that asked for
+  // neither, or for --geometry alone, gets the bytes it always got: geometry.json is the pose, and a reading derived
+  // from it is a second file beside it, written only when asked for.
+  const folds = flags.folds !== undefined;
   // Refused together rather than one of them ignored (issue #864). The export
   // records every slot's whole geometry, because a subset is a statement about
   // which pixels are DRAWN and the pose is the same whatever a picture leaves
@@ -501,6 +506,18 @@ export function cmdRender(flags: Record<string, string>): void {
           `--geometry takes no --${flag}: it records every slot's whole geometry, which a subset of the drawn slots ` +
             `does not change. Run \`rigc render --geometry\` on the whole rig for the file, and --${flag} ` +
             `${flags[flag]} without --geometry for the pictures — both land on the same grid`,
+        );
+      }
+    }
+  }
+  // The same refusal for the same reason: the reading is of every mesh the pose shows, whatever a picture leaves out.
+  if (folds) {
+    for (const flag of ['slot', 'hide'] as const) {
+      if (flags[flag] !== undefined) {
+        throw new UsageError(
+          `--folds takes no --${flag}: it reads every mesh the pose shows, which a subset of the drawn slots does not ` +
+            `change. Run \`rigc render --folds\` on the whole rig for the reading, and --${flag} ${flags[flag]} ` +
+            'without --folds for the pictures — both land on the same grid',
         );
       }
     }
@@ -569,7 +586,7 @@ export function cmdRender(flags: Record<string, string>): void {
     // `--geometry` rides on the SAME call (issue #864): the bones and the whole
     // attachments are read off the skeleton at the step that drew each frame, so
     // the export's grid is this frame set's by construction.
-    const sampling = geometry ? { ...pose, bones: true, geometry: true } : pose;
+    const sampling = geometry ? { ...pose, bones: true, geometry: true } : folds ? { ...pose, geometry: true } : pose;
     const sampled: Map<string, Frame[]> =
       only === undefined
         ? sampleAll(poser, fps, sampling)
@@ -583,15 +600,28 @@ export function cmdRender(flags: Record<string, string>): void {
         geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin)));
       }
     }
-    return { viewport, sampled, geometryTexts };
+    // The fold reading, off the very attachments the frames were drawn from, against the rest table the geometry
+    // export writes — one per set, every mesh any of its frames shows.
+    const foldReadings = new Map<string, ReturnType<typeof foldsFileOf>>();
+    if (folds) {
+      for (const [name, frames] of sampled) {
+        const animation = name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name;
+        const shown = frames.map((frame) => frame.attachments ?? []);
+        const read = frames.map((frame) => ({ index: frame.index, time: frame.time, attachments: frame.attachments ?? [] }));
+        foldReadings.set(name, foldsFileOf(animation, fps, skin, foldsOf(poser.rest(skin, shown), read)));
+      }
+    }
+    return { viewport, sampled, geometryTexts, foldReadings };
   });
-  const { viewport, sampled, geometryTexts } = posed.value;
+  const { viewport, sampled, geometryTexts, foldReadings } = posed.value;
   console.log(`  ..    poser    ${posed.note}`);
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
   if (!facts.declaresStage) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
   mkdirSync(outRoot, { recursive: true });
   const sets: FrameSet[] = [];
+  // A mesh's setup faults are a property of the mesh, not of an animation: said once, the first time a set shows it.
+  const faultsSaid = new Set<string>();
   for (const [name, frames] of sampled) {
     // Same naming as a reference render: the protocol rate says nothing, any
     // other rate says itself, so two rates of one animation sit side by side.
@@ -611,6 +641,8 @@ export function cmdRender(flags: Record<string, string>): void {
     if (sheet) contactSheet(frames, pages, viewport, SHEET_TILE).writePng(join(dir, SHEET_FILE));
     const geometryOut = geometryTexts.get(name);
     if (geometryOut !== undefined) writeFileSync(join(dir, GEOMETRY_FILE), geometryOut);
+    const foldReading = foldReadings.get(name);
+    if (foldReading !== undefined) writeFileSync(join(dir, FOLDS_FILE), foldsText(foldReading));
     const duration = frames[frames.length - 1].time;
     sets.push({
       dir: dirName,
@@ -622,8 +654,18 @@ export function cmdRender(flags: Record<string, string>): void {
       duration,
     });
     const how = frames.length === 1 ? 'a single pose' : `${duration.toFixed(3)}s`;
-    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}`;
+    const folding = foldReading?.meshes.filter((m) => m.worst !== null).length ?? 0;
+    const foldNote = foldReading === undefined ? '' : ` + ${FOLDS_FILE} (${folding} of ${foldReading.meshes.length} mesh(es) fold)`;
+    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}${foldNote}`;
     console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${extras} -> ${dir}`);
+    for (const mesh of foldReading?.meshes ?? []) {
+      const key = `${mesh.slot}\u0000${mesh.attachment}`;
+      const fault = faultsSaid.has(key) ? null : setupFaultLine(mesh);
+      faultsSaid.add(key);
+      if (fault !== null) console.log(`  ..    setup    ${fault}`);
+      const line = foldLine(foldReading?.animation ?? null, fps, mesh);
+      if (line !== null) console.log(`  ..    folds    ${line}`);
+    }
   }
 
   // The sidecar is what makes this a frame SET rather than a pile of pictures:

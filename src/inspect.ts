@@ -42,6 +42,11 @@
  * budget: `A13_MESH_BUDGET` is the one gate on counts, and this only says where
  * the triangles are.
  *
+ * ⭐ **A fold is read, never judged** (issue #1383). `folds` fills each mesh
+ * triangle that is turned over at the pose drawn — its world orientation the
+ * opposite of the setup pose's — by `./folds.ts`, the reading `render --folds`
+ * prints, so the picture and that line name the same triangles.
+ *
  * Links nothing from the runtime: the poser is handed in.
  */
 import { createHash } from 'node:crypto';
@@ -71,12 +76,13 @@ import {
   viewportFor,
 } from './render_shared.ts';
 import { hypot2 } from './numeric.ts';
+import { DEGENERATE_SHARE, foldedAt, FOLDS_READING, setupReading } from './folds.ts';
 
 /** The legend's format tag. */
 export const INSPECT_SPEC = 'rigc-inspect/1';
 
 /** Every word `--show` takes, in the order the picture draws them (bottom first). `weights` is spelled `weights:<bone>`. */
-export const SHOW_WORDS = ['art', 'grid', 'density', 'weights', 'mesh', 'hull', 'declared', 'bones', 'axes', 'slots', 'names'] as const;
+export const SHOW_WORDS = ['art', 'grid', 'density', 'weights', 'folds', 'mesh', 'hull', 'declared', 'bones', 'axes', 'slots', 'names'] as const;
 export type ShowWord = (typeof SHOW_WORDS)[number];
 
 /** The words as a refusal lists them — `weights` with the bone it needs. */
@@ -182,6 +188,19 @@ export const INSPECT_COLOURS = {
   label: { rgba: [...SHEET_LABEL], meaning: "a tile's build and poser (with --compare), time and frame (on a sheet), at its bottom-left corner" },
   rule: { rgba: [...SHEET_RULE], meaning: 'the gap between two tiles' },
 } as const satisfies Record<string, { rgba: readonly number[]; meaning: string }>;
+
+/**
+ * The `folds` view's colour (issue #1383). Kept out of `INSPECT_COLOURS`, which
+ * every legend lists whole: a colour added there would move the bytes of every
+ * legend written without `folds`. It is stated in the legend's `folds` block
+ * instead, only when the view is drawn — as the weights and density ramps are.
+ * Pure red at full alpha: neither ramp reaches it (the weights ramp's red end is
+ * `[215, 20, 20]`), and the mesh edges drawn over a fill stay readable.
+ */
+export const FOLD_COLOUR = {
+  rgba: [255, 0, 0, 255],
+  meaning: 'a mesh triangle folded over at this pose — its world orientation the opposite of the setup pose\'s: every pixel whose centre it holds',
+} as const;
 
 type ColourName = keyof typeof INSPECT_COLOURS;
 const colour = (name: ColourName): RGBA => [...INSPECT_COLOURS[name].rgba] as RGBA;
@@ -292,6 +311,8 @@ export interface InspectPlant {
   densityLinearRamp?: boolean;
   /** Density: take the figure's totals over the slots the filter keeps, not over every slot. */
   densityTotalsFiltered?: boolean;
+  /** Folds: fill every triangle of every kept mesh, folded or not. */
+  foldsFillAll?: boolean;
 }
 
 /** A point in both spaces. */
@@ -425,6 +446,20 @@ export interface LegendDensity {
   slots: LegendDensitySlot[];
 }
 
+/** One kept mesh with a folded triangle, or a setup fault, at one tile's pose (issue #1383). */
+export interface LegendFold {
+  slot: string;
+  attachment: string;
+  /** How many triangles the mesh has. */
+  triangleCount: number;
+  /** The triangles folded at this pose, by index (`triangles[3i..3i+2]` of the rest table), ascending — the ones filled. */
+  folded: number[];
+  /** Thinner than the posed numbers resolve at the setup pose, never counted — by index. */
+  degenerate: number[];
+  /** Drawn mirrored against the rest of the mesh at the setup pose, never counted — by index. */
+  inverted: number[];
+}
+
 export interface LegendTile {
   /** With `--compare`: which build this tile is — `A` is `--candidate`, `B` is `--compare`. */
   build?: 'A' | 'B';
@@ -445,6 +480,8 @@ export interface LegendTile {
   slots?: LegendSlot[];
   /** With `density`: the figure's totals and every kept slot's row. */
   density?: LegendDensity;
+  /** With `folds`: every kept mesh with a triangle folded at this pose or a setup fault, in draw order; empty when none. */
+  folds?: LegendFold[];
   declared?: LegendDeclared[];
   grid?: { step: number; x: number[]; y: number[] };
 }
@@ -470,6 +507,8 @@ export interface InspectLegend {
   weights?: { bone: string; ramp: Array<{ weight: number; rgba: number[] }>; floor: number; reading: string };
   /** With `density`: the ramp, its scale, and how area, totals and ratio are read. */
   density?: { ramp: Array<{ ratio: number; rgba: number[] }>; scale: string; area: string; totals: string; ratio: string; reading: string };
+  /** With `folds`: the colour a folded triangle is filled with, the degenerate share, and what folded, degenerate and inverted mean. */
+  folds?: { rgba: number[]; meaning: string; degenerateShare: number; folded: string; degenerate: string; inverted: string; index: string };
   /** With `--compare`: each build, the poser that posed it and its `skeleton.json`'s sha256; a tile names its own in `build`. */
   builds?: Array<{ build: 'A' | 'B'; poser: 'core' | 'spine'; skeletonSha256: string }>;
   coordinates: { world: string; image: string; toPixel: string; toWorld: string };
@@ -1138,7 +1177,7 @@ interface Gathered {
   sha: string;
 }
 
-const MESH_VIEWS: readonly ShowWord[] = ['mesh', 'hull', 'weights', 'density'];
+const MESH_VIEWS: readonly ShowWord[] = ['mesh', 'hull', 'weights', 'density', 'folds'];
 const restKey = (slot: string, attachment: string): string => `${slot}\u0000${attachment}`;
 
 /** A refusal about the second build says so: the same sentence, under the name of the build it is about. */
@@ -1357,6 +1396,16 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
           },
         }
       : {}),
+    ...(request.show.includes('folds')
+      ? {
+          folds: {
+            rgba: [...FOLD_COLOUR.rgba],
+            meaning: FOLD_COLOUR.meaning,
+            degenerateShare: DEGENERATE_SHARE,
+            ...FOLDS_READING,
+          },
+        }
+      : {}),
     ...(compare ? { builds: builds.map((b) => ({ build: b.tag, poser: b.poser, skeletonSha256: b.sha })) } : {}),
     coordinates: {
       world: 'spine world: y up, world units',
@@ -1520,6 +1569,37 @@ function drawTile(
         }
       }
       legendTile.meshes.push(entry);
+    }
+    // ── folds: each kept mesh's turned-over triangles filled, over the heat and under the edges (issue #1383) ──
+    if (request.show.includes('folds')) {
+      legendTile.folds = [];
+      for (const shown of frame.attachments ?? []) {
+        if (slotsOut.has(shown.slot)) continue;
+        const rest = build.rest.get(restKey(shown.slot, shown.attachment));
+        if (rest === undefined || rest.kind !== 'mesh') continue;
+        const setup = setupReading(rest);
+        const folded = foldedAt(rest, setup, shown.vertices);
+        const { degenerate, inverted } = setup.faults;
+        const fill = plant.foldsFillAll ? Array.from({ length: rest.triangles.length / 3 }, (_, i) => i) : folded;
+        const at = (v: number): [number, number] => {
+          const [px, py] = toPixel(shown.vertices[2 * v], shown.vertices[2 * v + 1]);
+          return [tx(px), ty(py)];
+        };
+        for (const t of fill) fillTriangle(tile, [at(rest.triangles[3 * t]), at(rest.triangles[3 * t + 1]), at(rest.triangles[3 * t + 2])], [...FOLD_COLOUR.rgba] as RGBA);
+        if (folded.length === 0 && degenerate.length === 0 && inverted.length === 0) continue;
+        legendTile.folds.push({ slot: shown.slot, attachment: shown.attachment, triangleCount: rest.triangles.length / 3, folded, degenerate, inverted });
+      }
+      if (first) {
+        const count = legendTile.folds.reduce((n, f) => n + f.folded.length, 0);
+        const meshes = legendTile.folds.filter((f) => f.folded.length > 0);
+        notes.push(
+          count === 0
+            ? `folds: no mesh${request.slotFilter === undefined ? '' : ' the filter keeps'} has a triangle folded over at this pose — nothing filled`
+            : `folds: ${count} triangle(s) folded over across ${meshes.length} mesh(es) — ${meshes.map((f) => `"${f.slot}" [${f.folded.join(', ')}]`).join(', ')} — every one is in the legend`,
+        );
+        const faulted = legendTile.folds.filter((f) => f.degenerate.length > 0 || f.inverted.length > 0);
+        if (faulted.length > 0) notes.push(`folds: setup faults, never counted — ${faulted.map((f) => `"${f.slot}" degenerate [${f.degenerate.join(', ')}] inverted [${f.inverted.join(', ')}]`).join(', ')}`);
+      }
     }
     for (const entry of legendTile.meshes) {
       if (entry.kind !== 'mesh') continue;

@@ -245,6 +245,7 @@ What the flags mean:
 | `--animation` | `render`, `preview` and `vote` only: which animation to show. The default is **every** one for `render`, the **first** for `preview` (each candidate's own first, with several), and for `vote` the first of candidate A. A name the skeleton does not have is refused, with the ones it does have listed — and for `vote` and a several-candidate `preview`, so is a name that only *some* candidates have, naming the one that lacks it |
 | `--show`, `--dim`, `--at`, `--zoom` | `inspect` only — what it draws, whether the art is faded, which times of `--animation` it poses and the bone or slot it frames to; §13 says each, with the refusals |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
+| `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
@@ -1108,6 +1109,7 @@ bun cli.ts bench    3 --candidate path/to/spine [--frames path/to/frames]
 bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--fps 12] [--max 256]
 bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,…>   # part of the rig, same grid
 bun cli.ts render   --candidate path/to/spine --geometry   # + geometry.json per set: the numbers the frames were drawn from
+bun cli.ts render   --candidate path/to/spine --folds      # + folds.json per set: which mesh triangles turn over, and when
 bun cli.ts preview  --candidate path/to/spine [--candidate path/to/another …] [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -7285,6 +7287,69 @@ still-in-frame residual over every region of `spineboy-pro` is 4.7e-12 world uni
 Topology and UVs sit in `rest` rather than on every frame because they do not
 change: repeating them per frame would add 35 % to `spineboy-pro`'s files.
 
+### 8.3 Which triangles fold — `render --folds`
+
+A mesh can **fold** — a triangle turning over under a bend — on a build that passes
+every assertion and every check. The art still draws, mirrored, over its neighbour,
+and nothing in a report says so. `--folds` reads it off the frames `render` draws:
+
+```bash
+bun cli.ts render --candidate path/to/spine --folds [--animation …] [--skin …] [--fps 12]
+# rigc render
+#   ..    show             321 frame(s), 16.000s + contact.png + folds.json (2 of 11 mesh(es) fold) -> …/show@20fps
+#   ..    folds    "show": mesh "hair_long" (slot "hair_long") folds on 88 frame(s) [33-54, 113-134, 194-215, 273-294] at 20 fps; worst frame 40 (t=2.0000s): 3 of 459 triangle(s) [137, 139, 140]; 3 triangle(s) fold on some frame [137, 139, 140]
+```
+
+**What folded means.** A mesh triangle is folded at a frame when its orientation
+there — the sign of its signed area in world space — is the opposite of its
+orientation at the setup pose. The setup pose is `rest`'s (§8.2): the setup pose's
+bones with no deform, so an attachment a slot only swaps to later is read too.
+Regions are not read: a region is one quad and cannot fold. A mesh mirrored whole by
+a negative scale reads every triangle as folded — that is what the definition says,
+and the count tells the two apart.
+
+**What is never counted.** A triangle already wrong at the setup pose is said once,
+on a `setup` line the first time a set shows its mesh, and never counted:
+
+- **degenerate** — its height over its longest edge is at most 2⁻³⁰ of the largest
+  coordinate its attachment holds at that pose, in world space or in its UVs. That
+  is eight million ulps above the rounding a chain of bone transforms leaves, and a
+  hundred-thousandth of a pixel on a rig 10⁴ units across drawn at one pixel per
+  unit — thinner than the posed numbers resolve, and thinner than anything drawn.
+  A triangle degenerate *at a frame* is not counted at that frame either: the sign of
+  a zero area is the rounding's;
+- **inverted** — its texture is drawn mirrored against the rest of its mesh: the sign
+  of world area × UV area is the opposite of the mesh's own sense, that product
+  summed over its triangles, weighted by world area. Read through the UVs and not the
+  index order, because the format fixes no winding — a mesh whose triangles are
+  listed in mixed orders draws correctly, and a winding test would call half of it
+  folded.
+
+**The file.** `folds.json`, `rigc-folds/1`, beside each set's frames: `animation`,
+`skin` (absent when none was set), `fps`, `reading` (these definitions, stated in
+the file), and `meshes[]` — every mesh any frame of the set shows, in `rest`'s
+order — each with `slot`, `attachment`, `triangleCount`, `setup` (`degenerate` and
+`inverted`, triangle indices), `frames[]` (only the frames with a folded triangle:
+`index`, `time`, `triangles`), `worst` (the frame with the most, the earliest on a
+tie; `null` when it never folds) and `folded` (every triangle folded on some frame).
+A triangle is named by its index `i` in `rest`'s `triangles`: vertices
+`triangles[3i]`, `triangles[3i+1]`, `triangles[3i+2]`. A mesh that never folds is in
+the file and on no printed line.
+
+**Nothing else moves.** The PNGs, `contact.png`, `frames.json` and, with
+`--geometry` beside it, `geometry.json` are byte for byte what the render writes
+without the flag. The reading is its own file rather than a field of `geometry.json`
+because that file is the pose, read by consumers that have it on disk already; a
+reading derived from it is computed from it — `foldsOf` over `geometry.json`'s
+`rest` and `frames` is `folds.json` exactly (`FO04`). ⛔ **Not with
+`--slot`/`--hide`**, for `--geometry`'s reason: the reading is of every mesh the pose
+shows.
+
+**A reading, not a gate.** Whether a fold is acceptable is yours: a tassel that swings
+past 90° folds honestly. To look at one, draw the worst frame:
+`inspect --show art,folds,mesh --animation <name> --at <worst time>` fills the folded
+triangles at that pose and lists them in its legend (§13).
+
 ---
 
 ## 9. Checking against the frames — `rigc check`
@@ -10111,6 +10176,7 @@ pixel (`IN09`).
 | What does this bone move? | `--show art,mesh,weights:<bone> --dim` | the bone's weight over every region and mesh it moves, as a heat: a pixel whose centre lies in a triangle is painted the ramp's colour at the blend of its corners' weights — blue near 0, yellow at 0.5, red at 1 (the stops are in the legend) — and a weight of 0 is not painted, so the art shows where the bone does not reach. A region and an unweighted mesh are moved whole by their slot's bone. The weights are read off `skeleton.json`, the file both posers skin from; a bone that weights nothing paints nothing and the run says so on a line of its own |
 | Does this part's edge follow that bone? | `--show art,weights:<bone>,mesh --overlay-slot <part> --zoom slot:<part>` | the part's own triangles and the bone's weight over them alone, over the whole painting. Where slots stack — a neck under the face, the hair, a collar — every mesh crossing the box is drawn and the heat is the union of every slot the bone moves, so the part's edge has no pixel of its own until the others are left out. The legend's `meshes[]` gives the part's weight for the bone at every vertex, so "does the top row follow the head" is read as numbers as well as colour |
 | Is this rig's density where its motion is? | `--show art,density --dim` | each region and mesh filled by its **ratio** — its triangles per world unit² over the figure's — on one ramp, log-scaled and centred on 1×: grey is as dense as the figure, pink to magenta denser (4×, 16×), light to dark green sparser (1/4×, 1/16×), clamped past the end stops (the stops are in the legend). A part's area is its posed mesh's own, the sum of its triangles' areas at the pose drawn, not the image's box; a region is two triangles over its quad. Where parts overlap the pixel is the part drawn last, as in the art, so a part under others is read with `--overlay-slot <part>`. The figure's totals are always over every slot the pose shows — the filter picks what is drawn and listed, never what the figure is — and the legend's `density` gives each slot's attachment, kind, vertices, triangles, hull, area, triangles per area, ratio and the bones it is weighted to, in draw order. A measurement, not a verdict: no bar is drawn, and `A13_MESH_BUDGET` stays the one gate on counts |
+| Does anything fold in this animation? | `render --folds --animation <name>` (§8.3), then `inspect --show art,folds,mesh --dim --animation <name> --at <the worst frame's time>` | `render --folds` prints one line per mesh with a triangle turned over against the setup pose: the frames, the worst frame's count and which triangles. The view fills those triangles at the pose drawn — every pixel whose centre a folded triangle holds — in the colour the legend's `folds` states, and the legend's `folds[]` names, per mesh, the folded triangles by index and the setup pose's degenerate and inverted ones, which are never counted. A fold is usually a sliver a few units across: `--viewport` around the vertices the legend's `meshes[]` gives is how it becomes visible. A reading, not a verdict |
 | How is this part triangulated? | `--show art,mesh,hull --zoom slot:<slot>` | each mesh's triangle edges, and over them its hull — vertex 0 to 1 to … to `hull − 1` and back. Regions are not drawn: a region is not a mesh. The legend lists every vertex in world units and in pixels |
 | Which is drawn over which? | `--show art,slots` | each slot that shows a region or mesh numbered by its place in the draw order **at the pose drawn** (0 is drawn first), on a white box at the centre of its attachment's box — so a `drawOrder` key (§4.7) shows from the first frame `render` draws it on |
 | Did this change move anything? | `--compare <dir>` beside any view | the same view of a second build beside the first, at the same times, on **one** world box and one transform, each half labelled `A`/`B` with the poser that posed it. A mark on a different pixel in the two halves is at a different place in the two rigs |
@@ -10167,7 +10233,7 @@ pixel (`IN09`).
   legend, and a left-out one says which flag left it out in `undrawn`. A pattern
   that matches no bone is refused naming the bones there are.
 - **`--overlay-slot <glob[,glob…]>`** draws the per-slot views — `mesh`, `hull`,
-  `weights:<bone>`, `density` and `slots` — only for the slots a pattern matches, and
+  `weights:<bone>`, `density`, `folds` and `slots` — only for the slots a pattern matches, and
   **`--hide-overlay-slot <glob[,glob…]>`** for none of the ones it matches, applied
   after `--overlay-slot`; the patterns are globs, as `--bone`'s are. The **art is not
   filtered**: the painting is what the edge is read against, and `--dim` already
@@ -10207,7 +10273,11 @@ pixel (`IN09`).
   `ratio`, the `rgba` it is painted, `bones` (how many bones it is weighted to —
   a region's or an unweighted mesh's is its slot's one) and `boneNames`. A part
   whose posed area is 0 has `trianglesPerArea` and `ratio` `null` and says why in
-  `why`; it is not painted. With `mesh`, `hull`, `weights` or `density`,
+  `why`; it is not painted. With `folds`, `folds[]`: every kept mesh with a
+  triangle folded at this tile's pose or a setup fault, in draw order — `slot`,
+  `attachment`, `triangleCount`, `folded` (the triangles filled, by index),
+  `degenerate` and `inverted` (the setup pose's, never counted); empty when none.
+  With `mesh`, `hull`, `weights`, `density` or `folds`,
   `meshes[]`: every region and mesh the pose shows, in draw order, with its `kind`,
   `vertexCount`, `triangleCount`, `hull` (a mesh's hull vertex count), its unique
   triangle `edges` as vertex pairs, every posed vertex in `world` and `pixel`, and
@@ -10224,6 +10294,11 @@ pixel (`IN09`).
 - `density` — with `density`: the ramp's stops (`ratio`, RGBA), the `scale` it is
   read on (log₂ of the ratio, clamped at the end stops), and in words what `area`,
   the figure's `totals` and the `ratio` are and how a pixel is painted.
+- `folds` — with `folds`: the colour a folded triangle is filled with, as RGBA, and
+  what it means; `degenerateShare` (2⁻³⁰, §8.3); and in words what `folded`,
+  `degenerate` and `inverted` are and how a triangle is named by `index`. Its colour
+  is stated here rather than in `colours`, which every legend lists whole, so a legend
+  drawn without `folds` is the bytes it was before the view existed.
 - `boneFilter` — `--bone` and `--hide-bone` as given.
 - `slotFilter` — `--overlay-slot` and `--hide-overlay-slot` as given; with it,
   `meshes[]` and `slots[]` list only the slots it keeps.

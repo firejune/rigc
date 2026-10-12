@@ -41,7 +41,7 @@ installed.
 | the same, and one texture instead of many | `rigc build --pack` | the parts arranged onto shared atlas pages, written beside the skeleton — losslessly, so the picture is the picture |
 | a pack somebody already made | `rigc build --atlas-in` | the same skeleton, with every part resolved to a region of that atlas — or a named refusal, never a part that silently does not draw |
 | a compiled rig | `rigc render` | every animation as PNG frames, plus one labelled contact sheet of the whole shot |
-| a compiled rig and a question about its geometry | `rigc inspect` | one picture of its bones, axes, mesh edges and hulls, one bone's weights, the draw order, a world grid or a declared axis over the art — at the setup pose, one time or a sheet of several, zoomed to a bone or a slot, or beside a second build on one transform — and a legend that puts every mark back in world units |
+| a compiled rig and a question about its geometry | `rigc inspect` | one picture of its bones, axes, mesh edges and hulls, one bone's weights, the triangles folded over, the draw order, a world grid or a declared axis over the art — at the setup pose, one time or a sheet of several, zoomed to a bone or a slot, or beside a second build on one transform — and a legend that puts every mark back in world units |
 | a compiled rig | `rigc preview` | one self-contained `.html` that plays it in Spine's own web player |
 | two to four compiled rigs | `rigc vote` | one ballot page a human picks from, and the answer checked into a ledger |
 | a picture of a key pose | `rigc pose` | where each loose part PNG sits in it, in spec coordinates — the movement between two poses is then yours to key ([docs/MOTION.md](docs/MOTION.md)) |
@@ -413,12 +413,13 @@ and over it any of `bones` (origin to tip, a bone of length 0 marked as one),
 `names` (one label per pixel), `axes` (each bone's world x and y), `mesh` and `hull`
 (each mesh's edges and outline), `weights:<bone>` (what that bone moves, as a heat),
 `density` (each part's triangles per area against the figure's, on a log ramp),
-`slots` (the draw order at the pose), `grid` (in world units) and `declared`
+`folds` (each mesh triangle turned over against the setup pose, filled — `render --folds`
+names them per animation and frame), `slots` (the draw order at the pose), `grid` (in world units) and `declared`
 (each `invariants.axes` line and the bones held to it), at the setup pose, at
 `--animation <name> --at <s[,s…]>` — one picture, or a sheet — or zoomed with
 `--zoom <bone|slot>[:pad]` or `--viewport x,y,w,h`; `--bone`/`--hide-bone` pick the
 bones by glob, `--overlay-slot`/`--hide-overlay-slot` the slots whose mesh, hull,
-weights, density and number are drawn over the whole painting, and `--compare <dir>` draws a second build beside the first on one
+weights, density, folds and number are drawn over the whole painting, and `--compare <dir>` draws a second build beside the first on one
 transform, to see what a change moved. Beside the PNG it writes a legend:
 the world-to-pixel transform both ways, what each colour means, and every bone's
 origin and tip in world units and in pixels, so a position read off the picture goes
@@ -600,7 +601,7 @@ commands take it and what its default is.
 | `repack <dir> --out <dir> --keep-pages` | **`skeleton.model.json` alone, for the pages already in place** — for a player that reads the document beside an atlas and pages that already shipped. The same read and stage rules, then `build --atlas-in` over the input atlas in place of the lift and the pack; it writes the document, and nothing else, only after its `pages` are shown to state the atlas as it stands, the rebuilt skeleton byte-identical to the one on disk (so `spine.sha256` names it — no acceptance flag here) and the gate green. `--out` is usually the build's own directory and must not already hold a `skeleton.model.json`; a page or region line the document has no field for is refused by name ([AUTHORING §0.4](docs/AUTHORING.md)) |
 | `ingest <skeleton.json> --out <dir>` | `build` run backwards: reads a Spine 4.3 skeleton and writes the rig spec and motion spec that **rebuild it**, plus a findings report naming everything it could not carry. a skeleton that declares no stage is carried as declaring none, `--stage x,y,w,h` adds a box to one — and is refused, rather than ignored, beside one that declares a box — and `--images <dir>` writes the spec's own images directory — the opposite direction from `build --images`, which overrides it — so the rebuild carries no flag at all |
 | `explain --rig … --motion …` | the compiled rig as a table — every bone with its resolved parent, the slots in draw order, every timeline key by key. Writes nothing. What to reach for when a rig compiles and still looks wrong |
-| `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/`. `--hide <slot,…>` or `--slot <slot,…>` draws part of the rig on the **same grid** as the whole, so the two frames overlay and the difference is the part; `frames.json` records the subset and `check` refuses such a set as a reference. `--geometry` adds a `geometry.json` per set: every frame's bone world transforms and skinned attachment vertices, with the rest geometry, on the frames' own grid |
+| `render --candidate <dir>` | PNG frames plus a contact sheet, in `render/`. `--hide <slot,…>` or `--slot <slot,…>` draws part of the rig on the **same grid** as the whole, so the two frames overlay and the difference is the part; `frames.json` records the subset and `check` refuses such a set as a reference. `--geometry` adds a `geometry.json` per set: every frame's bone world transforms and skinned attachment vertices, with the rest geometry, on the frames' own grid. `--folds` adds a `folds.json` per set and prints one line per mesh with a triangle turned over against the setup pose: the frames, the worst frame's count and which triangles |
 | `preview --candidate <dir>` | one self-contained `.html` that plays it, headed by the line `validate <dir>` prints for it and the rigc version — a refused candidate is still previewed, and its header says so in the gate's words. Repeat `--candidate` for one page with a pane per candidate, in the order given; a green `build` ends by naming this command for its own `--out` |
 | `vote --candidate a --candidate b` | one `.html` that asks a human which; `vote --record <file>` checks the answer into `votes.jsonl` |
 | `pose --images <dir> --frame <png>` | reads part placements **out of** a picture |
