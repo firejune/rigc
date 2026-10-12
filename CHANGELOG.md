@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.46.0](https://github.com/rig-c/core/compare/v2.45.2...v2.46.0) (2026-10-12)
+
+
+### Features
+
+* **render:** render --folds names the mesh triangles that turn over against the setup pose, and inspect --show folds fills them ([#1383](https://github.com/rig-c/core/issues/1383)) ([#1384](https://github.com/rig-c/core/issues/1384)) ([6a6ae3e](https://github.com/rig-c/core/commit/6a6ae3e7099f0db4bf0ea99023a52d0f7451336c))
+
 ## [2.45.2](https://github.com/rig-c/core/compare/v2.45.1...v2.45.2) (2026-10-12)
 
 
