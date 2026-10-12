@@ -129693,7 +129693,7 @@ function runRepackSuite(): number {
 // folds — which mesh triangles turn over against the setup pose (issue #1383)
 // ---------------------------------------------------------------------------
 
-import { DEGENERATE_SHARE, type FoldPlant, FOLDS_FILE, type FoldsFile, foldsOf, type MeshFolds } from './src/folds.ts';
+import { DEGENERATE_SHARE, type FoldFrame, type FoldPlant, type FoldRest, FOLDS_FILE, type FoldsFile, foldsOf, type MeshFolds } from './src/folds.ts';
 import { FOLD_COLOUR, InspectError } from './src/inspect.ts';
 
 /**
@@ -130185,7 +130185,113 @@ function runFoldsSuite(): number {
       'issue #1386: --zoom slot:<mesh> already frames the whole mesh; a folds zoom that does the same frames nothing new',
     );
   }
+
+  // FO15–FO16 — a triangle just below the degenerate line is set aside at the setup pose; one just above it is read.
+  const line = foldLineProbe(fps);
+  const lineRead = (plant: FoldPlant = {}): MeshFolds[] => foldsOf(line.rest, line.frames, plant);
+  const lineShape = `base ${line.base} along y = 0, apex mirrored through it on frame 1; the line is DEGENERATE_SHARE ${DEGENERATE_SHARE} × largest coordinate ${line.base} = ${line.line}`;
+  {
+    const faults = foldThinFaults(lineRead(), line);
+    say(
+      'FO15_A_TRIANGLE_BELOW_THE_DEGENERATE_LINE_IS_SET_ASIDE_AND_NEVER_FOLDS',
+      faults.length === 0,
+      faults.length > 0 ? faults[0] : `"thin": height ${line.thin} (half the line, above 0) — degenerate [0] at the setup pose and on no folded frame though frame 1 turns it over; ${lineShape}`,
+      'issue #1390: FO03\'s collinear triangle has area exactly 0, so it holds no threshold — this one sits between 0 and the line',
+    );
+  }
+  {
+    const faults = foldPlainFaults(lineRead(), line);
+    say(
+      'FO16_A_TRIANGLE_JUST_ABOVE_THE_DEGENERATE_LINE_IS_READ_AND_ITS_FLIP_COUNTED',
+      faults.length === 0,
+      faults.length > 0 ? faults[0] : `"plain": height ${line.plain} (twice the line) — no setup fault, triangle 0 folded on frame 1 alone; ${lineShape}`,
+      'issue #1390: the line is two-sided — one set too high calls a triangle degenerate that the numbers resolve, and stops reading it',
+    );
+  }
+  // FO17–FO18 — the line moved either way goes red, by the control that reads that side of it.
+  for (const [code, plant, reader, what] of [
+    ['FO17_A_DEGENERATE_LINE_DROPPED_TO_ZERO_IS_RED', { degenerateShare: 0 }, foldThinFaults, 'FO15'],
+    ['FO18_A_DEGENERATE_LINE_RAISED_PAST_THE_TRIANGLE_ABOVE_IT_IS_RED', { degenerateShare: (2 * line.plain) / line.base }, foldPlainFaults, 'FO16'],
+  ] as const) {
+    const clean = reader(lineRead(), line);
+    const planted = reader(lineRead(plant), line);
+    say(
+      code,
+      clean.length === 0 && planted.length > 0,
+      clean.length > 0 ? `the unplanted reading is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${what}'s reading found nothing` : `${JSON.stringify(plant)} planted: ${what}'s reading names it — ${planted[0]}; unplanted it reads clean`,
+      'issue #1390: a line no planted fault can push is not held — it is moved below and past its two triangles and caught by name',
+    );
+  }
   return bad;
+}
+
+/** The degenerate line's probe: its two meshes, their two frames, and the numbers they were placed by. */
+interface FoldLineProbe {
+  rest: FoldRest[];
+  frames: FoldFrame[];
+  /** The base, 2·side — the largest coordinate either mesh holds at either frame. */
+  base: number;
+  /** `DEGENERATE_SHARE` × `base`: the height at or below which a triangle is degenerate. */
+  line: number;
+  /** `thin`'s height, half the line. */
+  thin: number;
+  /** `plain`'s height, twice the line. */
+  plain: number;
+}
+
+/**
+ * The degenerate line's two triangles (issue #1390): two one-triangle meshes on
+ * the fold probe's scale — base 2·side along y = 0, apex over its middle — whose
+ * heights are half and twice `DEGENERATE_SHARE` × the base, the largest
+ * coordinate either holds. Frame 0 is the setup pose; frame 1 mirrors each apex
+ * through the base, which turns the triangle over. The UVs are a fat triangle of
+ * the same winding, so the world is the only side of the reading near the line.
+ *
+ * ⚠️ Read through `foldsOf` — the reading `render --folds` writes — on stated
+ * doubles rather than through the built probe: the core's setup pose comes back
+ * off the probe's numbers by ~2e-8 of the side (`FOLD_PROBE_TOLERANCE`), about
+ * twenty times the line itself, so a height placed within a factor of two of the
+ * line would not sit where it was put once posed.
+ */
+function foldLineProbe(fps: number): FoldLineProbe {
+  const base = 2 * FOLD_PROBE.side;
+  const line = DEGENERATE_SHARE * base;
+  const thin = line / 2;
+  const plain = 2 * line;
+  const at = (h: number): number[] => [0, 0, base, 0, base / 2, h];
+  const mesh = (slot: string, h: number): FoldRest => ({ slot, attachment: slot, kind: 'mesh', vertices: at(h), triangles: [0, 1, 2], uvs: [0, 1, 1, 1, 0.5, 0] });
+  const frame = (index: number, sign: number): FoldFrame => ({
+    index,
+    time: index / fps,
+    attachments: [
+      { slot: 'thin', attachment: 'thin', vertices: at(sign * thin) },
+      { slot: 'plain', attachment: 'plain', vertices: at(sign * plain) },
+    ],
+  });
+  return { rest: [mesh('thin', thin), mesh('plain', plain)], frames: [frame(0, 1), frame(1, -1)], base, line, thin, plain };
+}
+
+/** FO15's reading: `thin` — above 0, below the line — is degenerate at the setup pose and folds on no frame. */
+function foldThinFaults(meshes: readonly MeshFolds[], probe: FoldLineProbe): string[] {
+  const faults: string[] = [];
+  if (!(probe.thin > 0 && probe.thin < probe.line)) faults.push(`"thin" height ${probe.thin} is not between 0 and the line ${probe.line} — the probe holds nothing`);
+  const thin = meshes.find((m) => m.slot === 'thin');
+  if (thin === undefined) return [...faults, 'the reading lists no mesh "thin"'];
+  if (JSON.stringify(thin.setup) !== JSON.stringify({ degenerate: [0], inverted: [] })) faults.push(`"thin" setup ${JSON.stringify(thin.setup)}, required degenerate [0] — height ${probe.thin} is below the line ${probe.line}`);
+  if (thin.frames.length > 0 || thin.folded.length > 0) faults.push(`"thin" counted as folding on frame(s) [${thin.frames.map((f) => f.index).join(', ')}] — a setup-degenerate triangle has no orientation to turn over`);
+  return faults;
+}
+
+/** FO16's reading: `plain` — just above the line — has no setup fault and folds triangle 0 on frame 1 alone. */
+function foldPlainFaults(meshes: readonly MeshFolds[], probe: FoldLineProbe): string[] {
+  const faults: string[] = [];
+  if (!(probe.plain > probe.line)) faults.push(`"plain" height ${probe.plain} is not above the line ${probe.line} — the probe holds nothing`);
+  const plain = meshes.find((m) => m.slot === 'plain');
+  if (plain === undefined) return [...faults, 'the reading lists no mesh "plain"'];
+  if (JSON.stringify(plain.setup) !== JSON.stringify({ degenerate: [], inverted: [] })) faults.push(`"plain" setup ${JSON.stringify(plain.setup)}, required none — height ${probe.plain} is above the line ${probe.line}`);
+  const frames = plain.frames.map((f) => `${f.index}:[${f.triangles.join(', ')}]`);
+  if (JSON.stringify(frames) !== JSON.stringify(['1:[0]'])) faults.push(`"plain" folds on [${frames.join(', ')}], required triangle 0 on frame 1 alone — frame 1 mirrors its apex through the base`);
+  return faults;
 }
 
 /**
