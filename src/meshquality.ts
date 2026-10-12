@@ -306,6 +306,54 @@ export interface MeshReductionInput {
    * a list. `protect.edges` keeps its meaning: a line held whole is listed there.
    */
   lines?: NamedLine[];
+  /**
+   * What refused each kept source vertex (issue #1374) — opt-in. Left out = the report is the one it was before the
+   * field existed, byte for byte, and no refusal is measured that the run would not measure. Set, `changes` ends in
+   * `kept` (`KeptRefusals`): for the last removal pass, the one that took nothing, each kept source vertex's reason
+   * counted per reason and split boundary / interior — and with `'by-vertex'` also listed vertex by vertex with the
+   * refusal's text. A refusal the deviation floor decided is measured in full to be named, in that pass only, as
+   * `blockingConstraint`'s is. No step, order or mesh reads it. Any other value, `null` included, is refused.
+   */
+  explainKept?: 'by-row' | 'by-vertex';
+}
+
+/**
+ * Issue #1374: why the kept source vertices are kept — `ReductionChanges.kept`, written last in `changes` and only when
+ * the input set `explainKept`. The reasons are read from the last removal pass, the one in which no step was taken, so
+ * every kept vertex not protected was attempted there once as a single removal, on the mesh the result carries (before
+ * any `retriangulate` post-pass). A vertex is boundary when it is a source-hull vertex — a kept source vertex is on the
+ * outline exactly then — and interior otherwise. Vertices the refinement inserted are never candidates and are not
+ * listed.
+ *
+ * A reason is the refusal's constraint without the object an author named: a row's code (`MQ_BOUNDARY_DEVIATION`,
+ * `MQ_SKINNING_RESIDUAL`, …, the region or line it names left in `refusal`), or a structural condition as the refusal
+ * opens — `retriangulation`, `outline`, `protect (a)`, `weightJump (b)`, `line`. A vertex no attempt in such a pass
+ * reached reads why, never an absence: `protected` (`protect`, or a line's end or crossing), and — when the run has no
+ * pass that took nothing — `budget-exhausted`, `replayed-to-accepted-step` or `no-removal-pass` (the refined source
+ * did not meet its targets, so no removal was tried), the termination it ended in.
+ */
+export interface KeptRefusals {
+  /** The 1-based removal pass the reasons were read from; null when the run had no pass that took nothing. */
+  pass: number | null;
+  /** One entry per reason that holds a kept source vertex, ascending by reason. `boundary + interior` over the entries is the kept source vertices. */
+  rows: KeptRow[];
+  /** `explainKept: 'by-vertex'` only: every kept source vertex, ascending by source index. */
+  vertices?: KeptVertex[];
+}
+
+/** Issue #1374: one reason, and the kept source vertices it holds on the outline and inside it. */
+export interface KeptRow {
+  reason: string;
+  boundary: number;
+  interior: number;
+}
+
+/** Issue #1374: one kept source vertex, its reason, and the refusal's text as `blockingConstraint` writes it — null for a reason no attempt gave. */
+export interface KeptVertex {
+  vertex: number;
+  boundary: boolean;
+  reason: string;
+  refusal: string | null;
 }
 
 /**
@@ -687,8 +735,10 @@ export interface ReductionChanges {
    * `stopAfterAccepted: k` replays to the operation at `acceptedAt[k - 1]`.
    */
   acceptedAt: AcceptedOperation[];
-  /** Issue #1283: which triangulation the mesh carries — present only when the input set `retriangulate`, written last. */
+  /** Issue #1283: which triangulation the mesh carries — present only when the input set `retriangulate`. */
   retriangulation?: Retriangulation;
+  /** Issue #1374: what refused each kept source vertex in the last removal pass — present only when the input set `explainKept`, written last. */
+  kept?: KeptRefusals;
 }
 
 export interface MeshQualityReport {
@@ -750,6 +800,8 @@ export interface EffectiveSettings {
   lines?: NamedLine[];
   /** A measurement's `lineSource`, by id and `sourceMeshDigest`, echoed when the input set it (issue #1326); absent otherwise. */
   lineSource?: { id: string; digest: string };
+  /** A reduction's `explainKept`, echoed when the input set it (issue #1374); absent otherwise. */
+  explainKept?: 'by-row' | 'by-vertex';
 }
 
 export interface MeshCounts {
@@ -2805,6 +2857,7 @@ function effectiveJson(e: EffectiveSettings): Json {
     ...(e.overBound === undefined ? {} : { overBound: { maxSamples: e.overBound.maxSamples, triangles: e.overBound.triangles } }),
     ...(e.lines === undefined ? {} : { lines: e.lines.map((l): Json => ({ name: l.name, vertices: [...l.vertices], closed: l.closed, maxDeviation: l.maxDeviation })) }),
     ...(e.lineSource === undefined ? {} : { lineSource: { id: e.lineSource.id, digest: e.lineSource.digest } }),
+    ...(e.explainKept === undefined ? {} : { explainKept: e.explainKept }),
   };
 }
 
@@ -2948,6 +3001,15 @@ function candidateJson(c: CandidateReport): Json {
               sweeps: k.retriangulation.sweeps,
               refusedBy: k.retriangulation.refusedBy,
               monotonicity: k.retriangulation.monotonicity,
+            },
+          }),
+      ...(k.kept === undefined
+        ? {}
+        : {
+            kept: {
+              pass: k.kept.pass,
+              rows: k.kept.rows.map((r) => ({ reason: r.reason, boundary: r.boundary, interior: r.interior })),
+              ...(k.kept.vertices === undefined ? {} : { vertices: k.kept.vertices.map((v) => ({ vertex: v.vertex, boundary: v.boundary, reason: v.reason, refusal: v.refusal })) }),
             },
           }),
     };

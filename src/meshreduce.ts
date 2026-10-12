@@ -90,6 +90,15 @@
  * of the triangles it changed; the result's own measurement reads the row in
  * full. Left out, nothing here reads it and the call is the one it was.
  *
+ * ## What refused each kept vertex (issue #1374, opt-in)
+ *
+ * With `explainKept`, the pass that ends the reduction having taken nothing
+ * keeps each single removal's refusal and names it once the pass is over — the
+ * working mesh is then the one every attempt in it was tried on, so a refusal
+ * the deviation floor decided is measured as `blockingConstraint`'s is — and the
+ * result's `changes.kept` counts the kept source vertices per reason, boundary
+ * and interior (`keptOf`). No step, order or mesh reads it.
+ *
  * A removal whose deviation floor — the furthest removed source-hull vertex
  * from the candidate's outline, which `MQ_BOUNDARY_DEVIATION` can only exceed —
  * is over the bound is refused without the measurement; its name, when read,
@@ -148,6 +157,8 @@ import {
   type CandidateReport,
   type DeformKeyInput,
   type EffectiveSettings,
+  type KeptRefusals,
+  type KeptVertex,
   type MeasureRow,
   type MeshCounts,
   type MeshMeasureInput,
@@ -343,6 +354,9 @@ function validateReduction(input: MeshReductionInput, plant: ReductionPlant | nu
   }
   if ('removalOrder' in input && input.removalOrder !== undefined && input.removalOrder !== 'deformation-load') {
     refuse('REDUCE_INPUT_MISSING', `${who}: removalOrder is ${JSON.stringify(input.removalOrder)}; required "deformation-load" — single removals in ascending predicted deformation load, ties by source index — or the field left out (issue #1283: ascending source index)`);
+  }
+  if ('explainKept' in input && input.explainKept !== undefined && input.explainKept !== 'by-row' && input.explainKept !== 'by-vertex') {
+    refuse('REDUCE_INPUT_MISSING', `${who}: explainKept is ${JSON.stringify(input.explainKept)}; required "by-row" — what refused the kept source vertices in the last removal pass, counted per reason — or "by-vertex" — those counts and every kept source vertex listed — or the field left out (issue #1374: no such block)`);
   }
   // Issue #1287: refused here, before the admission measurement and any step, in the measurement's own words — the
   // admission does not carry the field, and a call whose source is refused never reaches the one measurement that does.
@@ -961,6 +975,18 @@ interface Run {
   hooks: SkinningHooks | null;
   /** Issue #1326: the declared lines, or null when the input left `lines` out. */
   lines: LineRun | null;
+  /** Issue #1374: the refusals of the current pass's single removals, and the last pass's once it took nothing — null when the input left `explainKept` out. */
+  kept: KeptLog | null;
+}
+
+/**
+ * Issue #1374: what `explainKept` reads. `attempts` is the current pass's single removals refused, by source vertex,
+ * as tried — a floor's refusal still a thunk, read only if the pass takes nothing; `final` is that pass's, read in
+ * the state it was tried in, once a pass ends having taken nothing.
+ */
+interface KeptLog {
+  attempts: Map<number, Refusal>;
+  final: { pass: number; refusals: Map<number, string> } | null;
 }
 
 /** Issue #1326: the input's lines as the steps read them. */
@@ -1486,7 +1512,14 @@ export type ReductionPlant =
   | OrderPlant
   | AmplitudePlant
   | RefinementPlant
-  | LinePlant;
+  | LinePlant
+  | KeptPlant;
+
+/**
+ * Issue #1374's fault, for the `mesh-quality` suite's control: each kept vertex named by the refusal of the next
+ * vertex refused in the last pass (the first's for the last) — a reason that did not refuse it.
+ */
+export type KeptPlant = 'kept-reason-shifted';
 
 /**
  * Issue #1326's faults in the line mechanism, for the `mesh-quality` suite's controls: the line rows read by no step
@@ -1909,6 +1942,7 @@ function removeVertices(run: Run): PhaseEnd {
     let taken = 0;
     let tried = 0;
     pass++;
+    if (run.kept !== null) run.kept.attempts = new Map();
     if (runs !== undefined) {
       let walk: number[] | null = null;
       for (let s = 0; s < hull; s++) {
@@ -1990,12 +2024,14 @@ function removeVertices(run: Run): PhaseEnd {
         if (accept(run, 'removal', [v])) return { kind: 'replayed' };
       } else {
         lastBlock = { refusal: block, what: `removing source vertex ${v}` };
+        if (run.kept !== null) run.kept.attempts.set(v, block);
         if (run.hooks?.plant === 'veto-ends-search' && typeof block === 'string' && block.startsWith('MQ_SKINNING_RESIDUAL')) return { kind: 'stuck', constraint: lastName() };
       }
     }
     if (taken === 0) {
       // A pass that took nothing left the working mesh as it found it, so a refusal the floor decided is measured
       // now in the state it was decided in.
+      if (run.kept !== null) run.kept.final = { pass, refusals: new Map([...run.kept.attempts].map(([v, r]) => [v, refusalText(r)])) };
       const kept = run.lines === null ? '' : ", or an open line's end or a vertex two lines list";
       const constraint = tried === 0 ? `protect: every surviving source vertex is protected (protect.hull, protect.vertices, protect.edges, protect.regionBoundaries or a weightJump edge${kept})` : lastName();
       return { kind: 'stuck', constraint };
@@ -2688,6 +2724,7 @@ function reduceValidated(
       skinning: null,
       hooks,
       lines: null,
+      kept: input.explainKept === undefined ? null : { attempts: new Map(), final: null },
     };
     run.skinning = skinningRunOf(run, skinningAdmitted);
     run.lines = lineRunOf(run);
@@ -2880,6 +2917,7 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     linkedMeshes: input.linkedMeshes,
     acceptedAt: run.acceptedAt.map((a) => ({ step: a.step, kind: a.kind, count: a.count, sourceVertices: [...a.sourceVertices] })),
     ...(retriangulation === undefined ? {} : { retriangulation }),
+    ...(run.kept === null ? {} : { kept: keptOf(run, termination) }),
   };
   const counts = candidate.counts!;
   const mesh: ReducedMesh = {
@@ -2892,6 +2930,62 @@ function finish(run: Run, effective: EffectiveSettings, sourceCounts: MeshCounts
     counts,
   };
   return { mesh, report: reportOf(effective, sourceCounts, { ...candidate, changes }, termination) };
+}
+
+/**
+ * A refusal's reason (issue #1374, `KeptRefusals`): a row's code, or the structural condition the refusal opens with.
+ * Every refusal a step writes opens with one of them; one that does not is a defect here, thrown rather than named.
+ */
+function refusalReason(text: string): string {
+  const code = /^MQ_[A-Z0-9_]+/.exec(text);
+  if (code !== null) return code[0];
+  if (text.startsWith('line "')) return 'line';
+  for (const condition of ['retriangulation', 'outline', 'protect (a)', 'weightJump (b)']) if (text.startsWith(`${condition}:`)) return condition;
+  throw new Error(`issue #1374: a refusal opens with no reason KeptRefusals names: "${text.slice(0, 120)}"`);
+}
+
+/**
+ * Issue #1374: `ReductionChanges.kept` — every kept source vertex with its reason: `protected`, else its refusal in the
+ * last pass when one took nothing, else the termination that ended the run without one.
+ */
+function keptOf(run: Run, termination: Termination): KeptRefusals {
+  const { work } = run;
+  const hull = run.input.source.hull;
+  const final = run.kept!.final;
+  const unreached = final !== null ? null : termination.reason === 'budget-exhausted' || termination.reason === 'replayed-to-accepted-step' ? termination.reason : 'no-removal-pass';
+  let refusals = final?.refusals ?? null;
+  if (refusals !== null && run.plant === 'kept-reason-shifted') {
+    const order = [...refusals.keys()].sort((a, b) => a - b);
+    refusals = new Map(order.map((v, i) => [v, refusals!.get(order[(i + 1) % order.length])!]));
+  }
+  const vertices: KeptVertex[] = [];
+  for (let v = 0; v < work.nSource; v++) {
+    if (!work.alive[v]) continue;
+    const boundary = v < hull;
+    if (run.protectedVertices.has(v)) {
+      vertices.push({ vertex: v, boundary, reason: 'protected', refusal: null });
+      continue;
+    }
+    if (refusals === null) {
+      vertices.push({ vertex: v, boundary, reason: unreached!, refusal: null });
+      continue;
+    }
+    const refusal = refusals.get(v);
+    if (refusal === undefined) throw new Error(`issue #1374: source vertex ${v} is kept and not protected, yet removal pass ${final!.pass}, which took nothing, did not refuse it`);
+    vertices.push({ vertex: v, boundary, reason: refusalReason(refusal), refusal });
+  }
+  const rows = new Map<string, { boundary: number; interior: number }>();
+  for (const k of vertices) {
+    const row = rows.get(k.reason) ?? { boundary: 0, interior: 0 };
+    if (k.boundary) row.boundary++;
+    else row.interior++;
+    rows.set(k.reason, row);
+  }
+  return {
+    pass: final === null ? null : final.pass,
+    rows: [...rows.keys()].sort().map((reason) => ({ reason, ...rows.get(reason)! })),
+    ...(run.input.explainKept === 'by-vertex' ? { vertices } : {}),
+  };
 }
 
 function reportOf(effective: EffectiveSettings, sourceCounts: MeshCounts | null, candidate: CandidateReport, termination: Termination): MeshQualityReport {
@@ -2924,6 +3018,7 @@ function effectiveOf(input: MeshReductionInput, measured: EffectiveSettings, sou
     ...(input.retriangulate === undefined ? {} : { retriangulate: input.retriangulate }),
     ...(input.removalOrder === undefined ? {} : { removalOrder: input.removalOrder }),
     ...(input.lines === undefined ? {} : { lines: input.lines }),
+    ...(input.explainKept === undefined ? {} : { explainKept: input.explainKept }),
   };
 }
 

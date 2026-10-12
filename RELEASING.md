@@ -834,6 +834,23 @@ when one is seen importing them. `validateLines`, `lineDeviation`,
 `lineDeviationRows` and the `LinePlant` members of `ReductionPlant` are merely
 exported, so by the rule above not promised.
 
+What refused each kept vertex
+([#1374](https://github.com/rig-c/core/issues/1374)) is additive on the
+agreed row's types: `MeshReductionInput.explainKept` (`'by-row'` or
+`'by-vertex'`) is a new optional input; set, `ReductionChanges` ends in
+`kept` (`KeptRefusals`, `{ pass, rows, vertices? }`) and `effective` echoes
+`explainKept`; any other value, `null` included, is refused
+`REDUCE_INPUT_MISSING`. A call without the field writes every byte as before —
+measured against `183928d` on 22 reductions of the blink fixtures (both
+sources, the residual declared and absent, no opt-in, the three Stage B
+opt-ins together, a replay, a budget cut, `protect.hull`, and a named line),
+22 of 22 meshes and reports identical (docs/MESH_REDUCTION.md, §2). `KeptRefusals`,
+`KeptRow` and `KeptVertex` are reached through the recorded
+`MeshReductionInput` and `ReductionChanges`; the smoke records no new name,
+because no dependant has named one yet. `reduceMeshWith`'s attempt observer,
+which rig-parts read the same figures through, stays merely exported, and so
+does `KeptPlant`, a member of `ReductionPlant`.
+
 🤝 **The same agreement names a second entry**
 ([#1230](https://github.com/rig-c/core/issues/1230)). The contract puts the
 motion comparison on an entry of its own, `rig-c/meshcompare`, and says
