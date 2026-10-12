@@ -88536,6 +88536,21 @@ function sameLeaves(x: unknown, y: unknown, at: string, out: string[] = []): str
  * it reads alone — `CO41` compares a unit run alone to the batch's, to every
  * leaf. With `RIGC_UNIT_PEAKS` each unit's seconds and its worker's peak RSS
  * after it are appended to that file, beside the workers' own lines.
+ *
+ * 🧹 Nor its memory (issue #1394): a worker collects its heap after every
+ * unit (`coreUnitWorker`), so the garbage one unit leaves is reused by the
+ * next rather than stacked under it. Without that a worker's peak — the figure
+ * `TY40` holds — was the sum of whatever its claims happened to leave
+ * uncollected, and the claims follow the clock: on one linux machine at
+ * `--jobs 4`, the same tree read 705–981 MB over five runs with nothing else
+ * on it and 765–877 over five run five at once, the top set each time by
+ * whichever worker drew `CD06` beside a run of lighter units (the reading
+ * after `CC09` alone moved +10 MB in one run and +126 in another). Collected,
+ * the same ten read 674–797 and 688–732: the figure is the heaviest unit's
+ * own (`CO25+CO26`, a worker to itself, or `CD06`). What a unit RETAINS is not
+ * garbage and still stacks — that is the growth the ceiling is for: 250 MiB
+ * held past `CD06`, planted by hand, read 1,111 MB alone and 1,096 and 1,228
+ * beside four other runs, red each time against the same bound.
  */
 function coreUnitBatch(inputs: readonly CoreUnitInput[], jobs: number): CoreUnitResult[] {
   for (const input of inputs.slice(0, 1)) {
@@ -88601,6 +88616,8 @@ function coreUnitWorker(spec: { dir: string; shared: CoreUnitInput; units: CoreU
     const began = performance.now();
     const result = coreUnitWork({ ...spec.shared, unit: name });
     writeFileSync(join(spec.dir, `result-${name}.json`), JSON.stringify(result));
+    // Issue #1394: the next unit starts on a collected heap, so this worker's peak is a unit's and not its claims' (see `coreUnitBatch`).
+    Bun.gc(true);
     const raw = process.resourceUsage().maxRSS;
     const scale = maxRssScale(raw, process.memoryUsage().rss);
     ran.push({ unit: name, seconds: (performance.now() - began) / 1000, maxRss: scale === null ? null : raw * scale });
