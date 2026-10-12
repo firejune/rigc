@@ -70,6 +70,7 @@ import {
   type Viewport,
   viewportFor,
 } from './render_shared.ts';
+import { hypot2 } from './numeric.ts';
 
 /** The legend's format tag. */
 export const INSPECT_SPEC = 'rigc-inspect/1';
@@ -1553,9 +1554,9 @@ function drawTile(
         entry.from = point(a.worldX, a.worldY);
         entry.to = point(b.worldX, b.worldY);
         // Across the whole tile: extend the line past both ends by the tile's diagonal, in world units.
-        const reach = Math.hypot(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY);
-        const ux = (b.worldX - a.worldX) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
-        const uy = (b.worldY - a.worldY) / Math.hypot(b.worldX - a.worldX, b.worldY - a.worldY);
+        const reach = hypot2(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY);
+        const ux = (b.worldX - a.worldX) / hypot2(b.worldX - a.worldX, b.worldY - a.worldY);
+        const uy = (b.worldY - a.worldY) / hypot2(b.worldX - a.worldX, b.worldY - a.worldY);
         const [p0x, p0y] = toPixel(a.worldX - ux * reach, a.worldY - uy * reach);
         const [p1x, p1y] = toPixel(a.worldX + ux * reach, a.worldY + uy * reach);
         line(tile, tx(p0x) + shiftX, ty(p0y) + shiftY, tx(p1x) + shiftX, ty(p1y) + shiftY, colour('declared'));

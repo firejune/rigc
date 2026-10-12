@@ -16,6 +16,7 @@ import { deflateSync, inflateSync } from 'node:zlib';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { drawText, textWidth } from './font5x7.ts';
 import { assertPng, NotAPngError } from '../src/png.ts';
+import { hypot2 } from '../src/numeric.ts';
 
 export type RGBA = [number, number, number, number];
 
@@ -88,7 +89,7 @@ export class Plate {
   }
 
   line(x0: number, y0: number, x1: number, y1: number, t: number, colour: RGBA): void {
-    const steps = Math.ceil(Math.hypot(x1 - x0, y1 - y0)) * 2 + 1;
+    const steps = Math.ceil(hypot2(x1 - x0, y1 - y0)) * 2 + 1;
     for (let s = 0; s <= steps; s++) {
       const u = s / steps;
       const cx = x0 + (x1 - x0) * u;
@@ -100,7 +101,7 @@ export class Plate {
   disc(cx: number, cy: number, r: number, colour: RGBA): void {
     for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
       for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
-        if (Math.hypot(x - cx, y - cy) <= r) this.blend(x, y, colour);
+        if (hypot2(x - cx, y - cy) <= r) this.blend(x, y, colour);
       }
     }
   }
@@ -108,7 +109,7 @@ export class Plate {
   ring(cx: number, cy: number, r: number, t: number, colour: RGBA): void {
     for (let y = Math.floor(cy - r - t); y <= Math.ceil(cy + r + t); y++) {
       for (let x = Math.floor(cx - r - t); x <= Math.ceil(cx + r + t); x++) {
-        const d = Math.hypot(x - cx, y - cy);
+        const d = hypot2(x - cx, y - cy);
         if (Math.abs(d - r) <= t) this.blend(x, y, colour);
       }
     }

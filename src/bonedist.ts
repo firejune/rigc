@@ -85,6 +85,7 @@ import {
   type Posable,
 } from './render.ts';
 import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from './correspondence.ts';
+import { hypot2 } from './numeric.ts';
 
 export class BoneDistError extends Error {}
 
@@ -193,7 +194,7 @@ function skeletonSize(posable: Pick<Posable, 'data'>): SkeletonSize {
   let size = 0;
   let farthest: string | null = null;
   for (const bone of bones) {
-    const distance = Math.hypot(bone.worldX - root.worldX, bone.worldY - root.worldY);
+    const distance = hypot2(bone.worldX - root.worldX, bone.worldY - root.worldY);
     if (distance > size) {
       size = distance;
       farthest = bone.name;
@@ -244,7 +245,7 @@ function deltaOf(
   const rx = (reference.worldX - referenceRoot.worldX) / rScale;
   const ry = (reference.worldY - referenceRoot.worldY) / rScale;
   return {
-    position: Math.hypot(cx - rx, cy - ry),
+    position: hypot2(cx - rx, cy - ry),
     rotation: Math.abs(wrapDegrees(candidate.rotationX - reference.rotationX)),
     scale: Math.max(Math.abs(candidate.scaleX - reference.scaleX), Math.abs(candidate.scaleY - reference.scaleY)),
     linear: Math.max(

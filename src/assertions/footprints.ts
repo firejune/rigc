@@ -59,6 +59,7 @@ import { FOOTPRINT_SLACK, pageFootprint } from '../atlas.ts';
 import type { AtlasRegionEntry, AtlasRegionFacts } from './facts/atlas_regions.ts';
 import type { MeshEntry, MeshFacts } from './facts/mesh_attachments.ts';
 import type { RegionJoinFacts } from './facts/region_joins.ts';
+import { hypot2 } from '../numeric.ts';
 
 /** A point in page texels, x right and y down from the page's top-left. */
 export type PagePoint = readonly [number, number];
@@ -266,7 +267,7 @@ export function piecesOverlap(a: readonly PagePoint[], b: readonly PagePoint[]):
       const q = poly[(i + 1) % poly.length];
       const nx = q[1] - p[1];
       const ny = p[0] - q[0];
-      const len = Math.hypot(nx, ny);
+      const len = hypot2(nx, ny);
       if (len === 0) continue;
       let minA = Infinity;
       let maxA = -Infinity;

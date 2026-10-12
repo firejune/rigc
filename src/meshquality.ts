@@ -74,6 +74,7 @@ import { allocationContrast, boundaryNecessityOnce, deformLoad, gradeMax, minAng
 import { skinningEchoOf, skinningResidual, sourceMeshDigest, validateSkinning, type ReductionSkinning, type SkinningDetail, type SkinningEcho, type SkinningPlant, type SkinningResidualInput } from './meshskinning.ts';
 import { artRastersOf, type ArtRasters, type CoverageReading, type OutlineMemo, type RegionEdgeReading, type SilhouetteReading, type StepRasters } from './meshrasters.ts';
 import { cropToSpineY } from './transform.ts';
+import { hypot2 } from './numeric.ts';
 
 // ---------------------------------------------------------------------------
 // §1 — inputs
@@ -1465,12 +1466,12 @@ function nearestParameter(a: Pt, b: Pt, c: Pt, d: Pt): number {
  * to the polygon within the tolerance of `transition`.
  */
 function runsAlongOuterBoundary(a: Pt, b: Pt, poly: readonly Pt[], transition: number): boolean {
-  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const length = hypot2(b[0] - a[0], b[1] - a[1]);
   const n = poly.length;
   for (let i = 0; i < n; i++) {
     const c = poly[i];
     const e = poly[(i + 1) % n];
-    const side = Math.hypot(e[0] - c[0], e[1] - c[1]);
+    const side = hypot2(e[0] - c[0], e[1] - c[1]);
     if (side === 0) continue;
     const ux = (e[0] - c[0]) / side;
     const uy = (e[1] - c[1]) / side;
@@ -1525,7 +1526,7 @@ export function edgeIsHeldByRegion(a: readonly [number, number], b: readonly [nu
   if (d < transition - BAND_CONTACT_TOLERANCE) return true;
   if (runsAlongOuterBoundary(a, b, poly, transition)) return true;
   // Where on the edge each polygon side is touched: one point, or several apart.
-  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const length = hypot2(b[0] - a[0], b[1] - a[1]);
   let first = Infinity;
   let last = -Infinity;
   const n = poly.length;
@@ -2548,7 +2549,7 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
   for (let i = 0; i < encoded.length; i += 2) {
     const a = encoded[i] / 2;
     const b = encoded[i + 1] / 2;
-    edges.push({ a: Math.min(a, b), b: Math.max(a, b), length: Math.hypot(points[b][0] - points[a][0], points[b][1] - points[a][1]) });
+    edges.push({ a: Math.min(a, b), b: Math.max(a, b), length: hypot2(points[b][0] - points[a][0], points[b][1] - points[a][1]) });
   }
   edges.sort((p, q) => p.a - q.a || p.b - q.b);
 
@@ -2688,14 +2689,14 @@ function regionRows(input: MeshMeasureInput, outline: MeshOutline, hullPolygon: 
     };
     const distance = (i: number, p: Pt): number => {
       const centre = centreOf(i);
-      return Math.hypot(p[0] - centre[0], p[1] - centre[1]);
+      return hypot2(p[0] - centre[0], p[1] - centre[1]);
     };
     if (steps === null) {
       for (const i of regionPixels) {
         const centre = centreOf(i);
         if (!inClosedPolygon(centre, hullPolygon)) continue;
         let nearest = Infinity;
-        for (const p of points) nearest = Math.min(nearest, Math.hypot(p[0] - centre[0], p[1] - centre[1]));
+        for (const p of points) nearest = Math.min(nearest, hypot2(p[0] - centre[0], p[1] - centre[1]));
         visit(i, nearest);
       }
     } else {

@@ -15,6 +15,7 @@
  */
 import { MeshReductionError } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
+import { hypot2 } from './numeric.ts';
 
 /** `pointInTriangle`'s epsilon in `src/mesh.ts`, applied to each barycentric coordinate. */
 export const CONTAINS = 1e-9;
@@ -222,7 +223,7 @@ function slackSupport(hits: readonly Carrier[], uvOf: (v: number) => readonly [n
     const h = [0, 1, 2].map((k) => {
       const a = p[(k + 1) % 3];
       const b = p[(k + 2) % 3];
-      return twice / Math.hypot(b[0] - a[0], b[1] - a[1]);
+      return twice / hypot2(b[0] - a[0], b[1] - a[1]);
     }) as [number, number, number];
     heights.set(c, h);
     widest = Math.max(widest, ...h);

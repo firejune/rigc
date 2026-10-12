@@ -54,6 +54,7 @@
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { Plate, readPlate } from '../tools/plate.ts';
+import { hypot2 } from './numeric.ts';
 // The rasteriser's sampler rather than a second one written here: how a pixel is
 // read between two pixel centres is exactly the kind of thing two
 // implementations drift on.
@@ -1249,7 +1250,7 @@ function localMinima(field: CoarseField, radius: number, keep: number): Candidat
   const accepted: Candidate[] = [];
   for (const cand of found) {
     if (accepted.length >= keep) break;
-    if (accepted.some((a) => Math.hypot(a.cx - cand.cx, a.cy - cand.cy) <= radius * field.stride)) continue;
+    if (accepted.some((a) => hypot2(a.cx - cand.cx, a.cy - cand.cy) <= radius * field.stride)) continue;
     accepted.push(cand);
   }
   return accepted;
@@ -1383,7 +1384,7 @@ function dedupe(sorted: Candidate[], within: number, degrees: number, scaleRatio
   for (const cand of sorted) {
     const same = out.some(
       (o) =>
-        Math.hypot(o.cx - cand.cx, o.cy - cand.cy) <= within &&
+        hypot2(o.cx - cand.cx, o.cy - cand.cy) <= within &&
         Math.abs(normaliseDegrees(o.rotDeg - cand.rotDeg)) <= degrees &&
         Math.abs(Math.log(o.scale / cand.scale)) <= Math.log(scaleRatio),
     );
@@ -2126,7 +2127,7 @@ function placePart(
   for (const m of measured) {
     const same = distinct.some(
       (d) =>
-        Math.hypot(d.placement.x - m.placement.x, d.placement.y - m.placement.y) <= Math.max(1.5, 0.03 * span * m.placement.scale) &&
+        hypot2(d.placement.x - m.placement.x, d.placement.y - m.placement.y) <= Math.max(1.5, 0.03 * span * m.placement.scale) &&
         Math.abs(normaliseDegrees(d.placement.rotationDeg - m.placement.rotationDeg)) <= 5 &&
         Math.abs(Math.log(d.placement.scale / m.placement.scale)) <= Math.log(1.05),
     );

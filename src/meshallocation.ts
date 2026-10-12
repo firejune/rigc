@@ -35,6 +35,7 @@
  */
 import { distanceToSegment, r6, type AlphaMask } from './mesh.ts';
 import { closedPolygonCentres, inClosedPolygon, regionEdgeBound, type MotionAmplitude, type RefinementRegion } from './meshquality.ts';
+import { hypot2 } from './numeric.ts';
 
 type Pt = readonly [number, number];
 type Weights = ReadonlyArray<ReadonlyArray<{ bone: string; weight: number }>>;
@@ -105,7 +106,7 @@ function uniqueEdges(triangles: readonly number[]): Array<[number, number]> {
   return out;
 }
 
-const lengthOf = (a: Pt, b: Pt): number => Math.hypot(b[0] - a[0], b[1] - a[1]);
+const lengthOf = (a: Pt, b: Pt): number => hypot2(b[0] - a[0], b[1] - a[1]);
 
 /**
  * Nearest rank at index round((n − 1) · p) of the values sorted ascending, ties by index — §8's percentile rule —
@@ -530,7 +531,7 @@ function needField(points: readonly Pt[], triangles: readonly number[], weights:
       const [wa, wb, wc] = [wt(i), wt(j), wt(k)];
       const gx = ((wb - wa) * (C[1] - A[1]) - (wc - wa) * (B[1] - A[1])) / det;
       const gy = ((wc - wa) * (B[0] - A[0]) - (wb - wa) * (C[0] - A[0])) / det;
-      tv += Math.hypot(gx, gy);
+      tv += hypot2(gx, gy);
     }
     tv /= 2;
     if (tv <= 0) continue;

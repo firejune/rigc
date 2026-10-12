@@ -35,6 +35,7 @@ import {
 } from './depth.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
 import { parseJsonWithPosition } from './json-position.ts';
+import { hypot2 } from './numeric.ts';
 // The "did you mean" list on a missing atlas region, from the one implementation
 // of it — the same search serves `refuseUnknownKeys`, and a second copy here with
 // a threshold edited is how such a pair drifts apart.
@@ -7581,7 +7582,7 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
   }
   const ex = Math.cos((deg * Math.PI) / 180);
   const ey = Math.sin((deg * Math.PI) / 180);
-  if (Math.hypot(unit[0] - ex, unit[1] - ey) > 1e-3) {
+  if (hypot2(unit[0] - ex, unit[1] - ey) > 1e-3) {
     throw new CompileError(
       `manifest axis.unit [${unit[0]}, ${unit[1]}] does not match axis.deg ${deg} (expected [${f32(ex)}, ${f32(ey)}])`,
     );
