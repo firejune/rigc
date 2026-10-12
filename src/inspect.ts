@@ -45,7 +45,8 @@
  * ⭐ **A fold is read, never judged** (issue #1383). `folds` fills each mesh
  * triangle that is turned over at the pose drawn — its world orientation the
  * opposite of the setup pose's — by `./folds.ts`, the reading `render --folds`
- * prints, so the picture and that line name the same triangles.
+ * prints, so the picture and that line name the same triangles — and the same
+ * box and area, which `--zoom folds` frames the picture to (issue #1386).
  *
  * Links nothing from the runtime: the poser is handed in.
  */
@@ -76,7 +77,7 @@ import {
   viewportFor,
 } from './render_shared.ts';
 import { hypot2 } from './numeric.ts';
-import { DEGENERATE_SHARE, foldedAt, FOLDS_READING, setupReading } from './folds.ts';
+import { DEGENERATE_SHARE, extentText, type FoldBox, foldedAt, foldExtent, type FoldPlant, FOLDS_READING, foldsOf, indexRuns, setupArea, setupReading } from './folds.ts';
 
 /** The legend's format tag. */
 export const INSPECT_SPEC = 'rigc-inspect/1';
@@ -313,6 +314,8 @@ export interface InspectPlant {
   densityTotalsFiltered?: boolean;
   /** Folds: fill every triangle of every kept mesh, folded or not. */
   foldsFillAll?: boolean;
+  /** Folds: a planted fold reading (`./folds.ts`) for the box and area the legend states and `--zoom folds` frames to. */
+  foldPlant?: FoldPlant;
 }
 
 /** A point in both spaces. */
@@ -458,6 +461,12 @@ export interface LegendFold {
   degenerate: number[];
   /** Drawn mirrored against the rest of the mesh at the setup pose, never counted — by index. */
   inverted: number[];
+  /** The world box of the folded triangles' vertices at this pose, `[minX, minY, maxX, maxY]`; `null` when none is folded (issue #1386). */
+  box: FoldBox | null;
+  /** The folded triangles' summed setup-pose area, world units² — 0 when none is folded. */
+  area: number;
+  /** `area` over the mesh's setup-pose area. */
+  share: number;
 }
 
 export interface LegendTile {
@@ -497,7 +506,7 @@ export interface InspectLegend {
   fps: number;
   framing:
     | { kind: 'shot'; note: string }
-    | { kind: 'zoom'; bone?: string; slot?: string; pad: number; padFrom: 'stated' | 'default' }
+    | { kind: 'zoom'; bone?: string; slot?: string; folds?: string; pad: number; padFrom: 'stated' | 'default' }
     | { kind: 'viewport' };
   /** `--bone` / `--hide-bone` as given — each bone they leave out says so in its `undrawn`. */
   boneFilter?: { include: string[] | null; exclude: string[] | null };
@@ -508,7 +517,7 @@ export interface InspectLegend {
   /** With `density`: the ramp, its scale, and how area, totals and ratio are read. */
   density?: { ramp: Array<{ ratio: number; rgba: number[] }>; scale: string; area: string; totals: string; ratio: string; reading: string };
   /** With `folds`: the colour a folded triangle is filled with, the degenerate share, and what folded, degenerate and inverted mean. */
-  folds?: { rgba: number[]; meaning: string; degenerateShare: number; folded: string; degenerate: string; inverted: string; index: string };
+  folds?: { rgba: number[]; meaning: string; degenerateShare: number; folded: string; degenerate: string; inverted: string; index: string; box: string; area: string };
   /** With `--compare`: each build, the poser that posed it and its `skeleton.json`'s sha256; a tile names its own in `build`. */
   builds?: Array<{ build: 'A' | 'B'; poser: 'core' | 'spine'; skeletonSha256: string }>;
   coordinates: { world: string; image: string; toPixel: string; toWorld: string };
@@ -598,7 +607,7 @@ export function readTimes(raw: string | undefined): number[] {
   return times;
 }
 
-/** `--zoom <name>[:<pad>]`: the name, and the pad in world units when one is stated. */
+/** `--zoom <name>[:<pad>]`: the name — a bone, a slot or `folds` — and the pad in world units when one is stated. */
 export function readZoom(raw: string): { target: string; pad: number | null } {
   const colon = raw.lastIndexOf(':');
   if (colon > 0) {
@@ -609,7 +618,7 @@ export function readZoom(raw: string): { target: string; pad: number | null } {
       return { target: raw.slice(0, colon), pad };
     }
   }
-  if (raw === '') throw new InspectError('--zoom needs a bone or slot name: --zoom <name>[:<pad>]');
+  if (raw === '') throw new InspectError('--zoom needs a bone or slot name, or folds: --zoom <name|folds>[:<pad>]');
   return { target: raw, pad: null };
 }
 
@@ -1075,10 +1084,17 @@ function slotsLeftOut(slots: ReadonlyArray<{ name: string }>, filter: SlotFilter
 // the view
 // ---------------------------------------------------------------------------
 
-/** The poses one picture is of: the frames, in the order the request named their times. */
-function posesOf(poser: Poser, request: InspectRequest, needAttachments: boolean): Array<{ frame: Frame; index: number }> {
+/**
+ * The poses one picture is of: the frames, in the order the request named their
+ * times — and every frame of the grid they were taken from, which `--zoom folds`
+ * reads when nothing is folded at the times drawn.
+ */
+function posesOf(poser: Poser, request: InspectRequest, needAttachments: boolean): { poses: Array<{ frame: Frame; index: number }>; grid: Frame[] } {
   const opts: PoseOptions = { bones: true, ...(needAttachments ? { geometry: true } : {}), ...(request.skin === undefined ? {} : { skin: request.skin }) };
-  if (request.animation === null) return [{ frame: sampleSetupPose(poser, opts)[0], index: 0 }];
+  if (request.animation === null) {
+    const grid = sampleSetupPose(poser, opts);
+    return { poses: [{ frame: grid[0], index: 0 }], grid };
+  }
   const animation = poser.animations.find((a) => a.name === request.animation);
   if (animation === undefined) {
     throw new InspectError(`no animation ${JSON.stringify(request.animation)} in this skeleton; it has [${poser.animations.map((a) => a.name).join(', ') || 'none'}]`);
@@ -1090,10 +1106,66 @@ function posesOf(poser: Poser, request: InspectRequest, needAttachments: boolean
     seen.add(index);
   }
   const frames = sampleAnimation(poser, animation.name, request.fps, opts);
-  return indices.map((index) => ({ frame: frames[index], index }));
+  return { poses: indices.map((index) => ({ frame: frames[index], index })), grid: frames };
 }
 
 type WorldBox = [number, number, number, number];
+
+/** The word `--zoom` takes for the fold reading's box rather than a bone's or a slot's (issue #1386). */
+export const ZOOM_FOLDS = 'folds';
+
+/**
+ * `--zoom folds`: the world box of every folded triangle of every kept mesh at
+ * the times drawn — the box the legend's `folds[]` states per tile, unioned —
+ * or, when none is folded there, `null` and the sentence that says which frames
+ * of the grid do fold, so the refusal points at them.
+ */
+function foldsZoomBox(
+  poser: Poser,
+  poses: ReadonlyArray<{ frame: Frame }>,
+  grid: readonly Frame[],
+  slotsOut: ReadonlySet<string>,
+  request: InspectRequest,
+  plant: InspectPlant,
+): { box: WorldBox; folds: string } | { miss: string } {
+  const rests = new Map<string, AttachmentRest>();
+  const restOf = (frames: ReadonlyArray<{ frame: Frame }>): void => {
+    for (const r of poser.rest(request.skin, frames.map((p) => p.frame.attachments ?? []))) rests.set(restKey(r.slot, r.attachment), r);
+  };
+  restOf(poses);
+  const box: WorldBox = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const { frame } of poses) {
+    for (const shown of frame.attachments ?? []) {
+      if (slotsOut.has(shown.slot)) continue;
+      const rest = rests.get(restKey(shown.slot, shown.attachment));
+      if (rest === undefined || rest.kind !== 'mesh') continue;
+      const extent = foldExtent(rest, shown.vertices, foldedAt(rest, setupReading(rest), shown.vertices), setupArea(rest), plant.foldPlant);
+      if (extent === null) continue;
+      box[0] = Math.min(box[0], extent.box[0]);
+      box[1] = Math.min(box[1], extent.box[1]);
+      box[2] = Math.max(box[2], extent.box[2]);
+      box[3] = Math.max(box[3], extent.box[3]);
+    }
+  }
+  const kept = request.slotFilter === undefined ? 'mesh' : 'mesh the filter keeps';
+  if (box.every(Number.isFinite)) return { box, folds: `every triangle of every ${kept} folded over at the time(s) drawn` };
+  const at = request.animation === null ? 'the setup pose' : `t=${request.times.map((t) => `${t}s`).join(', ')}`;
+  if (request.animation === null) {
+    return { miss: `no ${kept} has a triangle folded over at ${at} — the setup pose is what a fold is read against, so nothing folds there; name --animation <name> --at <s>` };
+  }
+  // Where the grid does fold: the reading `render --folds` prints, over every frame of it, for the kept meshes.
+  restOf(grid.map((frame) => ({ frame })));
+  const keptRest = [...rests.values()].filter((r) => !slotsOut.has(r.slot));
+  const read = grid.map((frame, index) => ({ index, time: frame.time, attachments: (frame.attachments ?? []).filter((a) => !slotsOut.has(a.slot)) }));
+  const folding = foldsOf(keptRest, read).filter((m) => m.worst !== null);
+  const where =
+    folding.length === 0
+      ? `no ${kept} folds on any frame of ${JSON.stringify(request.animation)} at ${request.fps} fps`
+      : `at ${request.fps} fps these do: ${folding
+          .map((m) => `"${m.slot}" on frame(s) [${indexRuns(m.frames.map((f) => f.index))}], worst frame ${m.worst?.index} (t=${m.worst?.time.toFixed(4)}s)`)
+          .join('; ')}`;
+  return { miss: `no ${kept} has a triangle folded over at ${at} of ${JSON.stringify(request.animation)} — ${where}` };
+}
 
 /** The world box of what `--zoom` names, over every pose of the picture. */
 function zoomBox(
@@ -1167,7 +1239,9 @@ interface Gathered {
   poses: Array<{ frame: Frame; index: number }>;
   /** `render`'s framing of the build — taken only when the picture is framed as a shot. */
   shot: Viewport | null;
-  zoom: { box: WorldBox; bone?: string; slot?: string } | null;
+  zoom: { box: WorldBox; bone?: string; slot?: string; folds?: string } | null;
+  /** `--zoom folds` with nothing folded at the times drawn: which frames do — the refusal's words, when no build has a box. */
+  foldsMiss: string | null;
   /** The rest table's topology for every attachment a pose shows, by `slot\0attachment` — taken only when a mesh view is drawn. */
   rest: Map<string, AttachmentRest> | null;
   pages: Map<string, Plate>;
@@ -1202,18 +1276,35 @@ function gather(tag: 'A' | 'B', candidate: Candidate, texts: InspectTexts, reque
     const lengths = boneLengths(texts.skeletonText);
     const meshViews = request.show.some((w) => MESH_VIEWS.includes(w));
     const needAttachments = request.frame.kind === 'zoom' || meshViews || request.show.includes('slots');
+    const zoomFolds = request.frame.kind === 'zoom' && request.frame.target === ZOOM_FOLDS && plant.zoomBone === undefined;
     const posed = throughPoser(candidate.choice, (poser, roster) => {
-      const poses = posesOf(poser, request, needAttachments);
+      if (zoomFolds && (poser.bones.some((b) => b.name === ZOOM_FOLDS) || poser.slots.some((s) => s.name === ZOOM_FOLDS))) {
+        // The word and a name in the rig would mean two boxes; which is meant is the caller's to say, as with a bone and a slot.
+        throw new InspectError(
+          `--zoom ${ZOOM_FOLDS} is the fold reading's box, and this skeleton also has a ${poser.bones.some((b) => b.name === ZOOM_FOLDS) ? 'bone' : 'slot'} named "${ZOOM_FOLDS}"; ` +
+            `for that one write --zoom bone:${ZOOM_FOLDS} or --zoom slot:${ZOOM_FOLDS}, and for the folds a --viewport around the box render --folds prints`,
+        );
+      }
+      const { poses, grid } = posesOf(poser, request, needAttachments);
       const shot =
         request.frame.kind === 'shot' ? framingViewport(poser, request.maxSide, request.skin === undefined ? undefined : { skin: request.skin }, roster) : null;
       if (request.frame.kind === 'shot' && shot === null) {
         throw new InspectError('this skeleton poses no drawable attachment in any animation or in its setup pose — there is nothing to frame; name a box with --viewport');
       }
-      const zoom = request.frame.kind === 'zoom' ? zoomBox(poser, poses, plant.zoomBone ?? request.frame.target, lengths) : null;
+      const folds = zoomFolds ? foldsZoomBox(poser, poses, grid, slotsLeftOut(poser.slots, request.slotFilter, plant.ignoreSlotFilter !== true), request, plant) : null;
+      const zoom =
+        folds !== null
+          ? 'box' in folds
+            ? folds
+            : null
+          : request.frame.kind === 'zoom'
+            ? zoomBox(poser, poses, plant.zoomBone ?? request.frame.target, lengths)
+            : null;
+      const foldsMiss = folds !== null && 'miss' in folds ? folds.miss : null;
       const rest = meshViews
         ? new Map(poser.rest(request.skin, poses.map((p) => p.frame.attachments ?? [])).map((r) => [restKey(r.slot, r.attachment), r]))
         : null;
-      return { poses, shot, zoom, rest, bones: poser.bones, slots: poser.slots };
+      return { poses, shot, zoom, foldsMiss, rest, bones: poser.bones, slots: poser.slots };
     });
     return {
       tag,
@@ -1275,6 +1366,11 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
     framing = { kind: 'viewport' };
   } else if (request.frame.kind === 'zoom') {
     const found = builds.map((b) => b.zoom).filter((z): z is NonNullable<Gathered['zoom']> => z !== null);
+    if (found.length === 0) {
+      // Only `--zoom folds` finds nothing without having refused already: a bone or slot that names nothing is refused while posing.
+      const misses = builds.map((b) => (compare ? `${b.tag === 'A' ? 'the --candidate build' : 'the --compare build'}: ${b.foldsMiss ?? ''}` : (b.foldsMiss ?? '')));
+      throw new InspectError(`--zoom ${request.frame.target}: nothing to frame — ${misses.join('; ')}`);
+    }
     const [x0, y0, x1, y1] = found.reduce<WorldBox>(
       (u, z) => [Math.min(u[0], z.box[0]), Math.min(u[1], z.box[1]), Math.max(u[2], z.box[2]), Math.max(u[3], z.box[3])],
       [Infinity, Infinity, -Infinity, -Infinity],
@@ -1289,7 +1385,14 @@ function view(builds: readonly Gathered[], request: InspectRequest, plant: Inspe
     }
     viewport = viewportFor(x0 - pad, y0 - pad, x1 + pad, y1 + pad, request.maxSide);
     const first = found[0];
-    framing = { kind: 'zoom', ...(first?.bone === undefined ? {} : { bone: first.bone }), ...(first?.slot === undefined ? {} : { slot: first.slot }), pad, padFrom: request.frame.pad === null ? 'default' : 'stated' };
+    framing = {
+      kind: 'zoom',
+      ...(first?.bone === undefined ? {} : { bone: first.bone }),
+      ...(first?.slot === undefined ? {} : { slot: first.slot }),
+      ...(first?.folds === undefined ? {} : { folds: first.folds }),
+      pad,
+      padFrom: request.frame.pad === null ? 'default' : 'stated',
+    };
   } else {
     const shots = builds.map((b) => b.shot).filter((v): v is Viewport => v !== null);
     if (!compare) {
@@ -1587,7 +1690,18 @@ function drawTile(
         };
         for (const t of fill) fillTriangle(tile, [at(rest.triangles[3 * t]), at(rest.triangles[3 * t + 1]), at(rest.triangles[3 * t + 2])], [...FOLD_COLOUR.rgba] as RGBA);
         if (folded.length === 0 && degenerate.length === 0 && inverted.length === 0) continue;
-        legendTile.folds.push({ slot: shown.slot, attachment: shown.attachment, triangleCount: rest.triangles.length / 3, folded, degenerate, inverted });
+        const extent = foldExtent(rest, shown.vertices, folded, setupArea(rest), plant.foldPlant);
+        legendTile.folds.push({
+          slot: shown.slot,
+          attachment: shown.attachment,
+          triangleCount: rest.triangles.length / 3,
+          folded,
+          degenerate,
+          inverted,
+          box: extent === null ? null : extent.box,
+          area: extent === null ? 0 : extent.area,
+          share: extent === null ? 0 : extent.share,
+        });
       }
       if (first) {
         const count = legendTile.folds.reduce((n, f) => n + f.folded.length, 0);
@@ -1595,7 +1709,9 @@ function drawTile(
         notes.push(
           count === 0
             ? `folds: no mesh${request.slotFilter === undefined ? '' : ' the filter keeps'} has a triangle folded over at this pose — nothing filled`
-            : `folds: ${count} triangle(s) folded over across ${meshes.length} mesh(es) — ${meshes.map((f) => `"${f.slot}" [${f.folded.join(', ')}]`).join(', ')} — every one is in the legend`,
+            : `folds: ${count} triangle(s) folded over across ${meshes.length} mesh(es) — ${meshes
+                .map((f) => `"${f.slot}" [${f.folded.join(', ')}]${f.box === null ? '' : ` ${extentText({ box: f.box, area: f.area, share: f.share })}`}`)
+                .join(', ')} — every one is in the legend`,
         );
         const faulted = legendTile.folds.filter((f) => f.degenerate.length > 0 || f.inverted.length > 0);
         if (faulted.length > 0) notes.push(`folds: setup faults, never counted — ${faulted.map((f) => `"${f.slot}" degenerate [${f.degenerate.join(', ')}] inverted [${f.inverted.join(', ')}]`).join(', ')}`);

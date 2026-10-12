@@ -36,6 +36,12 @@
  * A mesh mirrored whole by a negative scale reads every triangle as folded: that
  * is what "opposite to the setup pose" is, and the count says which it was.
  *
+ * ## Where and how big (issue #1386)
+ *
+ * Each folded frame also carries the world box of its folded triangles' posed
+ * vertices and their summed setup-pose area, alone and as a share of the mesh's
+ * — `foldExtent` says why the box is the frame's and the area the setup pose's.
+ *
  * Pure: no clock, no randomness, no runtime. The posed vertices are handed in by
  * whichever poser drew the frames (rigc's core for a rigc build).
  */
@@ -98,8 +104,21 @@ export interface SetupFaults {
   inverted: number[];
 }
 
+/** A world box `[minX, minY, maxX, maxY]`, world units, y up. */
+export type FoldBox = [number, number, number, number];
+
+/** Where a set of folded triangles is at one pose, and how big they are (issue #1386). */
+export interface FoldExtent {
+  /** The world box of the folded triangles' vertices as posed at this frame — every vertex of each, nothing else. */
+  box: FoldBox;
+  /** Their summed area at the setup pose, world units² — each triangle's unsigned area in the rest table. */
+  area: number;
+  /** `area` over the mesh's own setup-pose area (every triangle's, unsigned): the share of the mesh's art that is turned over. */
+  share: number;
+}
+
 /** One frame on which a mesh has a folded triangle. */
-export interface FoldedFrame {
+export interface FoldedFrame extends FoldExtent {
   index: number;
   time: number;
   /** The folded triangles, by index (`triangles[3i..3i+2]` of the rest table), ascending. */
@@ -112,6 +131,8 @@ export interface MeshFolds {
   attachment: string;
   /** How many triangles the mesh has. */
   triangleCount: number;
+  /** The mesh's area at the setup pose, world units²: every triangle's unsigned area in the rest table, summed — what `share` is over. */
+  area: number;
   setup: SetupFaults;
   /** Every frame with a folded triangle, in frame order; empty when the mesh never folds. */
   frames: FoldedFrame[];
@@ -129,7 +150,7 @@ export interface FoldsFile {
   skin?: string;
   fps: number;
   /** What the numbers mean, stated in the file so a reader does not need this module. */
-  reading: { folded: string; degenerate: string; inverted: string; index: string };
+  reading: { folded: string; degenerate: string; inverted: string; index: string; box: string; area: string };
   /** Every mesh any frame of the set shows, in the order the rest table lists them. */
   meshes: MeshFolds[];
 }
@@ -145,6 +166,10 @@ export interface FoldPlant {
   againstPreviousFrame?: boolean;
   /** Count the setup pose's degenerate and inverted triangles like any other. */
   countSetupFaults?: boolean;
+  /** Box every vertex of the mesh at the frame, rather than the folded triangles' vertices. */
+  boxWholeMesh?: boolean;
+  /** Size the folded triangles by their unsigned area as posed at the frame, rather than at the setup pose. */
+  areaPosed?: boolean;
 }
 
 /** Twice the signed area of triangle `t` in `xy` (`x, y` per vertex). */
@@ -249,6 +274,49 @@ export function foldedAt(rest: FoldRest, setup: SetupReading, vertices: readonly
   return out;
 }
 
+/** A mesh's area at the setup pose: every triangle's unsigned area in the rest table, summed in index order. */
+export function setupArea(rest: FoldRest): number {
+  let area = 0;
+  for (let t = 0; t < Math.floor(rest.triangles.length / 3); t++) area += Math.abs(cross2(rest.vertices, rest.triangles, t)) / 2;
+  return area;
+}
+
+/**
+ * Where `triangles` of one mesh are at one pose and how big they are: the world
+ * box of their posed vertices, and their summed setup-pose area, alone and as a
+ * share of `meshArea` (`setupArea(rest)`). `null` for no triangle.
+ *
+ * ⭐ The box is the pose's and the area is the setup pose's, on purpose. The box
+ * answers "where is it in this frame" — it is what a picture is framed to. The
+ * area answers "how much of the art is turned over", and a folded triangle's
+ * posed area cannot: it passes through 0 at the frame the triangle turns, so one
+ * triangle reads a different size on every frame it is folded and none of them
+ * says how much art it carries.
+ */
+export function foldExtent(
+  rest: FoldRest,
+  vertices: readonly number[],
+  triangles: readonly number[],
+  meshArea: number,
+  plant: FoldPlant = {},
+): FoldExtent | null {
+  if (triangles.length === 0) return null;
+  const box: FoldBox = [Infinity, Infinity, -Infinity, -Infinity];
+  const take = (v: number): void => {
+    box[0] = Math.min(box[0], vertices[2 * v]);
+    box[1] = Math.min(box[1], vertices[2 * v + 1]);
+    box[2] = Math.max(box[2], vertices[2 * v]);
+    box[3] = Math.max(box[3], vertices[2 * v + 1]);
+  };
+  if (plant.boxWholeMesh) for (let v = 0; v < vertices.length / 2; v++) take(v);
+  let area = 0;
+  for (const t of triangles) {
+    if (!plant.boxWholeMesh) for (let k = 0; k < 3; k++) take(rest.triangles[3 * t + k]);
+    area += Math.abs(cross2(plant.areaPosed ? vertices : rest.vertices, rest.triangles, t)) / 2;
+  }
+  return { box, area, share: meshArea > 0 ? area / meshArea : 0 };
+}
+
 const restKey = (slot: string, attachment: string): string => `${slot}\u0000${attachment}`;
 
 /**
@@ -264,6 +332,7 @@ export function foldsOf(rest: readonly FoldRest[], frames: readonly FoldFrame[],
   for (const r of rest) {
     if (r.kind !== 'mesh' || !shown.has(restKey(r.slot, r.attachment))) continue;
     let setup = setupReading(r, plant);
+    const area = setupArea(r);
     const folded: FoldedFrame[] = [];
     const union = new Set<number>();
     for (const frame of frames) {
@@ -274,9 +343,10 @@ export function foldsOf(rest: readonly FoldRest[], frames: readonly FoldFrame[],
         const signs = Int8Array.from(setup.signs, (sign, t) => (triangles.includes(t) ? -sign : sign));
         setup = { ...setup, signs };
       }
-      if (triangles.length === 0) continue;
+      const extent = foldExtent(r, posed.vertices, triangles, area, plant);
+      if (extent === null) continue;
       for (const t of triangles) union.add(t);
-      folded.push({ index: frame.index, time: frame.time, triangles });
+      folded.push({ index: frame.index, time: frame.time, triangles, ...extent });
     }
     let worst: FoldedFrame | null = null;
     for (const f of folded) if (worst === null || f.triangles.length > worst.triangles.length) worst = f;
@@ -284,6 +354,7 @@ export function foldsOf(rest: readonly FoldRest[], frames: readonly FoldFrame[],
       slot: r.slot,
       attachment: r.attachment,
       triangleCount: setup.signs.length,
+      area,
       setup: setup.faults,
       frames: folded,
       worst,
@@ -301,6 +372,9 @@ export const FOLDS_READING: FoldsFile['reading'] = {
   inverted:
     "a triangle drawn mirrored against the rest of its mesh at the setup pose: the sign of world area x UV area is the opposite of the mesh's own sense (that product summed over its triangles, weighted by world area). Setup faults are listed once and never counted as folds",
   index: 'a triangle is named by its index i in the rest table: vertices triangles[3i], triangles[3i+1], triangles[3i+2]',
+  box: "a frame's box is [minX, minY, maxX, maxY] in world units (y up) over every vertex of that frame's folded triangles as posed there, and nothing else",
+  area:
+    "a frame's area is its folded triangles' unsigned areas at the setup pose (the rest table), summed, in world units²; share is that over the mesh's area, every triangle's unsigned setup-pose area summed. The setup pose's, not the frame's: a folded triangle's posed area passes through 0 as it turns, so it says how far the turn has gone rather than how much art is turned over",
 };
 
 /** The file for one frame set. */
@@ -325,10 +399,27 @@ export function indexRuns(indices: readonly number[]): string {
   return runs.join(', ');
 }
 
+/** `x` rounded to hundredths away from the box's inside, so the printed box holds every vertex the exact one does. */
+const outward = (x: number, up: boolean): string => ((up ? Math.ceil(x * 100) : Math.floor(x * 100)) / 100).toFixed(2);
+
+/**
+ * Where and how big, as the fold line and the inspect note print it:
+ * `in world box x [x0, x1] y [y0, y1] (w × h), setup-pose area A units² = S% of the mesh's`.
+ * The box is rounded outward to hundredths; the file states it exactly.
+ */
+export function extentText(extent: FoldExtent): string {
+  const [x0, y0, x1, y1] = extent.box;
+  return (
+    `in world box x [${outward(x0, false)}, ${outward(x1, true)}] y [${outward(y0, false)}, ${outward(y1, true)}] ` +
+    `(${(x1 - x0).toFixed(2)} × ${(y1 - y0).toFixed(2)}), setup-pose area ${extent.area.toFixed(2)} units² = ${(100 * extent.share).toPrecision(3)}% of the mesh's`
+  );
+}
+
 /**
  * The printed line for a mesh that folds, or `null` for one that never does.
  * It names the animation, the mesh and its slot, the frames, the worst frame's
- * count and its triangles, and every triangle folded on any frame.
+ * count, its triangles, where they are and how big, and every triangle folded
+ * on any frame.
  */
 export function foldLine(animation: string | null, fps: number, mesh: MeshFolds): string | null {
   const worst = mesh.worst;
@@ -337,7 +428,8 @@ export function foldLine(animation: string | null, fps: number, mesh: MeshFolds)
   const frames = mesh.frames.map((f) => f.index);
   return (
     `${where}: mesh "${mesh.attachment}" (slot "${mesh.slot}") folds on ${frames.length} frame(s) [${indexRuns(frames)}] at ${fps} fps; ` +
-    `worst frame ${worst.index} (t=${worst.time.toFixed(4)}s): ${worst.triangles.length} of ${mesh.triangleCount} triangle(s) [${worst.triangles.join(', ')}]; ` +
+    `worst frame ${worst.index} (t=${worst.time.toFixed(4)}s): ${worst.triangles.length} of ${mesh.triangleCount} triangle(s) [${worst.triangles.join(', ')}] ` +
+    `${extentText(worst)}; ` +
     `${mesh.folded.length} triangle(s) fold on some frame [${mesh.folded.join(', ')}]`
   );
 }

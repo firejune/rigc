@@ -129694,18 +129694,22 @@ function runRepackSuite(): number {
 // ---------------------------------------------------------------------------
 
 import { DEGENERATE_SHARE, type FoldPlant, FOLDS_FILE, type FoldsFile, foldsOf, type MeshFolds } from './src/folds.ts';
-import { FOLD_COLOUR } from './src/inspect.ts';
+import { FOLD_COLOUR, InspectError } from './src/inspect.ts';
 
 /**
  * The fold probe's chosen numbers, world units. Every bone sits at the origin,
  * so a vertex's bone-local position is its world position, and every expected
  * frame below is derived from these by the area formula — never read off a run.
  *
- * - `sheet` — a 20 × 20 square split on its diagonal into triangles 0 (v0 v1 v2)
- *   and 1 (v0 v2 v3). v1 alone is weighted to `lift`, which `bend` translates by
- *   `lift` at s = 1, so triangle 0 turns over once its doubled area
- *   `side² − side·(lift.y − lift.x)·s`, written out in `foldProbeFolds`, goes
- *   below zero; triangle 1 holds no moving vertex.
+ * - `sheet` — a quadrilateral split on its diagonal into triangles 0 (v0 v1 v2),
+ *   half of a 20 × 20 square, and 1 (v0 v2 v3), with v3 at (−side, side) so the
+ *   mesh reaches past triangle 0's box (issue #1386: a box of the whole mesh is
+ *   then wider than the folded triangle's). v3's UV is the square's corner (0, 0),
+ *   so both triangles keep the mesh's sense. v1 alone is weighted to `lift`, which
+ *   `bend` translates by `lift` at s = 1, so triangle 0 turns over once its doubled
+ *   area `side² − side·(lift.y − lift.x)·s`, written out in `foldProbeFolds`, goes
+ *   below zero; triangle 1 holds no moving vertex. Setup-pose areas: triangle 0
+ *   side²/2, triangle 1 side² (`foldProbeSheetAreas`).
  * - `still` — one triangle on the root, which nothing moves.
  * - `odd` — a square at y −40 with two triangles that are wrong at the setup
  *   pose: triangle 2 (v2 v3 v4), whose UVs are mirrored against the rest of the
@@ -129746,10 +129750,25 @@ function foldProbeFolds(fps: number): number[] {
   return out;
 }
 
+/** `sheet`'s triangle 0's vertices as `bend` poses them at time t, from the probe's numbers: v0, v1 and v2. */
+function foldProbeTriangle0(t: number): Array<[number, number]> {
+  const { side, lift } = FOLD_PROBE;
+  const s = foldProbeS(t);
+  return [[0, 0], [side + lift.x * s, lift.y * s], [side, side]];
+}
+
+/** `sheet`'s setup-pose areas: triangle 0 (half the square) and triangle 1 (v0, v2 and v3 at (−side, side)), and the mesh's — summed in index order, as the reading sums. */
+function foldProbeSheetAreas(): { folded: number; mesh: number } {
+  const { side } = FOLD_PROBE;
+  const folded = (side * side) / 2;
+  return { folded, mesh: 0 + folded + side * side };
+}
+
 /** The fold probe: three meshes, two animations — built with a model document, so the core poses it. */
 function writeFoldProbe(): { outDir: string; work: string; built: string[] } {
   const { side, lift, nudge, oddY, duration } = FOLD_PROBE;
   const square: Array<[number, number]> = [[0, 0], [side, 0], [side, side], [0, side]];
+  const sheet: Array<[number, number]> = [[0, 0], [side, 0], [side, side], [-side, side]];
   const uvOf = ([x, y]: [number, number]): [number, number] => [x / side, 1 - y / side];
   const weighted = (points: Array<[number, number]>, moving: ReadonlySet<number>, bone: string): unknown[] =>
     points.map(([x, y], i) => [{ bone: moving.has(i) ? bone : 'root', x, y, weight: 1 }]);
@@ -129768,7 +129787,7 @@ function writeFoldProbe(): { outDir: string; work: string; built: string[] } {
     ],
     skins: {
       default: {
-        sheet: { sheet: { type: 'mesh', image: 'block.png', uvs: square.flatMap(uvOf), triangles: [0, 1, 2, 0, 2, 3], hull: 4, weights: weighted(square, new Set([1]), 'lift') } },
+        sheet: { sheet: { type: 'mesh', image: 'block.png', uvs: square.flatMap(uvOf), triangles: [0, 1, 2, 0, 2, 3], hull: 4, weights: weighted(sheet, new Set([1]), 'lift') } },
         still: { still: { type: 'mesh', image: 'block.png', uvs: [0, 1, 1, 1, 0, 0], triangles: [0, 1, 2], hull: 3, vertices: [2 * side, 0, 3 * side, 0, 2 * side, side] } },
         odd: { odd: { type: 'mesh', image: 'block.png', uvs: oddUvs.flat(), triangles: [0, 2, 4, 0, 4, 5, 2, 3, 4, 0, 2, 1], hull: odd.length, weights: weighted(odd, new Set([1, 3]), 'nudge') } },
       },
@@ -129988,7 +130007,7 @@ function runFoldsSuite(): number {
       if (tile !== undefined) {
         const s = foldProbeS(tile.time);
         const { side, lift } = FOLD_PROBE;
-        const v: Array<[number, number]> = [[0, 0], [side + lift.x * s, lift.y * s], [side, side], [0, side]];
+        const v: Array<[number, number]> = [[0, 0], [side + lift.x * s, lift.y * s], [side, side], [-side, side]];
         const centre = (ids: number[]): [number, number] => [ids.reduce((n, i) => n + v[i][0], 0) / 3, ids.reduce((n, i) => n + v[i][1], 0) / 3];
         const { minX, maxY, scale, x0, y0 } = tile.transform;
         const colourAt = ([wx, wy]: [number, number]): string => view.plate.get(Math.floor(x0 + (wx - minX) * scale), Math.floor(y0 + (maxY - wy) * scale)).join();
@@ -130031,7 +130050,190 @@ function runFoldsSuite(): number {
       'issue #1383: a fill that does not depend on the reading would pass a legend-only control',
     );
   }
+
+  // FO10 — every folded frame says where (the folded triangle's posed box) and how big (its setup-pose area and share).
+  const extentFaults = (meshes: readonly MeshFolds[]): string[] => foldExtentFaults(meshes, geometryFile, fps);
+  {
+    const probes = [...pre];
+    if (bendFile !== null) {
+      probes.push(...extentFaults(bendFile.meshes));
+      const line = lines.find((l) => l.includes('folds    "bend": mesh "sheet"'));
+      // The worst frame is the first folded one. Its printed box is rounded outward to hundredths: it has to hold the
+      // exact box the file states and be no more than a hundredth wider on any side.
+      const exact = bendFile.meshes.find((m) => m.slot === 'sheet')?.worst?.box ?? null;
+      const { folded: area, mesh } = foldProbeSheetAreas();
+      const tail = `setup-pose area ${area.toFixed(2)} units² = ${((100 * area) / mesh).toPrecision(3)}% of the mesh's`;
+      const printed = /\[0\] in world box x \[(-?[\d.]+), (-?[\d.]+)\] y \[(-?[\d.]+), (-?[\d.]+)\] \([\d.]+ × [\d.]+\), (.*?);/.exec(line ?? '');
+      if (line === undefined) probes.push('render --folds printed no folds line for "bend" mesh "sheet"');
+      else if (printed === null || exact === null) probes.push(`the line ${JSON.stringify(line.trim())} states no world box after the worst frame's triangles`);
+      else {
+        const [px0, px1, py0, py1] = printed.slice(1, 5).map(Number);
+        const holds = px0 <= exact[0] && py0 <= exact[1] && px1 >= exact[2] && py1 >= exact[3];
+        const snug = exact[0] - px0 <= 0.01 && exact[1] - py0 <= 0.01 && px1 - exact[2] <= 0.01 && py1 - exact[3] <= 0.01;
+        if (!holds || !snug) probes.push(`the printed box [${px0}, ${py0}, ${px1}, ${py1}] does not hold the file's ${JSON.stringify(exact)} within a hundredth outward`);
+        if (printed[5] !== tail) probes.push(`the line says ${JSON.stringify(printed[5])}, the probe's numbers ${JSON.stringify(tail)}`);
+      }
+    }
+    const ok = probes.length === 0;
+    const { folded: area, mesh } = foldProbeSheetAreas();
+    say(
+      'FO10_A_FOLDED_FRAME_STATES_ITS_BOX_AND_ITS_SETUP_POSE_AREA',
+      ok,
+      probeDetail(ok, probes, `"sheet" on each of frames [${want.join(', ')}]: box = the bounds of triangle 0's three vertices as posed there — the same doubles ${GEOMETRY_FILE} holds, and the probe's formula to side·1e-6 — never reaching v3 at x = −${FOLD_PROBE.side}; area ${area} = side²/2 and share ${area}/${mesh} of the mesh's setup-pose area on every frame; the printed line carries the worst frame's box and area`),
+      'issue #1386: a triangle index and a frame do not say where the fold is or how big — three slivers and three skirt panels read the same as counts',
+    );
+  }
+
+  // FO11 — inspect --zoom folds frames the picture to the folded triangles' box, padded; with nothing folded it refuses, naming the frames that fold.
+  const pad = 2;
+  const deepest = FOLD_PROBE.duration / 2;
+  const zoomRequest = (times: number[], over?: string[]): InspectRequest => ({
+    show: ['folds'],
+    dim: false,
+    animation: 'bend',
+    times,
+    fps,
+    skin: undefined,
+    frame: { kind: 'zoom', target: 'folds', pad },
+    maxSide: 64,
+    ...(over === undefined ? {} : { slotFilter: { include: over } }),
+  });
+  const zoomFaults = (view: ReturnType<typeof inspectCandidate>): string[] => {
+    const faults: string[] = [];
+    // The union over the two tiles, from the probe's numbers: the first folded frame and the deepest bend.
+    const boxes = [boxOf(foldProbeTriangle0(want[0] / fps)), boxOf(foldProbeTriangle0(deepest))];
+    const required = [
+      Math.min(...boxes.map((b) => b[0])) - pad,
+      Math.min(...boxes.map((b) => b[1])) - pad,
+      Math.max(...boxes.map((b) => b[2])) + pad,
+      Math.max(...boxes.map((b) => b[3])) + pad,
+    ];
+    const { minX, minY, maxX, maxY } = view.legend.viewport;
+    const got = [minX, minY, maxX, maxY];
+    if (got.some((g, i) => Math.abs(g - required[i]) > FOLD_PROBE_TOLERANCE)) faults.push(`viewport ${JSON.stringify(got)}, required the folded triangle's box over both times padded by ${pad}: ${JSON.stringify(required)}`);
+    const framing = view.legend.framing;
+    if (framing.kind !== 'zoom' || framing.folds === undefined || framing.pad !== pad || framing.padFrom !== 'stated') faults.push(`framing ${JSON.stringify(framing)}, required zoom with folds and pad ${pad} stated`);
+    const { folded: area, mesh } = foldProbeSheetAreas();
+    for (const [k, tile] of view.legend.tiles.entries()) {
+      const sheet = (tile.folds ?? []).find((f) => f.slot === 'sheet');
+      const box = boxOf(foldProbeTriangle0(tile.time));
+      if (sheet === undefined || sheet.box === null) faults.push(`tile ${k}: legend folds[] has no box for "sheet"`);
+      else if (
+        sheet.box.some((g, i) => Math.abs(g - box[i]) > FOLD_PROBE_TOLERANCE) ||
+        Math.abs(sheet.area - area) > FOLD_PROBE_TOLERANCE * FOLD_PROBE.side ||
+        Math.abs(sheet.share - area / mesh) > FOLD_PROBE_TOLERANCE / FOLD_PROBE.side
+      ) {
+        faults.push(`tile ${k}: "sheet" box ${JSON.stringify(sheet.box)} area ${sheet.area} share ${sheet.share}, required ${JSON.stringify(box)}, ${area}, ${area / mesh}`);
+      }
+      const odd = (tile.folds ?? []).find((f) => f.slot === 'odd');
+      if (odd !== undefined && (odd.box !== null || odd.area !== 0 || odd.share !== 0)) faults.push(`tile ${k}: "odd", which has no fold, states box ${JSON.stringify(odd.box)} area ${odd.area}`);
+    }
+    return faults;
+  };
+  const refusal = (request: InspectRequest): string => {
+    try {
+      inspectBuildView(probe.outDir, request);
+      return '';
+    } catch (err) {
+      if (err instanceof InspectError) return err.message;
+      throw err;
+    }
+  };
+  {
+    const probes = [...pre];
+    const runs = `[${want[0]}-${want[want.length - 1]}]`;
+    if (pre.length === 0) {
+      probes.push(...zoomFaults(inspectBuildView(probe.outDir, zoomRequest([want[0] / fps, deepest]))));
+      const none = refusal(zoomRequest([0]));
+      if (none === '') probes.push('--zoom folds at t=0, where nothing is folded, drew a picture');
+      else if (!none.includes(`"sheet" on frame(s) ${runs}`) || none.includes('"still"') || none.includes('"odd"')) probes.push(`the refusal at t=0 ${JSON.stringify(none)} does not name "sheet" on frames ${runs} alone`);
+      const kept = refusal(zoomRequest([want[0] / fps], ['still']));
+      if (kept === '') probes.push('--zoom folds --overlay-slot still at a folded time drew a picture — the filter leaves no mesh that folds');
+      else if (!kept.includes('no mesh the filter keeps folds on any frame')) probes.push(`the refusal with --overlay-slot still ${JSON.stringify(kept)} does not say no kept mesh folds on any frame`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'FO11_ZOOM_FOLDS_FRAMES_THE_FOLDED_TRIANGLES_AND_REFUSES_WHERE_NONE_IS',
+      ok,
+      probeDetail(ok, probes, `--zoom folds:${pad} at frame ${want[0]} and t=${deepest}s: the viewport is triangle 0's box over both poses, from the probe's numbers, padded by ${pad}, and each tile's folds[] states its own box, area and share; at t=0 refused naming "sheet" on frames ${runs}; with --overlay-slot still refused, no kept mesh folding`),
+      'issue #1386: the author should not have to script a box out of triangles[] and meshes[] to look at what the tool just named',
+    );
+  }
+
+  // FO12–FO13 — each planted wrong extent goes red, by the control that reads it.
+  for (const [code, plant] of [
+    ['FO12_A_BOX_OF_THE_WHOLE_MESH_IS_RED', { boxWholeMesh: true }],
+    ['FO13_AN_AREA_TAKEN_AT_THE_POSE_NOT_THE_SETUP_POSE_IS_RED', { areaPosed: true }],
+  ] as const) {
+    const clean = pre.length > 0 ? pre : extentFaults(fromGeometry());
+    const planted = pre.length > 0 ? [] : extentFaults(fromGeometry(plant));
+    say(
+      code,
+      clean.length === 0 && planted.length > 0,
+      clean.length > 0 ? `the unplanted reading is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and FO10's reading found nothing` : `${JSON.stringify(plant)} planted: FO10's reading names it — ${planted[0]}; unplanted it reads clean`,
+      'issue #1386: a box or an area that is plausible and wrong is planted and caught by name',
+    );
+  }
+  // FO14 — the zoom's box built from the whole mesh is red.
+  {
+    const clean = pre.length > 0 ? pre : zoomFaults(inspectBuildView(probe.outDir, zoomRequest([want[0] / fps, deepest])));
+    const planted = pre.length > 0 ? [] : zoomFaults(inspectBuildView(probe.outDir, zoomRequest([want[0] / fps, deepest]), { foldPlant: { boxWholeMesh: true } }));
+    say(
+      'FO14_A_ZOOM_TO_THE_WHOLE_MESH_IS_RED',
+      clean.length === 0 && planted.length > 0,
+      clean.length > 0 ? `the unplanted view is already red: ${clean[0]}` : planted.length === 0 ? '{"foldPlant":{"boxWholeMesh":true}} planted and FO11\'s reading found nothing' : `{"foldPlant":{"boxWholeMesh":true}} planted: FO11's reading names it — ${planted[0]}; unplanted it reads clean`,
+      'issue #1386: --zoom slot:<mesh> already frames the whole mesh; a folds zoom that does the same frames nothing new',
+    );
+  }
   return bad;
+}
+
+/**
+ * How near a posed number has to come to the probe's formula: a millionth of
+ * the probe's side. The core poses the setup pose through its bones' transforms,
+ * and the fold probe's rest table comes back off whole numbers by ~2e-8 of the
+ * side (the probe's v2 posed at x = 19.99999953) — the formula is exact and the
+ * pose is not, so the reading is held to the formula within this and to the
+ * posed doubles exactly.
+ */
+const FOLD_PROBE_TOLERANCE = FOLD_PROBE.side * 1e-6;
+
+/** The bounds of some points, `[minX, minY, maxX, maxY]`. */
+function boxOf(points: ReadonlyArray<[number, number]>): [number, number, number, number] {
+  return [Math.min(...points.map((p) => p[0])), Math.min(...points.map((p) => p[1])), Math.max(...points.map((p) => p[0])), Math.max(...points.map((p) => p[1]))];
+}
+
+/**
+ * FO10's reading: every folded frame of `sheet` states triangle 0's box — the
+ * same doubles as the vertices `geometry.json` holds for that frame, and the
+ * probe's formula to `FOLD_PROBE_TOLERANCE` — and its setup-pose area and share.
+ */
+function foldExtentFaults(meshes: readonly MeshFolds[], geometry: GeometryFile | null, fps: number): string[] {
+  const sheet = meshes.find((m) => m.slot === 'sheet');
+  if (sheet === undefined) return ['the reading lists no mesh "sheet"'];
+  const faults: string[] = [];
+  const { folded: area, mesh } = foldProbeSheetAreas();
+  const near = (got: number, required: number, scale: number): boolean => Math.abs(got - required) <= FOLD_PROBE_TOLERANCE * scale;
+  if (!near(sheet.area, mesh, FOLD_PROBE.side)) faults.push(`"sheet" area ${sheet.area}, required its setup-pose area ${mesh}`);
+  if (sheet.frames.length === 0) faults.push('"sheet" folds on no frame — nothing to read a box from');
+  const rest = geometry?.rest.find((r) => r.slot === 'sheet');
+  for (const f of sheet.frames) {
+    const formula = boxOf(foldProbeTriangle0(f.index / fps));
+    if (f.box.some((g, i) => !near(g, formula[i], 1))) faults.push(`"sheet" frame ${f.index} box ${JSON.stringify(f.box)}, the probe's numbers put triangle 0 in ${JSON.stringify(formula)}`);
+    const posed = geometry?.frames[f.index]?.attachments?.find((a) => a.slot === 'sheet')?.vertices;
+    if (rest !== undefined && posed !== undefined) {
+      const exact = boxOf(
+        [0, 1, 2].map((k): [number, number] => {
+          const v = rest.triangles[k];
+          return [posed[2 * v], posed[2 * v + 1]];
+        }),
+      );
+      if (JSON.stringify(f.box) !== JSON.stringify(exact)) faults.push(`"sheet" frame ${f.index} box ${JSON.stringify(f.box)} is not the bounds of triangle 0's posed vertices ${JSON.stringify(exact)}`);
+    }
+    if (!near(f.area, area, FOLD_PROBE.side) || !near(f.share, area / mesh, 1 / FOLD_PROBE.side)) faults.push(`"sheet" frame ${f.index} area ${f.area} share ${f.share}, required triangle 0's setup-pose area ${area} and ${area}/${mesh}`);
+  }
+  if (sheet.worst !== null && JSON.stringify(sheet.worst) !== JSON.stringify(sheet.frames.find((f) => f.index === sheet.worst?.index))) faults.push('"sheet" worst does not carry its frame\'s box and area');
+  return faults;
 }
 
 // ---------------------------------------------------------------------------
