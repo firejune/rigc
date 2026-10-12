@@ -4906,6 +4906,21 @@ file can be read; it is a **key** outside its bound that `build` refuses (§4.4)
 number: a non-number would reach the file as `null`, which the runtime reads as
 **zero**, so `"mass": "heavy"` would ship a constraint that never settles.
 
+⚠️ **What `rigc render` draws a spring with is not a player's clock to the bit.** A
+constraint integrates whole steps of `1 / fps` and shows the rest as a lag weight, so
+a frame lasting a whole number of steps (12, 20, 30 or 60 fps against the default
+60, every second frame at 24) leaves zero in exact arithmetic and a few ulps either
+side of it in doubles — and spine-core stepped by `1/fps` per frame lets the rounding
+decide, drawing every spring a frame late or on time and switching between the two on
+single frames (issue #1380: frames 5, 12, 45 and 188 of a 20 fps render, and a loop
+whose two ends sat in different regimes, 31.7 units apart). `render`, and everything
+that poses through its posers (`check`, `bonedist`, `inspect`, `--geometry`), runs
+the physics clock `2⁻³⁰` faster than the frames, so every such frame takes the steps
+exact arithmetic takes; the animation time is unchanged. A spring that has converged
+by the loop point therefore closes, which the loop-seam suite's `LS06` holds at all
+five rates. A player with a real clock is a different question and rigc does not
+answer it.
+
 `mix` is a player-side `AnimationStateData` config and is **not** emitted into
 skeleton JSON, so the parser is the only check it gets: it is
 `{ "default": <seconds>, "pairs"?: [["<from>", "<to>", <seconds>], …] }`, and a

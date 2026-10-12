@@ -128,7 +128,7 @@ import { readFileSync } from 'node:fs';
 // `loadPosedSkeleton`, and kept, the plant reads red for its own reason rather than for a missing name.
 import { dirname, join } from 'node:path';
 import { Plate, readPlate } from '../tools/plate.ts';
-import { clipSourceOf, corePoser, inactiveBoneSnapshot, subsetOver, unposedBones } from './render_core.ts';
+import { clipSourceOf, corePoser, inactiveBoneSnapshot, physicsClockStep, subsetOver, unposedBones } from './render_core.ts';
 import { type PosedVertices, type WorldTransform } from './nonfinite.ts';
 import {
   atlasScales,
@@ -488,9 +488,10 @@ export type PoseSource = Poser | SkeletonData;
  * because that is the path a runtime actually takes, and 4.3's
  * `Animation.apply` takes a `MixFrom` that only the state machine has any
  * business choosing. Frame 0 applies, updates by 0 and resets physics; every
- * later frame is one `state.update(1/fps)`, apply, `skeleton.update(1/fps)` and
+ * later frame is one `state.update(1/fps)`, apply, `skeleton.update` and
  * `Physics.update` — one continuous trajectory, so the track time of frame `i`
- * is the sum of `i` steps.
+ * is the sum of `i` steps. The skeleton's clock, which only the physics reads,
+ * moves by `physicsClockStep(1/fps)` (`PHYSICS_CLOCK_LEAD`, issue #1380).
  */
 export function spinePoser(data: SkeletonData): Poser {
   return {
@@ -507,12 +508,14 @@ export function spinePoser(data: SkeletonData): Poser {
       state.setAnimation(0, name, false);
       skeleton.setupPose();
       const step = 1 / fps;
+      // The physics clock runs `PHYSICS_CLOCK_LEAD` fast, so no frame ends on a physics step's tie (issue #1380).
+      const clock = physicsClockStep(step);
       const posed = spinePosed(skeleton);
       for (let i = 0; i <= count; i++) {
         if (i > 0) {
           state.update(step);
           state.apply(skeleton);
-          skeleton.update(step);
+          skeleton.update(clock);
           skeleton.updateWorldTransform(Physics.update);
         } else {
           state.apply(skeleton);
