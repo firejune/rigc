@@ -2162,7 +2162,16 @@ reset `'animation'`), stepped to its frames in ascending time by
 `stepSchedule`'s rule (`src/core/constraints_physics.ts`) — steps of `dt` while
 before the next frame, then to it — under `mode: 'step'`, and one jump per frame
 under `mode: 'none'`. The steps are computed once and handed to the reference
-and every candidate (`MQ22`). A time past the animation's duration, a frame id
+and every candidate (`MQ22`). Since
+[#1389](https://github.com/rig-c/core/issues/1389) the physics clock moves by
+`physicsClockStep` of each step, the render's clock (`src/core/raw.ts`, issue
+#1380), so a walk time that ends on a whole number of a constraint's steps
+takes them as exact arithmetic does rather than as rounding falls: at parts'
+12 fps and `dt` 1/12 the step itself happened to resolve every tie right
+against 60 Hz and mis-stepped thousands of updates against 30, 24 and 50 Hz,
+and at the suite's 4 fps and `dt` 1/60 it mis-stepped against every rate
+(`comparisonWalk`; `MQ178` reads each constraint's step count, `MQ179` holds a
+rig without physics byte-identical under either clock). A time past the animation's duration, a frame id
 given twice and an animation the reference does not have are
 `COMPARE_INPUT_MISSING`.
 
