@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.47.0](https://github.com/rig-c/core/compare/v2.46.0...v2.47.0) (2026-10-12)
+
+
+### Features
+
+* **render:** the fold reading says where and how big - a world box and a setup-pose area per folded frame - and inspect --zoom folds frames the picture to it ([#1386](https://github.com/rig-c/core/issues/1386)) ([#1387](https://github.com/rig-c/core/issues/1387)) ([4f8b156](https://github.com/rig-c/core/commit/4f8b156998049a6ca0e903954abfa2fe17109d76))
+
 ## [2.46.0](https://github.com/rig-c/core/compare/v2.45.2...v2.46.0) (2026-10-12)
 
 
