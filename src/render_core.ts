@@ -28,7 +28,11 @@
  *   frame of the nineteen tree rows by the core suite's `CR03`. The setup pose
  *   is `poseRawSetup`. Since issue #1180 the walk is `poseRawAnimationEach`,
  *   the same walk handing each pose over as it is posed (`CORE_RAW_WALK`), so
- *   one pose is held at a time.
+ *   one pose is held at a time. Since issue #1380 the physics clock — and
+ *   nothing else — moves by `physicsClockStep(1/fps)` rather than by the step
+ *   (`PHYSICS_CLOCK_LEAD` below), in both posers: `CR03` still holds the walk
+ *   under the step itself, and the loop-seam suite's `LS06` holds the two
+ *   posers equal under the render's clock.
  * - **Vertices, triangles, bones, slot colours, draw order** are the raw
  *   pose's, unchanged: the same doubles `computeWorldVertices`,
  *   `getWorldRotationX` and the slot pose hold (`CR03`).
@@ -361,8 +365,65 @@ export function keptPieceArrays(): PieceArrays {
  */
 export type CoreRawWalk = (doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, visit: (pose: RawPose, index: number) => void) => void;
 
-/** The walk `corePoser` steps with unless a plant passes another: one pose posed, drawn and released before the next. */
-export const CORE_RAW_WALK: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimationEach(doc, animation, steps, plant, 'animation', visit);
+/** The walk `corePoser` steps with unless a plant passes another: one pose posed, drawn and released before the next, the physics clock moved by `physicsClockStep` (issue #1380). */
+export const CORE_RAW_WALK: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimationEach(doc, animation, steps, plant, 'animation', visit, physicsClockStep);
+
+/**
+ * How much faster than the frames a render's physics clock runs: each frame
+ * moves the skeleton's clock — the time a physics constraint integrates — by
+ * `physicsClockStep(1 / fps)`, the frame's step and `2⁻³⁰` of it more, while
+ * the animation is applied at the running sum of the frame steps as before
+ * (issue #1380).
+ *
+ * ⭐ **Why a render's physics clock is not the frame clock.** A physics
+ * constraint keeps the time it has not yet integrated (`remaining`), takes
+ * whole steps of `1 / fps` (its own `fps`, 60 by default) while at least one
+ * step remains, and shows `offset − lag·(1 − remaining / step)`, `lag` being
+ * everything this update's steps moved (`src/core/constraints_physics.ts`,
+ * *The step*). Whenever a frame lasts a whole number of physics steps — 12,
+ * 20, 30 and 60 fps against 60 Hz, and every second frame at 24 — the time
+ * left at the frame's end is zero in exact arithmetic, and in doubles it is
+ * either a few ulps above zero or a few ulps short of one whole step. Which of
+ * the two is decided by rounding, not by the motion: the shown weight is 1 or
+ * 0, so the spring is drawn one frame late or on time, and it changes regime
+ * on a single frame. Measured on the public trailer (`show`, 20 fps, 321
+ * frames): every spring jumps at frames 5, 12, 45 and 188 — the four frames
+ * that arithmetic alone predicts — and the loop's start (frame 80, on time)
+ * and end (frame 320, a frame late, which is what exact arithmetic draws)
+ * differ by 31.70 units of vertex and 10.37 of bone
+ * while every keyed bone agrees to 1.3e-12. spine-core 4.3.13 stepped the
+ * same way draws the same frames to the bit: this is the runtime under a
+ * fixed offline step, not a defect of the core's port, which is why the fix
+ * is the render's schedule and the physics is untouched.
+ *
+ * Running the clock `2⁻³⁰` fast puts the time left a little ABOVE every
+ * whole number of steps instead of on it, by `2⁻³⁰ · t` after `t` seconds:
+ * 1.5e-8 s at 16 s, against a rounding error of at most a few ulps of the
+ * clock (3.6e-15 s at 16 s) — so every tie resolves the way exact arithmetic
+ * resolves it, a step taken, and the shown weight sits at 1 − 9e-7 rather
+ * than flipping. It stays below the smallest gap a step boundary can fall
+ * into for 7.8e5 s even at 23 fps against 60 Hz (a gap of 1/1380 s), and a
+ * physics `reset` key, which restarts the time left from zero, is resolved
+ * the same way on every frame after it, because the lead is taken on every
+ * frame rather than once (read off the clock arithmetic with a reset at frame
+ * 100, 16 s at the five rates: no tie; no tree probe keys a reset under the
+ * render's clock). A pose stays a function of its frame
+ * index alone: the lead does not depend on how many frames are asked for.
+ *
+ * Rejected, measured over the same arithmetic (16 s at 12, 20, 24, 25, 30 and
+ * 60 fps): the clock as `i / fps` rather than a running sum (90 frames still
+ * flipped at 20 fps); a one-time lead of half a step (114 flipped at 24 fps,
+ * where half a step lands on the other tie); a one-time lead of any size,
+ * which a `reset` key cancels; and snapping `remaining` inside the physics,
+ * which changes the runtime's physics rather than the render's schedule and
+ * which spine-core's poser could not follow.
+ */
+export const PHYSICS_CLOCK_LEAD = 2 ** -30;
+
+/** What one frame of `step` seconds moves a render's physics clock by — `PHYSICS_CLOCK_LEAD`; both posers step with it. */
+export function physicsClockStep(step: number): number {
+  return step + step * PHYSICS_CLOCK_LEAD;
+}
 
 /** What a suite passes `corePoser` in place of the poser's own parts — `PieceArrays` (`RC43`) and the raw walk (`RC44`). */
 export interface CorePoserPlants {

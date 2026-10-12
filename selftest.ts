@@ -104768,7 +104768,12 @@ function runRenderHashesSuite(): number | null {
         visit(pose, i);
       });
     };
-    const postedFirst: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimation(doc, animation, steps, plant, 'animation').forEach((pose, i) => visit(pose, i));
+    // The series posted whole before the first frame is drawn, under the render's own physics clock (issue #1380), so the plant differs from the tree in what it holds and in nothing it poses.
+    const postedFirst: CoreRawWalk = (doc, animation, steps, plant, visit) => {
+      const series: RawPose[] = [];
+      poseRawAnimationEach(doc, animation, steps, plant, 'animation', (pose) => series.push(pose), physicsClockStep);
+      series.forEach((pose, i) => visit(pose, i));
+    };
     /** Distinct arrays of one piece field over every frame of `sets`, and the pieces holding one. */
     const arrayCount = (sets: Iterable<Frame[]>, field: 'uvs' | 'triangles'): { pieces: number; arrays: number } => {
       const arrays = new Set<unknown>();
@@ -113828,6 +113833,216 @@ function runBallotSuite(): number {
  * of it. LS03 is the case that would have caught the defect — two shipped
  * invocations were at rates that do not land, and both read 0 by luck.
  */
+import { PHYSICS_CLOCK_LEAD, physicsClockStep } from './src/render_core.ts';
+
+/**
+ * LS05–LS06 (issue #1380): a render's physics clock never ends a frame on a
+ * physics step's tie, and a looping spring closes.
+ *
+ * The probe is built here, not borrowed: a swing bone keyed ±12° on a 4 s
+ * period from t = 0 (eased half-swings, so the drive is periodic from the first
+ * frame), a two-link chain under it with a `rotate` spring on each link, and 8 s
+ * of animation — 4 s of lead-in, in which the spring's transient from the reset
+ * decays (`damping` 0.8 per 1/60 s step: 0.8^240 after 4 s), then one period.
+ * Every rate the card names divides it into whole frames, so frame `4·fps` is
+ * loop time 0 and frame `8·fps` loop time 4 exactly.
+ *
+ * Which frames tie is arithmetic on the clock alone — the rig only decides
+ * whether anybody can see it — so one probe is enough at every rate: the old
+ * schedule, the physics clock moved by the frame step itself, mis-steps at
+ * frames 16, 5, 2, 5 and 5 of 12, 20, 24, 30 and 60 fps on this probe as on the
+ * trailer (issue #1380), within its first 1.4 s.
+ */
+function physicsClockCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const RATES = [12, 20, 24, 30, 60];
+  const lead = 4;
+  const period = 4;
+  const springs = ['c0', 'c1'];
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-physics-clock-'));
+  try {
+    mkdirSync(join(dir, 'images'));
+    copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(dir, 'images', 'tip.png'));
+    writeFileSync(
+      join(dir, 'rig.json'),
+      `${JSON.stringify({
+        spec: 'rigc-rig/1',
+        name: 'springloop',
+        images: 'images',
+        skeleton: { width: 256, height: 256 },
+        bones: [
+          { name: 'root' },
+          { name: 'swing', parent: 'root', x: 128, y: 220 },
+          { name: 'c0', parent: 'swing', rotation: -90, length: 60 },
+          { name: 'c1', parent: 'c0', x: 60, length: 60 },
+        ],
+        slots: [{ name: 'tip', bone: 'c1', attachment: 'tip' }],
+        skins: { default: { tip: { tip: { image: 'tip.png', x: 30 } } } },
+      })}\n`,
+    );
+    const halfSwings = (lead + period) / (period / 2);
+    const keys = Array.from({ length: halfSwings + 1 }, (_, k) => ({ t: (k * period) / 2, v: [k % 2 === 0 ? 12 : -12], ...(k < halfSwings ? { ease: 'swing' } : {}) }));
+    const spring = { rotate: 1, inertia: 0.5, strength: 60, damping: 0.8, mass: 1, mix: 1 };
+    writeFileSync(
+      join(dir, 'motion.json'),
+      `${JSON.stringify({
+        spec: 'rigc-motion/1',
+        archetype: 'springloop',
+        cut: 'springloop',
+        easings: { swing: [0.36, 0, 0.64, 1] },
+        physics: { c0_spring: { bone: 'c0', ...spring }, c1_spring: { bone: 'c1', ...spring } },
+        animations: { loop: { duration: lead + period, loop: true, tracks: [{ bone: 'swing', property: 'rotate', keys }] } },
+      })}\n`,
+    );
+    const out = join(dir, 'build');
+    const built = runCli(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', out]);
+    if (built.status !== 0) {
+      const why = `the spring probe did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}`;
+      say('LS05_EVERY_RENDER_FRAME_TAKES_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AND_THE_FRAME_CLOCK_IS_RED_ON_THE_TIES', false, why, 'issue #1380');
+      say('LS06_A_LOOPING_SPRING_RENDERS_CONTINUOUS_IN_ITS_CLOCK_AND_CLOSES_AND_THE_FRAME_CLOCK_IS_RED_BY_FRAME_AND_BONE', false, why, 'issue #1380');
+      return;
+    }
+    const modelText = readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8');
+    const atlasText = readFileSync(join(out, 'skeleton.atlas'), 'utf8');
+    const doc = noSkinView(readModel(modelText, MODEL_DOCUMENT_FILE));
+
+    // --- LS05: the mechanism, read off each constraint's own state ---
+    // Per frame `i` and constraint, the whole steps the update took against floor(i·f/F) − floor((i−1)·f/F), f the
+    // constraint's fps and F the frame rate — what exact arithmetic takes. `clock` undefined is the old schedule.
+    const misSteps = (fps: number, clock: ((dt: number) => number) | undefined): { updates: number; wrong: string[] } => {
+      let frame = 0;
+      let updates = 0;
+      const wrong: string[] = [];
+      const count = Math.round((lead + period) * fps);
+      const recorder = (...args: Parameters<typeof stepPhysics>): boolean => {
+        const [r, , , ctx] = args;
+        const s = physicsState(ctx, r.name);
+        const owed = s.remaining + Math.max(ctx.time - s.lastTime, 0);
+        const moved = stepPhysics(...args);
+        if (ctx.phase === 'update' && frame >= 1) {
+          const f = Math.round(1 / r.step);
+          const taken = Math.round((owed - s.remaining) / r.step);
+          const exact = Math.floor((frame * f) / fps) - Math.floor(((frame - 1) * f) / fps);
+          updates++;
+          if (taken !== exact) wrong.push(`${r.name} (bone ${r.bone}) at frame ${frame} took ${taken} step(s) where exact arithmetic takes ${exact}`);
+        }
+        return moved;
+      };
+      poseRawAnimationEach(doc, 'loop', new Array<number>(count).fill(1 / fps), { physicsStep: recorder }, 'animation', (_pose, i) => { frame = i + 1; }, clock);
+      return { updates, wrong };
+    };
+    const mechanism: string[] = [];
+    const planted: string[] = [];
+    let updates = 0;
+    for (const fps of RATES) {
+      const render = misSteps(fps, physicsClockStep);
+      updates += render.updates;
+      if (render.updates === 0) mechanism.push(`${fps} fps: no physics update was read`);
+      mechanism.push(...render.wrong.slice(0, 2).map((w) => `${fps} fps: ${w}`));
+      const old = misSteps(fps, undefined);
+      planted.push(old.wrong.length === 0 ? `${fps} fps: NOTHING — the frame clock read no tie` : `${fps} fps: ${old.wrong.length} update(s), first ${old.wrong[0]}`);
+    }
+    const plantSilent = planted.filter((p) => p.includes('NOTHING'));
+    const mechanismHeld = mechanism.length === 0 && plantSilent.length === 0;
+    say(
+      'LS05_EVERY_RENDER_FRAME_TAKES_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AND_THE_FRAME_CLOCK_IS_RED_ON_THE_TIES',
+      mechanismHeld,
+      probeDetail(
+        mechanismHeld,
+        [...mechanism, ...plantSilent.map((p) => `the planted frame clock at ${p}`)],
+        `${updates} constraint update(s) of the spring probe at ${RATES.join(', ')} fps through the render's clock (PHYSICS_CLOCK_LEAD ${PHYSICS_CLOCK_LEAD}): every one took the whole steps exact arithmetic takes. ` +
+          `The physics clock moved by the frame step itself — the schedule before issue #1380 — is red at every rate:\n          ${planted.join('\n          ')}`,
+      ),
+      'issue #1380: a frame lasting a whole number of physics steps leaves zero time in exact arithmetic and a few ulps either side of it in doubles, so which ' +
+        'way a frame falls is rounding, and the spring is drawn a frame late or on time by it — a jump on one frame, and a loop whose two ends sit in different ' +
+        'regimes. This reads the constraint\'s own step count, which is the mechanism and not a symptom of it, so it holds on any rig and at any rate',
+    );
+
+    // --- LS06: the observable, through both render posers ---
+    // A bone's reading is its origin and a point 60 units (one link) out along its x axis. The tolerance is per rate and
+    // bone: 1e-3 of the median frame step of that point over the walk. A tie moves a spring by a frame of its own
+    // deflection — the worst spring reading per rate on this probe moved 0.63 to 3.1 units against medians of 0.2 to 2.3 — and the render's own
+    // residuals under the nudge and across the seam stayed under 1.3e-6 — so the line sits orders from both.
+    type Reading = Map<string, [number, number, number, number]>;
+    const walkLeading = (gain: number): CoreRawWalk => (d, animation, steps, plant, visit) => poseRawAnimationEach(d, animation, steps, plant, 'animation', visit, (dt) => dt + dt * gain);
+    const poseWith = (poser: Poser, fps: number): Reading[] => {
+      const frames: Reading[] = [];
+      poser.animation('loop', undefined, fps, Math.round((lead + period) * fps), (_i, posed) => {
+        frames.push(new Map(posed.bones().map((b) => [b.name, [b.worldX, b.worldY, b.worldX + 60 * b.a, b.worldY + 60 * b.c]])));
+      });
+      return frames;
+    };
+    const apart = (p: readonly number[], q: readonly number[]): number => Math.max(Math.hypot(p[0] - q[0], p[1] - q[1]), Math.hypot(p[2] - q[2], p[3] - q[3]));
+    const spineData = loadPosable(join(out, 'skeleton.json'), join(out, 'skeleton.atlas'), out).data;
+    const core = (walk?: CoreRawWalk): Poser => corePoser(modelText, atlasText, undefined, undefined, undefined, walk === undefined ? {} : { walk });
+    const observed: string[] = [];
+    const redByFrame: string[] = [];
+    const seamRed: number[] = [];
+    let worstContinuity = 0;
+    let worstSeam = 0;
+    let worstKeyedSeam = 0;
+    let frames = 0;
+    for (const fps of RATES) {
+      const render = poseWith(core(), fps);
+      const spine = poseWith(spinePoser(spineData), fps);
+      const nudged = poseWith(core(walkLeading(2 * PHYSICS_CLOCK_LEAD)), fps);
+      const old = poseWith(core(walkLeading(0)), fps);
+      const oldNudged = poseWith(core(walkLeading(PHYSICS_CLOCK_LEAD)), fps);
+      frames += render.length;
+      const at0 = Math.round(lead * fps);
+      const at1 = Math.round((lead + period) * fps);
+      render.forEach((reading, i) => {
+        for (const [name, value] of reading) {
+          const theirs = spine[i]?.get(name);
+          if (theirs === undefined || theirs.some((v, k) => v !== value[k])) observed.push(`${fps} fps frame ${i} bone "${name}": the core poser and spine-core differ`);
+        }
+      });
+      worstKeyedSeam = Math.max(worstKeyedSeam, apart(render[at0].get('swing') ?? [], render[at1].get('swing') ?? []));
+      let worstRed = { d: 0, text: '' };
+      let overTolerance = 0;
+      for (const bone of springs) {
+        const steps = render.slice(1).map((m, i) => apart(m.get(bone) ?? [], render[i].get(bone) ?? [])).sort((x, y) => x - y);
+        const tolerance = 1e-3 * steps[Math.floor(steps.length / 2)];
+        render.forEach((m, i) => {
+          const d = apart(m.get(bone) ?? [], nudged[i].get(bone) ?? []);
+          worstContinuity = Math.max(worstContinuity, d / tolerance);
+          if (d > tolerance) observed.push(`${fps} fps frame ${i} bone "${bone}": moved ${d.toExponential(2)} when the clock moved by 2^-30 of a frame (tolerance ${tolerance.toExponential(2)})`);
+        });
+        const seam = apart(render[at0].get(bone) ?? [], render[at1].get(bone) ?? []);
+        worstSeam = Math.max(worstSeam, seam / tolerance);
+        if (seam > tolerance) observed.push(`${fps} fps bone "${bone}": loop time 0 (frame ${at0}) and loop time ${period} (frame ${at1}) are ${seam.toExponential(2)} apart (tolerance ${tolerance.toExponential(2)})`);
+        old.forEach((m, i) => {
+          const d = apart(m.get(bone) ?? [], oldNudged[i].get(bone) ?? []);
+          if (d > tolerance) overTolerance++;
+          if (d > tolerance && d / tolerance > worstRed.d) worstRed = { d: d / tolerance, text: `frame ${i}, bone "${bone}", ${d.toExponential(2)} against ${tolerance.toExponential(2)}` };
+        });
+        if (apart(old[at0].get(bone) ?? [], old[at1].get(bone) ?? []) > tolerance && !seamRed.includes(fps)) seamRed.push(fps);
+      }
+      redByFrame.push(overTolerance === 0 ? `${fps} fps: NOTHING — the frame clock moved no spring by more than its tolerance` : `${fps} fps: ${overTolerance} spring reading(s) over tolerance, the worst ${worstRed.text}`);
+    }
+    const observedSilent = redByFrame.filter((p) => p.includes('NOTHING'));
+    const observedHeld = observed.length === 0 && observedSilent.length === 0;
+    say(
+      'LS06_A_LOOPING_SPRING_RENDERS_CONTINUOUS_IN_ITS_CLOCK_AND_CLOSES_AND_THE_FRAME_CLOCK_IS_RED_BY_FRAME_AND_BONE',
+      observedHeld,
+      probeDetail(
+        observedHeld,
+        [...observed.slice(0, 8), ...observedSilent.map((p) => `the planted frame clock at ${p}`)],
+        `${frames} frame(s) of the spring probe at ${RATES.join(', ')} fps through both render posers, identical at tolerance 0; on the springs ${springs.join(' and ')}, ` +
+          `moving the physics clock by another 2^-30 of a frame moved no frame by more than ${worstContinuity.toFixed(4)} of its tolerance, and loop time 0 against loop time ${period} ` +
+          `came to ${worstSeam.toFixed(4)} of it (the keyed swing bone: ${worstKeyedSeam.toExponential(2)}). ` +
+          `The frame clock, planted in the core poser's walk, moves by whole frames under the same nudge — per rate, the worst frame and bone:\n          ${redByFrame.join('\n          ')}\n` +
+          `          and leaves the loop open at ${seamRed.length === 0 ? 'no rate' : `${seamRed.join(', ')} fps`}, the rates whose two loop ends it puts in different regimes`,
+      ),
+      'issue #1380: what the card asks of the render — no jump on a constrained bone and a loop that closes at 12, 20, 24, 30 and 60 fps. The jump is read as a ' +
+        'discontinuity in the clock rather than as a frame step k times the median: on this probe the eased keys alone put a frame at 17x its spring\'s median ' +
+        'second difference at 60 fps after the fix, while a tie at 24 fps put one at only 1.95x before it, so no k separates them; moving the clock by a ' +
+        'quantity far below any frame is the test only a tie fails',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function runLoopSeamSuite(): number {
   let bad = 0;
   console.log('\n── the loop-seam tool: sampling clause (issue #337) ──');
@@ -113931,6 +114146,9 @@ function runLoopSeamSuite(): number {
       'frames. That is only honest while the framing convention holds — the extreme landscape and portrait boxes ' +
       'are where a fit-inside convention would differ from a long-side one',
   );
+
+  // --- LS05–LS06: a render's physics clock and a looping spring (issue #1380) ---
+  physicsClockCases(say);
 
   // --- LS03: every invocation the gallery ships is one the tool will take ----
   // The case that would have caught #337. A README's own pixel figures are its

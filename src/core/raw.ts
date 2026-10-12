@@ -257,7 +257,7 @@ export interface WalkMode {
   keep: boolean;
   /** A plant only (the core suite's `CO26`): the animation time a looping step applies at, from its track time, the duration and the track time before it — `loopedTime` unless given. */
   time?: (trackTime: number, duration: number, before: number) => number;
-  /** A plant only (`CO26`): what the physics clock moves by, from the step and how far the animation time moved — the step itself unless given. */
+  /** What the physics clock moves by, from the step and how far the animation time moved — the step itself unless given: a plant (`CO26`), or the render's offline clock passed to `poseRawAnimationEach` (issue #1380). */
   clock?: (dt: number, moved: number) => number;
   /** A plant only (`CO26`): `false` fires no `reset` key across the wrap — the reading the walk was measured against and rejected. */
   wrapResets?: boolean;
@@ -494,10 +494,13 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
  * animation's series — on the production rig the core poser's render peaked
  * highest on, the largest animation's series was 153 MiB of retained heap.
  * A refusal is thrown from the pose it is met at, after `visit` has seen the
- * poses before it.
+ * poses before it. `clock`, when given, is what each step moves the physics
+ * clock by in place of the step itself — the render's offline schedule
+ * (`physicsClockStep` in `src/render_core.ts`, issue #1380); the track time and
+ * the animation time are the steps' running sum either way.
  */
-export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void): void {
-  walkEach(doc, animation, steps, plant, reset, RAW_MODE, RAW_SHAPE, visit);
+export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void, clock?: (dt: number) => number): void {
+  walkEach(doc, animation, steps, plant, reset, clock === undefined ? RAW_MODE : { ...RAW_MODE, clock: (dt) => clock(dt) }, RAW_SHAPE, visit);
 }
 
 /**
