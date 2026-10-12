@@ -55,6 +55,7 @@ import {
   type Footprint,
   type Viewport,
 } from './render_shared.ts';
+import { hypot2 } from './numeric.ts';
 
 /** Components smaller than this are antialiasing crumbs, not parts. */
 const MIN_COMPONENT_PIXELS = 4;
@@ -293,7 +294,7 @@ export interface SlotTrack {
  */
 export function driftBound(track: SlotTrack): number | null {
   if (track.method !== 'template' || track.wholePixel === null) return null;
-  return Math.hypot(Math.abs(track.wholePixel.dx) + SUBPIXEL_CLAMP, Math.abs(track.wholePixel.dy) + SUBPIXEL_CLAMP);
+  return hypot2(Math.abs(track.wholePixel.dx) + SUBPIXEL_CLAMP, Math.abs(track.wholePixel.dy) + SUBPIXEL_CLAMP);
 }
 
 /**
@@ -411,7 +412,7 @@ export function matchSlots(
     // a guess, so it is bounded by what this slot could plausibly have moved, and
     // a rival about as near makes it a guess between two things.
     const ranked = components
-      .map((c) => ({ c, d: Math.hypot(c.cx - foot.cx, c.cy - foot.cy) }))
+      .map((c) => ({ c, d: hypot2(c.cx - foot.cx, c.cy - foot.cy) }))
       .sort((a, b) => a.d - b.d);
     const nearest = ranked[0];
     if (nearest.d > radius) {
@@ -519,7 +520,7 @@ function fillComponentMatch(track: SlotTrack, foot: Footprint, component: Compon
   };
   track.driftX = component.cx - foot.cx;
   track.driftY = component.cy - foot.cy;
-  track.drift = Math.hypot(track.driftX, track.driftY);
+  track.drift = hypot2(track.driftX, track.driftY);
   track.widthDrift = foot.maxX - foot.minX - track.reference.width;
   track.heightDrift = foot.maxY - foot.minY - track.reference.height;
 }
@@ -836,12 +837,12 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
   const gap = Math.max(RIVAL_GAP, coarse);
   let rival = Infinity;
   for (const { dx, dy, s } of sweep) {
-    if (Math.hypot(dx - bestX, dy - bestY) < gap) continue;
+    if (hypot2(dx - bestX, dy - bestY) < gap) continue;
     if (s < rival) rival = s;
   }
   const confidence = Number.isFinite(rival) && rival > 0 ? Math.max(0, Math.min(1, 1 - best / rival)) : 0;
 
-  const reach = Math.min(1, Math.hypot(bestX, bestY) / radius);
+  const reach = Math.min(1, hypot2(bestX, bestY) / radius);
   const required = MIN_CONFIDENCE + reach * CONFIDENCE_SLOPE;
   if (best > template.contrast * MAX_RESIDUAL_FRACTION || confidence < required) {
     track.method = 'none';
@@ -851,7 +852,7 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
       `${radius} px either (best residual ${best.toFixed(1)} against its own ${template.contrast.toFixed(1)} of ` +
       `contrast over the ${template.ink - template.covered} of its ${template.ink} px that reach the picture; ` +
       `confidence ${(Number.isFinite(confidence) ? confidence : 0).toFixed(2)} where ` +
-      `${required.toFixed(2)} is needed ${Math.hypot(bestX, bestY).toFixed(1)} px out)`;
+      `${required.toFixed(2)} is needed ${hypot2(bestX, bestY).toFixed(1)} px out)`;
     return;
   }
 
@@ -861,7 +862,7 @@ function applyTemplateMatch(track: SlotTrack, foot: Footprint, source: SlotSourc
   track.reference = null;
   track.driftX = dx;
   track.driftY = dy;
-  track.drift = Math.hypot(dx, dy);
+  track.drift = hypot2(dx, dy);
   track.widthDrift = null;
   track.heightDrift = null;
   track.confidence = confidence;

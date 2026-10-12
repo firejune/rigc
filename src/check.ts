@@ -98,6 +98,7 @@ import {
   type TextureSubstitution,
   type Viewport,
 } from './render_shared.ts';
+import { hypot2 } from './numeric.ts';
 // The one name here that is the runtime's: a candidate's pages, read off the shape spine-core's loader returns.
 import type { Posable } from './render.ts';
 import {
@@ -3699,7 +3700,7 @@ export function checkLines(report: CheckReport, opts?: { allFrames?: boolean }):
   lines.push('  `⤷ bounded by` line under a drift is what that figure could have reached: for a');
   lines.push(`  template match, its whole-pixel winner plus ${SUBPIXEL_CLAMP} px on each axis — so a winner at`);
   lines.push(
-    `  the offset you drew bounds the whole figure at ${Math.hypot(SUBPIXEL_CLAMP, SUBPIXEL_CLAMP).toFixed(2)} px ` +
+    `  the offset you drew bounds the whole figure at ${hypot2(SUBPIXEL_CLAMP, SUBPIXEL_CLAMP).toFixed(2)} px ` +
       'and says the drift is the',
   );
   lines.push('  instrument, not the rig. Read every drift against its own line and not against a page.');

@@ -58,6 +58,7 @@ import { MeshReductionError, r6 } from './mesh.ts';
 import { areaBand, triangleAreas } from './areaband.ts';
 import { carrierIn, resolveCarriers, uvCarriers, type Carrier } from './meshcarriers.ts';
 import type { AttachmentRef, DeformTimelineInput, SourceFrame, SourceMesh, WorstSample } from './meshquality.ts';
+import { hypot2 } from './numeric.ts';
 
 type Pt = readonly [number, number];
 
@@ -407,8 +408,8 @@ export function sampleResidual(
     const dw = Math.abs(c.wbar[k] - r.wbar[k]);
     l1 += dw;
     lInf = Math.max(lInf, dw);
-    if (plant !== 'drop-covariance') cov[k] = eps[k] * Math.hypot(c.moment[k][0] - r.moment[k][0], c.moment[k][1] - r.moment[k][1]);
-    if (plant !== 'drop-lever') lev[k] = dw * (eps[k] * Math.hypot(r.p[0] - pivot[k][0], r.p[1] - pivot[k][1]) + tau[k]);
+    if (plant !== 'drop-covariance') cov[k] = eps[k] * hypot2(c.moment[k][0] - r.moment[k][0], c.moment[k][1] - r.moment[k][1]);
+    if (plant !== 'drop-lever') lev[k] = dw * (eps[k] * hypot2(r.p[0] - pivot[k][0], r.p[1] - pivot[k][1]) + tau[k]);
     total += cov[k] + lev[k];
   }
   return { total, cov, lev, l1, lInf };
@@ -539,7 +540,7 @@ export function skinningContract(args: SkinningMeasureArgs, plant: SkinningPlant
     for (let v = 0; v < mesh.points.length; v++) {
       const dx = Math.abs(mesh.points[v][0] - mesh.uvs[v * 2] * frame.width);
       const dy = Math.abs(mesh.points[v][1] - mesh.uvs[v * 2 + 1] * frame.height);
-      vertexGap = Math.max(vertexGap, Math.hypot(dx, dy));
+      vertexGap = Math.max(vertexGap, hypot2(dx, dy));
       if ((dx > slack[0] || dy > slack[1]) && plant !== 'setup-unchecked') {
         return out(
           'refused',
@@ -601,7 +602,7 @@ export function skinningResidual(args: SkinningMeasureArgs, plant: SkinningPlant
     measured++;
     const r = termsAt(source, cs, index);
     const c = termsAt(candidate, cc, index);
-    sampleGap = Math.max(sampleGap, Math.hypot(c.p[0] - r.p[0], c.p[1] - r.p[1]));
+    sampleGap = Math.max(sampleGap, hypot2(c.p[0] - r.p[0], c.p[1] - r.p[1]));
     const { total, cov, lev, l1, lInf } = sampleResidual(r, c, eps, tau, pivot, plant);
     l1Max = Math.max(l1Max, l1);
     lInfMax = Math.max(lInfMax, lInf);
@@ -767,7 +768,7 @@ function envelopeBoneWith(ranges: EnvelopeBoneRanges, plant: EnvelopePlant | nul
   for (let j = below.length - 2; j >= 0; j--) {
     if (plant === 'translation-ignored') break;
     const x = below[j];
-    delta = eOf(x) * Math.hypot(c[0] - x.pivot[0], c[1] - x.pivot[1]) + (1 + eOf(x)) * delta + x.translate;
+    delta = eOf(x) * hypot2(c[0] - x.pivot[0], c[1] - x.pivot[1]) + (1 + eOf(x)) * delta + x.translate;
   }
   return { bone: (ranges.chain[ranges.chain.length - 1] as BoneMotionRange).bone, linear: S * composed, pivot: [c[0], c[1]], translation: S * delta };
 }

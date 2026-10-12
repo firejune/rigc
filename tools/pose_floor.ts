@@ -58,6 +58,7 @@ import {
   viewportOfSize,
 } from '../src/render.ts';
 import { Plate } from './plate.ts';
+import { hypot2 } from '../src/numeric.ts';
 
 export const FLOOR_EXAMPLE = 'spineboy';
 export const FLOOR_SIZES = [24, 32, 48, 64, 96, 128, 192];
@@ -397,7 +398,7 @@ export function floorTrial(
     trace: log,
   });
   const got = report.parts[0];
-  const error = got.placement === null ? null : Math.hypot(got.placement.x - truth.x, got.placement.y - truth.y);
+  const error = got.placement === null ? null : hypot2(got.placement.x - truth.x, got.placement.y - truth.y);
   const outcome: FloorOutcome =
     got.refusal !== null ? 'refused' : got.ambiguous ? 'ambiguous' : error !== null && error <= FLOOR_WITHIN_PX ? 'found' : 'wrong';
   const truthResidual = residualAtTruth(frame, part, box);
@@ -406,7 +407,7 @@ export function floorTrial(
     outcome !== 'found' &&
     got.placement !== null &&
     truthResidual < got.placement.residual &&
-    !reported.some((p) => Math.hypot(p.x - truth.x, p.y - truth.y) <= FLOOR_WITHIN_PX);
+    !reported.some((p) => hypot2(p.x - truth.x, p.y - truth.y) <= FLOOR_WITHIN_PX);
   const { search, polish, coarseSeed } = searchColumns(log, truth);
   return { frame: scene.name, slot, size, texture, outcome, error, legibility: got.legibility, truthResidual, missed, search, polish, coarseSeed };
 }
@@ -416,7 +417,7 @@ function searchColumns(
   log: PoseTrace,
   truth: { x: number; y: number },
 ): { search: FloorLevel[]; polish: FloorPolish | null; coarseSeed: FloorCoarseSeed | null } {
-  const off = (c: { x: number; y: number }): number => Math.hypot(c.x - truth.x, c.y - truth.y);
+  const off = (c: { x: number; y: number }): number => hypot2(c.x - truth.x, c.y - truth.y);
   const nearest = (cs: { x: number; y: number }[]): number => cs.reduce((bi, c, i) => (off(c) < off(cs[bi]) ? i : bi), 0);
   const round = (n: number): number => Math.round(n * 1e5) / 1e5;
   const search = log.levels.map((level, i): FloorLevel => {

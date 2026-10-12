@@ -110,6 +110,7 @@ import { poseRawAnimationEach, poseRawSetup, type RawPose } from './core/raw.ts'
 import { sampleTime } from './core/animation.ts';
 import { CORE_DEFAULT_SKIN } from './core/skins.ts';
 import { readVersion } from './package_meta.ts';
+import { hypot2 } from './numeric.ts';
 
 // ---------------------------------------------------------------------------
 // the input — §3, with what the contract left undefined defined here
@@ -664,7 +665,7 @@ function inClosedPolygon(p: readonly [number, number], poly: ReadonlyArray<reado
     const dy = b[1] - a[1];
     const len = dx * dx + dy * dy;
     const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len));
-    if (Math.hypot(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t) <= ON_BOUNDARY) return true;
+    if (hypot2(p[0] - a[0] - dx * t, p[1] - a[1] - dy * t) <= ON_BOUNDARY) return true;
   }
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -1082,7 +1083,7 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
             if (!both[j]) continue;
             const p = carried(refCarrier[j]!, rw);
             const q = carried(candCarrier[j]!, cw);
-            const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+            const d = hypot2(q[0] - p[0], q[1] - p[1]);
             if (d > worst) {
               worst = d;
               worstAt = j;

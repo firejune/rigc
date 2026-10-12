@@ -26,6 +26,7 @@ import { CoreInputError, underSkin, type CompiledDocument } from './core/index.t
 import { float32Rows, meshWorld, poseDial as corePoseDial, poseJump, recordIdentity, sliderRecordOf, slotDraw, type CoreSurveyPose } from './core/hooks.ts';
 import { modelStructure, type SurveyAnimation, type SurveyDeformTimeline, type SurveyMesh, type SurveySkin, type SurveySlider, type SurveyStructure } from './deformstructure.ts';
 import { areaBand, DEFORM_AREA_EPSILON, float32AreaNoise, stretchSingularValues, triangleAreas } from './areaband.ts';
+import { hypot2 } from './numeric.ts';
 
 // The area band lives in `src/areaband.ts` (moved unchanged, issue #1224) so the
 // geometry entry can read it without reaching the compiler, and
@@ -1433,7 +1434,7 @@ function measurePosed(
     const dy = deformed[v * 2 + 1] - plain[v * 2 + 1];
     if (dx === 0 && dy === 0) continue;
     moved++;
-    const distance = Math.hypot(dx, dy);
+    const distance = hypot2(dx, dy);
     if (distance > maxDisplacement) {
       maxDisplacement = distance;
       maxDisplacementVertex = v;

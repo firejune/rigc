@@ -56,6 +56,7 @@
  */
 
 import { CompileError } from './errors.ts';
+import { hypot2 } from './numeric.ts';
 
 /** Which coordinate a bend or a wave reads, and which one it displaces. */
 export type DeformAxis = 'x' | 'y';
@@ -569,7 +570,7 @@ export function evaluateDeformTransform(
   let maxOffset = 0;
   let maxOffsetVertex = 0;
   for (let v = 0; v < count; v++) {
-    const m = Math.hypot(offsets[2 * v], offsets[2 * v + 1]);
+    const m = hypot2(offsets[2 * v], offsets[2 * v + 1]);
     if (m > maxOffset) {
       maxOffset = m;
       maxOffsetVertex = v;

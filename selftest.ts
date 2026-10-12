@@ -72747,6 +72747,117 @@ function runCurrencySuite(): number {
     );
   }
 
+  // --- CUR128: no `Math.hypot` where a length can reach a byte (issue #1377) ---
+  //
+  // Bun 1.4.2's `Math.hypot` returned 34.27192399143071 on macOS and
+  // 34.27192399143072 on Linux for one bit-identical input (rig-c/parts#276),
+  // and the probe of #1377 found 1,804 of the gallery's own (dx, dy) pairs on
+  // which the two platforms disagree; `Math.sqrt(dx * dx + dy * dy)` agreed on
+  // every one, because IEEE 754 requires `*`, `+` and `sqrt` to round correctly
+  // and requires nothing of `hypot`. `A18` compiles twice on ONE machine, so it
+  // cannot see this. Every call in `src/` became `hypot2` (`src/numeric.ts`).
+  //
+  // 🔒 The population is read from the tree, not listed: every tracked module
+  // under `src/`, every module `src/` imports from outside itself, and the two
+  // entries. A module that joins any of those joins the scan. Comments are
+  // blanked first, because the tree's own comments name `Math.hypot` to say why
+  // it is not used, and a gate that faulted the reason would be deleted.
+  {
+    const HYPOT = /\bMath\s*(?:\.\s*hypot\b|\[\s*['"`]hypot['"`]\s*\])|\{[^{}]*\bhypot\b[^{}]*\}\s*=\s*Math\b/g;
+    const DECLARES = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\*?\s+|const\s+|let\s+|class\s+)([A-Za-z_$][\w$]*)/;
+    const population = [
+      ...trackedFiles(root).filter((rel) => rel.startsWith('src/') && rel.endsWith('.ts')),
+      ...modulesSrcReachesOutsideItself(root),
+      'cli.ts',
+      'cli_core.ts',
+      // The rule's one home, named because the plants below write into it.
+      'src/numeric.ts',
+    ].filter((rel) => existsSync(join(root, rel)));
+    const texts = new Map<string, string>([...new Set(population)].sort().map((rel) => [rel, readFileSync(join(root, rel), 'utf8')]));
+    /** Each call as `file:line symbol`, the symbol being the top-level declaration it sits in. */
+    const hypotCalls = (files: ReadonlyMap<string, string>): string[] => {
+      const found: string[] = [];
+      for (const [rel, text] of files) {
+        // Blanked to the same length line by line, so a line number read off the code is the file's.
+        const code = text.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, ' ')).replace(/\/\/[^\n]*/g, (c) => ' '.repeat(c.length));
+        const lines = code.split('\n');
+        let symbol = '(top level)';
+        lines.forEach((line, i) => {
+          const declared = DECLARES.exec(line);
+          if (declared !== null) symbol = declared[1];
+          for (const m of line.matchAll(HYPOT)) found.push(`${rel}:${i + 1} ${symbol} calls ${m[0].replace(/\s+/g, ' ')}`);
+        });
+      }
+      return found;
+    };
+    const standing = hypotCalls(texts);
+    const edit = (rel: string, from: string, to: string): Map<string, string> | null => {
+      const text = texts.get(rel);
+      if (text === undefined || text.split(from).length !== 2) return null;
+      return new Map(texts).set(rel, text.replace(from, to));
+    };
+    const reached = modulesSrcReachesOutsideItself(root).find((rel) => rel.startsWith('tools/')) ?? '';
+    const plants: Array<{ what: string; files: Map<string, string> | null; at: string; quiet?: boolean }> = [
+      {
+        what: 'a call inside segmentDistance in src/mesh.ts',
+        files: edit('src/mesh.ts', '  return Math.sqrt(dx * dx + dy * dy);\n}', '  return Math.hypot(dx, dy);\n}'),
+        at: 'src/mesh.ts:',
+      },
+      {
+        what: 'a call in a module src/ reaches outside itself',
+        files: reached === '' ? null : new Map(texts).set(reached, `${texts.get(reached) ?? ''}\nexport const planted = (dx: number, dy: number): number => Math.hypot(dx, dy);\n`),
+        at: `${reached}:`,
+      },
+      {
+        what: 'hypot destructured off Math in src/numeric.ts',
+        files: new Map(texts).set('src/numeric.ts', `const { hypot } = Math;\n${texts.get('src/numeric.ts') ?? ''}`),
+        at: 'src/numeric.ts:',
+      },
+      {
+        what: 'Math.hypot named in a comment and a block comment',
+        files: new Map(texts).set('src/numeric.ts', `// Math.hypot(dx, dy)\n/* Math.hypot */\n${texts.get('src/numeric.ts') ?? ''}`),
+        at: 'src/numeric.ts:',
+        quiet: true,
+      },
+    ];
+    const probes: string[] = [];
+    const cases: string[] = [];
+    for (const plant of plants) {
+      if (plant.files === null) {
+        probes.push(`"${plant.what}": the edit found nothing to change, so this plant was never made`);
+        continue;
+      }
+      const raised = raisedBy(hypotCalls(plant.files), { at: plant.at, was: standing });
+      if (plant.quiet === true) {
+        if (raised.length > 0) probes.push(`"${plant.what}" is not a call and ${raised.length} fault(s) fired: ${raised[0]}`);
+        cases.push(`${plant.what} -> quiet`);
+        continue;
+      }
+      if (raised.length === 0) probes.push(`"${plant.what}" was planted and this gate did not fire`);
+      cases.push(`${plant.what} -> ${raised.join('; ')}`);
+    }
+    const scanned = [...texts.keys()];
+    const outside = scanned.filter((rel) => !rel.startsWith('src/'));
+    const held = standing.length === 0 && probes.length === 0 && texts.has('src/numeric.ts') && reached !== '';
+    say(
+      'CUR128_NO_MATH_HYPOT_IN_SRC_OR_WHAT_IT_IMPORTS_SO_A_LENGTH_HAS_ONE_ANSWER_ON_EVERY_PLATFORM',
+      held,
+      probeDetail(
+        held,
+        [
+          ...standing.map((call) => `${call} — use hypot2 from src/numeric.ts, whose bits are the same on every platform`),
+          ...probes,
+          ...(texts.has('src/numeric.ts') ? [] : ['src/numeric.ts is not tracked or not read, so the one home of the rule is missing']),
+          ...(reached === '' ? ['src/ reaches no module under tools/, so the plant outside src/ was never made'] : []),
+        ],
+        `${scanned.length} module(s) scanned with comments blanked — every tracked one under src/ and ${outside.join(', ')} — ` +
+          `and none calls Math.hypot; over ${cases.length} plant(s): ${cases.join('; ')}`,
+      ),
+      'issue #1377: Math.hypot is not required to round correctly and Bun 1.4.2 rounds it differently on macOS and Linux ' +
+        '(rig-c/parts#276); A18 compares two compiles on one machine and cannot see a byte that moves between two',
+    );
+  }
+
   say(
     'CUR06_THE_SCANNER_STILL_FAULTS_THE_ROWS_THIS_GATE_WAS_BUILT_FROM',
     probeFaults.length === 0 && CURRENCY_RED_FIRST.length >= 11,

@@ -43,6 +43,7 @@
  * (assertion A18 recompiles and compares bytes).
  */
 import type { ModelBinding, ModelVertices } from './model.ts';
+import { hypot2 } from './numeric.ts';
 
 // The mesh-quality measurement and its report (issue #1224) live in their own
 // module and reach a dependant through this file, which is what
@@ -468,7 +469,7 @@ export function ringControlAngles(
     const [x, y] = positionOf(name);
     const dx = x - center[0];
     const dy = y - center[1];
-    if (Math.hypot(dx, dy) < 1e-6) {
+    if (hypot2(dx, dy) < 1e-6) {
       throw new MeshError(`control bone "${name}" sits on the aperture centre, so it has no radial direction`);
     }
     return (Math.atan2(dy, dx) * 180) / Math.PI;
@@ -755,10 +756,10 @@ export function distanceToSegment(
   const dx = b[0] - a[0];
   const dy = b[1] - a[1];
   const len = dx * dx + dy * dy;
-  if (len === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+  if (len === 0) return hypot2(p[0] - a[0], p[1] - a[1]);
   let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len;
   t = Math.max(0, Math.min(1, t));
-  return Math.hypot(p[0] - (a[0] + dx * t), p[1] - (a[1] + dy * t));
+  return hypot2(p[0] - (a[0] + dx * t), p[1] - (a[1] + dy * t));
 }
 
 /**
@@ -809,7 +810,7 @@ export function simplifyClosedPolygon(poly: Array<[number, number]>, tolerance: 
   let far = 1;
   let farD = -1;
   for (let i = 1; i < n; i++) {
-    const d = Math.hypot(poly[i][0] - poly[0][0], poly[i][1] - poly[0][1]);
+    const d = hypot2(poly[i][0] - poly[0][0], poly[i][1] - poly[0][1]);
     if (d > farD) {
       farD = d;
       far = i;
@@ -852,7 +853,7 @@ export function offsetPolygon(poly: Array<[number, number]>, margin: number): Ar
     const n2: [number, number] = [e2[1], -e2[0]];
     let bx = n1[0] + n2[0];
     let by = n1[1] + n2[1];
-    let len = Math.hypot(bx, by);
+    let len = hypot2(bx, by);
     if (len < 1e-9) {
       // A 180-degree turn: the two edges double back, so there is no bisector.
       // The incoming edge's own normal is the only direction that is outward for
@@ -870,7 +871,7 @@ export function offsetPolygon(poly: Array<[number, number]>, margin: number): Ar
 }
 
 function unit(dx: number, dy: number): [number, number] {
-  const len = Math.hypot(dx, dy);
+  const len = hypot2(dx, dy);
   return len < 1e-12 ? [0, 0] : [dx / len, dy / len];
 }
 
@@ -1425,7 +1426,7 @@ export function measureContourFit(
           const nx = x + dx;
           if (nx < 0 || nx >= w) continue;
           if (!filled[ny * w + nx]) continue;
-          const d = Math.hypot(dx, dy);
+          const d = hypot2(dx, dy);
           if (d < best) best = d;
         }
       }

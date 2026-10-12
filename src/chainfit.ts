@@ -106,6 +106,7 @@ import {
   type Samples,
 } from './pose.ts';
 import type { SpineBone, SpineRegionAttachment, SpineSkeletonJson } from './types.ts';
+import { hypot2 } from './numeric.ts';
 
 export class ChainFitError extends Error {}
 
@@ -844,7 +845,7 @@ function solveFromDescendants(points: InwardPoint[]): BonePlace | null {
   if (!(spread > 1e-12)) return null;
   const p = dotp / spread;
   const q = dotq / spread;
-  const unit = Math.hypot(p, q);
+  const unit = hypot2(p, q);
   if (!(unit > 1e-9)) return null;
   return {
     x: mX - p * ma + q * mb,
@@ -991,7 +992,7 @@ function stampCover(into: Uint8Array, width: number, height: number, part: Plate
   const sin = Math.sin(pl.rotDeg * DEG);
   const halfW = part.width / 2;
   const halfH = part.height / 2;
-  const reach = Math.hypot(halfW, halfH) * pl.scale + 1;
+  const reach = hypot2(halfW, halfH) * pl.scale + 1;
   const x0 = Math.max(0, Math.floor(pl.cx - reach));
   const x1 = Math.min(width - 1, Math.ceil(pl.cx + reach));
   const y0 = Math.max(0, Math.floor(pl.cy - reach));
@@ -1665,7 +1666,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
         anchoredTo.set(name, name);
         carried.set(name, []);
         if (chainPlace !== null) {
-          pivotDisagreement.set(name, Math.hypot(chainPlace.x - place.x, chainPlace.y - place.y));
+          pivotDisagreement.set(name, hypot2(chainPlace.x - place.x, chainPlace.y - place.y));
         }
         continue;
       }
@@ -1757,7 +1758,7 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
       let lever = 0;
       for (let i = 0; i < usable.length; i++) {
         for (let j = i + 1; j < usable.length; j++) {
-          lever = Math.max(lever, Math.hypot(usable[i].place.x - usable[j].place.x, usable[i].place.y - usable[j].place.y));
+          lever = Math.max(lever, hypot2(usable[i].place.x - usable[j].place.x, usable[i].place.y - usable[j].place.y));
         }
       }
       if (solved === null) {
@@ -1790,8 +1791,8 @@ export function estimateChainFit(options: ChainFitOptions): ChainFitReport {
         return {
           bone: u.bone,
           part: u.part,
-          leverPx: roundTo(Math.hypot(u.place.x - solved.x, u.place.y - solved.y), 3),
-          offsetPx: roundTo(Math.hypot(px - u.place.x, py - u.place.y), 4),
+          leverPx: roundTo(hypot2(u.place.x - solved.x, u.place.y - solved.y), 3),
+          offsetPx: roundTo(hypot2(px - u.place.x, py - u.place.y), 4),
           carried: u.carried,
         };
       });

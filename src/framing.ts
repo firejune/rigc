@@ -56,6 +56,7 @@ import {
   type Frame,
   type Viewport,
 } from './render_shared.ts';
+import { hypot2 } from './numeric.ts';
 
 /** How far a channel must move for a pixel to count as "not background". */
 export const BACKGROUND_TOLERANCE = 8;
@@ -511,7 +512,7 @@ function cornerSpread(box: ContentBox, displace: (x: number, y: number) => [numb
     [right, bottom],
   ]) {
     const [dx, dy] = displace(x, y);
-    worst = Math.max(worst, Math.hypot(dx, dy));
+    worst = Math.max(worst, hypot2(dx, dy));
   }
   return worst;
 }
