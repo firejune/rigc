@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.45.1](https://github.com/rig-c/core/compare/v2.45.0...v2.45.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **determinism:** every 2-D length under src/ is the square root of the sum of squares, not Math.hypot, whose last bit Bun 1.4.2 rounds differently on macOS and Linux — held by CUR128 ([#1377](https://github.com/rig-c/core/issues/1377)) ([#1378](https://github.com/rig-c/core/issues/1378)) ([562b8d3](https://github.com/rig-c/core/commit/562b8d338450a43c1df5b486da5a6dc19ad335bd))
+
 ## [2.45.0](https://github.com/rig-c/core/compare/v2.44.0...v2.45.0) (2026-10-12)
 
 
