@@ -129690,6 +129690,351 @@ function runRepackSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// folds — which mesh triangles turn over against the setup pose (issue #1383)
+// ---------------------------------------------------------------------------
+
+import { DEGENERATE_SHARE, type FoldPlant, FOLDS_FILE, type FoldsFile, foldsOf, type MeshFolds } from './src/folds.ts';
+import { FOLD_COLOUR } from './src/inspect.ts';
+
+/**
+ * The fold probe's chosen numbers, world units. Every bone sits at the origin,
+ * so a vertex's bone-local position is its world position, and every expected
+ * frame below is derived from these by the area formula — never read off a run.
+ *
+ * - `sheet` — a 20 × 20 square split on its diagonal into triangles 0 (v0 v1 v2)
+ *   and 1 (v0 v2 v3). v1 alone is weighted to `lift`, which `bend` translates by
+ *   `lift` at s = 1, so triangle 0 turns over once its doubled area
+ *   `side² − side·(lift.y − lift.x)·s`, written out in `foldProbeFolds`, goes
+ *   below zero; triangle 1 holds no moving vertex.
+ * - `still` — one triangle on the root, which nothing moves.
+ * - `odd` — a square at y −40 with two triangles that are wrong at the setup
+ *   pose: triangle 2 (v2 v3 v4), whose UVs are mirrored against the rest of the
+ *   mesh, and triangle 3 (v0 v2 v1), with v1 on the line v0–v2 in the world and
+ *   in the UVs. v1 and v3 are weighted to `nudge`, which `bend` moves so that
+ *   triangle 2's world sign flips and triangle 3 gains an area — both would be
+ *   counted by a reading that did not set them aside.
+ *
+ * `bend` keys s linearly 0 → 1 → 0 over one second at its middle; `rest` keys
+ * nothing that moves, so a second set shows every mesh again.
+ */
+const FOLD_PROBE = {
+  side: 20,
+  lift: { x: -15, y: 30 },
+  nudge: { x: -25, y: -5 },
+  oddY: -40,
+  duration: 1,
+} as const;
+
+/** `bend`'s s at time t: up linearly to 1 at the middle, and back. */
+function foldProbeS(t: number): number {
+  const half = FOLD_PROBE.duration / 2;
+  return t <= half ? t / half : (FOLD_PROBE.duration - t) / half;
+}
+
+/**
+ * The frames of `bend` at `fps` on which `sheet`'s triangle 0 is turned over,
+ * from the probe's numbers: v0 (0, 0), v1 (side + lift.x·s, lift.y·s), v2 (side, side),
+ * and twice its area (v1 − v0) × (v2 − v0) = (side + lift.x·s)·side − side·lift.y·s.
+ */
+function foldProbeFolds(fps: number): number[] {
+  const { side, lift, duration } = FOLD_PROBE;
+  const out: number[] = [];
+  for (let i = 0; i <= Math.round(duration * fps); i++) {
+    const s = foldProbeS(i / fps);
+    if ((side + lift.x * s) * side - side * lift.y * s < 0) out.push(i);
+  }
+  return out;
+}
+
+/** The fold probe: three meshes, two animations — built with a model document, so the core poses it. */
+function writeFoldProbe(): { outDir: string; work: string; built: string[] } {
+  const { side, lift, nudge, oddY, duration } = FOLD_PROBE;
+  const square: Array<[number, number]> = [[0, 0], [side, 0], [side, side], [0, side]];
+  const uvOf = ([x, y]: [number, number]): [number, number] => [x / side, 1 - y / side];
+  const weighted = (points: Array<[number, number]>, moving: ReadonlySet<number>, bone: string): unknown[] =>
+    points.map(([x, y], i) => [{ bone: moving.has(i) ? bone : 'root', x, y, weight: 1 }]);
+  // odd, numbered along its outline as the format requires: v0 the square's corner, v1 halfway along to v2 (on the
+  // line, so triangle 3 has no area), v2 the next corner, v3 to the right of edge v2–v4, v4 and v5 the top corners.
+  const oddLocal: Array<[number, number]> = [[0, 0], [side / 2, 0], [side, 0], [side * 1.5, side / 2], [side, side], [0, side]];
+  const odd: Array<[number, number]> = oddLocal.map(([x, y]) => [x, y + oddY]);
+  // v3's UV sits inside the square, left of v2–v4: triangle 2 is drawn mirrored. v1's is on v0–v2, as its world point is.
+  const oddUvs = oddLocal.map((p, i) => (i === 3 ? ([0.5, 0.5] as [number, number]) : uvOf(p)));
+  const dirs = writeProbeRig({
+    bones: [{ name: 'root' }, { name: 'lift', parent: 'root' }, { name: 'nudge', parent: 'root' }],
+    slots: [
+      { name: 'sheet', bone: 'root', attachment: 'sheet' },
+      { name: 'still', bone: 'root', attachment: 'still' },
+      { name: 'odd', bone: 'root', attachment: 'odd' },
+    ],
+    skins: {
+      default: {
+        sheet: { sheet: { type: 'mesh', image: 'block.png', uvs: square.flatMap(uvOf), triangles: [0, 1, 2, 0, 2, 3], hull: 4, weights: weighted(square, new Set([1]), 'lift') } },
+        still: { still: { type: 'mesh', image: 'block.png', uvs: [0, 1, 1, 1, 0, 0], triangles: [0, 1, 2], hull: 3, vertices: [2 * side, 0, 3 * side, 0, 2 * side, side] } },
+        odd: { odd: { type: 'mesh', image: 'block.png', uvs: oddUvs.flat(), triangles: [0, 2, 4, 0, 4, 5, 2, 3, 4, 0, 2, 1], hull: odd.length, weights: weighted(odd, new Set([1, 3]), 'nudge') } },
+      },
+    },
+  });
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  const there = (v: { x: number; y: number }): unknown[] => [{ t: 0, v: [0, 0] }, { t: duration / 2, v: [v.x, v.y] }, { t: duration, v: [0, 0] }];
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'static_probe',
+      cut: 'static_probe',
+      easings: {},
+      animations: {
+        bend: { duration, loop: false, tracks: [{ bone: 'lift', property: 'translate', keys: there(lift) }, { bone: 'nudge', property: 'translate', keys: there(nudge) }] },
+        rest: { duration, loop: false, tracks: [{ bone: 'root', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: duration, v: [0] }] }] },
+      },
+    }, null, 2)}\n`,
+  );
+  const built: string[] = [];
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+  if (build.status !== 0) built.push(`the fold probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  return { outDir: dirs.outDir, work: dirs.dir, built };
+}
+
+/** FO01's reading: `sheet` folds triangle 0 alone, on exactly the frames the probe's numbers put it over. */
+function foldSheetFaults(meshes: readonly MeshFolds[], fps: number): string[] {
+  const want = foldProbeFolds(fps);
+  const sheet = meshes.find((m) => m.slot === 'sheet');
+  if (sheet === undefined) return ['the reading lists no mesh "sheet"'];
+  const faults: string[] = [];
+  const frames = sheet.frames.map((f) => f.index);
+  if (JSON.stringify(frames) !== JSON.stringify(want)) faults.push(`"sheet" folds on frames [${frames.join(', ')}], the probe's numbers put triangle 0 over on [${want.join(', ')}]`);
+  const wrong = sheet.frames.filter((f) => JSON.stringify(f.triangles) !== '[0]');
+  if (wrong.length > 0) faults.push(`"sheet" frame ${wrong[0].index} names triangles [${wrong[0].triangles.join(', ')}], required [0]`);
+  if (JSON.stringify(sheet.folded) !== (want.length === 0 ? '[]' : '[0]')) faults.push(`"sheet" folded [${sheet.folded.join(', ')}], required [0]`);
+  if (sheet.worst === null || sheet.worst.index !== want[0] || sheet.worst.triangles.length !== 1) {
+    faults.push(`"sheet" worst ${JSON.stringify(sheet.worst)}, required frame ${want[0]} (the earliest of a tie) with 1 triangle`);
+  }
+  return faults;
+}
+
+/** FO02's reading: `still` is listed, and never folds. */
+function foldStillFaults(meshes: readonly MeshFolds[]): string[] {
+  const still = meshes.find((m) => m.slot === 'still');
+  if (still === undefined) return ['the reading lists no mesh "still"'];
+  return still.frames.length === 0 && still.worst === null && still.folded.length === 0 ? [] : [`"still" reads ${JSON.stringify(still.frames)} — nothing moves it`];
+}
+
+/** FO03's reading: `odd`'s setup faults are named — 3 degenerate, 2 inverted — and none of its triangles is counted. */
+function foldOddFaults(meshes: readonly MeshFolds[]): string[] {
+  const odd = meshes.find((m) => m.slot === 'odd');
+  if (odd === undefined) return ['the reading lists no mesh "odd"'];
+  const faults: string[] = [];
+  if (JSON.stringify(odd.setup) !== JSON.stringify({ degenerate: [3], inverted: [2] })) faults.push(`"odd" setup ${JSON.stringify(odd.setup)}, required degenerate [3] and inverted [2]`);
+  if (odd.frames.length > 0) faults.push(`"odd" counts folds on ${odd.frames.length} frame(s), first ${JSON.stringify(odd.frames[0])} — its setup faults are never counted and its two good triangles hold no moving vertex`);
+  return faults;
+}
+
+function runFoldsSuite(): number {
+  console.log('\n── folds: which mesh triangles turn over against the setup pose (issue #1383) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const fps = PROTOCOL_FPS;
+  const probe = writeFoldProbe();
+  const ready = probe.built.length === 0;
+  const dir = (name: string): string => join(probe.work, name);
+  const folded = ready ? runCli(['render', '--candidate', probe.outDir, '--folds', '--max', '64', '--out', dir('folds')]) : null;
+  const geometry = ready ? runCli(['render', '--candidate', probe.outDir, '--geometry', '--max', '64', '--out', dir('geometry')]) : null;
+  const both = ready ? runCli(['render', '--candidate', probe.outDir, '--geometry', '--folds', '--max', '64', '--out', dir('both')]) : null;
+  const plain = ready ? runCli(['render', '--candidate', probe.outDir, '--max', '64', '--out', dir('plain')]) : null;
+  const pre: string[] = [...probe.built];
+  for (const [name, run] of [['--folds', folded], ['--geometry', geometry], ['--geometry --folds', both], ['plain', plain]] as const) {
+    if (run !== null && run.status !== 0) pre.push(`render ${name} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+  }
+  const fileOf = (root: string, set: string): FoldsFile | null => {
+    const path = join(root, set, FOLDS_FILE);
+    return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as FoldsFile) : null;
+  };
+  const bendFile = pre.length === 0 ? fileOf(dir('folds'), 'bend') : null;
+  if (pre.length === 0 && bendFile === null) pre.push(`render --folds wrote no ${FOLDS_FILE} for "bend"`);
+  const stdout = folded?.stdout ?? '';
+  const lines = stdout.split('\n');
+  // The geometry export's file, read by the library: the reading recomputed from what --geometry writes.
+  const geometryFile = pre.length === 0 ? (JSON.parse(readFileSync(join(dir('geometry'), 'bend', GEOMETRY_FILE), 'utf8')) as GeometryFile) : null;
+  const fromGeometry = (plant: FoldPlant = {}): MeshFolds[] => (geometryFile === null ? [] : foldsOf(geometryFile.rest, geometryFile.frames, plant));
+  const want = foldProbeFolds(fps);
+
+  // FO01 — the bent triangle is named on exactly the frames the probe's numbers put it over.
+  {
+    const probes = [...pre];
+    if (bendFile !== null) {
+      probes.push(...foldSheetFaults(bendFile.meshes, fps));
+      const line = lines.find((l) => l.includes('folds    "bend": mesh "sheet"'));
+      const runs = `[${want[0]}-${want[want.length - 1]}]`;
+      if (line === undefined) probes.push('render --folds printed no folds line for "bend" mesh "sheet"');
+      else if (!line.includes(`folds on ${want.length} frame(s) ${runs}`) || !line.includes(`worst frame ${want[0]} (t=${(want[0] / fps).toFixed(4)}s): 1 of 2 triangle(s) [0]`)) {
+        probes.push(`the line ${JSON.stringify(line.trim())} does not say ${want.length} frame(s) ${runs}, worst frame ${want[0]}, 1 of 2 triangle(s) [0]`);
+      }
+      if (want.length === 0 || want.length === Math.round(FOLD_PROBE.duration * fps) + 1) probes.push(`the probe's numbers put triangle 0 over on ${want.length} frame(s) — the control needs some frames folded and some not`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'FO01_THE_BENT_TRIANGLE_IS_NAMED_ON_EXACTLY_THE_FRAMES_IT_IS_OVER',
+      ok,
+      probeDetail(ok, probes, `"sheet" read by render --folds, posed by the core: triangle 0 alone on frames [${want.join(', ')}] of ${Math.round(FOLD_PROBE.duration * fps) + 1} at ${fps} fps — the frames the probe's area formula turns negative, computed here — worst frame ${want[0]} with 1, and one printed line naming the animation, the mesh, the frames, the worst frame's count and [0]`),
+      'issue #1383: a fold is silent on a build that passes everything; the reading is held to frames derived from the keys, not to a run',
+    );
+  }
+
+  // FO02 — a mesh that never folds is listed in the file and printed nowhere.
+  {
+    const probes = [...pre];
+    if (bendFile !== null) probes.push(...foldStillFaults(bendFile.meshes));
+    const said = lines.filter((l) => l.includes('"still"'));
+    if (pre.length === 0 && said.length > 0) probes.push(`render --folds printed ${said.length} line(s) naming "still": ${JSON.stringify(said[0].trim())}`);
+    const ok = probes.length === 0;
+    say(
+      'FO02_A_MESH_THAT_NEVER_FOLDS_PRINTS_NOTHING',
+      ok,
+      probeDetail(ok, probes, `"still" is in ${FOLDS_FILE} with no frame, no worst and no triangle, and no line of the run names it`),
+      'issue #1383: one line per mesh that folds — a line for a mesh that does not is noise an agent has to read past',
+    );
+  }
+
+  // FO03 — the setup pose's degenerate and inverted triangles are said once, and never counted.
+  {
+    const probes = [...pre];
+    if (bendFile !== null) probes.push(...foldOddFaults(bendFile.meshes));
+    const setupLines = lines.filter((l) => l.includes('setup    mesh "odd"'));
+    if (pre.length === 0) {
+      if (setupLines.length !== 1) probes.push(`render --folds over two sets printed ${setupLines.length} setup line(s) for "odd", required 1`);
+      else if (!setupLines[0].includes('1 degenerate [3]') || !setupLines[0].includes('1 inverted against the rest of the mesh [2]')) probes.push(`the setup line ${JSON.stringify(setupLines[0].trim())} does not name degenerate [3] and inverted [2]`);
+      const restFile = fileOf(dir('folds'), 'rest');
+      if (restFile === null) probes.push(`render --folds wrote no ${FOLDS_FILE} for "rest"`);
+      else if (JSON.stringify(restFile.meshes.find((m) => m.slot === 'odd')?.setup) !== JSON.stringify({ degenerate: [3], inverted: [2] })) probes.push('"rest"\'s file does not carry "odd"\'s setup faults too');
+    }
+    const ok = probes.length === 0;
+    say(
+      'FO03_SETUP_FAULTS_ARE_SAID_ONCE_AND_NEVER_COUNTED',
+      ok,
+      probeDetail(ok, probes, `"odd": triangle 3 (v1 on v0–v2, in the world and the UVs) degenerate and triangle 2 (UVs mirrored) inverted, in both sets' files and on one printed line across the two; neither counted on any frame of "bend", where the nudge turns 2 over and gives 3 an area (degenerate share ${DEGENERATE_SHARE})`),
+      'issue #1383: a triangle wrong at the setup pose has no setup orientation to keep, so counting it would report the author\'s mesh as the motion\'s fold, on every frame',
+    );
+  }
+
+  // FO04 — the reading is the geometry export's, and the flag moves no other byte.
+  {
+    const probes = [...pre];
+    if (bendFile !== null && geometryFile !== null) {
+      if (JSON.stringify(fromGeometry()) !== JSON.stringify(bendFile.meshes)) probes.push(`foldsOf over render --geometry's ${GEOMETRY_FILE} is not render --folds's ${FOLDS_FILE}`);
+      const files = (root: string): string[] => readdirSync(root, { recursive: true }).map(String).filter((f) => statSync(join(root, f)).isFile()).sort();
+      const plainFiles = files(dir('plain'));
+      const foldFiles = files(dir('folds'));
+      const extra = foldFiles.filter((f) => !plainFiles.includes(f));
+      if (JSON.stringify(extra) !== JSON.stringify(['bend/folds.json', 'rest/folds.json'])) probes.push(`render --folds wrote [${extra.join(', ')}] beyond the plain render's files, required bend/folds.json and rest/folds.json`);
+      for (const f of plainFiles) if (!readFileSync(join(dir('plain'), f)).equals(readFileSync(join(dir('folds'), f)))) probes.push(`${f} differs between the plain render and render --folds`);
+      for (const f of files(dir('geometry'))) if (!readFileSync(join(dir('geometry'), f)).equals(readFileSync(join(dir('both'), f)))) probes.push(`${f} differs between render --geometry and render --geometry --folds`);
+      if (files(dir('geometry')).some((f) => f.endsWith(FOLDS_FILE))) probes.push(`render --geometry alone wrote a ${FOLDS_FILE}`);
+      if ((geometry?.stdout ?? '').includes('folds') || (plain?.stdout ?? '').includes('folds')) probes.push('a run without --folds printed a folds line');
+    }
+    const ok = probes.length === 0;
+    say(
+      'FO04_THE_READING_IS_THE_GEOMETRY_EXPORTS_AND_MOVES_NO_OTHER_BYTE',
+      ok,
+      probeDetail(ok, probes, `foldsOf over ${GEOMETRY_FILE}'s rest table and frames is ${FOLDS_FILE} exactly; --folds adds one ${FOLDS_FILE} per set and every other file — frames, sheets, frames.json — is the plain render's bytes; --geometry --folds writes the --geometry run's ${GEOMETRY_FILE} bytes; without --folds no fold file and no fold line`),
+      'issue #1383: no flag, no moved byte — the fold record is a file of its own, so every geometry.json written before it stays the one written after',
+    );
+  }
+
+  // FO05–FO07 — each planted reversion goes red, by the control that reads it.
+  for (const [code, plant, reader, what] of [
+    ['FO05_A_SIGN_TEST_THAT_COUNTS_THE_AGREEING_SIGN_IS_RED', { signFlipped: true }, (m: MeshFolds[]) => foldSheetFaults(m, fps), 'FO01'],
+    ['FO06_A_READING_AGAINST_THE_PREVIOUS_FRAME_NOT_THE_SETUP_POSE_IS_RED', { againstPreviousFrame: true }, (m: MeshFolds[]) => foldSheetFaults(m, fps), 'FO01'],
+    ['FO07_SETUP_FAULTS_COUNTED_AS_FOLDS_IS_RED', { countSetupFaults: true }, foldOddFaults, 'FO03'],
+  ] as const) {
+    const clean = pre.length > 0 ? pre : reader(fromGeometry());
+    const planted = pre.length > 0 ? [] : reader(fromGeometry(plant));
+    say(
+      code,
+      clean.length === 0 && planted.length > 0,
+      clean.length > 0 ? `the unplanted reading is already red: ${clean[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${what}'s reading found nothing` : `${JSON.stringify(plant)} planted: ${what}'s reading names it — ${planted[0]}; unplanted it reads clean`,
+      'issue #1383: a control nobody has seen fail is not a control — the plausible wrong readings are planted and caught by name',
+    );
+  }
+
+  // FO08 — inspect --show folds fills the folded triangle at the pose drawn and lists it; FO09 — filling every triangle is red.
+  {
+    // The first folded frame: there triangle 0 is a sliver beside triangle 1, so both centres are read.
+    const at = want[0];
+    const box = { kind: 'viewport' as const, x: -10, y: FOLD_PROBE.oddY - 10, width: 4 * FOLD_PROBE.side, height: 4 * FOLD_PROBE.side };
+    const request = (time: number): InspectRequest => ({
+      show: ['folds'],
+      dim: false,
+      animation: 'bend',
+      times: [time],
+      fps,
+      skin: undefined,
+      frame: box,
+      maxSide: 4 * FOLD_PROBE.side * 4,
+    });
+    const viewFaults = (view: ReturnType<typeof inspectCandidate>, folds: boolean): string[] => {
+      const faults: string[] = [];
+      const tile = view.legend.tiles[0];
+      const entries = tile?.folds ?? [];
+      const sheet = entries.find((e) => e.slot === 'sheet');
+      const odd = entries.find((e) => e.slot === 'odd');
+      if (folds && JSON.stringify(sheet?.folded) !== '[0]') faults.push(`legend: "sheet" folded ${JSON.stringify(sheet?.folded)} at frame ${tile?.frame}, required [0]`);
+      if (!folds && sheet !== undefined) faults.push(`legend: "sheet" listed at frame ${tile?.frame}, where nothing of it is folded`);
+      if (JSON.stringify(odd === undefined ? null : { folded: odd.folded, degenerate: odd.degenerate, inverted: odd.inverted }) !== JSON.stringify({ folded: [], degenerate: [3], inverted: [2] })) faults.push(`legend: "odd" ${JSON.stringify(odd)}, required folded [] degenerate [3] inverted [2]`);
+      if (entries.some((e) => e.slot === 'still')) faults.push('legend: "still" listed, which never folds');
+      if (JSON.stringify(view.legend.folds?.rgba) !== JSON.stringify(FOLD_COLOUR.rgba)) faults.push(`legend: folds.rgba ${JSON.stringify(view.legend.folds?.rgba)}, required ${JSON.stringify(FOLD_COLOUR.rgba)}`);
+      // Pixels at each sheet triangle's centroid, posed from the probe's numbers and projected through the legend's own transform.
+      if (tile !== undefined) {
+        const s = foldProbeS(tile.time);
+        const { side, lift } = FOLD_PROBE;
+        const v: Array<[number, number]> = [[0, 0], [side + lift.x * s, lift.y * s], [side, side], [0, side]];
+        const centre = (ids: number[]): [number, number] => [ids.reduce((n, i) => n + v[i][0], 0) / 3, ids.reduce((n, i) => n + v[i][1], 0) / 3];
+        const { minX, maxY, scale, x0, y0 } = tile.transform;
+        const colourAt = ([wx, wy]: [number, number]): string => view.plate.get(Math.floor(x0 + (wx - minX) * scale), Math.floor(y0 + (maxY - wy) * scale)).join();
+        const red = FOLD_COLOUR.rgba.join();
+        if ((colourAt(centre([0, 1, 2])) === red) !== folds) faults.push(`picture: triangle 0's centre is ${colourAt(centre([0, 1, 2]))} at frame ${tile.frame}, ${folds ? 'required' : 'and must not be'} ${red}`);
+        // Triangle 1's centre is read only where the folded triangle 0 does not lie over it — at the deepest bend it does.
+        const [cx, cy] = centre([0, 2, 3]);
+        const side3 = (p: [number, number], q: [number, number]): number => (q[0] - p[0]) * (cy - p[1]) - (q[1] - p[1]) * (cx - p[0]);
+        const signs = [side3(v[0], v[1]), side3(v[1], v[2]), side3(v[2], v[0])];
+        const underZero = signs.every((n) => n > 0) || signs.every((n) => n < 0);
+        if (underZero && folds) faults.push(`probe: at frame ${tile.frame} the folded triangle 0 lies over triangle 1's centre, so the frame cannot show triangle 1 left unfilled`);
+        if (!underZero && colourAt([cx, cy]) === red) faults.push(`picture: triangle 1's centre is filled at frame ${tile.frame}, which is never folded`);
+      }
+      return faults;
+    };
+    const probes = [...pre];
+    let clean: string[] = [];
+    let planted: string[] = [];
+    if (pre.length === 0) {
+      probes.push(...viewFaults(inspectBuildView(probe.outDir, request(at / fps)), true));
+      probes.push(...viewFaults(inspectBuildView(probe.outDir, request(0)), false));
+      const run = runCli(['inspect', '--candidate', probe.outDir, '--show', 'art', '--max', '64', '--out', join(probe.work, 'no-folds.png')]);
+      const legend = run.status === 0 ? readFileSync(join(probe.work, 'no-folds.json'), 'utf8') : '';
+      if (run.status !== 0) probes.push(`inspect --show art exited ${String(run.status)}`);
+      else if (legend.includes('"folds"') || legend.includes(String(FOLD_COLOUR.rgba))) probes.push('the legend with no folds word states folds');
+      clean = viewFaults(inspectBuildView(probe.outDir, request(0)), false);
+      planted = viewFaults(inspectBuildView(probe.outDir, request(0), { foldsFillAll: true }), false);
+    }
+    const ok = probes.length === 0;
+    say(
+      'FO08_INSPECT_FILLS_THE_FOLDED_TRIANGLE_AT_THE_POSE_DRAWN_AND_LISTS_IT',
+      ok,
+      probeDetail(ok, probes, `--show folds at frame ${at}: "sheet" triangle 0 listed and its centre filled ${FOLD_COLOUR.rgba.join(',')}, triangle 1 not; at frame 0 neither, and "sheet" not listed; "odd"'s setup faults listed at both, "still" at neither; a legend without the word states no folds`),
+      'issue #1383: the picture is where an agent looks at a fold, and it must name the triangles render --folds names',
+    );
+    say(
+      'FO09_A_FOLDS_VIEW_THAT_FILLS_EVERY_TRIANGLE_IS_RED',
+      pre.length === 0 && clean.length === 0 && planted.length > 0,
+      pre.length > 0 ? `the probe did not build: ${pre[0]}` : clean.length > 0 ? `the unplanted view is already red: ${clean[0]}` : planted.length === 0 ? '{"foldsFillAll":true} planted and FO08\'s reading found nothing' : `{"foldsFillAll":true} planted: FO08's reading names it — ${planted[0]}; unplanted it reads clean`,
+      'issue #1383: a fill that does not depend on the reading would pass a legend-only control',
+    );
+  }
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
@@ -130052,7 +130397,7 @@ function runInspectSuite(): number {
       [['--zoom', 'arm'], ['names both a bone and a slot; say which with --zoom bone:arm or --zoom slot:arm']],
       [['--zoom', 'pin'], ['is one point', '--zoom pin:<pad>']],
       [['--animation', 'jump', '--at', '0'], ['no animation "jump" in this skeleton; it has [wave]']],
-      [['--show', 'bones,skin'], ['"skin" is not a view inspect draws; it draws [art, grid, density, weights:<bone>, mesh, hull, declared, bones, axes, slots, names]']],
+      [['--show', 'bones,skin'], ['"skin" is not a view inspect draws; it draws [art, grid, density, weights:<bone>, folds, mesh, hull, declared, bones, axes, slots, names]']],
       [['--hide', 'arm'], ['inspect takes no --hide; it takes --candidate']],
       [['--animation', 'wave', '--at', '0.3'], ['not on the 12 fps frame grid', '3 (0.2500s) and 4 (0.3333s)']],
       [['--animation', 'wave', '--at', '2'], ['past the end of "wave": it lasts 1s']],
@@ -131509,6 +131854,7 @@ function main(): void {
   tally.of('see-it', runSeeItSuite);
   tally.of('geometry-export', runGeometryExportSuite);
   tally.of('inspect', runInspectSuite);
+  tally.of('folds', runFoldsSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);

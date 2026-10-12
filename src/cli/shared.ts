@@ -36,6 +36,7 @@ import { ANCHOR_MAX_RESIDUAL, ANCHOR_MAX_UNEXPLAINED, DEFAULT_HINGE_MAX, DEFAULT
 import { checkAgainstFrames, type CheckOptions, CheckPlates, type CheckReport } from '../check.ts';
 import { compile, CompileError, droppedStateReason, headerBoundsOf, type CompileOptions } from '../compile.ts';
 import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
+import { FOLDS_FILE } from '../folds.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
@@ -126,7 +127,7 @@ export { PACKAGE_ROOT, readPackageMeta, readVersion };
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'accept-skeleton-differences', 'keep-pages', 'dim']);
+const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'folds', 'accept-skeleton-differences', 'keep-pages', 'dim']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -996,6 +997,11 @@ const FLAG_MEANINGS: Record<string, string> = {
     `also write ${GEOMETRY_FILE} into each frame directory: per frame, every bone's world transform and every ` +
     "slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry — on the " +
     'frames\' own grid and viewport. Not with --slot/--hide: the geometry is the whole pose whatever is drawn',
+  folds:
+    `also read which mesh triangles fold — turn over against the setup pose — and write ${FOLDS_FILE} into each frame ` +
+    'directory: per mesh, the frames with a folded triangle, the worst frame\'s count and which triangles, by index. ' +
+    'One line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. ' +
+    'A reading, not a gate. Not with --slot/--hide: it reads every mesh the pose shows',
   poser:
     "`render`, `inspect` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
     'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
@@ -1067,7 +1073,8 @@ const FLAG_MEANINGS: Record<string, string> = {
     "build's own frame; grid = lines at whole multiples of a step in world units, labelled; density = each region and mesh " +
     "filled by its triangles per world unit² over the figure's, on a log ramp centred on 1x that the legend states, with the " +
     "figure's totals over every slot and each slot's row in the legend; weights:<bone> = that bone's " +
-    'weight over every region and mesh it moves, as a heat on a ramp the legend states; mesh = each mesh\'s triangle edges; ' +
+    'weight over every region and mesh it moves, as a heat on a ramp the legend states; folds = each mesh triangle turned ' +
+    "over against the setup pose at the pose drawn, filled, and named by index in the legend (render --folds reads the same); mesh = each mesh's triangle edges; " +
     "hull = each mesh's hull outline; declared = each invariants.axes " +
     "line through its two bones' origins, its held bones drawn in their own colour; bones = each bone from origin to tip, " +
     'a bone of length 0 marked as one; axes = each bone\'s world x and y axes; slots = each slot\'s place in the posed ' +
@@ -1577,10 +1584,10 @@ export const COMMANDS: CommandDoc[] = [
     runtime: false,
     spineFormat: false,
     usage: [
-      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--poser core|spine] [--out render/]',
+      'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--folds] [--poser core|spine] [--out render/]',
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'poser', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
@@ -1595,7 +1602,7 @@ export const COMMANDS: CommandDoc[] = [
       'rigc inspect … --animation <name> --at <s[,s…]> [--fps 12] [--skin <name>]   (one time, or a sheet of several on one grid)',
       'rigc inspect … --zoom <bone|slot>[:<pad>] | --viewport <x,y,w,h>   (a box, in world units)',
       "rigc inspect … --bone 'bang_*' --hide-bone '*_ctl'   (which bones bones, axes and names draw)",
-      'rigc inspect … --overlay-slot neck --hide-overlay-slot <glob>   (which slots mesh, hull, weights and slots draw; the art stays whole)',
+      'rigc inspect … --overlay-slot neck --hide-overlay-slot <glob>   (which slots mesh, hull, weights, density, folds and slots draw; the art stays whole)',
       'rigc inspect … --compare <dir | skeleton.json>   (a second build beside the first, on one transform)',
     ],
     flags: ['candidate', 'atlas', 'show', 'dim', 'animation', 'at', 'fps', 'skin', 'zoom', 'viewport', 'bone', 'hide-bone', 'overlay-slot', 'hide-overlay-slot', 'compare', 'max', 'poser', 'out'],
