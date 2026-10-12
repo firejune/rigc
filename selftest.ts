@@ -50060,7 +50060,7 @@ function runMeshQualitySuite(): number {
 // (`SMOKE_MESHCOMPARE_COMPARES_FROM_AN_INSTALL_WITH_NO_SPINE_CORE`), because only
 // an install without spine-core can show the entry needs none.
 
-import { compareMeshesInMotion, compareMeshesInMotionPlanted, uvCarriers, type CompareAttachment, type ComparePlant, type MotionComparisonInput } from './src/meshcompare.ts';
+import { compareMeshesInMotion, compareMeshesInMotionPlanted, comparisonWalk, comparisonWalks, uvCarriers, type CompareAttachment, type ComparePlant, type MotionComparisonInput } from './src/meshcompare.ts';
 import { CONTAINS, uvCarriersWith } from './src/meshcarriers.ts';
 
 /** The plate every compare fixture draws: a strip, opaque everywhere, so every pixel centre is a sample. */
@@ -50118,6 +50118,10 @@ interface McRig {
   mayFold?: boolean;
   /** The mesh budget a generated attachment needs (`invariants.meshSlots` / `meshTriangles`) — MQ64's contour. */
   budget?: { meshSlots: number; meshTriangles: number };
+  /** More bends beside `bend`, by name: each turns `b` 0 → the bend linearly over the duration given, seconds — MQ178's durations. */
+  bends?: Record<string, number>;
+  /** The physics constraint's `fps`; left out, the default (60) — MQ178's 30 Hz spring. */
+  physicsFps?: number;
 }
 
 /** Compile a strip rig with the tree's own compiler and return its model document — the text `build` writes beside the pair. */
@@ -50151,9 +50155,12 @@ function mcBuild(dir: string, name: string, rig: McRig): string {
       archetype: 'strip',
       cut: 'strip',
       easings: {},
-      ...(rig.physics === true ? { physics: { b_follow: { bone: 'b', rotate: 0.5, inertia: 0.5, strength: 100, damping: 0.8, mass: 1, mix: 1 } } } : {}),
+      ...(rig.physics === true ? { physics: { b_follow: { bone: 'b', rotate: 0.5, inertia: 0.5, strength: 100, damping: 0.8, mass: 1, mix: 1, ...(rig.physicsFps === undefined ? {} : { fps: rig.physicsFps }) } } } : {}),
       // One bend: `b` turns 0 → 60° linearly over a second, so the bend — and with it a coarse mesh's error — grows with time.
-      animations: { bend: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [rig.bend ?? 60] }] }] } },
+      animations: {
+        bend: { duration: 1, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [rig.bend ?? 60] }] }] },
+        ...Object.fromEntries(Object.entries(rig.bends ?? {}).map(([name, d]) => [name, { duration: d, tracks: [{ bone: 'b', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: d, v: [rig.bend ?? 60] }] }] }])),
+      },
     }),
   );
   const built = compile({ rigPath: join(at, 'rig.json'), motionPath: join(at, 'motion.json'), outDir: join(at, 'out') });
@@ -50714,6 +50721,7 @@ const MESH_COMPARE_UNITS = [
   'MQ150',
   'MQ151',
   'MQ159-MQ161',
+  'MQ178-MQ179',
 ] as const;
 type MeshCompareUnitName = (typeof MESH_COMPARE_UNITS)[number];
 
@@ -50750,6 +50758,7 @@ const MESH_COMPARE_UNITS_HEAVIEST_FIRST: MeshCompareUnitName[] = [
   'MQ155',
   'MQ159-MQ161',
   'MQ55-MQ74',
+  'MQ178-MQ179',
 ];
 
 /** What a mesh-compare unit hands back: the lines its controls printed, exactly as they would have printed them, its FAIL count, and its shares of the run state (`runStates()`, in that order). */
@@ -55124,6 +55133,181 @@ function runMeshCompareSuite(child: MeshCompareChild | null = null): number {
         held,
         probeDetail(held, probes, `the folded candidate's refused sample reads ${inside} distinct supports at 1e-6 uv across its containing triangles: ${r?.message.slice(0, 200)}…; under the plant any-shared-vertex it is ${p === null ? 'taken' : `refused ${p.code}`}`),
         "issue #1323: the support is read to the slack's distance and no further, so an overlap or a fold — two triangles holding the sample well inside — is still correction 4's refusal",
+      );
+    });
+  });
+
+  // --- MQ178–MQ179 (#1389): the comparison's physics clock is the render's ----------------------------------------------
+  // `compareMeshesInMotion` steps its own schedule (`dt` between frames, then to each frame), so #1380's tie — a step
+  // that ends on a whole number of a constraint's steps, resolved by rounding — meets it wherever its times do. The
+  // rates are the comparison's callers': @rig-c/parts (src/automotion.ts `idleSchedule`, src/autoreplay.ts,
+  // src/meshdraft.ts) walks `idle` at 12 fps, `grid` and `irr` or `grid` alone, `dt` 1/12, and explicit time 0 for its
+  // stimuli and bend set; this suite's own fixtures walk `bend` at 4 fps, `dt` 1/60. The durations are the idles of
+  // parts' public examples, 40/12 s and 4 s — the core reads a duration as Spine does, as a float32, so 40/12 s puts no
+  // grid frame on a tie and 4 s puts every one there. The constraints step at 60 Hz, parts' default, and at 30 Hz,
+  // which an author can declare and at which the frame clock mis-steps 4 s at parts' own rate.
+  unit('MQ178-MQ179', () => {
+    const IDLES: Record<string, number> = { idle_40: 40 / 12, idle_48: 4 };
+    const springAt = (fps: number): { model: string; quad: string } => ({
+      model: mcBuild(dir, `mq178-spring-${fps}`, { mesh: mcMesh({ columns: fine }), physics: true, physicsFps: fps, bends: IDLES }),
+      quad: mcBuild(dir, `mq178-spring-quad-${fps}`, { mesh: mcMesh({ columns: [0, 64] }), physics: true, physicsFps: fps, bends: IDLES }),
+    });
+    const springs: Array<[number, { model: string; quad: string }]> = [[60, springAt(60)], [30, springAt(30)]];
+    type Schedule = NonNullable<MotionComparisonInput['schedule']>;
+    const parts = (animation: string, phases: Array<'grid' | 'irr'>): Schedule => ({ frames: [{ animation, fps: 12 }], phases, physics: { mode: 'step', dt: 1 / 12, warmupSteps: 0 }, selection: [] });
+    const suites: Schedule = { frames: ['setup', { animation: 'bend', fps: 4 }], phases: ['grid', 'irr'], physics: { mode: 'step', dt: 1 / 60, warmupSteps: 0 }, selection: [] };
+    const schedules: Array<[string, Schedule]> = [
+      ...Object.keys(IDLES).flatMap((a): Array<[string, Schedule]> => [
+        [`parts' idle, ${a} at 12 fps grid+irr, dt 1/12`, parts(a, ['grid', 'irr'])],
+        [`parts' search, ${a} at 12 fps grid, dt 1/12`, parts(a, ['grid'])],
+      ]),
+      [`parts' stimulus and bend set, idle_40 at explicit time 0, dt 1/12`, { frames: [{ animation: 'idle_40', times: [0] }], phases: ['grid'], physics: { mode: 'step', dt: 1 / 12, warmupSteps: 0 }, selection: [] }],
+      [`this suite's, bend at 4 fps grid+irr, dt 1/60`, suites],
+    ];
+
+    // --- MQ178: the mechanism, read off each constraint's own state on the comparison's own walks -----------------------
+    mcGuard('MQ178', () => {
+      // Per update and constraint, the whole steps it took against what exact arithmetic takes: the walk's time t (the
+      // running sum of its planned steps) holds t·f whole steps, f the constraint's rate, and a tie — t·f within 1e-9 of
+      // a whole number, a few thousand ulps — is a step taken, as it is in exact arithmetic. Every other time on these
+      // walks stays far from a whole step: the closest is printed and held to 1e-8 of one, above any rounding and below
+      // what a float32 duration moves a frame by.
+      const TIE = 1e-9;
+      const misSteps = (doc: CompiledDocument, animation: string, deltas: readonly number[], clock: 'render' | 'frame'): { updates: number; ties: number; wrong: string[]; nearest: number } => {
+        let index = 0;
+        let updates = 0;
+        let ties = 0;
+        let nearest = Infinity;
+        const wrong: string[] = [];
+        const times: number[] = [];
+        let sum = 0;
+        for (const d of deltas) times.push((sum += d));
+        const wholeSteps = (k: number, f: number, read: boolean): number => {
+          if (k < 0) return 0;
+          const n = times[k] * f;
+          const whole = Math.round(n);
+          const off = Math.abs(n - whole);
+          if (read && off < TIE) ties++;
+          if (read && off >= TIE) nearest = Math.min(nearest, off);
+          return off < TIE ? whole : Math.floor(n);
+        };
+        const recorder = (...args: Parameters<typeof stepPhysics>): boolean => {
+          const [r, , , ctx] = args;
+          const s = physicsState(ctx, r.name);
+          const owed = s.remaining + Math.max(ctx.time - s.lastTime, 0);
+          const moved = stepPhysics(...args);
+          if (ctx.phase === 'update' && index >= 1) {
+            const f = Math.round(1 / r.step);
+            const taken = Math.round((owed - s.remaining) / r.step);
+            const exact = wholeSteps(index - 1, f, true) - wholeSteps(index - 2, f, false);
+            updates++;
+            if (taken !== exact) wrong.push(`${r.name} (bone ${r.bone}, ${f} Hz) at update ${index} (t ${times[index - 1].toFixed(6)} s) took ${taken} step(s) where exact arithmetic takes ${exact}`);
+          }
+          return moved;
+        };
+        comparisonWalk(doc, animation, deltas, { physicsStep: recorder }, (_pose, i) => { index = i + 1; }, clock);
+        return { updates, ties, wrong, nearest };
+      };
+      const probes: string[] = [];
+      const planted: string[] = [];
+      let updates = 0;
+      let ties = 0;
+      let nearest = Infinity;
+      let plantedTotal = 0;
+      for (const [fps, spring] of springs) {
+        const doc = noSkinView(readModel(spring.model, `the MQ178 spring strip at ${fps} Hz`));
+        for (const [label, schedule] of schedules) {
+          let old = 0;
+          let first = '';
+          for (const w of comparisonWalks(schedule, spring.model)) {
+            const r = misSteps(doc, w.animation, w.deltas, 'render');
+            const o = misSteps(doc, w.animation, w.deltas, 'frame');
+            updates += r.updates;
+            ties += r.ties;
+            nearest = Math.min(nearest, r.nearest);
+            old += o.wrong.length;
+            if (first === '' && o.wrong.length > 0) first = `${w.phase ?? 'explicit'}: ${o.wrong[0]}`;
+            probes.push(...r.wrong.slice(0, 2).map((x) => `${fps} Hz, ${label}, ${w.phase ?? 'explicit'}: ${x}`));
+          }
+          plantedTotal += old;
+          planted.push(`${fps} Hz, ${label}: ${old}${first === '' ? '' : `, first ${first}`}`);
+        }
+      }
+      if (updates === 0 || ties === 0) probes.push(`${updates} physics update(s) read, ${ties} on a tie: nothing here could mis-step`);
+      // Where the plant must be red, by name: parts' own rate on its 4 s idle at 30 Hz, and this suite's rate at 60 Hz.
+      for (const must of ["30 Hz, parts' idle, idle_48", "60 Hz, this suite's"]) {
+        const line = planted.find((p) => p.startsWith(must));
+        if (line === undefined || /: 0$/.test(line)) probes.push(`the planted frame clock is not red on ${must}: ${line ?? 'not walked'}`);
+      }
+      if (nearest < 1e-8) probes.push(`a time that is not a tie lies ${nearest.toExponential(2)} of a step from a whole number of steps, too close for the tie reading to be unambiguous`);
+      const held = probes.length === 0;
+      say(
+        'MQ178_THE_COMPARISONS_WALKS_TAKE_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AT_ITS_CALLERS_RATES_AND_THE_FRAME_CLOCK_IS_RED_BY_CONSTRAINT_AND_UPDATE',
+        held,
+        probeDetail(
+          held,
+          probes,
+          `${updates} constraint update(s) on the comparison's own walks (comparisonWalks, comparisonWalk) through the render's clock, ${ties} of them on a tie: every one took the whole steps exact arithmetic takes (the nearest other time ${nearest.toExponential(2)} of a step from a whole step). ` +
+            `The planted frame clock, the walk before issue #1389, mis-steps ${plantedTotal} update(s):\n          ${planted.join('\n          ')}`,
+        ),
+        "issue #1389: #1380's tie is arithmetic on the clock, so it meets any walk whose times end on a whole number of a constraint's steps, the comparison's included, and which way it falls is rounding; this reads the constraint's own step count, the mechanism rather than a symptom of it",
+      );
+    });
+
+    // --- MQ179: no physics, no byte moves; with physics the plant reaches the readings ---------------------------------
+    mcGuard('MQ179', () => {
+      const probes: string[] = [];
+      const bytes = (input: MotionComparisonInput, plant: ComparePlant | null): string => writeMeshQualityReport(plant === null ? compareMeshesInMotion(input) : compareMeshesInMotionPlanted(input, plant));
+      const wide = { bounds: { maxLocalDeformation: 1e9 } };
+      const stillSchedules: Array<[string, Schedule]> = [
+        ["this suite's, dt 1/60", suites],
+        ["parts', bend at 12 fps grid+irr, dt 1/12", { frames: ['setup', { animation: 'bend', fps: 12 }], phases: ['grid', 'irr'], physics: { mode: 'step', dt: 1 / 12, warmupSteps: 0 }, selection: [] }],
+        ['physics none', { ...suites, physics: { mode: 'none' } }],
+      ];
+      let identical = 0;
+      for (const [label, schedule] of stillSchedules) {
+        const input = mcInput(stillRef, [{ id: 'quad', model: stillQuad }], { schedule, ...wide });
+        const tree = bytes(input, null);
+        if (tree !== bytes(input, 'frame-physics-clock')) probes.push(`no physics constraint, ${label}: the report under the frame clock differs from the tree's`);
+        else identical += tree.length;
+      }
+      // With the spring, per schedule: every leaf of the report the frame clock moves — how many, the largest change of a
+      // number, the first leaf that is not a number (a worst frame's id) — and the row values among them.
+      const leaves = (a: unknown, b: unknown, path: string, out: Array<{ path: string; a: unknown; b: unknown }>): void => {
+        if (a !== null && b !== null && typeof a === 'object' && typeof b === 'object') {
+          for (const k of [...new Set([...Object.keys(a), ...Object.keys(b)])]) leaves((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], `${path}.${k}`, out);
+        } else if (JSON.stringify(a) !== JSON.stringify(b)) out.push({ path, a, b });
+      };
+      const moved: string[] = [];
+      let movedRows = 0;
+      for (const [fps, spring] of springs) {
+        for (const [label, schedule] of [schedules[0], schedules[2], schedules[5]]) {
+          const input = mcInput(spring.model, [{ id: 'quad', model: spring.quad }], { schedule, ...wide });
+          const tree = compareMeshesInMotion(input);
+          const old = compareMeshesInMotionPlanted(input, 'frame-physics-clock');
+          const treeRows = tree.candidates[0].motion?.rows ?? [];
+          const oldRows = old.candidates[0].motion?.rows ?? [];
+          const rows = treeRows.flatMap((r, k) => (r.value === oldRows[k]?.value ? [] : [`${r.code} ${String(oldRows[k]?.value)} -> ${String(r.value)}`]));
+          const diff: Array<{ path: string; a: unknown; b: unknown }> = [];
+          leaves(JSON.parse(writeMeshQualityReport(tree)), JSON.parse(writeMeshQualityReport(old)), '', diff);
+          const numbers = diff.filter((d) => typeof d.a === 'number' && typeof d.b === 'number');
+          const change = (d: { a: unknown; b: unknown }): number => Math.abs((d.a as number) - (d.b as number));
+          const largest = numbers.reduce<{ path: string; a: unknown; b: unknown } | null>((m, d) => (m === null || change(d) > change(m) ? d : m), null);
+          const beyondR6 = numbers.filter((d) => change(d) > 1.5e-6).length;
+          const other = diff.find((d) => !(typeof d.a === 'number' && typeof d.b === 'number'));
+          movedRows += diff.length;
+          moved.push(
+            `${fps} Hz, ${label}: ${diff.length === 0 ? 'no leaf moved' : `${diff.length} leaf/leaves moved, ${beyondR6} number(s) by more than one r6 unit, the largest ${largest === null ? 'none' : `${largest.path} ${String(largest.b)} -> ${String(largest.a)}`}${other === undefined ? '' : `, first other ${other.path} ${JSON.stringify(other.b)} -> ${JSON.stringify(other.a)}`}; row values: ${rows.length === 0 ? 'none moved' : rows.join(', ')}`}`,
+          );
+        }
+      }
+      if (movedRows === 0) probes.push(`with a physics constraint the frame clock moved no row, so the plant does not reach the poser:\n          ${moved.join('\n          ')}`);
+      const held = probes.length === 0;
+      say(
+        'MQ179_WITH_NO_PHYSICS_CONSTRAINT_THE_RENDERS_CLOCK_AND_THE_FRAME_CLOCK_WRITE_THE_SAME_REPORT_BYTES_AND_WITH_ONE_THE_PLANT_MOVES_A_ROW',
+        held,
+        probeDetail(held, probes, `with no physics constraint, ${stillSchedules.length} schedule(s), ${identical} report byte(s) identical under either clock; with the spring, what the frame clock moves, frame clock -> the render's clock:\n          ${moved.join('\n          ')}`),
+        "issue #1389: the clock is read by the physics alone, so a rig without a physics constraint is compared exactly as before the change; and a plant that moved nothing would make MQ178's red a reading of a walk the comparison does not take",
       );
     });
   });

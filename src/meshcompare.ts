@@ -66,7 +66,11 @@
  *   on every walk and stepped at the declared `dt` to each frame (the oracle's
  *   `stepSchedule` rule: from the last frame, steps of `dt` while before the
  *   next, then to it), the same steps for the reference and every candidate. A
- *   nonzero `warmupSteps` is refused, never run as zero.
+ *   nonzero `warmupSteps` is refused, never run as zero. The physics clock
+ *   moves by `physicsClockStep` of each step, the render's clock
+ *   (`PHYSICS_CLOCK_LEAD` in `src/core/raw.ts`, issue #1380), so a step
+ *   lasting a whole number of a constraint's steps takes them as exact
+ *   arithmetic does (`comparisonWalk`, issue #1389).
  *
  * ## What it never does
  *
@@ -106,8 +110,8 @@ import {
 import { areaBand, stretchSingularValues, triangleAreas } from './areaband.ts';
 import { uvCarriers, uvCarriersWith, type Carrier, type CarrierPlant } from './meshcarriers.ts';
 import { CoreInputError, readModel, underNoSkin, underSkin, type CompiledDocument } from './core/index.ts';
-import { poseRawAnimationEach, poseRawSetup, type RawPose } from './core/raw.ts';
-import { sampleTime } from './core/animation.ts';
+import { physicsClockStep, poseRawAnimationEach, poseRawSetup, type RawPose } from './core/raw.ts';
+import { sampleTime, type TimelinePlant } from './core/animation.ts';
 import { CORE_DEFAULT_SKIN } from './core/skins.ts';
 import { readVersion } from './package_meta.ts';
 import { hypot2 } from './numeric.ts';
@@ -187,7 +191,9 @@ export interface MotionComparisonInput {
  * Issue #1291's faults in carrying `motionAmplitude` into the setup measurement, for the `mesh-compare` suite's
  * negative controls: the amplitude not handed over; `null` handed over as the field left out; the field not validated
  * before the builds are read; `null` echoed for a field left out; and the load counted as a required row, so the
- * amplitude moves a verdict. `compareMeshesInMotion` plants none. Issue #1323 adds `CarrierPlant`
+ * amplitude moves a verdict. `compareMeshesInMotion` plants none. Issue #1389 adds `'frame-physics-clock'`: every
+ * build posed with the physics clock moved by the schedule's step itself, the walk before that issue
+ * (`comparisonWalk`). Issue #1323 adds `CarrierPlant`
  * (`src/meshcarriers.ts`): a fault in resolving a sample's several carriers, planted in every `uvCarriers` the
  * comparison reads.
  */
@@ -197,6 +203,7 @@ export type ComparePlant =
   | 'amplitude-unvalidated'
   | 'echo-when-unset'
   | 'amplitude-gates-acceptance'
+  | 'frame-physics-clock'
   | OverBoundPlant
   | CarrierPlant;
 
@@ -594,7 +601,37 @@ function drawnOf(pose: RawPose, ref: AttachmentRef): number[] | null {
   return row === undefined ? null : row.vertices;
 }
 
-function poseBuild(doc: CompiledDocument, refs: readonly AttachmentRef[], frames: readonly Planned[], walks: readonly Walk[]): Posed | { refused: string } {
+/**
+ * The walk every build of a comparison is posed on (issue #1389): `poseRawAnimationEach`, reset at the animation, the
+ * physics clock moved by `physicsClockStep` of each step — the render's clock (`src/core/raw.ts`). A walk time that
+ * ends on a whole number of a physics constraint's steps leaves zero time over in exact arithmetic and a few ulps
+ * either side of zero in doubles, so with the step itself as the clock the constraint took one step too few or one
+ * too many by rounding. Measured over the clock arithmetic on 300 durations as the core reads them (float32, as Spine
+ * does: n/12 s to 20 s and tenths to 8 s): at 12 fps and `dt` 1/12, the rate `@rig-c/parts` walks, 11,248 of 44,486
+ * grid updates sit on a tie against a 60 Hz constraint and the frame clock happens to resolve every one as exact
+ * arithmetic does, while against 30, 24 and 50 Hz it mis-steps 3,274, 3,350 and 3,160 of them; at 4 fps and `dt` 1/60
+ * it mis-steps 19,876 grid and 594 irr updates against 60 Hz. The render's clock mis-steps none of any, so no time
+ * that is not a tie came within its lead of a whole step. `clock: 'frame'` is that walk, the step itself — `ComparePlant`
+ * `'frame-physics-clock'` and `MQ178`'s planted red. With no physics constraint the clock is read by nothing, so every
+ * pose is the same either way (`MQ179`); with one, the lead moves the shown lag weight by about `2⁻³⁰` of the time
+ * walked even where no step moves: on `MQ179`'s spring at parts' rate and 60 Hz, one unit of a row's sixth decimal,
+ * which can move the worst sample to a neighbour that nearly ties it.
+ */
+export function comparisonWalk(doc: CompiledDocument, animation: string, deltas: readonly number[], plant: TimelinePlant, visit: (pose: RawPose, index: number) => void, clock: 'render' | 'frame' = 'render'): void {
+  poseRawAnimationEach(doc, animation, deltas, plant, 'animation', visit, clock === 'render' ? physicsClockStep : undefined);
+}
+
+/**
+ * The walks `schedule` plans over the model document `model`, in walk order, each with the steps every build is posed
+ * on — `planSchedule`'s, read for the `mesh-compare` suite's `MQ178`. Internal: merely exported, so not promised; it
+ * reads the schedule without the input checks `compareMeshesInMotion` runs first.
+ */
+export function comparisonWalks(schedule: MotionSchedule, model: string): Array<{ animation: string; phase: 'grid' | 'irr' | null; deltas: number[] }> {
+  const doc = readModel(model, 'the model document');
+  return planSchedule(schedule, doc, doc.constraints.filter((c) => c.kind === 'physics').length).walks.map((w) => ({ animation: w.animation, phase: w.phase, deltas: [...w.deltas] }));
+}
+
+function poseBuild(doc: CompiledDocument, refs: readonly AttachmentRef[], frames: readonly Planned[], walks: readonly Walk[], clock: 'render' | 'frame'): Posed | { refused: string } {
   try {
     const view = viewOf(doc, refs[0].skin);
     const setupPose = poseRawSetup(view);
@@ -612,12 +649,19 @@ function poseBuild(doc: CompiledDocument, refs: readonly AttachmentRef[], frames
         list.push(i);
         wanted.set(f.pose, list);
       });
-      poseRawAnimationEach(view, w.animation, w.deltas, {}, 'animation', (pose, index) => {
-        const at = wanted.get(index);
-        if (at === undefined) return;
-        const drawn = refs.map((r) => drawnOf(pose, r));
-        for (const i of at) out[i] = drawn;
-      });
+      comparisonWalk(
+        view,
+        w.animation,
+        w.deltas,
+        {},
+        (pose, index) => {
+          const at = wanted.get(index);
+          if (at === undefined) return;
+          const drawn = refs.map((r) => drawnOf(pose, r));
+          for (const i of at) out[i] = drawn;
+        },
+        clock,
+      );
     });
     return { setup, frames: out, setupBones };
   } catch (err) {
@@ -1003,11 +1047,12 @@ function compareMeshesInMotionWith(input: MotionComparisonInput, plant: CompareP
     const carriersOf = (uvs: readonly number[], triangles: readonly number[], samples: ReadonlyArray<{ uv: [number, number] }>, who: string): Array<Carrier | null> =>
       uvCarriersWith(uvs, triangles, samples, who, carrierPlant);
     const refCarriers = order.map((i, k) => carriersOf(reference.meshes[i].uvs, reference.meshes[i].triangles, samplesOf[k].samples, `reference "${reference.id}", attachment ${nameOf(refs[i])}`));
-    const posedRef = poseBuild(reference.doc, order.map((i) => refs[i]), frames, walks);
+    const clock = plant === 'frame-physics-clock' ? 'frame' : 'render';
+    const posedRef = poseBuild(reference.doc, order.map((i) => refs[i]), frames, walks, clock);
 
     motionOf = (b: Build, isReference: boolean) => {
       const carriers = isReference ? refCarriers : order.map((i, k) => carriersOf(b.meshes[i].uvs, b.meshes[i].triangles, samplesOf[k].samples, `candidate "${b.id}", attachment ${nameOf(refs[i])}`));
-      const posed = isReference ? posedRef : poseBuild(b.doc, order.map((i) => refs[i]), frames, walks);
+      const posed = isReference ? posedRef : poseBuild(b.doc, order.map((i) => refs[i]), frames, walks, clock);
       const built: Built[] = [];
       const perFrame: NonNullable<CandidateReport['perFrame']> = [];
       // Issue #1315: kept for a candidate only, and only when asked — a call without the field does none of this.
