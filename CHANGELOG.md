@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.47.1](https://github.com/rig-c/core/compare/v2.47.0...v2.47.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **mesh:** the motion comparison steps its physics on the render's clock ([#1389](https://github.com/rig-c/core/issues/1389)) ([#1393](https://github.com/rig-c/core/issues/1393)) ([a659147](https://github.com/rig-c/core/commit/a6591470085be629b8b4180be74aa3d38e3b9ccb))
+
+
+### Instrument
+
+* **folds:** hold the degenerate line from both sides with a triangle just below it and one just above it ([#1390](https://github.com/rig-c/core/issues/1390)) ([#1391](https://github.com/rig-c/core/issues/1391)) ([ad453ef](https://github.com/rig-c/core/commit/ad453efebf6ca85a00209e5bea5dbbe52ba8104e))
+
 ## [2.47.0](https://github.com/rig-c/core/compare/v2.46.0...v2.47.0) (2026-10-12)
 
 
