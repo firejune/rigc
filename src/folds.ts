@@ -170,6 +170,8 @@ export interface FoldPlant {
   boxWholeMesh?: boolean;
   /** Size the folded triangles by their unsigned area as posed at the frame, rather than at the setup pose. */
   areaPosed?: boolean;
+  /** Read degeneracy against this share of the largest coordinate rather than `DEGENERATE_SHARE` — 0 drops the line (issue #1390). */
+  degenerateShare?: number;
 }
 
 /** Twice the signed area of triangle `t` in `xy` (`x, y` per vertex). */
@@ -201,12 +203,13 @@ function magnitude(xy: readonly number[]): number {
 
 /**
  * The sign of triangle `t`'s area in `xy`: +1, −1, or 0 when it is degenerate
- * — its height over its longest edge at most `DEGENERATE_SHARE` of `scale`.
+ * — its height over its longest edge at most `share` (`DEGENERATE_SHARE`
+ * unplanted) of `scale`.
  */
-function orientation(xy: readonly number[], triangles: readonly number[], t: number, scale: number): -1 | 0 | 1 {
+function orientation(xy: readonly number[], triangles: readonly number[], t: number, scale: number, share: number): -1 | 0 | 1 {
   const twice = cross2(xy, triangles, t);
   const edge = longestEdge(xy, triangles, t);
-  if (edge === 0 || Math.abs(twice) / edge <= DEGENERATE_SHARE * scale) return 0;
+  if (edge === 0 || Math.abs(twice) / edge <= share * scale) return 0;
   return twice > 0 ? 1 : -1;
 }
 
@@ -220,6 +223,7 @@ export interface SetupReading {
 /** The setup reading of one mesh — see the module comment for what degenerate and inverted mean. */
 export function setupReading(rest: FoldRest, plant: FoldPlant = {}): SetupReading {
   const count = Math.floor(rest.triangles.length / 3);
+  const share = plant.degenerateShare ?? DEGENERATE_SHARE;
   const signs = new Int8Array(count);
   const world: number[] = [];
   const uvSigns: number[] = [];
@@ -229,8 +233,8 @@ export function setupReading(rest: FoldRest, plant: FoldPlant = {}): SetupReadin
   let sense = 0;
   const degenerate: number[] = [];
   for (let t = 0; t < count; t++) {
-    const w = orientation(rest.vertices, rest.triangles, t, worldScale);
-    const u = uvs.length === rest.vertices.length ? orientation(uvs, rest.triangles, t, uvScale) : 1;
+    const w = orientation(rest.vertices, rest.triangles, t, worldScale, share);
+    const u = uvs.length === rest.vertices.length ? orientation(uvs, rest.triangles, t, uvScale, share) : 1;
     world.push(w);
     uvSigns.push(u);
     if (w === 0 || u === 0) {
@@ -263,11 +267,12 @@ export function foldedAt(rest: FoldRest, setup: SetupReading, vertices: readonly
     );
   }
   const scale = magnitude(vertices);
+  const share = plant.degenerateShare ?? DEGENERATE_SHARE;
   const out: number[] = [];
   for (let t = 0; t < setup.signs.length; t++) {
     const before = setup.signs[t];
     if (before === 0) continue;
-    const now = orientation(vertices, rest.triangles, t, scale);
+    const now = orientation(vertices, rest.triangles, t, scale, share);
     if (now === 0) continue;
     if (plant.signFlipped ? now === before : now === -before) out.push(t);
   }
