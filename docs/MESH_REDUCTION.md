@@ -533,6 +533,56 @@ removals, so every count is 1 and the list's length is still
 `insertedVertices + removedVertices`; only the entries' shape differs from
 2.24.0, where each was the bare `step` number.
 
+[implemented, #1374] With `explainKept` set (`'by-row'` or `'by-vertex'`),
+`changes` ends in one more key, `kept` — what refused each kept source vertex,
+written after `retriangulation` — and `effective` echoes the field. Left out,
+neither is written and no refusal is measured that the run would not measure,
+so the report and the mesh are the call's as they were. The reasons are read
+from the last removal pass, the one that took nothing: every kept vertex that
+is not protected was attempted there once as a single removal, on the mesh the
+removals leave (before any `retriangulate` post-pass), and its refusal is read
+in the state it was tried in — a refusal the deviation floor decided measured
+in full to be named, exactly as `blockingConstraint`'s is, in that pass only.
+
+```ts
+/** src/meshquality.ts [implemented, #1374] — written last in `changes`, only when the input set `explainKept`. */
+export interface KeptRefusals {
+  /** The 1-based removal pass read; null when the run had no pass that took nothing. */
+  pass: number | null;
+  /** One entry per reason holding a kept source vertex, ascending by reason; boundary + interior sums to the kept source vertices. */
+  rows: Array<{ reason: string; boundary: number; interior: number }>;
+  /** `explainKept: 'by-vertex'` only: each kept source vertex, ascending, with the refusal's text (null when no attempt gave one). */
+  vertices?: Array<{ vertex: number; boundary: boolean; reason: string; refusal: string | null }>;
+}
+```
+
+A vertex is **boundary** when it is a source-hull vertex — a kept source vertex
+is on the outline exactly then — and **interior** otherwise; vertices the
+refinement inserted are never candidates and are not listed. A **reason** is the
+refusal's constraint without the object an author named: a row's code
+(`MQ_BOUNDARY_DEVIATION`, `MQ_COVERAGE`, `MQ_SKINNING_RESIDUAL`, `MQ_LINE_DEVIATION`,
+…; the region or line it names stays in `refusal`) or the structural condition
+the refusal opens with — `retriangulation`, `outline`, `protect (a)`,
+`weightJump (b)`, `line`. A refusal that opens with none of them is a defect of
+the reducer and is thrown rather than named. A vertex no attempt in such a pass
+reached reads why, never an absence: `protected` (`protect`, or a line's end or
+crossing), and, on a run with no pass that took nothing, the termination that
+ended it — `budget-exhausted`, `replayed-to-accepted-step` — or
+`no-removal-pass`, when the refined source does not meet its targets and no
+removal is tried.
+
+Both levels sit behind the field because naming costs measurements a run
+without it does not make, and a default that moved every report's bytes would
+not be additive. Within it the counts are the first level and the list the
+second because the list grows by an entry per kept vertex (hundreds on a
+production part) while the counts are what a policy is drafted from — *the
+outline is held by the deviation bound, the interior by the residual* is two
+rows. The two levels cost the same: the floor's refusals of the last pass are
+measured to be named either way. This is the reading rig-parts took through `reduceMeshWith`'s attempt
+observer (`tools/auto_policy_survey.ts`, the final pass by row, outline and
+interior by the source hull), and the observer is what it is held to
+(`MQ176`, `MQ177`).
+
 ```ts
 /** [proposal] */
 export type MeasureState = 'pass' | 'fail' | 'undeclared' | 'refused' | 'not-measurable';
@@ -6386,6 +6436,19 @@ and lines over its 8 px lattice found by walking the grid; plants `LinePlant` in
 - `MQ174_A_REPLAY_WITH_LINES_IS_THE_FULL_RUNS_PREFIX_BYTE_FOR_BYTE_ACROSS_LINE_RUNS` (plant `stop-one-early`)
 - `MQ175_CONTROL_THE_LINE_ROWS_READ_BEFORE_THE_STRUCTURE_REFUSE_ONLY_WHAT_THE_FULL_PATH_REFUSES_AND_CHANGE_NO_BYTE`
   (against `measure-every-candidate`; plant `line-early-short`)
+
+What refused each kept vertex ([#1374](https://github.com/rig-c/core/issues/1374), [implemented]) — `explainKept`
+(§2) on the blink's subjects above, the attempt observer over the same run the oracle; plant `KeptPlant` in
+`ReductionPlant`:
+
+- `MQ176_EXPLAIN_KEPT_NAMES_THE_REFUSAL_THE_OBSERVER_READ_FOR_EVERY_KEPT_VERTEX_OF_THE_LAST_PASS_AND_LEFT_OUT_CHANGES_NO_BYTE`
+  (eight subjects: every kept vertex's refusal text equal to the observer's in its last pass, the reason the test's
+  own reading of it, the rows the list's own tally; `budget-exhausted`, `replayed-to-accepted-step`,
+  `no-removal-pass` and `protected` each reached; with the field set the mesh and the report less the echo and the
+  block are the call's without it; `null` and two wrong strings refused `REDUCE_INPUT_MISSING`)
+- `MQ177_CONTROL_A_KEPT_VERTEX_NAMED_BY_ANOTHER_VERTEXS_REFUSAL_IS_RED_BY_VERTEX_AND_ROW`
+  (plant `kept-reason-shifted`: each kept vertex named by the next refused vertex's refusal, named by vertex and by
+  the row the observer read)
 
 The decisions that change behaviour rather than an interface:
 

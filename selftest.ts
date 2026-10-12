@@ -49869,6 +49869,166 @@ function runMeshQualitySuite(): number {
           'issue #1326, §11\'s floor clause: a line row reads only the line vertices\' positions, which an attempt fixes before anything is built, so it is read whole there rather than bounded — the extension of the deviation floor is the row itself, held verdict-identical here',
         );
       }
+
+      // --- MQ176–MQ177 (#1374): `explainKept` — what refused each kept source vertex in the last removal pass ------------
+      //
+      // The oracle is the attempt observer over the same run: the single removals of the highest pass it saw, each read
+      // in the state it was tried in. The block is held to it vertex for vertex — the refusal's text equal, the reason the
+      // test's own reading of that text (before its first colon, a row's `[object]` and a line's name dropped) — and its
+      // rows to the test's own tally of the list. With the field left out the report and the mesh are the call's as they
+      // were; with it set they differ by the echo and the block alone. Every subject is the blink's lined source or the
+      // 8 px lattice, under bounds the suite already reads; none of the figures below is typed.
+      {
+        type KeptSeen = { pass: number; vertex: number; text: string | null };
+        const UNREACHED = ['protected', 'budget-exhausted', 'replayed-to-accepted-step', 'no-removal-pass'];
+        const ownReason = (text: string): string => (text.startsWith('line "') ? 'line' : text.slice(0, text.indexOf(':')).replace(/\[.*\]$/, ''));
+        const keptRun = (input: MeshReductionInput, explain: 'by-row' | 'by-vertex', plant: ReductionPlant | null): { run: MeshReductionResult; seen: KeptSeen[] } => {
+          const seen: KeptSeen[] = [];
+          const run = lnRun({ ...input, explainKept: explain }, plant, (rec) => {
+            if (rec.kind === 'removal') seen.push({ pass: rec.pass, vertex: rec.sourceVertices[0], text: rec.refusedBy === null ? null : rec.refusedBy() });
+          });
+          return { run, seen };
+        };
+        /** The block held to the observer and to the test's own tally; each disagreement named by vertex or row. */
+        const keptAgainstObserver = (label: string, source: SourceMesh, run: MeshReductionResult, seen: KeptSeen[], expectUnreached: string | null): { faults: string[]; compared: number; reasons: Set<string>; boundary: number; interior: number } => {
+          const faults: string[] = [];
+          const reasons = new Set<string>();
+          let compared = 0;
+          let boundary = 0;
+          let interior = 0;
+          const kept = run.report.candidates[0]?.changes?.kept;
+          const mesh = run.mesh;
+          if (kept === undefined || mesh === null) return { faults: [`${label}: no kept block (${mqSayEnd(run.report.termination)})`], compared, reasons, boundary, interior };
+          const list = kept.vertices ?? [];
+          const keptSource = mesh.indexMap.map((r, v) => (r === null ? -1 : v)).filter((v) => v >= 0);
+          if (JSON.stringify(list.map((k) => k.vertex)) !== JSON.stringify(keptSource)) faults.push(`${label}: the list names ${list.length} vertices, the mesh keeps ${keptSource.length} source vertices — not the same, in ascending order`);
+          const last = seen.length === 0 ? null : Math.max(...seen.map((s) => s.pass));
+          const final = new Map(seen.filter((s) => s.pass === last).map((s) => [s.vertex, s.text]));
+          if (expectUnreached === null) {
+            if (kept.pass !== last) faults.push(`${label}: the block reads pass ${kept.pass}, the observer's last is ${last}`);
+            for (const [v, text] of final) if (text === null) faults.push(`${label}: the observer saw vertex ${v} taken in pass ${last}, so that pass took something`);
+          } else if (kept.pass !== null) faults.push(`${label}: the block reads pass ${kept.pass} on a run that ended ${expectUnreached}`);
+          for (const k of list) {
+            if (k.boundary !== k.vertex < source.hull) faults.push(`${label}: vertex ${k.vertex} reads boundary ${k.boundary} against the source hull of ${source.hull}`);
+            if (k.boundary) boundary++;
+            else interior++;
+            reasons.add(k.reason);
+            if (expectUnreached !== null) {
+              if (k.reason !== 'protected' && k.reason !== expectUnreached) faults.push(`${label}: vertex ${k.vertex} reads ${k.reason}, required ${expectUnreached}`);
+              continue;
+            }
+            const text = final.get(k.vertex);
+            if (text === undefined) {
+              if (k.reason !== 'protected' || k.refusal !== null) faults.push(`${label}: vertex ${k.vertex} was not attempted in pass ${last}, yet reads ${k.reason}${k.refusal === null ? '' : ` "${k.refusal.slice(0, 60)}"`}`);
+              continue;
+            }
+            compared++;
+            if (text === null) continue;
+            if (k.reason !== ownReason(text)) faults.push(`${label}: vertex ${k.vertex} — the block names ${k.reason}, the observer read ${ownReason(text)} ("${text.slice(0, 60)}")`);
+            else if (k.refusal !== text) faults.push(`${label}: vertex ${k.vertex} — the block's refusal "${(k.refusal ?? 'null').slice(0, 60)}" is not the observer's "${text.slice(0, 60)}"`);
+          }
+          if (expectUnreached === null) for (const v of final.keys()) if (!list.some((k) => k.vertex === v)) faults.push(`${label}: the observer saw vertex ${v} refused in pass ${last}; the block does not list it`);
+          const own = new Map<string, { boundary: number; interior: number }>();
+          for (const k of list) {
+            const row = own.get(k.reason) ?? { boundary: 0, interior: 0 };
+            if (k.boundary) row.boundary++;
+            else row.interior++;
+            own.set(k.reason, row);
+          }
+          const ownRows = [...own.keys()].sort().map((reason) => ({ reason, ...own.get(reason)! }));
+          if (JSON.stringify(ownRows) !== JSON.stringify(kept.rows)) faults.push(`${label}: rows ${JSON.stringify(kept.rows)} against the list's own tally ${JSON.stringify(ownRows)}`);
+          return { faults, compared, reasons, boundary, interior };
+        };
+        const ringInput = lnInput(lined.mesh, {}, BLINK_BOUND, { lines: [ringLine(BLINK_BOUND)] });
+        const noRemovalBase = lnInput(lined.mesh, {}, null);
+        const subjects: Array<[string, MeshReductionInput, string | null]> = [
+          ['the ring at 1 px', ringInput, null],
+          ['the ring at 1 px, runs, load order, delaunay', { ...ringInput, boundaryRuns: { maxVertices: 4 }, removalOrder: 'deformation-load', retriangulate: 'delaunay' }, null],
+          ['the ring at 0.5 px, veto absent', lnInput(lined.mesh, {}, null, { lines: [ringLine(BLINK_BOUND / 2)] }), null],
+          ['the lined source, the veto', lnInput(lined.mesh, {}, BLINK_BOUND), null],
+          ['the 8 px lattice, the veto, protect.hull', lnInput(lattice8.mesh, { hull: true }, BLINK_BOUND), null],
+          ['the ring, a budget of 5', { ...ringInput, budget: { maxCandidates: 5 } }, 'budget-exhausted'],
+          ['the ring, replayed to step 1', { ...ringInput, stopAfterAccepted: 1 }, 'replayed-to-accepted-step'],
+          ['the lined source, minAngle 59°', { ...noRemovalBase, targets: { ...noRemovalBase.targets, minAngle: 59 } }, 'no-removal-pass'],
+        ];
+        const stripped = (r: MeshReductionResult): string => {
+          const c = r.report.candidates[0];
+          const report: MeshQualityReport = {
+            ...r.report,
+            effective: { ...r.report.effective, explainKept: undefined },
+            candidates: c === undefined || c.changes === undefined ? r.report.candidates : [{ ...c, changes: { ...c.changes, kept: undefined } }],
+          };
+          return `${JSON.stringify(r.mesh)}\n${writeMeshQualityReport(report)}`;
+        };
+        const bytesOff = (r: MeshReductionResult): string => `${JSON.stringify(r.mesh)}\n${writeMeshQualityReport(r.report)}`;
+        {
+          const probes: string[] = [];
+          const lines: string[] = [];
+          let compared = 0;
+          const reasons = new Set<string>();
+          let boundary = 0;
+          let interior = 0;
+          for (const [label, input, unreached] of subjects) {
+            const off = lnRun(input);
+            const offText = bytesOff(off);
+            if (/"explainKept"|"kept"/.test(offText)) probes.push(`${label}: the report without the field writes an explainKept or kept key`);
+            const byVertex = keptRun(input, 'by-vertex', null);
+            const byRow = lnRun({ ...input, explainKept: 'by-row' });
+            if (stripped(byVertex.run) !== offText) probes.push(`${label}: with explainKept 'by-vertex', the mesh or the report less its echo and its block differ from the call without the field`);
+            if (stripped(byRow) !== offText) probes.push(`${label}: with explainKept 'by-row', the mesh or the report less its echo and its block differ from the call without the field`);
+            if (byRow.report.effective.explainKept !== 'by-row' || byVertex.run.report.effective.explainKept !== 'by-vertex') probes.push(`${label}: effective does not echo explainKept`);
+            const rowBlock = byRow.report.candidates[0]?.changes?.kept;
+            const vertexBlock = byVertex.run.report.candidates[0]?.changes?.kept;
+            if (rowBlock === undefined || rowBlock.vertices !== undefined) probes.push(`${label}: 'by-row' wrote ${rowBlock === undefined ? 'no block' : 'the vertex list'}`);
+            else if (vertexBlock !== undefined && (rowBlock.pass !== vertexBlock.pass || JSON.stringify(rowBlock.rows) !== JSON.stringify(vertexBlock.rows))) probes.push(`${label}: 'by-row' reads pass ${rowBlock.pass} rows ${JSON.stringify(rowBlock.rows)}, 'by-vertex' pass ${vertexBlock.pass} rows ${JSON.stringify(vertexBlock.rows)}`);
+            const held = keptAgainstObserver(label, input.source, byVertex.run, byVertex.seen, unreached);
+            probes.push(...held.faults);
+            compared += held.compared;
+            boundary += held.boundary;
+            interior += held.interior;
+            for (const r of held.reasons) reasons.add(r);
+            lines.push(`${label}: pass ${vertexBlock?.pass ?? '?'}, ${(vertexBlock?.rows ?? []).map((r) => `${r.reason} ${r.boundary}+${r.interior}`).join(', ')}`);
+          }
+          for (const wrong of [null, 'yes', 'by-pass']) {
+            let said = 'not refused';
+            try {
+              lnRun({ ...ringInput, explainKept: wrong as unknown as 'by-row' });
+            } catch (err) {
+              said = err instanceof MeshReductionError ? `${err.code} ${err.message}` : (err as Error).message;
+            }
+            if (!said.startsWith('REDUCE_INPUT_MISSING') || !said.includes(`explainKept is ${JSON.stringify(wrong)}`)) probes.push(`explainKept ${JSON.stringify(wrong)}: ${said.slice(0, 120)}`);
+          }
+          const refusalReasons = [...reasons].filter((r) => !UNREACHED.includes(r));
+          if (refusalReasons.length < 2) probes.push(`the subjects' kept vertices were refused by ${refusalReasons.length} reason(s) (${refusalReasons.join(', ')}), so a vertex named by another vertex's reason could go unseen`);
+          if (compared === 0 || boundary === 0 || interior === 0) probes.push(`${compared} vertices compared, ${boundary} boundary and ${interior} interior — a side of the split is not exercised`);
+          for (const r of UNREACHED) if (!reasons.has(r)) probes.push(`no subject's block reads ${r}`);
+          const held = probes.length === 0;
+          say(
+            'MQ176_EXPLAIN_KEPT_NAMES_THE_REFUSAL_THE_OBSERVER_READ_FOR_EVERY_KEPT_VERTEX_OF_THE_LAST_PASS_AND_LEFT_OUT_CHANGES_NO_BYTE',
+            held,
+            probeDetail(held, probes, `${subjects.length} subjects, ${compared} kept vertices each named by the refusal the observer read in the last pass (reasons ${[...reasons].sort().join(', ')}; ${boundary} boundary, ${interior} interior); with the field left out the mesh and the report are the call's, and set they differ by the echo and the block alone; ${lines.join('; ')}`),
+            'issue #1374: the reading rig-c/parts took through reduceMeshWith\'s observer (tools/veto_tally.ts, tools/auto_policy_survey.ts) is now on the report, and the observer is what it is held to',
+          );
+        }
+        {
+          const probes: string[] = [];
+          const caught: string[] = [];
+          for (const [label, input, unreached] of subjects) {
+            if (unreached !== null) continue;
+            const planted = keptRun(input, 'by-vertex', 'kept-reason-shifted');
+            const named = keptAgainstObserver(label, input.source, planted.run, planted.seen, null).faults.filter((f) => f.includes('— the block names'));
+            if (named.length > 0) caught.push(`${label}: ${named.length} — ${named[0]}`);
+          }
+          if (caught.length === 0) probes.push('planted kept-reason-shifted: on no subject did the comparison name a vertex whose reason did not refuse it');
+          const held = probes.length === 0;
+          say(
+            'MQ177_CONTROL_A_KEPT_VERTEX_NAMED_BY_ANOTHER_VERTEXS_REFUSAL_IS_RED_BY_VERTEX_AND_ROW',
+            held,
+            probeDetail(held, probes, `planted kept-reason-shifted (each kept vertex named by the next refused vertex's refusal): ${caught.join('; ')}`),
+            'issue #1374: the block is only worth reading if a row that did not refuse the vertex cannot pass for one that did',
+          );
+        }
+      }
     }
   }
 
