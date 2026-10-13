@@ -147,10 +147,11 @@ export const MOTION_KEYS = {
   MotionDrawOrderOffset: ['slot', 'offset'],
   MotionEventKey: ['t', 'name', 'int', 'float', 'string', 'volume', 'balance'],
   TrackDeriveTurn: ['kind', 'degrees', 'depth', 'carried', 'about'],
-  DeformTurn: ['kind', 'radius', 'depth', 'degrees', 'about'],
-  DeformAffine: ['kind', 'scale', 'about'],
-  DeformWave: ['kind', 'amplitude', 'wavelength', 'phase', 'along', 'axis'],
-  DeformBend: ['kind', 'amount', 'from', 'to', 'power', 'along', 'axis'],
+  DeformTurn: ['kind', 'radius', 'depth', 'degrees', 'about', 'envelope'],
+  DeformAffine: ['kind', 'scale', 'about', 'envelope'],
+  DeformWave: ['kind', 'amplitude', 'wavelength', 'phase', 'along', 'axis', 'envelope'],
+  DeformBend: ['kind', 'amount', 'from', 'to', 'power', 'along', 'axis', 'envelope'],
+  DeformEnvelope: ['axis', 'from', 'to', 'shape', 'mask'],
 } as const satisfies Record<string, readonly string[]>;
 
 /**
@@ -220,10 +221,16 @@ export const MOTION_TYPES = {
     t: 'number', name: 'string', int: 'number', float: 'number', string: 'string', volume: 'number', balance: 'number',
   },
   TrackDeriveTurn: { kind: 'enum', degrees: 'number', depth: 'mixed', carried: 'number', about: 'number' },
-  DeformTurn: { kind: 'enum', radius: 'number', depth: 'boolean', degrees: 'number', about: 'number' },
-  DeformAffine: { kind: 'enum', scale: 'number[]', about: 'number[]' },
-  DeformWave: { kind: 'enum', amplitude: 'number', wavelength: 'number', phase: 'number', along: 'enum', axis: 'enum' },
-  DeformBend: { kind: 'enum', amount: 'number', from: 'number', to: 'number', power: 'number', along: 'enum', axis: 'enum' },
+  DeformTurn: { kind: 'enum', radius: 'number', depth: 'boolean', degrees: 'number', about: 'number', envelope: 'object' },
+  DeformAffine: { kind: 'enum', scale: 'number[]', about: 'number[]', envelope: 'object' },
+  DeformWave: {
+    kind: 'enum', amplitude: 'number', wavelength: 'number', phase: 'number', along: 'enum', axis: 'enum', envelope: 'object',
+  },
+  DeformBend: {
+    kind: 'enum', amount: 'number', from: 'number', to: 'number', power: 'number', along: 'enum', axis: 'enum',
+    envelope: 'object',
+  },
+  DeformEnvelope: { axis: 'number[]', from: 'number', to: 'number', shape: 'enum', mask: 'string' },
 } as const satisfies MotionTypeTable;
 
 /**
@@ -242,6 +249,7 @@ export const MOTION_ENUMS = {
   DeformAffine: { kind: { owner: 'evaluateDeformTransform' } },
   DeformWave: { kind: { owner: 'evaluateDeformTransform' }, along: { owner: 'evaluateDeformTransform' }, axis: { owner: 'evaluateDeformTransform' } },
   DeformBend: { kind: { owner: 'evaluateDeformTransform' }, along: { owner: 'evaluateDeformTransform' }, axis: { owner: 'evaluateDeformTransform' } },
+  DeformEnvelope: { shape: { owner: 'evaluateDeformEnvelope' } },
 } as const satisfies SpecEnumTable<typeof MOTION_TYPES>;
 
 /** A deform key's `transform` kinds, and the shape each one's keys come from. */
@@ -587,6 +595,10 @@ function parseDeform(raw: unknown, where: string, at: string): void {
       if (isObj(parsed.transform)) {
         const shape = DEFORM_TRANSFORM_SHAPE[String(parsed.transform.kind)];
         if (shape !== undefined) known(parsed.transform, shape, where, `${at}.transform`);
+        // The envelope is one shape under all five kinds (issue #1413); which
+        // of its two forms it states, and whether the fields agree, is
+        // `evaluateDeformEnvelope`'s to say.
+        known(parsed.transform.envelope, 'DeformEnvelope', where, `${at}.transform.envelope`);
       }
     }
   }

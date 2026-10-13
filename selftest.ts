@@ -354,6 +354,8 @@ import {
 } from './src/model.ts';
 import { computeWorldTransforms, cropToSpineY, toBoneLocal, toWorld, type BoneTransform } from './src/transform.ts';
 import { EVERY_GLOBAL_PHYSICS, MOTION_ENUMS, MOTION_KEYS, MOTION_TYPES, parseMotionSpec } from './src/motion.ts';
+import { checkEnvelopeWeights, DEFORM_ENVELOPE_SHAPES, evaluateDeformEnvelope } from './src/deformgen.ts';
+import { foldedAt, setupReading } from './src/folds.ts';
 import { CHECKED_SPEC_VALUE_TYPES, FLOAT32_MAX, SPEC_VALUE_TYPES, type SpecEnumRule } from './src/keys.ts';
 import { MANIFEST_ENUMS, MANIFEST_MESH_KINDS, MANIFEST_TYPES } from './src/types.ts';
 import {
@@ -44189,7 +44191,439 @@ function runDeformTransformSuite(): number {
       'nothing but a measurement of where the vertices actually go can tell them from the correct run',
   );
 
+  runDeformEnvelopeCases(say);
   return bad;
+}
+
+/**
+ * The wave the envelope cases ripple the skirt probe with: it reads `x` and
+ * displaces `y`, so un-enveloped every vertex of a column moves by the same
+ * amount — the waist included, which is what the envelope is for — and the
+ * model alone preserves every triangle's area (a vertical shear).
+ */
+const ENVELOPE_WAVE = { kind: 'wave', amplitude: 6, wavelength: 64, phase: 90, along: 'x', axis: 'y' } as const;
+
+/**
+ * A deform `transform` under an envelope (issue #1413), on the public skirt
+ * probe (`skirtFixture`) — the `EN` controls, appended to the deform-transform
+ * suite because an envelope is a field of that suite's construct.
+ *
+ * ⭐ The bars were posted on the issue before this was built, and each case
+ * names the one it answers. The reading at the heart of them — EN01's — is
+ * taken off the POSED skeleton through spine-core, compared with the same key
+ * built without the envelope, and it is then pointed at two forged tables
+ * (the envelope applied twice, and not at all) that load, gate and animate,
+ * so the reading is seen to go red on exactly the defects it exists for.
+ *
+ * The waist and the hem are lattice rows of the probe, derived from the
+ * fixture's own hip and cell rather than written here: two cells under the
+ * plate's top edge and two over its bottom edge.
+ */
+function runDeformEnvelopeCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const probe = skirtFixture();
+  const rigSpec = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as {
+    bones: Array<{ name: string; y?: number }>;
+    skins: { default: { skirt: { skirt: { generator: { cell: number } } } } };
+  };
+  const hipY = rigSpec.bones.find((b) => b.name === 'hip')?.y ?? Number.NaN;
+  const cell = rigSpec.skins.default.skirt.skirt.generator.cell;
+  const waist = hipY - 2 * cell;
+  const hem = hipY - SKIRT_PLATE.height + 2 * cell;
+  const RAMP = { axis: [0, 1], from: waist, to: hem, shape: 'smooth' };
+  const baseMotion = JSON.parse(readFileSync(probe.motionPath, 'utf8')) as Record<string, unknown>;
+  let builds = 0;
+  /** The probe with one animation, `ripple`: the setup pose at 0 and this transform at 1. */
+  const build = (transform: Record<string, unknown>, rigPath = probe.rigPath): CompileResult => {
+    const motionPath = join(probe.dir, `envelope_${builds++}.motion.json`);
+    const ripple = { duration: 1, loop: false, tracks: [], deform: [{ slot: 'skirt', attachment: 'skirt', keys: [{ t: 0 }, { t: 1, transform }] }] };
+    writeFileSync(motionPath, `${JSON.stringify({ ...baseMotion, animations: { ripple } }, null, 2)}\n`);
+    return compile({ rigPath, motionPath, outDir: probe.outDir, imagesDir: probe.imagesDir });
+  };
+  const refusedWith = (transform: Record<string, unknown>): string | null => refusalOf(() => build(transform));
+  /** A refusal without the temp path and key location it opens with, which say where and not what. */
+  const unlocated = (message: string): string => message.replace(/^[^\n]*?\.json: (?:animation "[^"]*" deform [^ ]+ \(t=[^)]*\): )?/, '');
+  /** Every vertex of the skirt mesh in world `x, y`, posed by spine-core at `time` with no physics step. */
+  const posed = (skeletonText: string, atlasText: string, time: number): number[] => {
+    const data = loadOracleData(skeletonText, atlasText, 'the envelope probe');
+    const skeleton = new Skeleton(data);
+    const state = new AnimationState(new AnimationStateData(data));
+    state.setAnimation(0, 'ripple', false);
+    skeleton.setupPose();
+    state.update(time);
+    state.apply(skeleton);
+    skeleton.updateWorldTransform(Physics.none);
+    const slot = skeleton.slots.find((s) => s.data.name === 'skirt');
+    const mesh = slot?.appliedPose.attachment;
+    if (slot === undefined || !(mesh instanceof MeshAttachment)) throw new Error('the skirt slot shows no mesh');
+    const world = new Array<number>(mesh.worldVerticesLength).fill(0);
+    mesh.computeWorldVertices(skeleton, slot, 0, mesh.worldVerticesLength, world, 0, 2);
+    return world;
+  };
+
+  // --- EN01 (Bar 1): 0 at and above the waist, whole at the hem, w × the offset between --
+  let plain: CompileResult | null = null;
+  let enveloped: CompileResult | null = null;
+  let setupError = '';
+  try {
+    plain = build({ ...ENVELOPE_WAVE });
+    enveloped = build({ ...ENVELOPE_WAVE, envelope: RAMP });
+  } catch (err) {
+    setupError = (err as Error).message;
+  }
+  const weights = enveloped?.deformTransforms[0]?.envelope?.weights ?? [];
+  /**
+   * The reading Bar 1 states, over a skeleton built with the envelope (or a
+   * forgery of one), posed by spine-core against the same key built without
+   * it. Each entry is a vertex where the claim did not hold.
+   */
+  const reading = (skeletonText: string): { probes: string[]; above: number; atHem: number; between: number; worst: number } => {
+    const out = { probes: [] as string[], above: 0, atHem: 0, between: 0, worst: 0 };
+    if (plain === null || enveloped === null) return { ...out, probes: [`the probe did not build: ${setupError}`] };
+    const setup = posed(skeletonText, enveloped.atlasText, 0);
+    const at = posed(skeletonText, enveloped.atlasText, 1);
+    const plainSetup = posed(plain.skeletonText, plain.atlasText, 0);
+    const plainAt = posed(plain.skeletonText, plain.atlasText, 1);
+    for (let v = 0; v < setup.length / 2; v++) {
+      const y = setup[2 * v + 1];
+      const [px, py] = [at[2 * v] - setup[2 * v], at[2 * v + 1] - setup[2 * v + 1]];
+      const [ux, uy] = [plainAt[2 * v] - plainSetup[2 * v], plainAt[2 * v + 1] - plainSetup[2 * v + 1]];
+      if (y >= waist) {
+        out.above++;
+        if (px !== 0 || py !== 0) out.probes.push(`v${v} at y=${y} is at or above the waist ${waist} and moved (${px}, ${py})`);
+      } else if (y <= hem) {
+        out.atHem++;
+        if (px !== ux || py !== uy) out.probes.push(`v${v} at y=${y} is at the hem and moved (${px}, ${py}), not the un-enveloped (${ux}, ${uy})`);
+      } else {
+        out.between++;
+        const w = weights[v];
+        const off = Math.hypot(px - w * ux, py - w * uy);
+        out.worst = Math.max(out.worst, off);
+        if (!(off <= 1e-4)) out.probes.push(`v${v} at y=${y} moved (${px}, ${py}), ${off.toExponential(3)} from ${w} × (${ux}, ${uy})`);
+      }
+    }
+    return out;
+  };
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      if (plain === null || enveloped === null) throw new Error(setupError);
+      const honest = reading(enveloped.skeletonText);
+      probes.push(...honest.probes.slice(0, 6));
+      if (honest.above === 0 || honest.atHem === 0 || honest.between === 0) probes.push(`the probe has ${honest.above} vertices above the waist, ${honest.atHem} at the hem and ${honest.between} between — a band with none measures nothing`);
+      // The arithmetic, to the float: every emitted displacement is the model's
+      // grid of the weight times the un-enveloped one, and the weight is the
+      // stated curve at the vertex's setup position as spine-core places it
+      // (within one step of the 1e-6 grid the weight is quantised on).
+      const p = plain.deformTransforms[0];
+      const e = enveloped.deformTransforms[0];
+      const unexact = e.offsets.filter((d, i) => d !== headerBoxNumber(weights[i >> 1] * p.offsets[i])).length;
+      if (unexact > 0) probes.push(`${unexact} emitted number(s) are not the grid of weight × the un-enveloped offset`);
+      const setup = posed(enveloped.skeletonText, enveloped.atlasText, 0);
+      let curveWorst = 0;
+      for (let v = 0; v < weights.length; v++) {
+        const u = Math.min(1, Math.max(0, (setup[2 * v + 1] - waist) / (hem - waist)));
+        curveWorst = Math.max(curveWorst, Math.abs(weights[v] - u * u * (3 - 2 * u)));
+      }
+      if (!(curveWorst <= 1e-6)) probes.push(`a weight is ${curveWorst.toExponential(3)} from u²(3 − 2u) at the vertex spine-core places`);
+      // Without the envelope the same key moves the waist.
+      const plainSetup = posed(plain.skeletonText, plain.atlasText, 0);
+      const plainAt = posed(plain.skeletonText, plain.atlasText, 1);
+      let waistMoved = 0;
+      for (let v = 0; v < plainSetup.length / 2; v++) {
+        if (plainSetup[2 * v + 1] >= waist && (plainAt[2 * v] !== plainSetup[2 * v] || plainAt[2 * v + 1] !== plainSetup[2 * v + 1])) waistMoved++;
+      }
+      if (waistMoved === 0) probes.push('without the envelope the waist does not move, so the probe cannot show the envelope holding it');
+      detail =
+        `skirt probe, ${weights.length} vertices, wave ${ENVELOPE_WAVE.amplitude}px along x under a smooth ramp from the waist y=${waist} to the hem y=${hem}: ` +
+        `${honest.above} at or above the waist moved exactly 0, ${honest.atHem} at the hem moved exactly the un-enveloped offset, ` +
+        `${honest.between} between within ${honest.worst.toExponential(2)} of w × it as posed by spine-core; every emitted displacement is ` +
+        `the grid of w × the un-enveloped one (${e.offsets.length} numbers, exact) and every w is u²(3 − 2u) at spine-core's setup position within ${curveWorst.toExponential(2)}; ` +
+        `without the envelope ${waistMoved} vertices at or above the waist move`;
+    } catch (err) {
+      probes.push(`the probe did not build or pose: ${(err as Error).message}`);
+    }
+    say(
+      'EN01_AN_ENVELOPE_HOLDS_THE_WAIST_MOVES_THE_HEM_WHOLE_AND_SCALES_BETWEEN',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, detail),
+      'issue #1413 Bar 1: a wave on a skirt ripples the waistband too, so "only the hem ripples" could not be written as a model — ' +
+        'read off the posed skeleton, against the same key without the envelope',
+    );
+  }
+
+  // --- EN02 (Bar 3): the reading goes red on the envelope applied twice, and not at all --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      if (plain === null || enveloped === null) throw new Error(setupError);
+      // Twice: every influence pair of vertex v multiplied by w once more —
+      // the table a second application would write, through the same bone
+      // inverses (a pair is linear in its displacement).
+      const skeleton = JSON.parse(enveloped.skeletonText) as Record<string, unknown>;
+      const mesh = ((skeleton.skins as Array<{ attachments: Record<string, Record<string, { vertices: number[] }>> }>)[0]).attachments.skirt.skirt;
+      const counts: number[] = [];
+      for (let i = 0; i < mesh.vertices.length; ) {
+        const n = mesh.vertices[i++];
+        counts.push(n);
+        i += n * 4;
+      }
+      const key = deformKeysOf((skeleton.animations as Record<string, Record<string, unknown>>).ripple, 'skirt')[1];
+      const run = key.vertices as number[];
+      const twiceRun: number[] = [];
+      for (let v = 0, k = 0; v < counts.length; v++) {
+        for (let n = 0; n < counts[v]; n++, k++) twiceRun.push(headerBoxNumber(weights[v] * run[2 * k]), headerBoxNumber(weights[v] * run[2 * k + 1]));
+      }
+      key.vertices = twiceRun;
+      const twice = reading(`${JSON.stringify(skeleton, null, 2)}\n`);
+      const none = reading(plain.skeletonText);
+      const twiceGate = validate({
+        skeletonText: `${JSON.stringify(skeleton, null, 2)}\n`,
+        atlasText: enveloped.atlasText,
+        atlasDir: probe.outDir,
+        declaredDurations: enveloped.declaredDurations,
+        modelText: threadedModel(enveloped, enveloped.atlasText),
+        rig: enveloped.rig,
+        profile: 'spine',
+      });
+      if (twice.probes.length === 0) probes.push('the envelope applied twice read green');
+      if (none.probes.length === 0) probes.push('the envelope left out read green');
+      const loadsClean = twiceGate.failures.filter((f) => f.assertion !== 'A18_DETERMINISTIC_EMIT' && f.assertion !== 'A00_ROUNDTRIP_PARSE' && !f.assertion.startsWith('A39'));
+      detail =
+        `applied twice: ${twice.probes.length} vertex(es) red, first ${JSON.stringify(twice.probes[0] ?? '')}; left out: ${none.probes.length} red, first ` +
+        `${JSON.stringify(none.probes[0] ?? '')}; the twice-applied table gates with [${twiceGate.failures.map((f) => f.assertion).join(', ') || 'nothing'}]` +
+        (loadsClean.length === 0 ? ' — a table the round trip loads, which only a reading of where the vertices go can tell from the right one' : '');
+    } catch (err) {
+      probes.push(`the plants did not build or pose: ${(err as Error).message}`);
+    }
+    say(
+      'EN02_THE_ENVELOPE_APPLIED_TWICE_OR_NOT_AT_ALL_IS_RED',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, detail),
+      'issue #1413 Bar 3: both plants load and animate, so a reading that cannot tell them from the honest table is no reading',
+    );
+  }
+
+  // --- EN03 (Bar 3): A39 and the fold reading judge the ENVELOPED geometry --
+  //
+  // A wave that reads x and displaces y is a vertical shear and cannot fold a
+  // triangle at any amplitude; an envelope that rises over one cell is what
+  // lets the row under it move past the row over it. So the same amplitude
+  // with and without the envelope is the pair that says the gate sees what the
+  // envelope did, not the model.
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      const steep = { axis: [0, 1], from: waist - 4 * cell, to: waist - 5 * cell, shape: 'linear' };
+      const tall = { ...ENVELOPE_WAVE, amplitude: 2 * cell };
+      const folded = build({ ...tall, envelope: steep });
+      const sheared = build({ ...tall });
+      const gateOf = (result: CompileResult): ReturnType<typeof validate> =>
+        validate({
+          skeletonText: result.skeletonText,
+          atlasText: result.atlasText,
+          atlasDir: probe.outDir,
+          declaredDurations: result.declaredDurations,
+          modelText: threadedModel(result, result.atlasText),
+          rig: result.rig,
+          profile: 'rig-play',
+        });
+      const foldedGate = gateOf(folded);
+      const shearedGate = gateOf(sheared);
+      const honestGate = enveloped === null ? null : gateOf(enveloped);
+      const foldHit = foldedGate.failures.filter((f) => f.assertion === A39);
+      const foldsOfBuild = (result: CompileResult): number => {
+        const data = loadOracleData(result.skeletonText, result.atlasText, 'the envelope probe');
+        const slot = data.findSlot('skirt');
+        const mesh = data.defaultSkin?.getAttachment(slot?.index ?? -1, 'skirt');
+        if (!(mesh instanceof MeshAttachment)) throw new Error('the skirt shows no mesh');
+        const rest = { slot: 'skirt', attachment: 'skirt', kind: 'mesh' as const, vertices: posed(result.skeletonText, result.atlasText, 0), triangles: Array.from(mesh.triangles) };
+        return foldedAt(rest, setupReading(rest), posed(result.skeletonText, result.atlasText, 1)).length;
+      };
+      const readFolded = foldsOfBuild(folded);
+      const readSheared = foldsOfBuild(sheared);
+      const readHonest = enveloped === null ? -1 : foldsOfBuild(enveloped);
+      if (foldHit.length !== 1 || !/skirt/.test(foldHit[0]?.detail ?? '')) probes.push(`A39 on the folding envelope: ${foldHit.length} failure(s) naming ${JSON.stringify(foldHit[0]?.detail ?? '')}`);
+      if (shearedGate.failures.length !== 0 || !shearedGate.passed.includes(A39)) probes.push(`the same wave without the envelope gates with [${shearedGate.failures.map((f) => f.assertion).join(', ')}]`);
+      if (honestGate === null || honestGate.failures.length !== 0 || !honestGate.passed.includes(A39)) probes.push(`the honest envelope gates with [${honestGate?.failures.map((f) => f.assertion).join(', ') ?? 'no build'}]`);
+      if (readFolded === 0) probes.push('the fold reading finds no folded triangle under the folding envelope');
+      if (readSheared !== 0 || readHonest !== 0) probes.push(`the fold reading finds ${readSheared} without the envelope and ${readHonest} under the honest one`);
+      detail =
+        `a ${tall.amplitude}px wave under a linear ramp one cell long (y ${steep.from} to ${steep.to}): A39 names it — ${(foldHit[0]?.detail ?? '').slice(0, 220)} — ` +
+        `and the fold reading counts ${readFolded} turned triangle(s) at t=1; the same wave with no envelope gates green with A39 passed and reads ${readSheared}; ` +
+        `the honest smooth ramp gates green and reads ${readHonest}`;
+    } catch (err) {
+      probes.push(`the fold plant did not build or pose: ${(err as Error).message}`);
+    }
+    say(
+      'EN03_A39_AND_THE_FOLD_READING_NAME_A_FOLD_ONLY_THE_ENVELOPE_MADE',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, detail),
+      'issue #1413 Bar 3: the gate sees the emitted numbers and nothing about where they came from — so an envelope has to be judged, not trusted',
+    );
+  }
+
+  // --- EN04 (Bar 5): rigc's core and spine-core pose the enveloped key identically --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      if (enveloped === null) throw new Error(setupError);
+      const modelText = modelDocument(enveloped.model, enveloped.skeletonText, enveloped.atlasText);
+      const options: OracleOptions = { phase: 'grid', samples: 9, skin: 'all', physics: 'none', dt: null };
+      const spine = dumpSkeleton(loadOracleData(enveloped.skeletonText, enveloped.atlasText, 'the envelope probe'), options);
+      const core = coreDump(readModel(modelText, 'the envelope probe'), options, {}, uvSourceOf(enveloped.atlasText, modelText));
+      const compared = compareDumps(spine, core, { xy: 0, m: 0 });
+      const vertices = compared.rows.reduce((s, r) => s + r.vertices, 0);
+      if (!compared.identical || compared.skipped.length > 0) probes.push(compared.identical ? `IDENTICAL skipping [${compared.skipped.join('; ')}]` : `DIFF — ${compared.first}`);
+      if (vertices === 0) probes.push('no vertex was compared');
+      detail = `the enveloped ripple over ${options.samples} samples: rigc's core and spine-core IDENTICAL at tolerance 0 over ${vertices} vertex-sample(s) — the envelope is in the table, so the runtime does nothing new`;
+    } catch (err) {
+      probes.push(`the comparison did not run: ${(err as Error).message}`);
+    }
+    say(
+      'EN04_BOTH_POSERS_POSE_THE_ENVELOPED_KEY_IDENTICALLY',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, detail),
+      'issue #1413 Bar 5: the envelope is baked into the emitted deform table, so both posers read the same numbers',
+    );
+  }
+
+  // --- EN05 (Bar 2): every envelope that cannot mean what it says is refused by name --
+  {
+    const cases: Array<[string, string | null, RegExp]> = [
+      ['positions that coincide', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, to: waist } }), new RegExp(`"envelope.from" and "envelope.to" are both ${waist}`)],
+      ['an axis that is not a unit direction', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, axis: [0, 2] } }), /"envelope.axis" is \[0, 2\], whose length is 2; it is a unit direction/],
+      ['an axis that is not a pair', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, axis: [1] } }), /"envelope.axis" is \[1\]; it is a pair/],
+      ['a shape outside the two', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, shape: 'cubic' } }), /"envelope.shape" is "cubic"; it is one of "linear", "smooth"/],
+      ['a ramp with no "from"', refusedWith({ ...ENVELOPE_WAVE, envelope: { axis: [0, 1], to: hem, shape: 'smooth' } }), /"envelope.from" is undefined/],
+      ['a mask on a mesh with no soft block', refusedWith({ ...ENVELOPE_WAVE, envelope: { mask: 'skirt_soft.png' } }), /"envelope.mask" is "skirt_soft.png", and this attachment has no "soft" block, so the mask names nothing/],
+      ['a ramp beside a mask', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, mask: 'skirt_soft.png' } }), /states "mask" "skirt_soft.png" beside the ramp's "axis", "from", "to", "shape"/],
+      ['an envelope stating nothing', refusedWith({ ...ENVELOPE_WAVE, envelope: {} }), /which states no weight at all/],
+      ['an unknown field', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, falloff: 2 } }), /falloff/],
+      ['an axis of the wrong type', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, axis: 'y' } }), /envelope\.axis/],
+      ['a ramp wholly past the part', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, from: hem - SKIRT_PLATE.height, to: hem - 2 * SKIRT_PLATE.height } }), /weighs every one of them 0 — so the key states a deformation and emits the identity/],
+      ['a ramp the part never enters', refusedWith({ ...ENVELOPE_WAVE, envelope: { ...RAMP, from: hipY + 2 * SKIRT_PLATE.height, to: hipY + SKIRT_PLATE.height } }), /it changes no emitted number: every vertex the model moves takes weight 1/],
+    ];
+    // The weight check: nothing a spec states reaches it (a ramp clamps and
+    // both shapes map [0, 1] onto itself; a mask is a sampled level), so it is
+    // handed the weight no envelope produces — and the shapes are swept past
+    // both ends to show they stay inside.
+    const planted = refusalOf(() => checkEnvelopeWeights([0, 0.5, 1.2], 'envelope.shape', 'planted'));
+    cases.push(['a weight outside [0, 1], planted', planted, /"envelope.shape" weighs vertex 2 at 1.2; an envelope's weight is in \[0, 1\]/]);
+    const missed = cases.filter(([, got, want]) => got === null || !want.test(got));
+    say(
+      'EN05_AN_ENVELOPE_THAT_CANNOT_MEAN_WHAT_IT_SAYS_IS_REFUSED_BY_NAME',
+      missed.length === 0,
+      missed.length === 0
+        ? `${cases.length} refusals, each naming the field and the value: ${cases.map(([label, got]) => `${label} -> ${JSON.stringify(unlocated(got ?? '').slice(0, 240))}`).join(' | ')}`
+        : missed.map(([label, got, want]) => `${label}: expected ${want}, got ${got === null ? 'a clean compile' : JSON.stringify(got)}`).join(' | '),
+      'issue #1413 Bar 2: an envelope that compiles to something other than what it states is a reader\'s false lead about which model shaped the run',
+    );
+  }
+
+  // --- EN06: a mask envelope weighs each vertex by the soft mask it was built with --
+  {
+    const probes: string[] = [];
+    let detail = '';
+    try {
+      const softBuild = (transform: Record<string, unknown> | null): ContourBuild =>
+        buildContourRig(
+          { type: 'mesh', image: 'blob.png', generator: { kind: 'grid', cols: 7, rows: 7, soft: { bone: 'wobble', mask: 'blob_soft.png' } } },
+          {
+            softmask: { kind: 'softmask' },
+            bones: [{ name: 'wobble', parent: 'blob', x: 0, y: 0 }],
+            motion: {
+              ...CONTOUR_MOTION,
+              animations: transform === null ? {} : { ripple: { duration: 1, loop: false, tracks: [], deform: [{ slot: 'blob', attachment: 'blob', keys: [{ t: 0 }, { t: 1, transform }] }] } },
+            },
+          },
+        );
+      const wave = { kind: 'wave', amplitude: 3, wavelength: 4 * CONTOUR_H, phase: 90, along: 'y', axis: 'x' };
+      const masked = softBuild({ ...wave, envelope: { mask: 'blob_soft.png' } }).result;
+      const bare = softBuild({ ...wave }).result;
+      const e = masked.deformTransforms[0];
+      const p = bare.deformTransforms[0];
+      const w = e.envelope?.weights ?? [];
+      // The weight is the level the soft region's own binding carries: read
+      // each vertex's weight on `wobble` off the emitted attachment.
+      const skeleton = JSON.parse(masked.skeletonText) as { bones: Array<{ name: string }>; skins: Array<{ attachments: { blob: { blob: { vertices: number[] } } } }> };
+      const wobble = skeleton.bones.findIndex((b) => b.name === 'wobble');
+      const carried: number[] = [];
+      const run = skeleton.skins[0].attachments.blob.blob.vertices;
+      for (let i = 0; i < run.length; ) {
+        const n = run[i++];
+        let on = 0;
+        for (let k = 0; k < n; k++) if (run[i + 4 * k] === wobble) on = run[i + 4 * k + 3];
+        carried.push(on);
+        i += n * 4;
+      }
+      const bindingWorst = Math.max(...w.map((x, v) => Math.abs(x - carried[v])));
+      const unexact = e.offsets.filter((d, i) => d !== headerBoxNumber(w[i >> 1] * p.offsets[i])).length;
+      const otherFile = refusalOf(() => softBuild({ ...wave, envelope: { mask: 'other_soft.png' } }));
+      if (w.length === 0 || w.length !== carried.length) probes.push(`${w.length} weights for ${carried.length} vertices`);
+      if (!(bindingWorst <= 1e-6)) probes.push(`a weight is ${bindingWorst} from the vertex's binding to "wobble"`);
+      if (unexact > 0) probes.push(`${unexact} emitted number(s) are not the grid of weight × the un-enveloped offset`);
+      if (!(e.envelope !== undefined && e.envelope.zero > 0 && e.envelope.full > 0)) probes.push('the mask weighs no vertex 0 or none 1, so the probe does not span the mask');
+      if (otherFile === null || !/"envelope.mask" is "other_soft.png", and this attachment's soft mask is "blob_soft.png", so the mask names nothing it was built with/.test(otherFile)) {
+        probes.push(`a mask naming another file: ${JSON.stringify(otherFile)}`);
+      }
+      detail =
+        `grid 7x7 carried by "wobble" through blob_soft.png: ${w.length} weights, ${e.envelope?.zero} at 0 and ${e.envelope?.full} at 1, each within ` +
+        `${bindingWorst.toExponential(2)} of that vertex's emitted weight on "wobble"; every emitted displacement the grid of w × the un-enveloped one; ` +
+        `a mask naming another file -> ${JSON.stringify(unlocated(otherFile ?? '').slice(0, 240))}`;
+    } catch (err) {
+      probes.push(`the soft probe did not build: ${(err as Error).message}`);
+    }
+    say(
+      'EN06_A_MASK_ENVELOPE_WEIGHS_EACH_VERTEX_BY_THE_SOFT_MASK_IT_WAS_BUILT_WITH',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, detail),
+      'issue #1413: the second form the card names — a soft mask (§3.4.6) is already a sampled level per vertex, so the weight is that number and nothing else',
+    );
+  }
+
+  // --- EN07: the two shapes stay in [0, 1] on both sides of the ramp, and absent is untouched --
+  {
+    const probes: string[] = [];
+    const sweep = Array.from({ length: 41 }, (_, i) => waist + (i - 10) * (hem - waist) / 20);
+    const setup = sweep.flatMap((y) => [0, y]);
+    for (const shape of DEFORM_ENVELOPE_SHAPES) {
+      let report: ReturnType<typeof evaluateDeformEnvelope>;
+      try {
+        report = evaluateDeformEnvelope({ ...RAMP, shape }, setup, null, headerBoxNumber, 'sweep');
+      } catch (err) {
+        probes.push(`${shape}: the sweep was refused: ${(err as Error).message}`);
+        continue;
+      }
+      const outside = report.weights.filter((x) => !(x >= 0 && x <= 1));
+      if (outside.length > 0) probes.push(`${shape}: ${outside.length} weight(s) outside [0, 1]`);
+      if (report.weights[0] !== 0 || report.weights[10] !== 0 || report.weights[30] !== 1 || report.weights[40] !== 1) {
+        probes.push(`${shape}: before "from" ${report.weights[0]}, at it ${report.weights[10]}, at "to" ${report.weights[30]}, past it ${report.weights[40]}`);
+      }
+      for (let i = 11; i <= 30; i++) if (!(report.weights[i] >= report.weights[i - 1])) probes.push(`${shape}: falls between sample ${i - 1} and ${i}`);
+    }
+    let bareSame = false;
+    try {
+      bareSame = plain !== null && JSON.stringify(build({ ...ENVELOPE_WAVE }).skeletonText) === JSON.stringify(plain.skeletonText) && plain.deformTransforms[0].envelope === undefined;
+    } catch (err) {
+      probes.push(`the bare build did not compile: ${(err as Error).message}`);
+    }
+    if (!bareSame) probes.push('a key with no envelope did not rebuild byte for byte, or reported an envelope');
+    say(
+      'EN07_CONTROL_BOTH_SHAPES_STAY_IN_THE_UNIT_INTERVAL_AND_NO_ENVELOPE_IS_NO_CHANGE',
+      probes.length === 0,
+      probeDetail(
+        probes.length === 0,
+        probes,
+        `${DEFORM_ENVELOPE_SHAPES.join(' and ')} over 41 positions from half a ramp before "from" to half past "to": 0 up to "from", 1 from "to" on, ` +
+          'rising in between, never outside [0, 1]; a key with no envelope rebuilds byte for byte and reports none',
+      ),
+      'issue #1413 Bar 2 and Bar 4: the weight check above is unreachable from a spec, and this says why — the clamp and the two curves — while the hash bases hold the absent half on the gallery',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -109997,7 +110431,7 @@ function priorDeformGeometry(
   att: Record<string, unknown>,
   bones: ReadonlyArray<{ name: string }>,
   transforms: Map<string, BoneTransform>,
-): Omit<DeformGeometry, 'depth'> {
+): Omit<DeformGeometry, 'depth' | 'soft'> {
   const type = typeof att.type === 'string' ? att.type : 'region';
   const worldVerticesLength = type === 'mesh' ? (att.uvs as number[]).length : (att.vertexCount as number) * 2;
   const vertices = (att.vertices as number[] | undefined) ?? [];
@@ -110098,7 +110532,7 @@ function firstNumberDifference(a: readonly number[], b: readonly number[]): stri
 }
 
 /** Where a model-record deform geometry and the prior decoder's reading of the file disagree, or null. */
-function deformGeometryDifference(now: DeformGeometry, prior: Omit<DeformGeometry, 'depth'>): string | null {
+function deformGeometryDifference(now: DeformGeometry, prior: Omit<DeformGeometry, 'depth' | 'soft'>): string | null {
   if (now.weighted !== prior.weighted) return `weighted ${now.weighted} against ${prior.weighted}`;
   if (now.deformLength !== prior.deformLength) return `deformLength ${now.deformLength} against ${prior.deformLength}`;
   if (now.vertexCount !== prior.vertexCount) return `vertexCount ${now.vertexCount} against ${prior.vertexCount}`;

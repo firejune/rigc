@@ -1372,6 +1372,24 @@ export function cmdExplain(flags: Record<string, string>): void {
               console.log(`               transform ${gen.kind}  ${gen.stated}`);
               console.log(`               ${gen.formula}`);
               for (const line of gen.derived) console.log(`                 ${line}`);
+              // The envelope's weights, one per vertex, because they are half
+              // of every number below (issue #1413): each offset is
+              // round(w × the un-enveloped offset), and a reader holding these
+              // and the model reproduces the run without a second evaluation.
+              if (gen.envelope !== undefined) {
+                const env = gen.envelope;
+                console.log(`               envelope  ${env.stated}`);
+                console.log(`               ${env.formula}`);
+                console.log(
+                  `                 each offset below is round(w × the un-enveloped offset): ${env.zero} vertex(es) at w 0, ` +
+                    `${env.full} at 1, ${gen.vertexCount - env.zero - env.full} between`,
+                );
+                for (let v = 0; v < env.weights.length; v += 8) {
+                  const ws: string[] = [];
+                  for (let k = v; k < Math.min(v + 8, env.weights.length); k++) ws.push(`v${String(k).padStart(3)} ${env.weights[k]}`);
+                  console.log(`                 w  ${ws.join('  ')}`);
+                }
+              }
               console.log(
                 `               ${gen.vertexCount} vertices, largest offset ${gen.maxOffset}px at vertex ${gen.maxOffsetVertex}`,
               );

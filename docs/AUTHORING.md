@@ -5627,7 +5627,9 @@ convention:
 an edit of part of it, so it starts at deform index 0 and runs to the end — which
 is why `fromVertex` and `offset` are refused beside it. A model applied to part
 of a run leaves a **step at the run's edge**. If you want a
-partial run, write it.
+partial run, write it — or, to move part of the attachment by the model, give the
+key an `envelope` (below), which weighs every vertex rather than cutting the run,
+so there is no edge to step at.
 
 **There is no `parallax` kind, and the reason is worth stating.** A pure depth
 slide — `d = z · offset`, no angle — is this form with a term dropped: subtract
@@ -5691,7 +5693,10 @@ about where they came from. A `yaw` past its fold angle folds the mesh and A39
 says so — the construct removes the transcription, not the arithmetic's
 consequences. One kind is the exception and it is an exception with a proof:
 `affine` refuses a determinant at or below zero, and above zero a positive
-determinant means no triangle **can** reverse.
+determinant means no triangle **can** reverse. ⚠️ The proof is about the
+un-enveloped key: under an `envelope` each vertex takes its own share of the map,
+so the keyed map is no longer affine, the `derived` line says so, and A39
+measures it like any other.
 
 **A model that evaluates to nothing is refused too.** Every parameter can be
 individually legal and the model still come out as a **run of zeros** — a `wave`
@@ -5757,6 +5762,83 @@ the same turn, where the missing number is a depth rather than a vertex, take a
 `derive` kind on a group track, under the same rules as this one — **§4.5.1**. The
 per-key `DEFORM` report block quotes the model above rather than re-evaluating it
 — **§4.11.2**.
+
+##### `envelope` — which vertices the model moves, and how much
+
+A transform moves **every** vertex of the attachment, so a `wave` on a skirt
+ripples the waistband too and "only the hem ripples" cannot be written as the
+model alone. An `envelope` on the transform gives each vertex a **weight in
+[0, 1]**, and each vertex's offset is multiplied by its weight before it is
+written. Every kind takes one:
+
+```json
+{ "t": 1, "transform": {
+    "kind": "wave", "amplitude": 6, "wavelength": 64, "phase": 90, "along": "x", "axis": "y",
+    "envelope": { "axis": [0, 1], "from": 224, "to": 120, "shape": "smooth" } } }
+```
+
+⚠️ **These numbers are the public skirt probe's** (`fixtures/public.ts`,
+`skirtFixture`): its waist row sits at world `y` 224 and its hem rows at 120
+and below. On your part, `from` and `to` are positions you read off the part —
+`explain` prints where its vertices sit — and nothing here is a default.
+
+It comes in two forms, and a key states exactly one:
+
+| Field | Meaning |
+| --- | --- |
+| `axis` | **ramp, required.** The unit direction a vertex's position is read along, `[x, y]` — `[0, 1]` reads `y`, `[1, 0]` reads `x`, a diagonal reads across both. Its length is 1 on the model's 1e-6 grid |
+| `from` | **ramp, required.** The position along `axis` where the weight is **0** — and before which it stays 0 |
+| `to` | **ramp, required.** The position along `axis` where the weight is **1** — and past which it stays 1. Differs from `from`; either may be the larger |
+| `shape` | **ramp, required.** How the weight rises between them: `"linear"` is `u`, `"smooth"` is `u²(3 − 2u)`, flat at both ends — the two curves `influence.shape` names (§3.4.7), read rising rather than falling |
+| `mask` | **mask, required, and alone.** The file name of this attachment's own `soft` mask (§3.4.6). The weight is the level that mask was sampled to at the vertex when the mesh was built, black 0 and white 1 — the same number the soft region's binding carries |
+
+For a ramp, `u = clamp((axis · position − from) / (to − from), 0, 1)` per
+vertex, and the weight is the shape at `u`. Weights are quantised onto the
+model's 1e-6 grid and each emitted offset is `round(w × the un-enveloped
+offset)` on the same grid — so a weight of 0 writes exactly 0, a weight of 1
+writes exactly the offset the key writes with no envelope, and a reader holding
+the weights `explain` prints reproduces every number.
+
+⭐ **The ramp is read in the space the model is.** The weight multiplies the
+offset the model produced at a vertex, so the position that picks it is the
+position the model read: the attachment's own space while every vertex is one
+pair of one bone, and setup **world** past that (above). `from` and `to`
+therefore change units exactly when `radius`, `about` and a bend's `from` do,
+and the `derived` line that says so applies to them too. A skirt weighted to
+its chains is on the world path, which is why the example's positions are world
+`y`.
+
+🔒 **It is baked, not played.** The weighted offsets are the deform table the
+file carries, so the runtime is asked to do nothing it did not already do:
+rigc's core and spine-core pose an enveloped key identically, and the gate
+judges it like any table — A35 the run, A39 the winding, `render --folds` the
+posed triangles. An envelope that rises over too short a distance can fold a
+triangle the model alone could not (a wave that reads `x` and displaces `y` is
+a shear and folds nothing), and A39 names it.
+
+What is refused, each by the field and the value:
+
+| You wrote | You get |
+| --- | --- |
+| `from` equal to `to` | `transform fields "envelope.from" and "envelope.to" are both 224; they are where the weight is 0 and where it is 1, so they differ` |
+| an `axis` that is not a unit direction | `transform field "envelope.axis" is [0, 2], whose length is 2; it is a unit direction, length 1 on the model's 1e-6 grid` |
+| a `shape` outside the two | `transform field "envelope.shape" is "cubic"; it is one of "linear", "smooth"` |
+| a ramp field missing | `transform field "envelope.from" is undefined; it is a finite number the spec has to state` |
+| a `mask` on an attachment with no `soft` block | `transform field "envelope.mask" is "skirt_soft.png", and this attachment has no "soft" block, so the mask names nothing` |
+| a `mask` naming another file than the attachment's soft mask | `… and this attachment's soft mask is "blob_soft.png", so the mask names nothing it was built with` |
+| a `mask` beside a ramp field | `transform field "envelope" states "mask" … beside the ramp's "axis", "from", "to", "shape". They are two answers to one question` |
+| an empty `envelope` | `transform field "envelope" is {}, which states no weight at all` |
+| a weight outside [0, 1] | `transform field "envelope.shape" weighs vertex 2 at 1.2; an envelope's weight is in [0, 1]` — unreachable from a spec (the ramp clamps, both shapes map [0, 1] onto itself, a mask is a sampled level), and kept because a weight past 1 would push a vertex past the model in silence |
+| a ramp that weighs every moving vertex 0 | `… and envelope axis=[0, 1] from=-16 to=-152 shape=smooth weighs every one of them 0 — so the key states a deformation and emits the identity`, with where the vertices sit along the axis |
+| a ramp the part never enters, so nothing changes | `… it changes no emitted number: every vertex the model moves takes weight 1` — a field a reader would credit for an output it did not shape |
+
+The last two are the "evaluates to nothing" rule above, one step on, and a key
+whose model states the identity (`amplitude: 0`, …) is exempt from both — the
+envelope multiplies the zeros it already said.
+
+`explain` prints the envelope under the model — its fields, its formula, how
+many vertices took 0 and 1, and every vertex's weight — and the `DEFORM` block's
+model line carries it as `envelope(…)` after the model's parameters.
 
 ---
 
@@ -6604,6 +6686,8 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `deform … (t=…): transform yaw has radius R, and vertex v sits at x=… past it` | §4.11.1 — the cylinder has no surface there; raise the radius to where the part sits |
 | `deform … (t=…): transform affine has scale […], whose determinant is …` | §4.11.1 — at or below zero the map reverses every triangle |
 | `deform … (t=…): transform <kind> states …, and every one of this attachment's N vertices evaluates to an offset of 0` | §4.11.1 — the parameters state a deformation and the geometry sampled it to nothing; the message names the measured cause. A key that means the setup pose states the identity in its parameters, or carries no run |
+| `deform … (t=…): transform field "envelope.<field>" is …` | §4.11.1 `envelope` — the field the message names: `from` and `to` differ, `axis` is a unit direction, `shape` is `"linear"` or `"smooth"`, a `mask` is this attachment's own soft mask, and a weight is in [0, 1] |
+| `deform … (t=…): transform <kind> states … and envelope … weighs every one of them 0` / `… it changes no emitted number` | §4.11.1 `envelope` — the ramp does not cross the part; the message says where its vertices sit along the axis |
 | `vertexCount is N, which is not a multiple of 3` | §3.4 — a path's vertices are knots and handles read in groups of three: `3(K + 1)` open, `3K` closed |
 | `vertexCount is N and an open path needs at least 6` | §3.4 — an open path drops its first and last point, so it needs six for one curve |
 | `"lengths" has N entry(ies) where the parser sizes M — vertexCount / 3 on …` | §3.4 — `vertexCount / 3` entries on either shape; give the array the source states, or leave the field out and rigc measures it |

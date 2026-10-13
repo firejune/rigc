@@ -57,6 +57,7 @@
 
 import { CompileError } from './errors.ts';
 import { hypot2 } from './numeric.ts';
+import { RIG_INFLUENCE_SHAPES } from './rig.ts';
 
 /** Which coordinate a bend or a wave reads, and which one it displaces. */
 export type DeformAxis = 'x' | 'y';
@@ -120,6 +121,8 @@ export interface DeformTurn {
   degrees: number;
   /** Where the axis crosses the driving coordinate. Default 0. */
   about?: number;
+  /** Scales each vertex's offset by a weight in [0, 1] — see `DeformEnvelope`. */
+  envelope?: DeformEnvelope;
 }
 
 /**
@@ -143,6 +146,8 @@ export interface DeformAffine {
   scale: [number, number];
   /** The fixed point, in the attachment's own units. Default `[0, 0]`. */
   about?: [number, number];
+  /** Scales each vertex's offset by a weight in [0, 1] — see `DeformEnvelope`. */
+  envelope?: DeformEnvelope;
 }
 
 /**
@@ -170,6 +175,8 @@ export interface DeformWave {
   along: DeformAxis;
   /** The coordinate it displaces. */
   axis: DeformAxis;
+  /** Scales each vertex's offset by a weight in [0, 1] — see `DeformEnvelope`. */
+  envelope?: DeformEnvelope;
 }
 
 /**
@@ -196,9 +203,95 @@ export interface DeformBend {
   along: DeformAxis;
   /** The coordinate it displaces. */
   axis: DeformAxis;
+  /** Scales each vertex's offset by a weight in [0, 1] — see `DeformEnvelope`. */
+  envelope?: DeformEnvelope;
 }
 
 export type DeformTransform = DeformTurn | DeformAffine | DeformWave | DeformBend;
+
+/**
+ * The two curves an envelope rises along: the names `influence.shape` gives its
+ * pull (issue #1415), and the same two curves read from the other end — a pull
+ * falls from 1 to 0, a weight rises from 0 to 1, and each is `1 − the other`
+ * at the same `u`. One vocabulary, so `"smooth"` means one curve in this tree.
+ */
+export const DEFORM_ENVELOPE_SHAPES = RIG_INFLUENCE_SHAPES;
+
+/**
+ * **Which vertices a transform moves, and how much** (issue #1413) — a weight
+ * in [0, 1] per vertex that each vertex's offset is multiplied by before it is
+ * written, so "only the hem ripples" is a model rather than a table.
+ *
+ * Two forms, and a key states exactly one:
+ *
+ * - **a ramp** — `axis`, `from`, `to`, `shape`. A vertex's position is read
+ *   along `axis` (`p = axis · position`), `u = (p − from) / (to − from)` is
+ *   clamped to [0, 1], and the weight is `u` (`"linear"`) or `u²(3 − 2u)`
+ *   (`"smooth"`). So the weight is 0 at `from` and everywhere before it, 1 at
+ *   `to` and everywhere past it.
+ * - **a mask** — `mask`, the file name of this attachment's own `soft` mask
+ *   (AUTHORING §3.4.6). The weight is the level that mask was sampled to at the
+ *   vertex when the mesh was built, black 0 and white 1 — the same number the
+ *   soft region's binding carries.
+ *
+ * ⭐ **The ramp is read in the space the transform is evaluated in**, and that
+ * is the only space it could be read in: the weight multiplies the offset the
+ * model produced at a vertex, so the position that picks the weight has to be
+ * the position the model read. That is the attachment's own space while every
+ * vertex is one pair of one bone, and setup WORLD past that (§4.11.1) — so
+ * `from` and `to` change units exactly when `radius`, `about` and a bend's
+ * `from` do, and the report's `derived` line says which.
+ *
+ * 🔒 **It is baked, not played.** The weighted offsets are the deform table the
+ * file carries, so the runtime is asked to do nothing it did not already do and
+ * every poser sees the same numbers. Every number here is a field the spec
+ * states; none has a default.
+ */
+export interface DeformEnvelope {
+  /**
+   * The unit direction a vertex's position is read along — `[0, 1]` reads `y`,
+   * `[1, 0]` reads `x`, and a diagonal reads across both. Its length is 1 on
+   * the model's own 1e-6 grid, or the key is refused: a longer one would scale
+   * the positions `from` and `to` are compared with.
+   */
+  axis?: [number, number];
+  /** The position along `axis` where the weight is 0 — and before which it stays 0. */
+  from?: number;
+  /** The position along `axis` where the weight is 1 — and past which it stays 1. Differs from `from`. */
+  to?: number;
+  /** How the weight rises between them: `"linear"` is `u`, `"smooth"` is `u²(3 − 2u)`, flat at both ends. */
+  shape?: (typeof DEFORM_ENVELOPE_SHAPES)[number];
+  /** The file name of this attachment's own `soft` mask; the weight is its sampled level. Never beside the ramp's fields. */
+  mask?: string;
+}
+
+/**
+ * A `soft` mask as the mesh builder sampled it: the file the generator named
+ * and its level at each vertex, `0..1`, in the emitted vertex order — what a
+ * `mask` envelope reads. Kept beside the attachment rather than in it, as a
+ * depth map's `z` is, because the format has nowhere to carry it.
+ */
+export interface DeformSoftMask {
+  mask: string;
+  levels: readonly number[];
+}
+
+/** What an envelope did, for `explain` to print beside the model. */
+export interface DeformEnvelopeReport {
+  /** The envelope as the spec states it. */
+  stated: string;
+  /** How a vertex's weight is computed, written out. */
+  formula: string;
+  /**
+   * Each vertex's weight, on the model's 1e-6 grid — the number its offset was
+   * multiplied by. Every emitted offset is `round(weight × the un-enveloped
+   * offset)`, so a reader reproduces the run from this and the model.
+   */
+  weights: number[];
+  /** How many vertices took weight 0, and how many weight 1. */
+  zero: number;
+  full: number;
+}
 
 /** The kinds this module evaluates, in the order the docs list them. */
 export const DEFORM_TRANSFORM_KINDS = ['yaw', 'pitch', 'affine', 'wave', 'bend'] as const;
@@ -233,8 +326,13 @@ export interface DeformTransformReport {
    * multi-influence one it is one WORLD displacement per vertex, and the array
    * the caller wrote from it is `expanded` on the compile result — the report
    * still quotes what was emitted rather than re-evaluating anything.
+   *
+   * Under an envelope these are the WEIGHTED displacements — what was emitted
+   * — and `envelope` carries the weights.
    */
   offsets: number[];
+  /** Present only on a key that states an `envelope` (issue #1413). */
+  envelope?: DeformEnvelopeReport;
 }
 
 /** The compiler's `onModelGrid` (1e-6, then float32), passed in so the quantiser stays in one place. */
@@ -271,6 +369,12 @@ export function evaluateDeformTransform(
    * name rather than silently falling back to a cylinder.
    */
   depth: readonly number[] | null = null,
+  /**
+   * The attachment's `soft` mask as its builder sampled it, or null when its
+   * generator named none — what makes a `mask` envelope that names nothing
+   * refusable by name (issue #1413).
+   */
+  soft: DeformSoftMask | null = null,
 ): DeformTransformReport {
   if (transform === null || typeof transform !== 'object' || Array.isArray(transform)) {
     throw new CompileError(`${where}: "transform" is ${JSON.stringify(transform)}; it is an object with a "kind"`);
@@ -284,6 +388,10 @@ export function evaluateDeformTransform(
   }
   const count = setup.length / 2;
   const offsets = new Array<number>(setup.length);
+  // An envelope scales each vertex by its own weight, so a proof that holds of
+  // the model — an affine's positive determinant, a power-1 bend's shear —
+  // says nothing about the enveloped key, and the derived line must not claim it.
+  const envelope = (transform as { envelope?: unknown }).envelope;
   let derived: string[];
   let stated: string;
   let formula: string;
@@ -440,7 +548,13 @@ export function evaluateDeformTransform(
         'the key holds still';
       stated = `scale=[${scale[0]}, ${scale[1]}]${a.about === undefined ? '' : ` about=[${about[0]}, ${about[1]}]`}`;
       formula = 'dx = (sx − 1)·(x − ax),   dy = (sy − 1)·(y − ay)';
-      derived = [`sx − 1 = ${round(scale[0] - 1)}`, `sy − 1 = ${round(scale[1] - 1)}`, `det = sx·sy = ${round(det)} > 0, so no triangle can reverse`];
+      derived = [
+        `sx − 1 = ${round(scale[0] - 1)}`,
+        `sy − 1 = ${round(scale[1] - 1)}`,
+        envelope === undefined
+          ? `det = sx·sy = ${round(det)} > 0, so no triangle can reverse`
+          : `det = sx·sy = ${round(det)} > 0 un-enveloped; the envelope weighs each vertex alone, so the keyed map is not affine and A39 measures it`,
+      ];
       break;
     }
     case 'wave': {
@@ -527,8 +641,10 @@ export function evaluateDeformTransform(
       formula = `d${axis === 0 ? 'x' : 'y'} = amount · u^${power},   u = (${an} − from) / (to − from)`;
       derived = [
         `span = to − from = ${round(span)}`,
-        power === 1
+        power === 1 && envelope === undefined
           ? 'power 1 is an affine shear (det = 1), so no triangle can reverse'
+          : power === 1
+            ? 'power 1 is an affine shear (det = 1) un-enveloped; the envelope weighs each vertex alone, so the keyed map is not affine and A39 measures it'
           : `power ${power} is not affine — the gradient at u is ${power}·amount·u^${power - 1}/span, so it is 0 at "from"`,
       ];
       break;
@@ -567,6 +683,49 @@ export function evaluateDeformTransform(
     );
   }
 
+  // -- the envelope (issue #1413) --------------------------------------------
+  //
+  // Applied to the run the model emits un-enveloped — the ROUNDED offsets, the
+  // ones a key without the envelope writes — and rounded again, so every
+  // emitted offset is `round(weight × that offset)` and a reader reproduces it
+  // from the report's weights and the model. Applied after the refusal above,
+  // so a model the geometry sampled to nothing keeps that refusal's diagnosis,
+  // and before the two below, which are the envelope's own.
+  let envelopeReport: DeformEnvelopeReport | undefined;
+  if (envelope !== undefined) {
+    const weighed = evaluateDeformEnvelope(envelope, setup, soft, round, where);
+    const plain = offsets.slice();
+    for (let v = 0; v < count; v++) {
+      offsets[2 * v] = round(weighed.weights[v] * plain[2 * v]);
+      offsets[2 * v + 1] = round(weighed.weights[v] * plain[2 * v + 1]);
+    }
+    envelopeReport = weighed;
+    const moving = plain.some((d) => d !== 0);
+    // ⭐ The same principle as the refusal above, one step on: every field is
+    // legal and the envelope still makes the key mean something other than it
+    // says. Weighing every moving vertex 0 states a deformation and emits the
+    // identity; leaving every emitted number where it was is a field that
+    // changes nothing — a reader's false lead about which model produced the
+    // run. A key whose model states the identity is exempt from both: the
+    // envelope multiplies the zeros it already said.
+    if (count > 0 && !identity && moving && offsets.every((d) => d === 0)) {
+      throw new CompileError(
+        `${where}: transform ${kind} states ${stated} and moves ${plain.filter((d, i) => i % 2 === 0 && (d !== 0 || plain[i + 1] !== 0)).length} ` +
+          `of ${count} vertices, and envelope ${weighed.stated} weighs every one of them 0 — so the key states a ` +
+          `deformation and emits the identity. ${weighed.reach}`,
+      );
+    }
+    if (count > 0 && !identity && moving && offsets.every((d, i) => d === plain[i])) {
+      throw new CompileError(
+        `${where}: transform ${kind} states envelope ${weighed.stated}, and it changes no emitted number: every vertex ` +
+          `the model moves takes weight 1 (${weighed.full} of ${count} vertices at 1, ${weighed.zero} at 0), so the run ` +
+          `is the un-enveloped one and the envelope is a field a reader would credit for an output it did not shape. ` +
+          `${weighed.reach}`,
+      );
+    }
+    stated = `${stated} envelope(${weighed.stated})`;
+  }
+
   let maxOffset = 0;
   let maxOffsetVertex = 0;
   for (let v = 0; v < count; v++) {
@@ -585,7 +744,179 @@ export function evaluateDeformTransform(
     maxOffset: round(maxOffset),
     maxOffsetVertex,
     offsets,
+    ...(envelopeReport === undefined
+      ? {}
+      : {
+          envelope: {
+            stated: envelopeReport.stated,
+            formula: envelopeReport.formula,
+            weights: envelopeReport.weights,
+            zero: envelopeReport.zero,
+            full: envelopeReport.full,
+          },
+        }),
   };
+}
+
+/** The fields of the two envelope forms, in the order a refusal names them. */
+const ENVELOPE_RAMP_FIELDS = ['axis', 'from', 'to', 'shape'] as const;
+
+/**
+ * Each vertex's envelope weight (issue #1413), refused by field name wherever
+ * the envelope cannot mean what it says.
+ *
+ * `setup` is the array the model was evaluated over, so a ramp reads the same
+ * positions in the same space the model did; `soft` is the attachment's
+ * sampled mask, or null. Returns the weights on the model's grid with the
+ * audit `explain` prints and the reach the two envelope refusals in
+ * `evaluateDeformTransform` quote.
+ */
+export function evaluateDeformEnvelope(
+  envelope: unknown,
+  setup: readonly number[],
+  soft: DeformSoftMask | null,
+  round: Rounder,
+  where: string,
+): DeformEnvelopeReport & { reach: string } {
+  if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) {
+    throw new CompileError(
+      `${where}: transform field "envelope" is ${JSON.stringify(envelope)}; it is an object — a ramp ` +
+        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`',
+    );
+  }
+  const e = envelope as DeformEnvelope;
+  const count = setup.length / 2;
+  const rampStated = ENVELOPE_RAMP_FIELDS.filter((f) => e[f] !== undefined);
+  if (e.mask !== undefined && rampStated.length > 0) {
+    throw new CompileError(
+      `${where}: transform field "envelope" states "mask" ${JSON.stringify(e.mask)} beside the ramp's ` +
+        `${rampStated.map((f) => `"${f}"`).join(', ')}. They are two answers to one question — what weight each vertex ` +
+        'takes — and a key carrying both leaves a reader unable to say which one the output came from. Drop one.',
+    );
+  }
+  if (e.mask === undefined && rampStated.length === 0) {
+    throw new CompileError(
+      `${where}: transform field "envelope" is ${JSON.stringify(envelope)}, which states no weight at all. It is a ramp ` +
+        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`; a key that weighs every vertex 1 carries no envelope.',
+    );
+  }
+
+  let weights: number[];
+  let stated: string;
+  let formula: string;
+  let reach: string;
+  if (e.mask !== undefined) {
+    const mask = e.mask;
+    if (soft === null) {
+      throw new CompileError(
+        `${where}: transform field "envelope.mask" is ${JSON.stringify(mask)}, and this attachment has no "soft" block, ` +
+          'so the mask names nothing. An envelope\'s mask is the attachment\'s own soft mask (AUTHORING §3.4.6), the ' +
+          'one its generator sampled at every vertex when the mesh was built; give the generator a "soft" block, or ' +
+          'state a ramp instead.',
+      );
+    }
+    if (soft.mask !== mask) {
+      throw new CompileError(
+        `${where}: transform field "envelope.mask" is ${JSON.stringify(mask)}, and this attachment's soft mask is ` +
+          `${JSON.stringify(soft.mask)}, so the mask names nothing it was built with. An envelope reads the mask the ` +
+          'generator sampled at every vertex, and only that one.',
+      );
+    }
+    if (soft.levels.length !== count) {
+      // Unreachable while the sampler walks the same vertex list the mesh
+      // emitted, as for a depth map; stated because a silent mismatch would
+      // weigh one vertex by another's level.
+      throw new CompileError(`${where}: the soft mask "${mask}" has ${soft.levels.length} sampled levels for ${count} vertices`);
+    }
+    weights = soft.levels.map((level) => round(level));
+    stated = `mask=${mask}`;
+    formula = 'w = the soft mask\'s level at the vertex, black 0 and white 1';
+    const carried = weights.filter((w) => w > 0).length;
+    reach = `The mask "${mask}" weighs ${carried} of ${count} vertices above 0.`;
+  } else {
+    const axis = pair(e.axis, 'envelope.axis', where);
+    const from = num(e.from, 'envelope.from', where);
+    const to = num(e.to, 'envelope.to', where);
+    const shape = DEFORM_ENVELOPE_SHAPES.find((name) => name === e.shape);
+    if (shape === undefined) {
+      throw new CompileError(
+        `${where}: transform field "envelope.shape" is ${JSON.stringify(e.shape)}; it is one of ` +
+          `${DEFORM_ENVELOPE_SHAPES.map((name) => JSON.stringify(name)).join(', ')} — how the weight rises from 0 at ` +
+          '"from" to 1 at "to": "linear" is u, "smooth" is u²(3 − 2u)',
+      );
+    }
+    const length = hypot2(axis[0], axis[1]);
+    // The model's own resolution decides "unit", rather than a tolerance chosen
+    // here: the diagonal written to seven places, `[0.7071068, 0.7071068]`, is
+    // 1.0000000266 long and is the unit direction it says, and a length the
+    // 1e-6 grid tells apart from 1 would scale every position the ramp
+    // compares with `from` and `to`.
+    if (round(length - 1) !== 0) {
+      throw new CompileError(
+        `${where}: transform field "envelope.axis" is [${axis[0]}, ${axis[1]}], whose length is ${round(length)}; it is a ` +
+          'unit direction, length 1 on the model\'s 1e-6 grid. A longer or shorter one would scale every position the ' +
+          'ramp compares with "from" and "to" — divide it by its length, and state "from" and "to" along the unit one.',
+      );
+    }
+    if (from === to) {
+      throw new CompileError(
+        `${where}: transform fields "envelope.from" and "envelope.to" are both ${from}; they are where the weight is 0 ` +
+          'and where it is 1, so they differ — a ramp of no length is a step, and a step is the edge a model exists not to leave.',
+      );
+    }
+    const span = to - from;
+    let lo = Infinity;
+    let hi = -Infinity;
+    weights = new Array<number>(count);
+    for (let v = 0; v < count; v++) {
+      const p = axis[0] * setup[2 * v] + axis[1] * setup[2 * v + 1];
+      if (p < lo) lo = p;
+      if (p > hi) hi = p;
+      const u = Math.min(1, Math.max(0, (p - from) / span));
+      weights[v] = round(shape === 'linear' ? u : u * u * (3 - 2 * u));
+    }
+    stated = `axis=[${axis[0]}, ${axis[1]}] from=${from} to=${to} shape=${shape}`;
+    formula =
+      `w = ${shape === 'linear' ? 'u' : 'u²(3 − 2u)'},   u = clamp((axis · position − from) / (to − from), 0, 1)`;
+    reach =
+      count === 0
+        ? 'The attachment has no vertices.'
+        : `Along [${axis[0]}, ${axis[1]}] this attachment's vertices sit at ${round(lo)} to ${round(hi)}, and the ramp ` +
+          `rises from ${from} (weight 0) to ${to} (weight 1) — move "from" and "to" onto the part.`;
+  }
+  checkEnvelopeWeights(weights, e.mask === undefined ? 'envelope.shape' : 'envelope.mask', where);
+  return {
+    stated,
+    formula,
+    weights,
+    zero: weights.filter((w) => w === 0).length,
+    full: weights.filter((w) => w === 1).length,
+    reach,
+  };
+}
+
+/**
+ * Refuse a weight outside [0, 1], naming the field that produced it, the vertex
+ * and the value (issue #1413, Bar 2).
+ *
+ * ⚠️ Nothing a spec states can reach this, and that is stated rather than left
+ * to be inferred: a ramp clamps `u` to [0, 1] and both shapes map [0, 1] onto
+ * itself, and a mask's level is a sample of a greyscale sheet. It stands
+ * because the multiplication is the whole of the envelope's effect and a
+ * weight of 1.2 would push a vertex past the model — the shape of defect a
+ * later shape or a later mask reader would bring in silently. Exported so the
+ * selftest can hand it the weight no envelope produces and see it refuse.
+ */
+export function checkEnvelopeWeights(weights: readonly number[], field: string, where: string): void {
+  for (let v = 0; v < weights.length; v++) {
+    const w = weights[v];
+    if (!(w >= 0 && w <= 1)) {
+      throw new CompileError(
+        `${where}: transform field "${field}" weighs vertex ${v} at ${w}; an envelope's weight is in [0, 1] — 0 leaves ` +
+          'the vertex where it is and 1 moves it the whole way the model says, and nothing past either end is a weight.',
+      );
+    }
+  }
 }
 
 /** One required finite number, refused by field name rather than compiled as a NaN. */
