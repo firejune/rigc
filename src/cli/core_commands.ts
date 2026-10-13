@@ -21,7 +21,8 @@ import { chainFitLines, type ChainFitOptions, estimateChainFit } from '../chainf
 import { checkLines, CheckPlates } from '../check.ts';
 import { writeCheckPictures } from '../checkpics.ts';
 import { compile, type CompileOptions, droppedStateReason, relativeImagesPath } from '../compile.ts';
-import { CoreInputError } from '../core/index.ts';
+import { CoreInputError, readModel } from '../core/index.ts';
+import { type WhirlAnimation, WHIRL_HEADER, whirlLines, whirlReading } from '../whirl.ts';
 import { surveyOfBuild } from '../deformbuild.ts';
 import type { DeformSurvey } from '../deformsurvey.ts';
 import { deformReportBlock } from '../deformreport.ts';
@@ -1436,6 +1437,19 @@ export function cmdExplain(flags: Record<string, string>): void {
     for (const ph of result.physics) {
       console.log(`  ${ph.name.padEnd(12)} bone=${ph.bone.padEnd(14)} components=[${ph.components.join(', ')}] mix=${ph.mix} drivesMesh=${ph.drivesMesh}`);
     }
+    // The whirl reading (issue #1423): how far each constraint's bone turns in one step, walked by the core from the
+    // setup pose — `src/whirl.ts` says why that walk and not render's. It decides nothing, so it sits in the report
+    // rather than in the gate, and explain's exit is the same whatever it prints.
+    console.log(`\n${WHIRL_HEADER}`);
+    let reading: WhirlAnimation[] | null = null;
+    try {
+      reading = whirlReading(readModel(modelDocument(result.model, result.skeletonText, result.atlasText), `the whirl reading of ${label}`));
+    } catch (err) {
+      if (!(err instanceof CoreInputError)) throw err;
+      console.log(`  ..    turn     not read — the core refused the model document: ${err.message}`);
+    }
+    if (reading !== null && reading.length === 0) console.log('  ..    turn     not read — the skeleton declares no animation to walk');
+    for (const line of whirlLines(reading ?? [])) console.log(`  ..    turn     ${line}`);
   }
 
   // Path constraints, with the curve each one follows MEASURED — its length and

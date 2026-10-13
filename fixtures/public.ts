@@ -78,7 +78,7 @@ const ACCENT: RGBA = [198, 96, 72, 255];
  * in every other synthetic plate in this project — so that no image from here can
  * ever be mistaken for a rendered part.
  */
-function writePlate(path: string, width: number, height: number, label: string, opaque = false): void {
+export function writePlate(path: string, width: number, height: number, label: string, opaque = false): void {
   const plate = new Plate(width, height);
   const cell = 8;
   for (let y = 0; y < height; y++) {

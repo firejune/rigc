@@ -1129,8 +1129,11 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   key with the curve kind. A rig with a `deform` timeline also gets the **`DEFORM`
   block** — per key, what that key did to the geometry: the area and stretch
   extremes, how far each vertex moved and whether the winding survived
-  (**§4.11.2**). It takes no `--profile`, it never gates, and it does not write
-  anything — so the figures are readable on a build the gate is refusing.
+  (**§4.11.2**). A rig with a physics constraint also gets the **turn lines** —
+  per constraint and animation, the largest turn its bone makes in one 1/60 s step,
+  walked from the setup pose as a player starts it (**§4.6.1**). It takes no
+  `--profile`, it never gates, and it does not write anything — so the figures are
+  readable on a build the gate is refusing.
 
   ⭐ **It reads what `ingest` writes, given the pack** — `--atlas-in <pack.atlas>`,
   with `build`'s meaning (§0.2). That matters more here than it looks: printing the
@@ -4613,7 +4616,8 @@ a delta from the constraint's own setting.
   of `mix`.** The runtime documents no range for the first three, and
   `PhysicsConstraintPose` documents `mix` as "a percentage (0+)" — so a negative
   wind is the other direction and a `mix` of `1.5` is an over-mix. Both are real
-  and both compile.
+  and both compile. An `inertia` above 1 is kept and posed by the editor too, and
+  what it does to a bone is read rather than refused — §4.6.1.
 - ⚠️ **A `mix` or `strength` key of exactly `0` is legal where a setup value of
   `0` is not**, and the difference is not an inconsistency: a setup pose says what
   the constraint IS and a key says what it is doing for a stretch. For `mix`,
@@ -5023,6 +5027,18 @@ file can be read; it is a **key** outside its bound that `build` refuses (§4.4)
 number: a non-number would reach the file as `null`, which the runtime reads as
 **zero**, so `"mass": "heavy"` would ship a constraint that never settles.
 
+🌀 **`inertia` has no upper bound, and above 1 a link can whirl** (issue #1423).
+Values above 1 are kept by the editor and posed: the Spine 4.3.26 editor imports
+2, 3 and 10 and exports them unchanged, the export posing as the build does, and
+the user guide describes the field as 0–100% with no cap stated. So `build`
+refuses none of them. What one does is a turn: a bone whose parent moves is kicked
+by `inertia` times that motion, and a 1-link rotate drive under a parent keyed
+±15° turns its bone at most 2.29–4.10° (by its `fps`), 18.78°, 35.61° and 153.38°
+in a single 1/60 s step at `inertia` 1, 2, 3 and 10 — the last half a turn between
+two frames. **`explain`
+prints that turn for every physics constraint and every animation** (§4.6.1), so a
+whirl is a figure you read rather than a frame you happen to watch.
+
 🧮 **Each value inside its bound is not enough: the step has to settle**
 (issue #1416). With `step = 1 / fps`, a constraint that drives anything must
 satisfy
@@ -5125,6 +5141,60 @@ skeleton JSON, so the parser is the only check it gets: it is
 `{ "default": <seconds>, "pairs"?: [["<from>", "<to>", <seconds>], …] }`, and a
 `default` that is not a number would pass the gate and the round trip before
 becoming a `NaN` mix duration in the player.
+
+#### 4.6.1 How far a physics bone turns in one step — `explain`'s turn lines
+
+Under its `physics constraints` block, `explain` prints one line per physics
+constraint per animation: the largest turn the constraint's bone makes in one
+step of the animation's walk, the step it happens at and its time.
+
+```
+turn per step  (a reading, never a gate: each animation walked by rigc's core as a player starts it — …)
+  ..    turn     "swing": physics "p_i10_f60" (bone "l_i10_f60") turns at most 153.38° in one step — step 1 of 240 (t=0.0167s)
+  ..    turn     "sweep": physics "whip" (bone "ahoge_whip") turns at most 0.29° in one step — step 90 of 193 (t=1.5000s)
+```
+
+**The walk.** Each animation is walked as a player that starts it plays it: a
+skeleton with no skin set, at the setup pose with every physics state reset there,
+then the animation in steps of 1/60 s until its duration (one step at least) — the
+physics stepped by the step itself, as spine-core's `update(1/60)` steps it. It is
+posed by rigc's core; the repository's selftest walks the same probe through
+spine-core and holds the two to the same figure and step, to the bit (`WH01`).
+
+⚠️ **Not `render`'s walk, on purpose.** `render` resets the physics at the
+animation's first pose, so a bone the first key moves away from the setup pose is
+already there when the physics starts. A player starts from the setup pose, and the
+first step moves every keyed bone at once — which is where a high `inertia` answers
+hardest: on the probe above, inertia 10 turns 153.38° in step 1 from the setup pose,
+and walked from the animation's first pose at most 4.10°, 3.82° and 13.68° at `fps`
+15, 30 and 60. The whirl is a property of
+starting the animation, so it is read where a player starts it.
+
+**The turn** is the signed angle between the bone's world x axis at two consecutive
+steps, in (−180°, 180°], printed as its magnitude to two decimals; the largest over
+the walk, the earliest step on a tie. It is the change of the direction the bone is
+drawn along, whatever moved it — its physics, its parent, a key, a mirrored scale —
+so every physics constraint has a line, whichever components it drives. A turn near
+180° in one step is a direction a frame cannot tell from its opposite. A bone that
+never turns reads `does not turn in any of N step(s)`.
+
+**Not read, and said so:** a skin-required constraint (`not read — skin-required,
+and a skeleton with no skin set does not step it`); an animation a slider applies —
+a table posed at a value the consumer holds, not a span of time (`A39`'s reading) —
+whose line names the slider, while the animation that moves the slider's value is
+walked; a walk the core refuses to pose (`not read — the core refused to pose the
+walk — …`); a bone whose world direction stops being a number (`not read — its
+bone's world direction is not a number from step k (t=…s)`), rather than the finite
+figure it reached before (`WH04`); and a skeleton with no animation.
+
+**A reading, not a gate.** Nothing in it is refused, and `explain`'s exit is the
+same whatever it prints — `src/whirl.ts`, which computes it, is imported by
+`explain` alone (`WH02`). Whether half a turn per frame is the motion you meant is
+yours: a link that should trail its parent wants an `inertia` at or under 1, and
+the figure is how you see the difference without watching the right frame. A walk
+that ignores the parent's motion — the turn read in the parent's frame, or
+`render`'s walk — misses the figures above, and the selftest plants both to show it
+(`WH03`).
 
 ### 4.7 `drawOrder` — reordering the slots over time
 
