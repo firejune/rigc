@@ -442,6 +442,15 @@ const REQUESTED_IN_1396 = 'rig-play fixed-step clock, requested on issue #1396';
  * player builds one with is importable from `rig-c/core`. This row holds it.
  */
 const REQUESTED_IN_1416 = 'the environment the physics answers, requested on issue #1416';
+/**
+ * The poser's Bézier evaluation (issue #1417): rig-c/pose fits Bézier curves
+ * to dense keys and holds each fit to a tolerance measured the way the poser
+ * draws a curve — the ten-piece polyline, not the exact cubic — so it asked
+ * for `bezierPolyline` and `BEZIER_PIECES` on `rig-c/core` rather than keep a
+ * mirror of them. The entry re-exports the one function the poser calls
+ * (`CA12` holds the identity); this row holds the two symbols.
+ */
+const REQUESTED_IN_1417 = 'rig-c/pose curve fitting, requested on issue #1417';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -609,6 +618,7 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
   { entry: './core', observed: REQUESTED_IN_1336, needsRuntime: false, values: { openTracks: 'function' }, types: ['LocalAdjust', 'AdjustableLocals', 'BoneLocals', 'LiveTracks', 'TracksOptions', 'MixOptions', 'QueueOptions', 'TrackEntryView'] },
   { entry: './core', observed: REQUESTED_IN_1396, needsRuntime: false, values: { physicsClockStep: 'function', PHYSICS_CLOCK_LEAD: 'constant' }, types: [] },
   { entry: './core', observed: REQUESTED_IN_1416, needsRuntime: false, values: {}, types: ['PhysicsEnvironment'] },
+  { entry: './core', observed: REQUESTED_IN_1417, needsRuntime: false, values: { bezierPolyline: 'function', BEZIER_PIECES: 'constant' }, types: [] },
 ];
 
 /**

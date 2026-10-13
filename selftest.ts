@@ -89636,6 +89636,9 @@ import { CORE_RAW_WALK, corePoser, firstPageDifference, type CorePoserPlants, ty
 import type { FramingSets, MakeCorePoser } from './src/render_shared.ts';
 import { animationCensusOf, animationReachLines, attachmentReachLines, buildRecipes, CLIPPED_CENSUS_FIELDS, clippedReachLines, GATE_BLOCKS, REMAINDER_CENSUS_BLOCKS, timelineKindLines, type GateBlock, censusOf, CONSTRAINT_CENSUS_FIELDS, constraintCensusOf, constraintKindLines, constraintReachLines, GATE_OPTIONS, gateBuild, gateBuilt, gateVerdict, PATH_CENSUS_FIELDS, pathCensusOf, pathReachLines, reachLines, slotCensusOf, slotReachLines, STEPPED_CENSUS_FIELDS, STEPPED_OPTIONS, steppedCensusOf, steppedReachLines, type AnimationCensusField, type BuiltRow, type ConstraintCensusField, type PathCensusField, type SteppedCensusField } from './tools/core_gate.ts';
 import { BEZIER_SIXTH, bezierPolyline, BONE_TIMELINE_KINDS, channelAt, keyIndexAt, posedBoneRows, sampleTime, SLOT_TIMELINE_KINDS, type ChannelEvaluator, type SamplePhase, type TimelinePlant } from './src/core/animation.ts';
+// The core entry's Bézier evaluation (issue #1417), its own statement so CA12 lands as one hunk.
+import { bezierPolyline as entryBezierPolyline, BEZIER_PIECES as ENTRY_BEZIER_PIECES } from './src/core/entry.ts';
+import { BEZIER_PIECES } from './src/core/animation.ts';
 import { DEFORM_CURVE_END, deformAt, deformPercent, heldArray, SEQUENCE_MODES as CORE_SEQUENCE_MODES, sequenceFrameAt, type CoreDeformKey } from './src/core/deform.ts';
 import { drawOrderAt } from './src/core/draw_order.ts';
 import { eventsFired, type CoreEventRow } from './src/core/events.ts';
@@ -93509,6 +93512,123 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
       'issue #380 §4: a construct no row uses is a HOLE, never a pass, and a HOLE is covered by a probe or it is not covered at all',
     );
     for (const line of animationReachLines(rows)) if (line.startsWith('  HOLE')) console.log(`          ⚠️ HOLE:${line.slice('  HOLE'.length)}`);
+  }
+
+  // --- CA12: the entry's bezierPolyline is the poser's own, re-exported rather than copied (issue #1417) --
+  //
+  // A dependant fitting curves (rig-c/pose) holds each fit to the polyline the
+  // poser draws, so what it imports from `rig-c/core` has to BE that polyline.
+  // Equal output alone cannot say so — a verbatim copy poses every sample the
+  // poser does today and drifts the day the poser's changes — so the export is
+  // held identical to the function `channelAt` calls, and the same Bézier
+  // segments are posed through it as a dependant would draw them. Each plant is
+  // a candidate export the verdict has to refuse.
+  if (parent) {
+    const probes: string[] = [];
+    type Polyline = typeof bezierPolyline;
+    /** A channel evaluator drawing a Bézier segment through `polyline` the way a dependant draws one from the entry: the keys' stored ends, the polyline over the stated numbers, read linearly between. */
+    const through = (polyline: Polyline): ChannelEvaluator => (keys, i, c, t) => {
+      const a = keys[i];
+      const b = keys[i + 1];
+      if (b === undefined || !Array.isArray(a.curve)) return channelAt(keys, i, c, t);
+      const q = a.curve.slice(c * 4, c * 4 + 4);
+      const all = [a.time, a.values[c], ...polyline(a.stated.time, a.stated.values[c], q[0], q[1], q[2], q[3], b.stated.time, b.stated.values[c]), b.time, b.values[c]];
+      let j = 2;
+      while (j < all.length - 2 && all[j] < t) j += 2;
+      return all[j - 1] + ((t - all[j - 2]) / (all[j] - all[j - 2])) * (all[j + 1] - all[j - 1]);
+    };
+    /** `bezierPolyline`'s recurrence with its constant passed in: `BEZIER_SIXTH` is a verbatim copy, anything else a copy that drifted. */
+    const copyOf = (sixth: number): Polyline => (t0, v0, cx1, cy1, cx2, cy2, t3, v3) => {
+      const walk = (p0: number, p1: number, p2: number, p3: number): number[] => {
+        const second = (p0 - 2 * p1 + p2) * 0.03;
+        const third = ((p1 - p2) * 3 - p0 + p3) * 0.006;
+        let first = (p1 - p0) * 0.3 + second + third * sixth;
+        let d2 = second * 2 + third;
+        let at = p0;
+        const out: number[] = [];
+        for (let i = 1; i < BEZIER_PIECES; i++) {
+          at += first;
+          first += d2;
+          d2 += third;
+          out.push(Math.fround(at));
+        }
+        return out;
+      };
+      const ts = walk(t0, cx1, cx2, t3);
+      const vs = walk(v0, cy1, cy2, v3);
+      return ts.flatMap((x, k) => [x, vs[k]]);
+    };
+    // The subjects: three all-kinds probes (every bone and slot kind, Bézier segments on one to seven channels) and 24 single segments stated off the float32 grid.
+    const rnd = seededRandom(1417);
+    const texts = [allKindsProbe(1417).model, allKindsProbe(2417).model, allKindsProbe(3417).model];
+    for (let k = 0; k < 24; k++) {
+      const t0 = Math.round(rnd() * 30) / 30;
+      const t1 = Math.round((t0 + 0.2 + Math.round(rnd() * 60) / 30) * 1e5) / 1e5;
+      const scale = [1, 10, 1000, 2000, 100, 50000][k % 6];
+      const v0 = Math.round((rnd() - 0.5) * scale * 1e4) / 1e4;
+      const v1 = Math.round((rnd() - 0.5) * scale * 1e4) / 1e4;
+      const c = [t0 + rnd() * (t1 - t0), v0 + (rnd() - 0.5) * 1.5 * scale, t0 + rnd() * (t1 - t0), v1 + (rnd() - 0.5) * 1.5 * scale].map((v) => Math.round(v * 1e6) / 1e6);
+      texts.push(timelinePair({ bones: [{ name: 'root' }, { name: 'b', parent: 'root' }], bones_: { b: { translatex: [{ time: t0, value: v0, curve: c }, { time: t1, value: v1 }] } } }).model);
+    }
+    const models = texts.map((text) => readModel(text, 'a Bézier probe'));
+    const segments = models.flatMap((m) => m.animations.flatMap((a) => [...a.timelines.bones, ...a.timelines.slots].flatMap((target) => target.timelines.flatMap((tl) => tl.keys.flatMap((key, i) => (Array.isArray(key.curve) && i + 1 < tl.keys.length ? key.values.map((_v, c) => ({ keys: tl.keys, i, c })) : []))))));
+    /** The bits of a number, so -0 and NaN compare as what they are. */
+    const bits = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+    const poser = models.map((m) => bits(coreDump(m, DENSE).animations));
+    let sampled = 0;
+    /** What is wrong with `candidate` as the entry's export: each clause by name, nothing when it is the poser's. */
+    const posedPieces = bezierPolyline(0, 0, 0.25, 0.1, 0.75, 0.9, 1, 1).length / 2 + 1;
+    const verdict = (candidate: Polyline): { identity: boolean; segment: string | null; pose: string | null } => {
+      const evaluate = through(candidate);
+      let segment: string | null = null;
+      sampled = 0;
+      for (const { keys, i, c } of segments) {
+        const [a, b] = [keys[i], keys[i + 1]];
+        // 64 times across the segment, and each knot of the poser's own polyline, where a piece ends.
+        const q = Array.isArray(a.curve) ? a.curve.slice(c * 4, c * 4 + 4) : [];
+        const knots = bezierPolyline(a.stated.time, a.stated.values[c], q[0], q[1], q[2], q[3], b.stated.time, b.stated.values[c]).filter((_x, k) => k % 2 === 0);
+        for (const t of [...Array.from({ length: 64 }, (_v, k) => a.time + ((b.time - a.time) * k) / 63), ...knots]) {
+          sampled++;
+          const want = channelAt(keys, i, c, t);
+          const got = evaluate(keys, i, c, t);
+          if (segment === null && !Object.is(want, got)) segment = `channel ${c} of the segment from ${a.time} to ${b.time} at t ${t}: the poser ${want}, through the candidate ${got}`;
+        }
+      }
+      const off = models.findIndex((m, k) => bits(coreDump(m, DENSE, { channel: evaluate }).animations) !== poser[k]);
+      return {
+        identity: candidate === bezierPolyline,
+        segment,
+        pose: off < 0 ? null : `probe ${off}'s dense samples posed through the candidate differ from the poser's`,
+      };
+    };
+    /** Whether `pieces` is the count the poser draws a segment in: its constant, and the pieces its polyline actually has. */
+    const piecesHeld = (pieces: number): boolean => pieces === BEZIER_PIECES && pieces === posedPieces;
+    const real = verdict(entryBezierPolyline);
+    const realSamples = sampled;
+    if (!real.identity) probes.push('the entry\'s bezierPolyline is not the function src/core/animation.ts exports and channelAt calls — a copy, which drifts the day the poser changes');
+    if (real.segment !== null) probes.push(`the entry's bezierPolyline drawn as a dependant draws it differs from channelAt: ${real.segment}`);
+    if (real.pose !== null) probes.push(`the entry's bezierPolyline as the poser's channel: ${real.pose}`);
+    if (!piecesHeld(ENTRY_BEZIER_PIECES)) probes.push(`the entry's BEZIER_PIECES is ${ENTRY_BEZIER_PIECES}, while the poser draws a segment in ${posedPieces} pieces`);
+    if (segments.length === 0 || realSamples === 0) probes.push('no Bézier segment was read from the probes, so nothing was compared');
+    // The plants: each a candidate export, and the clause it has to go red on.
+    const verbatim = verdict(copyOf(BEZIER_SIXTH));
+    const drifted = verdict(copyOf(1 / 6));
+    if (verbatim.identity) probes.push('a verbatim copy was read as the poser\'s own function');
+    // The load-bearing negative: the copy poses every sample the poser does today, which is why identity is asserted and equality alone is not.
+    if (verbatim.segment !== null || verbatim.pose !== null) probes.push(`a verbatim copy did not pose as the poser does, so the copy plant is not the copy it claims: ${verbatim.segment ?? verbatim.pose ?? ''}`);
+    if (drifted.identity || drifted.segment === null || drifted.pose === null) probes.push(`a copy with one-sixth exact was not refused on identity, a segment and a pose (identity ${drifted.identity ? 'held' : 'red'}, segment ${drifted.segment === null ? 'equal' : 'red'}, pose ${drifted.pose === null ? 'equal' : 'red'})`);
+    if (piecesHeld(BEZIER_PIECES - 1)) probes.push(`BEZIER_PIECES planted as ${BEZIER_PIECES - 1} was read as the poser's piece count`);
+    const ok = probes.length === 0;
+    say(
+      'CA12_THE_CORE_ENTRYS_BEZIER_POLYLINE_IS_THE_POSERS_OWN_FUNCTION_AND_POSES_EVERY_SEGMENT_AS_THE_POSER_DOES',
+      ok,
+      probeDetail(
+        ok,
+        probes,
+        `rig-c/core's bezierPolyline is the function channelAt calls, and ${segments.length} Bézier channel segment(s) over 3 all-kinds probes and 24 single segments stated off the float32 grid, ${realSamples} sample(s) at 64 times each and every knot, drawn through it as a dependant draws them equal channelAt at tolerance 0, and every dense sample of the ${models.length} probe(s) posed with it as the poser's channel identical; BEZIER_PIECES is the poser's ${posedPieces}. Planted: a verbatim copy poses every sample equal and is refused on identity alone, a copy with one-sixth exact is refused on identity, a segment and a pose, and BEZIER_PIECES as ${BEZIER_PIECES - 1} is refused`,
+      ),
+      'issue #1417: rig-c/pose fits Bézier curves to a tolerance measured the way the poser draws one, the ten-piece polyline and not the exact cubic, so the entry exports the poser\'s own evaluation. A copy would pose equal today and drift silently the day the poser changes — the mirror the request exists to remove — so the export is held identical to the one function, and the verbatim-copy plant is the proof that equality alone could not have caught it',
+    );
   }
 
   // --- CO19: the blend mode — a probe stating every mode posed as spine-core does, a bad spelling refused, the plant named on exactly the rows stating it --

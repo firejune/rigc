@@ -935,6 +935,20 @@ before (`CO57`), so the row adds one type and no value. It lives in
 `src/core/constraints_physics.ts`, which the entry already reached, so its
 closure gained no module (`CUR123`).
 
+🤝 **A sixth, by the same exception**
+([#1417](https://github.com/rig-c/core/issues/1417)): `bezierPolyline` and
+`BEZIER_PIECES`, the polyline the poser draws a Bézier segment as — the
+runtime's ten pieces, not the exact cubic — which `@rig-c/pose` asked for so
+that its curve fitter holds each fit to the poser's own evaluation instead of
+a mirror of it (`REQUESTED_IN_1417`). The entry re-exports the one function
+the poser calls rather than a copy, because a copy is the drift the request
+exists to remove: `CA12` holds the export identical to the function
+`channelAt` calls, and every Bézier sample a probe poses through the export
+equal at tolerance 0 to the poser's, with a copy of it planted red. Nothing
+about the evaluation changed, so no pose moved. Both live in
+`src/core/animation.ts`, which the entry already reached, so its closure
+gained no module (`CUR123`).
+
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
 from the install and calls `readModel` then `poseRawSetup` on the build it
