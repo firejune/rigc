@@ -32,9 +32,10 @@
  * did not already have the fixtures.
  *
  * So the fixtures are written fresh into a temp directory on every run, by
- * [`fixtures/public.ts`](fixtures/public.ts). Four of them, one per shape the
+ * [`fixtures/public.ts`](fixtures/public.ts). Six of them, one per shape the
  * assertions care about: `overlay_probe`, `articulated_probe`,
- * `contained_probe` and `segments_probe`, the last with no manifest. Two further suites build their own even smaller rigs inline
+ * `contained_probe`, `segments_probe` (with no manifest), `skirt_probe` and
+ * `pass_through_probe`. Two further suites build their own even smaller rigs inline
  * (static rigs, draw-order timelines).
  *
  * Other suites measure against the official Spine example corpus that
@@ -702,6 +703,8 @@ import {
   articulatedFixture,
   containedFixture,
   overlayFixture,
+  PASS_PLATE,
+  passThroughFixture,
   placeFixturesUnder,
   SEGMENTS_PLATE,
   segmentsFixture,
@@ -133190,6 +133193,381 @@ function foldExtentFaults(meshes: readonly MeshFolds[], geometry: GeometryFile |
 }
 
 // ---------------------------------------------------------------------------
+// pass-through — where a cloth slot drawn over a leg slot passes through it (issue #1413)
+// ---------------------------------------------------------------------------
+
+import { PASS_THROUGH_FILE, PASS_THROUGH_RUN, type PairReading, type PassPair, type PassPlant, passThroughOf, type PassThroughFile } from './src/passthrough.ts';
+
+/** The pairs the probe is read with: the planted one, the leg drawn over, the declaration swapped, and the skirt with itself. */
+const PASS_PROBE_PAIRS: readonly PassPair[] = [
+  { cloth: 'skirt', leg: 'leg' },
+  { cloth: 'skirt', leg: 'leg_front' },
+  { cloth: 'leg', leg: 'skirt' },
+  { cloth: 'skirt', leg: 'skirt' },
+];
+
+/**
+ * How far either boundary of the leg may move before the derivation below calls
+ * a frame's run fragile: a hundredth of a unit, far above the rounding of a
+ * region's corners and far below a step.
+ */
+const PASS_PROBE_EPSILON = 0.01;
+
+/** The probe's sets: their frame count at `fps`, and the hip's pose at a time — angle (degrees, CCW), x scale, x shift. */
+const PASS_PROBE_SETS = {
+  swing: (t: number) => ({ theta: PASS_PLATE.swing * (t <= PASS_PLATE.duration / 2 ? t : PASS_PLATE.duration - t) / (PASS_PLATE.duration / 2), sx: 1, tx: 0 }),
+  swing_behind: (t: number) => ({ theta: PASS_PLATE.swing * (t <= PASS_PLATE.duration / 2 ? t : PASS_PLATE.duration - t) / (PASS_PLATE.duration / 2), sx: 1, tx: 0 }),
+  rest: (_t: number) => ({ theta: 0, sx: 1, tx: 0 }),
+  squash: (_t: number) => ({ theta: 0, sx: PASS_PLATE.squash.scale, tx: PASS_PLATE.squash.shift }),
+} as const;
+const PASS_PROBE_DURATIONS: Record<keyof typeof PASS_PROBE_SETS, number> = { swing: PASS_PLATE.duration, swing_behind: PASS_PLATE.duration, rest: 1, squash: 1 };
+
+/**
+ * The longest run on one frame of the probe, derived from `PASS_PLATE` alone —
+ * never read off a run. Every plate is drawn one texel to a unit inside its
+ * transparent margin, so the skirt's outermost drawn cells have their centres
+ * half a unit inside its drawn edges, on every row from its drawn bottom to its
+ * drawn top (a rectangle: every row ties, so the corner is the bottom row and
+ * every row is read). The hip turns the skirt by θ about its own origin, after
+ * scaling its x by `sx` and before shifting it by `tx`; the leg is the drawn
+ * rectangle of its plate, which the hip does not move. Each row steps outward
+ * from that centre, one unit at a time along the posed outward direction —
+ * normalised (world steps) or as the pose carries one setup cell (`cells`) — and
+ * counts the steps inside the leg. `grow` moves every edge of the leg outward by
+ * that much, which is how the ε design check asks whether a frame's run is
+ * fragile.
+ */
+function passProbeRun(pose: { theta: number; sx: number; tx: number }, cells: boolean, grow = 0): number {
+  const { skirt, leg, margin, hipY, thighX } = PASS_PLATE;
+  const legBox = [thighX - leg.width / 2 + margin - grow, hipY - leg.height + margin - grow, thighX + leg.width / 2 - margin + grow, hipY - margin + grow];
+  const inLeg = (x: number, y: number): boolean => x > legBox[0] && x < legBox[2] && y > legBox[1] && y < legBox[3];
+  const c = Math.cos((pose.theta * Math.PI) / 180);
+  const s = Math.sin((pose.theta * Math.PI) / 180);
+  const turn = (x: number, y: number): [number, number] => [c * x - s * y, s * x + c * y];
+  let most = 0;
+  for (let row = hipY - skirt.height + margin + 0.5; row < hipY - margin; row++) {
+    for (const side of [-1, 1]) {
+      const [rx, ry] = turn(pose.sx * side * (skirt.width / 2 - margin - 0.5), row - hipY);
+      const origin = [pose.tx + rx, hipY + ry];
+      const [dx, dy] = turn(side * pose.sx, 0);
+      const length = cells ? 1 : Math.hypot(dx, dy);
+      let k = 0;
+      while (inLeg(origin[0] + ((k + 1) * dx) / length, origin[1] + ((k + 1) * dy) / length)) k++;
+      most = Math.max(most, k);
+    }
+  }
+  return most;
+}
+
+/** One set's derived runs, frame by frame, and whether every one survives the leg's edges moving by ε either way. */
+function passProbeRuns(set: keyof typeof PASS_PROBE_SETS, fps: number, cells = false): { runs: number[]; fragile: number[] } {
+  const runs: number[] = [];
+  const fragile: number[] = [];
+  for (let i = 0; i <= Math.round(PASS_PROBE_DURATIONS[set] * fps); i++) {
+    const pose = PASS_PROBE_SETS[set](i / fps);
+    const run = passProbeRun(pose, cells);
+    runs.push(run);
+    if (passProbeRun(pose, cells, PASS_PROBE_EPSILON) !== run || passProbeRun(pose, cells, -PASS_PROBE_EPSILON) !== run) fragile.push(i);
+  }
+  return { runs, fragile };
+}
+
+/** The frames a derived run list passes on. */
+const passingFrames = (runs: readonly number[]): number[] => runs.flatMap((run, i) => (run >= PASS_THROUGH_RUN ? [i] : []));
+
+/** The frames of `swing_behind` the draw-order key puts the leg over the skirt on: from `behind[0]` up to, not including, `behind[1]`. */
+function passProbeBehind(fps: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i <= Math.round(PASS_PLATE.duration * fps); i++) if (i / fps >= PASS_PLATE.behind[0] && i / fps < PASS_PLATE.behind[1]) out.push(i);
+  return out;
+}
+
+type PassReadings = ReadonlyMap<string, readonly PairReading[]>;
+
+const pairOf = (readings: PassReadings, set: string, cloth: string, leg: string): PairReading | undefined =>
+  readings.get(set)?.find((p) => p.cloth === cloth && p.leg === leg);
+
+/** PX01's reading: `skirt` over `leg` on `swing` passes on exactly the derived frames, each with its derived run. */
+function passBar1Faults(readings: PassReadings, fps: number): string[] {
+  const { runs } = passProbeRuns('swing', fps);
+  const want = passingFrames(runs);
+  const pair = pairOf(readings, 'swing', 'skirt', 'leg');
+  if (pair === undefined) return ['no reading of "skirt:leg" on "swing"'];
+  const faults: string[] = [];
+  const got = pair.frames.map((f) => f.index);
+  if (JSON.stringify(got) !== JSON.stringify(want)) faults.push(`"skirt:leg" on "swing" passes on [${got.join(', ')}], the probe's numbers put the hem through the leg on [${want.join(', ')}]`);
+  for (const f of pair.frames) if (f.cells !== runs[f.index]) faults.push(`"swing" frame ${f.index} reads a run of ${f.cells}, the probe's numbers give ${runs[f.index]}`);
+  if (pair.over !== runs.length) faults.push(`"skirt:leg" on "swing" read ${pair.over} frame(s), required all ${runs.length}`);
+  return faults;
+}
+
+/** PX02's reading: the leg drawn over, the declaration swapped and the draw-order key each read nothing — the declared order, never both. */
+function passBar2Faults(readings: PassReadings, fps: number): string[] {
+  const faults: string[] = [];
+  for (const set of Object.keys(PASS_PROBE_SETS)) {
+    const front = pairOf(readings, set, 'skirt', 'leg_front');
+    if (front === undefined || front.over !== 0 || front.frames.length !== 0) faults.push(`"skirt:leg_front" on "${set}" reads ${JSON.stringify(front && { over: front.over, frames: front.frames.map((f) => f.index) })} — "leg_front" draws over the skirt, so no frame is read`);
+  }
+  const swapped = pairOf(readings, 'swing', 'leg', 'skirt');
+  if (swapped === undefined || swapped.over !== 0 || swapped.frames.length !== 0) faults.push(`"leg:skirt" on "swing" reads ${JSON.stringify(swapped && { over: swapped.over, frames: swapped.frames.map((f) => f.index) })} — declared "leg" over "skirt", which it never is there`);
+  const behind = passProbeBehind(fps);
+  const want = passingFrames(passProbeRuns('swing_behind', fps).runs).filter((i) => !behind.includes(i));
+  const pair = pairOf(readings, 'swing_behind', 'skirt', 'leg');
+  if (pair === undefined) faults.push('no reading of "skirt:leg" on "swing_behind"');
+  else {
+    const got = pair.frames.map((f) => f.index);
+    if (JSON.stringify(got) !== JSON.stringify(want)) faults.push(`"skirt:leg" on "swing_behind" passes on [${got.join(', ')}], required [${want.join(', ')}] — "swing"'s frames less [${behind.join(', ')}], where the leg is drawn over the skirt`);
+    const total = Math.round(PASS_PLATE.duration * fps) + 1;
+    if (pair.over !== total - behind.length) faults.push(`"skirt:leg" on "swing_behind" read ${pair.over} frame(s), required ${total - behind.length}`);
+  }
+  return faults;
+}
+
+/** PX03's reading: nothing moves on `rest` and it reads 0, the setup pose's clearance, and a slot paired with itself is never read. */
+function passBar3Faults(readings: PassReadings, fps: number): string[] {
+  const faults: string[] = [];
+  const want = passProbeRuns('rest', fps).runs[0];
+  const rest = pairOf(readings, 'rest', 'skirt', 'leg');
+  if (rest === undefined || rest.frames.length !== 0 || rest.deepest?.cells !== want) faults.push(`"skirt:leg" on "rest" reads ${JSON.stringify(rest && { frames: rest.frames.map((f) => f.index), deepest: rest.deepest?.cells })}, required no frame and a deepest run of ${want}`);
+  for (const set of Object.keys(PASS_PROBE_SETS)) {
+    const self = pairOf(readings, set, 'skirt', 'skirt');
+    if (self === undefined || self.over !== 0 || self.frames.length !== 0) faults.push(`"skirt:skirt" on "${set}" reads ${JSON.stringify(self && { over: self.over, frames: self.frames.length })} — a slot does not draw over itself`);
+  }
+  return faults;
+}
+
+/** PX04's reading: the squashed skirt reads the run its world steps hold, which is below the line, on every frame. */
+function passSquashFaults(readings: PassReadings, fps: number): string[] {
+  const { runs } = passProbeRuns('squash', fps);
+  const pair = pairOf(readings, 'squash', 'skirt', 'leg');
+  if (pair === undefined) return ['no reading of "skirt:leg" on "squash"'];
+  const faults: string[] = [];
+  const got = pair.frames.map((f) => f.index);
+  const want = passingFrames(runs);
+  if (JSON.stringify(got) !== JSON.stringify(want)) faults.push(`"skirt:leg" on "squash" passes on [${got.join(', ')}], the probe's numbers in world steps give [${want.join(', ')}]`);
+  if (pair.deepest?.cells !== Math.max(...runs)) faults.push(`"skirt:leg" on "squash" reads a deepest run of ${String(pair.deepest?.cells)}, the probe's numbers in world steps give ${Math.max(...runs)}`);
+  return faults;
+}
+
+function runPassThroughSuite(): number {
+  console.log('\n── pass-through: where a cloth drawn over a leg passes through it (issue #1413) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const fps = PROTOCOL_FPS;
+  const probe = passThroughFixture();
+  const pre: string[] = [];
+  const build = runCli(['build', '--rig', probe.rigPath, '--motion', probe.motionPath, '--images', probe.imagesDir, '--out', probe.outDir]);
+  if (build.status !== 0) pre.push(`the probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  const dir = (name: string): string => join(probe.dir, name);
+  const flag = PASS_PROBE_PAIRS.map((p) => `${p.cloth}:${p.leg}`).join(',');
+  const render = (name: string, extra: string[]): ReturnType<typeof runCli> | null => (pre.length > 0 ? null : runCli(['render', '--candidate', probe.outDir, '--max', '64', ...extra, '--out', dir(name)]));
+  const passed = render('pass', ['--pass-through', flag]);
+  const spine = render('spine', ['--pass-through', flag, '--poser', 'spine']);
+  const plain = render('plain', []);
+  for (const [name, run] of [['--pass-through', passed], ['--pass-through --poser spine', spine], ['plain', plain]] as const) {
+    if (run !== null && run.status !== 0) pre.push(`render ${name} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+  }
+  const sets = Object.keys(PASS_PROBE_SETS);
+  const fileOf = (root: string, set: string): PassThroughFile | null => {
+    const path = join(root, set, PASS_THROUGH_FILE);
+    return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as PassThroughFile) : null;
+  };
+  const cli = new Map<string, readonly PairReading[]>();
+  if (pre.length === 0) {
+    for (const set of sets) {
+      const file = fileOf(dir('pass'), set);
+      if (file === null) pre.push(`render --pass-through wrote no ${PASS_THROUGH_FILE} for "${set}"`);
+      else cli.set(set, file.pairs);
+    }
+  }
+  // The design of the probe, checked before anything is read off it: some frames of `swing` pass and some do not,
+  // one does not pass with a run of exactly 1 (what a line read as 0 would name), the squash reads 1 in world steps
+  // and more than the line in setup cells, and no derived run moves when the leg's edges move by ε.
+  {
+    const swing = passProbeRuns('swing', fps);
+    const squash = passProbeRuns('squash', fps);
+    const squashCells = passProbeRuns('squash', fps, true);
+    const passing = passingFrames(swing.runs);
+    if (passing.length === 0 || passing.length === swing.runs.length) pre.push(`the probe's numbers pass "swing" on ${passing.length} of ${swing.runs.length} frame(s) — the control needs some frames through and some not`);
+    if (!swing.runs.includes(1)) pre.push('no frame of "swing" has a run of exactly 1 — the line moved to 1 would change nothing there');
+    if (passingFrames(squash.runs).length !== 0 || passingFrames(squashCells.runs).length !== squashCells.runs.length) {
+      pre.push(`the squash reads [${squash.runs.join(', ')}] in world steps and [${squashCells.runs.join(', ')}] in setup cells — it needs every frame below the line in world steps and above it in cells`);
+    }
+    for (const [set, runs] of [['swing', swing], ['squash', squash], ['squash in cells', squashCells]] as const) {
+      if (runs.fragile.length > 0) pre.push(`"${set}" frame(s) [${runs.fragile.join(', ')}] change their run when the leg's edges move by ${PASS_PROBE_EPSILON} — the probe's numbers sit on a boundary`);
+    }
+  }
+  const lines = (passed?.stdout ?? '').split('\n');
+
+  // The library over spine-core's poses of the same build: the reading recomputed, and the mutants planted, off the
+  // pieces and the rest table a second poser hands it.
+  const library = (plant: PassPlant = {}): Map<string, readonly PairReading[]> => {
+    const out = new Map<string, readonly PairReading[]>();
+    if (pre.length > 0) return out;
+    const posable = posableFromText(readFileSync(join(probe.outDir, 'skeleton.json'), 'utf8'), readFileSync(join(probe.outDir, 'skeleton.atlas'), 'utf8'), probe.outDir);
+    const poser = spinePoser(posable.data);
+    for (const set of sets) {
+      const frames = sampleAnimation(poser, set, fps, { geometry: true });
+      const rest = poser.rest(undefined, frames.map((f) => f.attachments ?? []));
+      const read = frames.map((f) => ({ index: f.index, time: f.time, pieces: f.pieces, attachments: f.attachments ?? [] }));
+      out.set(set, passThroughOf(PASS_PROBE_PAIRS, rest, read, posable.pages, plant));
+    }
+    return out;
+  };
+  const clean = library();
+
+  // PX01 — the planted hem is named on exactly the frames the probe's numbers put it through the leg.
+  {
+    const probes = pre.length > 0 ? [...pre] : passBar1Faults(cli, fps);
+    const want = passingFrames(passProbeRuns('swing', fps).runs);
+    if (pre.length === 0) {
+      const line = lines.find((l) => l.includes('pass     "swing": cloth "skirt" over leg "leg" passes through on'));
+      if (line === undefined) probes.push('render --pass-through printed no summary line for "swing" skirt over leg');
+      else if (!line.includes(`passes through on ${want.length} of ${Math.round(PASS_PLATE.duration * fps) + 1} frame(s) read [${want[0]}-${want[want.length - 1]}]`)) probes.push(`the line ${JSON.stringify(line.trim())} does not say ${want.length} frame(s) [${want[0]}-${want[want.length - 1]}]`);
+      const frameLines = lines.filter((l) => /pass {5}"swing" frame \d+ .*cloth "skirt" over leg "leg"/.test(l));
+      if (frameLines.length !== want.length) probes.push(`render --pass-through printed ${frameLines.length} frame line(s) for "swing" skirt over leg, required ${want.length}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'PX01_THE_PLANTED_HEM_IS_NAMED_ON_EXACTLY_THE_FRAMES_IT_IS_THROUGH_THE_LEG',
+      ok,
+      probeDetail(ok, probes, `"skirt" over "leg" on "swing", posed by the core: frames [${want.join(', ')}] of ${Math.round(PASS_PLATE.duration * fps) + 1} at ${fps} fps, each with the run the probe's numbers give — the hip's angle turning the skirt's drawn side into the leg's drawn rectangle, computed here — and one summary line and one line per frame`),
+      'issue #1413 Bar 1: a skirt swinging through a leg is silent on a build that passes everything; the reading is held to frames derived from the keys, not to a run',
+    );
+  }
+
+  // PX02 — both sides: the leg drawn over, the declaration swapped and the draw-order key each read nothing.
+  {
+    const probes = pre.length > 0 ? [...pre] : passBar2Faults(cli, fps);
+    if (pre.length === 0 && !lines.some((l) => l.includes('cloth "skirt" over leg "leg_front": the cloth draws over the leg on 0 of'))) probes.push('no line says "skirt" draws over "leg_front" on 0 frames');
+    const ok = probes.length === 0;
+    say(
+      'PX02_A_LEG_DRAWN_OVER_THE_CLOTH_IS_NEVER_READ',
+      ok,
+      probeDetail(ok, probes, `"leg_front", the same plate drawn over the skirt, reads 0 frames on every set; "leg:skirt" reads the declared order — 0 frames, never "skirt:leg" turned round; on "swing_behind" the frames [${passProbeBehind(fps).join(', ')}] a draw-order key puts the leg over the skirt are not read`),
+      'issue #1413 Bar 2: a skirt can only pass through a leg it is in front of; a reading of both orders would name the leg crossing the skirt as the skirt crossing the leg',
+    );
+  }
+
+  // PX03 — the rig at rest reads 0, and a slot paired with itself is never read.
+  {
+    const probes = pre.length > 0 ? [...pre] : passBar3Faults(cli, fps);
+    const ok = probes.length === 0;
+    say(
+      'PX03_THE_RIG_AT_REST_AND_A_SLOT_WITH_ITSELF_READ_ZERO',
+      ok,
+      probeDetail(ok, probes, `"rest" reads no frame and a deepest run of ${passProbeRuns('rest', fps).runs[0]} — the leg sits inside the skirt; "skirt:skirt" is read on no frame of any set and says why`),
+      'issue #1413 Bar 3: the self-controls at 0 — a reading that fired on the setup pose would be reading the author, not the motion',
+    );
+  }
+
+  // PX04 — a skirt squashed at a frame reads the run the picture holds, not the run its setup cells would count.
+  {
+    const probes = pre.length > 0 ? [...pre] : passSquashFaults(cli, fps);
+    const ok = probes.length === 0;
+    say(
+      'PX04_A_SQUASHED_CLOTH_READS_ITS_RUN_IN_WORLD_STEPS',
+      ok,
+      probeDetail(ok, probes, `"squash" holds the hip at x scale ${PASS_PLATE.squash.scale}, shifted ${PASS_PLATE.squash.shift}: the skirt's side is inside the leg by ${Math.max(...passProbeRuns('squash', fps).runs)} world step(s) — under the line of ${PASS_THROUGH_RUN} — and by ${Math.max(...passProbeRuns('squash', fps, true).runs)} of its setup cells; it reads no frame`),
+      'issue #1413: a run counted in setup cells printed a depth in units over a box narrower than that depth on a squashed cloth; the line claims world units, so the run is stepped in them',
+    );
+  }
+
+  // PX05 — the CLI's file is the library's reading over a second poser's frames.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      for (const set of sets) {
+        if (JSON.stringify(clean.get(set)) !== JSON.stringify(cli.get(set))) probes.push(`"${set}": passThroughOf over spine-core's poses is not render --pass-through's ${PASS_THROUGH_FILE}, posed by the core`);
+        const spineFile = join(dir('spine'), set, PASS_THROUGH_FILE);
+        if (!existsSync(spineFile) || !readFileSync(spineFile).equals(readFileSync(join(dir('pass'), set, PASS_THROUGH_FILE)))) probes.push(`"${set}": render --pass-through --poser spine wrote a ${PASS_THROUGH_FILE} that is not the core's bytes`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'PX05_THE_READING_IS_ONE_ON_BOTH_POSERS',
+      ok,
+      probeDetail(ok, probes, `every set's ${PASS_THROUGH_FILE}: the core's render, --poser spine's render and passThroughOf over spine-core's frames and rest table read the same, byte for byte`),
+      'issue #1413: the reading reads render geometry, which both posers draw — two posers reading two answers would be a reading of the poser',
+    );
+  }
+
+  // PX06 — the flag moves no other byte, and without it nothing is read.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const files = (root: string): string[] => readdirSync(root, { recursive: true }).map(String).filter((f) => statSync(join(root, f)).isFile()).sort();
+      const plainFiles = files(dir('plain'));
+      const extra = files(dir('pass')).filter((f) => !plainFiles.includes(f));
+      const want = sets.map((s) => `${s}/${PASS_THROUGH_FILE}`).sort();
+      if (JSON.stringify(extra) !== JSON.stringify(want)) probes.push(`render --pass-through wrote [${extra.join(', ')}] beyond the plain render's files, required [${want.join(', ')}]`);
+      for (const f of plainFiles) if (!readFileSync(join(dir('plain'), f)).equals(readFileSync(join(dir('pass'), f)))) probes.push(`${f} differs between the plain render and render --pass-through`);
+      if (/\.\.\s+pass\s/.test(plain?.stdout ?? '') || plainFiles.some((f) => f.endsWith(PASS_THROUGH_FILE))) probes.push('a run without --pass-through printed a pass line or wrote a pass-through file');
+    }
+    const ok = probes.length === 0;
+    say(
+      'PX06_THE_FLAG_MOVES_NO_OTHER_BYTE',
+      ok,
+      probeDetail(ok, probes, `--pass-through adds one ${PASS_THROUGH_FILE} per set and every other file — frames, sheets, frames.json — is the plain render's bytes; without it no file and no line`),
+      'issue #1413 Bar 6: no flag, no moved byte',
+    );
+  }
+
+  // PX07 — a malformed list, an unknown slot, a pair named twice and a subset are refused by name, nothing written.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      let n = 0;
+      for (const [value, extra, said] of [
+        ['skirt:nope', [], 'names leg slot "nope", which this skeleton does not have; its slots are [leg, skirt, leg_front]'],
+        ['skirt', [], 'entry 0 "skirt" has 0 ":"'],
+        ['skirt:leg:leg', [], 'has 2 ":"'],
+        ['skirt:leg,,skirt:leg_front', [], 'entry 1 is empty'],
+        [':leg', [], 'names no cloth slot'],
+        ['skirt:leg,skirt:leg', [], 'entry 1 names "skirt:leg" again'],
+        ['skirt:leg', ['--hide', 'leg_front'], '--pass-through takes no --hide'],
+      ] as const) {
+        const out = dir(`refused_${n++}`);
+        const run = runCli(['render', '--candidate', probe.outDir, '--pass-through', value, ...extra, '--max', '64', '--out', out]);
+        if (run.status !== 2 || !run.stderr.includes(said)) probes.push(`--pass-through ${value} ${extra.join(' ')}: exit ${String(run.status)}, stderr ${JSON.stringify(run.stderr.trim().split('\n')[0])} — required exit 2 and "${said}"`);
+        if (existsSync(out)) probes.push(`--pass-through ${value} ${extra.join(' ')} was refused and still wrote ${out}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'PX07_A_MALFORMED_OR_UNKNOWN_PAIR_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, 'an unknown slot (with the slots there are), an entry with no ":" or two, an empty entry, an empty name, a pair named twice and --hide beside the flag each exit 2 naming the entry, and write nothing'),
+      'issue #1413: a pair the reading cannot read is refused rather than read as 0 — a typo would otherwise print a clean bill for a slot nobody asked about',
+    );
+  }
+
+  // PX08–PX12 — each planted wrong reading goes red, by the control that reads it.
+  for (const [code, plant, reader, what] of [
+    ['PX08_A_READING_THAT_IGNORES_DRAW_ORDER_IS_RED', { ignoreDrawOrder: true }, passBar2Faults, 'PX02'],
+    ['PX09_A_LINE_READ_AS_ONE_STEP_IS_RED', { run: 1 }, passBar1Faults, 'PX01'],
+    ['PX10_A_READING_THAT_NEVER_FIRES_IS_RED', { run: Infinity }, passBar1Faults, 'PX01'],
+    ['PX11_ROWS_READ_IN_THE_WORLD_NOT_THE_SETUP_POSE_ARE_RED', { rowsInWorld: true }, passBar1Faults, 'PX01'],
+    ['PX12_A_RUN_STEPPED_IN_SETUP_CELLS_IS_RED', { cellSteps: true }, passSquashFaults, 'PX04'],
+  ] as const) {
+    const cleanFaults = pre.length > 0 ? pre : reader(clean, fps);
+    const planted = pre.length > 0 ? [] : reader(library(plant), fps);
+    say(
+      code,
+      cleanFaults.length === 0 && planted.length > 0,
+      cleanFaults.length > 0 ? `the unplanted reading is already red: ${cleanFaults[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and ${what}'s reading found nothing` : `${JSON.stringify(plant)} planted: ${what}'s reading names it — ${planted[0]}; unplanted it reads clean`,
+      code === 'PX10_A_READING_THAT_NEVER_FIRES_IS_RED'
+        ? 'issue #1413 Bar 5: a definition that never fires cannot pass — the planted control is a positive-rate floor, not an agreement ratio'
+        : 'issue #1413: a control nobody has seen fail is not a control — the plausible wrong readings are planted and caught by name',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
@@ -135012,6 +135390,7 @@ function main(): void {
   tally.of('geometry-export', runGeometryExportSuite);
   tally.of('inspect', runInspectSuite);
   tally.of('folds', runFoldsSuite);
+  tally.of('pass-through', runPassThroughSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
