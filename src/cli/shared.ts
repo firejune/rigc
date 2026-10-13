@@ -38,6 +38,7 @@ import { checkAgainstFrames, type CheckOptions, CheckPlates, type CheckReport } 
 import { compile, CompileError, droppedStateReason, headerBoundsOf, type CompileOptions } from '../compile.ts';
 import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
 import { FOLDS_FILE } from '../folds.ts';
+import { PASS_THROUGH_FILE, PASS_THROUGH_RUN } from '../passthrough.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
@@ -1013,6 +1014,13 @@ const FLAG_MEANINGS: Record<string, string> = {
     'with where they are (the world box of their posed vertices) and how big (their setup-pose area, and its share of the mesh\'s). ' +
     'One line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. ' +
     'A reading, not a gate. Not with --slot/--hide: it reads every mesh the pose shows',
+  'pass-through':
+    `also read where a cloth slot passes through a leg slot, for each <cloth>:<leg> pair, and write ${PASS_THROUGH_FILE} into ` +
+    'each frame directory: the frames where the cloth draws over the leg and its drawn side lies inside the leg\'s drawn ' +
+    `outline by ${PASS_THROUGH_RUN} steps or more — rows read in the cloth's setup pose from its hem's corner up, the run stepped in ` +
+    'world units, one texel of the coarser drawing to a step — each with the depth and the world box. One line per pair, and one per frame that passes through. ' +
+    'The order is the declaration: the first name must draw over the second for a frame to be read. A reading, not a gate. ' +
+    'An unknown slot, a slot that draws on no frame, a malformed list and a pair named twice are refused by name. Not with --slot/--hide',
   environment:
     'the world the rig\'s physics answers, in time: a file { "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, ' +
     '"wind"?: [x, y], "gravity"?: [x, y] }, …] }, x right and y down, each step holding from its t until the next and set ' +
@@ -1202,6 +1210,7 @@ const FLAG_VALUES: Record<string, string> = {
   'texture-from': '<path>',
   poser: 'core|spine',
   environment: '<schedule.json>',
+  'pass-through': '<cloth>:<leg>[,<cloth>:<leg>…]',
   reference: '<dir|skeleton.json>',
   'reference-atlas': '<path>',
   bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
@@ -1608,8 +1617,9 @@ export const COMMANDS: CommandDoc[] = [
       'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--folds] [--poser core|spine] [--out render/]',
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
       'rigc render … --environment <schedule.json>   (the wind and gravity the physics answers, in time)',
+      'rigc render … --pass-through <cloth>:<leg>[,…]   (the frames where a cloth drawn over a leg passes through it)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'environment', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'pass-through', 'environment', 'poser', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },

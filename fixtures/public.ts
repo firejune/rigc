@@ -972,3 +972,115 @@ export function skirtFixture(): SpecOnlyFixture {
 
   return { rig: 'skirt_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
 }
+
+// ---------------------------------------------------------------------------
+// pass_through_probe
+// ---------------------------------------------------------------------------
+
+/**
+ * The pass-through probe's numbers (issue #1413), world units: every plate is
+ * drawn one texel to a unit, with `writePlate`'s transparent margin of `margin`
+ * texels, so a plate's drawn rectangle is its own rectangle inset by `margin`.
+ *
+ * - `skirt` hangs from `hip`, its top edge on the bone: the plate's centre sits
+ *   `skirt.height / 2` below it.
+ * - `leg` and `legFront` hang from `thigh`, which is a child of the root, so the
+ *   hip's swing does not move them: one plate size, one place, `leg` drawn under
+ *   the skirt and `legFront` over it.
+ * - At rest the leg's drawn left edge, `thighX − leg.width / 2 + margin`, is
+ *   inside the skirt's, `−skirt.width / 2 + margin`: the leg is inside the skirt.
+ *
+ * `swing` turns the hip `swing` degrees counter-clockwise and back, linearly, over
+ * `duration` seconds, which carries the skirt's hem to the right, through the
+ * leg; `swingBehind` is the same swing with the leg moved over the skirt by a
+ * draw-order key from `behind[0]` to `behind[1]`; `rest` moves nothing.
+ * `squash` holds the hip at x scale `squash.scale` and moved by `squash.shift`,
+ * so the skirt's drawn left edge sits just inside the leg's — by less than two
+ * world units, and by more than two of the skirt's setup-pose cells, which the
+ * squash makes `squash.scale` units wide: a run counted in setup cells would read
+ * a pass-through the picture does not hold (issue #1413).
+ */
+export const PASS_PLATE = {
+  skirt: { width: 64, height: 96 },
+  leg: { width: 24, height: 120 },
+  margin: 2,
+  hipY: 200,
+  thighX: -17,
+  swing: 30,
+  duration: 2,
+  behind: [0.45, 1.55],
+  squash: { scale: 0.5, shift: -10.65 },
+} as const;
+
+/**
+ * A skirt over a leg, and a hem swung through it — the planted pass-through the
+ * reading behind `render --pass-through` is held to (issue #1413). Regions only:
+ * a region is one affine map, so where its drawn side lands at a frame is the
+ * probe's numbers turned by the hip's angle, which the suite derives on its own.
+ */
+export function passThroughFixture(): SpecOnlyFixture {
+  const dir = makeDir('pass_through_probe');
+  const imagesDir = join(dir, 'parts');
+  const { skirt, leg, hipY, thighX, swing, duration, behind, squash } = PASS_PLATE;
+  writePlate(join(imagesDir, 'skirt.png'), skirt.width, skirt.height, 'skirt');
+  writePlate(join(imagesDir, 'leg.png'), leg.width, leg.height, 'leg');
+  writePlate(join(imagesDir, 'leg_front.png'), leg.width, leg.height, 'leg front');
+
+  const rigPath = join(dir, 'pass_through_probe.rig.json');
+  writeJson(rigPath, {
+    spec: 'rigc-rig/1',
+    name: 'pass_through_probe',
+    images: 'parts',
+    skeleton: { width: 160, height: 240 },
+    bones: [{ name: 'root' }, { name: 'hip', parent: 'root', x: 0, y: hipY }, { name: 'thigh', parent: 'root', x: thighX, y: hipY }],
+    slots: [
+      { name: 'leg', bone: 'thigh', attachment: 'leg' },
+      { name: 'skirt', bone: 'hip', attachment: 'skirt' },
+      { name: 'leg_front', bone: 'thigh', attachment: 'leg_front' },
+    ],
+    skins: {
+      default: {
+        leg: { leg: { image: 'leg.png', y: -leg.height / 2 } },
+        skirt: { skirt: { image: 'skirt.png', y: -skirt.height / 2 } },
+        leg_front: { leg_front: { image: 'leg_front.png', y: -leg.height / 2 } },
+      },
+    },
+  });
+
+  const swingTrack = {
+    bone: 'hip',
+    property: 'rotate',
+    keys: [
+      { t: 0, v: [0] },
+      { t: duration / 2, v: [swing] },
+      { t: duration, v: [0] },
+    ],
+  };
+  const motionPath = join(dir, 'pass_through_probe.motion.json');
+  writeJson(motionPath, {
+    spec: 'rigc-motion/1',
+    archetype: 'pass_through_probe',
+    cut: 'pass_through_probe',
+    easings: {},
+    animations: {
+      swing: { duration, loop: false, tracks: [swingTrack] },
+      swing_behind: {
+        duration,
+        loop: false,
+        drawOrder: [{ t: behind[0], offsets: [{ slot: 'leg', offset: 1 }] }, { t: behind[1] }],
+        tracks: [swingTrack],
+      },
+      rest: { duration: 1, loop: false, tracks: [{ bone: 'hip', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [0] }] }] },
+      squash: {
+        duration: 1,
+        loop: false,
+        tracks: [
+          { bone: 'hip', property: 'scale', keys: [{ t: 0, v: [squash.scale, 1] }, { t: 1, v: [squash.scale, 1] }] },
+          { bone: 'hip', property: 'translate', keys: [{ t: 0, v: [squash.shift, 0] }, { t: 1, v: [squash.shift, 0] }] },
+        ],
+      },
+    },
+  });
+
+  return { rig: 'pass_through_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
+}

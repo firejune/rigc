@@ -246,6 +246,7 @@ What the flags mean:
 | `--show`, `--dim`, `--at`, `--zoom` | `inspect` only — what it draws, whether the art is faded, which times of `--animation` it poses and the bone, slot or folds it frames to; §13 says each, with the refusals |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
 | `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index, with their world box and setup-pose area. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
+| `--pass-through` | `render` only: `<cloth>:<leg>[,<cloth>:<leg>…]` — also read where each cloth slot **passes through** its leg slot, and write a `pass-through.json` into each frame directory: the frames where the cloth draws over the leg and its drawn side lies inside the leg's drawn outline by 2 steps or more, each with the depth and the world box. One printed line per pair, and one per frame that passes through. The first name must draw over the second for a frame to be read — the declared order, never both. A reading, not a gate. Every other file is byte for byte what the render writes without it. An unknown slot, a slot that draws on no frame, a malformed list and a pair named twice are refused by name, and so is `--slot`/`--hide` beside it — **§8.5** |
 | `--environment` | `render` only: the wind and gravity the rig's physics constraints answer, in time — a schedule file `{ "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, "wind"?: [x, y], "gravity"?: [x, y] }, …] }`, x right and **y down**, each step holding from its `t` until the next. Both posers set each change before the step that poses the first frame at or after its `t`, and draw the same frames, `geometry.json` and `frames.json` (`RE01`). `frames.json` and `geometry.json` record it, and the framing reads it. A malformed file, a half no physics constraint answers, two steps on one frame and a step after every set's last frame are refused by name, exit 2, nothing written; `check` refuses a frame set drawn under one as a reference. Without it every file is the bytes it always was. An inspection of the response the rig states, not a scene — **§8.4** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -1115,6 +1116,7 @@ bun cli.ts render   --candidate path/to/spine [--animation …] [--skin …] [--
 bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,…>   # part of the rig, same grid
 bun cli.ts render   --candidate path/to/spine --geometry   # + geometry.json per set: the numbers the frames were drawn from
 bun cli.ts render   --candidate path/to/spine --folds      # + folds.json per set: which mesh triangles turn over, and when
+bun cli.ts render   --candidate path/to/spine --pass-through skirt:leg   # + pass-through.json: where a cloth goes through a leg
 bun cli.ts preview  --candidate path/to/spine [--candidate path/to/another …] [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -7683,6 +7685,97 @@ span would have to restate as a velocity — a second meaning the live track doe
 not have — and a render draws the rig where it stands, so the picture would show
 a coat trailing a rig that never moves. The live track holds both to spine-core
 (`CO56`), and a player forwards them as §4.6 says.
+
+### 8.5 Where a cloth passes through a leg — `render --pass-through`
+
+A skirt drawn over a thigh can swing its side straight through the thigh on a build
+that passes every assertion and every check. A real skirt cannot do that while it is
+in front of the leg: the leg is inside it and leaves through the hem. `--pass-through`
+reads it off the frames `render` draws, for the pairs you name. On the selftest's
+probe (`pass_through_probe`, `fixtures/public.ts`: a skirt whose hip swings 30° and
+back over a leg it hangs in front of, and a second copy of the leg drawn over it):
+
+```bash
+bun cli.ts render --candidate path/to/spine --animation swing --pass-through skirt:leg,skirt:leg_front [--skin …] [--fps 12]
+# rigc render
+#   ..    swing            25 frame(s), 2.000s + contact.png + pass-through.json (1 of 2 pair(s) pass through) -> …/swing
+#   ..    pass     "swing": cloth "skirt" over leg "leg" passes through on 21 of 25 frame(s) read [2-22] at 12 fps; deepest frame 11 (t=0.9167s): 23.00 units (23 step(s) of 1.0000) on its left side
+#   ..    pass     "swing" frame 2 (t=0.1667s): cloth "skirt" over leg "leg" by 5.00 units (5 step(s) of 1.0000) on its left side, 44 row(s), in world box x [-27.48, -21.73] y [103.80, 147.08] (5.74 × 43.27)
+#   …     one line for each of frames 3-22
+#   ..    pass     "swing": cloth "skirt" over leg "leg_front": the cloth draws over the leg on 0 of 25 frame(s) both draw ("leg_front" draws over "skirt" wherever both draw) — nothing read
+```
+
+**Which frames are read.** A frame where both slots draw and the **cloth draws over
+the leg**, in that frame's own draw order — a draw-order key that puts the leg in
+front takes its frames out of the reading. The order in the flag is the
+declaration: `skirt:leg` asks whether the skirt passes through the leg, and
+`leg:skirt` is a different question, never the same one read both ways. A slot
+paired with itself is read on no frame, and its line says why.
+
+**What passing through means.** Four steps, every number in them derived:
+
+1. **Rows, in the cloth's setup pose.** The cloth is drawn over its setup-pose
+   geometry — `rest`'s vertices (§8.2), the setup pose's bones with no deform — at
+   the frame's own UVs and tint, onto cells of **one texel of its drawing** as the
+   setup pose lays it out. A cell is drawn when the renderer paints its centre at
+   half opacity or more (128 of 255) — the line an antialiased edge sits on, rather
+   than the faintest fringe the renderer would still paint. The rows are the setup
+   pose's, not the world's, so a skirt the pose swings or bends still has its side
+   where its side is: read in world rows, a waist the pose tilts becomes a "side"
+   on the rows it spans, and a leg under it would read as passing through.
+2. **The hem's corner.** On each side, the corner is the outermost drawn cell in the
+   lower half of the drawn rows — the lowest on a tie. The rows from the corner up
+   to the cloth's top are read; the rows below it are the hem's own curve, under
+   which a leg is meant to show.
+3. **The run.** On each read row, from the centre of the outermost drawn cell as the
+   frame poses it, step outward — along the setup pose's outward direction, carried
+   to the frame by the cloth triangle holding that centre — in **world units**, one
+   texel of the coarser of the two drawings at a time, and count the steps whose
+   point the leg draws at half opacity, up to the first it does not. That is how far
+   the leg's outline passes the cloth's, in the units the picture shows.
+4. **The line.** A frame passes through when some read row's run is **2 steps or
+   more** — more than the one step an outline is resolved to.
+
+⚠️ The run is in world steps, not in the cloth's setup-pose cells, because on a
+cloth the pose squashes the two disagree: counted in setup cells, a run reads longer
+than the picture holds, and the line printed a depth in units over a box narrower
+than that depth. The rows are the setup pose's
+because they say *which* part of the cloth is its side; the run is the world's
+because it says *how far* the leg shows (`PX04`, and `PX12` plants the other).
+
+**Blind spots, stated.** A cloth that widens all the way up to its waist has its
+corner at mid-height, so the rows below are not read. A leg wholly beside the cloth,
+entering above its top, meets no read row's side. And the rows are the setup pose's,
+so a cloth authored lying on its side reads its side as a hem.
+
+**The file.** `pass-through.json`, `rigc-pass-through/1`, beside each set's frames:
+`animation`, `skin` (absent when none was set), `fps`, `reading` (these definitions,
+stated in the file), and `pairs[]` in the flag's order, each with `cloth`, `leg`,
+`drawn` (frames where both slots draw), `over` (of those, the frames the cloth draws
+over the leg — the frames read), `frames[]` (only the frames that pass through:
+`index`, `time`, `cells` — the longest run, in steps — `depth` — that in world
+units — `cell` — the step — `side` — `left` or `right` of the cloth as it lies at its
+setup pose — `attachment` — the cloth's at that frame — `rows` — read rows whose run
+reaches the line — and `box` — `[minX, minY, maxX, maxY]`, world units, y up, over
+both ends of every such run, the cloth's outline to the run's far end) and `deepest`
+(the read frame with the longest run, the earliest on a tie, with `index`, `time`,
+`cells`, `depth`, `cell` and `side`; `null` when no frame is read). A pair that passes
+through on no frame is in the file, and its line says how many frames were read.
+
+**Refused, nothing written:** a slot the skeleton does not have (with the slots it
+does), an entry without exactly one `:`, an empty entry or name, a pair named twice,
+a slot that draws on no frame of the sets drawn, a cloth or leg a clip cuts (its
+drawing's outline is no longer its attachment's), and `--slot`/`--hide` beside the
+flag, for `--folds`' reason.
+
+**Nothing else moves.** The PNGs, `contact.png`, `frames.json` and `geometry.json`
+are byte for byte what the render writes without the flag (`PX06`), and both posers
+write the same file (`PX05`).
+
+**A reading, not a gate.** It names frames and decides nothing: whether a frame that
+passes through is a defect, and what to do about it — a leg stop, a wider hem, a
+different swing — is yours. To look at one, draw it:
+`inspect --show art --animation <name> --at <time> --zoom slot:<cloth>`.
 
 ---
 

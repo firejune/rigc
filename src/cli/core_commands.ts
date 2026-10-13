@@ -32,6 +32,7 @@ import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
 import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
 import { FOLDS_FILE, foldLine, foldsFileOf, foldsOf, foldsText, setupFaultLine } from '../folds.ts';
+import { PASS_THROUGH_FILE, passFrameLine, type PassPair, passSummaryLine, passThroughFileOf, passThroughOf, passThroughText, PassThroughError, readPassPairs } from '../passthrough.ts';
 import { environmentCollisions, environmentFrame, EnvironmentError, environmentResponse, readEnvironmentSchedule, type EnvironmentStep } from '../environment.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
@@ -540,6 +541,22 @@ function environmentRefusal(given: string, steps: readonly EnvironmentStep[], sk
 }
 
 /**
+ * `--pass-through <cloth>:<leg>[,…]` read against the skeleton's slots (issue
+ * #1413, `../passthrough.ts`), or refused as a usage error before anything is
+ * posed: a malformed list, an empty name, a slot the skeleton does not have, a
+ * pair named twice — each by its entry. `undefined` without the flag.
+ */
+function readPassThroughFlag(raw: string | undefined, facts: SkeletonFacts): PassPair[] | undefined {
+  if (raw === undefined) return undefined;
+  try {
+    return readPassPairs(raw, facts.slots.map((slot) => slot.name));
+  } catch (err) {
+    if (err instanceof PassThroughError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/**
  * render — the frame series, drawn by the same rasteriser `check` measures with.
  *
  * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
@@ -580,6 +597,8 @@ export function cmdRender(flags: Record<string, string>): void {
       }
     }
   }
+  // The pass-through reading (issue #1413) is its own flag for --folds' reason: without it, every file is the bytes it was.
+  const passThrough = flags['pass-through'];
   // The same refusal for the same reason: the reading is of every mesh the pose shows, whatever a picture leaves out.
   if (folds) {
     for (const flag of ['slot', 'hide'] as const) {
@@ -588,6 +607,19 @@ export function cmdRender(flags: Record<string, string>): void {
           `--folds takes no --${flag}: it reads every mesh the pose shows, which a subset of the drawn slots does not ` +
             `change. Run \`rigc render --folds\` on the whole rig for the reading, and --${flag} ${flags[flag]} ` +
             'without --folds for the pictures — both land on the same grid',
+        );
+      }
+    }
+  }
+
+  // And for the pass-through reading: it reads the two slots as the frame draws them, and a subset changes which draw.
+  if (passThrough !== undefined) {
+    for (const flag of ['slot', 'hide'] as const) {
+      if (flags[flag] !== undefined) {
+        throw new UsageError(
+          `--pass-through takes no --${flag}: it reads the cloth and the leg as the whole rig draws them, which a subset of the ` +
+            `drawn slots would change. Run \`rigc render --pass-through\` on the whole rig for the reading, and --${flag} ${flags[flag]} ` +
+            'without --pass-through for the pictures — both land on the same grid',
         );
       }
     }
@@ -610,6 +642,7 @@ export function cmdRender(flags: Record<string, string>): void {
   const only = readAnimationFlag(flags, [...facts.animations]);
   const skin = readSkinFlag(flags, [...facts.skins]);
   const subset = readSlotSubsetFlags(flags, facts, skin);
+  const passPairs = readPassThroughFlag(passThrough, facts);
   // One object, so the framing and the frames cannot be posed under two
   // different skins — which would frame one shot with another shot's box.
   // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
@@ -669,7 +702,7 @@ export function cmdRender(flags: Record<string, string>): void {
     // `--geometry` rides on the SAME call (issue #864): the bones and the whole
     // attachments are read off the skeleton at the step that drew each frame, so
     // the export's grid is this frame set's by construction.
-    const sampling = geometry ? { ...pose, bones: true, geometry: true } : folds ? { ...pose, geometry: true } : pose;
+    const sampling = geometry ? { ...pose, bones: true, geometry: true } : folds || passPairs !== undefined ? { ...pose, geometry: true } : pose;
     const sampled: Map<string, Frame[]> =
       only === undefined
         ? sampleAll(poser, fps, sampling)
@@ -694,9 +727,37 @@ export function cmdRender(flags: Record<string, string>): void {
         foldReadings.set(name, foldsFileOf(animation, fps, skin, foldsOf(poser.rest(skin, shown), read)));
       }
     }
-    return { viewport, sampled, geometryTexts, foldReadings };
+    // The pass-through reading, off the very pieces the frames are drawn from, in their draw order — one per set, every
+    // pair the flag names. A pair whose slot draws on no frame of any set drawn is refused rather than read as 0.
+    const passReadings = new Map<string, ReturnType<typeof passThroughFileOf>>();
+    if (passPairs !== undefined) {
+      const draws = new Set<string>();
+      for (const frames of sampled.values()) for (const frame of frames) for (const piece of frame.pieces) draws.add(piece.slot);
+      for (const pair of passPairs) {
+        for (const slot of [pair.cloth, pair.leg]) {
+          if (!draws.has(slot)) {
+            throw new UsageError(
+              `--pass-through: slot ${JSON.stringify(slot)} draws on no frame of [${[...sampled.keys()].join(', ')}]${skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`} ` +
+                '— it shows no region or mesh there, so it has no drawn outline to read',
+            );
+          }
+        }
+      }
+      for (const [name, frames] of sampled) {
+        const animation = name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name;
+        const shown = frames.map((frame) => frame.attachments ?? []);
+        const read = frames.map((frame) => ({ index: frame.index, time: frame.time, pieces: frame.pieces, attachments: frame.attachments ?? [] }));
+        try {
+          passReadings.set(name, passThroughFileOf(animation, fps, skin, passThroughOf(passPairs, poser.rest(skin, shown), read, pages)));
+        } catch (err) {
+          if (err instanceof PassThroughError) throw new UsageError(`--pass-through, ${JSON.stringify(name)}: ${err.message}`);
+          throw err;
+        }
+      }
+    }
+    return { viewport, sampled, geometryTexts, foldReadings, passReadings };
   });
-  const { viewport, sampled, geometryTexts, foldReadings } = posed.value;
+  const { viewport, sampled, geometryTexts, foldReadings, passReadings } = posed.value;
   console.log(`  ..    poser    ${posed.note}`);
   if (environment !== undefined) {
     const response = environmentResponse(skeletonText);
@@ -733,6 +794,8 @@ export function cmdRender(flags: Record<string, string>): void {
     if (geometryOut !== undefined) writeFileSync(join(dir, GEOMETRY_FILE), geometryOut);
     const foldReading = foldReadings.get(name);
     if (foldReading !== undefined) writeFileSync(join(dir, FOLDS_FILE), foldsText(foldReading));
+    const passReading = passReadings.get(name);
+    if (passReading !== undefined) writeFileSync(join(dir, PASS_THROUGH_FILE), passThroughText(passReading));
     const duration = frames[frames.length - 1].time;
     sets.push({
       dir: dirName,
@@ -746,7 +809,9 @@ export function cmdRender(flags: Record<string, string>): void {
     const how = frames.length === 1 ? 'a single pose' : `${duration.toFixed(3)}s`;
     const folding = foldReading?.meshes.filter((m) => m.worst !== null).length ?? 0;
     const foldNote = foldReading === undefined ? '' : ` + ${FOLDS_FILE} (${folding} of ${foldReading.meshes.length} mesh(es) fold)`;
-    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}${foldNote}`;
+    const passing = passReading?.pairs.filter((p) => p.frames.length > 0).length ?? 0;
+    const passNote = passReading === undefined ? '' : ` + ${PASS_THROUGH_FILE} (${passing} of ${passReading.pairs.length} pair(s) pass through)`;
+    const extras = `${sheet ? ` + ${SHEET_FILE}` : ''}${geometryOut === undefined ? '' : ` + ${GEOMETRY_FILE}`}${foldNote}${passNote}`;
     console.log(`  ..    ${name.padEnd(16)} ${frames.length} frame(s), ${how}${extras} -> ${dir}`);
     for (const mesh of foldReading?.meshes ?? []) {
       const key = `${mesh.slot}\u0000${mesh.attachment}`;
@@ -755,6 +820,10 @@ export function cmdRender(flags: Record<string, string>): void {
       if (fault !== null) console.log(`  ..    setup    ${fault}`);
       const line = foldLine(foldReading?.animation ?? null, fps, mesh);
       if (line !== null) console.log(`  ..    folds    ${line}`);
+    }
+    for (const pair of passReading?.pairs ?? []) {
+      console.log(`  ..    pass     ${passSummaryLine(passReading?.animation ?? null, fps, pair)}`);
+      for (const frame of pair.frames) console.log(`  ..    pass     ${passFrameLine(passReading?.animation ?? null, pair, frame)}`);
     }
   }
 
