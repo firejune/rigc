@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.51.0](https://github.com/rig-c/core/compare/v2.50.0...v2.51.0) (2026-10-13)
+
+
+### Features
+
+* **validate:** A11 and A27 are retired, because the player rig-play names draws a clipping attachment and a region on a page named for something else in both of its modes ([#1404](https://github.com/rig-c/core/issues/1404)) ([#1408](https://github.com/rig-c/core/issues/1408)) ([f9f1937](https://github.com/rig-c/core/commit/f9f19378aa69c38161484d33ec9a3169621a89e8))
+
 ## [2.50.0](https://github.com/rig-c/core/compare/v2.49.0...v2.50.0) (2026-10-13)
 
 
