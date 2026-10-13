@@ -2022,9 +2022,9 @@ function firstPageLine(atlasText: string): string {
  * The atlas with the pages `pick` chooses moved off the disk, and the names
  * they were moved to (issue #1055). A page line is the first line of a page
  * block; it is moved into a directory that is not there with its basename
- * kept, so the file is not on disk while `A27`'s subject — the page's basename
- * against its one region's name — is untouched. `pick` sees the block's lines,
- * so a caller chooses a page by what the block states rather than by position.
+ * kept, so the file is not on disk while its basename is untouched. `pick` sees
+ * the block's lines, so a caller chooses a page by what the block states rather
+ * than by position.
  */
 function atlasWithPagesOffDisk(atlasText: string, pick: (block: readonly string[]) => boolean): { atlasText: string; moved: string[] } {
   const moved: string[] = [];
@@ -2043,7 +2043,7 @@ function atlasWithPagesOffDisk(atlasText: string, pick: (block: readonly string[
  * The atlas with the pages `pick` chooses replaced, on disk, by bytes rigc
  * cannot read as a PNG (issue #1064) — `atlasWithPagesOffDisk`'s other half.
  * Each chosen page is moved into a directory `unreadable_<tag>/` beside its
- * file, with its basename kept (so `A27`'s subject is untouched), and the file
+ * file, with its basename kept, and the file
  * written there is `bytes` of the real page: the page is on disk (`A17` has
  * nothing to say) and is not a PNG this tree can read.
  */
@@ -4077,13 +4077,19 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
-    // ⭐ The profile split's own control, and it takes two mutants because the
-    // claim is a difference: the SAME edit must be caught by one rulebook and
-    // waved through by the other. One mutant could only ever prove half of it,
-    // and the half it proved would look identical either way.
-    name: 'M36a_clipping_attachment_is_renderer_policy',
-    origin: 'SURVEY_2026-08-22 part 2-2 — A11 is renderer-profile: spine-html skips clipping attachments silently, spineboy-pro ships one',
-    expect: 'A11_NO_CLIPPING_ATTACHMENTS',
+    // This pair was the profile split's own control until issue #1404: the
+    // SAME edit caught by `A11_NO_CLIPPING_ATTACHMENTS` under the opt-in
+    // profile and waved through by `spine`. A11 is retired — the player
+    // `rig-play` names draws a clipping attachment in both modes (rig-c/play
+    // #120: dom / canvas parity on its figure mask, 0.515 % against a 1.5 %
+    // limit on chromium, where a mutant that never applies the clip scores
+    // 16.0 %) — so both halves are now tolerances, and this one is the
+    // retirement's control: a rule re-registered to refuse a clip goes red
+    // here by name. The split itself keeps its control in `S70` (A12, a
+    // renderer rule refused under `rig-play` and PROF under `spine`).
+    name: 'M36a_clipping_attachment_draws_under_rig_play',
+    origin: 'issue #1404 — the player rig-play names draws clipping attachments in both modes, so the opt-in profile refuses none; spineboy-pro ships one',
+    expect: null,
     profile: 'rig-play',
     mutate: (a) => ({
       ...a,
@@ -4095,14 +4101,8 @@ const MUTANTS: Mutant[] = [
         };
       }),
     }),
-    // The same clipping record in the document's skin that the file's first
-    // skin is — the editor keeps `default` first (issue #1025).
-    twin: {
-      forge: (doc) => {
-        const skin = (doc as any).skins.find((k: any) => k.name === 'default') ?? (doc as any).skins[0];
-        skin.attachments.stage.stage_clip = { kind: 'clipping', vertexCount: 4, vertices: { weighted: false, xy: [0, 0, 64, 0, 64, 64, 0, 64] } };
-      },
-    },
+    // No twin: a twin is the model side's copy of a break that fails a moved
+    // assertion (VF03), and this edit now fails none.
   },
   {
     name: 'M36b_clipping_attachment_is_valid_spine',
@@ -5719,13 +5719,21 @@ const ARTICULATED_MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M29_region_name_diverges_from_its_page_filename',
-    origin: 'attachment = region = filename is the runtime join key, and a break makes the slot vanish silently',
-    expect: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME',
+    // A27_REGION_NAME_MATCHES_PAGE_FILENAME's mutant until issue #1404 retired
+    // the rule, and now the retirement's control: a region alone on a page
+    // named for something else is accepted under the opt-in profile, so a rule
+    // re-registered to refuse it goes red here by name. No reader joins a
+    // region to its page's basename — spine-core and the player `rig-play`
+    // names both take the region off the page record the atlas states it
+    // under, and the player draws this case in both modes (rig-c/play #120,
+    // the `named` rig).
+    name: 'M29_region_name_diverges_from_its_page_filename_and_is_accepted',
+    origin: 'issue #1404 — the join is attachment -> region -> page record, never the page file basename, in spine-core and in the player rig-play names',
+    expect: null,
     mutate: (a) => ({
       // Renamed on BOTH sides, so the attachment still resolves and A08 stays
-      // green. That is the hole: the first two links of the chain agreed with
-      // each other while pointing at a file called something else.
+      // green: the attachment and the region agree, and the page is called
+      // something else, which no reader looks at.
       atlasText: a.atlasText.replace('\n05_pool\n', '\n05_pool_typo\n'),
       skeletonText: editJson(a.skeletonText, (j) => {
         const atts = (j as any).skins[0].attachments.pool;
@@ -5733,15 +5741,8 @@ const ARTICULATED_MUTANTS: Mutant[] = [
         delete atts['05_pool'];
       }),
     }),
-    // Both renames: the atlas through its pages, and the skin's key (issue #1025, cut 4c-1).
-    twin: {
-      forge: (doc, call) => {
-        doc.pages = pagesOfAtlas(call.atlasText);
-        const atts = docSkin(doc, 'default').attachments.pool;
-        atts['05_pool_typo'] = atts['05_pool'];
-        delete atts['05_pool'];
-      },
-    },
+    // No twin: a twin is the model side's copy of a break that fails a moved
+    // assertion (VF03), and this edit now fails none.
   },
   {
     name: 'M30_ribbon_row_weights_diverge',
@@ -16594,7 +16595,7 @@ function assertionsBehindTheRoundTrip(source: string): string[] {
  *
  *   * **the body iterates at all** — `for`, `forEach` or `walkTimelines`. A rule
  *     with no iteration measures the artifact itself and has no subject list to
- *     be empty (`A00`, `A16`, `A11`, `A18`). Deleting a guard does not delete
+ *     be empty (`A00`, `A16`, `A18`). Deleting a guard does not delete
  *     the loop it guarded, and neither does turning its `skip` back into a bare
  *     `return`, which is #568's own defect shape.
  *   * **the name is not the ¬∃ form** — the criterion stated with the SKIP
@@ -17355,14 +17356,14 @@ function runStaticRigSuite(): number {
   const noArtGate = gateProbe(noArt, STATIC_MOTION);
   const noArtPolicy = gateProbe(noArt, STATIC_MOTION, 'rig-play');
   // Every rule whose only subject is a PAGE. A06 and A17 run under both
-  // profiles; A19 and A27 are renderer rules, so `rig-play` is the profile
-  // that reaches all four — reading them under `spine` would report "no
-  // failure" from two rules that never executed.
+  // profiles; A19 is a renderer rule, so `rig-play` is the profile that
+  // reaches all three — reading them under `spine` would report "no failure"
+  // from a rule that never executed. A27 was the fourth until issue #1404
+  // retired it, and its subject was the region on a single-region page.
   const PAGE_RULES = [
     'A06_ATLAS_PAGE_SIZE_MATCHES_PNG',
     'A17_ATLAS_PAGE_FILES_EXIST',
     'A19_OVERLAY_PNGS_HAVE_ALPHA',
-    'A27_REGION_NAME_MATCHES_PAGE_FILENAME',
   ];
   const noArtA07 = noArtPolicy.skipped.find((s) => s.assertion === 'A07_ATLAS_TEXT_SHAPE');
   const pageProbes = [
@@ -17385,10 +17386,7 @@ function runStaticRigSuite(): number {
         ]),
     ...PAGE_RULES.flatMap((rule) => {
       const said = noArtPolicy.skipped.find((s) => s.assertion === rule);
-      // A27's subject is the REGION on a single-region page, so its reason
-      // names the region (#580); the other three name the page.
-      const owed = rule === 'A27_REGION_NAME_MATCHES_PAGE_FILENAME' ? SKIP_NO_ATLAS_REGION : SKIP_NO_ATLAS_PAGE;
-      if (said !== undefined && said.reason === owed) return [];
+      if (said !== undefined && said.reason === SKIP_NO_ATLAS_PAGE) return [];
       return [
         `${rule} ${
           said === undefined
@@ -17409,12 +17407,12 @@ function runStaticRigSuite(): number {
       pageProbes,
       `the gate ran ${noArtGate.passed.length} assertion(s) with ${noArtGate.failures.length} failure(s) under spine ` +
         `and ${noArtPolicy.passed.length} with ${noArtPolicy.failures.length} under rig-play; A07 skipped: ` +
-        `${noArtA07?.reason ?? ''}; and ${PAGE_RULES.length} page rule(s) skipped naming the page or, for A27, the region`,
+        `${noArtA07?.reason ?? ''}; and ${PAGE_RULES.length} page rule(s) skipped naming the page`,
     ),
     'two different wrongs met on this rig. A07 named objects that do not exist — there are no consecutive blank ' +
       'lines in a file with no lines, and no last page block to declare a region — which is the opposite of a ' +
-      'failure detail naming the object, the value found and the value required. And the four rules whose subject ' +
-      'IS a page walked an empty array and came out of `check()` with the counts untouched, which is how that ' +
+      'failure detail naming the object, the value found and the value required. And the rules whose subject ' +
+      'IS a page (four then: A27 was one until issue #1404) walked an empty array and came out of `check()` with the counts untouched, which is how that ' +
       'function decides an assertion PASSED: the same vacuous pass #568 fixed for the atlas that will not parse, ' +
       'one level in. It stayed invisible only because A07 refused every pageless atlas before anything else could ' +
       'report on one',
@@ -35188,12 +35186,17 @@ function runPolygonSuite(): number {
     rig: built.rig,
     profile: 'rig-play',
   });
+  // Until issue #1404 this case held the opposite: `A11_NO_CLIPPING_ATTACHMENTS`
+  // refused the clip under the opt-in profile, for a renderer that skipped clips
+  // silently. The player `rig-play` names draws them in both modes, so A11 is
+  // retired and the same build is green under both rulebooks.
   say(
-    'PG01_the_same_rig_is_refused_by_the_renderer_profile',
-    policy.failures.some((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS'),
-    policy.failures.find((f) => f.assertion === 'A11_NO_CLIPPING_ATTACHMENTS')?.detail ??
-      'A11 accepted a clipping attachment under the profile whose renderer skips them',
-    'valid Spine that one renderer will not draw: the emitter must be able to write it and the policy must still say no',
+    'PG01_the_same_rig_is_green_under_rig_play_too',
+    policy.failures.length === 0,
+    policy.failures.length === 0
+      ? `${policy.passed.length} assertions ran under rig-play, none failed`
+      : `[${policy.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'a clipping attachment is valid Spine and the player the opt-in profile names draws it (issue #1404), so no rulebook refuses it',
   );
 
   const posable = posableFromText(built.skeletonText, built.atlasText, dirs.outDir);
@@ -72808,14 +72811,24 @@ function scanNamedThings(doc: CurrencyDoc, shipsToo: (path: string) => boolean, 
  */
 // The current spelling of each row is read off the registry, not typed: these rows stood as literals and every
 // assertion that landed or left turned their clean half into a stale figure (issue #1196 retired A41 and four of them
-// faulted at once). The stale half stays a literal, because it is the text a repair once replaced.
+// faulted at once). The stale half stays a literal, because it is the text a repair once replaced — and when a
+// registry change makes an old stale figure true again (issue #1404 took the excluded count back to 14, which was
+// the README row's stale figure), the row takes the hunk that change itself repaired, so it is still a real one.
 const REGISTRY_ALL = ASSERTION_NAMES.length;
 const REGISTRY_SPINE = assertionCountForProfile('spine');
+const REGISTRY_RENDERER = ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'renderer').length;
+const REGISTRY_ARCHETYPE = ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'archetype').length;
+/** The excluded count as INGEST §3.3 spells it, read off the scanner's own number words — a count it cannot spell is a thrown error, not a guess. */
+const REGISTRY_EXCLUDED_WORD = ((): string => {
+  const word = Object.keys(CURRENCY_NUMERALS).find((w) => CURRENCY_NUMERALS[w] === REGISTRY_ALL - REGISTRY_SPINE);
+  if (word === undefined) throw new Error(`CURRENCY_NUMERALS has no word for ${REGISTRY_ALL - REGISTRY_SPINE}, the count INGEST §3.3 spells`);
+  return word[0].toUpperCase() + word.slice(1);
+})();
 const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> = [
   {
-    row: 'README: the profile paragraph (#359)',
+    row: 'README: the profile paragraph (#359; the stale hunk is #1404\'s)',
     stale:
-      'adds all 39: the other 14 are one renderer\'s policy and one canvas budget\'s, and they\n' +
+      'adds all 51: the other 16 are one renderer\'s policy and one canvas budget\'s, and they\n' +
       'fire on perfectly correct editor-produced Spine data.\n',
     clean:
       `adds all ${REGISTRY_ALL}: the other ${REGISTRY_ALL - REGISTRY_SPINE} are one renderer's policy and one canvas budget's, and they\n` +
@@ -72843,7 +72856,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       '| `rig-play` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      `| \`rig-play\` | all ${REGISTRY_ALL} — those ${REGISTRY_SPINE} plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n`,
+      `| \`rig-play\` | all ${REGISTRY_ALL} — those ${REGISTRY_SPINE} plus ${REGISTRY_RENDERER} renderer and ${REGISTRY_ARCHETYPE} archetype | Opt-in. Is this a rig it can ship? |\n`,
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -72857,7 +72870,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
       ' `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`,' +
       ' `A30_STROKE_WITHIN_CAP_CONTAINMENT` |\n',
     clean:
-      '**Sixteen assertions do not run under `spine`, and they come back `PROF`, not\n' +
+      `**${REGISTRY_EXCLUDED_WORD} assertions do not run under \`spine\`, and they come back \`PROF\`, not\n` +
       '`SKIP`:**\n' +
       '\n' +
       '| Excluded as | Rules |\n' +
@@ -72869,7 +72882,7 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   {
     row: 'INGEST §3.3: the quoted report summary inside a fence (#360, found on the current tree)',
     stale: '```\n  ..    profile spine — 7 renderer-policy and 7 archetype assertion(s) do not apply\n```\n',
-    clean: '```\n  ..    profile spine — 8 renderer-policy and 8 archetype assertion(s) do not apply\n```\n',
+    clean: `\`\`\`\n  ..    profile spine — ${REGISTRY_RENDERER} renderer-policy and ${REGISTRY_ARCHETYPE} archetype assertion(s) do not apply\n\`\`\`\n`,
   },
   {
     row: 'README + LADDER: the certification line\'s gate version (#359)',
@@ -120203,7 +120216,8 @@ function runIngestSuite(): number {
       ),
       'issue #771: every probe the selftest builds is gated green by the profile it targets, or the suite says why ' +
         'not. This one carries a dark colour and a clipping attachment on purpose — the coverage it exists for — so ' +
-        'the renderer\'s rulebook refuses it by design, and that is the one refusal it may carry',
+        'the renderer\'s rulebook refuses its dark colour by design (A12; the clip was refused as well until issue ' +
+        '#1404 retired A11), and that is the one refusal it may carry',
     );
   }
 
@@ -128437,7 +128451,6 @@ function runVerdictSuppliersSuite(): number {
     };
     const spine = validateOverSpine(input);
     const plants: Array<[string, Partial<ModelSupply>, string]> = [
-      ['one clipping attachment more than the skins hold', { skinEntries: (read) => ({ ...modelSkinEntries(read), clippingCount: modelSkinEntries(read).clippingCount + 1 }) }, 'A11_NO_CLIPPING_ATTACHMENTS'],
       ['the first region one width below zero', { skinEntries: (read) => {
         const facts = modelSkinEntries(read);
         return { ...facts, regionAttachments: facts.regionAttachments.map((r, i) => (i === 0 ? { ...r, width: -r.width } : r)) };
@@ -128729,7 +128742,7 @@ function runVerdictSuppliersSuite(): number {
     const behindView = assertionsBehindTheRoundTrip(view);
     const behindFile = assertionsBehindTheRoundTrip(file);
     const recovered = codes.filter((code) => (inView.includes(code) && !inFile.includes(code)) || (behindView.includes(code) && !behindFile.includes(code)));
-    for (const code of ['A17_ATLAS_PAGE_FILES_EXIST', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A19_OVERLAY_PNGS_HAVE_ALPHA', 'A27_REGION_NAME_MATCHES_PAGE_FILENAME']) {
+    for (const code of ['A17_ATLAS_PAGE_FILES_EXIST', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A19_OVERLAY_PNGS_HAVE_ALPHA']) {
       if (!behindView.includes(code)) probes.push(`${code}, whose body opens on \`if (!atlas)\`, is not behind the round trip in the view`);
     }
     for (const code of ['A03_REGION_WIDTH_HEIGHT_FINITE', 'A17_ATLAS_PAGE_FILES_EXIST', 'A45_SEPARABLE_COLOR_TIMELINES_OWN_THEIR_CHANNELS_AND_POSE_AS_WRITTEN', 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A08_REGION_NAMES_MATCH_ATTACHMENTS', 'A13_MESH_BUDGET', 'A22_MESH_UVS_IN_UNIT_RANGE', 'A38_SKIN_MEMBERS_ARE_SKIN_REQUIRED']) {
@@ -129646,7 +129659,7 @@ function runVerdictSuppliersSuite(): number {
   // tolerance: there neither side prints a #1055 SKIP.
   {
     const probes: string[] = [];
-    const pageCodes = ['A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A17_ATLAS_PAGE_FILES_EXIST', 'A19_OVERLAY_PNGS_HAVE_ALPHA', 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const pageCodes = ['A06_ATLAS_PAGE_SIZE_MATCHES_PNG', 'A17_ATLAS_PAGE_FILES_EXIST', 'A19_OVERLAY_PNGS_HAVE_ALPHA'];
     const unreadSkips = (report: ValidateReport | ModelReport): string[] =>
       report.skipped
         .filter((s) => (s.assertion === 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG' || s.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA') && s.reason.includes('A17_ATLAS_PAGE_FILES_EXIST'))
@@ -129701,13 +129714,13 @@ function runVerdictSuppliersSuite(): number {
     probes.push(...floorProbes([[counts.compared, 1, `${counts.compared} report pair(s) compared`], [counts.skipsOff, 1, `${counts.skipsOff} #1055 SKIP(s) read`]], 'and a comparison over nothing is not a comparison'));
     const held = probes.length === 0;
     say(
-      'VF17_A_PAGE_FILE_NOT_ON_DISK_PRINTS_THE_SAME_A06_A17_A19_A27_LINES_ON_BOTH_SIDES',
+      'VF17_A_PAGE_FILE_NOT_ON_DISK_PRINTS_THE_SAME_A06_A17_A19_LINES_ON_BOTH_SIDES',
       held,
       probeDetail(
         held,
         probes,
         `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page, the first and every page off disk — ` +
-          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.skipsOff} SKIP(s) of A06/A19 naming a page not read, 0 on the builds whose pages are present; ` +
+          `${counts.lines} line(s) of [A06 A17 A19] identical on both sides; ${counts.skipsOff} SKIP(s) of A06/A19 naming a page not read, 0 on the builds whose pages are present; ` +
           "the present build's A06 lines differ from those of the build with every page off, so the comparison can fail",
       ),
       "issue #1055: A06's size clause and A19 walked past a page file they could not open and printed PASS; they now SKIP naming it, and VF03's twins compare only the lines a break fails",
@@ -129729,7 +129742,7 @@ function runVerdictSuppliersSuite(): number {
     const probes: string[] = [];
     const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
     const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
-    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19, 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19];
     const unreadableSkips = (report: ValidateReport | ModelReport): number =>
       report.skipped.filter((s) => s.assertion === A19 && s.reason.includes(A06)).length;
     const counts = { compared: 0, lines: 0, skipsPresent: 0, skipsUnreadable: 0, namedOnce: 0 };
@@ -129791,13 +129804,13 @@ function runVerdictSuppliersSuite(): number {
     );
     const held = probes.length === 0;
     say(
-      'VF18_A_PAGE_FILE_THAT_IS_NOT_A_PNG_PRINTS_THE_SAME_A06_A17_A19_A27_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
+      'VF18_A_PAGE_FILE_THAT_IS_NOT_A_PNG_PRINTS_THE_SAME_A06_A17_A19_LINES_ON_BOTH_SIDES_AND_A06_ALONE_NAMES_IT',
       held,
       probeDetail(
         held,
         probes,
         `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page, the first page carrying a part as text and cut, every page as text — ` +
-          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of an unreadable page, each by A06's one line; ` +
+          `${counts.lines} line(s) of [A06 A17 A19] identical on both sides; ${counts.namedOnce} naming(s) of an unreadable page, each by A06's one line; ` +
           `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under rig-play, 0 on the builds whose pages are readable; ` +
           "the present build's A06 lines differ from those of the build with every page unreadable, so the comparison can fail",
       ),
@@ -129826,7 +129839,7 @@ function runVerdictSuppliersSuite(): number {
     const probes: string[] = [];
     const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
     const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
-    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19, 'A27_REGION_NAME_MATCHES_PAGE_FILENAME'];
+    const pageCodes = [A06, 'A17_ATLAS_PAGE_FILES_EXIST', A19];
     const phrased = (report: ValidateReport | ModelReport): number => report.failures.filter((f) => f.assertion === A06 && f.detail.includes(phrase)).length;
     const unreadableSkips = (report: ValidateReport | ModelReport): number =>
       report.skipped.filter((s) => s.assertion === A19 && s.reason.includes(A06)).length;
@@ -129897,7 +129910,7 @@ function runVerdictSuppliersSuite(): number {
         held,
         probes,
         `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page edited, ${legal[0]}, ${breaks.map(([label]) => label).join(', ')} — ` +
-          `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of a broken page, each by A06's one line saying ${JSON.stringify(phrase)}; ` +
+          `${counts.lines} line(s) of [A06 A17 A19] identical on both sides; ${counts.namedOnce} naming(s) of a broken page, each by A06's one line saying ${JSON.stringify(phrase)}; ` +
           `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under rig-play; ${counts.tolerated} readable build(s) with no such line and no SKIP; ` +
           "the pristine build's A06 lines differ from the broken build's, so the comparison can fail",
       ),

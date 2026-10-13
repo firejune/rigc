@@ -25,7 +25,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
   // A SKIP for the same reason A06's is (#568). This one is invisible under
   // `spine`, where the profile excludes the rule before its body runs — and
   // that is exactly why it was worth finding: `--profile spine-html` reported
-  // it, and A27 below, green on an atlas nothing had read.
+  // it, and A27 (retired since, issue #1404), green on an atlas nothing had read.
   if (!atlas) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS);
   if (atlas.pages.length === 0) return skip('A19_OVERLAY_PNGS_HAVE_ALPHA', SKIP_NO_ATLAS_PAGE);
   // Every sentence this body prints goes through here, so its end can tell

@@ -41,7 +41,6 @@ import { ASSERTION_KIND, resolveProfile, type AssertionProfile } from '../kinds.
 import { verdictHarness, type VerdictHarness, type Verdicts, type VerdictLists } from '../harness.ts';
 import { SKIP_NO_ATLAS, SKIP_NO_MODEL } from '../reasons.ts';
 import { a03RegionWidthHeightFinite } from '../bodies/a03.ts';
-import { a11NoClippingAttachments } from '../bodies/a11.ts';
 import { a17AtlasPageFilesExist } from '../bodies/a17.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from '../bodies/a45.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND, modelRead, modelRegionsOnPages, SKIP_NO_MODEL_DOCUMENT, SKIP_NO_MODEL_PAGES, type ReadDocument } from './parse.ts';
@@ -69,7 +68,6 @@ import { modelSetupWorld } from './setup_world.ts';
 import type { SetupWorldFacts } from '../facts/setup_world.ts';
 import { modelStageBox } from './stage_box.ts';
 import type { StageBoxFacts } from '../facts/stage_box.ts';
-import { a27RegionNameMatchesPageFilename } from '../bodies/a27.ts';
 import { modelAnimatedBones } from './animated_bones.ts';
 import { modelSkinMembers } from './skin_members.ts';
 import { modelRegionJoins } from './region_joins.ts';
@@ -290,7 +288,6 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A03_REGION_WIDTH_HEIGHT_FINITE', run: (v, read, _input, supply) => a03RegionWidthHeightFinite(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
   { code: 'A04_MESH_TRIANGLES_AND_ENCODING', run: (v, read, _input, supply) => a04MeshTrianglesAndEncoding(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
   { code: 'A33_VERTEX_ATTACHMENT_GEOMETRY', run: (v, read, _input, supply) => a33VertexAttachmentGeometry(v, supply.polygons(read)), unread: SKIP_NO_MODEL },
-  { code: 'A11_NO_CLIPPING_ATTACHMENTS', run: (v, read, _input, supply) => a11NoClippingAttachments(v, supply.skinEntries(read)), unread: SKIP_NO_MODEL },
   { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.meshes(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
   { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.meshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.meshes(read), supply.animatedBones(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
@@ -320,7 +317,6 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A24_AXIS_SPACE_STROKE', run: (v, read, input, supply) => a24AxisSpaceStroke(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A25_DETACHED_BONE_PARENTAGE', run: (v, read, input, supply) => a25DetachedBoneParentage(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A26_SLOT_DRAW_ORDER', run: (v, read, input, supply) => a26SlotDrawOrder(v, supply.skeletonRoster(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
-  { code: 'A27_REGION_NAME_MATCHES_PAGE_FILENAME', run: (v, read, input, supply) => a27RegionNameMatchesPageFilename(v, supply.atlasRegions(read, input)), unread: SKIP_NO_ATLAS },
   { code: 'A28_RIBBON_ROWS_SHARE_WEIGHTS', run: (v, read, input, supply) => a28RibbonRowsShareWeights(v, supply.meshes(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A29_STROKE_WITHIN_CONTACT_DEPTH', run: (v, read, input, supply) => a29StrokeWithinContactDepth(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },
   { code: 'A30_STROKE_WITHIN_CAP_CONTAINMENT', run: (v, read, input, supply) => a30StrokeWithinCapContainment(v, supply.boneTimelines(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL, beforeTheParse: true },

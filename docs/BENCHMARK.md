@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 51 named assertions and their profiles, the selftest that has watched every
+today, the 49 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -1063,7 +1063,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 51 named assertions over the loaded skeleton. Each one exists because
+and then runs 49 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -1071,10 +1071,10 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 51 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
-clipping attachments, unweighted meshes, 116-triangle meshes and packed atlases —
+unweighted meshes, 116-triangle meshes and packed atlases —
 all valid, none of them things spine-html will draw. Others are about **rigc's own
 rigs** and mean nothing at all on a skeleton rigc did not compile — they read the
 rig spec's `invariants` block, and they **SKIP** when it is absent rather than
@@ -1085,16 +1085,16 @@ So `validate` and `build` take a `--profile`:
 | Profile | Runs | For |
 | --- | --- | --- |
 | `spine` | the 35 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `rig-play` | all 51 — those 35 plus 8 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `rig-play` | all 49 — those 35 plus 6 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 51 and `assertionCountForProfile('spine')` is 35, so a
+`ASSERTION_NAMES.length` is 49 and `assertionCountForProfile('spine')` is 35, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 35 validity rules are about. The other 16 are somebody's policy
+that is what the 35 validity rules are about. The other 14 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile rig-play` when you want them.
@@ -1121,7 +1121,6 @@ the renderer policy*.
 | `A08_REGION_NAMES_MATCH_ATTACHMENTS` | both | every attachment resolves to a region the atlas holds, and no region name carries stray whitespace. It has no opinion about how the attachment is *spelled*: a placeholder may differ from the region its `path` names, which is what `path` is for |
 | `A09_ANIMATION_DURATION_MATCHES_SPEC` | both | the compiled duration equals the duration the spec declared (skeleton JSON has no duration field — the last key *is* the duration). Two tolerances: a frame of slack for a duration declared long, but a key landing *past* the declared end is held to the grid the times are stored on, because nothing playing the animation ever reaches it. SKIPs without a motion spec |
 | `A10_NO_NAN_AFTER_STEPPING` | both | stepping every animation frame by frame produces no NaN anywhere in the pose |
-| `A11_NO_CLIPPING_ATTACHMENTS` | renderer | no clipping attachments (the renderer skips them silently) |
 | `A12_NO_DARK_COLOR` | renderer | no dark / two-colour tint on slots or timelines — parsed, then ignored |
 | `A13_MESH_BUDGET` | renderer | no more mesh slots than the rig's `invariants.meshSlots`, and no mesh past its `invariants.meshTriangles`. SKIPs when the rig declares neither |
 | `A14_NO_FULL_FRAME_MESH` | renderer | no mesh spans the whole stage (a full-frame mesh is a full-frame canvas that can never dirty-skip). SKIPs when the skeleton declares no stage |
@@ -1137,7 +1136,6 @@ the renderer policy*.
 | `A24_AXIS_SPACE_STROKE` | archetype | the stroke is authored in **axis space** — no screen-space Y component anywhere in the axis subtree, and no keys at all on the axis bone (its rotation is the one per-cut setup value) |
 | `A25_DETACHED_BONE_PARENTAGE` | archetype | bones that must stay detached are not parented under a moving part |
 | `A26_SLOT_DRAW_ORDER` | archetype | the slots array — which *is* the draw order — matches the rig spec's slot table |
-| `A27_REGION_NAME_MATCHES_PAGE_FILENAME` | renderer | each region's name equals its page's basename, closing the second link of the attachment → region → file chain |
 | `A28_RIBBON_ROWS_SHARE_WEIGHTS` | archetype | both vertices of a ribbon row carry the same bones at the same weights, so the strip can lengthen and curve but never widen. **SKIPs on authored geometry and on contour meshes** — rigc did not pair the first's rows, and the second is one silhouette loop |
 | `A29_STROKE_WITHIN_CONTACT_DEPTH` | archetype | the stroke plus any inward keys stays within the cut's measured contact depth (skipped when the manifest declares none) |
 | `A30_STROKE_WITHIN_CAP_CONTAINMENT` | archetype | the stroke stays within the cut's measured containment ceiling, and nothing in the axis subtree scales — a scale key changes the contour the ceiling was measured on (skipped when the manifest declares none) |

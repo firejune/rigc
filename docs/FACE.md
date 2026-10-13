@@ -850,13 +850,13 @@ counter-scale the turn stops reading at about **18°**; with it, about **26°**.
 Eight degrees of usable range for two tracks, and the record reports nothing else
 in the experiment came close to that ratio.
 
-⚠️ **A `clipping` attachment would lift the iris's travel ceiling and you cannot
-have one.** Spine has them (AUTHORING §3.4) but `A11_NO_CLIPPING_ATTACHMENTS`
-refuses one under `--profile rig-play`, so a rig carrying one builds on only one
-of the two profiles. The ceiling is then geometric: in the worked example the
+⚠️ **A `clipping` attachment would lift the iris's travel ceiling, and the worked
+example has none.** Spine has them (AUTHORING §3.4) and both profiles build one
+since issue #1404 retired A11, but the worked example was drawn while A11 refused
+a clip under `--profile rig-play`. Its ceiling is therefore geometric: the
 iris's ink ring has radius 28.5 against a socket opening 36 half-wide, so
 `36 − 28.5 = 7.5` units is as far as it can travel before it crosses its own lash.
-⇒ **Compute that ceiling from the art before keying a gaze**; the first draft of
+⇒ **Without a clip, compute that ceiling from the art before keying a gaze**; the first draft of
 the worked example keyed 9 and had to come back to 7.
 
 ---
@@ -1835,7 +1835,7 @@ it come off:
   MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
   MESH  hair_bang    authored 15 vertices / 16 triangles  (budget 32)  bones=[bang]  attachments=[hair_bang]  covers 100.00% of the art, reaching 55.22px past it
   ..    validate (spine-core round trip + machine assertions, profile spine)
-  ..    profile spine — 8 renderer-policy and 8 archetype assertion(s) do not apply
+  ..    profile spine — 6 renderer-policy and 8 archetype assertion(s) do not apply
 ```
 
 `spine` is the default, so that is the `build` above with no `--profile` on it —

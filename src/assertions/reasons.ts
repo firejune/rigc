@@ -28,7 +28,7 @@ export const SKIP_NO_ATLAS = 'the round trip did not produce an atlas to measure
 /**
  * The third of them, and it is NOT waiting on A00 (issue #608): the atlas parsed
  * and it has no pages, which is what a compile that measured no art writes. The
- * four rules whose only subject is a page — A06, A17, A19, A27 — have nothing to
+ * three rules whose only subject is a page — A06, A17, A19 — have nothing to
  * look at, and an empty loop walking out of `check()` is reported as a PASS.
  */
 /*

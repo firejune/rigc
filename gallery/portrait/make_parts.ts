@@ -141,11 +141,13 @@ const EYE = `
  * 🚨 **Sized to clear the socket at the gaze extremes rather than to fill it**,
  * because the eye carries no `clipping` attachment and therefore nothing trims
  * an iris that walks off its own white. Spine has one (AUTHORING §3.4) and it
- * would lift this ceiling — but `A11_NO_CLIPPING_ATTACHMENTS` refuses one under
- * the `rig-play` profile, since the renderer it was written for, spine-html
- * 0.4.1, skipped clips silently, so a
- * gallery example that reached for it would only build on one of the two
- * profiles the gallery bar asks for. The arithmetic instead:
+ * would lift this ceiling — but when these parts were drawn
+ * `A11_NO_CLIPPING_ATTACHMENTS` refused one under the opt-in profile, since the
+ * renderer it was written for, spine-html 0.4.1, skipped clips silently, so a
+ * gallery example that reached for it would only have built on one of the two
+ * profiles the gallery bar asks for. Issue #1404 retired A11 (the player
+ * `rig-play` names draws clips in both modes); the parts were not redrawn, so
+ * the arithmetic below is still what holds the iris:
  *
  *     iris outer radius   26.5 + 4/2 (the ink ring)  =  28.5
  *     opening half-width  (82 - 10) / 2              =  36     => |dx| <= 7.5

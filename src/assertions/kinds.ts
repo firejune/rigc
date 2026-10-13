@@ -70,6 +70,13 @@ export type AssertionKind = 'validity' | 'renderer' | 'archetype';
  * restating it as the renderer's own join made it a tautology over the validity
  * half. The argument, with the renderer lines it is measured against, sits above
  * `check('A08_…')`.
+ *
+ * The numbering has gaps, and they are retirements, not reservations: A41
+ * (issue #1202), and A11 and A27 (issue #1404) — two `renderer` rules stating
+ * limits the player `rig-play` names does not have, since it draws a clipping
+ * attachment and a region on a page named for something else in both of its
+ * modes. A retired code is not reused, so a line that names one in an old
+ * report still means what it meant.
  */
 export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A00_ROUNDTRIP_PARSE: 'validity',
@@ -83,7 +90,6 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A08_REGION_NAMES_MATCH_ATTACHMENTS: 'validity', // no longer mixed — see above (#574)
   A09_ANIMATION_DURATION_MATCHES_SPEC: 'validity',
   A10_NO_NAN_AFTER_STEPPING: 'validity',
-  A11_NO_CLIPPING_ATTACHMENTS: 'renderer',
   A12_NO_DARK_COLOR: 'renderer',
   A13_MESH_BUDGET: 'renderer',
   A14_NO_FULL_FRAME_MESH: 'renderer',
@@ -99,7 +105,6 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A24_AXIS_SPACE_STROKE: 'archetype',
   A25_DETACHED_BONE_PARENTAGE: 'archetype',
   A26_SLOT_DRAW_ORDER: 'archetype',
-  A27_REGION_NAME_MATCHES_PAGE_FILENAME: 'renderer',
   A28_RIBBON_ROWS_SHARE_WEIGHTS: 'archetype',
   A29_STROKE_WITHIN_CONTACT_DEPTH: 'archetype',
   A30_STROKE_WITHIN_CAP_CONTAINMENT: 'archetype',

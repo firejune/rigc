@@ -137,7 +137,7 @@ rigc validate examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
 ```
 rigc validate …/examples/3-timing-and-spacing/export/3-timing-and-spacing-ess.json
   ..    atlas …/examples/3-timing-and-spacing/export/3-timing-and-spacing.atlas
-  ..    profile spine — 8 renderer-policy and 8 archetype assertion(s) do not apply
+  ..    profile spine — 6 renderer-policy and 8 archetype assertion(s) do not apply
   PASS  A07_ATLAS_TEXT_SHAPE
   PASS  A00_ROUNDTRIP_PARSE
   PASS  A16_SKELETON_VERSION_4_3
@@ -168,7 +168,7 @@ Read it as three separate statements, because they answer three different questi
   timeline, no event timeline, no constraint timeline, no deform timeline, no mesh
   attachment, no physics constraint, and no bounding box, clipping attachment or
   path. ⭐ What passes over an empty list is the other kind of rule — `A01`, `A02`,
-  `A11`, `A12`, `A14` ask *how many of this does the file carry*, and **zero is the
+  `A12`, `A14` ask *how many of this does the file carry*, and **zero is the
   answer**.
 - **`PROF`** — the rule was excluded by the profile before its body ran. §3.3.
 
@@ -985,18 +985,18 @@ prints a `CONSUMER_DRIVEN_MIX` judgement (§2.0), and `build` then SKIPs it by n
 runtime is content and the burden is on the rule. Reporting that is a better answer
 than a quietly edited export.
 
-### 3.3 Profile choice, and the sixteen rules that will not fire
+### 3.3 Profile choice, and the fourteen rules that will not fire
 
 `--profile spine` is the default and answers *"is this valid Spine 4.3 that any
 runtime plays correctly?"* — and it is the right profile for foreign data, because the
 other one is this project's own renderer and archetype policy.
 
-**Sixteen assertions do not run under `spine`, and they come back `PROF`, not
+**Fourteen assertions do not run under `spine`, and they come back `PROF`, not
 `SKIP`:**
 
 | Excluded as | Rules |
 | --- | --- |
-| **renderer policy** (8) | `A11_NO_CLIPPING_ATTACHMENTS`, `A12_NO_DARK_COLOR`, `A13_MESH_BUDGET`, `A14_NO_FULL_FRAME_MESH`, `A15_IDLE_NO_MESH_BONE_KEYS`, `A19_OVERLAY_PNGS_HAVE_ALPHA`, `A27_REGION_NAME_MATCHES_PAGE_FILENAME`, `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` |
+| **renderer policy** (6) | `A12_NO_DARK_COLOR`, `A13_MESH_BUDGET`, `A14_NO_FULL_FRAME_MESH`, `A15_IDLE_NO_MESH_BONE_KEYS`, `A19_OVERLAY_PNGS_HAVE_ALPHA`, `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` |
 | **archetype policy** (8) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`, `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`, `A30_STROKE_WITHIN_CAP_CONTAINMENT`, `A39_DEFORM_KEEPS_TRIANGLE_WINDING` |
 
 Two further rules — **`A06`** and **`A20`** — are *mixed*: their validity clauses run
@@ -1007,7 +1007,7 @@ weighted at all is policy.
 
 ⚠️ **`--profile rig-play` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
-run ends `rigc: 13 assertion(s) failed`, and this is the tally with one real message
+run ends `rigc: 12 assertion(s) failed`, and this is the tally with one real message
 per rule — `A06` takes a page that is one part covering it exactly *or a tiling of
 regions*, so a packed atlas passes both profiles and the wall is policy only:
 
@@ -1015,10 +1015,11 @@ regions*, so a packed atlas passes both profiles and the wall is policy only:
 | --- | --- | --- |
 | **10** | `A15_IDLE_NO_MESH_BONE_KEYS` | `idle keys bone "front-shoulder", which drives a mesh — meshes never idle-skip` |
 | **2** | `A20_MESH_WEIGHTS_COHERENT` | `mesh "front-shin" is unweighted; the ring tier drives meshes by bones` |
-| **1** | `A11_NO_CLIPPING_ATTACHMENTS` | `1 clipping attachment(s); the renderer skips them silently` |
 
 Every one of those is a correct statement about a correct file: a bone *does* key a
-mesh, a mesh *is* unweighted, a clipping attachment *is* present.
+mesh, and a mesh *is* unweighted. (A third line named the export's clipping
+attachment until issue #1404 retired that rule: the player `rig-play` names draws
+clips.)
 ⇒ **Do not run `rig-play` against
 somebody's export unless they asked whether it satisfies this project's renderer
 policy**, which is a different question from whether their file is valid.
@@ -1263,10 +1264,11 @@ Three things to read out of that, in order:
 something is invisible to every measure in that report. Pair it with a `check` against
 frames rendered from the original.
 
-⚠️ **Do not rename toward what a rule seems to want.** `A27`'s
-region-name-matches-page-filename is `rig-play` policy (§3.3): under the default
-profile it does not fire, and renaming somebody's attachments to satisfy a policy they
-never opted into is a change with no benefit to them.
+⚠️ **Do not rename toward what a rule seems to want.** A `rig-play` policy rule
+(§3.3) does not fire under the default profile, and renaming somebody's attachments to
+satisfy a policy they never opted into is a change with no benefit to them. (This
+paragraph's example was A27, region name against page filename, until issue #1404
+retired it: no reader joins a region to its page's file name.)
 
 ### 4.3 Extending a foreign skeleton with a new animation
 

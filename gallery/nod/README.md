@@ -624,14 +624,14 @@ instead of being kept by hand
 
 ```
 PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
-..    51 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 16 not in profile "spine"
+..    49 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 14 not in profile "spine"
 ```
 
 `rigc build --profile rig-play`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
+..    49 assertions: 25 measured (25 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
 ```
 
 **Mesh overshoot is large and is not a defect.** `head` reports

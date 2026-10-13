@@ -1,6 +1,6 @@
 /**
  * The model side's supply of `SkinEntryFacts` (issue #1025, step 4c of #380):
- * the skins' region attachments and clipping count, read off the document.
+ * the skins' region attachments, read off the document.
  *
  * ⭐ **In the file's order, by the emitter's own rule.** The document holds the
  * skins in the spec's order and the Spine file holds them in the editor's
@@ -55,9 +55,7 @@ export function fileOrderedEntries(read: ReadDocument, order?: SkinOrder): Array
 
 export function modelSkinEntries(read: ReadDocument, order?: SkinOrder): SkinEntryFacts {
   const regionAttachments: RegionEntry[] = [];
-  let clippingCount = 0;
   for (const entry of fileOrderedEntries(read, order)) {
-    if (entry.record.kind === 'clipping') clippingCount++;
     if (entry.record.kind !== 'region') continue;
     const geometry = entry.record.geometry;
     // `readModel` reads every region record's geometry or refuses the document, so a record without one is this module's defect.
@@ -65,5 +63,5 @@ export function modelSkinEntries(read: ReadDocument, order?: SkinOrder): SkinEnt
     const shown = shownRow(entry);
     regionAttachments.push({ name: shown.name, width: geometry.region.width, height: geometry.region.height, path: shown.path as string });
   }
-  return { regionAttachments, clippingCount };
+  return { regionAttachments };
 }
