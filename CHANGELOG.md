@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.50.0](https://github.com/rig-c/core/compare/v2.49.0...v2.50.0) (2026-10-13)
+
+
+### Features
+
+* **validate:** the opt-in profile is rig-play, and --profile spine-html reads as it for one minor ([#1277](https://github.com/rig-c/core/issues/1277)) ([#1405](https://github.com/rig-c/core/issues/1405)) ([01f51a1](https://github.com/rig-c/core/commit/01f51a17519a4807d2221dd676b25405ee12029f))
+
 ## [2.49.0](https://github.com/rig-c/core/compare/v2.48.0...v2.49.0) (2026-10-13)
 
 
