@@ -88378,7 +88378,7 @@ import { loopedTime } from './src/core/raw.ts';
 import { poseLoopingWalk, poseWalkSetup, scanLoopingWalk, scanWalkSetup, type WalkPlant, type WalkPose } from './src/core/walk.ts';
 import type { ScanPose } from './src/core/raw.ts';
 import { walkIn, type RawReset } from './src/core/raw.ts';
-import { openTrack, type TrackOptions } from './src/core/track.ts';
+import { openTrack, type PhysicsEnvironment, type TrackOptions } from './src/core/track.ts';
 import { mixPropertyOrder, openTracks, type TracksPlant } from './src/core/tracks.ts';
 import type { CoreSlotRow } from './src/core/index.ts';
 import { noSkinView } from './src/render_core.ts';
@@ -89305,7 +89305,7 @@ function noSkinSeedSkeleton(rnd: () => number, mode: 'none' | 'plain' | 'members
  */
 const CORE_UNITS = [
   'CO08', 'CO14', 'CO18', 'CL04', 'CA06', 'CA08', 'CO19', 'CC09', 'CC10', 'CQ10', 'CK07', 'CK09', 'CP10',
-  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO53+CO54+CO55', 'CO29+CO30', 'CO31+CO32',
+  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO53+CO54+CO55', 'CO56+CO57', 'CO29+CO30', 'CO31+CO32',
 ] as const;
 type CoreUnitName = (typeof CORE_UNITS)[number];
 
@@ -89318,7 +89318,7 @@ type CoreUnitName = (typeof CORE_UNITS)[number];
  */
 const CORE_UNITS_HEAVIEST_FIRST: CoreUnitName[] = [
   'CO31+CO32', 'CO25+CO26', 'CO27', 'CD11', 'CO08', 'CO29+CO30', 'CA08', 'CU04', 'CR06', 'CD06', 'CK09', 'CO14',
-  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10', 'CO53+CO54+CO55',
+  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10', 'CO53+CO54+CO55', 'CO56+CO57',
 ];
 
 /**
@@ -101788,6 +101788,11 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
   unit('CO53+CO54+CO55', () => {
     // The live tracks' physics clock (issue #1396): `trackClockCases`, beside the spring probe it shares with LS05–LS06.
     trackClockCases(say, built.filter((b) => b.exits.every((e) => e === 0)));
+  });
+
+  unit('CO56+CO57', () => {
+    // The environment the live tracks' physics answers and the rig moved from outside (issue #1416): `trackEnvironmentCases`.
+    trackEnvironmentCases(say, built.filter((b) => b.exits.every((e) => e === 0)));
   });
 
   unit('CO29+CO30', () => {
@@ -115486,6 +115491,429 @@ function trackClockCases(say: (name: string, ok: boolean, detail: string, why: s
             `Planted, the player scaling its own dt by the same factor (the clock applied to the animation time too): the times off on ${tally.dtRedTimes} of ${tally.walks} walk(s), the events on ${tally.dtRedEvents}, a key fired a step early on ${tally.early}; the option refused by name when it is not a function and when it returns NaN or −1, and the track refused at every step after (${refusalChecks - refusals.length} of ${refusalChecks})`,
         ),
         'issue #1396: the clock is the physics clock\'s alone — a player scaling dt moves the track time, the animation time and the event firing with it, fires a key on a step boundary one frame early, and stops agreeing with `rigc render`, which keeps the animation on the frame sum',
+      );
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The wind probe CO56–CO57 step (issue #1416), built into `dir`: a swing bone
+ * keyed ±15° under five physics constraints, one per branch of the step — `x`
+ * and `y` together, `rotate` alone (and a second `rotate` link below it),
+ * `scaleX` alone, `rotate` with `scaleX`, and
+ * `shearX` with `rotate` — every one stating a `wind` and a `gravity`, under a
+ * `referenceScale` of 50 so the factor the step weighs them by is not the
+ * parser's 100. The build's directory, or why it did not build.
+ */
+function buildWindProbe(dir: string): { out: string } | { why: string } {
+  mkdirSync(join(dir, 'images'));
+  copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(dir, 'images', 'tip.png'));
+  writeFileSync(
+    join(dir, 'rig.json'),
+    `${JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'windprobe',
+      images: 'images',
+      skeleton: { width: 256, height: 256, referenceScale: 50 },
+      bones: [
+        { name: 'root' },
+        { name: 'swing', parent: 'root', x: 128, y: 200 },
+        { name: 'xy', parent: 'swing', x: 20, rotation: -80, length: 40 },
+        { name: 'rot', parent: 'swing', rotation: -90, length: 60 },
+        { name: 'rot2', parent: 'rot', x: 60, length: 40 },
+        { name: 'scl', parent: 'swing', rotation: -60, length: 50 },
+        { name: 'rs', parent: 'swing', rotation: -120, length: 50 },
+        { name: 'sh', parent: 'swing', rotation: -30, length: 50 },
+      ],
+      slots: [{ name: 'tip', bone: 'rot2', attachment: 'tip' }],
+      skins: { default: { tip: { tip: { image: 'tip.png', x: 20 } } } },
+    })}\n`,
+  );
+  const keys = Array.from({ length: 5 }, (_, k) => ({ t: k, v: [k % 2 === 0 ? 15 : -15], ...(k < 4 ? { ease: 'swing' } : {}) }));
+  writeFileSync(
+    join(dir, 'motion.json'),
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'windprobe',
+      cut: 'windprobe',
+      easings: { swing: [0.36, 0, 0.64, 1] },
+      physics: {
+        p_xy: { bone: 'xy', x: 1, y: 1, inertia: 0.5, strength: 40, damping: 0.9, mass: 1, wind: 2, gravity: 3 },
+        p_rot: { bone: 'rot', rotate: 1, inertia: 0.5, strength: 60, damping: 0.85, mass: 1, wind: 30, gravity: 40 },
+        p_rot2: { bone: 'rot2', rotate: 1, inertia: 0.5, strength: 50, damping: 0.85, mass: 1, wind: 30, gravity: 30 },
+        p_scl: { bone: 'scl', scaleX: 1, inertia: 0.5, strength: 80, damping: 0.8, mass: 1, wind: 5, gravity: 4 },
+        p_rs: { bone: 'rs', rotate: 1, scaleX: 1, inertia: 0.5, strength: 70, damping: 0.85, mass: 1, wind: 20, gravity: 10 },
+        p_sh: { bone: 'sh', shearX: 1, rotate: 0.5, inertia: 0.5, strength: 60, damping: 0.85, mass: 1, wind: 25, gravity: 15 },
+      },
+      animations: {
+        loop: {
+          duration: 4,
+          loop: true,
+          // No physics timeline: the live tracks over several animations mix none (issue #1336), and this probe is walked through both entries.
+          tracks: [{ bone: 'swing', property: 'rotate', keys }],
+        },
+      },
+    })}\n`,
+  );
+  const out = join(dir, 'build');
+  const built = runCli(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', out]);
+  if (built.status !== 0) return { why: `the wind probe did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}` };
+  return { out };
+}
+
+/**
+ * gallery/look rebuilt with its one physics constraint (`whip`) answering the
+ * environment — `wind` 25 and `gravity` 30 added to its tuning row, nothing
+ * else changed — since the gallery's own states neither, and a constraint
+ * whose `wind` and `gravity` are 0 is moved by no environment: the
+ * environment's half of CO56 on the gallery's physics rig would hold nothing
+ * there. The build's directory, or why it did not build.
+ */
+function buildRespondingLook(dir: string): { out: string } | { why: string } {
+  const look = resolve(import.meta.dir, 'gallery', 'look');
+  cpSync(look, join(dir, 'look'), { recursive: true, filter: (from) => !/[\\/](build|render|preview\.html)$/.test(from) });
+  const motionPath = join(dir, 'look', 'motion.json');
+  const motion = JSON.parse(readFileSync(motionPath, 'utf8')) as { physics: Record<string, Record<string, unknown>> };
+  if (motion.physics.whip === undefined) return { why: 'gallery/look/motion.json no longer declares the physics constraint "whip" this control adds a response to' };
+  motion.physics.whip = { ...motion.physics.whip, wind: 25, gravity: 30 };
+  writeFileSync(motionPath, `${JSON.stringify(motion, null, 2)}\n`);
+  const out = join(dir, 'look', 'build');
+  const built = runCli(['build', '--rig', join(dir, 'look', 'rig.json'), '--motion', motionPath, '--out', out]);
+  if (built.status !== 0) return { why: `gallery/look with a responding whip did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}` };
+  return { out };
+}
+
+/**
+ * CO56–CO57 (issue #1416): the environment the physics answers, and the rig
+ * moved from outside. A live track's `setEnvironment({ wind, gravity })` is
+ * spine-core 4.3.13's `Skeleton.windX, windY, gravityX, gravityY`, and its
+ * `physicsTranslate` and `physicsRotate` are the `Skeleton`'s methods of those
+ * names. CO56 holds the core to spine-core given the same values, on the wind
+ * probe (every branch of the step, under a `referenceScale` of 50), on the
+ * gallery's physics rig as it ships (whose `whip` states no `wind` or
+ * `gravity`, so only the movement reaches it) and on the same rig with a
+ * responding `whip` — every bone's world transform and every drawn vertex at
+ * tolerance 0, through `openTrack` and `openTracks` held and looped under
+ * both resets, over a side gust at 60 fps and over seeded mixed steps that
+ * change the environment and move the rig between poses. Each reading the
+ * mapping rejects is planted on the core's side and held red: the environment
+ * ignored, its y read up, the translation ignored or read y down, the turn read
+ * clockwise or about the origin. CO57 holds that nothing set is the rig
+ * posed before the option existed — the runtime's own environment set on every
+ * step and a move of 0 pose every walk bit for bit as nothing set — and the
+ * refusals by name.
+ */
+function trackEnvironmentCases(say: (name: string, ok: boolean, detail: string, why: string) => void, builtGreen: readonly BuiltRow[]): void {
+  const names = [
+    'CO56_THE_LIVE_TRACKS_ENVIRONMENT_AND_MOVEMENT_POSE_WHAT_SPINE_CORES_SKELETON_WIND_GRAVITY_TRANSLATE_AND_ROTATE_POSE_AND_EACH_REJECTED_READING_IS_RED',
+    'CO57_NOTHING_SET_IS_THE_RIG_POSED_BEFORE_THE_ENVIRONMENT_EXISTED_AND_A_BAD_ENVIRONMENT_OR_MOVE_IS_REFUSED_BY_NAME',
+  ];
+  const bits = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+  type Flat = { bones: Array<[string, number[]]>; drawn: Array<[string, string, number[]]> };
+  const flatCore = (p: RawPose): Flat => ({ bones: p.bones.map((b): [string, number[]] => [b.name, [b.a, b.b, b.c, b.d, b.worldX, b.worldY]]), drawn: p.drawn.map((d): [string, string, number[]] => [d.slot, d.attachment, d.vertices]) });
+  const flatSpine = (sk: Skeleton): Flat => {
+    const drawn: Flat['drawn'] = [];
+    for (const slot of sk.drawOrder.appliedPose) {
+      const att = slot.appliedPose.attachment;
+      if (!(att instanceof MeshAttachment) && !(att instanceof RegionAttachment)) continue;
+      const world = new Array<number>(att instanceof MeshAttachment ? att.worldVerticesLength : 8).fill(0);
+      if (att instanceof MeshAttachment) att.computeWorldVertices(sk, slot, 0, att.worldVerticesLength, world, 0, 2);
+      else att.computeWorldVertices(slot, att.getOffsets(slot.appliedPose), world, 0, 2);
+      drawn.push([slot.data.name, att.name, world]);
+    }
+    return { bones: sk.bones.map((b): [string, number[]] => [b.data.name, [b.appliedPose.a, b.appliedPose.b, b.appliedPose.c, b.appliedPose.d, b.appliedPose.worldX, b.appliedPose.worldY]]), drawn };
+  };
+  /** What a caller does between two poses: the environment set (either half), the rig moved, the rig turned. */
+  type Op = { env?: { wind?: [number, number]; gravity?: [number, number] }; translate?: [number, number]; rotate?: [number, number, number] };
+  /** A schedule: each step's `dt` and what is done before it. */
+  type Schedule = { label: string; steps: number[]; ops: Op[] };
+  /** The readings CO56 plants on the core's side: each a rewrite of what the caller passes. */
+  const PLANTS: Array<[string, (op: Op) => Op]> = [
+    ['the environment ignored', (op) => ({ ...op, env: undefined })],
+    ['the environment\'s y read up', (op) => ({ ...op, env: op.env === undefined ? undefined : { ...(op.env.wind ? { wind: [op.env.wind[0], -op.env.wind[1]] as [number, number] } : {}), ...(op.env.gravity ? { gravity: [op.env.gravity[0], -op.env.gravity[1]] as [number, number] } : {}) } })],
+    ['the translation ignored', (op) => ({ ...op, translate: undefined })],
+    ['the translation read y down', (op) => ({ ...op, translate: op.translate === undefined ? undefined : [op.translate[0], -op.translate[1]] })],
+    ['the turn read clockwise', (op) => ({ ...op, rotate: op.rotate === undefined ? undefined : [op.rotate[0], op.rotate[1], -op.rotate[2]] })],
+    ['the turn read about the origin', (op) => ({ ...op, rotate: op.rotate === undefined ? undefined : [0, 0, op.rotate[2]] })],
+  ];
+  const gust = (fps: number, seconds: number, wind: [number, number]): Schedule => {
+    const n = Math.round(seconds * fps);
+    const ops: Op[] = Array.from({ length: n }, (_v, k): Op => (k === 0 ? { env: { wind: [0, 0] } } : k === Math.round(n / 3) ? { env: { wind } } : k === Math.round((2 * n) / 3) ? { env: { wind: [0, 0] } } : {}));
+    return { label: `a side gust of [${wind.join(', ')}] from ${(seconds / 3).toFixed(2)} s to ${((2 * seconds) / 3).toFixed(2)} s at ${fps} fps`, steps: new Array<number>(n).fill(1 / fps), ops };
+  };
+  const seeded = (seed: number, n: number): Schedule => {
+    const rnd = seededRandom(seed);
+    const MIXED = [1 / 60, 1 / 30, 1 / 24, 0];
+    const steps: number[] = [];
+    const ops: Op[] = [];
+    const v = (span: number): number => (rnd() * 2 - 1) * span;
+    for (let k = 0; k < n; k++) {
+      steps.push(rnd() < 0.2 ? rnd() * 0.08 : MIXED[Math.floor(rnd() * MIXED.length)]);
+      const op: Op = {};
+      if (rnd() < 0.3) op.env = rnd() < 0.5 ? { wind: [v(2), v(2)] } : rnd() < 0.5 ? { gravity: [v(1.5), v(1.5)] } : { wind: [v(2), v(2)], gravity: [v(1.5), v(1.5)] };
+      if (rnd() < 0.3) op.translate = [v(30), v(30)];
+      if (rnd() < 0.2) op.rotate = [v(100), v(100), v(20)];
+      ops.push(op);
+    }
+    return { label: `${n} seeded mixed steps (seed ${seed}) changing the environment and moving the rig`, steps, ops };
+  };
+  type Kind = 'held track' | 'looped track' | 'held tracks' | 'looped tracks';
+  const KINDS: Kind[] = ['held track', 'looped track', 'held tracks', 'looped tracks'];
+  /** The core's walk: pose 0, then per step the ops and the step. */
+  const coreWalk = (doc: CompiledDocument, name: string, kind: Kind, s: Schedule, reset: RawReset, rewrite: (op: Op) => Op = (op) => op): RawPose[] => {
+    type Mover = { setEnvironment(e: Op['env'] & object): void; physicsTranslate(x: number, y: number): void; physicsRotate(x: number, y: number, d: number): void; step(dt: number): RawPose };
+    let mover: Mover;
+    let first: RawPose;
+    if (kind === 'held tracks' || kind === 'looped tracks') {
+      const t = openTracks(doc, { reset });
+      t.setAnimation(0, name, { loop: kind === 'looped tracks', mixDuration: 0 });
+      first = t.start();
+      mover = t;
+    } else {
+      const t = openTrack(doc, name, { loop: kind === 'looped track', reset });
+      first = t.first;
+      mover = t;
+    }
+    const out = [first];
+    s.steps.forEach((dt, k) => {
+      const op = rewrite(s.ops[k]);
+      if (op.env !== undefined) mover.setEnvironment(op.env);
+      if (op.translate !== undefined) mover.physicsTranslate(op.translate[0], op.translate[1]);
+      if (op.rotate !== undefined) mover.physicsRotate(op.rotate[0], op.rotate[1], op.rotate[2]);
+      out.push(mover.step(dt));
+    });
+    return out;
+  };
+  /** spine-core 4.3.13 stepped as CO50 steps it, the ops made on its `Skeleton` before each update. */
+  const spineWalk = (data: SkeletonData, name: string, loop: boolean, s: Schedule, reset: RawReset): Flat[] => {
+    const sk = new Skeleton(data);
+    const st = new AnimationState(new AnimationStateData(data));
+    st.setAnimation(0, name, loop);
+    sk.setupPose();
+    if (reset === 'animation') st.apply(sk);
+    sk.update(0);
+    sk.updateWorldTransform(Physics.reset);
+    const out = [flatSpine(sk)];
+    s.steps.forEach((dt, k) => {
+      const op = s.ops[k];
+      st.update(dt);
+      sk.setupPoseBones();
+      st.apply(sk);
+      if (op.env?.wind !== undefined) [sk.windX, sk.windY] = op.env.wind;
+      if (op.env?.gravity !== undefined) [sk.gravityX, sk.gravityY] = op.env.gravity;
+      if (op.translate !== undefined) sk.physicsTranslate(op.translate[0], op.translate[1]);
+      if (op.rotate !== undefined) sk.physicsRotate(op.rotate[0], op.rotate[1], op.rotate[2]);
+      sk.update(dt);
+      sk.updateWorldTransform(Physics.update);
+      out.push(flatSpine(sk));
+    });
+    return out;
+  };
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-track-environment-'));
+  try {
+    type Subject = { label: string; doc: CompiledDocument; data: SkeletonData; anims: string[]; responds: boolean };
+    const subjects: Subject[] = [];
+    const refusedAnims: string[] = [];
+    const why: string[] = [];
+    const load = (label: string, out: string, responds: boolean): void => {
+      const doc = noSkinView(readModel(readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8'), label));
+      const data = loadOracleData(readFileSync(join(out, 'skeleton.json'), 'utf8'), readFileSync(join(out, 'skeleton.atlas'), 'utf8'), label);
+      // An animation every walk refuses by name (a construct the core leaves out) is not a subject; it is counted.
+      const anims = doc.animations.map((a) => a.name).filter((name) => {
+        try {
+          openTrack(doc, name, { loop: true, reset: 'animation' });
+          openTracks(doc, { reset: 'animation' }).setAnimation(0, name, { loop: true, mixDuration: 0 });
+          return true;
+        } catch (err) {
+          if (!(err instanceof CoreInputError)) throw err;
+          refusedAnims.push(`${label} "${name}"`);
+          return false;
+        }
+      });
+      if (anims.length > 0) subjects.push({ label, doc, data, anims, responds });
+    };
+    mkdirSync(join(dir, 'probe'));
+    const probe = buildWindProbe(join(dir, 'probe'));
+    if ('why' in probe) why.push(probe.why);
+    else load('the wind probe', probe.out, true);
+    const galleryPhysics = builtGreen.filter((b) => b.name.startsWith('gallery/') && noSkinView(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name)).constraints.some((c) => c.kind === 'physics'));
+    for (const b of galleryPhysics) load(`${b.name} as it ships`, b.out, false);
+    mkdirSync(join(dir, 'responding'));
+    const responding = buildRespondingLook(join(dir, 'responding'));
+    if ('why' in responding) why.push(responding.why);
+    else load('gallery/look with whip wind 25 and gravity 30', responding.out, true);
+    if (why.length === 0 && subjects.filter((x) => x.responds).length < 2) why.push(`the wind probe and the responding look left ${subjects.filter((x) => x.responds).length} subject(s) answering the environment (refused: ${refusedAnims.join(', ') || 'none'})`);
+    if (why.length > 0 || galleryPhysics.length === 0) {
+      const detail = [...why, ...(galleryPhysics.length === 0 ? ['no gallery row built green with a physics constraint'] : [])].join('; ');
+      for (const name of names) say(name, false, detail, 'issue #1416');
+      return;
+    }
+    const schedules = [gust(60, 3, [1.5, -0.4]), seeded(141601, 150)];
+
+    // --- CO56: the core given the values spine-core's Skeleton is given poses what it poses ---
+    {
+      const probes: string[] = [];
+      const tally = { walks: 0, poses: 0, spineWalks: 0, envMoved: 0, envWalks: 0, moveMoved: 0, moveWalks: 0 };
+      const red = PLANTS.map(() => 0);
+      const plantedWalks = PLANTS.map(() => 0);
+      const still: Schedule[] = schedules.map((s) => ({ label: s.label, steps: s.steps, ops: s.ops.map(() => ({})) }));
+      for (const subj of subjects) {
+        for (const anim of subj.anims) {
+          for (const [si, s] of schedules.entries()) {
+            for (const loop of [true, false]) {
+              for (const reset of ['animation', 'setup'] as const) {
+                const want = spineWalk(subj.data, anim, loop, s, reset);
+                tally.spineWalks++;
+                const wantStill = spineWalk(subj.data, anim, loop, still[si], reset);
+                const envOnly: Schedule = { label: s.label, steps: s.steps, ops: s.ops.map((op) => ({ env: op.env })) };
+                const moveOnly: Schedule = { label: s.label, steps: s.steps, ops: s.ops.map((op) => ({ translate: op.translate, rotate: op.rotate })) };
+                if (s.ops.some((op) => op.env !== undefined)) {
+                  tally.envWalks++;
+                  if (bits(spineWalk(subj.data, anim, loop, envOnly, reset)) !== bits(wantStill)) tally.envMoved++;
+                }
+                if (s.ops.some((op) => op.translate !== undefined || op.rotate !== undefined)) {
+                  tally.moveWalks++;
+                  if (bits(spineWalk(subj.data, anim, loop, moveOnly, reset)) !== bits(wantStill)) tally.moveMoved++;
+                }
+                for (const kind of KINDS.filter((k) => k.startsWith(loop ? 'looped' : 'held'))) {
+                  const where = `${subj.label} "${anim}" ${kind}, reset at the ${reset}, ${s.label}`;
+                  let got: Flat[];
+                  try {
+                    got = coreWalk(subj.doc, anim, kind, s, reset).map(flatCore);
+                  } catch (err) {
+                    if (!(err instanceof CoreInputError)) throw err;
+                    probes.push(`${where}: refused — ${err.message}`);
+                    continue;
+                  }
+                  tally.walks++;
+                  tally.poses += got.length;
+                  const off = want.findIndex((w, i) => bits(w) !== bits(got[i]));
+                  if (off >= 0 || got.length !== want.length) probes.push(`${where}: pose ${off} differs from spine-core's Skeleton given the same wind, gravity, physicsTranslate and physicsRotate`);
+                  if (kind !== 'looped track' && kind !== 'held track') continue;
+                  PLANTS.forEach(([, rewrite], p) => {
+                    const planted = coreWalk(subj.doc, anim, kind, s, reset, rewrite).map(flatCore);
+                    plantedWalks[p]++;
+                    if (planted.some((x, i) => bits(x) !== bits(want[i]))) red[p]++;
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+      PLANTS.forEach(([label], p) => {
+        if (red[p] === 0) probes.push(`${label}, planted on the core's side, posed spine-core on all ${plantedWalks[p]} walk(s), so the control cannot tell the reading from the runtime's`);
+      });
+      probes.push(
+        ...floorProbes(
+          [
+            [tally.envMoved, 1, `${tally.envMoved} of ${tally.envWalks} spine-core walk(s) the environment alone moved`],
+            [tally.moveMoved, 1, `${tally.moveMoved} of ${tally.moveWalks} spine-core walk(s) the movement alone moved`],
+          ],
+          'so the oracle was not seen to answer what the walks set',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        names[0],
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${subjects.length} subject(s) — ${subjects.map((x) => `${x.label} (${x.anims.length} animation(s)${x.responds ? '' : ', no wind or gravity stated'})`).join('; ')}${refusedAnims.length === 0 ? '' : `; left out, refused by name by every live walk: ${refusedAnims.join(', ')}`} — over ${schedules.map((s) => s.label).join(' and ')}: ` +
+            `${tally.walks} walk(s) of openTrack and openTracks' track 0, held and looped, under both resets, ${tally.poses} pose(s) equal at tolerance 0 in every bone's world transform and every drawn vertex to spine-core 4.3.13 (${tally.spineWalks} walk(s)) given the same Skeleton.windX, windY, gravityX, gravityY, physicsTranslate and physicsRotate. ` +
+            `On spine-core's side the environment alone moved ${tally.envMoved} of ${tally.envWalks} walk(s) and the movement alone ${tally.moveMoved} of ${tally.moveWalks}. ` +
+            `Planted on the core's side, each red: ${PLANTS.map(([label], p) => `${label} on ${red[p]} of ${plantedWalks[p]}`).join(', ')}`,
+        ),
+        'issue #1416: the consumer sets the world — wind, gravity, the rig moved and turned across the scene — and the rig answers with what each physics constraint states; the Spine export carries the same response, so an official runtime handed the same values on its Skeleton has to pose what the core poses',
+      );
+    }
+
+    // --- CO57: nothing set is the rig posed before the option existed; a bad environment or move is refused by name ---
+    {
+      const probes: string[] = [];
+      const tally = { walks: 0, poses: 0 };
+      const runtimeOwn: Op = { env: { wind: [1, 0], gravity: [0, 1] }, translate: [0, 0], rotate: [0, 0, 0] };
+      for (const subj of subjects) {
+        for (const anim of subj.anims) {
+          for (const s of schedules) {
+            const bare: Schedule = { label: s.label, steps: s.steps, ops: s.ops.map(() => ({})) };
+            const stated: Schedule = { label: s.label, steps: s.steps, ops: s.ops.map(() => runtimeOwn) };
+            for (const kind of KINDS) {
+              for (const reset of ['animation', 'setup'] as const) {
+                tally.walks++;
+                const a = coreWalk(subj.doc, anim, kind, bare, reset);
+                const b = coreWalk(subj.doc, anim, kind, stated, reset);
+                tally.poses += a.length;
+                const off = a.findIndex((p, i) => bits(p) !== bits(b[i]));
+                if (off >= 0) probes.push(`${subj.label} "${anim}" ${kind}, reset at the ${reset}, ${s.label}: pose ${off} with the runtime's own environment and a move of 0 set on every step differs from nothing set`);
+              }
+            }
+          }
+        }
+      }
+      const refusals: string[] = [];
+      let checks = 0;
+      const refused = (f: () => unknown, says: RegExp, what: string): void => {
+        checks++;
+        try {
+          f();
+          refusals.push(`${what}: accepted`);
+        } catch (err) {
+          if (!(err instanceof CoreInputError) || !says.test(err.message)) refusals.push(`${what}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
+      const doc = subjects[0].doc;
+      const anim = subjects[0].anims[0];
+      const forged = (v: unknown): Partial<PhysicsEnvironment> => v as Partial<PhysicsEnvironment>;
+      for (const kind of ['track', 'tracks'] as const) {
+        const open = (): { setEnvironment(e: Partial<PhysicsEnvironment>): void; physicsTranslate(x: number, y: number): void; physicsRotate(x: number, y: number, d: number): void; step(dt: number): RawPose; environment: PhysicsEnvironment } => {
+          if (kind === 'track') return openTrack(doc, anim, { loop: true, reset: 'animation' });
+          const t = openTracks(doc, { reset: 'animation' });
+          t.setAnimation(0, anim, { loop: true, mixDuration: 0 });
+          t.start();
+          return t;
+        };
+        const who = kind === 'track' ? 'the live track\'s' : 'the live tracks\'';
+        const t = open();
+        refused(() => t.setEnvironment(forged(null)), /setEnvironment was given null, not an object/, `${who} setEnvironment(null)`);
+        refused(() => t.setEnvironment(forged([1, 0])), /setEnvironment was given an array/, `${who} setEnvironment([1, 0])`);
+        refused(() => t.setEnvironment(forged({ breeze: [1, 0] })), /setEnvironment names "breeze", which is not one of \[wind, gravity\]/, `${who} setEnvironment({ breeze })`);
+        refused(() => t.setEnvironment(forged({ wind: [1] })), /setEnvironment's wind is \[1\], not a pair of finite numbers/, `${who} setEnvironment({ wind: [1] })`);
+        refused(() => t.setEnvironment(forged({ gravity: [0, Number.NaN] })), /setEnvironment's gravity is \[0,null\], not a pair of finite numbers/, `${who} setEnvironment({ gravity: [0, NaN] })`);
+        refused(() => t.physicsTranslate(Number.POSITIVE_INFINITY, 0), /physicsTranslate's x is Infinity, not a finite distance/, `${who} physicsTranslate(Infinity, 0)`);
+        refused(() => t.physicsRotate(0, 0, Number.NaN), /physicsRotate's degrees is NaN, not a finite number/, `${who} physicsRotate(0, 0, NaN)`);
+        // A refusal moves nothing: the environment that stood still stands, and a half left out keeps its own.
+        t.setEnvironment({ wind: [2, 0] });
+        refused(() => t.setEnvironment(forged({ wind: [3, 0], gravity: 'down' })), /setEnvironment's gravity is "down"/, `${who} setEnvironment({ wind, gravity: "down" })`);
+        checks++;
+        if (bits(t.environment) !== bits({ wind: [2, 0], gravity: [0, 1] })) refusals.push(`${who} environment after a refused setEnvironment reads ${bits(t.environment)}, not the one that stood`);
+        const pair: [number, number] = [4, 5];
+        t.setEnvironment({ gravity: pair });
+        pair[0] = 99;
+        checks++;
+        if (bits(t.environment) !== bits({ wind: [2, 0], gravity: [4, 5] })) refusals.push(`${who} environment reads ${bits(t.environment)} after setting gravity alone and changing the caller's array, not wind [2, 0] kept and gravity [4, 5] copied`);
+      }
+      // A refused track refuses every call that would move it.
+      const stuck = openTrack(doc, anim, { loop: true, reset: 'animation', clock: (dt) => (dt === 0 ? 0 : Number.NaN) });
+      refused(() => stuck.step(0.05), /clock moved the physics by NaN/, 'the live track\'s clock returning NaN');
+      refused(() => stuck.setEnvironment({ wind: [0, 0] }), /was refused at step 1 .* \(setEnvironment not made\)/, 'the live track\'s setEnvironment after it was refused');
+      refused(() => stuck.physicsTranslate(1, 0), /was refused at step 1 .* \(physicsTranslate not made\)/, 'the live track\'s physicsTranslate after it was refused');
+      refused(() => stuck.physicsRotate(0, 0, 1), /was refused at step 1 .* \(physicsRotate not made\)/, 'the live track\'s physicsRotate after it was refused');
+      probes.push(...refusals);
+      const ok = probes.length === 0;
+      say(
+        names[1],
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${tally.walks} walk(s) over CO56's subjects and schedules, every kind of live track under both resets: ${tally.poses} pose(s) with { wind: [1, 0], gravity: [0, 1] }, physicsTranslate(0, 0) and physicsRotate(0, 0, 0) set before every step equal to nothing set, every field, bit for bit — spine-core's initial Skeleton fields are what a walk nobody set one on answers; ` +
+            `${checks - refusals.length} of ${checks} refusal(s) and readings by name: an environment that is not an object, an unknown key, a pair that is not two finite numbers, a non-finite move or turn, a refusal that leaves the environment standing, a half left out kept and the caller's array copied, and a refused track refusing all three`,
+        ),
+        'issue #1416: absent input is today\'s behaviour, byte for byte — the bases and every control before this one read it unchanged — and a value the consumer sends that the runtime would read as a different world is refused where it is sent',
       );
     }
   } finally {

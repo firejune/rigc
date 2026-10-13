@@ -923,6 +923,18 @@ out, a track poses exactly what it posed before (`CO46`–`CO52` unchanged), so
 the row adds the two symbols and no type. The two live in `src/core/raw.ts`,
 which the entry already reached, so its closure gained no module (`CUR123`).
 
+🤝 **A fifth, by the same exception**
+([#1416](https://github.com/rig-c/core/issues/1416)): the type
+`PhysicsEnvironment`, what the live tracks' new `setEnvironment` takes — the
+wind and gravity directions spine-core 4.3 keeps on its `Skeleton` — which the
+issue asked for as something the consumer sets (`REQUESTED_IN_1416`). The
+methods themselves — `setEnvironment`, `environment`, `physicsTranslate` and
+`physicsRotate` on `LiveTrack` and `LiveTracks` — are additive on types the
+rows above already name: nothing set, a track poses exactly what it posed
+before (`CO57`), so the row adds one type and no value. It lives in
+`src/core/constraints_physics.ts`, which the entry already reached, so its
+closure gained no module (`CUR123`).
+
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
 from the install and calls `readModel` then `poseRawSetup` on the build it

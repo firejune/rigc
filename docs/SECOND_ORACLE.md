@@ -339,6 +339,26 @@ The scope: 13,648 poses whose times, events and entry times are identical with
 and without the clock, and the player scaling its own `dt` instead reads the
 times off on 48 of 48 walks and fires a key a step early on 40 (`CO55`).
 
+**The environment the physics answers** ([#1416](https://github.com/rig-c/core/issues/1416))
+is spine-core 4.3's own: the `Skeleton` carries the wind and gravity directions
+(`windX, windY, gravityX, gravityY`, initially `1, 0, 0, 1`, y down) and each
+constraint's `wind` and `gravity` weigh them. The live tracks take it as
+`setEnvironment`, and the rig moved from outside as `physicsTranslate` and
+`physicsRotate`, the `Skeleton`'s methods of those names. Held on three
+subjects — a probe with one constraint per branch of the step under a
+`referenceScale` of 50, gallery/look as it ships (whose `whip` states no wind
+or gravity, so only the movement reaches it) and gallery/look with the `whip`
+answering wind 25 and gravity 30 — over a side gust at 60 fps and 150 seeded
+mixed steps that change the environment and move and turn the rig: 18,592 poses
+of `openTrack` and `openTracks`, held and looped, under both resets, equal at
+tolerance 0 in every bone's world transform and drawn vertex to spine-core given
+the same values on its `Skeleton`; on spine-core's side the environment alone
+moved 32 of 56 walks and the movement alone 28 of 28, and each reading the
+mapping rejects — the environment ignored or its y read up, the translation
+ignored or read y down, the turn read clockwise or about the origin — is red on
+every walk it can reach (`CO56`). Nothing set, the runtime's own values set on
+every step and a move of 0 pose the same 18,592 poses bit for bit (`CO57`).
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private

@@ -174,6 +174,36 @@
  * `AnimationState` updated by the step and its `Skeleton` by the clock), and
  * `CO55` that the times and the events are those of the walk without it.
  *
+ * ## The environment, and the rig moved from outside (issue #1416)
+ *
+ * The rig states how each physics constraint answers the world — its `wind`
+ * and `gravity` — and the consumer states the world. `setEnvironment({ wind,
+ * gravity })` sets it from the next pose on and it stands until set again,
+ * as spine-core's four `Skeleton` fields do: `wind` is `[windX, windY]`,
+ * `gravity` is `[gravityX, gravityY]`, x to the right and **y down**, and
+ * until set it is the runtime's own `{ wind: [1, 0], gravity: [0, 1] }`
+ * (`./constraints_physics.ts`, *The environment*). Either half may be left
+ * out to keep the one that stands. So a gust is the consumer setting `wind`
+ * to `[0, 0]` at rest and `[k, 0]` while it blows, and a constraint that
+ * states `wind: 0` does not feel it — the response is the rig's, the gust the
+ * scene's.
+ *
+ * `physicsTranslate(x, y)` and `physicsRotate(x, y, degrees)` are the
+ * runtime's `Skeleton` methods of those names: the consumer moved or turned
+ * the whole rig since the last pose — in the skeleton's world, y up, degrees
+ * counter-clockwise — and every constraint's next update sees its bone move
+ * by that much, so a rig walked across the screen trails what hangs from it.
+ * A player forwards what spine-core's `SkeletonPhysicsMovement` forwards: the
+ * change of its display object's position since the last frame, converted into
+ * the skeleton's units and axes, and the change of its rotation about the
+ * skeleton's origin, `physicsRotate(0, 0, Δ)`, both before the `step` that
+ * poses the frame.
+ *
+ * `CO56` holds the poses to spine-core 4.3.13 given the same values on its
+ * `Skeleton`, and holds red the readings the mapping rejects; `CO57` holds that
+ * nothing set — or the runtime's own values set on every step and a move of 0
+ * — poses what the track posed before the methods existed, bit for bit.
+ *
  * ## The oracle chain
  *
  * Nothing here is held to spine-core directly but the events: the live track
@@ -192,9 +222,11 @@
  * history, so a seek is "open, then step to the time".
  */
 import { CoreInputError, type CompiledDocument } from './index.ts';
-import { checkedClock, openRawTrack, stepRawTrack, type RawPose, type RawReset, type TrackState, type WalkMode } from './raw.ts';
+import { checkedClock, environmentOf, openRawTrack, rotateOn, setEnvironmentOn, stepRawTrack, translateOn, type RawPose, type RawReset, type TrackState, type WalkMode } from './raw.ts';
 import type { LocalAdjust, TimelinePlant } from './animation.ts';
+import type { PhysicsEnvironment } from './constraints_physics.ts';
 export type { AdjustableLocals, BoneLocals, LocalAdjust } from './animation.ts';
+export type { PhysicsEnvironment } from './constraints_physics.ts';
 
 /** How a live track is opened: whether it loops, and where its physics is reset (`RawReset`) — both the caller's, neither with a default — the caller's adjustment of every pose's bone locals (the header's *The adjustment*), and what each step moves the physics clock by (the header's *The physics clock*). */
 export interface TrackOptions {
@@ -217,6 +249,14 @@ export interface LiveTrack {
   readonly animationTime: number;
   /** The runtime's duration of the animation (`CoreAnimationTimelines.duration`). */
   readonly duration: number;
+  /** Sets the world every physics constraint answers from the next pose on (the header's *The environment*): `wind` and `gravity` as spine-core's `Skeleton.windX, windY` and `gravityX, gravityY` — x right, y down — either left out to keep the one that stands. Until set, `{ wind: [1, 0], gravity: [0, 1] }`, the runtime's own. */
+  setEnvironment(environment: Partial<PhysicsEnvironment>): void;
+  /** The environment the next pose answers. */
+  readonly environment: PhysicsEnvironment;
+  /** spine-core's `Skeleton.physicsTranslate`: the consumer moved the whole rig by `(x, y)` in the skeleton's world (y up) since the last pose, and every physics constraint's next update sees it. */
+  physicsTranslate(x: number, y: number): void;
+  /** spine-core's `Skeleton.physicsRotate`: the consumer turned the whole rig by `degrees` (counter-clockwise) about `(x, y)` in the skeleton's world since the last pose. */
+  physicsRotate(x: number, y: number, degrees: number): void;
 }
 
 /** The two modes: a track that holds at its duration is the raw entry's walk; a looping one fires its events across the wrap and cuts its clipped rows (`live`). Neither keeps a non-finite value. */
@@ -262,6 +302,30 @@ class Track implements LiveTrack {
 
   get duration(): number {
     return this.track.duration;
+  }
+
+  get environment(): PhysicsEnvironment {
+    return environmentOf(this.track.ctx);
+  }
+
+  setEnvironment(environment: Partial<PhysicsEnvironment>): void {
+    this.live('setEnvironment');
+    setEnvironmentOn(this.track.ctx, environment, 'the live track\'s');
+  }
+
+  physicsTranslate(x: number, y: number): void {
+    this.live('physicsTranslate');
+    translateOn(this.track.ctx, x, y, 'the live track\'s');
+  }
+
+  physicsRotate(x: number, y: number, degrees: number): void {
+    this.live('physicsRotate');
+    rotateOn(this.track.ctx, x, y, degrees, 'the live track\'s');
+  }
+
+  /** A refused track refuses every call that would move it, naming the step it was refused at. */
+  private live(call: string): void {
+    if (this.refused !== null) throw new CoreInputError(`the live track was refused at step ${this.refused}, after its time and physics had moved; open the track again (${call} not made)`);
   }
 
   step(dt: number): RawPose {

@@ -434,6 +434,14 @@ const REQUESTED_IN_1336 = 'rig-play player migration, requested on issue #1336';
  * above already name; this row holds the two symbols.
  */
 const REQUESTED_IN_1396 = 'rig-play fixed-step clock, requested on issue #1396';
+/**
+ * The world the physics answers (issue #1416): the live tracks take
+ * `setEnvironment`, `physicsTranslate` and `physicsRotate` — methods of
+ * `LiveTrack` and `LiveTracks`, which the rows above name — and the issue
+ * asked for the environment as a type the consumer sets, so the type a
+ * player builds one with is importable from `rig-c/core`. This row holds it.
+ */
+const REQUESTED_IN_1416 = 'the environment the physics answers, requested on issue #1416';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -600,6 +608,7 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
   { entry: './core', observed: REQUESTED_IN_1276, needsRuntime: false, values: { openTrack: 'function' }, types: ['LiveTrack', 'TrackOptions'] },
   { entry: './core', observed: REQUESTED_IN_1336, needsRuntime: false, values: { openTracks: 'function' }, types: ['LocalAdjust', 'AdjustableLocals', 'BoneLocals', 'LiveTracks', 'TracksOptions', 'MixOptions', 'QueueOptions', 'TrackEntryView'] },
   { entry: './core', observed: REQUESTED_IN_1396, needsRuntime: false, values: { physicsClockStep: 'function', PHYSICS_CLOCK_LEAD: 'constant' }, types: [] },
+  { entry: './core', observed: REQUESTED_IN_1416, needsRuntime: false, values: {}, types: ['PhysicsEnvironment'] },
 ];
 
 /**
