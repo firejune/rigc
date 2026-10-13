@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.48.0](https://github.com/rig-c/core/compare/v2.47.1...v2.48.0) (2026-10-13)
+
+
+### Features
+
+* **guide:** rigc guide prints the row a failure line names, and every such line ends with the command ([#1397](https://github.com/rig-c/core/issues/1397)) ([#1398](https://github.com/rig-c/core/issues/1398)) ([907e820](https://github.com/rig-c/core/commit/907e82006a71da3e5608a110c39e1d1eabe4eacd))
+
 ## [2.47.1](https://github.com/rig-c/core/compare/v2.47.0...v2.47.1) (2026-10-12)
 
 
