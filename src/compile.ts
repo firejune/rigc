@@ -120,7 +120,7 @@ import {
   type PhysicsPoseRule,
   type SlotColorChannel,
 } from './timelines.ts';
-import { evaluateDeformTransform } from './deformgen.ts';
+import { evaluateDeformTransform, type DeformSoftMask } from './deformgen.ts';
 import { evaluateTrackDerive, TRACK_DERIVE_PROJECTIONS, type TrackDeriveMember } from './trackgen.ts';
 import {
   computeExactFrameTransforms,
@@ -2875,6 +2875,9 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   // `skin/slot/attachment` -> per-vertex z, for the attachments that named a
   // depth map. Read at deform-key time; never emitted. See `AttachmentContext`.
   const attachmentDepths = new Map<string, number[]>();
+  // The same for a `soft` mask's per-vertex level, which a deform envelope's
+  // `mask` reads (issue #1413). Never emitted either.
+  const attachmentSoftMasks = new Map<string, DeformSoftMask>();
 
   for (const rigSlot of rig.slots) {
     const part = partBySlot.get(rigSlot.name);
@@ -3042,6 +3045,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           skinName,
           imagesDir,
           depths: attachmentDepths,
+          softMasks: attachmentSoftMasks,
           slotNames: new Set(rig.slots.map((s) => s.name)),
           atlasRegions: atlasIn === null ? null : atlasIn.byName,
           links: pendingLinks,
@@ -3544,6 +3548,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           {
             ...deformGeometryOf(attachment, at, transforms),
             depth: attachmentDepths.get(`${skinName}/${track.slot}/${track.attachment}`) ?? null,
+            soft: attachmentSoftMasks.get(`${skinName}/${track.slot}/${track.attachment}`) ?? null,
           },
           deformTransforms,
         );
@@ -4174,6 +4179,12 @@ interface AttachmentContext {
    * read by `evaluateDeformTransform` at key time and never emitted at all.
    */
   depths: Map<string, number[]>;
+  /**
+   * A `soft` mask's file and its sampled level per vertex, keyed like `depths`
+   * — what a deform envelope's `mask` reads at key time (issue #1413). Never
+   * emitted, for `depths`' reason.
+   */
+  softMasks: Map<string, DeformSoftMask>;
   /** Every slot the rig declares — a clipping attachment's `end` resolves here. */
   slotNames: Set<string>;
   /**
@@ -6292,7 +6303,7 @@ function softRegionWeights(
   grid: SheetGrid,
   where: string,
   ctx: AttachmentContext,
-): { weights: MeshVertexWeight[][]; bone: string; mask: string; digest: string; carried: number; ramped: number } {
+): { weights: MeshVertexWeight[][]; levels: number[]; bone: string; mask: string; digest: string; carried: number; ramped: number } {
   const { bone } = spec;
   if (typeof bone !== 'string' || bone.length === 0) {
     throw new CompileError(`${where}: the "soft" block has no "bone"; it is the bone the soft region is carried by`);
@@ -6316,8 +6327,10 @@ function softRegionWeights(
   const [toSheetX, toSheetY] = sheetRatio(grid);
   let carried = 0;
   let ramped = 0;
+  const levels: number[] = [];
   const weights = points.map(([x, y]) => {
     const w = sampleLevel(sheet, x * toSheetX, y * toSheetY) / 255;
+    levels.push(w);
     if (w >= 1) carried++;
     else if (w > 0) ramped++;
     if (w <= 0) return [{ bone: 'anchor', weight: 1 }] as MeshVertexWeight[];
@@ -6334,7 +6347,7 @@ function softRegionWeights(
         'check that the mask is painted where the mesh actually is, and that it is white where the art is soft.',
     );
   }
-  return { weights, bone, mask: spec.mask, digest: depthDigest(sheet), carried, ramped };
+  return { weights, levels, bone, mask: spec.mask, digest: depthDigest(sheet), carried, ramped };
 }
 
 /**
@@ -6461,6 +6474,7 @@ function buildGridAttachment(
   ctx.meshBones.add(ctx.anchorBone);
   if (bound) ctx.meshBones.add(bound.bone);
   if (depth !== undefined) ctx.depths.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, depth.z);
+  if (bound) ctx.softMasks.set(`${ctx.skinName}/${ctx.slotName}/${placeholder}`, { mask: bound.mask, levels: bound.levels });
   ctx.meshes.push({
     slot: ctx.slotName,
     kind: 'grid',
@@ -8520,6 +8534,12 @@ export interface DeformGeometry {
    * caller, which is where the skin, slot and attachment names live.
    */
   depth: readonly number[] | null;
+  /**
+   * The attachment's `soft` mask and its level per vertex, when its generator
+   * named one — what a deform envelope's `mask` reads (issue #1413). Filled in
+   * by the caller, as `depth` is, and for the same reason.
+   */
+  soft: DeformSoftMask | null;
 }
 
 /**
@@ -8596,8 +8616,9 @@ export function deformGeometryOf(
       influenceBones: null,
       setupWhy: null,
       // Filled in by the caller; `deformGeometryOf` reads the attachment's
-      // record, and the depth is deliberately not in it.
+      // record, and the depth is deliberately not in it — nor the soft mask.
       depth: null,
+      soft: null,
     };
   }
   // Walk the bindings for the per-vertex influence counts. Their shape is
@@ -8631,7 +8652,7 @@ export function deformGeometryOf(
   // LOADED attachment, which is where the `/3*2` in the parser comes from.
   let influences = 0;
   for (const n of boneCounts) influences += n;
-  const common = { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts, depth: null };
+  const common = { weighted, deformLength: influences * 2, vertexCount: boneCounts.length, boneCounts, depth: null, soft: null };
   // -- one bind space, unchanged -------------------------------------------
   //
   // Every vertex a single influence of a single bone: the run IS that bone's
@@ -8874,7 +8895,14 @@ function compileDeformTrack(
             'yourself and start the run with "offset".',
         );
       }
-      const report = evaluateDeformTransform(key.transform, geometry.setup, onModelGrid, `${where} (t=${key.t})`, geometry.depth);
+      const report = evaluateDeformTransform(
+        key.transform,
+        geometry.setup,
+        onModelGrid,
+        `${where} (t=${key.t})`,
+        geometry.depth,
+        geometry.soft,
+      );
       if (report.offsets.length !== geometry.vertexCount * 2) {
         // Unreachable while `setup` is one pair per vertex, which is the whole
         // reason both are derived from the same walk. Stated rather than
