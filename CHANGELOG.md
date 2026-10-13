@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.49.0](https://github.com/rig-c/core/compare/v2.48.0...v2.49.0) (2026-10-13)
+
+
+### Features
+
+* **core:** live tracks take a physics clock, and rig-c/core exports the render's ([#1396](https://github.com/rig-c/core/issues/1396)) ([#1402](https://github.com/rig-c/core/issues/1402)) ([ee3e9dd](https://github.com/rig-c/core/commit/ee3e9dd0b3741f588d133d4fe3b3c5f73458b0b7))
+
 ## [2.48.0](https://github.com/rig-c/core/compare/v2.47.1...v2.48.0) (2026-10-13)
 
 
