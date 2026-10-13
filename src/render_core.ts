@@ -100,7 +100,7 @@ import { atlasRegionLookup, parseAtlasText } from './atlas.ts';
 import { pagesOfAtlas, spineFileSha256, type ModelPage } from './model.ts';
 import { clipThrough, type ClipShape, type ShapeClipper } from './core/clipping.ts';
 import { activeBones, CoreInputError, readModel, sourceOfDoc, underNoSkin, underSkin, type CompiledDocument, type CoreSlotRow } from './core/index.ts';
-import { PHYSICS_CLOCK_LEAD, physicsClockStep, poseRawAnimationEach, poseRawSetup, type RawDrawn, type RawPose } from './core/raw.ts';
+import { PHYSICS_CLOCK_LEAD, physicsClockStep, poseRawAnimationEach, poseRawSetup, type RawDrawn, type RawPose, type StepEnvironment } from './core/raw.ts';
 import type { TimelinePlant } from './core/animation.ts';
 import { CORE_DEFAULT_SKIN, lookupSkins } from './core/skins.ts';
 import { documentPageLookup, drawnRegions, meshPageUvs, readUvSequences, regionPageUvs, type DrawnRegion, type UvRegion, type UvSource } from './core/uvs.ts';
@@ -363,10 +363,14 @@ export function keptPieceArrays(): PieceArrays {
  * one pose is held at a time rather than the animation's whole series. A plant
  * passes another (`RC44`).
  */
-export type CoreRawWalk = (doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, visit: (pose: RawPose, index: number) => void) => void;
+export type CoreRawWalk = (doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, visit: (pose: RawPose, index: number) => void, environment?: StepEnvironment) => void;
 
-/** The walk `corePoser` steps with unless a plant passes another: one pose posed, drawn and released before the next, the physics clock moved by `physicsClockStep` (issue #1380). */
-export const CORE_RAW_WALK: CoreRawWalk = (doc, animation, steps, plant, visit) => poseRawAnimationEach(doc, animation, steps, plant, 'animation', visit, physicsClockStep);
+/**
+ * The walk `corePoser` steps with unless a plant passes another: one pose posed, drawn and released before the next, the
+ * physics clock moved by `physicsClockStep` (issue #1380), and `render --environment`'s change for each pose set before it
+ * is posed (issue #1416, `StepEnvironment`).
+ */
+export const CORE_RAW_WALK: CoreRawWalk = (doc, animation, steps, plant, visit, environment) => poseRawAnimationEach(doc, animation, steps, plant, 'animation', visit, physicsClockStep, environment);
 
 /**
  * The render's physics clock (issue #1380): defined beside the walk that takes it (`./core/raw.ts`), where the mesh
@@ -750,7 +754,7 @@ export function corePoser(
       const input = inputOf(skin);
       return corePosed(input, poseRawSetup(input.doc, { through }), through);
     },
-    animation: (name, skin, fps, count, visit) => {
+    animation: (name, skin, fps, count, visit, environment) => {
       const input = inputOf(skin);
       const step = 1 / fps;
       // Each pose is drawn as it is posed and released before the next (issue #1180), so the walk holds one pose and not
@@ -765,7 +769,7 @@ export function corePoser(
         } catch (thrown) {
           drawFailed.push(thrown);
         }
-      });
+      }, environment);
       if (drawFailed.length > 0) throw drawFailed[0];
     },
     rest: (skin, shown) => {

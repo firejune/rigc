@@ -130,6 +130,7 @@ import { dirname, join } from 'node:path';
 import { Plate, readPlate } from '../tools/plate.ts';
 import { clipSourceOf, corePoser, inactiveBoneSnapshot, physicsClockStep, subsetOver, unposedBones } from './render_core.ts';
 import { type PosedVertices, type WorldTransform } from './nonfinite.ts';
+import type { EnvironmentChange } from './environment.ts';
 import {
   atlasScales,
   choosePosers,
@@ -500,7 +501,7 @@ export function spinePoser(data: SkeletonData): Poser {
     slots: data.slots.map((slot) => ({ name: slot.name, bone: slot.boneData.name })),
     subset: (opts, skin) => slotSubsetOf(data, opts, skin),
     setup: (skin) => spinePosed(setupPosed(data, skin)),
-    animation: (name, skin, fps, count, visit) => {
+    animation: (name, skin, fps, count, visit, environment) => {
       const skeleton = skeletonUnderSkin(data, skin);
       const state = new AnimationState(new AnimationStateData(data));
       // Not looping: the last frame sits at the animation's duration, and a looping
@@ -515,10 +516,12 @@ export function spinePoser(data: SkeletonData): Poser {
         if (i > 0) {
           state.update(step);
           state.apply(skeleton);
+          setSkeletonEnvironment(skeleton, environment?.(i));
           skeleton.update(clock);
           skeleton.updateWorldTransform(Physics.update);
         } else {
           state.apply(skeleton);
+          setSkeletonEnvironment(skeleton, environment?.(i));
           skeleton.update(0);
           skeleton.updateWorldTransform(Physics.reset);
         }
@@ -527,6 +530,17 @@ export function spinePoser(data: SkeletonData): Poser {
     },
     rest: (skin, shown) => restOf(data, skin, shown),
   };
+}
+
+/**
+ * `render --environment`'s change for one frame (issue #1416), set on spine-core's own `Skeleton` before the update that
+ * poses the frame: `wind` is `windX, windY` and `gravity` is `gravityX, gravityY`, both in the runtime's convention, x
+ * right and y down — the live track's `setEnvironment` mapping, held to these four fields by the core suite's `CO56`. A
+ * half left out keeps the one standing, as the core merges it.
+ */
+function setSkeletonEnvironment(skeleton: Skeleton, change: EnvironmentChange | undefined): void {
+  if (change?.wind !== undefined) [skeleton.windX, skeleton.windY] = change.wind;
+  if (change?.gravity !== undefined) [skeleton.gravityX, skeleton.gravityY] = change.gravity;
 }
 
 /** A spine-core skeleton as it stands posed, read through the seam's `Posed`. */
