@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.53.0](https://github.com/rig-c/core/compare/v2.52.0...v2.53.0) (2026-10-13)
+
+
+### Features
+
+* **mesh:** a segments mesh can weight each vertex to every chain link near it with a falloff that reaches zero at a stated radius, so a skirt bends as one sheet rather than as strips ([#1415](https://github.com/rig-c/core/issues/1415)) ([#1420](https://github.com/rig-c/core/issues/1420)) ([372a610](https://github.com/rig-c/core/commit/372a6108a13a80e7aa74e5a6f8f179ebd687629c))
+
 ## [2.52.0](https://github.com/rig-c/core/compare/v2.51.1...v2.52.0) (2026-10-13)
 
 
