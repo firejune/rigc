@@ -116,6 +116,7 @@ import {
   type FramesSidecar,
   type FrameSet,
 } from '../src/render.ts';
+import { frameSetDir } from '../src/render_shared.ts';
 
 /**
  * 🔓 The examples that may be rendered **local-only** — one name, and it is a set
@@ -390,7 +391,7 @@ for (const skeletonEntry of rung.skeletons) {
   const skeletonRoot = rung.skeletons.length > 1 ? join(outRoot, skeletonEntry.label) : outRoot;
   const sets: FrameSet[] = [];
   for (const [name, frames] of sampled) {
-    const dirName = fps === PROTOCOL_FPS ? name : `${name}@${fps}fps`;
+    const dirName = frameSetDir(name, fps);
     const dir = join(skeletonRoot, dirName);
     if (existsSync(dir)) rmSync(dir, { recursive: true });
     mkdirSync(dir, { recursive: true });

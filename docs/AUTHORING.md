@@ -247,6 +247,8 @@ What the flags mean:
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
 | `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index, with their world box and setup-pose area. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
 | `--pass-through` | `render` only: `<cloth>:<leg>[,<cloth>:<leg>…]` — also read where each cloth slot **passes through** its leg slot, and write a `pass-through.json` into each frame directory: the frames where the cloth draws over the leg and its drawn side lies inside the leg's drawn outline by 2 steps or more, each with the depth and the world box. One printed line per pair, and one per frame that passes through. The first name must draw over the second for a frame to be read — the declared order, never both. A reading, not a gate. Every other file is byte for byte what the render writes without it. An unknown slot, a slot that draws on no frame, a malformed list and a pair named twice are refused by name, and so is `--slot`/`--hide` beside it — **§8.5** |
+| `--angle-range` | `render` only: `<bone>:<relative-to>[,<bone>:<relative-to>…]` — also read, for each pair, the range of the first bone's world direction against the second's over each set's frames, and print one line per pair per set: the lowest and the highest angle in degrees, the span, and the frame each was first reached on. A reading, not a gate: nothing is written, and every file is the bytes the render writes without it. An unknown bone (with the bones there are), a bone against itself, a malformed list and a pair named twice are refused by name, and so is a bone with no direction on a frame — **§8.7** |
+| `--viewport`, `--viewport-from` | `render`: give the box every frame is drawn over instead of fitting one — `--viewport <x,y,w,h>`, a world box, y up, `x,y` its bottom-left corner, at the pixel size `--max` gives; or `--viewport-from <frames.json \| dir>`, an earlier render's grid exactly (its box, scale and pixel size), so two candidates land on one pixel grid. A slot that reaches past the box is named by set and frame, and `frames.json` records the box was given under `pinned`. The two together are refused, and so is `--max` beside `--viewport-from` — **§8.6**. On `check` and `inspect`, `--viewport` pins the box those commands draw over instead |
 | `--environment` | `render` only: the wind and gravity the rig's physics constraints answer, in time — a schedule file `{ "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, "wind"?: [x, y], "gravity"?: [x, y] }, …] }`, x right and **y down**, each step holding from its `t` until the next. Both posers set each change before the step that poses the first frame at or after its `t`, and draw the same frames, `geometry.json` and `frames.json` (`RE01`). `frames.json` and `geometry.json` record it, and the framing reads it. A malformed file, a half no physics constraint answers, two steps on one frame and a step after every set's last frame are refused by name, exit 2, nothing written; `check` refuses a frame set drawn under one as a reference. Without it every file is the bytes it always was. An inspection of the response the rig states, not a scene — **§8.4** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
@@ -268,7 +270,8 @@ What the flags mean:
 
 `render` also takes `--fps <n>` (the rate it samples at, default 12 — the same
 protocol rate the reference frames use) and `--max <px>` (the long side of a
-frame, default 256). A clipping attachment is applied as the runtime applies it —
+frame, default 256). A set drawn at any rate but the default is written to
+`<anim>@<fps>fps/` rather than `<anim>/`, so two rates sit side by side: `--fps 24` writes `<anim>@24fps/`, and the default 12 writes `<anim>/`. A clipping attachment is applied as the runtime applies it —
 spine-core's own `SkeletonClipping`, in spine-webgl's call order, on a Spine export,
 and the core's clipper, drawing the same pixels, on a rigc build (the `--poser`
 row) — so a slot from
@@ -1117,6 +1120,8 @@ bun cli.ts render   --candidate path/to/spine --slot <name,…> | --hide <name,�
 bun cli.ts render   --candidate path/to/spine --geometry   # + geometry.json per set: the numbers the frames were drawn from
 bun cli.ts render   --candidate path/to/spine --folds      # + folds.json per set: which mesh triangles turn over, and when
 bun cli.ts render   --candidate path/to/spine --pass-through skirt:leg   # + pass-through.json: where a cloth goes through a leg
+bun cli.ts render   --candidate path/to/spine --angle-range tail:hip   # how far a bone turns against another, per animation
+bun cli.ts render   --candidate path/to/spine --viewport-from render/   # an earlier render's grid: two builds, one pixel grid
 bun cli.ts preview  --candidate path/to/spine [--candidate path/to/another …] [--animation …] [--out preview.html]
 bun cli.ts vote     --candidate path/to/a --candidate path/to/b [--out ballot.html]
 bun cli.ts vote     --record vote-<id>.json [--ballot ballot.html] [--ledger votes.jsonl]
@@ -5075,6 +5080,16 @@ keeps more velocity per step, yet it is what widens the bound: from 2 at `0`
 toward 4 as it nears `1`, which is itself out); the refusal prints both sides so
 you can see how far each lever has to go.
 
+📏 **What a value does to a link is read off a render, not estimated.** The bound
+above says whether a spring settles; it does not say how far it swings, which
+depends on the link's length, its parent's motion and every value together. Render
+the animation with `--angle-range <link>:<parent>` (§8.7) and the line prints how
+far the link turns against the bone it hangs from — the lowest and the highest
+angle and the frames they fall on — so a change of `inertia` or `strength` is read
+as the change of that range, before and after. On the selftest's angle probe a
+link's span widens when its `inertia` is raised from 0.2 to 0.8, and `AR02` prints
+both spans.
+
 ⚠️ **What `rigc render` draws a spring with is not a player's clock to the bit.** A
 constraint integrates whole steps of `1 / fps` and shows the rest as a lag weight, so
 a frame lasting a whole number of steps (12, 20, 30 or 60 fps against the default
@@ -7613,6 +7628,8 @@ exports names the frame that moved. Two exports of one skeleton are byte-identic
 | `setup` | the setup pose, sampled the way a skeleton with no animation is rendered: `{ bones, attachments }` |
 | `frames` | one per PNG, in index order: `{ index, time, bones, attachments }`. `index` is the number in `f####.png`, `time` is `index / fps` in seconds |
 
+**The keys, as the file writes them.** Top level: `spec`, `coordinates`, `animation`, `skin`?, `environment`?, `fps`, `viewport`, `bones`, `slots`, `rest`, `setup`, `frames` — a `?` marks a key written only when it is set. Each frame: `index`, `time`, `bones`, `attachments`; and `setup`: `bones`, `attachments`. What a frame draws is under `attachments`: the top-level `slots` is the table of the bone each slot hangs from, not a frame's pieces.
+
 Inside `setup` and each frame:
 
 - `bones` — every bone in declaration order: `{ name, a, b, c, d, worldX, worldY }`,
@@ -7957,6 +7974,88 @@ write the same file (`PX05`).
 passes through is a defect, and what to do about it — a leg stop, a wider hem, a
 different swing — is yours. To look at one, draw it:
 `inspect --show art --animation <name> --at <time> --zoom slot:<cloth>`.
+
+### 8.6 One box for two renders — `render --viewport`, `render --viewport-from`
+
+`render` fits its box to the rig it draws, so two builds of one rig — before and
+after a change — usually land on two grids of different sizes, and their pixels
+cannot be compared without a transform written by hand. Give the box instead:
+
+```bash
+bun cli.ts render --candidate before/ --out render-before
+bun cli.ts render --candidate after/ --viewport-from render-before --out render-after
+bun cli.ts render --candidate after/ --viewport -40,70,90,140 --max 256 --out render-box
+```
+
+- `--viewport-from <frames.json | dir>` reads an earlier render's `frames.json` (the
+  file, or the directory `render --out` wrote it into) and draws on **its grid
+  exactly**: the same world box, the same scale and the same pixel size, so a world
+  point lands on the same pixel in both renders and the two frame sets overlay.
+  `--max` is refused beside it, because the file already fixes the pixel size.
+- `--viewport <x,y,w,h>` draws over a world box you state, y up, `x,y` its
+  bottom-left corner — the numbers `frames.json`'s `viewport` records, and the
+  spelling `check --viewport` and `inspect --viewport` take. Its pixel size follows
+  from `--max` as a fitted box's does.
+
+The render prints a `viewport given by …` line with the box and the box it would
+have fitted, so you can see what the given one leaves out.
+
+⚠️ **Nothing is cropped in silence.** Each frame is the box: what lies past it is
+not drawn. A fitted box is measured over every pose the rig strikes at 60 fps and padded; a given one is not,
+so every slot whose drawn geometry reaches past it — a piece's posed vertex outside
+the box — is named, once per set: the frames, the farthest it reaches in world
+units, and the sides (`left`, `right`, `bottom`, `top`, y up). `frames.json` records
+the box was given and those slots under `pinned`: `{ "by": "--viewport" |
+"--viewport-from", "outside": [{ "set", "slot", "frames" }] }` — written only when a
+box was given, so a fitted render is the bytes it always was.
+
+**Refused, nothing written:** the two flags together; `--max` beside
+`--viewport-from`; a `--viewport` that is not four numbers or whose width or height
+is not above 0; a `--viewport-from` path with no `frames.json`, a file whose `spec`
+is not `rigc-frames/1`, and a `viewport` field that is not a finite number (`x`,
+`y`), a number above 0 (`width`, `height`, `scale`) or a whole number of pixels above
+0 (`pixelWidth`, `pixelHeight`) — each named with the value found. The framing still
+runs under a given box, so a pose with nothing to draw, one that is not finite and
+one with no extent are refused as they are without one.
+
+### 8.7 How far a bone turns against another — `render --angle-range`
+
+A physics value has no scale you can see from the spec: what `inertia` 0.5 does to
+a link depends on its length, on how its parent moves and on every other value
+together. The answer is a number the pose already holds — how far the link turned
+against the bone it hangs from — and `--angle-range` reads it off the frames
+`render` draws:
+
+```bash
+bun cli.ts render --candidate path/to/spine --angle-range tail:hip,sleeve:arm [--animation …] [--fps 12]
+```
+
+One line per pair per set, beside the set's line: the lowest and the highest angle
+in degrees, the span, the frames read and the rate, and the frame each extreme was
+first reached on. Nothing is written, and every file is the bytes the render writes
+without the flag.
+
+**What the angle is.** At each frame, the first bone's world direction less the
+second's — each the direction its x axis points, degrees counter-clockwise, y up,
+as the poser that drew the frame poses it (`rotationX`). The first frame's
+difference is taken into (−180°, 180°], and each later frame's is moved by whole
+turns to within half a turn of the frame before, so a link that sweeps 200° reads
+200°, not −160°. ⚠️ It is the angle **drawn**, not the bone's local `rotation`: the
+two agree for a child of the other bone when the parent carries no non-uniform scale
+or shear.
+
+**Where it is read.** On the frames' own grid — `--fps`, from t = 0 to each set's
+last frame — so a peak between two frames is not read; raise `--fps` to read finer.
+It reads bones, which `--slot`/`--hide` do not change, so it takes them.
+
+**Refused, nothing written:** a bone the skeleton does not have (with the bones it
+does), an entry without exactly one `:`, an empty entry or name, a bone against
+itself (0° on every frame), a pair named twice, and a bone with no direction on a
+frame — a world matrix of zero, which a bone the posed skin leaves unposed has, or
+one scaled to nothing — named with the frame.
+
+**A reading, not a gate.** Whether a range is too wide is yours; §4.6 says which
+values move it.
 
 ---
 

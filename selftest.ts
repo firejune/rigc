@@ -134674,6 +134674,868 @@ function runPassThroughSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// render-viewport — a box given rather than fitted (issue #1414)
+// ---------------------------------------------------------------------------
+
+import { type OutsidePlant, type OutsideReading, outsideViewport, SIDES, type Side } from './src/viewportpin.ts';
+import { frameSetDir } from './src/render_shared.ts';
+import { indexRuns } from './src/folds.ts';
+
+/**
+ * The box the outside controls pin the pass-through probe to — chosen, world
+ * units, y up, `x,y` its bottom-left corner. It holds both legs and the skirt at
+ * rest and squashed, and the skirt's swing carries its right and top corners past
+ * it on some frames and not others. Every frame and every overhang the controls
+ * expect is derived from `PASS_PLATE` and this box; nothing is read off a run.
+ */
+const VIEWPORT_PIN = { x: -40, y: 70, width: 90, height: 140 } as const;
+/** The renders' long side: small, because no pixel here is looked at, only compared. */
+const VIEWPORT_MAX = 64;
+/** How near an edge a derived corner may sit before the expectation would be a rounding's — the design check's margin. */
+const VIEWPORT_EPSILON = 1e-6;
+/** The far slot candidate B adds to the probe: a bone the probe does not have, holding the leg plate, so its fitted box is not A's. */
+const VIEWPORT_FAR = { x: 150, y: 100 } as const;
+
+/** Each drawn region's four world corners at time `t` of `set` — the probe's numbers turned by the hip's pose. */
+function viewportProbeCorners(set: keyof typeof PASS_PROBE_SETS, t: number): Map<string, Array<[number, number]>> {
+  const { skirt, leg, hipY, thighX } = PASS_PLATE;
+  const pose = PASS_PROBE_SETS[set](t);
+  const c = Math.cos((pose.theta * Math.PI) / 180);
+  const s = Math.sin((pose.theta * Math.PI) / 180);
+  // The skirt hangs from the hip, its top edge on the bone: x ±width/2, y from −height to 0, scaled in x, turned, shifted.
+  const local: Array<[number, number]> = [[-skirt.width / 2, -skirt.height], [skirt.width / 2, -skirt.height], [skirt.width / 2, 0], [-skirt.width / 2, 0]];
+  const skirtCorners = local.map(([x, y]): [number, number] => [pose.tx + c * pose.sx * x - s * y, hipY + s * pose.sx * x + c * y]);
+  // Both legs hang from the thigh, which the hip does not move.
+  const legCorners: Array<[number, number]> = [[thighX - leg.width / 2, hipY - leg.height], [thighX + leg.width / 2, hipY - leg.height], [thighX + leg.width / 2, hipY], [thighX - leg.width / 2, hipY]];
+  return new Map([['leg', legCorners], ['skirt', skirtCorners], ['leg_front', legCorners]]);
+}
+
+/** How far a point lies past each side of a box, world units — positive past it. */
+function pastSides(box: { minX: number; minY: number; maxX: number; maxY: number }, [x, y]: [number, number]): Array<[Side, number]> {
+  return [['left', box.minX - x], ['right', x - box.maxX], ['bottom', box.minY - y], ['top', y - box.maxY]];
+}
+
+interface DerivedOutside {
+  /** `set \0 slot` → the frames past the box, the farthest overhang and the sides. */
+  past: Map<string, { frames: number[]; most: number; sides: Side[] }>;
+  /** Corners within `VIEWPORT_EPSILON` of an edge — where the expectation would be a rounding's. */
+  fragile: string[];
+  /** Frames of the probe read, all sets. */
+  frames: number;
+}
+
+/** The slots past `VIEWPORT_PIN` on every frame of every set at `fps`, from the probe's numbers alone. */
+function viewportProbeOutside(fps: number): DerivedOutside {
+  const box = { minX: VIEWPORT_PIN.x, minY: VIEWPORT_PIN.y, maxX: VIEWPORT_PIN.x + VIEWPORT_PIN.width, maxY: VIEWPORT_PIN.y + VIEWPORT_PIN.height };
+  const past = new Map<string, { frames: number[]; most: number; sides: Side[] }>();
+  const fragile: string[] = [];
+  let frames = 0;
+  for (const set of Object.keys(PASS_PROBE_SETS) as Array<keyof typeof PASS_PROBE_SETS>) {
+    for (let i = 0; i <= Math.round(PASS_PROBE_DURATIONS[set] * fps); i++) {
+      frames++;
+      for (const [slot, corners] of viewportProbeCorners(set, i / fps)) {
+        for (const corner of corners) {
+          for (const [side, by] of pastSides(box, corner)) {
+            if (Math.abs(by) < VIEWPORT_EPSILON) fragile.push(`"${set}" frame ${i} slot "${slot}" ${side}`);
+            if (!(by > 0)) continue;
+            const key = `${set}\u0000${slot}`;
+            const entry = past.get(key) ?? { frames: [], most: 0, sides: [] };
+            if (!entry.frames.includes(i)) entry.frames.push(i);
+            entry.most = Math.max(entry.most, by);
+            if (!entry.sides.includes(side)) entry.sides.push(side);
+            past.set(key, entry);
+          }
+        }
+      }
+    }
+  }
+  for (const entry of past.values()) entry.sides = SIDES.filter((side) => entry.sides.includes(side));
+  return { past, fragile, frames };
+}
+
+/**
+ * How far a reading over spine-core's poses may sit from the probe's numbers.
+ * spine-core turns degrees with its own π, `MathUtils.PI = 3.1415927`
+ * (`spine-core/dist/Utils.js`), a relative error of 2.8e-8 against `Math.PI`:
+ * measured here, 6.3e-7 world units on the skirt's overhang and 1.1e-6° on a
+ * 35° key. The bounds sit above those and far below anything printed — the
+ * lines print hundredths of a unit and ten-thousandths of a degree, and those
+ * are compared exactly.
+ */
+const SPINE_PI_UNITS = 1e-5;
+const SPINE_PI_RELATIVE = 1e-7;
+
+/** A reading of what reaches past the pin against the derived one — frames always; the overhang and sides where the reading carries them. */
+function viewportOutsideFaults(read: ReadonlyArray<{ set: string; slot: string; frames: number[]; most?: number; sides?: readonly Side[] }>, fps: number): string[] {
+  const want = viewportProbeOutside(fps).past;
+  const faults: string[] = [];
+  const got = new Map(read.map((r) => [`${r.set}\u0000${r.slot}`, r]));
+  for (const [key, w] of want) {
+    const [set, slot] = key.split('\u0000');
+    const r = got.get(key);
+    if (r === undefined) {
+      faults.push(`"${set}" slot "${slot}" reaches past the box on frames [${indexRuns(w.frames)}] by the probe's numbers, and the reading names nothing`);
+      continue;
+    }
+    if (JSON.stringify(r.frames) !== JSON.stringify(w.frames)) faults.push(`"${set}" slot "${slot}" is read past the box on [${indexRuns(r.frames)}], the probe's numbers give [${indexRuns(w.frames)}]`);
+    if (r.most !== undefined && Math.abs(r.most - w.most) > SPINE_PI_UNITS) faults.push(`"${set}" slot "${slot}" reaches ${r.most} past the box, the probe's numbers give ${w.most}`);
+    if (r.sides !== undefined && JSON.stringify(r.sides) !== JSON.stringify(w.sides)) faults.push(`"${set}" slot "${slot}" is past the [${r.sides.join(', ')}] side(s), the probe's numbers give [${w.sides.join(', ')}]`);
+  }
+  for (const [key, r] of got) if (!want.has(key)) faults.push(`"${r.set}" slot "${r.slot}" is read past the box on [${indexRuns(r.frames)}], and by the probe's numbers it is inside on every frame`);
+  return faults;
+}
+
+/** Two frame sets on one grid: the same `viewport` in `frames.json`, the same set directories, and every file under them the same bytes. */
+function sameGridFaults(aRoot: string, bRoot: string, label: string): string[] {
+  const faults: string[] = [];
+  const read = (root: string): FramesSidecar => JSON.parse(readFileSync(join(root, FRAMES_SIDECAR), 'utf8')) as FramesSidecar;
+  const a = read(aRoot);
+  const b = read(bRoot);
+  if (JSON.stringify(a.viewport) !== JSON.stringify(b.viewport)) faults.push(`${label}: frames.json records viewport ${JSON.stringify(b.viewport)} against A's ${JSON.stringify(a.viewport)}`);
+  // A world point through each file's own stated transform — px = (x − vx)·scale, py = (vy + vh − y)·scale — on the leg's
+  // corners, which neither candidate moves: the same pixel in both, or the grids are two.
+  for (const [x, y] of viewportProbeCorners('rest', 0).get('leg') ?? []) {
+    const at = (v: FramesSidecar['viewport']): string => `${(x - v.x) * v.scale},${(v.y + v.height - y) * v.scale}`;
+    if (at(a.viewport) !== at(b.viewport)) faults.push(`${label}: world point (${x}, ${y}) lands on pixel (${at(b.viewport)}), on A's (${at(a.viewport)})`);
+  }
+  const dirs = (s: FramesSidecar): string => s.sets.map((set) => set.dir).join(',');
+  if (dirs(a) !== dirs(b)) faults.push(`${label}: sets [${dirs(b)}] against A's [${dirs(a)}]`);
+  for (const set of a.sets) {
+    const aDir = join(aRoot, set.dir);
+    const bDir = join(bRoot, set.dir);
+    if (!existsSync(bDir)) continue;
+    const pngs = readdirSync(aDir).filter((f) => f.endsWith('.png')).sort();
+    const differ = pngs.filter((f) => !existsSync(join(bDir, f)) || !readFileSync(join(aDir, f)).equals(readFileSync(join(bDir, f))));
+    if (differ.length > 0) faults.push(`${label}: "${set.dir}" ${differ.length} of ${pngs.length} PNG(s) differ from A's (${differ.slice(0, 3).join(', ')}${differ.length > 3 ? ', …' : ''})`);
+  }
+  return faults;
+}
+
+function runRenderViewportSuite(): number {
+  console.log('\n── render-viewport: a box given rather than fitted, and what it leaves out (issue #1414) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const fps = PROTOCOL_FPS;
+  const probe = passThroughFixture();
+  const pre: string[] = [];
+  const dir = (name: string): string => join(probe.dir, `viewport_${name}`);
+  const aBuild = dir('a_build');
+  const bBuild = dir('b_build');
+  const built = runCli(['build', '--rig', probe.rigPath, '--motion', probe.motionPath, '--images', probe.imagesDir, '--out', aBuild]);
+  if (built.status !== 0) pre.push(`the probe did not build (exit ${String(built.status)}): ${(built.stdout + built.stderr).trim().slice(-400)}`);
+  // Candidate B: the same probe and one more slot far to the right, on a bone of its own — another build, whose fitted box is not A's.
+  const rig = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as { bones: unknown[]; slots: unknown[]; skins: { default: Record<string, unknown> } };
+  rig.bones.push({ name: 'far', parent: 'root', x: VIEWPORT_FAR.x, y: VIEWPORT_FAR.y });
+  rig.slots.push({ name: 'far', bone: 'far', attachment: 'far' });
+  rig.skins.default.far = { far: { image: 'leg.png', y: -PASS_PLATE.leg.height / 2 } };
+  const bRig = join(probe.dir, 'viewport_b.rig.json');
+  writeFileSync(bRig, `${JSON.stringify(rig, null, 2)}\n`);
+  if (pre.length === 0) {
+    const b = runCli(['build', '--rig', bRig, '--motion', probe.motionPath, '--images', probe.imagesDir, '--out', bBuild]);
+    if (b.status !== 0) pre.push(`candidate B did not build (exit ${String(b.status)}): ${(b.stdout + b.stderr).trim().slice(-400)}`);
+  }
+  const render = (candidate: string, name: string, extra: string[], max = true): ReturnType<typeof runCli> | null =>
+    pre.length > 0 ? null : runCli(['render', '--candidate', candidate, ...(max ? ['--max', String(VIEWPORT_MAX)] : []), ...extra, '--out', dir(name)]);
+  const aFit = render(aBuild, 'a_fit', []);
+  const bFit = render(bBuild, 'b_fit', []);
+  const bFrom = render(bBuild, 'b_from', ['--viewport-from', dir('a_fit'), '--hide', 'far'], false);
+  const aSheet = (): FramesSidecar['viewport'] | null => (existsSync(join(dir('a_fit'), FRAMES_SIDECAR)) ? (JSON.parse(readFileSync(join(dir('a_fit'), FRAMES_SIDECAR), 'utf8')) as FramesSidecar).viewport : null);
+  const av = pre.length === 0 ? aSheet() : null;
+  const bBox = av === null ? null : render(bBuild, 'b_box', ['--viewport', `${av.x},${av.y},${av.width},${av.height}`, '--hide', 'far']);
+  const bWhole = render(bBuild, 'b_whole', ['--viewport-from', join(dir('a_fit'), FRAMES_SIDECAR)], false);
+  const aPin = render(aBuild, 'a_pin', ['--viewport', `${VIEWPORT_PIN.x},${VIEWPORT_PIN.y},${VIEWPORT_PIN.width},${VIEWPORT_PIN.height}`]);
+  for (const [name, run] of [['A fitted', aFit], ['B fitted', bFit], ['B --viewport-from', bFrom], ['B --viewport', bBox], ['B --viewport-from, far drawn', bWhole], ['A pinned', aPin]] as const) {
+    if (pre.length === 0 && (run === null || run.status !== 0)) pre.push(`render ${name} exited ${String(run?.status)}: ${(run?.stderr ?? '').trim().slice(0, 300)}`);
+  }
+  // The design of the probe, checked before anything is read off it: some frames of the swing reach past the box and some
+  // do not, no derived corner sits within ε of an edge, and B's fitted grid is not A's — or the same-grid control proves nothing.
+  {
+    const derived = viewportProbeOutside(fps);
+    const skirt = derived.past.get('swing\u0000skirt');
+    const swingFrames = Math.round(PASS_PLATE.duration * fps) + 1;
+    if (skirt === undefined || skirt.frames.length === swingFrames) pre.push(`the probe's numbers put the skirt past the box on ${skirt?.frames.length ?? 0} of ${swingFrames} "swing" frame(s) — the control needs some past it and some not`);
+    for (const slot of ['leg', 'leg_front']) if ([...derived.past.keys()].some((k) => k.endsWith(`\u0000${slot}`))) pre.push(`the probe's numbers put "${slot}" past the box — the control needs a slot inside it on every frame`);
+    if (derived.fragile.length > 0) pre.push(`derived corners within ${VIEWPORT_EPSILON} of the box's edge: ${derived.fragile.slice(0, 3).join('; ')}`);
+  }
+  const lines = (aPin?.stdout ?? '').split('\n');
+  const pinFile = pre.length === 0 && existsSync(join(dir('a_pin'), FRAMES_SIDECAR)) ? (JSON.parse(readFileSync(join(dir('a_pin'), FRAMES_SIDECAR), 'utf8')) as FramesSidecar) : null;
+
+  // The library over spine-core's poses of the same build: the reading recomputed, and the plant planted, off a second poser's frames.
+  const library = (plant: OutsidePlant = {}): OutsideReading[] => {
+    if (pre.length > 0) return [];
+    const posable = posableFromText(readFileSync(join(aBuild, 'skeleton.json'), 'utf8'), readFileSync(join(aBuild, 'skeleton.atlas'), 'utf8'), aBuild);
+    const poser = spinePoser(posable.data);
+    const sets = new Map(Object.keys(PASS_PROBE_SETS).map((set) => [set, sampleAnimation(poser, set, fps)] as const));
+    const { x, y, width, height } = VIEWPORT_PIN;
+    return outsideViewport(sets, viewportFor(x, y, x + width, y + height, VIEWPORT_MAX), plant);
+  };
+
+  // VP01 — Bar 1a: a second candidate under the first one's box draws on its pixel grid, to the byte.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      probes.push(...sameGridFaults(dir('a_fit'), dir('b_from'), 'B under --viewport-from A, far hidden'));
+      probes.push(...sameGridFaults(dir('a_fit'), dir('b_box'), "B under --viewport <A's box> --max 64, far hidden"));
+      const said = (bFrom?.stdout ?? '').split('\n').find((l) => l.includes('viewport given by --viewport-from'));
+      if (said === undefined || !said.includes('every drawn piece of every frame is inside it')) probes.push(`B under A's box printed ${JSON.stringify(said?.trim())}, required the given box and that nothing drawn reaches past it`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'VP01_A_SECOND_CANDIDATE_UNDER_THE_FIRST_ONES_BOX_LANDS_ON_ITS_PIXELS',
+      ok,
+      probeDetail(ok, probes, "candidate B — the probe plus a slot of its own far to the right — under A's box, read off A's frames.json and stated as --viewport with --max: frames.json's viewport is A's, the leg's world corners land on A's pixels through each file's stated transform, and every PNG of every set is A's bytes with that slot hidden"),
+      'issue #1414 Bar 1a: two candidates auto-fit to two grids, and a comparison needed a transform written by hand; one box given is one grid, measured to the byte rather than asserted',
+    );
+  }
+
+  // VP02 — Bar 1b: every slot past the box is named by set and frame, the line says what happens to it, and frames.json records it.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const derived = viewportProbeOutside(fps).past;
+      for (const [key, w] of derived) {
+        const [set, slot] = key.split('\u0000');
+        const want = `outside  ${JSON.stringify(set)}: slot ${JSON.stringify(slot)} reaches past the box on ${w.frames.length} frame(s) [${indexRuns(w.frames)}] at ${fps} fps`;
+        const line = lines.find((l) => l.includes(want));
+        if (line === undefined) probes.push(`no line ${JSON.stringify(want)}`);
+        else if (!line.includes('what lies past the box is not drawn')) probes.push(`the line for "${set}" "${slot}" does not say what happens to what lies past the box`);
+      }
+      const outsideLines = lines.filter((l) => /\.\.\s+outside\s/.test(l)).length;
+      if (outsideLines !== derived.size) probes.push(`${outsideLines} outside line(s) printed, the probe's numbers give ${derived.size}`);
+      if (pinFile?.pinned === undefined) probes.push('frames.json of the pinned render records no `pinned`');
+      else {
+        if (pinFile.pinned.by !== '--viewport') probes.push(`frames.json records the box given by ${JSON.stringify(pinFile.pinned.by)}, required "--viewport"`);
+        probes.push(...viewportOutsideFaults(pinFile.pinned.outside, fps).map((f) => `frames.json: ${f}`));
+      }
+      // B under A's box with its far slot drawn: the slot no frame of A's box holds is named on every frame of every set.
+      const whole = existsSync(join(dir('b_whole'), FRAMES_SIDECAR)) ? (JSON.parse(readFileSync(join(dir('b_whole'), FRAMES_SIDECAR), 'utf8')) as FramesSidecar) : null;
+      const aView = aSheet();
+      if (whole === null || aView === null) probes.push('B under A\'s box with its far slot drawn wrote no frames.json');
+      else {
+        const bySet = (a: { set: string }, b: { set: string }): number => (a.set < b.set ? -1 : a.set > b.set ? 1 : 0);
+        const want = whole.sets.map((s) => ({ set: s.dir, frames: Array.from({ length: s.sampled }, (_, i) => i) })).sort(bySet);
+        const far = (whole.pinned?.outside ?? []).filter((o) => o.slot === 'far').map((o) => ({ set: o.set, frames: o.frames })).sort(bySet);
+        if (JSON.stringify(far) !== JSON.stringify(want)) probes.push(`B's "far" is recorded past A's box on ${JSON.stringify(far)}, required every frame of every set`);
+        const { leg } = PASS_PLATE;
+        const farMost = Math.max(VIEWPORT_FAR.x + leg.width / 2 - (aView.x + aView.width), aView.y - (VIEWPORT_FAR.y - leg.height));
+        const farLine = (bWhole?.stdout ?? '').split('\n').find((l) => l.includes('slot "far" reaches past the box'));
+        if (farLine === undefined || !farLine.includes(`by up to ${farMost.toFixed(2)} units (right, bottom)`)) probes.push(`B's "far" line ${JSON.stringify(farLine?.trim())} does not say ${farMost.toFixed(2)} units past the right and bottom sides`);
+        if ((whole.pinned?.outside ?? []).some((o) => o.slot !== 'far')) probes.push('B under A\'s box names a slot other than "far" past it');
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'VP02_EVERY_SLOT_PAST_A_GIVEN_BOX_IS_NAMED_BY_SET_AND_FRAME',
+      ok,
+      probeDetail(ok, probes, `the probe pinned to x ${VIEWPORT_PIN.x}, y ${VIEWPORT_PIN.y}, ${VIEWPORT_PIN.width} × ${VIEWPORT_PIN.height}: the skirt is named past it on exactly the frames, by the overhang and on the sides the hip's angle derives (frames.json's \`pinned\` the same list), the legs are inside and named nowhere; and B's far slot under A's box is named on every frame of every set, past the right and bottom sides by the distance its numbers give`),
+      'issue #1414 Bar 1b: a fitted box is measured over the rig\'s own poses, a given one is not — so what it leaves out is named and recorded rather than cropped in silence',
+    );
+  }
+
+  // VP03 — the library's reading is the CLI's: spine-core's poses read the same slots past the box.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) probes.push(...viewportOutsideFaults(library(), fps).map((f) => `outsideViewport over spine-core's poses: ${f}`));
+    const ok = probes.length === 0;
+    say(
+      'VP03_THE_READING_IS_THE_PROBES_ON_A_SECOND_POSER',
+      ok,
+      probeDetail(ok, probes, "outsideViewport over spine-core's poses of the probe reads the derived frames, overhangs and sides — the positive control VP04 plants against"),
+      'issue #1414: the reading reads drawn geometry, which both posers pose alike; a plant is only red against a clean reading that is green',
+    );
+  }
+
+  // VP04 — Bar 1c: a reading that ignores the box, and a render that ignores it, each go red.
+  {
+    const clean = pre.length > 0 ? pre : viewportOutsideFaults(library(), fps);
+    const planted = pre.length > 0 ? [] : viewportOutsideFaults(library({ ownBox: true }), fps);
+    const fitted = pre.length > 0 ? [] : sameGridFaults(dir('a_fit'), dir('b_fit'), 'B fitted to its own box');
+    const ok = clean.length === 0 && planted.length > 0 && fitted.length > 0;
+    say(
+      'VP04_A_READING_OR_A_RENDER_THAT_IGNORES_THE_BOX_IS_RED',
+      ok,
+      clean.length > 0
+        ? `the unplanted reading is already red: ${clean[0]}`
+        : planted.length === 0
+          ? '{"ownBox":true} planted and VP02\'s reading found nothing'
+          : fitted.length === 0
+            ? 'B rendered with no box given lands on A\'s grid, so VP01 would pass on a render that ignored the box'
+            : `{"ownBox":true} planted: VP02's reading names it — ${planted[0]}; and B fitted to its own box is named by VP01's reading — ${fitted[0]}`,
+      'issue #1414 Bar 1c: the reading measured against the box its own frames fill finds nothing outside, and a render that ignores the box lands on another grid; both are the plausible wrong answers, and both are caught',
+    );
+  }
+
+  // VP05 — refused by name, nothing written.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const badSpec = join(probe.dir, 'viewport_bad_spec.json');
+      writeFileSync(badSpec, `${JSON.stringify({ spec: 'rigc-frames/0', viewport: {} })}\n`);
+      const badPixels = join(probe.dir, 'viewport_bad_pixels.json');
+      const sheet = JSON.parse(readFileSync(join(dir('a_fit'), FRAMES_SIDECAR), 'utf8')) as FramesSidecar;
+      writeFileSync(badPixels, `${JSON.stringify({ ...sheet, viewport: { ...sheet.viewport, pixelWidth: 51.5 } })}\n`);
+      let n = 0;
+      for (const [args, said] of [
+        [['--viewport', '0,0,10,10', '--viewport-from', dir('a_fit')], '--viewport and --viewport-from both give the box'],
+        [['--viewport-from', dir('a_fit'), '--max', '64'], '--viewport-from takes no --max'],
+        [['--viewport', '0,0,10'], '--viewport takes four numbers'],
+        [['--viewport', '0,0,0,10'], '--viewport width and height must be positive'],
+        [['--viewport-from', join(probe.dir, 'nowhere')], `no ${FRAMES_SIDECAR} at`],
+        [['--viewport-from', badSpec], 'spec is "rigc-frames/0"'],
+        [['--viewport-from', badPixels], 'viewport.pixelWidth is 51.5; it must be a whole number of pixels above 0'],
+      ] as const) {
+        const out = dir(`refused_${n++}`);
+        const run = runCli(['render', '--candidate', aBuild, ...args, '--out', out]);
+        if (run.status !== 2 || !run.stderr.includes(said)) probes.push(`${args.join(' ')}: exit ${String(run.status)}, stderr ${JSON.stringify(run.stderr.trim().split('\n')[0])} — required exit 2 and "${said}"`);
+        if (existsSync(out)) probes.push(`${args.join(' ')} was refused and still wrote ${out}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'VP05_A_BOX_THAT_CANNOT_BE_USED_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, 'the two flags together, --max beside --viewport-from, a box of three numbers, a box of width 0, a path with no frames.json, a file of another spec and a pixel width that is not whole each exit 2 naming what is wrong, and write nothing'),
+      'issue #1414: a box that cannot be the grid asked for is refused rather than replaced by one that can — a fitted box drawn in its place would be the silent answer',
+    );
+  }
+
+  // VP06 — no box given, nothing said and nothing recorded: the fitted render is the bytes it was.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const sheet = JSON.parse(readFileSync(join(dir('a_fit'), FRAMES_SIDECAR), 'utf8')) as Record<string, unknown>;
+      if ('pinned' in sheet) probes.push('a render with no box given records `pinned` in frames.json');
+      if (/viewport given by|\.\.\s+outside\s/.test(aFit?.stdout ?? '')) probes.push('a render with no box given printed a viewport or outside line');
+    }
+    const ok = probes.length === 0;
+    say(
+      'VP06_WITH_NO_BOX_GIVEN_NOTHING_IS_SAID_OR_RECORDED',
+      ok,
+      probeDetail(ok, probes, 'a fitted render prints no viewport or outside line and its frames.json carries no `pinned` — the render-hashes base, read with `bun tools/render_hashes.ts base --check`, is what holds every fitted frame to its bytes'),
+      'issue #1414 Bar 1d: no flag, no moved byte',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// angle-range — how far one bone turns against another (issue #1414)
+// ---------------------------------------------------------------------------
+
+import { type AngleFrame, type AnglePlant, AngleRangeError, type AngleRangeReading, angleRangesOf, type BonePair } from './src/anglerange.ts';
+
+/**
+ * The angle probe's chosen numbers. `base` swings in the world, `link` hangs off
+ * its tip and is keyed against it, `tail` hangs off the same tip and is moved by
+ * a physics constraint alone, and `vane`, off the root, answers the wind (for the
+ * geometry file's `environment` key). Every key falls on the protocol grid, so
+ * the keyed range is reached on a frame.
+ */
+const ANGLE_PROBE = {
+  base: { length: 40, turn: [[0, 0], [0.5, 40], [1, -25], [2, 0]] },
+  link: { x: 40, length: 30, turn: [[0, 0], [0.5, 35], [1, -20], [1.5, 10], [2, 0]], spin: 200 },
+  turnDuration: 2,
+  spinDuration: 1,
+  inertia: { low: 0.2, high: 0.8 },
+} as const;
+
+/** The probe rig and motion with the tail's `inertia`, built; the build directory, or why it is not there. */
+function buildAngleProbe(inertia: number): { outDir: string; work: string; built: string[] } {
+  const { base, link } = ANGLE_PROBE;
+  const dirs = writeProbeRig({
+    bones: [
+      { name: 'root' },
+      { name: 'base', parent: 'root', x: 0, y: 0, length: base.length },
+      { name: 'link', parent: 'base', x: link.x, y: 0, length: link.length },
+      { name: 'tail', parent: 'base', x: link.x, y: 0, length: link.length },
+      { name: 'vane', parent: 'root', x: -40, y: 0, length: 20 },
+    ],
+    slots: [
+      { name: 'base', bone: 'base', attachment: 'block' },
+      { name: 'link', bone: 'link', attachment: 'block' },
+      { name: 'tail', bone: 'tail', attachment: 'marker' },
+      { name: 'vane', bone: 'vane', attachment: 'marker' },
+    ],
+    skins: {
+      default: {
+        base: { block: { image: 'block.png' } },
+        link: { block: { image: 'block.png' } },
+        tail: { marker: { image: 'marker.png' } },
+        vane: { marker: { image: 'marker.png' } },
+      },
+    },
+  });
+  const keys = (pairs: ReadonlyArray<readonly [number, number]>): Array<{ t: number; v: number[] }> => pairs.map(([t, v]) => ({ t, v: [v] }));
+  const motionPath = join(dirs.dir, 'probe.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify(
+      {
+        spec: 'rigc-motion/1',
+        archetype: 'static_probe',
+        cut: 'static_probe',
+        easings: {},
+        physics: {
+          tail_swing: { bone: 'tail', rotate: 1, inertia, strength: 60, damping: 0.85, mass: 1, mix: 1 },
+          vane_swing: { bone: 'vane', rotate: 1, inertia: 0.5, strength: 60, damping: 0.85, mass: 1, mix: 1, wind: 1 },
+        },
+        animations: {
+          turn: {
+            duration: ANGLE_PROBE.turnDuration,
+            loop: false,
+            tracks: [
+              { bone: 'base', property: 'rotate', keys: keys(base.turn) },
+              { bone: 'link', property: 'rotate', keys: keys(link.turn) },
+            ],
+          },
+          spin: { duration: ANGLE_PROBE.spinDuration, loop: false, tracks: [{ bone: 'link', property: 'rotate', keys: keys([[0, 0], [ANGLE_PROBE.spinDuration, link.spin]]) }] },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  const built: string[] = [];
+  const build = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir]);
+  if (build.status !== 0) built.push(`the angle probe (inertia ${inertia}) did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`);
+  return { outDir: dirs.outDir, work: dirs.dir, built };
+}
+
+/** A keyed track's lowest and highest value and the frame each is first reached on at `fps` — from the keys alone (linear between them). */
+function keyedExtremes(pairs: ReadonlyArray<readonly [number, number]>, fps: number): { low: [number, number]; high: [number, number] } {
+  let low: [number, number] = [pairs[0][1], Math.round(pairs[0][0] * fps)];
+  let high: [number, number] = [...low];
+  for (const [t, v] of pairs) {
+    if (v < low[0]) low = [v, Math.round(t * fps)];
+    if (v > high[0]) high = [v, Math.round(t * fps)];
+  }
+  return { low, high };
+}
+
+/** The line `render --angle-range` must print for a keyed pair, written out here from the keys — the format and the numbers both. */
+function keyedAngleLine(set: string, bone: string, against: string, pairs: ReadonlyArray<readonly [number, number]>, duration: number, fps: number): string {
+  const { low, high } = keyedExtremes(pairs, fps);
+  return (
+    `"${set}": bone "${bone}" against "${against}" ranges ${low[0].toFixed(4)}° to ${high[0].toFixed(4)}° (a span of ${(high[0] - low[0]).toFixed(4)}°) ` +
+    `over ${Math.round(duration * fps) + 1} frame(s) at ${fps} fps; lowest at frame ${low[1]} (t=${(low[1] / fps).toFixed(4)}s), highest at frame ${high[1]} (t=${(high[1] / fps).toFixed(4)}s)`
+  );
+}
+
+/** AR01's reading: `link` against `base` on `turn`, and on `spin` past half a turn, is the keyed range — numbers within spine-core's π (`SPINE_PI_RELATIVE`) and frames exactly. */
+function angleKeyedFaults(readings: ReadonlyMap<string, readonly AngleRangeReading[]>, fps: number): string[] {
+  const faults: string[] = [];
+  const { link, turnDuration, spinDuration } = ANGLE_PROBE;
+  for (const [set, pairs, duration] of [['turn', link.turn, turnDuration], ['spin', [[0, 0], [spinDuration, link.spin]], spinDuration]] as const) {
+    const r = readings.get(set)?.find((p) => p.bone === 'link' && p.relativeTo === 'base');
+    if (r === undefined) {
+      faults.push(`no reading of "link:base" on "${set}"`);
+      continue;
+    }
+    const { low, high } = keyedExtremes(pairs, fps);
+    if (Math.abs(r.low.degrees - low[0]) > SPINE_PI_RELATIVE * Math.max(1, Math.abs(low[0])) || r.low.index !== low[1]) faults.push(`"${set}" "link:base" reads its lowest ${r.low.degrees}° at frame ${r.low.index}, the keys give ${low[0]}° at frame ${low[1]}`);
+    if (Math.abs(r.high.degrees - high[0]) > SPINE_PI_RELATIVE * Math.max(1, Math.abs(high[0])) || r.high.index !== high[1]) faults.push(`"${set}" "link:base" reads its highest ${r.high.degrees}° at frame ${r.high.index}, the keys give ${high[0]}° at frame ${high[1]}`);
+    if (r.frames !== Math.round(duration * fps) + 1) faults.push(`"${set}" "link:base" read ${r.frames} frame(s), required ${Math.round(duration * fps) + 1}`);
+  }
+  return faults;
+}
+
+/** AR02's reading: the physics link reads a range on both builds, the inertia moves it, and the keyed link does not move with it. */
+function angleInertiaFaults(low: ReadonlyMap<string, readonly AngleRangeReading[]>, high: ReadonlyMap<string, readonly AngleRangeReading[]>): string[] {
+  const faults: string[] = [];
+  const span = (r: AngleRangeReading | undefined): number | null => (r === undefined ? null : r.high.degrees - r.low.degrees);
+  const pick = (m: ReadonlyMap<string, readonly AngleRangeReading[]>, bone: string): AngleRangeReading | undefined => m.get('turn')?.find((p) => p.bone === bone && p.relativeTo === 'base');
+  const [lowTail, highTail] = [span(pick(low, 'tail')), span(pick(high, 'tail'))];
+  if (lowTail === null || highTail === null) return ['no reading of "tail:base" on "turn" on one of the two builds'];
+  // At the printed precision: a range the line cannot show is not a range, and a move it cannot show is not a move.
+  if (lowTail.toFixed(4) === '0.0000' || highTail.toFixed(4) === '0.0000') faults.push(`"tail:base" spans ${lowTail.toFixed(4)}° at inertia ${ANGLE_PROBE.inertia.low} and ${highTail.toFixed(4)}° at ${ANGLE_PROBE.inertia.high} — a physics link the base swings reads no range`);
+  if (lowTail.toFixed(4) === highTail.toFixed(4)) faults.push(`"tail:base" spans ${lowTail.toFixed(4)}° at both inertias — the reading does not move with the value it is read to scale`);
+  if (JSON.stringify(pick(low, 'link')) !== JSON.stringify(pick(high, 'link'))) faults.push('"link:base", keyed and on no physics constraint, reads differently on the two builds');
+  return faults;
+}
+
+function runAngleRangeSuite(): number {
+  console.log('\n── angle-range: how far one bone turns against another, per animation (issue #1414) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const fps = PROTOCOL_FPS;
+  const lowProbe = buildAngleProbe(ANGLE_PROBE.inertia.low);
+  const highProbe = buildAngleProbe(ANGLE_PROBE.inertia.high);
+  const pre = [...lowProbe.built, ...highProbe.built];
+  const pairs: BonePair[] = [{ bone: 'link', relativeTo: 'base' }, { bone: 'tail', relativeTo: 'base' }];
+  const flag = pairs.map((p) => `${p.bone}:${p.relativeTo}`).join(',');
+  const render = (outDir: string, out: string, extra: string[]): ReturnType<typeof runCli> | null => (pre.length > 0 ? null : runCli(['render', '--candidate', outDir, '--max', '64', ...extra, '--out', out]));
+  const lowRun = render(lowProbe.outDir, join(lowProbe.work, 'r_angle'), ['--angle-range', flag]);
+  const lowSpine = render(lowProbe.outDir, join(lowProbe.work, 'r_spine'), ['--angle-range', flag, '--poser', 'spine']);
+  const lowPlain = render(lowProbe.outDir, join(lowProbe.work, 'r_plain'), []);
+  const highRun = render(highProbe.outDir, join(highProbe.work, 'r_angle'), ['--angle-range', flag]);
+  for (const [name, run] of [['low', lowRun], ['low --poser spine', lowSpine], ['low plain', lowPlain], ['high', highRun]] as const) {
+    if (pre.length === 0 && (run === null || run.status !== 0)) pre.push(`render ${name} exited ${String(run?.status)}: ${(run?.stderr ?? '').trim().slice(0, 300)}`);
+  }
+  // The design of the probe: every key time is a frame of the grid, so the keyed extremes are on frames; and the spin
+  // turns past half a turn, so a reading that does not follow its angle from frame to frame would read it otherwise.
+  for (const [t] of [...ANGLE_PROBE.link.turn, ...ANGLE_PROBE.base.turn]) if (!Number.isInteger(t * fps)) pre.push(`key time ${t} is not a frame at ${fps} fps`);
+  if (ANGLE_PROBE.link.spin <= 180) pre.push(`the spin turns ${ANGLE_PROBE.link.spin}° — the follow control needs more than half a turn`);
+  if ((ANGLE_PROBE.link.spin / (ANGLE_PROBE.spinDuration * fps)) >= 180) pre.push('the spin turns half a turn or more between two frames, which no following can read');
+
+  /** The reading over spine-core's poses of a build, per set, planted. */
+  const library = (outDir: string, plant: AnglePlant = {}): Map<string, AngleRangeReading[]> => {
+    const out = new Map<string, AngleRangeReading[]>();
+    if (pre.length > 0) return out;
+    const posable = posableFromText(readFileSync(join(outDir, 'skeleton.json'), 'utf8'), readFileSync(join(outDir, 'skeleton.atlas'), 'utf8'), outDir);
+    const poser = spinePoser(posable.data);
+    for (const set of ['turn', 'spin']) {
+      const frames: AngleFrame[] = sampleAnimation(poser, set, fps, { bones: true }).map((f) => ({ index: f.index, time: f.time, bones: f.bones ?? [] }));
+      out.set(set, angleRangesOf(pairs, frames, JSON.stringify(set), plant));
+    }
+    return out;
+  };
+  const clean = library(lowProbe.outDir);
+  const lines = (run: ReturnType<typeof runCli> | null): string[] => (run?.stdout ?? '').split('\n').filter((l) => /\.\.\s+angle\s/.test(l)).map((l) => l.replace(/^\s*\.\.\s+angle\s+/, ''));
+
+  // AR01 — Bar 3a: the keyed relative rotation reads the keyed range, exactly, printed and computed.
+  {
+    const probes = pre.length > 0 ? [...pre] : angleKeyedFaults(clean, fps);
+    if (pre.length === 0) {
+      const { link, turnDuration, spinDuration } = ANGLE_PROBE;
+      for (const want of [keyedAngleLine('turn', 'link', 'base', link.turn, turnDuration, fps), keyedAngleLine('spin', 'link', 'base', [[0, 0], [spinDuration, link.spin]], spinDuration, fps)]) {
+        if (!lines(lowRun).includes(want)) probes.push(`render --angle-range printed no line ${JSON.stringify(want)}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR01_A_KEYED_RELATIVE_ROTATION_READS_THE_KEYED_RANGE',
+      ok,
+      probeDetail(ok, probes, `"link" keyed against "base" while "base" itself swings ${ANGLE_PROBE.base.turn.map(([, v]) => v).join(' → ')}°: on "turn" the line prints the keys' ${keyedExtremes(ANGLE_PROBE.link.turn, fps).low[0]}° to ${keyedExtremes(ANGLE_PROBE.link.turn, fps).high[0]}° on the keys' frames, and on "spin" 0° to ${ANGLE_PROBE.link.spin}° — the line written out here from the keys, and the reading over spine-core's poses within ${SPINE_PI_RELATIVE} of them relative, the error of spine-core's own π`),
+      'issue #1414 Bar 3a: a reading is held to a range the keys state, not to a run of itself',
+    );
+  }
+
+  // AR02 — Bar 3b: a physics link reads a range, and the inertia moves it.
+  const highClean = library(highProbe.outDir);
+  {
+    const probes = pre.length > 0 ? [...pre] : angleInertiaFaults(clean, highClean);
+    const tail = (m: ReadonlyMap<string, readonly AngleRangeReading[]>): string => {
+      const r = m.get('turn')?.find((p) => p.bone === 'tail');
+      return r === undefined ? '?' : `${r.low.degrees.toFixed(4)}° to ${r.high.degrees.toFixed(4)}° (span ${(r.high.degrees - r.low.degrees).toFixed(4)}°)`;
+    };
+    if (pre.length === 0) {
+      const cliTail = (run: ReturnType<typeof runCli> | null): string | undefined => lines(run).find((l) => l.startsWith('"turn": bone "tail" against "base"'));
+      if (cliTail(lowRun) === undefined || cliTail(lowRun) === cliTail(highRun)) probes.push(`the CLI's "tail:base" line is ${JSON.stringify(cliTail(lowRun))} at both inertias`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR02_A_PHYSICS_LINK_READS_A_RANGE_THE_INERTIA_MOVES',
+      ok,
+      probeDetail(ok, probes, `"tail", moved by its physics constraint alone, against "base" on "turn": ${tail(clean)} at inertia ${ANGLE_PROBE.inertia.low}, ${tail(highClean)} at ${ANGLE_PROBE.inertia.high}; the keyed "link" reads the same on both builds`),
+      'issue #1414 Bar 3b: the reading exists to give a physics value a scale, so a change of the value has to show as a change of the range — and only on the link it drives',
+    );
+  }
+
+  // AR03 — Bar 3c: a pair the reading cannot read is refused by name, nothing written.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      let n = 0;
+      for (const [value, said] of [
+        ['link:nope', 'names relative-to bone "nope", which this skeleton does not have; its bones are [root, base, link, tail, vane]'],
+        ['nope:base', 'names bone "nope", which this skeleton does not have'],
+        ['link', 'entry 0 "link" has 0 ":"'],
+        ['link:base:root', 'has 2 ":"'],
+        ['link:base,,tail:base', 'entry 1 is empty'],
+        [':base', 'names no bone'],
+        ['link:link', 'reads bone "link" against itself'],
+        ['link:base,link:base', 'entry 1 names "link:base" again'],
+      ] as const) {
+        const out = join(lowProbe.work, `refused_${n++}`);
+        const run = runCli(['render', '--candidate', lowProbe.outDir, '--angle-range', value, '--max', '64', '--out', out]);
+        if (run.status !== 2 || !run.stderr.includes(said)) probes.push(`--angle-range ${value}: exit ${String(run.status)}, stderr ${JSON.stringify(run.stderr.trim().split('\n')[0])} — required exit 2 and "${said}"`);
+        if (existsSync(out)) probes.push(`--angle-range ${value} was refused and still wrote ${out}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR03_AN_UNKNOWN_BONE_OR_A_MALFORMED_PAIR_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, 'an unknown bone on either side (with the bones there are), an entry with no ":" or two, an empty entry, an empty name, a bone against itself and a pair named twice each exit 2 naming the entry, and write nothing'),
+      'issue #1414 Bar 3c: a typo read as 0° would print a clean bill for a bone nobody asked about',
+    );
+  }
+
+  // AR04, AR05 — Bar 3d and the follow: each planted wrong reading goes red, by the control that reads it.
+  for (const [code, plant, what] of [
+    ['AR04_A_READING_OF_WORLD_ANGLES_NOT_RELATIVE_ONES_IS_RED', { worldAngle: true }, 'Bar 3d: the bone\'s own world direction, which carries the base\'s swing, read as the angle against the base'],
+    ['AR05_A_READING_THAT_DOES_NOT_FOLLOW_ITS_ANGLE_IS_RED', { noFollow: true }, 'each frame\'s difference left in (−180°, 180°], so a link that sweeps 200° reads a jump'],
+  ] as const) {
+    const cleanFaults = pre.length > 0 ? pre : angleKeyedFaults(clean, fps);
+    const planted = pre.length > 0 ? [] : angleKeyedFaults(library(lowProbe.outDir, plant), fps);
+    say(
+      code,
+      cleanFaults.length === 0 && planted.length > 0,
+      cleanFaults.length > 0 ? `the unplanted reading is already red: ${cleanFaults[0]}` : planted.length === 0 ? `${JSON.stringify(plant)} planted and AR01's reading found nothing` : `${JSON.stringify(plant)} planted: AR01's reading names it — ${planted[0]}; unplanted it reads clean`,
+      `issue #1414: ${what} — a plausible wrong reading, planted and caught by name`,
+    );
+  }
+
+  // AR06 — a bone with no direction is refused by name rather than read as 0°.
+  {
+    const probes: string[] = [];
+    const bone = (name: string, scale: number): BoneSnapshot => ({ name, worldX: 0, worldY: 0, a: scale, b: 0, c: 0, d: scale, rotationX: 0, rotationY: 90, scaleX: scale, scaleY: scale });
+    const frames = (scale: number): AngleFrame[] => [0, 1].map((index) => ({ index, time: index / fps, bones: [bone('a', 1), bone('b', index === 1 ? scale : 1)] }));
+    try {
+      angleRangesOf([{ bone: 'a', relativeTo: 'b' }], frames(1), '"probe"');
+    } catch (err) {
+      probes.push(`two posed bones were refused: ${(err as Error).message}`);
+    }
+    try {
+      angleRangesOf([{ bone: 'a', relativeTo: 'b' }], frames(0), '"probe"');
+      probes.push('a bone whose world matrix is zero at frame 1 was read, not refused');
+    } catch (err) {
+      const said = 'frame 1 (t=0.0833s): bone "b" has no direction — its world matrix is zero';
+      if (!(err instanceof AngleRangeError) || !err.message.includes(said)) probes.push(`refused as ${JSON.stringify((err as Error).message)}, required an AngleRangeError saying "${said}"`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR06_A_BONE_WITH_NO_DIRECTION_IS_REFUSED_NOT_READ_AS_ZERO',
+      ok,
+      probeDetail(ok, probes, 'two frames of two posed bones read; the same frames with the second bone\'s world matrix zero on frame 1 — what an unposed bone\'s snapshot is — are refused naming the bone and the frame'),
+      'issue #1414: an unposed bone\'s snapshot is all zeros, and its rotationX of 0 is not an angle; read, it would put 0° into every range it touched',
+    );
+  }
+
+  // AR07 — one reading on both posers, and the CLI's line is the library's over a second poser.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const sorted = (run: ReturnType<typeof runCli> | null): string => [...lines(run)].sort().join('\n');
+      if (sorted(lowRun) !== sorted(lowSpine)) probes.push('render --angle-range under the core and under --poser spine print different lines');
+      if (lines(lowRun).length !== pairs.length * 2) probes.push(`render --angle-range printed ${lines(lowRun).length} angle line(s), required ${pairs.length * 2} — one per pair per set`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR07_THE_READING_IS_ONE_ON_BOTH_POSERS',
+      ok,
+      probeDetail(ok, probes, `the core's render and --poser spine's render print the same ${pairs.length * 2} line(s), one per pair per set`),
+      'issue #1414: the reading reads the bones the frames were posed with, which both posers pose — two answers would be a reading of the poser',
+    );
+  }
+
+  // AR08 — the flag moves no byte, and without it nothing is read.
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      const files = (root: string): string[] => readdirSync(root, { recursive: true }).map(String).filter((f) => statSync(join(root, f)).isFile()).sort();
+      const plainRoot = join(lowProbe.work, 'r_plain');
+      const angleRoot = join(lowProbe.work, 'r_angle');
+      if (JSON.stringify(files(plainRoot)) !== JSON.stringify(files(angleRoot))) probes.push(`render --angle-range wrote [${files(angleRoot).join(', ')}], the plain render [${files(plainRoot).join(', ')}]`);
+      for (const f of files(plainRoot)) if (existsSync(join(angleRoot, f)) && !readFileSync(join(plainRoot, f)).equals(readFileSync(join(angleRoot, f)))) probes.push(`${f} differs between the plain render and render --angle-range`);
+      if (lines(lowPlain).length > 0) probes.push('a render without --angle-range printed an angle line');
+    }
+    const ok = probes.length === 0;
+    say(
+      'AR08_THE_FLAG_MOVES_NO_BYTE',
+      ok,
+      probeDetail(ok, probes, 'render --angle-range writes the plain render\'s files, byte for byte, and nothing more; without the flag no line is printed'),
+      'issue #1414: a reading is printed, not written — no flag, no moved byte',
+    );
+  }
+
+  // AR09 — AR02's reading can fire: one inertia read twice moves nothing, and it is named.
+  {
+    const cleanFaults = pre.length > 0 ? pre : angleInertiaFaults(clean, highClean);
+    const planted = pre.length > 0 ? [] : angleInertiaFaults(clean, library(lowProbe.outDir));
+    say(
+      'AR09_ONE_INERTIA_READ_TWICE_IS_RED',
+      cleanFaults.length === 0 && planted.length > 0,
+      cleanFaults.length > 0 ? `the unplanted reading is already red: ${cleanFaults[0]}` : planted.length === 0 ? 'the low build read against itself and AR02\'s reading found nothing' : `the low build read against itself: AR02's reading names it — ${planted[0]}`,
+      'issue #1414: a control nobody has seen fail is not a control — AR02 must be able to say the inertia moved nothing',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
+// render-naming — what a render's directories and geometry.json are called, held to the code (issue #1414)
+// ---------------------------------------------------------------------------
+
+/** The guide's and `render --help`'s sentence on the set directories, as the naming function spells it — every fragment it must carry. */
+function fpsNamingFragments(name: (animation: string, fps: number) => string): string[] {
+  const other = 24;
+  return [
+    `\`${name('<anim>', other).split(String(other)).join('<fps>')}/\``,
+    `\`--fps ${other}\` writes \`${name('<anim>', other)}/\``,
+    `the default ${PROTOCOL_FPS} writes \`${name('<anim>', PROTOCOL_FPS)}/\``,
+  ];
+}
+
+/** Each place's text against the fragments, whitespace folded so a wrapped line reads as one. */
+function fpsNamingFaults(places: ReadonlyArray<readonly [string, string]>, name: (animation: string, fps: number) => string): string[] {
+  const faults: string[] = [];
+  for (const [label, text] of places) {
+    const folded = text.replace(/\s+/g, ' ');
+    for (const fragment of fpsNamingFragments(name)) if (!folded.includes(fragment)) faults.push(`${label} does not say ${JSON.stringify(fragment)}`);
+  }
+  return faults;
+}
+
+/** The key lists §8.2 states, read off its sentence: top level (with `?` for a key written only when set), a frame, `setup`, a bone, an attachment. */
+function geometryKeysStated(guide: string): { top: Array<{ key: string; optional: boolean }>; frame: string[]; setup: string[]; bone: string[]; attachment: string[] } | string {
+  const folded = guide.replace(/\s+/g, ' ');
+  const at = folded.indexOf('**The keys, as the file writes them.**');
+  if (at < 0) return '§8.2 has no "**The keys, as the file writes them.**" sentence';
+  const sentence = folded.slice(at, folded.indexOf('Inside `setup` and each frame:', at));
+  const clause = (from: string, to: string): string | null => {
+    const i = sentence.indexOf(from);
+    const j = sentence.indexOf(to, i + from.length);
+    return i < 0 || j < 0 ? null : sentence.slice(i + from.length, j);
+  };
+  const top = clause('Top level: ', ' — ');
+  const frame = clause('Each frame: ', ';');
+  const setup = clause('and `setup`: ', '.');
+  if (top === null || frame === null || setup === null) return `§8.2's keys sentence has no "Top level: … — ", "Each frame: …;" or "and \`setup\`: …." clause: ${JSON.stringify(sentence.slice(0, 200))}`;
+  const spans = (text: string): Array<{ key: string; optional: boolean }> => [...text.matchAll(/`([A-Za-z]+)`(\?)?/g)].map((m) => ({ key: m[1], optional: m[2] === '?' }));
+  const braces = (lead: string): string[] => {
+    const i = folded.indexOf(lead);
+    const m = i < 0 ? null : /`\{ ([^}]*) \}`/.exec(folded.slice(i));
+    return m === null ? [] : m[1].split(',').map((k) => k.trim());
+  };
+  return {
+    top: spans(top),
+    frame: spans(frame).map((s) => s.key),
+    setup: spans(setup).map((s) => s.key),
+    bone: braces('- `bones` — every bone in declaration order:'),
+    attachment: braces('- `attachments` — every slot showing a region or a mesh'),
+  };
+}
+
+/** The stated key lists against two written files — one with every optional key unset, one with every one set. */
+function geometryKeysFaults(stated: ReturnType<typeof geometryKeysStated>, plain: Record<string, unknown>, full: Record<string, unknown>): string[] {
+  if (typeof stated === 'string') return [stated];
+  const faults: string[] = [];
+  const same = (label: string, want: readonly string[], got: readonly string[]): void => {
+    if (JSON.stringify(want) !== JSON.stringify(got)) faults.push(`${label}: the guide says [${want.join(', ')}], the file is written with [${got.join(', ')}]`);
+  };
+  same('top level, nothing optional set', stated.top.filter((k) => !k.optional).map((k) => k.key), Object.keys(plain));
+  same('top level, every optional key set', stated.top.map((k) => k.key), Object.keys(full));
+  const frames = plain.frames as Array<Record<string, unknown>>;
+  const first = frames[0] ?? {};
+  same('a frame', stated.frame, Object.keys(first));
+  same('setup', stated.setup, Object.keys(plain.setup as Record<string, unknown>));
+  same('a bone', stated.bone, Object.keys(((first.bones as unknown[]) ?? [])[0] ?? {}));
+  same('an attachment', stated.attachment, Object.keys(((first.attachments as unknown[]) ?? [])[0] ?? {}));
+  return faults;
+}
+
+function runRenderNamingSuite(): number {
+  console.log('\n── render-naming: the set directories and geometry.json\'s keys, as the code writes them (issue #1414) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const guide = readFileSync(join(import.meta.dir, 'docs/AUTHORING.md'), 'utf8');
+  const help = runCli(['render', '--help']);
+  const probe = buildAngleProbe(ANGLE_PROBE.inertia.low);
+  const pre = [...probe.built];
+  if (help.status !== 0) pre.push(`render --help exited ${String(help.status)}`);
+  const render = (out: string, extra: string[]): ReturnType<typeof runCli> | null => (pre.length > 0 ? null : runCli(['render', '--candidate', probe.outDir, '--max', '32', ...extra, '--out', join(probe.work, out)]));
+  const environmentPath = join(probe.work, 'environment.json');
+  writeFileSync(environmentPath, `${JSON.stringify({ spec: 'rigc-environment/1', steps: [{ t: 0.5, wind: [2, 0] }] })}\n`);
+  const at24 = render('r_24', ['--fps', '24']);
+  const atDefault = render('r_default', ['--geometry']);
+  const full = render('r_full', ['--geometry', '--skin', 'default', '--environment', environmentPath]);
+  for (const [name, run] of [['--fps 24', at24], ['--geometry', atDefault], ['--geometry --skin --environment', full]] as const) {
+    if (pre.length === 0 && (run === null || run.status !== 0)) pre.push(`render ${name} exited ${String(run?.status)}: ${(run?.stderr ?? '').trim().slice(0, 300)}`);
+  }
+  const places = [['render --help', help.stdout], ['docs/AUTHORING.md', guide]] as const;
+  const planted = (animation: string, fps: number): string => (fps === PROTOCOL_FPS ? animation : `${animation}_${fps}fps`);
+
+  // RN01 — item 4: the sentence is in both places, held to the naming function, and the directories on disk are its.
+  {
+    const probes = pre.length > 0 ? [...pre] : fpsNamingFaults(places, frameSetDir);
+    if (pre.length === 0) {
+      for (const [root, fps] of [['r_24', 24], ['r_default', PROTOCOL_FPS]] as const) {
+        const sheet = JSON.parse(readFileSync(join(probe.work, root, FRAMES_SIDECAR), 'utf8')) as FramesSidecar;
+        for (const set of ['turn', 'spin']) {
+          const want = frameSetDir(set, fps);
+          if (!sheet.sets.some((s) => s.dir === want) || !existsSync(join(probe.work, root, want))) probes.push(`render at ${fps} fps wrote no "${want}" set for "${set}" (frames.json sets [${sheet.sets.map((s) => s.dir).join(', ')}])`);
+        }
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'RN01_THE_FPS_DIRECTORY_SENTENCE_IS_THE_NAMING_FUNCTIONS',
+      ok,
+      probeDetail(ok, probes, `render --help and docs/AUTHORING.md each say ${fpsNamingFragments(frameSetDir).join(', ')} — every fragment derived from frameSetDir — and a render at 24 fps and at the default writes the directories it names`),
+      'issue #1414 item 4: `--fps 24` wrote `dance@24fps/` and nothing a reader could open said so; a sentence held to the function cannot drift from it',
+    );
+  }
+
+  // RN02 — a naming function the sentence does not describe is named in both places.
+  {
+    const cleanFaults = pre.length > 0 ? pre : fpsNamingFaults(places, frameSetDir);
+    const faults = pre.length > 0 ? [] : fpsNamingFaults(places, planted);
+    say(
+      'RN02_A_NAMING_FUNCTION_THE_SENTENCE_DOES_NOT_DESCRIBE_IS_RED',
+      cleanFaults.length === 0 && faults.length >= places.length,
+      cleanFaults.length > 0 ? `the sentence is already red: ${cleanFaults[0]}` : faults.length < places.length ? `a planted \`<anim>_<fps>fps\` naming was named in ${faults.length} place(s), required both` : `a planted \`<anim>_<fps>fps\` naming: ${faults.length} fault(s), the first ${faults[0]}`,
+      'issue #1414: a doc check nobody has seen fail is not a check',
+    );
+  }
+
+  // RN03 — item 5: §8.2 names geometry.json's keys as written, read off two written files.
+  const readGeometry = (root: string): Record<string, unknown> | null => {
+    const path = join(probe.work, root, 'turn', GEOMETRY_FILE);
+    return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>) : null;
+  };
+  const plainFile = pre.length > 0 ? null : readGeometry('r_default');
+  const fullFile = pre.length > 0 ? null : readGeometry('r_full');
+  const stated = geometryKeysStated(guide);
+  {
+    const probes = [...pre];
+    if (pre.length === 0) {
+      if (plainFile === null || fullFile === null) probes.push('a render --geometry wrote no geometry.json for "turn"');
+      else probes.push(...geometryKeysFaults(stated, plainFile, fullFile));
+    }
+    const ok = probes.length === 0;
+    say(
+      'RN03_THE_GUIDE_NAMES_GEOMETRY_JSONS_KEYS_AS_WRITTEN',
+      ok,
+      probeDetail(ok, probes, `§8.2's keys sentence and its two brace lists against two written files: top level [${typeof stated === 'string' ? '?' : stated.top.map((k) => `${k.key}${k.optional ? '?' : ''}`).join(', ')}] in order — the optional keys absent from a plain --geometry render and present under --skin and --environment — and a frame's, setup's, a bone's and an attachment's keys as the file writes them`),
+      'issue #1414 item 5: a reader looked for a frame\'s pieces under `slots`, the rig spec\'s word, and the file writes them under `attachments`; the sentence that names the keys is read against a file, so the two cannot drift',
+    );
+  }
+
+  // RN04 — a sentence that names the frame's pieces `slots`, and a file written with a key the sentence lacks, each go red.
+  {
+    const cleanFaults = pre.length > 0 ? pre : plainFile === null || fullFile === null ? ['no file'] : geometryKeysFaults(stated, plainFile, fullFile);
+    const wrongWord = pre.length > 0 || plainFile === null || fullFile === null ? [] : geometryKeysFaults(geometryKeysStated(guide.replace('Each frame: `index`, `time`, `bones`, `attachments`', 'Each frame: `index`, `time`, `bones`, `slots`')), plainFile, fullFile);
+    const extraKey =
+      pre.length > 0 || plainFile === null || fullFile === null
+        ? []
+        : geometryKeysFaults(stated, { ...plainFile, frames: (plainFile.frames as Array<Record<string, unknown>>).map((f) => ({ ...f, pieces: [] })) }, fullFile);
+    say(
+      'RN04_A_STALE_KEY_SENTENCE_OR_AN_UNNAMED_KEY_IS_RED',
+      cleanFaults.length === 0 && wrongWord.length > 0 && extraKey.length > 0,
+      cleanFaults.length > 0
+        ? `the unplanted reading is already red: ${cleanFaults[0]}`
+        : wrongWord.length === 0
+          ? 'the sentence planted with `slots` for a frame\'s `attachments` read clean'
+          : extraKey.length === 0
+            ? 'a file planted with a frame key `pieces` the sentence does not name read clean'
+            : `\`slots\` planted for \`attachments\`: ${wrongWord[0]}; a frame key \`pieces\` planted in the file: ${extraKey[0]}`,
+      'issue #1414: the polisher\'s own wrong word is the plant — the check has to name it',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
@@ -136498,6 +137360,9 @@ function main(): void {
   tally.of('folds', runFoldsSuite);
   tally.of('pass-through', runPassThroughSuite);
   tally.of('whirl', runWhirlSuite);
+  tally.of('render-viewport', runRenderViewportSuite);
+  tally.of('angle-range', runAngleRangeSuite);
+  tally.of('render-naming', runRenderNamingSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
