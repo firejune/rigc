@@ -24,7 +24,9 @@ import {
   physicsKeyRefusal,
   physicsOutsideSays,
   physicsRuleFor,
+  physicsStepStability,
   type PhysicsPoseRule,
+  type PhysicsStepStability,
 } from '../../timelines.ts';
 
 /**
@@ -165,6 +167,9 @@ export function a23PhysicsConstraintEffective({ fail, skip, stats }: Verdicts, f
     });
   }
   let mutedUntilKeyed = 0;
+  // Each constraint whose setup values the stability clause read, by position — the
+  // floor every animation's combination is taken from below.
+  const setupCombos = new Map<number, StabilityCombo>();
   facts.constraints.forEach((constraint, index) => {
     const physics = constraint.physics;
     if (physics === undefined) return;
@@ -245,6 +250,24 @@ export function a23PhysicsConstraintEffective({ fail, skip, stats }: Verdicts, f
     if (physics.step <= 0 || !Number.isFinite(physics.step)) {
       fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has step ${physics.step} (fps must be > 0)`);
     }
+    // --- the step itself has to settle (issue #1416, part B) ------------------
+    //
+    // The rows above judge each value against its own interval; this is the one
+    // joint condition, `physicsStepStability`'s. It is read only where the rows
+    // it combines all hold — a value its own row refuses is named there, and a
+    // second line about the same number would be the same fault twice — and
+    // only on a constraint that drives something, which the first clause names
+    // otherwise.
+    if (components.length && stableInputs(pose, physics.step)) {
+      const setupCombo: StabilityCombo = {
+        strength: { value: pose.strength, from: 'setup' },
+        massInverse: { value: pose.massInverse, from: 'setup' },
+        damping: { value: pose.damping, from: 'setup' },
+      };
+      const at = physicsStepStability(pose.strength, pose.massInverse, pose.damping, physics.step);
+      if (!at.stable) fail('A23_PHYSICS_CONSTRAINT_EFFECTIVE', `${where} has ${runawaySays(setupCombo, physics.step, at)}`);
+      setupCombos.set(index, setupCombo);
+    }
   });
   // What the PASS would otherwise not say: this rig rests with physics off
   // on that many constraints and an animation is what switches them on. A
@@ -302,4 +325,155 @@ export function a23PhysicsConstraintEffective({ fail, skip, stats }: Verdicts, f
     }
   }
   stats.physicsTimelineKeys = keysRead;
+
+  // --- the step has to settle on every pose an animation reaches (#1416) ----
+  //
+  // 🔑 **Which combinations are read.** Per animation and per constraint its
+  // `strength`, `mass` or `damping` timelines reach (a named one, or each a
+  // global one reaches): the LARGEST strength, the LARGEST massInverse and the
+  // SMALLEST damping that animation can pose on that constraint, judged
+  // together. A value's candidates are every key and every Bézier sample of
+  // every such timeline, as the pose field it lands in (`posed`) — and the
+  // setup value as well wherever the animation keys that value not at all, or
+  // keys it first after t = 0, because before its first key a timeline poses the
+  // setup value. Each extreme is exact for its own value: the runtime moves
+  // a value linearly between those points, `massInverse` is monotone in the
+  // mass it inverts, and the bound is monotone in damping.
+  //
+  // ⚠️ The JOINT is an upper bound rather than a time-aligned pose: an
+  // animation that raises strength while it raises mass, so the ratio holds,
+  // is judged at the larger strength against the smaller mass. That is the
+  // conservative direction — no pose this animation reaches is less stable
+  // than the combination read — and it was chosen over evaluating the three
+  // curves at shared times because the facts carry each curve's values and
+  // not its sample times, and because a single held key crossing the bound is
+  // already a runaway. A line names which key or setup supplied each value, so
+  // a refusal of that kind says so.
+  //
+  // A combination equal to the setup's is not repeated: the setup line names
+  // it already. A value its own row refuses is left out of the extremes — it
+  // was named above, by its key.
+  const keyed = new Map<string, Map<number, Partial<Record<StabilityWord, Candidate[]>>>>();
+  for (const timeline of facts.timelines) {
+    if (timeline.kind !== 'physics' || !isStabilityWord(timeline.word)) continue;
+    const rule = physicsRuleFor(timeline.word);
+    if (rule === undefined) continue;
+    const word = timeline.word;
+    const values = timeline.channelValues(0);
+    const firstTime = timeline.frames[0]?.time ?? 0;
+    const candidates: Candidate[] = [];
+    // `channelValues` lists each key and then the Bézier samples of the segment
+    // it opens, so the next key's value is that key and anything else is the
+    // curve leaving the key before it.
+    let next = 0;
+    for (const value of values) {
+      const frame = timeline.frames[next];
+      const isKey = frame !== undefined && frame.value === value;
+      if (isKey) next++;
+      const posedValue = timeline.posed === undefined ? rule.toPose(value) : timeline.posed(value);
+      if (physicsKeyRefusal(rule, value, posedValue) !== null) continue;
+      candidates.push({
+        value: posedValue,
+        from: isKey ? `the key at t=${frame.time.toFixed(6)}s` : `the curve after the key at t=${(timeline.frames[next - 1]?.time ?? 0).toFixed(6)}s`,
+      });
+    }
+    const byConstraint = keyed.get(timeline.animation) ?? new Map<number, Partial<Record<StabilityWord, Candidate[]>>>();
+    keyed.set(timeline.animation, byConstraint);
+    for (const index of timeline.reach) {
+      const setup = setupCombos.get(index);
+      if (setup === undefined) continue;
+      const slot = byConstraint.get(index) ?? {};
+      byConstraint.set(index, slot);
+      const list = slot[word] ?? [];
+      list.push(...candidates);
+      // Before the first key the timeline poses the setup value.
+      if (firstTime > 0) list.push(setup[STABILITY_FIELD[word]]);
+      slot[word] = list;
+    }
+  }
+  for (const [animation, byConstraint] of keyed) {
+    for (const [index, slot] of byConstraint) {
+      const setup = setupCombos.get(index);
+      const physics = facts.constraints[index]?.physics;
+      if (setup === undefined || physics === undefined) continue;
+      const pick = (word: StabilityWord, worse: (a: number, b: number) => boolean): Candidate => {
+        const list = slot[word];
+        // A value this animation never keys, or keys only with values refused above, stays at setup.
+        if (list === undefined || list.length === 0) return setup[STABILITY_FIELD[word]];
+        return list.reduce((best, one) => (worse(one.value, best.value) ? one : best));
+      };
+      const combo: StabilityCombo = {
+        strength: pick('strength', (a, b) => a > b),
+        massInverse: pick('mass', (a, b) => a > b),
+        damping: pick('damping', (a, b) => a < b),
+      };
+      if (combo.strength.value === setup.strength.value && combo.massInverse.value === setup.massInverse.value && combo.damping.value === setup.damping.value) continue;
+      const at = physicsStepStability(combo.strength.value, combo.massInverse.value, combo.damping.value, physics.step);
+      if (at.stable) continue;
+      fail(
+        'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+        `animation "${animation}" can pose physics "${facts.constraints[index]?.name ?? `#${index}`}" at ${runawaySays(combo, physics.step, at)}`,
+      );
+    }
+  }
+}
+
+/** The three timelines whose values the stability clause combines. */
+type StabilityWord = 'strength' | 'mass' | 'damping';
+const STABILITY_FIELD: Record<StabilityWord, keyof StabilityCombo> = { strength: 'strength', mass: 'massInverse', damping: 'damping' };
+function isStabilityWord(word: string): word is StabilityWord {
+  return word === 'strength' || word === 'mass' || word === 'damping';
+}
+
+/** One value the stability clause read, and where it came from: `setup`, or a key or curve of the animation. */
+interface Candidate {
+  readonly value: number;
+  readonly from: string;
+}
+
+/** The three pose values the stability clause judges together. */
+interface StabilityCombo {
+  readonly strength: Candidate;
+  readonly massInverse: Candidate;
+  readonly damping: Candidate;
+}
+
+/** Whether every value the stability clause combines is inside its own row, so the joint condition is the only one left to read. */
+function stableInputs(pose: PhysicsSetup, step: number): boolean {
+  if (!(step > 0) || !Number.isFinite(step)) return false;
+  return PHYSICS_POSE_RULES.every((rule) => rule.timeline === 'mix' || rule.poseOk(pose[rule.field]));
+}
+
+/** A number as an author typed it: `1 / (1 / 45)` prints 45 rather than its last-bit neighbour. */
+function plain(value: number): string {
+  return String(Number(value.toPrecision(12)));
+}
+
+/**
+ * The stability clause's sentence: the four authored numbers, `k` and the bound
+ * as the runtime forms them, what the step does at that pose, and the four
+ * levers that move it back under the bound.
+ */
+function runawaySays(combo: StabilityCombo, step: number, at: PhysicsStepStability): string {
+  const src = (c: Candidate): string => (c.from === 'setup' ? '' : ` (${c.from})`);
+  const fps = plain(1 / step);
+  const places = apart(at.k, at.bound, 4);
+  return (
+    `strength ${combo.strength.value}${src(combo.strength)}, mass ${plain(1 / combo.massInverse.value)} (massInverse ${combo.massInverse.value})${src(combo.massInverse)}, ` +
+    `fps ${fps}, damping ${combo.damping.value}${src(combo.damping)} — strength·massInverse·step² = ${at.k.toFixed(places)} must be < ` +
+    `2·(1 + damping^(60·step)) = ${at.bound.toFixed(places)}: at or past that bound the step stops settling — one step can ` +
+    `multiply the offset by ${at.growth.toFixed(apart(at.growth, 1, 3))} every 1/${fps} s — so a push (wind, gravity, a key, the ` +
+    'bone moving) never dies out, and past the bound it grows without limit; lower strength, raise mass, raise fps or raise damping'
+  );
+}
+
+/**
+ * The fewest decimal places, from `min`, at which `a` and `b` print apart — so
+ * a value one part in 10⁹ past the bound does not print as equal to it. Two
+ * equal numbers print at `min`.
+ */
+function apart(a: number, b: number, min: number): number {
+  if (a === b) return min;
+  for (let places = min; places < 17; places++) if (a.toFixed(places) !== b.toFixed(places)) return places;
+  return 17;
 }
