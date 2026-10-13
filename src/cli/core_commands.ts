@@ -22,7 +22,7 @@ import { checkLines, CheckPlates } from '../check.ts';
 import { writeCheckPictures } from '../checkpics.ts';
 import { compile, type CompileOptions, droppedStateReason, relativeImagesPath } from '../compile.ts';
 import { CoreInputError, readModel } from '../core/index.ts';
-import { type WhirlAnimation, WHIRL_HEADER, whirlLines, whirlReading } from '../whirl.ts';
+import { leverFractionWhy, leverHeader, leverLines, leverReading, type LeverReading, type WhirlAnimation, WHIRL_HEADER, whirlLines, whirlReading } from '../whirl.ts';
 import { surveyOfBuild } from '../deformbuild.ts';
 import type { DeformSurvey } from '../deformsurvey.ts';
 import { deformReportBlock } from '../deformreport.ts';
@@ -1276,6 +1276,11 @@ function refuseUnposableArt(result: CompileResult, opts: CompileOptions): void {
 export function cmdExplain(flags: Record<string, string>): void {
   // `--poser` is refused by its spelling before anything compiles (issue #1019): it chooses the deform survey's reader and poser.
   const poser = readPoserFlag(flags);
+  // `--lever-fold` is refused by its value before anything compiles, too (issue #1427): the fraction is the caller's and
+  // has no default, so a value that is not one is a usage error rather than a reading taken at a guess.
+  const leverFold = flags['lever-fold'] === undefined ? null : Number(flags['lever-fold']);
+  const leverWhy = leverFold === null ? null : leverFractionWhy(leverFold);
+  if (leverWhy !== null) throw new UsageError(`--lever-fold ${JSON.stringify(flags['lever-fold'])}: ${leverWhy}`);
   const { label, opts } = resolveCut(flags);
   console.log(`rigc explain ${label}`);
   // See the identical pair of lines in `cmdBuild` for why both paths are named
@@ -1567,6 +1572,23 @@ export function cmdExplain(flags: Record<string, string>): void {
     }
     if (reading !== null && reading.length === 0) console.log('  ..    turn     not read — the skeleton declares no animation to walk');
     for (const line of whirlLines(reading ?? [])) console.log(`  ..    turn     ${line}`);
+    // The lever reading (issue #1427): on the same walk, the steps a scaleX drive's inertia lever divides by a collapsed
+    // divisor, and the steps its scale factor jumps. Only when asked for, because its fraction has no default —
+    // and said so when not asked, rather than left out in silence.
+    if (leverFold === null) {
+      console.log('\n  ..    lever    not read — `--lever-fold <fraction>` states the fraction of its setup divisor a scaleX lever is named for dividing below, and it has no default');
+    } else {
+      console.log(`\n${leverHeader(leverFold)}`);
+      let levers: LeverReading | null = null;
+      try {
+        levers = leverReading(readModel(modelDocument(result.model, result.skeletonText, result.atlasText), `the lever reading of ${label}`), leverFold);
+      } catch (err) {
+        if (!(err instanceof CoreInputError)) throw err;
+        console.log(`  ..    lever    not read — the core refused the model document: ${err.message}`);
+      }
+      if (levers !== null && levers.animations.length === 0 && levers.unread.length < result.physics.length) console.log('  ..    lever    not read — the skeleton declares no animation to walk');
+      for (const line of levers === null ? [] : leverLines(levers)) console.log(`  ..    lever    ${line}`);
+    }
   }
 
   // Path constraints, with the curve each one follows MEASURED — its length and

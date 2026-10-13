@@ -251,6 +251,7 @@ What the flags mean:
 | `--viewport`, `--viewport-from` | `render`: give the box every frame is drawn over instead of fitting one — `--viewport <x,y,w,h>`, a world box, y up, `x,y` its bottom-left corner, at the pixel size `--max` gives; or `--viewport-from <frames.json \| dir>`, an earlier render's grid exactly (its box, scale and pixel size), so two candidates land on one pixel grid. A slot that reaches past the box is named by set and frame, and `frames.json` records the box was given under `pinned`. The two together are refused, and so is `--max` beside `--viewport-from` — **§8.6**. On `check` and `inspect`, `--viewport` pins the box those commands draw over instead |
 | `--environment` | `render` only: the wind and gravity the rig's physics constraints answer, in time — a schedule file `{ "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, "wind"?: [x, y], "gravity"?: [x, y] }, …] }`, x right and **y down**, each step holding from its `t` until the next. Both posers set each change before the step that poses the first frame at or after its `t`, and draw the same frames, `geometry.json` and `frames.json` (`RE01`). `frames.json` and `geometry.json` record it, and the framing reads it. A malformed file, a half no physics constraint answers, two steps on one frame and a step after every set's last frame are refused by name, exit 2, nothing written; `check` refuses a frame set drawn under one as a reference. Without it every file is the bytes it always was. An inspection of the response the rig states, not a scene — **§8.4** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
+| `--lever-fold` | `explain` only: a fraction above 0 and at most 1. Also read, on the turn lines' walk, the steps where a physics constraint that drives `scaleX` has its inertia lever divide by less than this fraction of the divisor it takes at the setup pose, and the steps where the scale factor it applies moves by more than the bone's setup scale. **No default**: without it the reading is not taken and one line says so; a value that is not such a fraction is refused by name (exit 2). A reading, not a gate — **§4.6.2** |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
 | `--ledger` | `vote --record` only: the append-only JSONL the vote lands in (default `votes.jsonl`), one vote per line |
@@ -1136,7 +1137,9 @@ bun cli.ts pose     --images path/to/parts --frame poseA.png [--out pose.json]
   extremes, how far each vertex moved and whether the winding survived
   (**§4.11.2**). A rig with a physics constraint also gets the **turn lines** —
   per constraint and animation, the largest turn its bone makes in one 1/60 s step,
-  walked from the setup pose as a player starts it (**§4.6.1**). It takes no
+  walked from the setup pose as a player starts it (**§4.6.1**) — and, given
+  `--lever-fold <fraction>`, the **lever lines**: the steps a `scaleX` drive's
+  inertia lever divides by a collapsed length (**§4.6.2**). It takes no
   `--profile`, it never gates, and it does not write anything — so the figures are
   readable on a build the gate is refusing.
 
@@ -5133,7 +5136,10 @@ by `inertia` times that motion, and a 1-link rotate drive under a parent keyed
 in a single 1/60 s step at `inertia` 1, 2, 3 and 10 — the last half a turn between
 two frames. **`explain`
 prints that turn for every physics constraint and every animation** (§4.6.1), so a
-whirl is a figure you read rather than a frame you happen to watch.
+whirl is a figure you read rather than a frame you happen to watch. On a `scaleX`
+drive, a high `inertia` down a chain can also make a link's lever divide by a
+length near zero and throw its scale offset by hundreds in one step — `explain
+--lever-fold <fraction>` names those steps (§4.6.2).
 
 🧮 **Each value inside its bound is not enough: the step has to settle**
 (issue #1416). With `step = 1 / fps`, a constraint that drives anything must
@@ -5301,6 +5307,80 @@ the figure is how you see the difference without watching the right frame. A wal
 that ignores the parent's motion — the turn read in the parent's frame, or
 `render`'s walk — misses the figures above, and the selftest plants both to show it
 (`WH03`).
+
+#### 4.6.2 Where a `scaleX` lever divides by a collapsed length — `explain --lever-fold`
+
+A physics constraint that drives `scaleX` kicks its scale offset by its bone's
+motion **divided by a length**: `scaleOffset += (dx·cos + dy·sin) · inertia / rr`.
+`limit` caps `dx` and `dy`; nothing caps the division, and the kick is skipped
+only when `rr` is not above 0. `rr` is the bone's `length` times its world x-axis
+length (`√(a² + c²)` of the world matrix the step is handed) — and, on a drive
+that does not also rotate (`rotate` and `shearX` both 0), **less `scaleLag ·
+shown`**, the last integration's move of the offset weighted by how much of it was
+shown. When that divisor collapses, the next kick is enormous, children inherit
+the scale, and the lengths multiply down a chain: [measured] on a 5-link chain
+driven on `scaleX` alone at `inertia` 10, `fps` 15 and 0.95 of the step bound,
+link 3's offset jumps 24.3 → 349 in one step and the tip passes 10⁶ units with
+every assertion green (issue #1422). Whether a chain gets there depends on how far
+an offset swings, which no number in the spec states — so `build` refuses nothing
+for it, and `explain` reads it when you ask:
+
+```
+lever under 0.5× setup  (a reading, never a gate: the turn lines' walk; …)
+  ..    lever    "quiet": physics "p_v_1" (bone "v_1") reads nothing in 240 step(s): no lever divides by less than 0.5× its setup divisor 50.00, and no step moves its scale factor by its setup scale
+  ..    lever    "quiet": physics "p_v_3" (bone "v_3") lever divides by less than 0.5× its setup divisor 50.00 on 8 of 240 step(s) [8, 17, 28, 56, 83-84, 92, 99] — least 2.940 (0.05880× setup; world x axis 0.5636× setup) at step 17 (t=0.2833s)
+  ..    lever    "quiet": physics "p_v_3" (bone "v_3") scale factor moves by more than its setup scale in one step on 73 of 240 step(s) [5-13, …] — largest 1268, scale offset -616.8 → 651.4 at step 25 (t=0.4167s)
+```
+
+**The walk** is the turn lines' (§4.6.1): from the setup pose with every physics
+state reset, in steps of 1/60 s to the duration, posed by rigc's core. The
+repository's selftest walks the same probe through spine-core and holds every
+step and figure to the core's, to the bit (`LV01`).
+
+**What it names**, per animation, for every constraint that drives `scaleX`:
+
+- **a collapsed division** — a step where the lever divides (`rr` above 0) by less
+  than `--lever-fold` × the divisor it takes at the setup pose (`length` × the
+  world x-axis length there). A lever divides on a step where the constraint is
+  not pending (the first update after a reset integrates nothing), its `mix` is
+  not 0 and its `inertia` is not 0. The line gives the steps as runs and the
+  least divisor, as that fraction, with the world x-axis length the lever read on
+  that step beside it.
+- **a jump** — a step where the scale factor the constraint applies, `1 +
+  scaleOffset · mix · scaleX`, moves by more than 1: by more than the bone's own
+  setup scale, since the factor is 1 at the setup pose and multiplies whatever
+  scale the bone already has. The line gives the steps and the largest move,
+  with the offset on either side of it.
+
+⚠️ **The divisor, not the world length alone.** On the step above, link 3's lever
+reads its world x axis at 0.5636 of its setup length — not near zero — and divides
+by 0.0588 of its setup divisor, because `scaleLag · shown` (25.24) takes almost all
+of `length · |world x axis|` (28.18) away. A reading of the world length alone misses
+that step at every fraction below 0.5636, and names steps where the kick is skipped
+altogether: the same link reads 0.481 of its setup length three steps earlier while
+its divisor is −8.47, so nothing is divided (`LV04`). On a drive that rotates too
+the two are one number. A reading of the parent's **local** scale sees none of it —
+physics moves the world matrix, never a local transform (`LV03`).
+
+**The fraction is yours, stated.** `--lever-fold` has no default: what counts as
+collapsed is not a number the spec carries. Without the flag `explain` prints one
+line saying the reading was not taken (`` not read — `--lever-fold <fraction>` … ``);
+a value that is not a number above 0 and at most 1 is refused by name, exit 2
+(`LV05`).
+
+**Not read, and said so:** constraints that drive no `scaleX`, on one line —
+no lever of theirs divides by a length, which is what the gallery's and the
+public fixtures' physics read (`LV02`); and, per constraint, the cases §4.6.1
+lists — skin-required, an animation a slider applies, a walk the core refuses — plus
+a divisor, world length or offset that stops being a number (`not read — … is not
+a number from step k`), rather than the steps it named before.
+
+**A reading, not a gate.** Nothing in it is refused, `explain`'s exit is the same
+whatever it prints, and the module that computes it is the turn lines' own
+(`src/whirl.ts`, imported by `explain` alone — `WH02`). A chain that collapses is
+yours to judge: an `inertia` at or under 1, a stiffness further from the bound, or
+`rotate` driven alongside (which drops the lag term from the divisor) are the
+levers you hold.
 
 ### 4.7 `drawOrder` — reordering the slots over time
 
