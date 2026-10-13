@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.52.0](https://github.com/rig-c/core/compare/v2.51.1...v2.52.0) (2026-10-13)
+
+
+### Features
+
+* **core:** a live track takes the world its physics answers, because cloth has to move with the wind and with the rig the consumer carries across the scene ([#1416](https://github.com/rig-c/core/issues/1416)) ([#1418](https://github.com/rig-c/core/issues/1418)) ([a630155](https://github.com/rig-c/core/commit/a6301552b775e653c40381dc731747e6f547b050))
+
 ## [2.51.1](https://github.com/rig-c/core/compare/v2.51.0...v2.51.1) (2026-10-13)
 
 
