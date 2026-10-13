@@ -2524,7 +2524,7 @@ no crop to flip against, so `size` (or, for a contour, the PNG's own size) is
 placed with its centre on the bone the slot names — which is also exactly where a
 plain region attachment with no `x`/`y` would have drawn it.
 
-#### `ring` — an aperture that opens inside a pinned seam
+##### `ring` — an aperture that opens inside a pinned seam
 
 **When you need one:** a part with a hole in it that a bone opens and closes — an
 eye, a mouth, an iris. The silhouette stays exactly where the art put it and only
@@ -2593,7 +2593,7 @@ it; `A20_MESH_WEIGHTS_COHERENT` names it.
 | two or more `controls`, one of them ON `center` | `control bone "iris_aperture" sits on the aperture centre, so it has no radial direction` — the position a lone control is supposed to occupy is the one position a split cannot use. With a single control it is never asked, so this refusal cannot fire on one |
 | two `controls` at the same angle about `center` | `two control bones share the angle 90 degrees about the aperture centre` — further out is not elsewhere: the arc between them is empty and one of them would bind nothing |
 
-#### `ribbon` — a strip of cross rows riding a bone chain
+##### `ribbon` — a strip of cross rows riding a bone chain
 
 **When you need one:** a part that hangs and swings off a chain — a tail, a
 strap, a lock of hair, a drip. The strip spans the part window and each cross row
@@ -2624,7 +2624,7 @@ blend.
 | an empty `chain` | `ribbon needs at least one chain bone, got 0` |
 | a chain bone the rig does not declare | `mesh bone "nobody" is not in the rig's bone list` |
 
-#### `contour` — the mesh is the art's own silhouette
+##### `contour` — the mesh is the art's own silhouette
 
 **When you need one:** the part's outline is the interesting thing and a
 rectangle of region is the wrong shape — a leaf, a cape, a splash, anything whose
@@ -2722,7 +2722,7 @@ Self-intersection is refused; **holes are not cut out**; and nothing here does
 interior/Steiner points, so a contour mesh bends only where its outline has
 vertices.
 
-#### `grid` — a lattice over the part window
+##### `grid` — a lattice over the part window
 
 **When you need one:** the part is a plate whose *surface* moves — a face that
 turns, a cloth that ripples — and a `deform` model (§4.12) needs interior
@@ -2766,7 +2766,7 @@ rather than being checked afterwards.
 | a position outside `0..1` | `positions are fractions of the part window, 0..1` |
 | `cols` or `rows` under 2 | `it is a whole number of at least 2` |
 
-#### `depth` — give every vertex its own z, instead of one cylinder radius
+##### `depth` — give every vertex its own z, instead of one cylinder radius
 
 **On a `contour` or a `grid`.** A grid is the one it was built for: a turn
 needs interior vertices to move, and a contour has none of its own.
@@ -2817,7 +2817,7 @@ number that says whether the map covers the part or a corner of it.
 Past that angle a triangle turns inside out and `A39` refuses the build by name.
 The loop this replaces is *pick an angle, build, read the refusal, guess again*.
 
-#### Is the ceiling describing the form, or the sheet's grain?
+##### Is the ceiling describing the form, or the sheet's grain?
 
 The lines under the ceiling answer that, and they are **reports only** — nothing
 in them refuses a build or moves a ceiling.
@@ -3007,7 +3007,7 @@ would be a lie and the count stands alone. What that leaves true either way: the
 rim's depth really did come from off the art, which is harmless on a sheet
 dilated past the margin and is the whole failure on a full-frame estimate.
 
-##### `soft` — which part is soft, and which bone carries it
+###### `soft` — which part is soft, and which bone carries it
 
 A mesh can say **which vertices are soft**, so a `physics` constraint (§3.5) on
 their bone answers an impact over exactly that region — a chest, a cheek, a
@@ -3061,7 +3061,7 @@ influence through that bone's own inverse, so the **angle** a raised surface tur
 through and the **impact** a soft one answers sit on one slot. ⚠️ Read §4.11.1 before you add a mask to a part that already turns:
 past one bone the model's own coordinates are **world** ones, so `radius` and
 `about` change units.
-#### `segments` — a lattice over the art, weighted by distance to the bones you name
+##### `segments` — a lattice over the art, weighted by distance to the bones you name
 
 **When you need one:** an arbitrary layer that a chosen set of bones should
 pull — a robe over a chest, a hip and two legs; a head of hair over a skull and
@@ -3785,7 +3785,7 @@ array that decides, not the flags and not which animation the file names first. 
 key such a property from one slider only, or move both edits into the single
 animation one slider applies.
 
-#### 3.5.2.1 What each `property` can actually be read AS
+##### 3.5.2.1 What each `property` can actually be read AS
 
 **A `property` under `local: false` is read through the world transform, and four
 of those readings are bounded.** A range that names values the reader cannot
@@ -3860,7 +3860,7 @@ producible *set* is unbounded either way — the free case is in it — but if
 `local: true` is your repair for a world reader's floor, check that the driving
 bone is not itself constrained.
 
-#### 3.5.2.2 The circle a `rotate` world dial has to stay inside
+##### 3.5.2.2 The circle a `rotate` world dial has to stay inside
 
 🚨 **A `rotate`-driven slider with `local: false` has to stay inside the circle
 `[0, 360]`.** `local: false` reads the bone's **world** rotation through
@@ -6150,9 +6150,13 @@ Failures arrive in two layers, and they read differently.
 `ingest` finding. `rigc guide <RULE>` prints that rule's row(s), each under the file,
 the section and the heading it sits in, read from the shipped guide when it runs;
 `rigc guide §<n>` prints one section of this page and lists its subsections with their
-sizes, and `rigc guide §<n>.<m>` the m-th `###` under it. A name the guide does not
-have is refused with the nearest real ones, exit 1. A compile error names no rule —
-§5.1's tables are keyed on the message — so it carries no pointer.
+sizes, `rigc guide §<n>.<m>` the m-th `###` under it and `rigc guide §<n>.<m>.<k>` the
+k-th `####` under that — so a citation such as §4.5.1 here is a command. A name the
+guide does not have is refused by a rule of its own — `GUIDE_RULE_KNOWN` with the
+three nearest real names, `GUIDE_SECTION_KNOWN` with the sections that do exist —
+on stderr, exit 1 (§5.5). A compile error
+names no rule — §5.1's tables are keyed on the message — so it ends with
+` (see rigc guide §5.1)`, the section its row is in.
 
 📥 **A third surface is `ingest`'s, and it is not a failure at all.** What a skeleton
 holds and the spec format cannot say is **recorded** rather than refused — one coded
@@ -6180,7 +6184,9 @@ number, is under *nothing to draw* in §3.4.
 
 ### 5.1 Compile errors — before the gate
 
-A `CompileError` names the object and the field, and nothing is written.
+A `CompileError` names the object and the field, and nothing is written. Its line
+ends with ` (see rigc guide §5.1)`: this section, where the tables below find its row
+by its message.
 
 They arrive in two waves, and the wave tells you what kind of mistake it is. The
 first is a **shape** refusal from a spec parser — `parseRigSpec`
@@ -6661,6 +6667,17 @@ a file that is not a vote at all has no fields for the others to read.
 | <a id="V04_CHOICE_IS_ON_THE_BALLOT"></a>`V04_CHOICE_IS_ON_THE_BALLOT` | `choice` is neither `"tie"` nor one of the ballot's labels (`A`–`D`, as many as it has panes). The message lists the labels |
 | <a id="V05_REASON_CODE_FITS_THE_CHOICE"></a>`V05_REASON_CODE_FITS_THE_CHOICE` | `reasonCode` is not one the choice takes: a winner takes `preferred` or `defect-in-others`, a `tie` takes `indistinguishable`, `both-acceptable`, `both-unacceptable` or `unsure`. The message lists the ones this choice takes |
 | <a id="V06_NOT_ALREADY_RECORDED"></a>`V06_NOT_ALREADY_RECORDED` | the ledger already holds a vote on this ballot. Pass `--again` to record a deliberate re-vote, or `--ledger` to record into another file |
+
+### 5.5 `guide` — a name the guide does not have
+
+`rigc guide` refuses what it cannot print by a rule of its own, on stderr, exit 1, and
+the line ends with the pointer like every other: `rigc guide GUIDE_RULE_KNOWN` prints
+the row below.
+
+| Rule | What tripped it, and where to fix it |
+| --- | --- |
+| <a id="GUIDE_RULE_KNOWN"></a>`GUIDE_RULE_KNOWN` | no rule row names what was asked — not this page's rows, and not `docs/INGEST.md`'s finding-code table. The line names the three nearest real rule names: a name the asked one starts, or (from three characters) contains, first, then by edit distance. Copy the name from the failure line, where it stands before the colon; a name differing only in case is refused, and is the first of the three |
+| <a id="GUIDE_SECTION_KNOWN"></a>`GUIDE_SECTION_KNOWN` | no section is at the address asked. `§<n>` is a `## <n>.` heading, `§<n>.<m>` the m-th `###` under it and `§<n>.<m>.<k>` the k-th `####` under that, counted when the guide is read. The line names the deepest section the address does reach and that section's own addresses — run one of those, or `rigc guide §<n>` for the whole chapter's list |
 
 ---
 
@@ -9359,7 +9376,7 @@ emitted array all three of whose numbers change. ⇒ Read a
 `lengths` disagreement as *certainly wrong data, and visible only under
 `positionMode: fixed`*.
 
-#### 10.6b The order it writes keys in
+##### 10.6b The order it writes keys in
 
 🔬 **The editor writes every object's keys in one fixed order per kind of
 object**, and rigc writes the same. Read off the twelve exports under `examples/`: for each kind,
@@ -9464,7 +9481,7 @@ comparison of an export's rebuild against the export finds no object whose keys
 sit elsewhere, and with §10.6c it finds the header's `hash` and `spine` and
 nothing else.
 
-#### 10.6c The keys it leaves out
+##### 10.6c The keys it leaves out
 
 The editor writes a key only where its value is not the one the parser reads in its
 absence, and rigc's emitter does the same, in one pass over the finished skeleton (`withoutParserDefaults` in
@@ -9977,7 +9994,7 @@ from a cousin. If a whole side of your figure comes back that way, the repair is
 upstream: give `pose` a better frame, pin its `--scale`, or loosen
 `--anchor-residual` deliberately and read the consequences.
 
-#### 12.2b The inward step — two anchors bracket the bone between them
+##### 12.2b The inward step — two anchors bracket the bone between them
 
 ⬆️ There is **one exception** to the paragraph above, and it is one shape.
 

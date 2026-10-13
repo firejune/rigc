@@ -604,6 +604,9 @@ import {
 } from './src/ballot.ts';
 import {
   allRuleRows,
+  COMPILE_ERROR_SECTION,
+  GUIDE_RULES,
+  compileErrorLine,
   failLine,
   GUIDE_FILE,
   GUIDE_RULE_TABLES_ELSEWHERE,
@@ -612,6 +615,7 @@ import {
   guideSections,
   numberingFaults,
   type GuideRow,
+  type GuideSection,
   type GuideTexts,
 } from './src/guide.ts';
 import { ATLAS_KEY, buildPreview, PLAYER_SCRIPT_URL, SKELETON_KEY, type PreviewGate } from './src/preview.ts';
@@ -70881,6 +70885,7 @@ function emittableRules(ingestSource: string): Map<string, string> {
   for (const code of ASSERTION_NAMES) rules.set(code, 'a gate FAIL line (the registry)');
   for (const code of Object.keys(MODEL_PARSE_KIND)) rules.set(code, 'a gate FAIL line (the model side\'s parse)');
   for (const code of VOTE_RULES) rules.set(code, 'a vote --record FAIL line');
+  for (const code of GUIDE_RULES) rules.set(code, 'a guide refusal');
   for (const code of ingestFindingCodes(ingestSource).codes.keys()) rules.set(code, 'an ingest finding');
   return rules;
 }
@@ -70945,6 +70950,7 @@ function pointerBypasses(files: ReadonlyArray<{ path: string; text: string }>): 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/`\s*FAIL {2}\$\{/.test(line)) faults.push(`${path}:${i + 1} writes a FAIL line by hand — \`failLine\` writes it, with the pointer to the rule's row`);
+      if (/`rigc compile error: \$\{/.test(line)) faults.push(`${path}:${i + 1} writes a compile error line by hand — \`compileErrorLine\` writes it, with the pointer to §5.1`);
       if (/INGEST_GUTTERS\[[^\]]*\]\.padEnd/.test(line) && !(path === 'src/ingest.ts' && /findingLine/.test(lines.slice(Math.max(0, i - 3), i + 1).join('\n')))) {
         faults.push(`${path}:${i + 1} writes an ingest finding line by hand — \`findingLine\` writes it, with the pointer to the code's row`);
       }
@@ -71019,7 +71025,8 @@ function runGuideSuite(): number {
         held,
         probes,
         `${rules.size} rule(s) a line can name — ${ASSERTION_NAMES.length} assertion(s), ${Object.keys(MODEL_PARSE_KIND).length} model-side parse rule(s), ` +
-          `${VOTE_RULES.length} vote refusal(s), ${rules.size - ASSERTION_NAMES.length - Object.keys(MODEL_PARSE_KIND).length - VOTE_RULES.length} ingest finding code(s) — ` +
+          `${VOTE_RULES.length} vote refusal(s), ${GUIDE_RULES.length} guide refusal(s), ` +
+          `${rules.size - ASSERTION_NAMES.length - Object.keys(MODEL_PARSE_KIND).length - VOTE_RULES.length - GUIDE_RULES.length} ingest finding code(s) — ` +
           `each with exactly one of the ${rows.length} rule row(s) (${where}); over ${cases.length} plant(s): ${cases.join('; ')}`,
         (count) => `${count} way(s) the rule rows and the rules disagree:`,
       ),
@@ -71040,6 +71047,7 @@ function runGuideSuite(): number {
           [sources.length, 50, `${sources.length} module(s) were read`],
           [callers('failLine'), 2, `${callers('failLine')} call(s) of failLine — the gate's report and vote --record`],
           [callers('findingLine'), 2, `${callers('findingLine')} call(s) of findingLine — ingest and repack`],
+          [callers('compileErrorLine'), 1, `${callers('compileErrorLine')} call(s) of compileErrorLine — the CLI's refusal chain`],
         ],
         'so the scan did not read the modules that print these lines',
       ),
@@ -71051,6 +71059,7 @@ function runGuideSuite(): number {
       caught(mark, raisedBy(pointerBypasses(planted), { was: live }), at, cases, probes);
     };
     plantOn('src/cli/spine_commands.ts', "console.error(`  FAIL  ${'V00'}: planted`);", 'a FAIL line written by hand');
+    plantOn('src/cli/core_commands.ts', 'console.error(`rigc compile error: ${String(1)}`);', 'a compile error line written by hand');
     plantOn('src/cli/repack.ts', "lines.push(`  ${INGEST_GUTTERS.blocker.padEnd(5)} X`); const y = INGEST_GUTTERS['blocker'].padEnd(5);", 'a finding line written by hand');
     const held = probes.length === 0;
     say(
@@ -71059,8 +71068,8 @@ function runGuideSuite(): number {
       probeDetail(
         held,
         probes,
-        `${sources.length} module(s) under src/ and the two entries: no FAIL line and no finding line written by hand; failLine called ${callers('failLine')} time(s), ` +
-          `findingLine ${callers('findingLine')}; over ${cases.length} plant(s): ${cases.join('; ')}`,
+        `${sources.length} module(s) under src/ and the two entries: no FAIL line, finding line or compile error line written by hand; failLine called ${callers('failLine')} time(s), ` +
+          `findingLine ${callers('findingLine')}, compileErrorLine ${callers('compileErrorLine')}; over ${cases.length} plant(s): ${cases.join('; ')}`,
         (count) => `${count} line writer(s) that bypass the pointer:`,
       ),
       'issue #1397: "one function writes it" is what makes every line carry the same pointer; a second writer is a line without one',
@@ -71076,12 +71085,16 @@ function runGuideSuite(): number {
     if (fail !== `  FAIL  A20_MESH_WEIGHTS_COHERENT: mesh "x" vertex 12 weights sum to 0.9000${FORM}`) probes.push(`a FAIL line reads ${JSON.stringify(fail)}`);
     const finding = findingLine({ code: 'DURATION', where: 'animation "idle"', detail: 'planted', kind: 'judgement' });
     if (finding !== '  JUDGE DURATION: animation "idle" — planted (see rigc guide DURATION)') probes.push(`a finding line reads ${JSON.stringify(finding)}`);
+    const compiled = compileErrorLine('rig.json: a rig spec needs a "name"');
+    if (compiled !== 'rigc compile error: rig.json: a rig spec needs a "name" (see rigc guide §5.1)') probes.push(`a compile error line reads ${JSON.stringify(compiled)}`);
+    const section = guideAnswer(COMPILE_ERROR_SECTION, texts);
+    if (!section.ok) probes.push(`the section a compile error points at, ${COMPILE_ERROR_SECTION}, is refused: ${section.rule}: ${section.detail}`);
     // Every rule, and one member of each family, through the command's own reader.
     const asked = [...rules.keys()].map((rule) => (rule.includes('<') ? rule.replace(/<[A-Z]+>/g, 'POINT') : rule));
     let resolved = 0;
     for (const rule of asked) {
       const answer = guideAnswer(rule, texts);
-      if (!answer.ok) probes.push(`${rule}: guide refuses it — ${answer.refusal}`);
+      if (!answer.ok) probes.push(`${rule}: guide refuses it — ${answer.rule}: ${answer.detail}`);
       else resolved++;
     }
     const cases: string[] = [];
@@ -71090,7 +71103,7 @@ function runGuideSuite(): number {
       const removed = { ...texts, guide: texts.guide.split('\n').filter((_, k) => k + 1 !== first.line).join('\n') };
       const answer = guideAnswer(first.rule, removed);
       if (answer.ok) probes.push(`with ${first.rule}'s row removed, guide still answered it — the pointer would lead nowhere and say nothing`);
-      else cases.push(`${first.rule}'s row removed -> refused: ${answer.refusal.slice(0, 120)}…`);
+      else cases.push(`${first.rule}'s row removed -> refused by ${answer.rule}: ${answer.detail.slice(0, 120)}…`);
     }
     const held = probes.length === 0 && resolved === asked.length;
     say(
@@ -71099,7 +71112,8 @@ function runGuideSuite(): number {
       probeDetail(
         held,
         probes,
-        `the pointer is ${JSON.stringify(FORM)} for A20, on a FAIL line and on a finding line alike; ${resolved} of ${asked.length} rule(s) ` +
+        `the pointer is ${JSON.stringify(FORM)} for A20, on a FAIL line and on a finding line alike, and a compile error's ends ` +
+          `" (see rigc guide ${COMPILE_ERROR_SECTION})", which guide prints; ${resolved} of ${asked.length} rule(s) ` +
           `(a family asked as its POINT member) answered by guide over the shipped texts; ${cases.join('; ')}`,
         (count) => `${count} way(s) the pointer is not the form, or leads nowhere:`,
       ),
@@ -71107,25 +71121,48 @@ function runGuideSuite(): number {
     );
   }
 
-  // GD04 — the numbers the guide writes on its ### headings are the positions §<n>.<m> counts.
+  // GD04 — the numbers the guide writes on its ### and #### headings are the positions §<n>.<m> and §<n>.<m>.<k> count.
   {
     const live = numberingFaults(texts.guide);
     const sections = guideSections(texts.guide);
     const subs = sections.filter((s) => s.heading.level === 3);
-    const probes = [...live, ...floorProbes([[subs.length, 40, `${subs.length} ### heading(s) were counted`]], 'so the heading reader matched less than the guide holds')];
+    const subsubs = sections.filter((s) => s.heading.level === 4);
+    const numbered = (list: readonly GuideSection[]): number => list.filter((s) => /^\d/.test(s.heading.title)).length;
+    const probes = [
+      ...live,
+      ...floorProbes(
+        [
+          [subs.length, 40, `${subs.length} ### heading(s) were counted`],
+          [subsubs.length, 10, `${subsubs.length} #### heading(s) were counted`],
+        ],
+        'so the heading reader matched less than the guide holds',
+      ),
+    ];
     const cases: string[] = [];
     const lines = texts.guide.split('\n');
-    const five2 = subs.find((s) => s.address === '5.2');
-    const five3 = subs.find((s) => s.address === '5.3');
-    const demoted = lines.findIndex((line) => /^#### 10\.6b /.test(line));
-    if (five2 === undefined || five3 === undefined || demoted < 0) probes.push('the guide has no §5.2, §5.3 or #### 10.6b to plant on, so no plant was made');
-    else {
-      const swapped = lines.map((line, k) =>
-        k + 1 === five2.heading.line ? line.replace('### 5.2 ', '### 5.3 ') : k + 1 === five3.heading.line ? line.replace('### 5.3 ', '### 5.2 ') : line,
-      );
-      caught('§5.2 and §5.3 written in each other\'s place', raisedBy(numberingFaults(swapped.join('\n')), { was: live }), `${GUIDE_FILE}:${five2.heading.line} "### 5.3 `, cases, probes);
-      const raised = lines.map((line, k) => (k === demoted ? line.slice(1) : line));
-      caught('a lettered heading raised back to ###', raisedBy(numberingFaults(raised.join('\n')), { was: live }), `${GUIDE_FILE}:${demoted + 1} "### 10.6b `, cases, probes);
+    const at = (address: string): GuideSection | undefined => sections.find((s) => s.address === address);
+    const swap = (a: GuideSection, b: GuideSection, level: string): string =>
+      lines
+        .map((line, k) =>
+          k + 1 === a.heading.line
+            ? line.replace(`${level} ${a.address} `, `${level} ${b.address} `)
+            : k + 1 === b.heading.line
+              ? line.replace(`${level} ${b.address} `, `${level} ${a.address} `)
+              : line,
+        )
+        .join('\n');
+    const five2 = at('5.2');
+    const five3 = at('5.3');
+    const eleven1 = at('4.11.1');
+    const eleven2 = at('4.11.2');
+    const lettered = lines.findIndex((line) => /^##### 10\.6b /.test(line));
+    if (five2 === undefined || five3 === undefined || eleven1 === undefined || eleven2 === undefined || lettered < 0) {
+      probes.push('the guide has no §5.2/§5.3, no §4.11.1/§4.11.2 or no ##### 10.6b to plant on, so no plant was made');
+    } else {
+      caught('§5.2 and §5.3 written in each other\'s place', raisedBy(numberingFaults(swap(five2, five3, '###')), { was: live }), `${GUIDE_FILE}:${five2.heading.line} "### 5.3 `, cases, probes);
+      caught('§4.11.1 and §4.11.2 written in each other\'s place', raisedBy(numberingFaults(swap(eleven1, eleven2, '####')), { was: live }), `${GUIDE_FILE}:${eleven1.heading.line} "#### 4.11.2 `, cases, probes);
+      const raised = lines.map((line, k) => (k === lettered ? line.slice(1) : line));
+      caught('a lettered heading raised back to ####', raisedBy(numberingFaults(raised.join('\n')), { was: live }), `${GUIDE_FILE}:${lettered + 1} "#### 10.6b `, cases, probes);
     }
     const held = probes.length === 0;
     say(
@@ -71134,11 +71171,12 @@ function runGuideSuite(): number {
       probeDetail(
         held,
         probes,
-        `${subs.length} ### heading(s) under ${sections.filter((s) => s.heading.level === 2).length} numbered chapter(s), each writing the number §<n>.<m> counts it at; ` +
+        `${subs.length} ### heading(s) (${numbered(subs)} numbered) and ${subsubs.length} #### heading(s) (${numbered(subsubs)} numbered) under ` +
+          `${sections.filter((s) => s.heading.level === 2).length} numbered chapter(s), each number the one §<n>.<m> or §<n>.<m>.<k> counts it at; ` +
           `over ${cases.length} plant(s): ${cases.join('; ')}`,
         (count) => `${count} heading(s) whose written number is not where guide counts them:`,
       ),
-      'HQ\'s ruling on rig-c/parts#343: §<n>.<m> is the m-th ### under ## <n>., counted when it is read — so a number written on the heading has to be that count, or `rigc guide §4.6` prints a heading that says 4.5.1',
+      'HQ\'s rulings on rig-c/parts#343: §<n>.<m> is the m-th ### under ## <n>. and §<n>.<m>.<k> the k-th #### under that, counted when it is read — so a number written on a heading has to be that count, or `rigc guide §4.6` prints a heading that says 4.5.1',
     );
   }
 
@@ -71185,10 +71223,28 @@ function runGuideSuite(): number {
       { what: 'a vote refusal', args: [VOTE_RULES[0]], status: 0, out: (o) => (o.includes(rowText(VOTE_RULES[0])) ? null : 'not its row') },
       { what: 'an ingest finding code', args: [ingestRule], status: 0, out: (o) => (o.startsWith('docs/INGEST.md, line ') && o.includes(rowText(ingestRule)) ? null : 'not its row from docs/INGEST.md, naming that file') },
       { what: 'a family member', args: ['ATTACHMENT_POINT'], status: 0, out: (o) => (o.includes('the row for the family ATTACHMENT_<TYPE>') ? null : 'not the family row, said as one') },
-      { what: 'a section', args: ['§5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §5, lines \d+–\d+, [\d.]+ KB\n {2}§5\.1 /.test(o) && o.includes('\n## 5. Reading a failure\n') ? null : 'not §5 with its subsections listed and its text') },
+      { what: 'a section', args: ['§5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §5 "5\. Reading a failure", lines \d+–\d+, [\d.]+ KB\n§5\.1 {2,}[\d.]+ KB {2}5\.1 /.test(o) && o.includes('\n## 5. Reading a failure\n') ? null : 'not §5 with its subsections listed and its text') },
+      { what: 'a ### listing its ####', args: ['§4.5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5 "4\.5 `keys` — times, values, curves", lines \d+–\d+, [\d.]+ KB\n§4\.5\.1 {2} *[\d.]+ KB {2}4\.5\.1 /.test(o) ? null : 'not §4.5 with its #### listed by address, size and title') },
+      { what: 'a ####', args: ['§4.5.1'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5\.1 "4\.5\.1 [^"]*", lines /.test(o) && o.includes('\n#### 4.5.1 ') && !o.includes('\n#### 4.5.2 ') ? null : 'not §4.5.1 alone') },
       { what: 'a subsection', args: ['§5.2'], status: 0, out: (o) => (o.includes('\n### 5.2 Assertions') && !o.includes('\n### 5.3 ') ? null : 'not §5.2 alone') },
-      { what: 'an unknown rule', args: ['A20_MESH_WEIGHT_COHERENT'], status: 1, out: (o, e) => (o === '' && /^rigc guide: no rule is named A20_MESH_WEIGHT_COHERENT .*; the nearest are A20_MESH_WEIGHTS_COHERENT, /.test(e) ? null : 'not refused by name with the nearest real name first') },
-      { what: 'an unknown section', args: ['§5.9'], status: 1, out: (o, e) => (o === '' && /^rigc guide: no section is addressed §5\.9 .*the nearest are §5\.\d/.test(e) ? null : 'not refused by name with the nearest sections of §5') },
+      {
+        what: 'an unknown rule',
+        args: ['A20_MESH_WEIGHT_COHERENT'],
+        status: 1,
+        out: (o, e) =>
+          o === '' && /^FAIL {2}GUIDE_RULE_KNOWN: "A20_MESH_WEIGHT_COHERENT" — no row in docs\/AUTHORING\.md names it; the nearest: A20_MESH_WEIGHTS_COHERENT, [A-Z0-9_]+, [A-Z0-9_]+ \(see rigc guide GUIDE_RULE_KNOWN\)\n$/.test(e)
+            ? null
+            : 'not the GUIDE_RULE_KNOWN refusal with the three nearest real names, the right one first',
+      },
+      {
+        what: 'an unknown section',
+        args: ['§5.9'],
+        status: 1,
+        out: (o, e) =>
+          o === '' && /^FAIL {2}GUIDE_SECTION_KNOWN: "§5\.9" — no such section; the deepest that exists is §5 "5\. Reading a failure", whose sections are: §5\.1, §5\.2, (§5\.\d, )*§5\.\d \(see rigc guide GUIDE_SECTION_KNOWN\)\n$/.test(e)
+            ? null
+            : 'not the GUIDE_SECTION_KNOWN refusal naming §5 and its sections',
+      },
     ];
     for (const entry of ['cli.ts', 'cli_core.ts']) {
       for (const want of expectations) {
@@ -77425,7 +77481,9 @@ function runCurrencySuite(): number {
         if (line === null) continue;
         const head = /^(#{1,6}) (.*)$/.exec(line);
         if (head !== null) {
-          heading = head[1].length === 4 ? head[2] : null;
+          // `####` or below: since issue #1397 the mesh generators' field tables sit under ##### headings, because
+          // §<n>.<m>.<k> counts the ####s of §3.4 and 3.4.1–3.4.3 have to be the first three of them.
+          heading = head[1].length >= 4 ? head[2] : null;
           inTable = false;
           continue;
         }
@@ -80206,9 +80264,10 @@ function runCurrencySuite(): number {
     const compileText = readFileSync(join(root, compilePath), 'utf8');
     const flat = (text: string): string => text.replace(/\s+/g, ' ');
     const sectionOf = (text: string): string | null => {
-      // A #### under §10.6 since issue #1397, which counts §<n>.<m> as the m-th ### and holds the written numbers to it.
-      const at = text.indexOf('\n#### 10.6b ');
-      const ends = at < 0 ? [] : ['\n### ', '\n#### '].map((mark) => text.indexOf(mark, at + 1)).filter((k) => k >= 0);
+      // A ##### under §10.6 since issue #1397, which counts §<n>.<m> and §<n>.<m>.<k> and holds the written numbers to
+      // the count: a lettered 10.6b is no count, so it sits below the levels that are addressed.
+      const at = text.indexOf('\n##### 10.6b ');
+      const ends = at < 0 ? [] : ['\n### ', '\n#### ', '\n##### '].map((mark) => text.indexOf(mark, at + 1)).filter((k) => k >= 0);
       const end = ends.length === 0 ? -1 : Math.min(...ends);
       return at < 0 ? null : text.slice(at, end < 0 ? undefined : end);
     };

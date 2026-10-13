@@ -54,9 +54,27 @@ export function guidePointer(rule: string): string {
   return ` (see ${GUIDE_BIN} guide ${rule})`;
 }
 
-/** A failure line as every gate prints it: the gutter, the rule, the detail, and the pointer to the rule's row. */
+/**
+ * The section a compile error points at (HQ's ruling on rig-c/parts#343): no compile error names a rule — 0 of
+ * the 463 throw sites carry a code, and §5.1's tables are keyed on the message — and §5.1 has no #### a thrower
+ * could name, so every one points at the section its row is in. When §5.1 grows #### families a thrower can
+ * name, this is where `§5.1.<k>` goes.
+ */
+export const COMPILE_ERROR_SECTION = '§5.1';
+
+/** A compile error as the CLI prints it: the prefix, the message, and the pointer to §5.1. */
+export function compileErrorLine(message: string): string {
+  return `rigc compile error: ${message}${guidePointer(COMPILE_ERROR_SECTION)}`;
+}
+
+/** A refusal naming its rule, unindented, as `guide` prints its own: `FAIL  <RULE>: <detail> (see rigc guide <RULE>)`. */
+export function refusalLine(rule: string, detail: string): string {
+  return `FAIL  ${rule}: ${detail}${guidePointer(rule)}`;
+}
+
+/** A failure line as every gate prints it: the report's two-space gutter, then the refusal line. */
 export function failLine(rule: string, detail: string): string {
-  return `  FAIL  ${rule}: ${detail}${guidePointer(rule)}`;
+  return `  ${refusalLine(rule, detail)}`;
 }
 
 /** One heading outside a code fence: its level, its text, the line it is on (1-based) and its byte offset. */
@@ -148,39 +166,52 @@ export function guideSections(text: string): GuideSection[] {
   const out: GuideSection[] = [];
   let chapter: string | null = null;
   let m = 0;
+  let sub = 0;
   for (let k = 0; k < heads.length; k++) {
     const h = heads[k];
     if (h.level <= 2) {
       chapter = h.level === 2 ? chapterNumber(h.title) : null;
       m = 0;
+      sub = 0;
       if (chapter !== null) out.push({ address: chapter, heading: h, ...span(k) });
     } else if (h.level === 3 && chapter !== null) {
       m++;
+      sub = 0;
       out.push({ address: `${chapter}.${m}`, heading: h, ...span(k) });
+    } else if (h.level === 4 && chapter !== null && m > 0) {
+      // §<n>.<m>.<k>: the k-th #### under the m-th ### (HQ's ruling on rig-c/parts#343, S-A). A #### above the
+      // chapter's first ### belongs to no ###, so nothing addresses it.
+      sub++;
+      out.push({ address: `${chapter}.${m}.${sub}`, heading: h, ...span(k) });
     }
   }
   return out;
 }
 
 /**
- * Every `###` whose written number is not the position it is counted at — the
- * guide writes `### 5.2 …`, and `§5.2` is the second `###` under `## 5.`, so a
- * heading inserted, moved or misnumbered would make the printed number lie
- * about what `rigc guide §5.2` prints. Named by heading and line. A `###` that
- * writes no number is counted and not checked; one that writes a number not of
- * the form `<n>.<m>` is a fault, because nothing could address it by it.
+ * Every `###` and `####` whose written number is not the position it is counted
+ * at — the guide writes `### 5.2 …` and `#### 4.5.1 …`, and `§5.2` is the second
+ * `###` under `## 5.`, `§4.5.1` the first `####` under `§4.5`, so a heading
+ * inserted, moved or misnumbered would make the printed number lie about what
+ * `rigc guide` prints for it. Named by heading and line. A heading that writes
+ * no number is counted and not checked; one that writes a number its counted
+ * address is not — a lettered `10.6b`, a four-part `3.5.2.1` at `####` — is a
+ * fault, because nothing could address it by it.
  */
 export function numberingFaults(text: string, file: string = GUIDE_FILE): string[] {
   const faults: string[] = [];
   for (const section of guideSections(text)) {
-    if (section.heading.level !== 3) continue;
+    if (section.heading.level < 3) continue;
     const written = /^(\d+(?:\.\d+)*[a-z]?(?:\.\d+)*)\s/.exec(section.heading.title);
     if (written === null) continue;
     if (written[1] !== section.address) {
+      const parts = section.address.split('.');
+      const level = '#'.repeat(section.heading.level);
+      const parent = section.heading.level === 3 ? `"## ${parts[0]}."` : `§${parts.slice(0, -1).join('.')}`;
       faults.push(
-        `${file}:${section.heading.line} "### ${section.heading.title}" writes ${written[1]} and is the ` +
-          `${ordinal(Number(section.address.split('.')[1]))} ### under "## ${section.address.split('.')[0]}.", so ${GUIDE_BIN} guide §${section.address} prints it — ` +
-          `renumber it ${section.address}, or make it a #### of the ### above it`,
+        `${file}:${section.heading.line} "${level} ${section.heading.title}" writes ${written[1]} and is the ` +
+          `${ordinal(Number(parts[parts.length - 1]))} ${level} under ${parent}, so ${GUIDE_BIN} guide §${section.address} prints it — ` +
+          `renumber it ${section.address}, or make it a ${level}# of the ${level} above it`,
       );
     }
   }
@@ -320,26 +351,42 @@ function editDistance(a: string, b: string): number {
   return prev[b.length];
 }
 
-/** What `guide` answers: the lines to print, or a refusal sentence (exit 1). */
-export type GuideAnswer = { ok: true; lines: string[] } | { ok: false; refusal: string };
+/**
+ * The two rules `guide` itself refuses by (HQ's ruling on rig-c/parts#343, the printed form): a name no row
+ * carries, and an address no section has. Each has its row in the guide, like every other rule a line can name.
+ */
+export const GUIDE_RULE_KNOWN = 'GUIDE_RULE_KNOWN';
+export const GUIDE_SECTION_KNOWN = 'GUIDE_SECTION_KNOWN';
+export const GUIDE_RULES: readonly string[] = [GUIDE_RULE_KNOWN, GUIDE_SECTION_KNOWN];
+
+/** What `guide` answers: the lines to print, or the refusal's rule and detail (stderr, exit 1). */
+export type GuideAnswer = { ok: true; lines: string[] } | { ok: false; rule: string; detail: string };
 
 function kb(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-/** The `§` address of the section a line of the guide sits in — its `###` when it has one, else its `## <n>.`; `null` outside every numbered section. */
+/** The `§` address of the section a line of the guide sits in — its deepest addressed heading; `null` outside every numbered section. */
 function addressOfLine(sections: readonly GuideSection[], line: number): string | null {
   let best: GuideSection | null = null;
   for (const s of sections) if (s.firstLine <= line && line <= s.lastLine && (best === null || s.heading.level > best.heading.level)) best = s;
   return best === null ? null : best.address;
 }
 
+/** A section's children — the addresses one level below it, in the order the guide gives them; `null` is the guide itself. */
+function childrenOf(sections: readonly GuideSection[], address: string | null): GuideSection[] {
+  const depth = address === null ? 0 : address.split('.').length;
+  return sections.filter((s) => s.address.split('.').length === depth + 1 && (address === null || s.address.startsWith(`${address}.`)));
+}
+
 /**
- * `rigc guide <RULE>` and `rigc guide §<n>[.<m>]`, over the texts as read.
- * A rule prints every row naming it, each under the file, the `§` and the
- * heading it sits in, with its table's header so its cells read by column; a
- * section prints its text as it stands, after a line per subsection with its
- * address and size.
+ * `rigc guide <RULE>` and `rigc guide §<n>[.<m>[.<k>]]`, over the texts as read, in the printed form HQ fixed for
+ * both packages on rig-c/parts#343:
+ *
+ * - a rule: per row, `docs/AUTHORING.md §<addr>, line <N> — under "<heading>"`, then the row verbatim;
+ * - a section: `docs/AUTHORING.md §<addr> "<title>", lines <a>–<b>, <X.X> KB`, then — when it has children — one
+ *   `§<addr>  <X.X KB>  <title>` line per child, then the section verbatim;
+ * - an unknown rule or section: a refusal by `GUIDE_RULE_KNOWN` / `GUIDE_SECTION_KNOWN`.
  */
 export function guideAnswer(asked: string, texts: GuideTexts): GuideAnswer {
   const sections = guideSections(texts.guide);
@@ -347,54 +394,44 @@ export function guideAnswer(asked: string, texts: GuideTexts): GuideAnswer {
     const address = asked.slice(1);
     const section = sections.find((s) => s.address === address);
     if (section === undefined) {
-      // Nearest by number, not by spelling: the chapter first (§14 is nearer §13 than §1), then the subsection
-      // (§5.9 is nearer §5.4 than §4.9); an address that is not numbers falls back to the spelling.
-      const parts = (a: string): number[] => a.split('.').map((p) => Number.parseInt(p, 10));
-      const want = parts(address);
-      const near = want.some((p) => Number.isNaN(p))
-        ? nearestNames(address, sections.map((s) => s.address)).map((a) => `§${a}`)
-        : [...sections]
-            .map((s) => ({ a: s.address, p: parts(s.address) }))
-            .sort((x, y) => {
-              const dx = [Math.abs(x.p[0] - want[0]), Math.abs((x.p[1] ?? 0) - (want[1] ?? 0)), x.p.length];
-              const dy = [Math.abs(y.p[0] - want[0]), Math.abs((y.p[1] ?? 0) - (want[1] ?? 0)), y.p.length];
-              return dx[0] - dy[0] || dx[1] - dy[1] || dx[2] - dy[2];
-            })
-            .slice(0, 3)
-            .map((x) => `§${x.a}`);
+      // The deepest section the address names a prefix of, and its sections: §5.9 -> §5 and §5.1…§5.4.
+      const parts = address.split('.');
+      let deepest: GuideSection | null = null;
+      for (let n = parts.length - 1; n >= 1 && deepest === null; n--) deepest = sections.find((s) => s.address === parts.slice(0, n).join('.')) ?? null;
+      const kids = childrenOf(sections, deepest === null ? null : deepest.address).map((s) => `§${s.address}`);
+      const where = deepest === null ? `the guide itself, ${GUIDE_FILE}` : `§${deepest.address} "${deepest.heading.title}"`;
       return {
         ok: false,
-        refusal:
-          `no section is addressed ${asked} in ${GUIDE_FILE}: §<n> is a "## <n>." heading and §<n>.<m> the m-th ### under it; ` +
-          `the nearest are ${near.join(', ')}`,
+        rule: GUIDE_SECTION_KNOWN,
+        detail: `"${asked}" — no such section; the deepest that exists is ${where}, whose sections are: ${kids.length === 0 ? 'none' : kids.join(', ')}`,
       };
     }
     const body = texts.guide.split('\n').slice(section.firstLine - 1, section.lastLine).join('\n').replace(/\n+$/, '');
-    const lines = [`${GUIDE_FILE} §${section.address}, lines ${section.firstLine}–${section.lastLine}, ${kb(section.end - section.start)}`];
-    if (section.heading.level === 2) {
-      const subs = sections.filter((s) => s.heading.level === 3 && s.address.startsWith(`${section.address}.`));
-      for (const sub of subs) lines.push(`  §${sub.address.padEnd(6)} ${kb(sub.end - sub.start).padStart(9)}  ${sub.heading.title}`);
-    }
-    lines.push('', body);
+    const lines = [`${GUIDE_FILE} §${section.address} "${section.heading.title}", lines ${section.firstLine}–${section.lastLine}, ${kb(section.end - section.start)}`];
+    // A chapter lists its ###, a ### its #### — each with the address that prints it, its size and its title.
+    const subs = childrenOf(sections, section.address);
+    const wide = Math.max(0, ...subs.map((sub) => sub.address.length + 1));
+    const wideKb = Math.max(0, ...subs.map((sub) => kb(sub.end - sub.start).length));
+    for (const sub of subs) lines.push(`${`§${sub.address}`.padEnd(wide)}  ${kb(sub.end - sub.start).padStart(wideKb)}  ${sub.heading.title}`);
+    lines.push(body);
     return { ok: true, lines };
   }
   const rows = allRuleRows(texts);
   const found = rowsFor(asked, rows);
   if (found.length === 0) {
-    const files = [GUIDE_FILE, ...GUIDE_RULE_TABLES_ELSEWHERE.map((t) => `${t.file}'s "${t.heading.replace(/^#+ /, '')}" table`)];
     return {
       ok: false,
-      refusal: `no rule is named ${asked} in ${files.join(' or ')}; the nearest are ${nearestNames(asked, rows.map((r) => r.rule)).join(', ')}`,
+      rule: GUIDE_RULE_KNOWN,
+      detail: `"${asked}" — no row in ${GUIDE_FILE} names it; the nearest: ${nearestNames(asked, rows.map((r) => r.rule)).join(', ')}`,
     };
   }
   const lines: string[] = [];
   for (const row of found) {
-    if (lines.length > 0) lines.push('');
     const address = row.file === GUIDE_FILE ? addressOfLine(sections, row.line) : null;
     const where = `${row.file}${address === null ? '' : ` §${address}`}, line ${row.line}`;
     lines.push(`${where} — under "${row.heading === null ? '(no heading)' : row.heading.title}"`);
     if (row.rule !== asked) lines.push(`${asked} has no row of its own; the row for the family ${row.rule}, which spells it, answers for it`);
-    lines.push(...row.header, row.text);
+    lines.push(row.text);
   }
   return { ok: true, lines };
 }
