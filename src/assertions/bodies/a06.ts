@@ -1,7 +1,7 @@
 /**
  * A06, the body (issue #1025, step 4c of #380): every page the atlas names is
  * the size its PNG is, every region lies inside its page, and — under
- * `spine-html` — no page claims premultiplied alpha and no region is turned.
+ * `rig-play` — no page claims premultiplied alpha and no region is turned.
  * The clause that refused two regions on one page overlapping is
  * `A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP` since issue #1099 (`./a49.ts`).
  *

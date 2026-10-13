@@ -818,4 +818,4 @@ export const SPINE_COMMAND_REFUSALS: readonly CliRefusal[] = [
 ];
 
 /** Each profile's rule count — the validator's, which the usage's `--profile` paragraph states. */
-export const PROFILE_RULES = (profile: 'spine' | 'spine-html'): number => assertionCountForProfile(profile);
+export const PROFILE_RULES = (profile: 'spine' | 'rig-play'): number => assertionCountForProfile(profile);

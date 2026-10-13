@@ -1,7 +1,7 @@
 /**
  * A20, the body (issue #1025, step 4c of #380): a weighted mesh's weights
  * cohere — every vertex bound, every weight finite and non-negative, every
- * vertex's weights summing to 1 — and, under `spine-html`, a generated mesh is
+ * vertex's weights summing to 1 — and, under `rig-play`, a generated mesh is
  * weighted, binds only bones that move it and binds every bone it declares.
  *
  * Moved out of `src/validate.ts` clause by clause, every clause about the
@@ -72,7 +72,7 @@ export function a20MeshWeightsCoherent({ fail, skip }: Verdicts, { meshes, bones
         // In a rigc-GENERATED ring or ribbon it is still a defect: the
         // generator bound a bone that does nothing, which is a bug in the
         // generator and dead work in the runtime's inner loop. So it stays a
-        // failure under spine-html and is not one under spine.
+        // failure under rig-play and is not one under spine.
         else if (policy && generated && weight === 0) {
           fail(
             'A20_MESH_WEIGHTS_COHERENT',

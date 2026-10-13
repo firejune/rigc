@@ -37,7 +37,7 @@
  * Links nothing from the runtime, directly or through what it imports — held
  * by the selftest's `VF` controls.
  */
-import { ASSERTION_KIND, type AssertionProfile } from '../kinds.ts';
+import { ASSERTION_KIND, resolveProfile, type AssertionProfile } from '../kinds.ts';
 import { verdictHarness, type VerdictHarness, type Verdicts, type VerdictLists } from '../harness.ts';
 import { SKIP_NO_ATLAS, SKIP_NO_MODEL } from '../reasons.ts';
 import { a03RegionWidthHeightFinite } from '../bodies/a03.ts';
@@ -294,7 +294,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A13_MESH_BUDGET', run: (v, read, input, supply) => a13MeshBudget(v, supply.meshes(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
   { code: 'A14_NO_FULL_FRAME_MESH', run: (v, read, input, supply) => a14NoFullFrameMesh(v, supply.meshes(read), supply.stage(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A15_IDLE_NO_MESH_BONE_KEYS', run: (v, read, input, supply) => a15IdleNoMeshBoneKeys(v, supply.meshes(read), supply.animatedBones(read), { rig: supply.rigInfo(read, input) }), unread: SKIP_NO_MODEL },
-  { code: 'A20_MESH_WEIGHTS_COHERENT', run: (v, read, input, supply) => a20MeshWeightsCoherent(v, supply.meshes(read), input.profile === 'spine-html', supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
+  { code: 'A20_MESH_WEIGHTS_COHERENT', run: (v, read, input, supply) => a20MeshWeightsCoherent(v, supply.meshes(read), input.profile === 'rig-play', supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A21_MESH_RIM_PINNED', run: (v, read, input, supply) => a21MeshRimPinned(v, supply.meshes(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
   { code: 'A22_MESH_UVS_IN_UNIT_RANGE', run: (v, read, _input, supply) => a22MeshUvsInUnitRange(v, supply.meshes(read)), unread: SKIP_NO_MODEL },
   { code: 'A39_DEFORM_KEEPS_TRIANGLE_WINDING', run: (v, read, input, supply) => a39DeformKeepsTriangleWinding(v, supply.deformSurvey(read), supply.rigInfo(read, input)), unread: SKIP_NO_MODEL },
@@ -313,7 +313,7 @@ export const MOVED_ASSERTIONS: readonly MovedAssertion[] = [
   { code: 'A44_LINKED_MESH_STATES_NO_GEOMETRY_OF_ITS_OWN', run: (v, read, _input, supply) => a44LinkedMeshStatesNoGeometryOfItsOwn(v, supply.links(read)), unread: SKIP_NO_MODEL },
   { code: 'A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES', run: (v, read, _input, supply) => a46SequenceAttachmentsShowTheFrameTheFileStates(v, supply.sequences(read)), unread: SKIP_NO_MODEL },
   { code: 'A17_ATLAS_PAGE_FILES_EXIST', run: (v, read, input, supply) => a17AtlasPageFilesExist(v, supply.atlasPages(read), input), unread: SKIP_NO_ATLAS },
-  { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'spine-html'), unread: SKIP_NO_ATLAS },
+  { code: 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG', run: (v, read, input, supply) => a06AtlasPageSizeMatchesPng(v, supply.atlasRegions(read, input), input, input.profile === 'rig-play'), unread: SKIP_NO_ATLAS },
   { code: 'A19_OVERLAY_PNGS_HAVE_ALPHA', run: (v, read, input, supply) => a19OverlayPngsHaveAlpha(v, supply.atlasRegions(read, input), supply.stage(read, input), supply.skinEntries(read), { atlasDir: input.atlasDir, rig: supply.rigInfo(read, input) }), unread: SKIP_NO_ATLAS },
   { code: 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP', run: (v, read, input, supply) => a49PackedFootprintsDoNotOverlap(v, supply.atlasRegions(read, input), supply.regionJoins(read), supply.meshes(read)), unread: SKIP_NO_ATLAS },
   { code: 'A50_STAGE_BOX_IS_THE_STAGE', run: (v, read, _input, supply) => a50StageBoxIsTheStage(v, supply.stageBox(read)), unread: SKIP_NO_MODEL },
@@ -389,7 +389,9 @@ function rigFigures(stats: Record<string, number | string>, read: ReadDocument |
  * prints. `plant` replaces a family's supplier; only the selftest's plants
  * pass one.
  */
-export function validateModel(input: ModelValidateInput, plant: Partial<ModelSupply> = {}): ModelReport {
+export function validateModel(given: ModelValidateInput, plant: Partial<ModelSupply> = {}): ModelReport {
+  // A former profile name reads as its profile (issue #1277), for the policy switches and the report alike.
+  const input: ModelValidateInput = { ...given, profile: resolveProfile(given.profile, 'the model side') };
   const supply: ModelSupply = { ...MODEL_SUPPLY, ...plant };
   const h = verdictHarness(input.profile, { ...ASSERTION_KIND, ...MODEL_PARSE_KIND }, 'the model side');
   const { read, held } = parse(h, input.modelText);

@@ -10,7 +10,18 @@ import type { AssertionProfile } from './kinds.ts';
 import type { VerdictLists } from './harness.ts';
 import { failLine } from '../guide.ts';
 
-export const VALIDATE_PROFILES: readonly AssertionProfile[] = ['spine', 'spine-html'];
+export const VALIDATE_PROFILES: readonly AssertionProfile[] = ['spine', 'rig-play'];
+
+/**
+ * The line `--profile <alias>` prints on stderr before the command runs: the
+ * old name, the profile it reads as, and the flag to pass instead (issue
+ * #1277). Stderr so a report on stdout reads the same whichever name the
+ * caller typed; the report itself names the profile that judged it, which is
+ * the target and never the alias.
+ */
+export function profileAliasLine(alias: string, target: AssertionProfile): string {
+  return `rigc: --profile ${alias} is deprecated and reads as --profile ${target}, the same rules; it is accepted until the next minor release — pass --profile ${target}`;
+}
 
 /**
  * What the CLI uses when `--profile` is absent — and ONLY the CLI. This is not
@@ -21,7 +32,7 @@ export const VALIDATE_PROFILES: readonly AssertionProfile[] = ['spine', 'spine-h
  * into the Spine editor", which is exactly the question `spine` asks, and a
  * stranger's first build was being judged instead against one renderer's policy
  * and one project's canvas budget — 14 rules they have no stake in, with the
- * escape hatch documented only in prose. Defaults beat prose. `spine-html` is
+ * escape hatch documented only in prose. Defaults beat prose. `rig-play` is
  * still one flag away, and every report names the profile that judged it.
  */
 export const CLI_DEFAULT_PROFILE: AssertionProfile = 'spine';

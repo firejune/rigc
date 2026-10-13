@@ -1,6 +1,9 @@
 /**
  * A12, the body (issue #1025, cut 4c-4 of #380): no dark colour and no
- * two-colour timeline — both parsed, then silently ignored by spine-html.
+ * two-colour timeline — both parsed, then ignored by rig-play's DOM mode.
+ * Only the DOM mode is named (issue #1277): rig-play's canvas mode carries
+ * `dark` on the frame, but no test of the player's draws it, so nothing here
+ * says it is drawn there.
  *
  * Moved out of `src/validate.ts` unchanged but for what it reads: the slots
  * are a fact (`../facts/skeleton_roster.ts`) and the slot timelines are A45's
@@ -16,14 +19,14 @@ import type { SlotTimelines } from '../facts/slot_colour.ts';
 export function a12NoDarkColor({ fail }: Verdicts, { slots }: SkeletonRosterFacts, slotTimelines: readonly SlotTimelines[]): void {
   for (const slot of slots) {
     if (slot.dark) {
-      fail('A12_NO_DARK_COLOR', `slot "${slot.name}" declares a dark colour; the renderer ignores it`);
+      fail('A12_NO_DARK_COLOR', `slot "${slot.name}" declares a dark colour; rig-play's DOM mode ignores it`);
     }
   }
   for (const { animation, slot, timelines } of slotTimelines) {
     for (const [name, keys] of Object.entries(timelines)) {
       if (!Array.isArray(keys)) continue;
       if (name === 'rgba2' || name === 'rgb2') {
-        fail('A12_NO_DARK_COLOR', `${animation}.slots.${slot}.${name}: two-colour timeline "${name}" is silently ignored by the renderer`);
+        fail('A12_NO_DARK_COLOR', `${animation}.slots.${slot}.${name}: two-colour timeline "${name}" is ignored by rig-play's DOM mode`);
       }
     }
   }

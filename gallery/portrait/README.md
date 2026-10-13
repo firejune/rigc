@@ -126,7 +126,7 @@ splits that are load-bearing are these:
 
 ⭐ **`idle` keys `headroll`, never `head`.** `head` is the head mesh's own slot
 bone, and `A15_IDLE_NO_MESH_BONE_KEYS` refuses an `idle` that keys one — a
-`spine-html` renderer rule about meshes never idle-skipping. Putting the head's
+`rig-play` renderer rule about meshes never idle-skipping. Putting the head's
 pivot on its own bone one link up satisfies it and is the better rig anyway: a
 head rotates about the top of the neck, not about the middle of its own face.
 
@@ -529,7 +529,7 @@ distinction [FINDINGS.md](FINDINGS.md) argued an instrument would buy.
 There is no `clipping` attachment holding the iris inside the white, and there
 could not be one: Spine has them ([§3.4](../../docs/AUTHORING.md)) and they
 would lift the 7-unit ceiling, but `A11_NO_CLIPPING_ATTACHMENTS` refuses one
-under `--profile spine-html`, so an example carrying one would build on only one
+under `--profile rig-play`, so an example carrying one would build on only one
 of the two profiles the gallery bar asks for.
 
 ---
@@ -539,7 +539,7 @@ of the two profiles the gallery bar asks for.
 | | |
 | --- | --- |
 | `rigc build --profile spine` | green — the run's own verdict, quoted below the table, says how many rules measured anything and how many the profile left out |
-| `rigc build --profile spine-html` | green — same, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
+| `rigc build --profile rig-play` | green — same, including `A13_MESH_BUDGET` against `invariants.meshTriangles: 32` and `A15_IDLE_NO_MESH_BONE_KEYS` against an `idle` that keys `headroll` rather than `head` |
 | mesh coverage | **100.00%** on both meshes, measured against the PNGs they name (`head` reaching 95.90px past the art at its grid corners, `hair_bang` 55.22px) |
 | **the yaw model, on the artifact** | every mesh column, every feature bone and every `scalex` posed by `spine-core` at `t = 1.0` and compared against `dx = x(cos t − 1) − z sin t` composed with the 1.6° roll: **agreement to under 0.001 px** on all 10 mesh columns and all 6 feature bones, and to 4 decimal places on all 6 scale values |
 | the parallax | fringe centre travels **5.406px** further than the face centre; predicted `(196 − 170)·sin 12° = 5.406` |
@@ -570,11 +570,11 @@ PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
 ..    51 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 16 not in profile "spine"
 ```
 
-`rigc build --profile spine-html`:
+`rigc build --profile rig-play`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "spine-html"
+..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
 ```
 
 ---

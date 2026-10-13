@@ -26,10 +26,11 @@ import {
   CLI_DEFAULT_PROFILE,
   type GateHere,
   type PackPageFigures,
+  profileAliasLine,
   VALIDATE_PROFILES,
 } from '../assertions/report.ts';
 import type { VerdictLists } from '../assertions/harness.ts';
-import type { AssertionProfile } from '../assertions/kinds.ts';
+import { PROFILE_ALIASES, type AssertionProfile } from '../assertions/kinds.ts';
 import { MAX_CANDIDATES, MIN_CANDIDATES } from '../ballot.ts';
 import { BONEDIST_SPEC, IDENTITY_CORRESPONDENCE } from '../correspondence.ts';
 import { ANCHOR_MAX_RESIDUAL, ANCHOR_MAX_UNEXPLAINED, DEFAULT_HINGE_MAX, DEFAULT_HINGE_MIN, DEFAULT_MIN_LEVER_PX, DEFAULT_MIN_VISIBLE, DEFAULT_PASSES } from '../chainfit.ts';
@@ -988,7 +989,7 @@ const FLAG_MEANINGS: Record<string, string> = {
   cuts: 'the cuts.json --cut names',
   profile:
     'which rulebook to check against (default: spine) — spine = valid Spine 4.3 that any runtime plays ' +
-    "correctly; spine-html = also this project's renderer/archetype policy",
+    "correctly; rig-play = also this project's renderer/archetype policy",
   atlas: "the candidate's atlas, when it is not beside the skeleton",
   reference: 'the reference skeleton to pose beside the candidate — a directory or a skeleton.json path',
   'reference-atlas': "the reference's atlas, when it is not beside the reference skeleton",
@@ -1179,7 +1180,7 @@ const FLAG_VALUES: Record<string, string> = {
   manifest: '<path>',
   cut: '<name>',
   cuts: '<path>',
-  profile: 'spine|spine-html',
+  profile: 'spine|rig-play',
   atlas: '<path>',
   'atlas-in': '<file.atlas>',
   'page-size': '<px>',
@@ -1324,7 +1325,7 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the gate round-trips every build through it before anything is written',
       core: {
         usage: [
-          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images] [--report <file>]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
+          'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|rig-play] [--copy-images] [--report <file>]   (the same files the round-tripped build writes; gated without spine-core — see build --help)',
           `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
           'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
           'rigc build --cut <name> --cuts <cuts.json>',
@@ -1348,7 +1349,7 @@ export const COMMANDS: CommandDoc[] = [
     },
     spineFormat: true,
     usage: [
-      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|spine-html] [--copy-images] [--report <file>]',
+      'rigc build --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--profile spine|rig-play] [--copy-images] [--report <file>]',
       `rigc build … --pack [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon]   (parts onto shared pages, written into --out)`,
       'rigc build … --atlas-in <skeleton.atlas>                    (resolve the parts against a pack somebody already made)',
       'rigc build --cut <name> --cuts <cuts.json>',
@@ -1378,8 +1379,8 @@ export const COMMANDS: CommandDoc[] = [
       for: 'the rebuild it writes is gated by build\'s gate, which round-trips it through spine-core',
       core: {
         usage: [
-          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]   (gated without spine-core — see repack --help)`,
-          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
+          `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|rig-play] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]   (gated without spine-core — see repack --help)`,
+          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|rig-play] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
         ],
         notes: [
           'a packed build repacked from its own output — skeleton.json, skeleton.atlas and the',
@@ -1401,8 +1402,8 @@ export const COMMANDS: CommandDoc[] = [
     },
     spineFormat: true,
     usage: [
-      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]`,
-          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|spine-html] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
+      `rigc repack <dir | skeleton.json> --out <dir> [--atlas <path>] [--page-size ${DEFAULT_PAGE_SIZE}] [--padding ${DEFAULT_PADDING}] [--page-edges pot|free] [--pack-shape rect|polygon] [--profile spine|rig-play] [--stage x,y,w,h] [--stage-box <slot>] [--accept-skeleton-differences] [--report <file>]`,
+          `rigc repack <dir | skeleton.json> --out <dir> --keep-pages [--atlas <path>] [--profile spine|rig-play] [--stage x,y,w,h] [--stage-box <slot>] [--report <file>]   (skeleton.model.json alone, pages kept)`,
     ],
     flags: ['out', 'atlas', 'page-size', 'padding', 'page-edges', 'pack-shape', 'profile', 'stage', 'stage-box', 'accept-skeleton-differences', 'keep-pages', 'report'],
     overrides: {
@@ -1469,7 +1470,7 @@ export const COMMANDS: CommandDoc[] = [
     runtime: { for: 'the gate it re-runs is the round trip through it', rerunsTheGate: true },
     spineFormat: true,
     usage: [
-      'rigc validate <dir | skeleton.json> [--atlas <path>] [--profile spine|spine-html]',
+      'rigc validate <dir | skeleton.json> [--atlas <path>] [--profile spine|rig-play]',
       'rigc validate --cut <name> --cuts <cuts.json>   (also re-derives declared durations)',
     ],
     flags: ['atlas', 'profile', 'cut', 'cuts', 'rig', 'motion', 'out', 'manifest', 'images'],
@@ -1815,17 +1816,17 @@ export function commandHelp(name: string, docs: readonly CommandDoc[] = COMMANDS
  * `--profile` paragraph states each profile's rule count, which only the
  * validator knows (`CliEntry.profileRules`).
  */
-const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: string }; lines: (rules: (profile: 'spine' | 'spine-html') => number) => string[] }> = [
+const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: string }; lines: (rules: (profile: 'spine' | 'rig-play') => number) => string[] }> = [
   {
     about: ['build', 'validate', 'bench'],
     lines: (rules) => [
-      'build, validate and bench take --profile spine|spine-html:',
+      'build, validate and bench take --profile spine|rig-play:',
       '  spine       is this valid Spine 4.3 that any runtime plays correctly?',
       `              THE DEFAULT — ${rules('spine')} rules, and the question the output answers when`,
       '              you import it into the Spine editor.',
-      '  spine-html  the above, plus this project\'s renderer and archetype policy:',
-      `              all ${rules('spine-html')} rules, opt-in. Those extra ` +
-        `${rules('spine-html') - rules('spine')} fire on real, correct,`,
+      '  rig-play    the above, plus this project\'s renderer and archetype policy:',
+      `              all ${rules('rig-play')} rules, opt-in. Those extra ` +
+        `${rules('rig-play') - rules('spine')} fire on real, correct,`,
       '              editor-produced Spine data, so they are somebody\'s policy rather',
       '              than anybody\'s validity.',
       '',
@@ -1955,7 +1956,7 @@ const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: strin
  * lines, then every paragraph about only those commands (`USAGE_PARAGRAPHS`).
  * `checkout` is the file a source checkout runs this entry as.
  */
-export function usageText(docs: readonly CommandDoc[], checkout: string, rules: ((profile: 'spine' | 'spine-html') => number) | undefined): string {
+export function usageText(docs: readonly CommandDoc[], checkout: string, rules: ((profile: 'spine' | 'rig-play') => number) | undefined): string {
   const names = new Set(docs.map((doc) => doc.name));
   const takes = (flag: string): boolean => docs.some((doc) => doc.flags.includes(flag));
   const lines = [
@@ -2002,6 +2003,13 @@ export function usageText(docs: readonly CommandDoc[], checkout: string, rules: 
 export function readProfile(flags: Record<string, string>): AssertionProfile {
   const raw = flags.profile;
   if (raw === undefined) return CLI_DEFAULT_PROFILE;
+  // A former name resolves here and nowhere else (issue #1277): past this line
+  // the alias does not exist, so it cannot select a rule set of its own.
+  const aliased = Object.hasOwn(PROFILE_ALIASES, raw) ? PROFILE_ALIASES[raw] : undefined;
+  if (aliased !== undefined) {
+    console.error(profileAliasLine(raw, aliased));
+    return aliased;
+  }
   const found = VALIDATE_PROFILES.find((p) => p === raw);
   if (!found) throw new UsageError(`--profile ${JSON.stringify(raw)}; known profiles: ${VALIDATE_PROFILES.join(', ')}`);
   return found;
@@ -2633,7 +2641,7 @@ export interface CliEntry {
   /** Every command this entry runs, by name — exactly its set, or the run refuses to start. */
   runs: Readonly<Record<string, CommandRun>>;
   /** Each profile's rule count, for the `--profile` paragraph; the validator's, so only an entry that links it states it. */
-  profileRules?: (profile: 'spine' | 'spine-html') => number;
+  profileRules?: (profile: 'spine' | 'rig-play') => number;
   /** The refusals of bodies only this entry registers (`CliRefusal`). */
   refusals?: readonly CliRefusal[];
 }

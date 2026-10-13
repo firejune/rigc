@@ -1415,7 +1415,7 @@ export interface RefinementRegion {
   (`src/mesh.ts`); an authored mesh's UVs are the author's.
 - Weights: every vertex bound, finite and non-negative, summing to 1 within
   `1e-3` (`src/assertions/bodies/a20.ts`); a weight of 0 is refused on a
-  generated mesh under `spine-html`. `segmentShares` keeps the strongest
+  generated mesh under `rig-play`. `segmentShares` keeps the strongest
   `maxBones`, drops shares under `minWeight`, renormalises and closes the last
   at `1 − others` (`src/mesh.ts`); defaults `maxBones` 4,
   `minWeight` 0.03, and a `minWeight` under one grid step `0.000001` is

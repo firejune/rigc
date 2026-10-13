@@ -553,7 +553,7 @@ export interface EmitPage {
  * against the unturned pack. But on neither rig did a turn shrink the page: both
  * were already on the smallest power-of-two page their area allows, and a turn
  * that buys no area only moves bytes. Shipping it would also need two clauses
- * changed that say rigc never turns a region — `A06`'s under `spine-html`
+ * changed that say rigc never turns a region — `A06`'s under `rig-play`
  * ([`src/validate.ts`](validate.ts)) and `artUvsOf`
  * ([`src/render.ts`](render.ts)), which returns no art UVs for a turned region
  * attachment, so `check`'s texture substitution would report it unmatched.

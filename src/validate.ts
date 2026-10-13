@@ -77,7 +77,7 @@ import {
   walkTimelines,
 } from './timelines.ts';
 import type { RigInfo } from './types.ts';
-import { ASSERTION_KIND, kindRunsUnder, type AssertionProfile } from './assertions/kinds.ts';
+import { ASSERTION_KIND, kindRunsUnder, resolveProfile, type AssertionProfile } from './assertions/kinds.ts';
 import { verdictHarness, type Failure } from './assertions/harness.ts';
 import { isObj, type Json } from './assertions/values.ts';
 import type { SkinEntryFacts } from './assertions/facts/skin_entries.ts';
@@ -168,14 +168,14 @@ export type { Failure } from './assertions/harness.ts';
  * ⭐ The distinction this draws is the difference between "wrong" and "not how we
  * do it here", and conflating the two is how a validator stops being usable on
  * anybody else's data. Fifteen of the 40 assertions are policy — seven for one
- * renderer (`spine-html`) and one project's canvas budget, eight for rigc's own
+ * renderer (`rig-play`) and one project's canvas budget, eight for rigc's own
  * formations — and every one of them fires
  * on real, correct, editor-produced Spine data — the official example projects
  * carry clipping attachments, unweighted meshes, 116-triangle meshes and packed
  * atlases, all of which are perfectly valid and none of which spine-html likes.
  *
  * - `spine`      — is this valid Spine 4.3 that any runtime will play correctly?
- * - `spine-html` — the above, plus this project's renderer and archetype policy.
+ * - `rig-play`   — the above, plus this project's renderer and archetype policy.
  *
  * ⚠️ `validate()` has NO default profile — `ValidateInput.profile` is required,
  * and that is deliberate. A silent default here can only be wrong in one of two
@@ -207,7 +207,7 @@ export const ASSERTION_NAMES: readonly string[] = Object.keys(ASSERTION_KIND);
 
 /** How many assertions this profile applies, by the kinds it carries. */
 export function assertionCountForProfile(profile: ValidateProfile): number {
-  if (profile === 'spine-html') return ASSERTION_NAMES.length;
+  if (profile === 'rig-play') return ASSERTION_NAMES.length;
   return ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'validity').length;
 }
 
@@ -2012,9 +2012,10 @@ function once<T>(supply: () => T): () => T {
 }
 
 export function validate(input: ValidateInput): ValidateReport {
-  const profile = input.profile;
+  // A former name reads as its profile (issue #1277): the policy switch below and the report both use the resolved one.
+  const profile = resolveProfile(input.profile, 'validate');
   /** True when this profile's rulebook includes the policy layer. */
-  const policy = profile === 'spine-html';
+  const policy = profile === 'rig-play';
   // The harness — `check`, `fail`, `skip` and the lists they fill — is
   // `./assertions/harness.ts`'s since issue #1025, and the rule is the one it
   // always was: the model side runs the bodies that moved there in the same
@@ -2566,7 +2567,7 @@ export function validate(input: ValidateInput): ValidateReport {
   });
 
   // --- A12: no dark / two-colour tint --------------------------------------
-  // Parsed, then silently ignored by spine-html.
+  // Parsed, then ignored by rig-play's DOM mode.
   check('A12_NO_DARK_COLOR', () => a12NoDarkColor(verdicts, rawSkeletonRoster(raw), rawSlotTimelines(raw)));
 
   // --- A05: curve arrays are 4 numbers per value channel --------------------
@@ -3309,7 +3310,7 @@ export function validate(input: ValidateInput): ValidateReport {
   // first build — and told them, untruthfully, that the file held no transparency
   // at all. That audit is also why the CLI's default is now `spine`, which does
   // not run this rule at all (#221): a stranger reaches this refusal only by
-  // asking for `spine-html`. It still has to be both TRUE and actionable when it
+  // asking for `rig-play`. It still has to be both TRUE and actionable when it
   // fires, and it now has to name the profile it belongs to as well as the one
   // that does not ask — the reader opted in, and the message is where they find
   // out what they opted into.

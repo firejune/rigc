@@ -49,7 +49,7 @@ under reading.
 `validate --profile spine` on the candidate reports **0 FAIL**.
 
 A candidate that is not valid Spine 4.3 has cleared nothing, whatever else it scores. The
-`spine-html` profile is deliberately not used: the thing being reproduced is an editor
+`rig-play` profile is deliberately not used: the thing being reproduced is an editor
 export, not this project's renderer policy.
 
 ## G2: worst attributable slot drift

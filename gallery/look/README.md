@@ -487,7 +487,7 @@ time (AUTHORING §4.11.4), which is the frame a playthrough actually contains:
 ⇒ **both sliders declare `"mix": 1`, `sweep` keys no `mix` at all, and both
 assertions run:**
 
-**No run reproduces this:** two verdict lines lifted out of one `--profile spine-html` run, which does not print them adjacent
+**No run reproduces this:** two verdict lines lifted out of one `--profile rig-play` run, which does not print them adjacent
 ```
   PASS  A39_DEFORM_KEEPS_TRIANGLE_WINDING
   PASS  A40_SLIDERS_COMPOSE_ON_A_SHARED_TARGET
@@ -651,8 +651,8 @@ gauge read backwards while both files stayed self-consistent.
 | Claim | How | Reading |
 | --- | --- | --- |
 | builds green under the default `spine` profile | `rigc build` | the run's own verdict, quoted below the table |
-| builds green under `spine-html` too | `--profile spine-html` | the same, and `A13`, `A14`, `A15`, `A21`, `A39` are among the rules only that profile runs |
-| the selftest's gallery suite gates it under **both** | `bun run selftest` | `GALLERY_EXAMPLE_IS_GREEN[look/spine]`, `[look/spine-html]` |
+| builds green under `rig-play` too | `--profile rig-play` | the same, and `A13`, `A14`, `A15`, `A21`, `A39` are among the rules only that profile runs |
+| the selftest's gallery suite gates it under **both** | `bun run selftest` | `GALLERY_EXAMPLE_IS_GREEN[look/spine]`, `[look/rig-play]` |
 | deterministic | `A18`, plus the suite compiling it three times | byte-identical |
 | the far lock folds and draws nothing when it does | `A39` + the stats line | 4 keys not drawn, 8 reversed triangles among them, 17 keys still measured |
 | `turn` is measured in the frame the slider puts it in | `A39` + the `DEFORM` block | `deformFrames=turn:slider/yaw`, and each key line names the dial value its mapping inverts to |
@@ -676,11 +676,11 @@ PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
 ..    51 assertions: 21 measured (21 passed, 0 failed), 14 skipped, 16 not in profile "spine"
 ```
 
-`rigc build --profile spine-html`:
+`rigc build --profile rig-play`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 30 measured (30 passed, 0 failed), 21 skipped, 0 not in profile "spine-html"
+..    51 assertions: 30 measured (30 passed, 0 failed), 21 skipped, 0 not in profile "rig-play"
 ```
 
 🚨 **The loop does not close, and the reason is the spring, not the timeline.**

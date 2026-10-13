@@ -24,7 +24,7 @@
  * (`documentRig`) and the declared durations it states (`documentDurations`,
  * since cut 4c-3: A09 reads them) — and the model side over the document with
  * the same directory, reading the rig info and the durations off the document
- * itself (issue #1054), under `spine` and again under `spine-html` (A11 is a
+ * itself (issue #1054), under `spine` and again under `rig-play` (A11 is a
  * renderer rule, and `spine` never runs it; the archetype rules A21 and A28
  * likewise). For each moved assertion and
  * profile the row prints `IDENTICAL` or `DIFFERING` with both sides' lines.
@@ -125,8 +125,8 @@ import { HashesInputError, readRecipes, treeRecipes, TREE_ROOT, type Recipe } fr
 import { buildRecipes, type BuiltRow } from './core_gate.ts';
 import { readKeepWork, WorkDirectory } from './work_dir.ts';
 
-/** The profiles a row is gated under: `spine` runs the validity rules, `spine-html` every rule. */
-export const VERDICT_PROFILES: readonly ValidateProfile[] = ['spine', 'spine-html'];
+/** The profiles a row is gated under: `spine` runs the validity rules, `rig-play` every rule. */
+export const VERDICT_PROFILES: readonly ValidateProfile[] = ['spine', 'rig-play'];
 
 /** A refusal about an input — the command exits 2 on it. */
 export class VerdictInputError extends Error {}

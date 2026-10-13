@@ -12,7 +12,32 @@
  */
 
 /** The two rulebooks — `ValidateProfile` in `src/validate.ts`, where the choice between them is argued. */
-export type AssertionProfile = 'spine' | 'spine-html';
+export type AssertionProfile = 'spine' | 'rig-play';
+
+/**
+ * A profile's former name, which the CLI's `--profile` still reads for one
+ * minor and resolves at parse time, printing the deprecation line that names
+ * the profile it reads as (issue #1277). Nothing past the flag parser sees an
+ * alias: the rule set is keyed on the profile it resolves to, so the alias and
+ * its target cannot come to run different rules.
+ */
+export const PROFILE_ALIASES: Readonly<Record<string, AssertionProfile>> = { 'spine-html': 'rig-play' };
+
+/**
+ * The profile a gate entry runs under: a profile as given, a former name as the
+ * profile it became — silently, because the CLI prints the deprecation line and
+ * a library caller of `validate()` through a courtesy key passed the former
+ * name on the release before this one and must get the same rules — and
+ * anything else refused by name. `kindRunsUnder` reads every name but
+ * `rig-play` as validity-only, so an unresolved name would run a weaker gate in
+ * silence, under a name nobody chose (issue #1277).
+ */
+export function resolveProfile(profile: string, who: string): AssertionProfile {
+  if (profile === 'spine' || profile === 'rig-play') return profile;
+  const target = Object.hasOwn(PROFILE_ALIASES, profile) ? PROFILE_ALIASES[profile] : undefined;
+  if (target !== undefined) return target;
+  throw new Error(`${who}: profile ${JSON.stringify(profile)} is not a profile; the profiles are "spine" and "rig-play"`);
+}
 
 /** The three kinds a rule can be; the table's own comment says what each means. */
 export type AssertionKind = 'validity' | 'renderer' | 'archetype';
@@ -100,7 +125,7 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: 'validity',
 };
 
-/** Whether `profile` runs a rule of `kind`: `spine` runs validity alone, `spine-html` every kind. */
+/** Whether `profile` runs a rule of `kind`: `spine` runs validity alone, `rig-play` every kind. */
 export function kindRunsUnder(kind: AssertionKind, profile: AssertionProfile): boolean {
-  return kind === 'validity' || profile === 'spine-html';
+  return kind === 'validity' || profile === 'rig-play';
 }

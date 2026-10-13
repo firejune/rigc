@@ -25,7 +25,7 @@ bun cli.ts preview --candidate gallery/flex/build --out gallery/flex/preview.htm
 ```
 
 `build` gates green under both profiles — `--profile spine` (the default) and
-`--profile spine-html` — with **no declared exemption**: this example carried the
+`--profile rig-play` — with **no declared exemption**: this example carried the
 repository's only `invariants.deformMayFold` until
 [#313](https://github.com/rig-c/core/issues/313), and *The deform* below is
 what removing it took. Nothing built is committed; the three output paths above

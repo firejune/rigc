@@ -37,7 +37,7 @@ names the reversed triangles with their signed areas. `invariants.deformMayFold`
 in the rig spec is the one declared exemption, so reach for it when the slot
 folds on purpose and never to quiet a refusal you have not read. It is an
 **archetype** rule: a `--profile spine` build prints `PROF` for it and says
-nothing about the fold, so author under `--profile spine-html`.
+nothing about the fold, so author under `--profile rig-play`.
 
 What `A39` still cannot say is whether the projection was the right one —
 nothing measures whether 12° was the angle the shot wanted. FACE §9.2 is that

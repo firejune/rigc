@@ -72,7 +72,7 @@ bun cli.ts build \
 bun cli.ts bench 3 --candidate <your-out-dir> --json report.json
 ```
 
-Use `--profile spine`. You are reproducing an editor export, and the `spine-html`
+Use `--profile spine`. You are reproducing an editor export, and the `rig-play`
 profile would fail you for renderer policy that this rung is not about.
 
 Notes on the shape of the deliverable:

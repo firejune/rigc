@@ -634,7 +634,7 @@ import {
 import { pngProblem, readPngHeader, readPngInfo } from './src/png.ts';
 import type { CompiledImage, CompileResult, SpineAnimation, SpineBone, SpineRegionAttachment, SpineSkeletonJson, SpineSlot } from './src/types.ts';
 import { skeletonDataFromText, stretchSingularValues, surveyDeformKeys, unreachableWhy } from './src/deformmeasure.ts';
-import { BUILD_REPORT_SPEC } from './src/assertions/report.ts';
+import { BUILD_REPORT_SPEC, profileAliasLine } from './src/assertions/report.ts';
 import {
   ASSERTION_NAMES,
   assertionCountForProfile,
@@ -671,7 +671,7 @@ import {
 import { MODEL_SIDE_CODES, MODEL_SUPPLY, MOVED_ASSERTIONS, validateModel, type ModelReport, type ModelSupply } from './src/assertions/model/index.ts';
 import { SKIP_NO_STAGE_BOX } from './src/assertions/facts/stage_box.ts';
 import { A00_MODEL_READ, A00_MODEL_REGIONS_ON_PAGES, MODEL_PARSE_KIND } from './src/assertions/model/parse.ts';
-import { ASSERTION_KIND } from './src/assertions/kinds.ts';
+import { ASSERTION_KIND, kindRunsUnder, PROFILE_ALIASES, type AssertionKind, type AssertionProfile } from './src/assertions/kinds.ts';
 import { fileOrderedEntries, modelSkinEntries } from './src/assertions/model/skin_entries.ts';
 import { modelMeshFacts } from './src/assertions/model/mesh_attachments.ts';
 import { modelPolygonFacts } from './src/assertions/model/vertex_polygons.ts';
@@ -3502,7 +3502,7 @@ interface Mutant {
   expect: string | null;
   /**
    * Which rulebook to run the break against. Absent means `MUTANT_PROFILE`
-   * (`spine-html`), the profile every other mutant in this file was written for
+   * (`rig-play`), the profile every other mutant in this file was written for
    * — the suite pins it rather than inheriting a default, so that flipping the
    * CLI's default (#221) cannot quietly stop a mutant's assertion from running
    * at all. A mutant that names a profile is asserting something about the SPLIT
@@ -4084,7 +4084,7 @@ const MUTANTS: Mutant[] = [
     name: 'M36a_clipping_attachment_is_renderer_policy',
     origin: 'SURVEY_2026-08-22 part 2-2 — A11 is renderer-profile: spine-html skips clipping attachments silently, spineboy-pro ships one',
     expect: 'A11_NO_CLIPPING_ATTACHMENTS',
-    profile: 'spine-html',
+    profile: 'rig-play',
     mutate: (a) => ({
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
@@ -12239,7 +12239,7 @@ function runRigSuite(): number {
             declaredDurations: built.declaredDurations,
             modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
             rig: built.rig,
-            profile: 'spine-html',
+            profile: 'rig-play',
           });
     const said = report?.failures.find((f) => f.assertion === 'A15_IDLE_NO_MESH_BONE_KEYS')?.detail ?? '';
     bad += reportCase(
@@ -12341,7 +12341,7 @@ function runRigSuite(): number {
           atlasDir: opts.outDir,
           declaredDurations: first.declaredDurations,
           rig: first.rig,
-          profile: 'spine-html',
+          profile: 'rig-play',
           modelText: modelDocument(first.model, first.skeletonText, first.atlasText),
           reEmit: gateTextsOf(second),
         });
@@ -12557,7 +12557,7 @@ function runRigSuite(): number {
           atlasDir: opts.outDir,
           declaredDurations: first.declaredDurations,
           rig: first.rig,
-          profile: 'spine-html',
+          profile: 'rig-play',
           modelText: modelDocument(first.model, first.skeletonText, first.atlasText),
           reEmit: gateTextsOf(second),
         });
@@ -12757,7 +12757,7 @@ function runRigSuite(): number {
           declaredDurations: built.declaredDurations,
           modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
           rig: built.rig,
-          profile: 'spine-html',
+          profile: 'rig-play',
         });
         return [...new Set(report.failures.map((f) => f.assertion))];
       };
@@ -16768,7 +16768,7 @@ function runStaticRigSuite(): number {
   // consumer's frame time, not a property of Spine, so a rig that never wrote one
   // down has nothing for the assertion to measure against — and "nothing to
   // measure" must report SKIP, never a pass.
-  const policy = gateProbe(dirs, STATIC_MOTION, 'spine-html');
+  const policy = gateProbe(dirs, STATIC_MOTION, 'rig-play');
   const budget = policy.skipped.find((s) => s.assertion === 'A13_MESH_BUDGET');
   say(
     'S04_A13_SKIPS_WHEN_THE_RIG_DECLARED_NO_BUDGET',
@@ -16871,11 +16871,11 @@ function runStaticRigSuite(): number {
   // and the remaining 20 printed nothing at all — and two of the seven passes
   // were rules whose only subject is the atlas that had not loaded.
   //
-  // ⚠️ The profile is `spine-html` deliberately. Under `spine` fourteen of the
+  // ⚠️ The profile is `rig-play` deliberately. Under `spine` fourteen of the
   // rules are excluded before their bodies run, so a vacuous pass among them is
   // invisible — which is how two of the four atlas guards went unnoticed.
   const behind = assertionsBehindTheRoundTrip(validateSourceWithBodies(import.meta.dir));
-  const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'spine-html', ATLAS_EDIT_TWIN);
+  const torn = gateProbeAtlas(dirs, STATIC_MOTION, dropFirstAtlasPage, 'rig-play', ATLAS_EDIT_TWIN);
   const rowOf = (report: ReturnType<typeof validate>, name: string): string[] => {
     const where: string[] = [];
     if (report.passed.includes(name)) where.push('PASS');
@@ -16915,12 +16915,12 @@ function runStaticRigSuite(): number {
   // The half that says the missing row was hiding something, rather than merely
   // being missing. Same `size:` defect in both runs; the only difference is
   // whether the loader got far enough to have an opinion.
-  const sized = gateProbeAtlas(dirs, STATIC_MOTION, doubleFirstAtlasPageSize, 'spine-html', ATLAS_EDIT_TWIN);
+  const sized = gateProbeAtlas(dirs, STATIC_MOTION, doubleFirstAtlasPageSize, 'rig-play', ATLAS_EDIT_TWIN);
   const sizedAndTorn = gateProbeAtlas(
     dirs,
     STATIC_MOTION,
     (text) => dropFirstAtlasPage(doubleFirstAtlasPageSize(text)),
-    'spine-html',
+    'rig-play',
     ATLAS_EDIT_TWIN,
   );
   const A06 = 'A06_ATLAS_PAGE_SIZE_MATCHES_PNG';
@@ -16941,7 +16941,7 @@ function runStaticRigSuite(): number {
   // Clause (c) of the same issue, and the positive control for both above: the
   // figures the summary states are the rows a reader can count, on a candidate
   // whose round trip is fine and on one whose is not.
-  const whole = gateProbeAtlas(dirs, STATIC_MOTION, (text) => text, 'spine-html');
+  const whole = gateProbeAtlas(dirs, STATIC_MOTION, (text) => text, 'rig-play');
   const summaryProbes = [torn, whole].flatMap((report) => {
     const rows = verdictRows(report);
     const label = report.failures.length === 0 ? 'the intact candidate' : 'the torn candidate';
@@ -17002,7 +17002,7 @@ function runStaticRigSuite(): number {
   const stageless = writeProbeRig({ skeleton: { width: null, height: null } });
   // A14 is renderer policy, so it does not run at all under `spine` — a case
   // that read `skipped` under that profile would report a confident green for an
-  // assertion nothing executed. Reaching it means gating under `spine-html`,
+  // assertion nothing executed. Reaching it means gating under `rig-play`,
   // which also runs A19, so the art has to be able to draw a transparent pixel:
   // one corner of each part is cleared. That is the same fixture either way, so
   // the two gates below are two readings of one build rather than two builds.
@@ -17036,7 +17036,7 @@ function runStaticRigSuite(): number {
     declaredDurations: stagelessBuild.declaredDurations,
     modelText: threadedModel(stagelessBuild, stagelessBuild.atlasText),
     rig: stagelessBuild.rig,
-    profile: 'spine-html',
+    profile: 'rig-play',
   });
   const stagelessHeader = (JSON.parse(stagelessBuild.skeletonText) as { skeleton: Record<string, unknown> }).skeleton;
   const stageKeys = ['x', 'y', 'width', 'height'].filter((k) => k in stagelessHeader);
@@ -17059,7 +17059,7 @@ function runStaticRigSuite(): number {
       stagelessFrame !== null,
     `the emitted header is {${Object.keys(stagelessHeader).join(', ')}}, so ${stageKeys.length === 0 ? 'no stage field survived' : `[${stageKeys.join(', ')}] survived`}; ` +
       `the gate ran ${stagelessGate.passed.length} assertion(s) with ${stagelessGate.failures.length} failure(s) under spine and ` +
-      `${stagelessPolicy.passed.length} with ${stagelessPolicy.failures.length} under spine-html; ` +
+      `${stagelessPolicy.passed.length} with ${stagelessPolicy.failures.length} under rig-play; ` +
       `A14 ${stagelessA14 ? `skipped: ${stagelessA14.reason}` : 'did not skip — it counted a 0x0 stage no mesh can span as a pass'}; ` +
       `render framed it at ${stagelessFrame ? `${stagelessFrame.width}x${stagelessFrame.height}px` : 'nothing at all'}`,
     'the compiler never invents a value that is not in the spec, and until now "there is no stage" was a thing the ' +
@@ -17103,7 +17103,7 @@ function runStaticRigSuite(): number {
   // subject the artifact does not carry, while their siblings over the same
   // shape (`A31`, `A33`, `A36`, `A37`) reported SKIP.
   //
-  // ⚠️ The profile is `spine-html` for S09's reason: under `spine` the archetype
+  // ⚠️ The profile is `rig-play` for S09's reason: under `spine` the archetype
   // and renderer rules are excluded before their bodies run, and four of the
   // rules these cases are about (`A13`, `A19`, `A24`, `A26`) live there.
   //
@@ -17168,14 +17168,14 @@ function runStaticRigSuite(): number {
       delete skeleton.slots;
       skeleton.bones = [];
     },
-    'spine-html',
+    'rig-play',
     // A26 fires on it (issue #1025, cut 4c-4): the document with no slot and no bone — every one the rig fills is none.
     { forge: (doc) => {
       for (const slot of doc.slots as Array<{ name: string }>) docDropSlot(doc, slot.name);
       doc.bones = [];
     } },
   );
-  const borne = gateProbe(dirs, SUBJECT_BEARING, 'spine-html');
+  const borne = gateProbe(dirs, SUBJECT_BEARING, 'rig-play');
   const quantified = subjectQuantifiedAssertions(validateSourceWithBodies(import.meta.dir));
   /** The reasons a SKIP gives when the SUBJECT is what was missing (#580). */
   const subjectReasons = new Set([
@@ -17353,9 +17353,9 @@ function runStaticRigSuite(): number {
     imagesDir: noArt.dir,
   });
   const noArtGate = gateProbe(noArt, STATIC_MOTION);
-  const noArtPolicy = gateProbe(noArt, STATIC_MOTION, 'spine-html');
+  const noArtPolicy = gateProbe(noArt, STATIC_MOTION, 'rig-play');
   // Every rule whose only subject is a PAGE. A06 and A17 run under both
-  // profiles; A19 and A27 are renderer rules, so `spine-html` is the profile
+  // profiles; A19 and A27 are renderer rules, so `rig-play` is the profile
   // that reaches all four — reading them under `spine` would report "no
   // failure" from two rules that never executed.
   const PAGE_RULES = [
@@ -17371,7 +17371,7 @@ function runStaticRigSuite(): number {
       : [`under spine the gate failed: ${noArtGate.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
     ...(noArtPolicy.failures.length === 0
       ? []
-      : [`under spine-html the gate failed: ${noArtPolicy.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
+      : [`under rig-play the gate failed: ${noArtPolicy.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`]),
     ...(noArtA07 !== undefined && noArtA07.reason === SKIP_NO_ATLAS_PAGE
       ? []
       : [
@@ -17408,7 +17408,7 @@ function runStaticRigSuite(): number {
       pageHeld,
       pageProbes,
       `the gate ran ${noArtGate.passed.length} assertion(s) with ${noArtGate.failures.length} failure(s) under spine ` +
-        `and ${noArtPolicy.passed.length} with ${noArtPolicy.failures.length} under spine-html; A07 skipped: ` +
+        `and ${noArtPolicy.passed.length} with ${noArtPolicy.failures.length} under rig-play; A07 skipped: ` +
         `${noArtA07?.reason ?? ''}; and ${PAGE_RULES.length} page rule(s) skipped naming the page or, for A27, the region`,
     ),
     'two different wrongs met on this rig. A07 named objects that do not exist — there are no consecutive blank ' +
@@ -17700,7 +17700,7 @@ function runStaticRigSuite(): number {
         'than quoted, so a SKIP for some other subject cannot satisfy it',
     );
 
-    const policy = gateProbe(twoColour, tintMotion, 'spine-html');
+    const policy = gateProbe(twoColour, tintMotion, 'rig-play');
     const a12 = detailsOf(policy, 'A12_NO_DARK_COLOR');
     const a12Probes = [
       ...(a12.some((d) => d.includes('slot "block" declares a dark colour')) ? [] : ['A12 does not name the slot field']),
@@ -17716,7 +17716,7 @@ function runStaticRigSuite(): number {
       probeDetail(
         a12Held,
         a12Probes,
-        `${a12.length} A12 failure(s) under \`spine-html\`: ${a12.join('; ')}. Under \`spine\`, A12 is PROF`,
+        `${a12.length} A12 failure(s) under \`rig-play\`: ${a12.join('; ')}. Under \`spine\`, A12 is PROF`,
         (count) => `${count} thing(s) the profile split did not do:`,
       ),
       'the clause that keeps emitting and refusing from contradicting each other. A12 is filed `renderer` in ' +
@@ -18493,7 +18493,7 @@ function runStaticRigSuite(): number {
       declaredDurations: stageless.declaredDurations,
       modelText: threadedModel(stageless, stageless.atlasText),
       rig: stageless.rig,
-      profile: 'spine-html',
+      profile: 'rig-play',
     });
     const bodyOf = (text: string): string => {
       const parsed = JSON.parse(text) as Record<string, unknown>;
@@ -18526,7 +18526,7 @@ function runStaticRigSuite(): number {
         cropProbes,
         `the fixture's crop ${String(crop?.w)}x${String(crop?.h)} is its stage when the rig states none; with ` +
           `\`"width": null, "height": null\` the header is {${Object.keys(JSON.parse(stageless.skeletonText).skeleton).join(', ')}}, ` +
-          `the gate ran ${gate.passed.length} assertion(s) with 0 failures under spine-html and A14 skipped, and ` +
+          `the gate ran ${gate.passed.length} assertion(s) with 0 failures under rig-play and A14 skipped, and ` +
           'the atlas and every section below the header are the staged build\'s, byte for byte',
         (count) => `${count} thing(s) the stated absence did not do against a crop:`,
       ),
@@ -20249,7 +20249,7 @@ const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
 /**
  * Replace the probe rig's `block.png` with one of these files and gate the rig.
  *
- * ⚠️ The profile is `spine-html` and it has to be: A19 is renderer policy, so
+ * ⚠️ The profile is `rig-play` and it has to be: A19 is renderer policy, so
  * under `spine` it is not a pass and not a skip but a third thing —
  * `profileSkipped` — and a case that read `passed` under the wrong profile would
  * report a confident green for an assertion that never ran.
@@ -20261,7 +20261,7 @@ const A19 = 'A19_OVERLAY_PNGS_HAVE_ALPHA';
 function gatePartImage(write: (path: string) => void): ReturnType<typeof validate> {
   const dirs = writeProbeRig();
   write(join(dirs.dir, 'block.png'));
-  return gateProbe(dirs, STATIC_MOTION, 'spine-html');
+  return gateProbe(dirs, STATIC_MOTION, 'rig-play');
 }
 
 /**
@@ -20365,7 +20365,7 @@ function gateLooseAndPacked(
 /**
  * The static probe with no stage and one opaque RGBA backdrop as big as the
  * probe's old stage — a rig spec's build, which has no way to name a base
- * plate — gated loose and packed under `spine-html`.
+ * plate — gated loose and packed under `rig-play`.
  */
 function gateStagelessSpecBackdrop(): ReturnType<typeof gateLooseAndPacked> & { part: string } {
   const dirs = writeProbeRig({ skeleton: { width: null, height: null } });
@@ -20373,7 +20373,7 @@ function gateStagelessSpecBackdrop(): ReturnType<typeof gateLooseAndPacked> & { 
   const motionPath = join(dirs.dir, 'probe.motion.json');
   writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
   const opts: Options = { rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir };
-  return { ...gateLooseAndPacked(opts, 'spine-html'), part: 'block' };
+  return { ...gateLooseAndPacked(opts, 'rig-play'), part: 'block' };
 }
 
 function runPngTransparencySuite(): number {
@@ -20444,12 +20444,12 @@ function runPngTransparencySuite(): number {
     /rgba/i.test(detail) ? null : 'the target format (RGBA)',
     /tRNS/.test(detail) ? null : 'the chunk that would make it transparent (tRNS)',
     // Both halves of the profile split, and `spine` is matched with `-` excluded
-    // so that the words "--profile spine-html" cannot satisfy both requirements
+    // so that the words "--profile rig-play" cannot satisfy both requirements
     // at once. Since #221 the reader arrives here only by opting in, so the
     // message has to say which rulebook they opted into as well as which one
     // would not have asked — naming only the escape hatch now reads as though
     // the tool had chosen this rule for them.
-    /--profile spine-html/.test(detail) ? null : 'the profile this rule belongs to (--profile spine-html)',
+    /--profile rig-play/.test(detail) ? null : 'the profile this rule belongs to (--profile rig-play)',
     /--profile spine\b(?!-)/.test(detail) ? null : 'the default profile that does not enforce it (--profile spine)',
     /no alpha channel/i.test(detail) ? 'DROP the old untrue "no alpha channel" phrasing' : null,
   ].filter((m): m is string => m !== null);
@@ -20519,7 +20519,7 @@ function runPngTransparencySuite(): number {
     });
     const gated = gateLooseAndPacked(
       stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-baseplate-overlay-out-'), 'loose'),
-      'spine-html',
+      'rig-play',
     );
     const probes = opaqueOverlayProbes(gated);
     const held = probes.length === 0;
@@ -20550,7 +20550,7 @@ function runPngTransparencySuite(): number {
     writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
     const outDir = join(root, 'loose');
     mkdirSync(outDir, { recursive: true });
-    const gated = gateLooseAndPacked({ ...optsForFixture(copy), rigPath, outDir }, 'spine-html');
+    const gated = gateLooseAndPacked({ ...optsForFixture(copy), rigPath, outDir }, 'rig-play');
     // Two-sided: the stated stage must really be one the overlay covers, or the
     // size reading had nothing to exempt and the case measures nothing.
     // The stage the build states — the model's since issue #907; the header carries the setup-pose bounding box.
@@ -20586,9 +20586,9 @@ function runPngTransparencySuite(): number {
   {
     const gated = gateLooseAndPacked(
       stagelessOptionsFor(ARTICULATED, buildRootIn(ARTICULATED.dir, 'rigc-baseplate-norig-'), 'loose'),
-      'spine-html',
+      'rig-play',
     );
-    const run = runCli(['validate', gated.packedDir, '--profile', 'spine-html']);
+    const run = runCli(['validate', gated.packedDir, '--profile', 'rig-play']);
     const line = run.stdout.split('\n').find((l) => l.startsWith(`  FAIL  ${A19}: `)) ?? '';
     const missing = [
       run.status === 1 ? null : `exit ${run.status} rather than 1`,
@@ -20635,7 +20635,7 @@ function runPngTransparencySuite(): number {
     writeSolidRgbaPng(basePath, fromManifest.base.w, fromManifest.base.h, null);
     const gated = gateLooseAndPacked(
       stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseopaque-out-'), 'loose'),
-      'spine-html',
+      'rig-play',
     );
     const loose = a19Details(gated.loose);
     const packed = a19Details(gated.packed);
@@ -20689,7 +20689,7 @@ function runPngTransparencySuite(): number {
     writeSolidRgbaPng(overlayPath, fromManifest.overlay.w, fromManifest.overlay.h, last);
     const gated = gateLooseAndPacked(
       stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-looseclear-out-'), 'loose'),
-      'spine-html',
+      'rig-play',
     );
     const clear = clearTexels(overlayPath);
     const probes = [
@@ -20983,7 +20983,7 @@ function runDrawOrderSuite(): number {
       'offsets and an index-keyed consumer both count against',
   );
 
-  // ⚠️ `spine-html` and not the default: A26 is an ARCHETYPE assertion, so under
+  // ⚠️ `rig-play` and not the default: A26 is an ARCHETYPE assertion, so under
   // `spine` it does not execute at all and a control reading "no A26 failure"
   // off that run would be reading an assertion that never ran.
   const dropped = gateProbeArtifacts(
@@ -20996,7 +20996,7 @@ function runDrawOrderSuite(): number {
         1,
       );
     },
-    'spine-html',
+    'rig-play',
     { forge: (doc) => docDropSlot(doc, 'ghost') },
   );
   const droppedDetail = dropped.failures.find((f) => f.assertion === 'A26_SLOT_DRAW_ORDER')?.detail ?? null;
@@ -21020,7 +21020,7 @@ function runDrawOrderSuite(): number {
       const from = slots.findIndex((s) => s.name === 'marker');
       slots.splice(slots.findIndex((s) => s.name === 'ghost'), 0, slots.splice(from, 1)[0]);
     },
-    'spine-html',
+    'rig-play',
     { forge: (doc) => {
       const slots = doc.slots as Array<{ name: string }>;
       const from = slots.findIndex((s) => s.name === 'marker');
@@ -35186,7 +35186,7 @@ function runPolygonSuite(): number {
     declaredDurations: built.declaredDurations,
     modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
     rig: built.rig,
-    profile: 'spine-html',
+    profile: 'rig-play',
   });
   say(
     'PG01_the_same_rig_is_refused_by_the_renderer_profile',
@@ -36142,7 +36142,7 @@ function runContourMeshSuite(): number {
     declaredDurations: build.result.declaredDurations,
     modelText: threadedModel(build.result, build.result.atlasText),
     rig: build.result.rig,
-    profile: 'spine-html',
+    profile: 'rig-play',
   });
   const emitted = build.result.meshes[0];
   say(
@@ -37293,7 +37293,7 @@ function runContourMeshSuite(): number {
         declaredDurations: build.result.declaredDurations,
         modelText: threadedModel(build.result, build.result.atlasText),
         rig: build.result.rig,
-        profile: 'spine-html',
+        profile: 'rig-play',
       });
     };
 
@@ -38059,7 +38059,7 @@ function runContourMeshSuite(): number {
           declaredDurations: past.result.declaredDurations,
           modelText: threadedModel(past.result, past.result.atlasText),
           rig: past.result.rig,
-          profile: 'spine-html',
+          profile: 'rig-play',
         });
         const hit = gated.failures.find((f) => f.assertion === A39);
         const m = hit ? /(\d+) of (\d+) triangle\(s\) reverse winding — triangle (\d+) \[/.exec(hit.detail) : null;
@@ -38854,7 +38854,7 @@ function runSegmentsMeshSuite(): number {
       reEmit: gateTextsOf(second),
     });
   const plain = gateUnder('spine');
-  const policy = gateUnder('spine-html');
+  const policy = gateUnder('rig-play');
   const mesh = first.meshes.find((m) => m.slot === 'cloth');
   const a21 = policy.skipped.find((sk) => sk.assertion === 'A21_MESH_RIM_PINNED');
   const green = plain.failures.length === 0 && policy.failures.length === 0;
@@ -38869,7 +38869,7 @@ function runSegmentsMeshSuite(): number {
       !policy.passed.includes('A21_MESH_RIM_PINNED'),
     green
       ? `slot "cloth" is a ${mesh?.kind} of ${mesh?.vertices} vertices / ${mesh?.triangles} triangles; A20 passed under ` +
-          `both profiles, and A21 SKIPPED under spine-html with "${a21?.reason ?? 'NO SKIP'}"`
+          `both profiles, and A21 SKIPPED under rig-play with "${a21?.reason ?? 'NO SKIP'}"`
       : `[${[...plain.failures, ...policy.failures].map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
     'every control below reads this build; and A21 must SKIP rather than pass, because a segments mesh makes no claim about a pinned rim for it to have checked',
   );
@@ -39566,7 +39566,7 @@ function gateTurn(build: TurnBuild, skeletonText?: string, twin?: ModelTwin): Re
     declaredDurations: build.result.declaredDurations,
     modelText: threadedModel(build.result, build.result.atlasText),
     rig: build.result.rig,
-    profile: 'spine-html',
+    profile: 'rig-play',
   }, twin);
 }
 
@@ -42193,7 +42193,7 @@ function runDeformWindingSuite(): number {
   const PATH_LIFT = 40;
   const liftRun = Array.from({ length: pathPoints }, () => [0, PATH_LIFT]).flat();
   const liftMotion = pathDeformMotion([{ t: 0 }, { t: 1, vertices: liftRun }]);
-  const liftGate = gateProbe(pathDirs, liftMotion, 'spine-html');
+  const liftGate = gateProbe(pathDirs, liftMotion, 'rig-play');
   const liftBuilt = compile({
     rigPath: pathDirs.rigPath,
     motionPath: join(pathDirs.dir, 'probe.motion.json'),
@@ -44476,7 +44476,7 @@ function runMeshSuite(): number {
   // angular split collapsed to control 0, and the second bone was printed on the
   // `MESH` line, added to `meshBones`, and bound by nothing. Measured on the
   // branch point: 25 vertices, 40 triangles, `bones=[blob, grip_a, grip_b]`, and
-  // a weighted run referencing two bone indices. `--profile spine-html` green.
+  // a weighted run referencing two bone indices. `--profile rig-play` green.
   //
   // ⭐ Every figure below is read back through spine-core rather than off the
   // emitted JSON, and each vertex's part-local pixel comes from its own
@@ -44818,7 +44818,7 @@ function runMeshSuite(): number {
         declaredDurations: build.result.declaredDurations,
         modelText: threadedModel(build.result, build.result.atlasText),
         rig: build.result.rig,
-        profile: 'spine-html',
+        profile: 'rig-play',
       });
     const withLinkReport = gateOf(linkedBuild);
     const ringOnly = buildContourRig(RING_ATTACHMENT, ringWithLink(null));
@@ -55480,7 +55480,7 @@ function runMeshCheckSuite(): number | null {
     atlasText: faithful.atlasText,
     atlasDir: faithful.atlasDir,
     modelText: faithful.modelText,
-    profile: 'spine-html',
+    profile: 'rig-play',
     rig: faithful.rig,
   });
   const skipped = new Map(faithfulGate.skipped.map((x) => [x.assertion, x.reason]));
@@ -55500,7 +55500,7 @@ function runMeshCheckSuite(): number | null {
     faithfulGate.failures.length === 0 && missing.length === 0,
     `${
       faithfulGate.failures.length === 0
-        ? 'green under spine-html'
+        ? 'green under rig-play'
         : `${faithfulGate.failures.length} failure(s) on correct foreign geometry: ` +
           `[${[...new Set(faithfulGate.failures.map((x) => x.assertion))].join(', ')}]`
     }; ${topology
@@ -55699,13 +55699,13 @@ interface Suite {
  * The rulebook the mutation suite runs under, pinned.
  *
  * Every mutant in this file was written against the full 36, and 14 of those
- * rules exist only under `spine-html`. Under `spine` those 14 do not pass and do
+ * rules exist only under `rig-play`. Under `spine` those 14 do not pass and do
  * not skip — they are `profileSkipped`, a third channel — so a mutant aimed at
  * one of them would come back with nothing fired and no complaint. This suite is
  * the reason the assertions are known to be reachable at all, so it names its
  * profile out loud instead of inheriting whatever the CLI happens to default to.
  */
-const MUTANT_PROFILE: ValidateProfile = 'spine-html';
+const MUTANT_PROFILE: ValidateProfile = 'rig-play';
 
 const SUITES: Suite[] = [
   { name: OVERLAY.rig, opts: optsForFixture(OVERLAY), mutants: MUTANTS },
@@ -57972,7 +57972,7 @@ function runPackerSuite(): number {
     // The renderer's own rulebook is what PK19-PK22 are about, so it stays the
     // default; PK58 onwards name a profile because the clause they measure is
     // validity and has to hold under both (#694).
-    profile: ValidateProfile = 'spine-html',
+    profile: ValidateProfile = 'rig-play',
     // The atlas edit's model-side twin (issue #1025, cut 4c-1), declared by each call that breaks a moved assertion.
     twin?: ModelTwin,
   ): ReturnType<typeof validate> =>
@@ -58013,7 +58013,7 @@ function runPackerSuite(): number {
     packedRegions[1].width,
     packedRegions[1].height,
   );
-  const overlapReport = gatePacked(htmlPack.dir, overlapped, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN);
+  const overlapReport = gatePacked(htmlPack.dir, overlapped, htmlPack.result, 'rig-play', ATLAS_EDIT_TWIN);
   say(
     'PK20_TWO_REGIONS_OVER_THE_SAME_TEXELS_ARE_REFUSED_BY_NAME',
     overlapReport.failures.some(
@@ -58039,7 +58039,7 @@ function runPackerSuite(): number {
     packedRegions[0].width,
     packedRegions[0].height,
   );
-  const offReport = gatePacked(htmlPack.dir, runsOff, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN);
+  const offReport = gatePacked(htmlPack.dir, runsOff, htmlPack.result, 'rig-play', ATLAS_EDIT_TWIN);
   say(
     'PK21_A_REGION_THAT_RUNS_OFF_ITS_SHARED_PAGE_IS_REFUSED_BY_NAME',
     offReport.failures.some(
@@ -58074,7 +58074,7 @@ function runPackerSuite(): number {
   const opaqueDir = join(opaqueDirs.dir, 'packed');
   mkdirSync(opaqueDir, { recursive: true });
   for (const page of opaquePack.pages) page.plate.writePng(join(opaqueDir, page.name));
-  const opaqueReport = gatePacked(opaqueDir, opaquePack.atlasText, opaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
+  const opaqueReport = gatePacked(opaqueDir, opaquePack.atlasText, opaqueResult, 'rig-play', ATLAS_EDIT_TWIN);
   const pageDeclaresAlpha = readPngInfo(join(opaqueDir, opaquePack.pages[0].name)).hasTransparency;
   const named = opaqueResult.images.map((img) => img.region);
   const alphaFailures = opaqueReport.failures.filter((f) => f.assertion === 'A19_OVERLAY_PNGS_HAVE_ALPHA');
@@ -58355,7 +58355,7 @@ function runPackerSuite(): number {
       regions[1].width,
       regions[1].height,
     );
-    const report = gatePacked(pack.dir, overlapped, overlayCompile, 'spine-html', ATLAS_EDIT_TWIN);
+    const report = gatePacked(pack.dir, overlapped, overlayCompile, 'rig-play', ATLAS_EDIT_TWIN);
     const printed = new Map<string, string>();
     for (const f of report.failures) {
       if (f.assertion !== 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP' || !f.detail.includes('overlap on page')) continue;
@@ -58438,7 +58438,7 @@ function runPackerSuite(): number {
   for (const degrees of TURNS) {
     const pack = turnedPack(packInputsOf(turnedOpaqueResult.images), degrees);
     const text = readFileSync(pack.atlasPath, 'utf8');
-    const report = gatePacked(pack.dir, text, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
+    const report = gatePacked(pack.dir, text, turnedOpaqueResult, 'rig-play', ATLAS_EDIT_TWIN);
     const named = new Map<string, string>();
     for (const f of report.failures) {
       if (f.assertion !== 'A19_OVERLAY_PNGS_HAVE_ALPHA') continue;
@@ -58705,13 +58705,13 @@ function runPackerSuite(): number {
   const FOOTPRINT_RULE = 'A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP';
   const splitProbes: string[] = [];
   for (const profile of VALIDATE_PROFILES) {
-    // Overlap is the renderer's policy, so only `spine-html` fails a moved assertion over it — and only there does the twin run.
-    const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile, profile === 'spine-html' ? ATLAS_EDIT_TWIN : undefined);
+    // Overlap is the renderer's policy, so only `rig-play` fails a moved assertion over it — and only there does the twin run.
+    const report = gatePacked(htmlPack.dir, overlapped, htmlPack.result, profile, profile === 'rig-play' ? ATLAS_EDIT_TWIN : undefined);
     const named = report.failures.some((f) => f.assertion === FOOTPRINT_RULE && f.detail.includes('overlap on page'));
     if (profile === 'spine' && named) {
       splitProbes.push(`profile ${profile} refuses two regions over the same texels: ${verdictOf(report, FOOTPRINT_RULE)}`);
     }
-    if (profile === 'spine-html' && !named) {
+    if (profile === 'rig-play' && !named) {
       splitProbes.push(
         `profile ${profile} accepts two regions over the same texels: A49 came back ${verdictOf(report, FOOTPRINT_RULE)}`,
       );
@@ -58725,7 +58725,7 @@ function runPackerSuite(): number {
       splitHeld,
       splitProbes,
       `"${packedRegions[1].name.trim()}" moved onto "${packedRegions[0].name.trim()}"'s corner, on one atlas text: ` +
-        'no overlap named under spine, one named under spine-html',
+        'no overlap named under spine, one named under rig-play',
     ),
     'the two clauses sat in one profile and only one of them belongs there, so moving both would refuse correct ' +
       'foreign data and moving neither would leave the defect standing. The corpus decides it rather than ' +
@@ -58871,7 +58871,7 @@ function runPackerSuite(): number {
     const unreadPlate = readPlate(join(htmlPack.dir, packPage.name));
     const unreadDeclared = unreadRect.width * unreadRect.height;
     const unreadOnPage = texelsOnPage(unreadRect, unreadPlate);
-    const unreadDetails = alphaDetails(gatePacked(htmlPack.dir, unreadText, htmlPack.result, 'spine-html', ATLAS_EDIT_TWIN), unreadName);
+    const unreadDetails = alphaDetails(gatePacked(htmlPack.dir, unreadText, htmlPack.result, 'rig-play', ATLAS_EDIT_TWIN), unreadName);
     if (unreadDetails.length !== 1) {
       unreadProbes.push(
         `A19 printed ${unreadDetails.length} line(s) about "${unreadName}" and one rectangle is one subject: ` +
@@ -58956,7 +58956,7 @@ function runPackerSuite(): number {
       partlyRect.width,
       partlyRect.height,
     );
-    const partlyDetails = alphaDetails(gatePacked(flushDir, partlyText, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN), partlyName);
+    const partlyDetails = alphaDetails(gatePacked(flushDir, partlyText, turnedOpaqueResult, 'rig-play', ATLAS_EDIT_TWIN), partlyName);
     if (partlyDetails.length !== 1) {
       partlyProbes.push(
         `A19 printed ${partlyDetails.length} line(s) about "${partlyName}", which is opaque over the ` +
@@ -59008,7 +59008,7 @@ function runPackerSuite(): number {
   // PK65: and the sentence a part wholly on its page gets does not move. The
   // same flush pack, untouched: every region on it is opaque and on the page,
   // so every one is named, in the words the branch point used, to the byte.
-  const intactReport = gatePacked(flushDir, flushPack.atlasText, turnedOpaqueResult, 'spine-html', ATLAS_EDIT_TWIN);
+  const intactReport = gatePacked(flushDir, flushPack.atlasText, turnedOpaqueResult, 'rig-play', ATLAS_EDIT_TWIN);
   const intactProbes: string[] = [];
   let intactNamed = 0;
   for (const region of flushPage.regions) {
@@ -59071,7 +59071,7 @@ function runPackerSuite(): number {
   let regionsSeen = 0;
   let fullyRead = 0;
   for (const [label, dir, text, result, twin] of alphaPopulation) {
-    const report = gatePacked(dir, text, result, 'spine-html', twin);
+    const report = gatePacked(dir, text, result, 'rig-play', twin);
     for (const f of report.failures) {
       if (f.assertion === ALPHA_RULE && f.detail.includes('is not measured')) {
         silentProbes.push(`${label}: ${f.detail.slice(0, 150)}`);
@@ -59133,7 +59133,7 @@ function runPackerSuite(): number {
     const stagedPagesDir = join(root, 'staged-pages');
     mkdirSync(stagedPagesDir, { recursive: true });
     for (const page of stagedPack.pages) page.plate.writePng(join(stagedPagesDir, page.name));
-    // Under `spine`: the question is validity. The same pack under `spine-html`
+    // Under `spine`: the question is validity. The same pack under `rig-play`
     // is PK68's: A19 used to refuse its opaque base plate here, because its one
     // reading of "base plate" was the image covering the stage (issue #770).
     const packGate = gatePacked(stagelessOpts.outDir, stagelessPack.atlasText, stagelessResult, 'spine');
@@ -59170,7 +59170,7 @@ function runPackerSuite(): number {
 
   // --- PK68–PK69: the base plate a stageless pack is allowed (issue #770) ----
   //
-  // PK67 gates its stageless pack under `spine` because under `spine-html` A19
+  // PK67 gates its stageless pack under `spine` because under `rig-play` A19
   // refused the pack's opaque base plate: the only reading of "base plate" it
   // had was an image at least the stage's size, and the rig states no stage. A
   // cut manifest names the plate itself, so that build has an answer with no
@@ -59179,10 +59179,10 @@ function runPackerSuite(): number {
     const { base } = manifestBaseAndOverlay(ARTICULATED);
     const baseRegion = basename(base.image, '.png');
     const root = buildRootIn(ARTICULATED.dir, 'rigc-pack-baseplate-');
-    const stageless = gateLooseAndPacked(stagelessOptionsFor(ARTICULATED, root, 'stageless'), 'spine-html');
+    const stageless = gateLooseAndPacked(stagelessOptionsFor(ARTICULATED, root, 'stageless'), 'rig-play');
     const stagedOut = join(root, 'staged');
     mkdirSync(stagedOut, { recursive: true });
-    const staged = gateLooseAndPacked({ ...optsForFixture(ARTICULATED), outDir: stagedOut }, 'spine-html');
+    const staged = gateLooseAndPacked({ ...optsForFixture(ARTICULATED), outDir: stagedOut }, 'rig-play');
     // The exemption is only worth anything if the plate really is opaque where
     // it was packed and really shares its page: otherwise this passes on
     // transparency, or on the file-level read, and measures nothing.
@@ -59219,7 +59219,7 @@ function runPackerSuite(): number {
         held,
         probes,
         `"${baseRegion}" is opaque in all of its packed rectangle and shares its page with ${neighbours} other ` +
-          'region(s); the stageless pack passes A19 under spine-html, and so do its loose build and both staged builds',
+          'region(s); the stageless pack passes A19 under rig-play, and so do its loose build and both staged builds',
         (count) => `${count} thing(s) the stageless pack's gate did not do:`,
       ),
       'the manifest names its base plate — the part whose window is the crop — so "no stage" is not "no base plate" ' +
@@ -60048,7 +60048,7 @@ function runPackerSuite(): number {
 
     // PK86: the route rig-parts' `check` stage runs — every gallery rig built
     // `--pack --page-edges free --pack-shape polygon` through the CLI, under both
-    // profiles — exits 0, with A49 measured (PASS) under `spine-html` and out of
+    // profiles — exits 0, with A49 measured (PASS) under `rig-play` and out of
     // profile under `spine`. The case is only worth something because some of
     // those pages overlap two rectangles: `nod` and `squash` do, and under A06's
     // clause they failed `spine-html` by name.
@@ -60067,17 +60067,17 @@ function runPackerSuite(): number {
       ...galleryProbes,
       ...routeRows.flatMap((r) => {
         const packed = r.rows[r.rows.length - 1] ?? '(no A49 row)';
-        const want = r.profile === 'spine-html' ? `PASS  ${FOOTPRINT_RULE}` : `PROF  ${FOOTPRINT_RULE}`;
+        const want = r.profile === 'rig-play' ? `PASS  ${FOOTPRINT_RULE}` : `PROF  ${FOOTPRINT_RULE}`;
         return [
           ...(r.run.status === 0 ? [] : [`${r.name}/${r.profile} exited ${String(r.run.status)}: ${(r.run.stdout.split('\n').find((l) => l.includes('FAIL')) ?? r.run.stderr.split('\n')[0]).trim()}`]),
           ...(r.run.status !== 0 || (r.rows.length === 2 && packed.startsWith(want)) ? [] : [`${r.name}/${r.profile}: the packed gate's A49 row is ${JSON.stringify(packed)}`]),
         ];
       }),
-      ...(routeRows.some((r) => r.profile === 'spine-html' && r.overlapping > 0) ? [] : ['no gallery polygon pack overlaps two rectangles, so the case cannot tell A49 from the clause it replaced']),
+      ...(routeRows.some((r) => r.profile === 'rig-play' && r.overlapping > 0) ? [] : ['no gallery polygon pack overlaps two rectangles, so the case cannot tell A49 from the clause it replaced']),
     ];
     const routeHeld = routeProbes.length === 0;
-    const overlapsSaid = routeRows.filter((r) => r.profile === 'spine-html' && r.overlapping > 0).map((r) => `${r.name} ${r.overlapping}`);
-    const nodLine = routeRows.find((r) => r.name === 'nod' && r.profile === 'spine-html')?.summaries.slice(-1)[0] ?? '(no nod row)';
+    const overlapsSaid = routeRows.filter((r) => r.profile === 'rig-play' && r.overlapping > 0).map((r) => `${r.name} ${r.overlapping}`);
+    const nodLine = routeRows.find((r) => r.name === 'nod' && r.profile === 'rig-play')?.summaries.slice(-1)[0] ?? '(no nod row)';
     say(
       'PK87_EVERY_GALLERY_POLYGON_PACK_BUILDS_GREEN_UNDER_BOTH_PROFILES',
       routeHeld,
@@ -60085,8 +60085,8 @@ function runPackerSuite(): number {
         routeHeld,
         routeProbes,
         `${routeRows.length} build(s) of ${galleryNames.length} gallery rig(s), \`--pack --page-edges free --pack-shape polygon\` under ${VALIDATE_PROFILES.join(' and ')}: ` +
-          `every one exit 0, A49 PASS on each packed gate under spine-html and PROF under spine; rectangle pairs overlapping on ${overlapsSaid.join(', ') || 'none'}; ` +
-          `nod under spine-html: ${nodLine}`,
+          `every one exit 0, A49 PASS on each packed gate under rig-play and PROF under spine; rectangle pairs overlapping on ${overlapsSaid.join(', ') || 'none'}; ` +
+          `nod under rig-play: ${nodLine}`,
       ),
       'issue #1099: the polygon pack is the mode\'s whole point, and the rectangle clause it replaced refused it by ' +
         'name under the renderer\'s profile — so the route a consumer gates a demo on has to come back green, on the ' +
@@ -60097,7 +60097,7 @@ function runPackerSuite(): number {
     // the smallest other region moved so its rectangle is centred on the centroid
     // of a mesh's first triangle, read off the file. No measured literal: the
     // mesh, the triangle, the region and the page are found, not written down.
-    // Red by name on both suppliers under `spine-html`, the same line on each;
+    // Red by name on both suppliers under `rig-play`, the same line on each;
     // and under `spine` the rule is out of profile and the build is green.
     const hullProbes2: string[] = [...galleryProbes];
     let plantSaid = '(no plant)';
@@ -60125,8 +60125,8 @@ function runPackerSuite(): number {
         const vx = Math.max(0, Math.min(page.width - visitor.width, Math.round(cx - visitor.width / 2)));
         const vy = Math.max(0, Math.min(page.height - visitor.height, Math.round(cy - visitor.height / 2)));
         const planted = withBounds(nod.pack.atlasText, visitor.name.trim(), vx, vy, visitor.width, visitor.height);
-        const spineSide = gateOn(nod, planted, 'spine-html', ATLAS_EDIT_TWIN);
-        const modelSide = modelOn(nod, planted, 'spine-html');
+        const spineSide = gateOn(nod, planted, 'rig-play', ATLAS_EDIT_TWIN);
+        const modelSide = modelOn(nod, planted, 'rig-play');
         const outOfProfile = gateOn(nod, planted, 'spine');
         const spineLines = a49Lines(spineSide);
         const modelLines = a49Lines(modelSide);
@@ -60162,7 +60162,7 @@ function runPackerSuite(): number {
       const g = galleryPack(name, 'polygon');
       const reading = packedFootprintFindings(g.pack.atlasText, g.result.skeletonText, g.pack.padding);
       if (reading.rectanglesOverlapping === 0) continue;
-      const report = gateOn(g, g.pack.atlasText, 'spine-html');
+      const report = gateOn(g, g.pack.atlasText, 'rig-play');
       const runtime = runtimeFacts(g.result.skeletonText, g.pack.atlasText);
       const asRectangles: string[] = [];
       if (runtime !== null) a49PackedFootprintsDoNotOverlap({ fail: (_a, detail) => void asRectangles.push(detail), skip: () => {}, stats: {} }, runtime.atlasRegions, runtime.regionJoins, null);
@@ -60196,8 +60196,8 @@ function runPackerSuite(): number {
       else {
         const [first, second] = whole;
         const planted = withBounds(nodRect.pack.atlasText, second.region.name.trim(), first.region.x, first.region.y, second.region.width, second.region.height);
-        const spineLines = a49Lines(gateOn(nodRect, planted, 'spine-html', ATLAS_EDIT_TWIN));
-        const modelLines = a49Lines(modelOn(nodRect, planted, 'spine-html'));
+        const spineLines = a49Lines(gateOn(nodRect, planted, 'rig-play', ATLAS_EDIT_TWIN));
+        const modelLines = a49Lines(modelOn(nodRect, planted, 'rig-play'));
         const names = (line: string): boolean => line.includes(`"${first.region.name}"`) && line.includes(`"${second.region.name}"`) && line.includes('the two rectangles share');
         if (!spineLines.some(names)) rectProbes.push(`spine-core's side did not name the pair: ${JSON.stringify(spineLines.slice(0, 1))}`);
         if (JSON.stringify(spineLines) !== JSON.stringify(modelLines)) rectProbes.push(`the two suppliers printed different A49 lines: ${JSON.stringify(spineLines)} against ${JSON.stringify(modelLines)}`);
@@ -61951,8 +61951,8 @@ function runAtlasReaderSuite(): number | null {
     );
 
     // PKR47 — the instrument the card named, on the page it cannot locate.
-    const coarsePolicy = halved.gate(halved.packed.atlasText, halved.dir, 'spine-html', ATLAS_EDIT_TWIN);
-    const declaredPolicy = halved.gate(halved.packed.atlasText, halved.packed.dir, 'spine-html');
+    const coarsePolicy = halved.gate(halved.packed.atlasText, halved.dir, 'rig-play', ATLAS_EDIT_TWIN);
+    const declaredPolicy = halved.gate(halved.packed.atlasText, halved.packed.dir, 'rig-play');
     const alphaSaid = coarsePolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
     const declaredAlpha = declaredPolicy.failures.filter((f) => f.assertion === A19).map((f) => f.detail);
     // 🔑 Keyed on the GRID sentence and not on "is not measured", and the
@@ -61998,7 +61998,7 @@ function runAtlasReaderSuite(): number | null {
 
     // PKR48 — the positive control, and the one this change most risks failing.
     const declaredSpine = halved.gate(halved.packed.atlasText, halved.packed.dir, 'spine');
-    const honestPolicy = halved.gate(halved.honestText, halved.dir, 'spine-html');
+    const honestPolicy = halved.gate(halved.honestText, halved.dir, 'rig-play');
     const ratioWords = ['of the declared width', 'of the declared height', 'is not measured'];
     const untouchedProbes = [
       ...[
@@ -62067,7 +62067,7 @@ function runAtlasReaderSuite(): number | null {
     const detailsOf = (report: ReturnType<typeof validate>, code: string): string[] =>
       report.failures.filter((f) => f.assertion === code).map((f) => f.detail);
     const honestSpine = gateOf(honestPack, 'spine');
-    const honestHtml = gateOf(honestPack, 'spine-html');
+    const honestHtml = gateOf(honestPack, 'rig-play');
     const declared = `declares ${webpPack.page.width}x${webpPack.page.height}`;
 
     // PKR49 — the card's own case, at the gate.
@@ -62208,7 +62208,7 @@ function runAtlasReaderSuite(): number | null {
     // unreadable file is one red line, A06's. What this case holds of A19 is
     // that it still says it did not read the page, and points at the rule
     // that names it — and that no failure line of A19 is about it at all.
-    const webpHtml = gateOf(webpPack, 'spine-html');
+    const webpHtml = gateOf(webpPack, 'rig-play');
     const alphaSaid = detailsOf(webpHtml, A19);
     const alphaSkip = webpHtml.skipped.find((s) => s.assertion === A19)?.reason ?? '';
     // The every-page form names no page (#1055's, which leaves the file-by-file naming to the owner).
@@ -64482,14 +64482,14 @@ function buildReportControls(say: (name: string, ok: boolean, detail: string, wh
     'the build\'s own files are held byte-identical (A18, emit_hashes); a report of that build that carried a time or a path could not be, and a dependant comparing two runs would read a change that is not there',
   );
 
-  // A red build: the A19 probe of CLI07 — an opaque indexed PNG with no tRNS — under spine-html, where A19 FAILs and the static probe SKIPs.
+  // A red build: the A19 probe of CLI07 — an opaque indexed PNG with no tRNS — under rig-play, where A19 FAILs and the static probe SKIPs.
   {
     const dirs = writeProbeRig();
     writeTypedPng(join(dirs.dir, 'block.png'), 12, 8, { colourType: 3, trns: false });
     const motionPath = join(dirs.dir, 'probe.motion.json');
     writeFileSync(motionPath, `${JSON.stringify(STATIC_MOTION, null, 2)}\n`);
     const report = join(dirs.dir, 'red.report.json');
-    const red = entryRun('cli.ts', ['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--profile', 'spine-html', '--report', report]);
+    const red = entryRun('cli.ts', ['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', dirs.outDir, '--profile', 'rig-play', '--report', report]);
     const text = existsSync(report) ? readFileSync(report, 'utf8') : '';
     const lines = reportStatedByLines(red.stdout);
     const fails = lines.gates.flatMap((g) => g.failures);
@@ -64506,7 +64506,7 @@ function buildReportControls(say: (name: string, ok: boolean, detail: string, wh
       probeDetail(
         probes.length === 0,
         probes,
-        `the opaque probe under spine-html: exit 1, --out absent, and the document states its ${fails.length} FAIL row(s) (${fails.map((f) => f.code).join(', ')}), ${skips.length} SKIP row(s) with their reasons and the summary's ${lines.gates[0]?.summary?.failed ?? '?'} failed, as the lines do`,
+        `the opaque probe under rig-play: exit 1, --out absent, and the document states its ${fails.length} FAIL row(s) (${fails.map((f) => f.code).join(', ')}), ${skips.length} SKIP row(s) with their reasons and the summary's ${lines.gates[0]?.summary?.failed ?? '?'} failed, as the lines do`,
         (count) => `${count} way(s) the red build's document is not its lines:`,
       ),
       'a red build is the one a dependant most needs to read, and the document has to reach the disk before the exit that leaves the build unwritten',
@@ -64678,7 +64678,7 @@ function runCliSuite(): number {
   // ⭐ The art is chosen so that ONE rule separates the two profiles: `block.png`
   // is an opaque indexed PNG with no tRNS, which A19 — renderer policy — refuses
   // and no validity rule has an opinion about. So the same two files must build
-  // green with no flag and RED under `--profile spine-html`, and the pair states
+  // green with no flag and RED under `--profile rig-play`, and the pair states
   // the default in the only place a default can be stated honestly: what happens
   // when nobody says anything.
   //
@@ -64710,7 +64710,7 @@ function runCliSuite(): number {
     // than written here. They used to be the literals `14` and `39`, and a
     // literal is a guardrail that has to be remembered: adding one assertion
     // failed two cases whose names said nothing about counting.
-    const everyAssertion = assertionCountForProfile('spine-html');
+    const everyAssertion = assertionCountForProfile('rig-play');
     const policyAssertions = everyAssertion - assertionCountForProfile('spine');
 
     const bare = runCli(args([]));
@@ -64719,7 +64719,7 @@ function runCliSuite(): number {
       'CLI06_NO_PROFILE_FLAG_MEANS_SPINE',
       bare.status === 0 &&
         /profile spine\b/.test(bare.stdout) &&
-        !/profile spine-html/.test(bare.stdout) &&
+        !/profile rig-play/.test(bare.stdout) &&
         bareProf.includes(A19) &&
         bareProf.length === policyAssertions,
       bare.status === 0
@@ -64730,11 +64730,11 @@ function runCliSuite(): number {
         "judged against a third-party renderer's policy instead (#221)",
     );
 
-    const opted = runCli(args(['--profile', 'spine-html']));
+    const opted = runCli(args(['--profile', 'rig-play']));
     const optedAll = assertions(opted.stdout);
     const optedProf = [...opted.stdout.matchAll(/^ {2}PROF {2}A\d\d_/gm)].length;
     say(
-      'CLI07_PROFILE_SPINE_HTML_STILL_RUNS_EVERY_ASSERTION',
+      'CLI07_PROFILE_RIG_PLAY_STILL_RUNS_EVERY_ASSERTION',
       opted.status !== 0 &&
         opted.status !== null &&
         optedAll.size === everyAssertion &&
@@ -64744,6 +64744,132 @@ function runCliSuite(): number {
         `A19 ${new RegExp(`^ {2}FAIL {2}${A19}`, 'm').test(opted.stdout) ? 'FAILED as it must' : 'did not fire'}`,
       'flipping a default is only safe if the old one is still reachable and still complete — the opt-in has to be ' +
         'every rule it always was, not a weakened copy',
+    );
+
+    // --- issue #1277: the profile is `rig-play`, and its former name is an alias for one minor ---
+    //
+    // ⭐ The deprecation line is stated here as text, not read from `profileAliasLine`: a
+    // control that built its expectation with the printer would go on passing whatever
+    // the printer said. The printer is compared to it as well, so the two cannot drift.
+    const DEPRECATION = 'rigc: --profile spine-html is deprecated and reads as --profile rig-play, the same rules; it is accepted until the next minor release — pass --profile rig-play';
+    const [former, target] = Object.entries(PROFILE_ALIASES)[0] ?? ['(no alias)', 'spine'];
+    const aliased = runCli(args(['--profile', former]));
+    const aliasErr = aliased.stderr.split('\n');
+    say(
+      'CLI110_THE_FORMER_PROFILE_NAME_READS_AS_RIG_PLAY_AND_SAYS_SO_ON_ITS_FIRST_STDERR_LINE',
+      Object.keys(PROFILE_ALIASES).length === 1 &&
+        target === 'rig-play' &&
+        profileAliasLine(former, target) === DEPRECATION &&
+        aliasErr[0] === DEPRECATION &&
+        aliased.status === opted.status &&
+        aliased.stdout === opted.stdout &&
+        aliasErr.slice(1).join('\n') === opted.stderr &&
+        !opted.stderr.includes('deprecated'),
+      `--profile ${former}: exit ${String(aliased.status)} (rig-play: ${String(opted.status)}), first stderr line ` +
+        `${JSON.stringify(aliasErr[0])}, stdout ${aliased.stdout === opted.stdout ? 'identical to' : 'DIFFERENT from'} --profile rig-play's, ` +
+        `the rest of stderr ${aliasErr.slice(1).join('\n') === opted.stderr ? 'identical' : 'DIFFERENT'}; ` +
+        `--profile rig-play prints ${opted.stderr.includes('deprecated') ? 'A' : 'no'} deprecation line`,
+      "a consumer's scripts carry the old flag, so it has to keep selecting the same rules for one minor and say, " +
+        'on the stream a report does not use, which name to pass instead (#1277)',
+    );
+
+    const typo = runCli(args(['--profile', 'spine-htlm']));
+    say(
+      'CLI111_AN_UNKNOWN_PROFILE_IS_REFUSED_BY_NAME_AND_LISTS_THE_PROFILES',
+      typo.status === 2 &&
+        typo.stderr.includes('--profile "spine-htlm"; known profiles: spine, rig-play') &&
+        !typo.stderr.includes('deprecated') &&
+        typo.stdout === '',
+      `exit ${String(typo.status)}, stderr ${JSON.stringify(typo.stderr.split('\n')[0])}`,
+      'an alias table is one more place a near-miss could be read as a name; a typo of the old name is still a typo',
+    );
+
+    // The rule set, derived from the registry twice: by the expression the profile
+    // was keyed on before the rename (`kind === 'validity' || profile === <former>`,
+    // evaluated with the former name) and by `kindRunsUnder` over the profile the
+    // alias resolves to. 🌱 The plant drops one rule from the new set, and the
+    // comparison has to name exactly that rule — a check that cannot see one rule
+    // leave is not checking membership.
+    const before = ASSERTION_NAMES.filter((name) => {
+      const kind: AssertionKind = ASSERTION_KIND[name];
+      return kind === 'validity' || former === 'spine-html';
+    });
+    const membershipDiff = (a: readonly string[], b: readonly string[]): string[] => [
+      ...a.filter((name) => !b.includes(name)).map((name) => `only before: ${name}`),
+      ...b.filter((name) => !a.includes(name)).map((name) => `only after: ${name}`),
+    ];
+    const resolvedProfile: AssertionProfile = PROFILE_ALIASES[former] ?? 'spine';
+    const resolved = ASSERTION_NAMES.filter((name) => kindRunsUnder(ASSERTION_KIND[name], resolvedProfile));
+    const direct = ASSERTION_NAMES.filter((name) => kindRunsUnder(ASSERTION_KIND[name], 'rig-play'));
+    const dropped = ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'renderer').slice(-1)[0] ?? '(no renderer rule)';
+    const planted = membershipDiff(before, resolved.filter((name) => name !== dropped));
+    const real = membershipDiff(before, resolved);
+    say(
+      'CLI112_RIG_PLAY_RUNS_EXACTLY_THE_RULES_THE_FORMER_PROFILE_RAN',
+      real.length === 0 &&
+        membershipDiff(resolved, direct).length === 0 &&
+        before.length === ASSERTION_NAMES.length &&
+        planted.length === 1 &&
+        planted[0] === `only before: ${dropped}`,
+      `before ${before.length} rule(s), rig-play ${direct.length}, through the alias ${resolved.length}, differing ` +
+        `${real.length ? real.join('; ') : 'none'}; planted (${dropped} dropped from rig-play): ${planted.join('; ') || 'NOT SEEN'}`,
+      'the rename moves no membership — retiring a rule from the profile is a card of its own (#1404), ' +
+        'and a rename that quietly dropped one would read as green',
+    );
+
+    // Past the CLI a former name still reads as its profile: `validate.ts` is
+    // reachable through the `./*` courtesy keys, a JS caller passing the former
+    // name got the opt-in rules on the release before this one, and a minor does
+    // not throw on it while the alias exists. Silently — the CLI is what prints
+    // the deprecation. An unknown name is still refused by name. The build is a
+    // green default build of the same probe rig, into a directory of its own, and
+    // both suppliers judge it under each name.
+    const resolvedOut = join(dirs.dir, 'cli113-out');
+    const greenBuild = runCli(['build', '--rig', dirs.rigPath, '--motion', motionPath, '--images', dirs.dir, '--out', resolvedOut]);
+    const readOut = (file: string): string => (existsSync(join(resolvedOut, file)) ? readFileSync(join(resolvedOut, file), 'utf8') : '');
+    const reportsUnder = (profile: string): string => {
+      try {
+        const spineSide = validateOverSpine({
+          skeletonText: readOut('skeleton.json'),
+          atlasText: readOut('skeleton.atlas'),
+          atlasDir: resolvedOut,
+          modelText: readOut('skeleton.model.json'),
+          profile: profile as AssertionProfile,
+        });
+        const modelSide = validateModel({ modelText: readOut('skeleton.model.json'), atlasDir: resolvedOut, profile: profile as AssertionProfile });
+        return JSON.stringify([spineSide, modelSide]);
+      } catch (err) {
+        return `REFUSED ${(err as Error).message}`;
+      }
+    };
+    const underTarget = reportsUnder('rig-play');
+    const underFormer = reportsUnder(former);
+    const underSpine = reportsUnder('spine');
+    const unknownRefused = reportsUnder('nonesuch');
+    // 🌱 The plant removes the resolution: the former name handed to the kind
+    // rule as it is runs the validity rules alone — exactly the silence the
+    // resolution exists to prevent, and what the case would see without it.
+    const unresolved = ASSERTION_NAMES.filter((name) => kindRunsUnder(ASSERTION_KIND[name], former as AssertionProfile));
+    const validityOnly = ASSERTION_NAMES.filter((name) => ASSERTION_KIND[name] === 'validity');
+    const formerPolicyCount = (JSON.parse(underFormer.startsWith('REFUSED') ? '[]' : underFormer) as Array<{ profileSkipped: unknown[] }>)
+      .map((r) => r.profileSkipped.length);
+    say(
+      'CLI113_A_FORMER_PROFILE_NAME_PAST_THE_CLI_READS_AS_ITS_PROFILE_AND_AN_UNKNOWN_ONE_IS_REFUSED_BY_NAME',
+      greenBuild.status === 0 &&
+        !underTarget.startsWith('REFUSED') &&
+        underFormer === underTarget &&
+        underSpine !== underTarget &&
+        formerPolicyCount.length === 2 &&
+        formerPolicyCount.every((n) => n === 0) &&
+        unknownRefused === 'REFUSED validate: profile "nonesuch" is not a profile; the profiles are "spine" and "rig-play"' &&
+        unresolved.length === validityOnly.length &&
+        unresolved.length < ASSERTION_NAMES.length,
+      `green build exit ${String(greenBuild.status)}; validate() and the model side under "${former}" ` +
+        `${underFormer === underTarget ? 'equal' : 'DIFFER from'} their reports under "rig-play", ${formerPolicyCount.join(' and ')} PROF line(s), ` +
+        `and ${underSpine !== underTarget ? 'differ' : 'DO NOT differ'} from "spine"'s; unknown: ${JSON.stringify(unknownRefused)}; ` +
+        `planted (resolution removed): "${former}" runs ${unresolved.length} of ${ASSERTION_NAMES.length} rules — the ${validityOnly.length} validity ones`,
+      'the kind rule reads any name but rig-play as validity-only, so a former name that reached it unresolved would run a ' +
+        'weaker gate in silence; a courtesy-key caller of the release before keeps its rules for the minor the alias lives (#1277)',
     );
   }
 
@@ -67195,7 +67321,7 @@ function runCliSuite(): number {
     const redMotion = join(red.dir, 'probe.motion.json');
     writeFileSync(redMotion, `${JSON.stringify(SLIDE_MOTION, null, 2)}\n`);
     const redBuild = runCli([
-      'build', '--rig', red.rigPath, '--motion', redMotion, '--images', red.dir, '--out', red.outDir, '--profile', 'spine-html',
+      'build', '--rig', red.rigPath, '--motion', redMotion, '--images', red.dir, '--out', red.outDir, '--profile', 'rig-play',
     ]);
 
     // CLI106
@@ -67231,7 +67357,7 @@ function runCliSuite(): number {
         buildHeld,
         buildProbes,
         `the green build's last line is the preview of ${resolve(green.outDir)}, once, and running it writes a page; ` +
-          'the red build (A19 under spine-html) exits 1, nothing written, and names neither a file nor a page',
+          'the red build (A19 under rig-play) exits 1, nothing written, and names neither a file nor a page',
         (count) => `${count} thing(s) the hand-off did wrong:`,
       ),
       'the next command is part of the message — a build that ends on the files it wrote leaves the one question ' +
@@ -72206,10 +72332,10 @@ const CURRENCY_NUMBER = `(?<![\\d.§#\\w])(\\d+|${Object.keys(CURRENCY_NUMERALS)
  * The profile split's own vocabulary, read off the RAW line.
  *
  * It gates the two loose forms. Raw rather than prose because `--profile` and
- * `spine-html` are nearly always written as inline code, which the prose pass
+ * `rig-play` are nearly always written as inline code, which the prose pass
  * blanks — the subject is context, and only the NUMBER has to come from prose.
  */
-const CURRENCY_SUBJECT = /spine-html|--profile\b|validity rules?|renderer(?:'s|s')? policy|archetype policy|renderer-policy/i;
+const CURRENCY_SUBJECT = /rig-play|--profile\b|validity rules?|renderer(?:'s|s')? policy|archetype policy|renderer-policy/i;
 
 /** One quantity the tool knows, and the shapes a doc states it in. */
 interface CurrencyTally {
@@ -72702,22 +72828,22 @@ const CURRENCY_RED_FIRST: Array<{ row: string; stale: string; clean: string }> =
   },
   {
     row: 'AUTHORING: the `--profile` row (#359)',
-    stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `spine-html` = all 36, opt-in |\n',
-    clean: `| \`--profile\` | \`spine\` = the ${REGISTRY_SPINE} validity rules (**the default**) · \`spine-html\` = all ${REGISTRY_ALL}, opt-in |\n`,
+    stale: '| `--profile` | `spine` = the 22 validity rules (**the default**) · `rig-play` = all 36, opt-in |\n',
+    clean: `| \`--profile\` | \`spine\` = the ${REGISTRY_SPINE} validity rules (**the default**) · \`rig-play\` = all ${REGISTRY_ALL}, opt-in |\n`,
   },
   {
     row: 'BENCHMARK: the profiles paragraph (#359)',
-    stale: 'Not all 36 rules are about Spine. Some are about **spine-html**, the renderer this\n',
-    clean: `Not all ${REGISTRY_ALL} rules are about Spine. Some are about **spine-html**, the renderer this\n`,
+    stale: 'Not all 36 rules are about Spine. Some are about **rig-play**, the renderer this\n',
+    clean: `Not all ${REGISTRY_ALL} rules are about Spine. Some are about **rig-play**, the renderer this\n`,
   },
   {
     row: 'BENCHMARK: the profile table\'s own row (#359)',
     stale:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      '| `spine-html` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
+      '| `rig-play` | all 36 | Opt-in. Is this a rig *this* project can ship? |\n',
     clean:
       '| Profile | Runs | For |\n| --- | --- | --- |\n' +
-      `| \`spine-html\` | all ${REGISTRY_ALL} — those ${REGISTRY_SPINE} plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n`,
+      `| \`rig-play\` | all ${REGISTRY_ALL} — those ${REGISTRY_SPINE} plus 8 renderer and 8 archetype | Opt-in. Is this a rig it can ship? |\n`,
   },
   {
     row: 'INGEST §3.3: the profile-exclusion sentence and its roster (#360, found on the current tree)',
@@ -79944,7 +80070,7 @@ function runCurrencySuite(): number {
     writeSolidRgbaPng(join(copy.dir, fromManifest.overlay.image), fromManifest.overlay.w, fromManifest.overlay.h, null);
     const gated = gateLooseAndPacked(
       stagelessOptionsFor(copy, buildRootIn(copy.dir, 'rigc-loosequote-out-'), 'loose'),
-      'spine-html',
+      'rig-play',
     );
     const live =
       gated.loose.failures.find(
@@ -81445,7 +81571,7 @@ function typeAliasesIn(source: string): Map<string, string> {
 //
 // ⚠️ **Cost, measured rather than guessed.** The pool is one subprocess per
 // stated command per example: `build` for all seven, `explain` for the six whose
-// README names it, `build --profile spine-html` for the seven that mention that
+// README names it, `build --profile rig-play` for the seven that mention that
 // profile. Twenty runs, 6–18 s of wall clock depending on what else the machine
 // is doing. It is NOT taken from `GALLERY_EXAMPLE_IS_GREEN`'s in-process
 // `compile()` + `validate()`, which is the cheaper thing sitting right there:
@@ -82054,7 +82180,7 @@ function readmeStates(readme: string, verb: string): boolean {
 /**
  * Run every command this example's README states, over the example's own spec.
  *
- * The third is what keeps a `--profile spine-html` verdict from being reported
+ * The third is what keeps a `--profile rig-play` verdict from being reported
  * stale: under the default profile those rules print `PROF`, not `PASS`, so a
  * README quoting the opt-in run would have nothing to match against.
  */
@@ -82069,8 +82195,8 @@ function transcriptRunsFor(example: string, readme: string, outDir: string): Tra
   ];
   const wanted: Array<[string, string[]]> = [['build', ['build', ...spec]]];
   if (readmeStates(readme, 'explain')) wanted.push(['explain', ['explain', ...spec]]);
-  if (readme.includes('spine-html')) {
-    wanted.push(['build --profile spine-html', ['build', ...spec, '--profile', 'spine-html']]);
+  if (readme.includes('rig-play')) {
+    wanted.push(['build --profile rig-play', ['build', ...spec, '--profile', 'rig-play']]);
   }
   return wanted.map(([command, argv]) => {
     const result = runCli(argv);
@@ -83053,7 +83179,7 @@ function runGalleryTranscriptSuite(): number {
     // testing a spelling no README carries.
     const aRecipe = (over: Partial<Record<RecipeField['name'], string>>): string =>
       recipeSentence({ from: 'a', to: 'b', example: anExample, spec: 'rig', command: 'build', ...over });
-    const wellFormed = parseRefusalRecipe(aRecipe({ command: 'build --profile spine-html' }), recipeNames);
+    const wellFormed = parseRefusalRecipe(aRecipe({ command: 'build --profile rig-play' }), recipeNames);
     const malformed: Array<[string, string]> = [
       ['a line that is not the sentence at all', `${anExample} rig build | a | b`],
       ['an example this run never found', aRecipe({ example: 'no-such-example' })],
@@ -103586,7 +103712,7 @@ function runEmitHashesSuite(): number | null {
     const otherSet = join(work, 'other-set.json');
     if (a.doc !== null) {
       const copy = JSON.parse(readFileSync(a.out, 'utf8')) as HashesDocument;
-      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'spine-html'];
+      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'rig-play'];
       writeFileSync(otherSet, `${JSON.stringify(copy, null, 2)}\n`);
     }
     const badOut = join(work, 'bad-out.json');
@@ -104707,7 +104833,7 @@ function runRenderHashesSuite(): number | null {
     if (a.doc !== null) {
       const copy = JSON.parse(readFileSync(a.out, 'utf8')) as RenderHashesDocument;
       writeFileSync(otherRender, renderHashesText({ ...copy, render: [...copy.render, '--fps', '24'] }));
-      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'spine-html'];
+      copy.recipes[0].commands[0] = [...copy.recipes[0].commands[0], '--profile', 'rig-play'];
       writeFileSync(otherSet, renderHashesText(copy));
     }
     const full = join(work, 'full');
@@ -107312,7 +107438,7 @@ function runRenderHashesSuite(): number | null {
       if (help.status !== 0) probes24.push(`cli_core.ts --help exited ${help.status}`);
       for (const doc of runs) for (const line of doc.usage) if (!help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help leaves out ${doc.name}'s usage line ${JSON.stringify(line.slice(0, 60))}`);
       for (const doc of others) for (const line of doc.usage) if (help.stdout.includes(`  ${line}\n`)) probes24.push(`cli_core.ts --help prints ${doc.name}'s usage line, a command it does not run`);
-      if (help.stdout.includes('--profile spine|spine-html:')) probes24.push('cli_core.ts --help prints the --profile paragraph, about commands it does not run');
+      if (help.stdout.includes('--profile spine|rig-play:')) probes24.push('cli_core.ts --help prints the --profile paragraph, about commands it does not run');
       // The commands, each in both entries; `dir` stands for where the run writes.
       const parts = join(spec, 'parts');
       const two = join(work, 'rc24-two-parts');
@@ -107677,7 +107803,7 @@ function runRenderHashesSuite(): number | null {
           writeFileSync(join(redSpec, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
           const red = (entry: 'cli.ts' | 'cli_core.ts'): { r: ReturnType<typeof runCli>; out: string } => {
             const out = join(work, `rc30-red-${entry}`);
-            const args = ['build', '--rig', join(redSpec, 'rig.json'), '--motion', join(redSpec, 'motion.json'), '--images', join(redSpec, 'parts'), '--out', out, '--profile', 'spine-html'];
+            const args = ['build', '--rig', join(redSpec, 'rig.json'), '--motion', join(redSpec, 'motion.json'), '--images', join(redSpec, 'parts'), '--out', out, '--profile', 'rig-play'];
             return { r: entry === 'cli.ts' ? runCli(args) : runEntryIn(tree, entry, args, work), out };
           };
           const redFull = red('cli.ts');
@@ -107687,7 +107813,7 @@ function runRenderHashesSuite(): number | null {
             if (run.r.status !== 1 || !run.r.stderr.includes('assertion(s) failed — nothing written') || existsSync(run.out)) probes.RC30.push(`${entry} on a rig over its budget exited ${run.r.status}, ${existsSync(run.out) ? 'and wrote its --out' : 'wrote nothing'}: ${JSON.stringify(firstErr(run.r).slice(0, 160))}`);
           }
           if (a13(redCore.r).length === 0 || JSON.stringify(a13(redCore.r)) !== JSON.stringify(a13(redFull.r))) probes.RC30.push(`the A13 lines differ: ${JSON.stringify(a13(redFull.r))} against ${JSON.stringify(a13(redCore.r))}`);
-          figures.RC30 = `${meshRow.name} with its mesh budget planted to 1 triangle, --profile spine-html: both entries exit 1, write nothing, and print the same ${a13(redCore.r).length} A13 line(s) — "${(a13(redCore.r)[0] ?? '').trim().slice(0, 100)}"`;
+          figures.RC30 = `${meshRow.name} with its mesh budget planted to 1 triangle, --profile rig-play: both entries exit 1, write nothing, and print the same ${a13(redCore.r).length} A13 line(s) — "${(a13(redCore.r)[0] ?? '').trim().slice(0, 100)}"`;
         }
 
         // RC31 — one name, two bodies: the command table says which entry runs which, and each page says so.
@@ -108084,7 +108210,7 @@ function runRenderHashesSuite(): number | null {
         if (reds40.length !== plants40.length && probes.RC40.length === 0) probes.RC40.push(`${reds40.length} of ${plants40.length} plants read red`);
         figures.RC40 = `in copies of the tree, ${row1060.name} built by cli_core.ts against cli.ts's: ${reds40.join('; ')}`;
 
-        const containedArgs = (out: string): string[] => ['build', '--rig', CONTAINED.rigPath, '--motion', CONTAINED.motionPath, '--manifest', CONTAINED.manifestPath, '--profile', 'spine-html', '--out', out];
+        const containedArgs = (out: string): string[] => ['build', '--rig', CONTAINED.rigPath, '--motion', CONTAINED.motionPath, '--manifest', CONTAINED.manifestPath, '--profile', 'rig-play', '--out', out];
         // Built inside the fixture's own directory (issue #1127), so neither entry's pages spell a temp directory.
         const rc41Root = buildRootIn(CONTAINED.dir, 'rigc-rc41-');
         const fullBare = runCli(containedArgs(join(rc41Root, 'rc41-full')));
@@ -108098,7 +108224,7 @@ function runRenderHashesSuite(): number | null {
           if (bareKeys.length <= constraintCounts.length) probes.RC41.push(`cli_core.ts's figures line on the contained probe is the constraint counts alone: [${bareKeys.join(' ')}]`);
           probes.RC41.push(...figuresFaults(`${CONTAINED.rig} (contained cut)`, fullBare.stdout, coreBare.stdout));
         }
-        figures.RC41 = `the contained probe (no constraints), --profile spine-html, by both entries: cli_core.ts prints [${bareKeys.join(' ')}], cli.ts's line key for key`;
+        figures.RC41 = `the contained probe (no constraints), --profile rig-play, by both entries: cli_core.ts prints [${bareKeys.join(' ')}], cli.ts's line key for key`;
       }
     }
     const cases: Array<[string, string, string]> = [
@@ -112152,7 +112278,7 @@ function runModelAtlasSuite(): number {
       const lineOf = (report: ModelReport, code: string): string =>
         report.failures.find((f) => f.assertion === code)?.detail ?? (report.passed.includes(code) ? 'PASS' : report.skipped.find((k) => k.assertion === code)?.reason ?? '(none)');
       // The rig info is the document's own (issue #1054), so the call hands none.
-      const run = (modelText: string, given?: Parameters<typeof validateModel>[0]['given']) => validateModel({ modelText, atlasDir: out, profile: 'spine-html', given });
+      const run = (modelText: string, given?: Parameters<typeof validateModel>[0]['given']) => validateModel({ modelText, atlasDir: out, profile: 'rig-play', given });
       // The document alone, no caller-given value: read.
       const clean = run(text);
       if (lineOf(clean, a06).includes('premultiplied') || lineOf(clean, a06).includes('threw')) probes.push(`the built /3 document, nothing given, read A06 as ${JSON.stringify(lineOf(clean, a06))}`);
@@ -115364,11 +115490,11 @@ function runCutsSuite(): { failures: number; cuts: number } {
         // carries floats nobody chose.
         modelText: modelDocument(result.model, result.skeletonText, result.atlasText),
         reEmit: gateTextsOf(compile(opts)),
-        // `spine-html`, pinned: a registered cut is a rig this project ships, and
+        // `rig-play`, pinned: a registered cut is a rig this project ships, and
         // "can this project ship it" is the whole question the extra suite asks.
         // It is the reading this suite has always had, and it is now stated
         // rather than inherited (#221).
-        profile: 'spine-html',
+        profile: 'rig-play',
       });
       if (report.failures.length === 0) {
         const skips = report.skipped.length ? `, ${report.skipped.length} skipped` : '';
@@ -120055,14 +120181,14 @@ function runIngestSuite(): number {
         profile,
       });
     const own = gateUnder('spine');
-    const renderer = gateUnder('spine-html');
+    const renderer = gateUnder('rig-play');
     const policy = new Set(own.profileSkipped.filter((p) => p.kind === 'renderer').map((p) => p.assertion));
     const refusedBy = [...new Set(renderer.failures.map((f) => f.assertion))];
     const ownProbes = [
       ...own.failures.map((f) => `under spine ${f.assertion}: ${f.detail.slice(0, 200)}`),
       ...renderer.failures
         .filter((f) => !policy.has(f.assertion))
-        .map((f) => `under spine-html ${f.assertion}, which is not a renderer rule: ${f.detail.slice(0, 200)}`),
+        .map((f) => `under rig-play ${f.assertion}, which is not a renderer rule: ${f.detail.slice(0, 200)}`),
     ];
     const ownHeld = ownProbes.length === 0;
     say(
@@ -120072,7 +120198,7 @@ function runIngestSuite(): number {
         ownHeld,
         ownProbes,
         `ingest_probe's build: under spine ${own.passed.length} pass(es), 0 failures, ${own.skipped.length} skip(s); ` +
-          `under spine-html refused by [${refusedBy.join(', ')}] only, each a renderer rule spine does not run`,
+          `under rig-play refused by [${refusedBy.join(', ')}] only, each a renderer rule spine does not run`,
         (count) => `${count} refusal(s) of the coverage probe's own build:`,
       ),
       'issue #771: every probe the selftest builds is gated green by the profile it targets, or the suite says why ' +
@@ -120670,7 +120796,7 @@ function runIngestSuite(): number {
     ] as const;
     const written = read.rig.invariants?.consumerDrivenMix ?? [];
     const judged = read.findings.filter((f) => f.code === 'CONSUMER_DRIVEN_MIX');
-    const gates = (['spine', 'spine-html'] as const).map((profile) => [profile, gateOf(rebuilt, profile, join(root, 'S', 'out'))] as const);
+    const gates = (['spine', 'rig-play'] as const).map((profile) => [profile, gateOf(rebuilt, profile, join(root, 'S', 'out'))] as const);
     const bareGate = gateOf(withoutIt, 'spine', join(root, 'U', 'out'));
     const carryProbes = [
       ...read.findings.filter((f) => f.kind === 'blocker').map((f) => `ingest recorded a blocker: ${f.code} — ${f.detail.slice(0, 120)}`),
@@ -128307,7 +128433,7 @@ function runVerdictSuppliersSuite(): number {
       modelText: threadedModel(overlay.result, overlay.result.atlasText),
       rig: overlay.result.rig,
       declaredDurations: overlay.result.declaredDurations,
-      profile: 'spine-html',
+      profile: 'rig-play',
     };
     const spine = validateOverSpine(input);
     const plants: Array<[string, Partial<ModelSupply>, string]> = [
@@ -128395,7 +128521,7 @@ function runVerdictSuppliersSuite(): number {
       atlasDir: articulated.opts.outDir,
       modelText: threadedModel(articulated.result, articulated.result.atlasText),
       rig: articulated.result.rig,
-      profile: 'spine-html',
+      profile: 'rig-play',
     };
     const rigSpine = validateOverSpine(rigInput);
     const axisBone = articulated.result.rig.axisBone ?? '(the articulated probe declares no axis bone)';
@@ -128433,7 +128559,7 @@ function runVerdictSuppliersSuite(): number {
       } }, 'A34_CONSTRAINT_TIMELINE_TARGETS', cut4c5[1]],
     ];
     for (const [label, supply, code, b] of cut4c5Plants) {
-      const plantedInput: ValidateInput = { skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, modelText: threadedModel(b.result, b.result.atlasText), rig: b.result.rig, declaredDurations: b.result.declaredDurations, profile: 'spine-html' };
+      const plantedInput: ValidateInput = { skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, modelText: threadedModel(b.result, b.result.atlasText), rig: b.result.rig, declaredDurations: b.result.declaredDurations, profile: 'rig-play' };
       const check = new SupplierCheck(supply);
       check.observe(plantedInput, validateOverSpine(plantedInput), undefined);
       check.caseLine('VF04_PLANTED_CASE');
@@ -128512,10 +128638,10 @@ function runVerdictSuppliersSuite(): number {
       const doc = JSON.parse(modelText) as Record<string, unknown>;
       edit(doc);
       const text = `${JSON.stringify(doc, null, 2)}\n`;
-      return validateModel({ modelText: text, atlasDir: overlay.opts.outDir, profile: 'spine-html', given: modelGivenOf(text, overlay.result.skeletonText, overlay.result.atlasText) });
+      return validateModel({ modelText: text, atlasDir: overlay.opts.outDir, profile: 'rig-play', given: modelGivenOf(text, overlay.result.skeletonText, overlay.result.atlasText) });
     };
     const { placeholder } = firstRegion(base);
-    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'spine-html', given: modelGivenOf(modelText, overlay.result.skeletonText, overlay.result.atlasText) });
+    const clean = validateModel({ modelText, atlasDir: overlay.opts.outDir, profile: 'rig-play', given: modelGivenOf(modelText, overlay.result.skeletonText, overlay.result.atlasText) });
     if (!clean.passed.includes(A00_MODEL_READ) || !clean.passed.includes(A00_MODEL_REGIONS_ON_PAGES)) probes.push(`the probe's own document did not pass both rules: [${clean.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`);
     const unreadable = run((doc) => void delete firstRegion(doc).record.width);
     const readFail = unreadable.failures.find((f) => f.assertion === A00_MODEL_READ);
@@ -129042,7 +129168,7 @@ function runVerdictSuppliersSuite(): number {
       { label: 'the turn probe at 40°', result: turn.result, outDir: turn.opts.outDir },
     ];
     for (const b of builds) {
-      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'spine-html' });
+      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'rig-play' });
     }
     const c = SUPPLIERS;
     probes.push(...walkFaults(c, '4c-3'));
@@ -129127,7 +129253,7 @@ function runVerdictSuppliersSuite(): number {
     const probes: string[] = [];
     // This suite's own two builds, gated so the supplier check asks their questions under `--only` too.
     for (const b of cut4c5) {
-      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'spine-html' });
+      validate({ skeletonText: b.result.skeletonText, atlasText: b.result.atlasText, atlasDir: b.outDir, declaredDurations: b.result.declaredDurations, rig: b.result.rig, modelText: threadedModel(b.result, b.result.atlasText), profile: 'rig-play' });
     }
     const c = SUPPLIERS;
     probes.push(...walkFaults(c, '4c-5'));
@@ -129369,7 +129495,7 @@ function runVerdictSuppliersSuite(): number {
     const { skeletonText, atlasText } = articulated.result;
     const dir = articulated.opts.outDir;
     const text = threadedModel(articulated.result, atlasText) ?? '';
-    const inputOf = (modelText: string): Parameters<typeof validateModel>[0] => ({ modelText, atlasDir: dir, profile: 'spine-html', given: modelGivenOf(modelText, skeletonText, atlasText) });
+    const inputOf = (modelText: string): Parameters<typeof validateModel>[0] => ({ modelText, atlasDir: dir, profile: 'rig-play', given: modelGivenOf(modelText, skeletonText, atlasText) });
     const edited = (edit: (doc: Record<string, unknown>) => void, from = text): string => {
       const doc = JSON.parse(from) as Record<string, unknown>;
       edit(doc);
@@ -129378,7 +129504,7 @@ function runVerdictSuppliersSuite(): number {
     const base = inputOf(text);
     const clean = validateModel(base);
     // Nothing given: the model side prints what validate() prints handed the build's own declarations.
-    const spine = validateOverSpine({ skeletonText, atlasText, atlasDir: dir, profile: 'spine-html', rig: articulated.result.rig, declaredDurations: articulated.result.declaredDurations });
+    const spine = validateOverSpine({ skeletonText, atlasText, atlasDir: dir, profile: 'rig-play', rig: articulated.result.rig, declaredDurations: articulated.result.declaredDurations });
     const unequal = MOVED_CODES.filter((code) => linesOfCode(spine, code).join('\n') !== linesOfCode(clean, code).join('\n'));
     if (unequal.length > 0) probes.push(`the articulated probe's document, nothing given, prints otherwise than validate() handed the build's declarations on [${unequal.join(', ')}]`);
     // Who reads each declaration, read off the run (a sentinel plant), never listed.
@@ -129638,7 +129764,7 @@ function runVerdictSuppliersSuite(): number {
             counts.skipsPresent += unreadableSkips(spineReport) + unreadableSkips(modelReport);
             continue;
           }
-          if (profile === 'spine-html') counts.skipsUnreadable += unreadableSkips(spineReport);
+          if (profile === 'rig-play') counts.skipsUnreadable += unreadableSkips(spineReport);
           for (const [side, report] of [['validate()', spineReport], ['the model side', modelReport]] as const) {
             for (const name of moved) {
               const naming = report.failures.filter((f) => f.detail.includes(`"${name}"`)).map((f) => f.assertion.slice(0, 3));
@@ -129672,7 +129798,7 @@ function runVerdictSuppliersSuite(): number {
         probes,
         `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page, the first page carrying a part as text and cut, every page as text — ` +
           `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of an unreadable page, each by A06's one line; ` +
-          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under spine-html, 0 on the builds whose pages are readable; ` +
+          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under rig-play, 0 on the builds whose pages are readable; ` +
           "the present build's A06 lines differ from those of the build with every page unreadable, so the comparison can fail",
       ),
       "issue #1064: a page on disk that is not a PNG was named by A06 and again by A19's \"not measured\" FAIL; A19 now SKIPs pointing at A06, and VF03's twins compare only the lines a break fails",
@@ -129685,7 +129811,7 @@ function runVerdictSuppliersSuite(): number {
   // and one whose compressed stream is broken behind an intact header (VF22).
   // On each broken build every such page is named by exactly one failure
   // line on each side, A06's, carrying the card's own phrase; A19 SKIPs
-  // pointing at A06 under spine-html. The tolerance is twofold: the pages as
+  // pointing at A06 under rig-play. The tolerance is twofold: the pages as
   // built print no such line on either side, and the nearest legal file —
   // a 1x1 PNG for VF21, the same stream re-cut into three IDATs for VF22 —
   // prints A06's pristine lines on both sides. The plant: the pristine model
@@ -129738,7 +129864,7 @@ function runVerdictSuppliersSuite(): number {
             else counts.tolerated++;
             continue;
           }
-          if (profile === 'spine-html') counts.skipsUnreadable += unreadableSkips(spineReport);
+          if (profile === 'rig-play') counts.skipsUnreadable += unreadableSkips(spineReport);
           for (const [side, report] of [['validate()', spineReport], ['the model side', modelReport]] as const) {
             for (const name of moved) {
               const naming = report.failures.filter((f) => f.detail.includes(`"${name}"`)).map((f) => f.assertion.slice(0, 3));
@@ -129772,7 +129898,7 @@ function runVerdictSuppliersSuite(): number {
         probes,
         `${counts.compared} report pair(s) — ${fixtures.length} fixture(s) × ${VALIDATE_PROFILES.length} profile(s) × no page edited, ${legal[0]}, ${breaks.map(([label]) => label).join(', ')} — ` +
           `${counts.lines} line(s) of [A06 A17 A19 A27] identical on both sides; ${counts.namedOnce} naming(s) of a broken page, each by A06's one line saying ${JSON.stringify(phrase)}; ` +
-          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under spine-html; ${counts.tolerated} readable build(s) with no such line and no SKIP; ` +
+          `${counts.skipsUnreadable} A19 SKIP(s) pointing at A06 under rig-play; ${counts.tolerated} readable build(s) with no such line and no SKIP; ` +
           "the pristine build's A06 lines differ from the broken build's, so the comparison can fail",
       ),
       origin,
@@ -134020,7 +134146,7 @@ function main(): void {
       'symlink rather than dying on one), ' +
       '+ ' + n('cli') + ' cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
-      'builds green with no flag and is refused by every rule under `--profile spine-html`, and the MESH report line ' +
+      'builds green with no flag and is refused by every rule under `--profile rig-play`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +
       'while still reporting an authored coverage; plus the two halves of what the help says about a flag, held ' +
       'together by reading it rather than by naming one — every switch printed with no `<value>` column accepted ' +
@@ -135071,7 +135197,7 @@ function runSliderReaderSuite(): number {
 // **What is NOT in scope, stated so the boundary reads as chosen.** §9.2's good
 // build is not run here: its stated command renders 57 frames and writes both
 // its artifacts INTO the repository, and the same build is already gated by
-// `GALLERY_EXAMPLE_IS_GREEN[portrait/spine-html]` — which the page itself says,
+// `GALLERY_EXAMPLE_IS_GREEN[portrait/rig-play]` — which the page itself says,
 // leaving the tally to the tool. §9.3's `check` row needs
 // `gallery/portrait/render/`, generated and gitignored, and a gate that renders
 // per run is a different cost class. Both of those are the `good` column and the
@@ -136792,7 +136918,7 @@ function runDocScriptSuite(): number {
 //  - the same page's one-line-per-verdict-kind block, assembled. The `PASS` and
 //    the `PROF` are byte-exact from the `build` the page states at §3.4; the
 //    `SKIP` is a real message cut at an ellipsis and printed only under
-//    `--profile spine-html`, which this page states no command for; the `FAIL`
+//    `--profile rig-play`, which this page states no command for; the `FAIL`
 //    is invented — no green build prints one, and its mesh, vertex and sum are
 //    the doctrine's own example values.
 //  - `docs/FACE.md`'s `MEMBER` record — the same one the first of these quotes,

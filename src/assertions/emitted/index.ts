@@ -22,7 +22,7 @@
  *
  * Links nothing from the runtime.
  */
-import { ASSERTION_KIND, type AssertionProfile } from '../kinds.ts';
+import { ASSERTION_KIND, resolveProfile, type AssertionProfile } from '../kinds.ts';
 import { verdictHarness, type VerdictLists } from '../harness.ts';
 import { MOVED_ASSERTIONS } from '../model/index.ts';
 import type { Verdicts } from '../harness.ts';
@@ -125,7 +125,9 @@ export function roundTripOnlyCodes(): string[] {
 }
 
 /** The restated rules over one build's emitted texts, in `validate()`'s report shape. */
-export function validateEmittedText(input: EmittedTextInput): VerdictLists & { profile: AssertionProfile } {
+export function validateEmittedText(given: EmittedTextInput): VerdictLists & { profile: AssertionProfile } {
+  // A former profile name reads as its profile (issue #1277), for the rules and the report alike.
+  const input: EmittedTextInput = { ...given, profile: resolveProfile(given.profile, 'the emitted text') };
   const known = new Set(EMITTED_TEXT_RULES.map((r) => r.code));
   const unrun = roundTripOnlyCodes().filter((code) => !known.has(code));
   if (unrun.length > 0) {
