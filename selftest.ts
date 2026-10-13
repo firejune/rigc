@@ -719,7 +719,7 @@ import {
   type Fixture,
   writePlate,
 } from './fixtures/public.ts';
-import { axisTurn, freshTurnRecord, recordTurn, type TurnRecord, WHIRL_HEADER, WHIRL_HZ, whirlLines, whirlReading, type WhirlAnimation, type WhirlPlant } from './src/whirl.ts';
+import { axisTurn, freshTurnRecord, leverFractionWhy, leverHeader, leverLines, type LeverPlant, type LeverRead, leverReading, type LeverReading, recordTurn, type TurnRecord, WHIRL_HEADER, WHIRL_HZ, whirlLines, whirlReading, type WhirlAnimation, type WhirlPlant } from './src/whirl.ts';
 import { BLINK, BLINK_BOUND, BLINK_T, blinkAlpha, blinkEdgeSamples, blinkReductionInput, blinkShare, blinkSource, carriedShare as blinkCarriedShare, edgeDisplacement as blinkEdgeDisplacement, simplifiedLine } from './fixtures/blink.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -133807,6 +133807,362 @@ function runWhirlSuite(): number {
   return bad;
 }
 
+/**
+ * The lever probe (issue #1427): issue #1422's traced F1 chain — 5 links,
+ * driven on `scaleX` alone, inertia 10, `fps` 15, strength at 0.95 of the
+ * step bound (mass 1, damping 0.85), wind 20, gravity 10, limit 5000, mix 1,
+ * under the runtime's default world — beside a calm twin of it that reads
+ * nothing, each chain its own anchor, links and constraints, so neither moves
+ * the other.
+ *
+ * - `<k>_a` — an anchor under the root; `quiet` keys none of them (it keys
+ *   `other`, ±15° at each whole second), so the chains answer only the wind,
+ *   the gravity and each other — #1422's `default` condition.
+ * - `<k>_1` … `<k>_5` — the links, `length` long: the first at rotation −60
+ *   under its anchor, each next at x `length`, rotation 20 under the one
+ *   before, a placeholder plate on each.
+ * - `p_<k>_<i>` — link i's constraint, `scaleX: 1`.
+ *
+ * `v` is the victim; `c` is the calm twin at #1422's typical stiffness
+ * (strength 100) and inertia 0.5 at `fps` 60, the corner of its grid where no
+ * scaleX chain ran away.
+ */
+const LEVER_PROBE = {
+  links: 5,
+  length: 50,
+  swing: 15,
+  duration: 4,
+  /** The fraction the bar is read at — stated, because the reading has no default. */
+  fraction: 0.5,
+  chains: {
+    v: { inertia: 10, fps: 15, strength: 0.95 * 2 * (1 + 0.85 ** (60 / 15)) * 15 * 15 },
+    c: { inertia: 0.5, fps: 60, strength: 100 },
+  },
+} as const;
+
+/**
+ * What #1422's mechanism trace (`mech.ts`, spine-core, section F1) printed
+ * for the victim, at the precision it printed it: link 3's scale offset
+ * 24.3 → 349 on step 17, and the collapse on step 16 that link 4's lever
+ * reads (#1422 printed link 3's own drawn length there, 0.192 — the world x
+ * axis link 4 is posed under). Not a derivation — `LV01` reads the reading
+ * against it AND against spine-core walked here, which is the derivation.
+ */
+const LEVER_BAR = { jump: { constraint: 'p_v_3', step: 17, from: '24.3', to: '349' }, collapse: [{ constraint: 'p_v_3', step: 17 }, { constraint: 'p_v_4', step: 16 }] } as const;
+
+/** The lever probe, built — its output directory and work directory, or why it did not build. */
+function writeLeverProbe(): { outDir: string; work: string; built: string[] } {
+  const { links, length, swing, duration, chains } = LEVER_PROBE;
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-lever-'));
+  writePlate(join(dir, 'link.png'), 24, 40, 'link');
+  const bones: unknown[] = [{ name: 'root' }, { name: 'other', parent: 'root', x: 20, y: 20, length: 10 }];
+  const slots: unknown[] = [{ name: 'o', bone: 'other', attachment: 'link' }];
+  const skin: Record<string, unknown> = { o: { link: { image: 'link.png' } } };
+  const physics: Record<string, unknown> = {};
+  let column = 0;
+  for (const [k, c] of Object.entries(chains)) {
+    bones.push({ name: `${k}_a`, parent: 'root', x: 128 + 400 * column++, y: 60 });
+    for (let i = 1; i <= links; i++) {
+      bones.push(i === 1 ? { name: `${k}_1`, parent: `${k}_a`, x: 30, rotation: -60, length } : { name: `${k}_${i}`, parent: `${k}_${i - 1}`, x: length, rotation: 20, length });
+      slots.push({ name: `s_${k}_${i}`, bone: `${k}_${i}`, attachment: 'link' });
+      skin[`s_${k}_${i}`] = { link: { image: 'link.png', x: length / 2 } };
+      physics[`p_${k}_${i}`] = { bone: `${k}_${i}`, scaleX: 1, inertia: c.inertia, strength: c.strength, damping: 0.85, mass: 1, wind: 20, gravity: 10, mix: 1, fps: c.fps, limit: 5000 };
+    }
+  }
+  const rigPath = join(dir, 'lever.rig.json');
+  writeFileSync(rigPath, `${JSON.stringify({ spec: 'rigc-rig/1', name: 'lever_probe', skeleton: { width: 128 + 400 * column, height: 256 }, bones, slots, skins: { default: skin } }, null, 2)}\n`);
+  const keys = Array.from({ length: duration + 1 }, (_v, t) => ({ t, v: [t % 2 === 0 ? swing : -swing], ...(t < duration ? { ease: 'swing' } : {}) }));
+  const motionPath = join(dir, 'lever.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'lever_probe',
+      cut: 'lever_probe',
+      easings: { swing: [0.36, 0, 0.64, 1] },
+      physics,
+      animations: { quiet: { duration, loop: true, tracks: [{ bone: 'other', property: 'rotate', keys }] } },
+    }, null, 2)}\n`,
+  );
+  const outDir = join(dir, 'spine');
+  const build = runCli(['build', '--rig', rigPath, '--motion', motionPath, '--images', dir, '--out', outDir]);
+  const built = build.status === 0 ? [] : [`the lever probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`];
+  return { outDir, work: dir, built };
+}
+
+/** The figures of one constraint's read that the two posers are held to, as one comparable value. */
+type LeverFigures = Pick<LeverRead, 'setup' | 'folds' | 'least' | 'jumps' | 'largest'>;
+
+/**
+ * The lever reading through spine-core: the build's pair loaded by the
+ * runtime and walked as the whirl's `whirlThroughSpine` walks it (CO56's
+ * recipe), each `PhysicsConstraint.update` wrapped to read what its lever is
+ * about to divide by — `length · getWorldScaleX()`, less `scaleLag · max(0,
+ * 1 − remaining / step)` on a drive that does not rotate, the runtime's own
+ * expression — and whether it divides (`Physics.update`, not `_reset`, `mix`
+ * and `inertia` not 0), then the offset it left. The figures are formed from
+ * those exactly as `leverReading` forms them.
+ */
+function leverThroughSpine(data: SkeletonData, animation: string, steps: number, fraction: number): Map<string, LeverFigures> {
+  const skeleton = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, animation, false);
+  type Seen = { divided: { divisor: number; world: number } | null; handed: number; world: number; offset: number; weight: number };
+  let seen = new Map<string, Seen>();
+  for (const pc of skeleton.physics) {
+    const update = pc.update.bind(pc);
+    pc.update = (sk: Skeleton, phase: Physics): void => {
+      const d = pc.data;
+      const p = pc.appliedPose;
+      const length = pc.bone.bone.data.length;
+      const world = pc.bone.getWorldScaleX();
+      const product = length * world;
+      const lagged = d.rotate > 0 || d.shearX > 0 ? 0 : pc.scaleLag * Math.max(0, 1 - pc.remaining / d.step);
+      const divides = phase === Physics.update && !pc._reset && p.mix !== 0 && p.inertia !== 0;
+      const divisor = product - lagged;
+      update(sk, phase);
+      if (!(d.scaleX > 0)) return;
+      const before = seen.get(d.name);
+      const earlier = before?.divided ?? null;
+      const divided = !divides || !(divisor > 0) ? earlier : earlier === null || divisor < earlier.divisor ? { divisor, world } : earlier;
+      seen.set(d.name, { divided, handed: before?.handed ?? product, world: before?.world ?? world, offset: pc.scaleOffset, weight: p.mix * d.scaleX });
+    };
+  }
+  const out = new Map<string, LeverFigures>();
+  const setupWorld = new Map<string, number>();
+  const last = new Map<string, number>();
+  const visit = (index: number, time: number): void => {
+    for (const [name, s] of seen) {
+      if (index === 0) {
+        out.set(name, { setup: s.handed, folds: [], least: null, jumps: [], largest: null });
+        setupWorld.set(name, s.world);
+        last.set(name, s.offset);
+        continue;
+      }
+      const r = out.get(name) as LeverFigures;
+      if (s.divided !== null && r.setup !== null && s.divided.divisor < fraction * r.setup) {
+        const collapse = { step: index, time, divisor: s.divided.divisor, world: s.divided.world / (setupWorld.get(name) as number) };
+        r.folds.push(collapse);
+        if (r.least === null || collapse.divisor < r.least.divisor) r.least = collapse;
+      }
+      const from = last.get(name) as number;
+      const size = Math.abs(s.offset - from) * s.weight;
+      if (size > 1) {
+        const jump = { step: index, time, from, to: s.offset, size };
+        r.jumps.push(jump);
+        if (r.largest === null || size > r.largest.size) r.largest = jump;
+      }
+      last.set(name, s.offset);
+    }
+    seen = new Map();
+  };
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  visit(0, 0);
+  const dt = 1 / WHIRL_HZ;
+  let time = 0;
+  for (let i = 1; i <= steps; i++) {
+    state.update(dt);
+    skeleton.setupPoseBones();
+    state.apply(skeleton);
+    skeleton.update(dt);
+    skeleton.updateWorldTransform(Physics.update);
+    time += dt;
+    visit(i, time);
+  }
+  return out;
+}
+
+/** A read's figures, for the comparison. */
+function leverFigures(r: LeverRead): LeverFigures {
+  return { setup: r.setup, folds: r.folds, least: r.least, jumps: r.jumps, largest: r.largest };
+}
+
+/** Which of the bar's facts a reading of the probe does not name, as sentences — empty when it names every one. */
+function leverBarFaults(reading: LeverReading, label: string): string[] {
+  const quiet = reading.animations.find((a) => a.animation === 'quiet');
+  if (quiet === undefined) return [`${label}: no "quiet" walk`];
+  const read = (name: string): LeverRead | undefined => quiet.reads.find((r) => r.constraint === name);
+  const faults: string[] = [];
+  const j = read(LEVER_BAR.jump.constraint);
+  const jump = j?.jumps.find((x) => x.step === LEVER_BAR.jump.step);
+  if (jump === undefined) faults.push(`${label}: "${LEVER_BAR.jump.constraint}" names no jump at step ${LEVER_BAR.jump.step} (jumps [${j?.jumps.map((x) => x.step).join(', ') ?? j?.why ?? 'no line'}])`);
+  else if (jump.from.toPrecision(3) !== LEVER_BAR.jump.from || jump.to.toPrecision(3) !== LEVER_BAR.jump.to) {
+    faults.push(`${label}: "${LEVER_BAR.jump.constraint}" at step ${LEVER_BAR.jump.step} moves ${jump.from.toPrecision(3)} → ${jump.to.toPrecision(3)}, the bar ${LEVER_BAR.jump.from} → ${LEVER_BAR.jump.to}`);
+  }
+  for (const c of LEVER_BAR.collapse) {
+    const r = read(c.constraint);
+    if (r?.folds.some((f) => f.step === c.step) !== true) faults.push(`${label}: "${c.constraint}" names no collapsed division at step ${c.step} (steps [${r?.folds.map((f) => f.step).join(', ') ?? r?.why ?? 'no line'}])`);
+  }
+  return faults;
+}
+
+/** Whether a read names anything — a collapse or a jump. */
+function leverNames(r: LeverRead): boolean {
+  return r.folds.length > 0 || r.jumps.length > 0;
+}
+
+function runLeverSuite(): number {
+  console.log('\n── lever: where a scaleX lever divides by a collapsed length, read by explain --lever-fold (issue #1427) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const { fraction } = LEVER_PROBE;
+  const probe = writeLeverProbe();
+  const pre = [...probe.built];
+  const docText = pre.length === 0 ? readFileSync(join(probe.outDir, MODEL_DOCUMENT_FILE), 'utf8') : null;
+  const reading = docText === null ? null : leverReading(readModel(docText, 'the lever probe'), fraction);
+  const explainArgs = ['explain', '--rig', join(probe.work, 'lever.rig.json'), '--motion', join(probe.work, 'lever.motion.json'), '--images', probe.work, '--out', join(probe.work, 'explain')];
+  const explained = pre.length === 0 ? runCli([...explainArgs, '--lever-fold', String(fraction)]) : null;
+  if (explained !== null && explained.status !== 0) pre.push(`explain --lever-fold exited ${String(explained.status)}: ${explained.stderr.trim().slice(0, 300)}`);
+  const leverOf = (stdout: string): string[] => stdout.split('\n').filter((l) => l.includes('..    lever    '));
+  const quiet = reading?.animations.find((a) => a.animation === 'quiet');
+  const victim = quiet?.reads.filter((r) => r.constraint.startsWith('p_v_')) ?? [];
+  const calm = quiet?.reads.filter((r) => r.constraint.startsWith('p_c_')) ?? [];
+
+  // --- LV01: Bar 1 — the traced chain is named on the steps #1422 traced, through the core and through spine-core alike ---
+  {
+    const probes: string[] = [...pre];
+    let compared = 0;
+    if (probes.length === 0 && reading !== null && explained !== null && quiet !== undefined) {
+      probes.push(...leverBarFaults(reading, 'the core'));
+      // spine-core, walked here, step for step: the same steps and the same figures, to the bit.
+      const data = loadOracleData(readFileSync(join(probe.outDir, 'skeleton.json'), 'utf8'), readFileSync(join(probe.outDir, 'skeleton.atlas'), 'utf8'), 'the lever probe');
+      const spine = leverThroughSpine(data, quiet.animation, quiet.steps, fraction);
+      for (const r of quiet.reads) {
+        compared++;
+        const s = spine.get(r.constraint);
+        if (r.why !== null) probes.push(`"${r.constraint}" not read — ${r.why}`);
+        else if (s === undefined || JSON.stringify(s) !== JSON.stringify(leverFigures(r))) {
+          probes.push(`"${r.constraint}": the core reads ${JSON.stringify(leverFigures(r)).slice(0, 160)}, spine-core ${JSON.stringify(s ?? null).slice(0, 160)}`);
+        }
+      }
+      // What explain prints is the reading, line for line, under its header.
+      const lines = leverOf(explained.stdout);
+      const want = leverLines(reading).map((l) => `  ..    lever    ${l}`);
+      if (JSON.stringify(lines) !== JSON.stringify(want)) probes.push(`explain printed ${lines.length} lever line(s), the reading has ${want.length}: first ${JSON.stringify(lines[0] ?? null)}`);
+      if (!explained.stdout.includes(leverHeader(fraction))) probes.push('explain printed no lever header');
+    }
+    const ok = probes.length === 0;
+    const traced = victim.find((r) => r.constraint === LEVER_BAR.jump.constraint);
+    const jump = traced?.jumps.find((j) => j.step === LEVER_BAR.jump.step);
+    const collapse = traced?.folds.find((f) => f.step === LEVER_BAR.jump.step);
+    const share = collapse === undefined || traced?.setup === null || traced?.setup === undefined ? '?' : (collapse.divisor / traced.setup).toPrecision(3);
+    say(
+      'LV01_THE_TRACED_CHAIN_IS_NAMED_ON_BOTH_POSERS',
+      ok,
+      probeDetail(
+        ok,
+        probes.slice(0, 12),
+        `#1422's 5-link scaleX chain at inertia 10, fps 15, 0.95 of the bound, read at ${fraction}×: "${LEVER_BAR.jump.constraint}" jumps ${jump?.from.toPrecision(3) ?? '?'} → ${jump?.to.toPrecision(3) ?? '?'} at step ${LEVER_BAR.jump.step} ` +
+          `with its lever dividing by ${share}× its setup divisor (world x axis ${collapse?.world.toPrecision(4) ?? '?'}× setup), ` +
+          `and ${LEVER_BAR.collapse.map((c) => `"${c.constraint}" divides collapsed at step ${c.step}`).join(', ')}; ${victim.filter(leverNames).length} of ${victim.length} links named; ` +
+          `spine-core walked as a player starts the animation reads every step and figure to the bit over ${compared} constraint(s); explain prints the reading line for line`,
+      ),
+      'issue #1427 bar 1: the reading has to name the steps #1422 traced, on the poses a player draws',
+    );
+  }
+
+  // --- LV02: Bar 2 — the calm twin reads nothing; the gallery and the public fixtures name nothing and say why ---
+  {
+    const probes: string[] = [...pre];
+    const said: string[] = [];
+    if (probes.length === 0) {
+      if (calm.length !== LEVER_PROBE.links) probes.push(`the calm twin has ${calm.length} read(s), required ${LEVER_PROBE.links}`);
+      for (const r of calm.filter(leverNames)) probes.push(`calm "${r.constraint}" names ${r.folds.length} collapse(s) and ${r.jumps.length} jump(s), first at step ${r.folds[0]?.step ?? r.jumps[0]?.step}`);
+      for (const r of calm) if (r.why !== null) probes.push(`calm "${r.constraint}" not read — ${r.why}`);
+      const first = victim.find((r) => r.constraint === 'p_v_1');
+      if (first === undefined || leverNames(first)) probes.push("the victim's first link, under an anchor nothing moves, names a step");
+      const gallery = join(import.meta.dir, 'gallery');
+      const runs: Array<[string, string[]]> = [];
+      for (const name of readdirSync(gallery).sort()) {
+        const rig = join(gallery, name, 'rig.json');
+        if (!existsSync(rig)) continue;
+        runs.push([`gallery/${name}`, ['explain', '--rig', rig, '--motion', join(gallery, name, 'motion.json'), '--out', join(probe.work, `g-${name}`), '--lever-fold', String(fraction)]]);
+      }
+      for (const f of [OVERLAY, ARTICULATED, CONTAINED]) runs.push([f.rig, ['explain', '--rig', f.rigPath, '--motion', f.motionPath, '--manifest', f.manifestPath, '--out', join(probe.work, `f-${f.rig}`), '--lever-fold', String(fraction)]]);
+      for (const f of [segmentsFixture(), skirtFixture(), passThroughFixture()]) runs.push([f.rig, ['explain', '--rig', f.rigPath, '--motion', f.motionPath, '--images', f.imagesDir, '--out', join(probe.work, `f-${f.rig}`), '--lever-fold', String(fraction)]]);
+      const notRead: string[] = [];
+      for (const [label, args] of runs) {
+        const run = runCli(args);
+        if (run.status !== 0) {
+          probes.push(`explain ${label} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 200)}`);
+          continue;
+        }
+        const lines = leverOf(run.stdout);
+        const naming = lines.filter((l) => l.includes(' divides by less than ') || l.includes(' moves by more than '));
+        if (naming.length > 0) probes.push(`${label} names ${naming.length} lever line(s): ${naming[0].trim()}`);
+        if (lines.some((l) => /\bSKIP\b/.test(l))) probes.push(`${label} prints SKIP on a lever line`);
+        // A rig with physics prints its lever block; one whose constraints drive no scaleX says so and is not read.
+        if (lines.length > 0 && !lines.every((l) => l.includes('no scaleX, so no inertia lever'))) probes.push(`${label} prints a lever line that is neither a naming nor the not-read line: ${lines[0].trim()}`);
+        if (lines.length > 0) notRead.push(label);
+      }
+      if (runs.length === 0) probes.push('no gallery rig or fixture was read');
+      said.push(`${runs.length} gallery rig(s) and fixture(s) explained, none names a step; the ${notRead.length} with a physics block (${notRead.join(', ')}) drive no scaleX and each says it was not read`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'LV02_THE_CALM_TWIN_READS_NOTHING_AND_THE_CORPUS_NAMES_NOTHING',
+      ok,
+      probeDetail(ok, probes.slice(0, 12), `the calm twin's ${calm.length} links (strength 100, inertia 0.5, fps 60) read nothing at ${fraction}×, nor does the victim's first link; ${said.join('; ')}`),
+      'issue #1427 bar 2: a reading that names a calm chain names everything; where no lever divides by a length there is nothing to measure, and that is said rather than counted as read',
+    );
+  }
+
+  // --- LV03: Bar 3 — a reading of the parent's local scale goes red on the traced chain ---
+  // --- LV04: and so does the card's own wording, the world length alone, on the step the jump is on ---
+  const plants: ReadonlyArray<readonly [string, LeverPlant, string, string]> = [
+    ['LV03_A_READING_OF_THE_PARENTS_LOCAL_SCALE_GOES_RED', { measure: 'parent-local-scale' }, "the parent's local scaleX in place of the divisor", "issue #1427 bar 3: physics moves the world matrix and never a bone's local transform, so a reading of the local scale cannot see the collapse"],
+    ['LV04_A_READING_OF_THE_WORLD_LENGTH_ALONE_GOES_RED', { measure: 'world-length' }, "length × world x axis alone, the scaleX-only drive's scaleLag × shown left out", 'issue #1427, measured: on the traced step the lever reads the world x axis at more than half its setup length and divides by a sixteenth of its setup divisor — the lag term is the collapse'],
+  ];
+  for (const [name, plant, label, why] of plants) {
+    const probes: string[] = [...pre];
+    let red = '';
+    if (probes.length === 0 && docText !== null) {
+      const planted = leverReading(readModel(docText, 'the lever probe'), fraction, plant);
+      const faults = leverBarFaults(planted, label);
+      const steps = planted.animations.find((a) => a.animation === 'quiet')?.reads.filter((r) => r.constraint.startsWith('p_v_')).reduce((n, r) => n + r.folds.length, 0) ?? 0;
+      if (faults.length === 0) probes.push(`${label}: named every fact of the bar`);
+      else red = `${label}: ${faults.length} of the bar's ${LEVER_BAR.collapse.length + 1} fact(s) missed, e.g. ${faults[0].split(': ').slice(1).join(': ')} — ${steps} collapsed step(s) named on the victim in all`;
+    }
+    const ok = probes.length === 0;
+    say(name, ok, probeDetail(ok, probes, red), why);
+  }
+
+  // --- LV05: the fraction is stated or the reading is not taken — no default, and a value that is not a fraction is refused by name ---
+  {
+    const probes: string[] = [...pre];
+    const said: string[] = [];
+    if (probes.length === 0) {
+      const bare = runCli(explainArgs);
+      if (bare.status !== 0) probes.push(`explain without --lever-fold exited ${String(bare.status)}`);
+      const lines = leverOf(bare.stdout);
+      if (lines.length !== 1 || !lines[0].includes('not read — `--lever-fold <fraction>`')) probes.push(`explain without --lever-fold printed ${JSON.stringify(lines)}, required the one not-read line`);
+      else said.push('without the flag one line says the reading was not taken');
+      const refused: string[] = [];
+      for (const value of ['0', '1.5', '-0.2', 'half', 'NaN']) {
+        const run = runCli([...explainArgs, '--lever-fold', value]);
+        const text = run.stderr + run.stdout;
+        if (run.status !== 2 || !text.includes(`--lever-fold ${JSON.stringify(value)}: `) || !text.includes('is not a fraction above 0 and at most 1')) probes.push(`--lever-fold ${value}: exit ${String(run.status)}, ${JSON.stringify(text.trim().slice(0, 200))}`);
+        else refused.push(value);
+      }
+      said.push(`--lever-fold ${refused.join(', ')} each refused by name, exit 2`);
+      for (const value of [0, 1.5, Number.NaN]) if (leverFractionWhy(value) === null) probes.push(`leverFractionWhy(${value}) admits it`);
+      if (leverFractionWhy(1) !== null || leverFractionWhy(fraction) !== null) probes.push("leverFractionWhy refuses 1 or the bar's fraction");
+    }
+    const ok = probes.length === 0;
+    say(
+      'LV05_THE_FRACTION_IS_STATED_OR_NOT_READ',
+      ok,
+      probeDetail(ok, probes, said.join('; ')),
+      'issue #1427: the threshold is a stated flag value with no default, so the reading never invents one — absent, it says it was not taken',
+    );
+  }
+  return bad;
+}
+
 function runFoldsSuite(): number {
   console.log('\n── folds: which mesh triangles turn over against the setup pose (issue #1383) ──');
   let bad = 0;
@@ -137620,6 +137976,7 @@ function main(): void {
   tally.of('angle-range', runAngleRangeSuite);
   tally.of('render-naming', runRenderNamingSuite);
   tally.of('leg-stop', runLegStopSuite);
+  tally.of('lever', runLeverSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);

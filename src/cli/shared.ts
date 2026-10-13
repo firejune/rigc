@@ -1047,6 +1047,12 @@ const FLAG_MEANINGS: Record<string, string> = {
     'line of the render or the check report says which and why. `--poser core` on an input that cannot carry it is refused by name. ' +
     "`explain`: which reads and poses the DEFORM block's survey — `core` (the model document the compile writes, spine-core untouched) or " +
     '`spine` (the Spine skeleton parsed and posed by spine-core); default `core`, and `spine` where the core refuses the document, which the block names',
+  'lever-fold':
+    '`explain` only: also read, on the turn lines\' walk, the steps where a physics constraint that drives scaleX has its inertia lever ' +
+    'divide by less than this fraction (above 0, at most 1) of the divisor it takes at the setup pose — the bone\'s length times its world x-axis ' +
+    'length, less scaleLag × shown on a drive that does not rotate — and the steps where the scale factor it applies moves by more than the ' +
+    'bone\'s setup scale in one step: each line the constraint, the steps, the extreme value and its step. No default: without it the reading ' +
+    'is not taken, and says so; a value that is not such a fraction is refused by name. A reading, not a gate',
   'texture-from':
     "also measure this run through this atlas's texels, keeping the candidate's own geometry, and report how much " +
     'of the MAE is texture resampling rather than the rig — pass the atlas the reference frames were rendered ' +
@@ -1239,6 +1245,7 @@ const FLAG_VALUES: Record<string, string> = {
   scale: '<min,max>',
   rotation: '<min,max>',
   'max-residual': '<0..1>',
+  'lever-fold': '<fraction>',
   anchor: '<pose.json>',
   hinge: '<min,max>',
   stretch: '<ratio>',
@@ -1490,8 +1497,9 @@ export const COMMANDS: CommandDoc[] = [
       'rigc explain --rig <path> --motion <path> --out <dir> [--manifest <path>] [--images <dir>] [--poser core|spine]   (it never gates, and writes nothing)',
       'rigc explain … --atlas-in <skeleton.atlas>                  (resolve the parts against a pack somebody already made, as build does)',
       'rigc explain --cut <name> --cuts <cuts.json>',
+      'rigc explain … --lever-fold <fraction>                     (also name the steps a scaleX lever divides by a collapsed length)',
     ],
-    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts', 'poser'],
+    flags: ['rig', 'motion', 'out', 'manifest', 'images', 'atlas-in', 'cut', 'cuts', 'poser', 'lever-fold'],
     notes: [
       'this line said "the same arguments as build, minus --profile" and was false in both',
       'directions (issue #697): --atlas-in was not listed here, so the one flag that lets this',
