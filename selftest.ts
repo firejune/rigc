@@ -3805,6 +3805,35 @@ function oneStabilityLine(report: ReturnType<typeof validate>, broken: Artifacts
   };
 }
 
+/**
+ * Exactly as many A23 lines as `opens` names, the i-th opening with `opens[i]`
+ * and every one carrying each of `carries` (issue #1422) — the reading for a
+ * break whose verdict is a sentence about one value, where `oneStabilityLine`
+ * reads `k` and the bound.
+ */
+function a23LinesSay(report: ReturnType<typeof validate>, opens: readonly string[], carries: readonly string[]): { held: boolean; read: string } {
+  const lines = report.failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE').map((f) => f.detail);
+  const held = lines.length === opens.length && lines.every((line, i) => line.startsWith(opens[i]) && carries.every((c) => line.includes(c)));
+  return { held, read: `${lines.length} A23 line(s), ${opens.length} wanted${lines.length ? `: ${lines.join(' | ')}` : ''}` };
+}
+
+/** The damping row's reason at 1, as the row states it — read off the row rather than retyped, so the mutants hold the sentence to the table. */
+function dampingAt1Says(): string {
+  const arm = physicsRuleFor('damping')?.basis.find((one) => one.when(1));
+  return arm === undefined ? 'no damping arm holds for 1' : arm.kind === 'arithmetic' ? arm.expression : arm.does;
+}
+
+/**
+ * The largest double below 1, and the first rate at which the runtime's own
+ * `damping ** (60 * step)` rounds it to exactly 1 (issue #1422) — the rate is
+ * found, not typed: the walk stops at the first fps from 60 where the decay is 1.
+ */
+const DAMPING_JUST_BELOW_1 = 1 - Number.EPSILON / 2;
+const FPS_WHERE_THE_DECAY_ROUNDS_TO_1 = ((): number => {
+  for (let fps = 60; fps < 100000; fps++) if (DAMPING_JUST_BELOW_1 ** (60 * (1 / fps)) === 1) return fps;
+  return Number.NaN;
+})();
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MUTANTS: Mutant[] = [
   {
@@ -4694,8 +4723,8 @@ const MUTANTS: Mutant[] = [
   },
   {
     name: 'M22_physics_damping_never_settles',
-    // It stood ON the top end until issue #794 closed the bound: 1 is finite at
-    // every rate, a jiggle held rather than a fault, so the break moved past it.
+    // It stood ON the top end until issue #794 closed the bound, and moved past it;
+    // #1422 opened the bound at 1 again, and `M104` stands on that end now.
     origin: 'damping above 1 multiplies every velocity up on every step, so it never settles and a mesh canvas stays alive forever',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
     twin: { forge: (doc) => void (docConstraint(doc, 'physics').damping = 1.5) },
@@ -4971,17 +5000,20 @@ const MUTANTS: Mutant[] = [
     }),
   },
   {
-    name: 'M102c_physics_exactly_on_the_bound_at_damping_1_is_refused',
+    // ⚠️ It stood at damping 1 and k exactly 4 until issue #1422, when the damping
+    // row stopped admitting 1 and that rig became the row's to refuse rather than
+    // this clause's. d = 0 is the other end the row admits, and puts the edge at
+    // k = 2, where the step map is [[−1, 1], [0, 0]].
+    name: 'M102c_physics_exactly_on_the_bound_at_damping_0_is_refused',
     origin:
-      'the bound is strict: at damping 1 and k exactly 4 the step has a repeated eigenvalue of −1 and the offset grows ' +
-      'linearly — [measured] the issue\'s grid has 10 rigs on it: its x, y and scaleX ones ended a 6 s walk at their peak, ' +
-      'x at strength 100 at 400 units where its 15 fps neighbour (k < 4) peaked at 41, and its rotate and shearX ones ' +
-      'swung their tip the bone\'s full length. fps 4 makes the step 0.25 and every product exact, so k is 4 to the bit',
+      'the bound is strict: at damping 0 and k exactly 2 the step map has trace −1 and determinant 0, so its eigenvalues ' +
+      'are −1 and 0 and the offset flips sign every step without settling. fps 4 makes the step 0.25 and every product ' +
+      'exact, so k is 2 to the bit',
     expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
     twin: {
       forge: (doc) => {
         const c = docConstraint(doc, 'physics');
-        Object.assign(c, { fps: 4, damping: 1, mass: 1 });
+        Object.assign(c, { fps: 4, damping: 0, mass: 1 });
         c.strength = strengthOnTheStabilityBound(c);
       },
     },
@@ -4989,7 +5021,7 @@ const MUTANTS: Mutant[] = [
       ...a,
       skeletonText: editJson(a.skeletonText, (j) => {
         const c = (j as any).constraints.find((x: any) => x.type === 'physics');
-        Object.assign(c, { fps: 4, damping: 1, mass: 1 });
+        Object.assign(c, { fps: 4, damping: 0, mass: 1 });
         c.strength = strengthOnTheStabilityBound(c);
       }),
     }),
@@ -5045,6 +5077,183 @@ const MUTANTS: Mutant[] = [
       skeletonText: editJson(a.skeletonText, (j) => {
         const c = (j as any).constraints.find((x: any) => x.type === 'physics');
         (j as any).animations.shut_once.physics = { [c.name]: { strength: [{ time: 0.25, value: strengthOnTheStabilityBound(c) * (1 - 1e-6) }] } };
+      }),
+    }),
+  },
+  // ─── damping 1, and strength held at 0 for a whole animation (issue #1422) ───
+  //
+  // Both were accepted before: 1 sat inside the damping row from #794, and a
+  // strength key of 0 is accepted from #727 because a later key pulls the offset
+  // back. [measured on the issue] two identical damping-1 links on one chain grow
+  // linearly without limit, and an animation that keys strength 0 and nothing
+  // else grows the offset linearly for as long as it plays.
+  {
+    name: 'M104_physics_damping_1_at_rest_is_refused',
+    origin:
+      'at 1 the decay damping^(60·step) is 1 at every rate, so the step\'s eigenvalues lie on the unit circle and nothing ' +
+      'a push puts in ever dies out — inside the row from #794 until #1422',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void (docConstraint(doc, 'physics').damping = 1) },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.find((x: any) => x.type === 'physics').damping = 1;
+      }),
+    }),
+    holds: (report) => a23LinesSay(report, ['physics "iris_settle" has damping 1; must be inside [0, 1)'], [dampingAt1Says()]),
+  },
+  {
+    name: 'M104b_physics_damping_key_of_1_is_refused',
+    origin: 'the same value keyed: a span at damping 1 never decays either, and the key arm reads the same row',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const name = docConstraint(doc, 'physics').name;
+        docAnimationConstraints(doc, 'shut_once').physics = [{ name, timelines: [{ name: 'damping', keys: [{ time: 0, value: 1 }] }] }];
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { damping: [{ time: 0, value: 1 }] } };
+      }),
+    }),
+    holds: (report) =>
+      a23LinesSay(report, ['animation "shut_once" physics "iris_settle" damping key at t=0.000000s is 1; must be inside [0, 1)'], [dampingAt1Says()]),
+  },
+  {
+    name: 'M104c_physics_coupled_pair_at_damping_1_is_refused_once_per_link',
+    origin:
+      'the measured victim of #1422: two links on one chain, both at damping 1 and stepping alike, the parent\'s ' +
+      'undamped swing driving the child at its own frequency — the offset grew 6.03e3 at 60 s to 6.09e4 at 600 s. ' +
+      'Each link states the value, so each is named once, by its own name',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const child = docConstraint(doc, 'physics');
+        child.damping = 1;
+        (doc.constraints as DocRecord[]).unshift({ ...child, name: 'iris_swing', bone: 'iris', damping: 1 });
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const child = (j as any).constraints.find((x: any) => x.type === 'physics');
+        child.damping = 1;
+        (j as any).constraints.unshift({ ...child, name: 'iris_swing', bone: 'iris', damping: 1 });
+      }),
+    }),
+    holds: (report) =>
+      a23LinesSay(
+        report,
+        ['physics "iris_swing" has damping 1; must be inside [0, 1)', 'physics "iris_settle" has damping 1; must be inside [0, 1)'],
+        [dampingAt1Says()],
+      ),
+  },
+  {
+    name: 'M104d_physics_damping_just_below_1_is_accepted',
+    origin:
+      'the near miss under the new end: 0.999999 decays, if slowly — its eigenvalues are inside the circle — and a ' +
+      'clause that refused it would be refusing a number that settles',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        (j as any).constraints.find((x: any) => x.type === 'physics').damping = 0.999999;
+      }),
+    }),
+  },
+  {
+    name: 'M104e_physics_damping_below_1_whose_decay_rounds_to_1_is_refused',
+    origin:
+      'the row reads the value and the step reads the decay: the largest double below 1 passes the row, and at a high ' +
+      'enough rate the runtime\'s own damping ** (60 * step) is exactly 1 — the fault 1 is refused for, reached by rounding',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void Object.assign(docConstraint(doc, 'physics'), { damping: DAMPING_JUST_BELOW_1, fps: FPS_WHERE_THE_DECAY_ROUNDS_TO_1 }) },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        Object.assign((j as any).constraints.find((x: any) => x.type === 'physics'), { damping: DAMPING_JUST_BELOW_1, fps: FPS_WHERE_THE_DECAY_ROUNDS_TO_1 });
+      }),
+    }),
+    holds: (report) =>
+      a23LinesSay(
+        report,
+        [`physics "iris_settle" has damping ${DAMPING_JUST_BELOW_1} at fps ${FPS_WHERE_THE_DECAY_ROUNDS_TO_1} — damping^(60·step) = 1 as the runtime forms it`],
+        ['reached here by rounding'],
+      ),
+  },
+  {
+    name: 'M104f_physics_the_same_damping_one_fps_lower_is_accepted',
+    origin: 'the rounding mutant\'s control: the same damping one rate lower, where the decay is still below 1',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        Object.assign((j as any).constraints.find((x: any) => x.type === 'physics'), { damping: DAMPING_JUST_BELOW_1, fps: FPS_WHERE_THE_DECAY_ROUNDS_TO_1 - 1 });
+      }),
+    }),
+  },
+  {
+    name: 'M105_physics_strength_held_at_0_for_the_whole_animation',
+    origin:
+      'every key 0 from t=0 and nothing after to pull the offset back: [measured on #1422] the offset grew exactly ' +
+      'linearly for the 600 s walk, and A10\'s walk of the animation\'s own length saw a finite number',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const name = docConstraint(doc, 'physics').name;
+        docAnimationConstraints(doc, 'shut_once').physics = [
+          { name, timelines: [{ name: 'strength', keys: [{ time: 0, value: 0 }, { time: 0.4, value: 0 }] }] },
+        ];
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { strength: [{ time: 0, value: 0 }, { time: 0.4, value: 0 }] } };
+      }),
+    }),
+    holds: (report) =>
+      a23LinesSay(report, ['animation "shut_once" poses physics "iris_settle" strength 0 at every time it plays'], ['nothing pulls it back', 'this animation has none']),
+  },
+  {
+    name: 'M105b_physics_strength_key_of_0_with_a_later_key_above_0_is_accepted',
+    origin: '#727\'s release, kept: a span at 0 and a later key that pulls the offset back',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { strength: [{ time: 0, value: 0 }, { time: 0.3, value: 100 }] } };
+      }),
+    }),
+  },
+  {
+    name: 'M105c_physics_strength_keys_of_0_after_t_0_are_accepted',
+    origin: 'before its first key a timeline poses the setup strength, which pulls the offset back on every play',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = { [name]: { strength: [{ time: 0.1, value: 0 }, { time: 0.4, value: 0 }] } };
+      }),
+    }),
+  },
+  {
+    name: 'M105d_physics_strength_keys_of_0_joined_by_a_lifting_curve_are_accepted',
+    origin: 'two keys of 0 whose Bézier rises above 0 between them pose a strength above 0 there, so the clause reads samples, not keys',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
+        (j as any).animations.shut_once.physics = {
+          [name]: { strength: [{ time: 0, value: 0, curve: [0.1, 50, 0.3, 50] }, { time: 0.4, value: 0 }] },
+        };
       }),
     }),
   },
@@ -5432,10 +5641,11 @@ const MUTANTS: Mutant[] = [
     // The atlas edit, as the document's `pages` spell it (issue #1025, cut 4c-1).
     twin: ATLAS_EDIT_TWIN,
   },
-  // The two ends of `damping`'s bound are inside it since issue #794 — 1 never
+  // The two ends of `damping`'s bound were inside it from issue #794 — 1 never
   // decays and 0 zeroes the velocity, both finite at every rate — so the two
-  // breaks are the values just past them, and `M22` above now stands past the
-  // top by a margin rather than on it.
+  // breaks are the values just past them, and `M22` above stands past the top
+  // by a margin rather than on it. #1422 moved 1 back out (`M104` stands on it);
+  // these two still hold the values beyond either end.
   {
     name: 'M78_a_setup_damping_just_below_0_the_power_that_is_NaN_at_a_fractional_rate',
     origin:
@@ -22887,7 +23097,8 @@ function runConstraintAndDeformSuite(): number {
   // velocity −1.55e6 still climbing, **zero** gate failures; `strength: 0` →
   // monotonic drift, zero gate failures; `mix: 1.5` → zero gate failures and an
   // integration byte-identical to `mix: 1`.
-  const physicsKeyed = (property: string, value: number): Record<string, unknown> => ({
+  // `later` is the second key's value, the first's where it is not given.
+  const physicsKeyed = (property: string, value: number, later = value): Record<string, unknown> => ({
     spec: 'rigc-motion/1',
     archetype: 'static_probe',
     cut: 'static_probe',
@@ -22896,7 +23107,7 @@ function runConstraintAndDeformSuite(): number {
       jig: {
         duration: 1,
         loop: false,
-        tracks: [{ physics: 'jiggle', property, keys: [{ t: 0, v: [value] }, { t: 1, v: [value] }] }],
+        tracks: [{ physics: 'jiggle', property, keys: [{ t: 0, v: [value] }, { t: 1, v: [later] }] }],
       },
     },
   });
@@ -22914,26 +23125,28 @@ function runConstraintAndDeformSuite(): number {
   // below is that measurement: released for the span, no NaN, and the restoring
   // key pulls the offset back. It moved out of the refused column with #727 and
   // the negative took its place, because a bound that admits 0 has to be shown
-  // still refusing something.
+  // still refusing something. ⚠️ It is keyed as a SPAN, with its later key above
+  // 0 (issue #1422): until then both keys were 0, which is strength held at 0
+  // for as long as the animation plays, and A23 now refuses that (`M105`).
   const physicsRefused: Array<[property: string, value: number, bound: string]> = [
     ['mass', 0, '> 0'],
     ['mass', -1, '> 0'],
-    ['damping', 2, 'inside [0, 1]'],
-    // 1 stood here until issue #794: it never decays and is finite at every
-    // rate, so it moved inside and `T111` keys it; a negative took its place,
-    // because a bound that admits both ends has to be shown still refusing
-    // something below as well as above. −0.5 is #748's value, and exact in
-    // float32, which `T84` needs: it reads the planted key back through the
+    ['damping', 2, 'inside [0, 1)'],
+    // 1 stood here until issue #794 moved it inside; a negative took its place,
+    // because a bound that admits an end has to be shown still refusing
+    // something below as well as above. #1422 moved 1 back out — `T111` and
+    // `M104b` refuse it — and the negative stays. −0.5 is #748's value, and exact
+    // in float32, which `T84` needs: it reads the planted key back through the
     // runtime's `Float32Array` and matches the number it printed.
-    ['damping', -0.5, 'inside [0, 1]'],
+    ['damping', -0.5, 'inside [0, 1)'],
     ['strength', -100, '>= 0'],
     ['mix', -0.5, '>= 0'],
   ];
-  const physicsAccepted: Array<[property: string, value: number]> = [
+  const physicsAccepted: Array<[property: string, value: number, later?: number]> = [
     ['mass', 1],
     ['mix', 0],
     ['mix', 1.5],
-    ['strength', 0],
+    ['strength', 0, PHYSICS_TIMELINE_RIG.constraints[0].strength],
     ['wind', -27.4],
     ['gravity', -40],
     ['inertia', 0],
@@ -22943,9 +23156,9 @@ function runConstraintAndDeformSuite(): number {
     const message = refusal(physicsDirs, physicsKeyed(property, value));
     return message === null || !message.includes(`${property} key at t=0 is ${value}`) || !message.includes(`must be ${bound}`);
   });
-  const notAccepted = physicsAccepted.flatMap(([property, value]) => {
+  const notAccepted = physicsAccepted.flatMap(([property, value, later]) => {
     const emitted: Array<Record<string, unknown>> = [];
-    const gate = gateProbeOrRefusal(physicsDirs, physicsKeyed(property, value), emitted);
+    const gate = gateProbeOrRefusal(physicsDirs, physicsKeyed(property, value, later), emitted);
     const report = gate.report;
     if (gate.refused !== null || report === null) return [`${property} ${value}: refused — ${gate.refused}`];
     if (!report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')) return [`${property} ${value}: A23 did not pass`];
@@ -22967,7 +23180,9 @@ function runConstraintAndDeformSuite(): number {
   // The other half of the division: a file rigc never compiled. The values are
   // planted into the EMITTED skeleton, where no `CompileError` can reach them
   // and the only thing left is the assertion.
-  const plantPhysicsKey = (property: string, value: number, fires = true): ReturnType<typeof validate> =>
+  // `firstOnly` plants the first key and leaves the later ones as they were — a
+  // value keyed for a span rather than for the whole animation (issue #1422).
+  const plantPhysicsKey = (property: string, value: number, fires = true, firstOnly = false): ReturnType<typeof validate> =>
     gateProbeArtifacts(
       physicsDirs,
       physicsTimelineMotion(),
@@ -22976,11 +23191,11 @@ function runConstraintAndDeformSuite(): number {
           string,
           Record<string, Array<Record<string, unknown>>>
         >;
-        for (const key of physics.jiggle[property]) key.value = value;
+        for (const key of physics.jiggle[property].slice(0, firstOnly ? 1 : undefined)) key.value = value;
       },
       'spine',
       // The same keys planted into the document (issue #1025); only beside a break that fires.
-      fires ? { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', property).forEach((key) => (key.value = value)) } : undefined,
+      fires ? { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', property).slice(0, firstOnly ? 1 : undefined).forEach((key) => (key.value = value)) } : undefined,
     );
   const plantedNamed = physicsRefused.flatMap(([property, value, bound]) => {
     const hits = plantPhysicsKey(property, value).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
@@ -23235,7 +23450,12 @@ function runConstraintAndDeformSuite(): number {
   // The two arms on ONE number. The compiler never sees the setup case — a rig
   // states it and no `bounds` row applies — and `A23` never sees a spec, so a
   // reader who knows only one of them cannot tell which owns `strength: 0`.
-  const plantedZero = plantPhysicsKey('strength', 0, false);
+  // The FIRST key only (issue #1422): until then this planted 0 on both of the
+  // animation's keys, which is strength held at 0 for as long as the animation
+  // plays — what A23 now refuses (`M105`). The claim here is #727's, a key of 0
+  // for a span with a later key to pull the offset back, so the later key keeps
+  // its value above 0.
+  const plantedZero = plantPhysicsKey('strength', 0, false, true);
   const setupZeroDirs = writeProbeRig({
     ...PHYSICS_TIMELINE_RIG,
     constraints: [{ ...PHYSICS_TIMELINE_RIG.constraints[0], strength: 0 }],
@@ -24530,15 +24750,17 @@ function runConstraintAndDeformSuite(): number {
       'same row is the silence #580 closed, and a SKIP that does not say which constraint is a SKIP nobody can act on',
   );
 
-  // --- `damping` at the two ends of its bound (issue #794) ------------------
+  // --- `damping` at the two ends of its bound (issues #794, #1422) ----------
   //
   // The decay is `damping ** (60 * step)`, and at the two ends that is 1 and 0
   // for every positive exponent, which is every rate `fps` can name. So 1 is a
-  // velocity that never decays and 0 one zeroed on every step, both finite, and
-  // both are rigs an author can mean: 1 holds the jiggle for as long as it
-  // runs, and 0 follows the bone with no overshoot. 4.2's own parser reads an
-  // omitted `damping` as 1, so a rig migrated from 4.2 that keys "the default"
-  // states exactly that number. The rates are #748's pair plus 30, whose
+  // velocity that never decays and 0 one zeroed on every step, both finite.
+  // #794 took both inside as rigs an author can mean; #1422 took 1 back out,
+  // because a step whose decay is 1 has its eigenvalues on the unit circle and
+  // a chain of such links was measured resonating without limit. 0 follows the
+  // bone with no overshoot and stays in. 4.2's own parser reads an omitted
+  // `damping` as 1, so a rig migrated from 4.2 that keys "the default" states
+  // exactly the number now refused. The rates are #748's pair plus 30, whose
   // exponent is whole and not 1. Every clause compares two walks of this run or
   // a verdict with a verdict, so no measured figure is typed; `JUST_OUTSIDE` is
   // the distance the probes stand past each end, a choice and not a reading.
@@ -24581,12 +24803,21 @@ function runConstraintAndDeformSuite(): number {
     return out;
   };
   /** Build one rig through the whole gate, and walk what it emitted; `faults` is every way it was not green. */
-  const endRun = (setup: number, keyed: number | null, fps: number): { faults: string[]; walk: EndStep[] } => {
+  // `refusedBy`, where given, is the opening of the one A23 line the gate must
+  // print instead of passing (issue #1422) — the walk is still taken, because
+  // what the value DOES is measured whether or not the gate accepts it.
+  const endRun = (setup: number, keyed: number | null, fps: number, refusedBy?: string): { faults: string[]; walk: EndStep[] } => {
     const probe = endProbe(setup, fps);
     const gate = gateProbeOrRefusal(probe, endMotion(keyed), []);
     if (gate.refused !== null || gate.report === null) return { faults: [`refused — ${gate.refused}`], walk: [] };
-    const faults = gate.report.failures.map((f) => `${f.assertion}: ${f.detail}`);
-    if (!gate.report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')) faults.push('A23 did not pass');
+    const failures = gate.report.failures;
+    const faults =
+      refusedBy === undefined
+        ? failures.map((f) => `${f.assertion}: ${f.detail}`)
+        : failures.length === 1 && failures[0].assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE' && failures[0].detail.startsWith(refusedBy)
+          ? []
+          : [`not refused by exactly one A23 line opening "${refusedBy}": ${failures.map((f) => `${f.assertion}: ${f.detail}`).join(' | ') || 'nothing failed'}`];
+    if (refusedBy === undefined && !gate.report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')) faults.push('A23 did not pass');
     const built = compile({ rigPath: probe.rigPath, motionPath: join(probe.dir, 'probe.motion.json'), outDir: probe.outDir, imagesDir: probe.dir });
     const walk = endWalk(posableFromText(built.skeletonText, built.atlasText, probe.outDir).data);
     if (walk.length !== END_STEPS + 1) faults.push(`walked ${walk.length} step(s), not ${END_STEPS + 1}`);
@@ -24598,11 +24829,16 @@ function runConstraintAndDeformSuite(): number {
   const movingSteps = (walk: EndStep[]): number => walk.slice(1).filter((s) => s.vx !== 0 || s.vy !== 0).length;
   const twins = END_RATES.map((fps) => endRun(restingDamping, null, fps));
 
-  // T109 — a setup `damping` of 1: green at every rate, finite, and it never decays.
+  // T109 — a setup `damping` of 1: refused at every rate, and still finite, and it never decays.
+  //
+  // ⚠️ Green at every rate from #794 to #1422, and the gate half is what moved:
+  // the walk half is the arm's own `behavioural` claim, unchanged — the runtime
+  // plays 1 finitely and the jiggle never decays. What #1422 measured is what
+  // that costs: on a chain of such links nothing dies out and they resonate.
   const heldProbes: string[] = [];
   const heldSeen: string[] = [];
   END_RATES.forEach((fps, i) => {
-    const run = endRun(1, null, fps);
+    const run = endRun(1, null, fps, `physics "jiggle" has damping 1; must be ${dampingRow?.states}`);
     heldProbes.push(...run.faults.map((f) => `${fps} fps: ${f}`), ...twins[i].faults.map((f) => `${fps} fps, the ${restingDamping} twin: ${f}`));
     if (run.walk.some((s) => s.damping !== 1)) heldProbes.push(`${fps} fps: the runtime posed a damping other than 1`);
     if (!(latePeak(run.walk) > latePeak(twins[i].walk))) {
@@ -24612,18 +24848,19 @@ function runConstraintAndDeformSuite(): number {
   });
   const heldOk = heldProbes.length === 0;
   say(
-    'T109_A_SETUP_DAMPING_OF_1_BUILDS_GREEN_AND_WALKS_FINITE_AT_EVERY_RATE_AND_NEVER_DECAYS',
+    'T109_A_SETUP_DAMPING_OF_1_IS_REFUSED_BY_A23_AT_EVERY_RATE_AND_STILL_WALKS_FINITE_AND_NEVER_DECAYS',
     heldOk,
     probeDetail(
       heldOk,
       heldProbes,
-      `damping 1 at ${END_RATES.join(', ')} fps: gated green with A23 passing, ${END_STEPS} steps from Physics.reset finite, ` +
-        `and the last 30 steps still swing wider than the rig at its own ${restingDamping}: ${heldSeen.join('; ')}`,
-      (count) => `${count} clause(s) of a held jiggle did not hold:`,
+      `damping 1 at ${END_RATES.join(', ')} fps: refused by exactly one A23 line naming the row's bound, ${END_STEPS} steps ` +
+        `from Physics.reset finite, and the last 30 steps still swing wider than the rig at its own ${restingDamping}: ${heldSeen.join('; ')}`,
+      (count) => `${count} clause(s) of a refused, held jiggle did not hold:`,
     ),
-    '`1 ** (60 * step)` is 1 at every rate, so the velocity is multiplied by 1 and the jiggle holds: a choice, finite, ' +
-      'and the value 4.2\'s own parser gives an omitted `damping`. Refusing it asked the author to change the rig\'s ' +
-      'behaviour to satisfy the gate',
+    '`1 ** (60 * step)` is 1 at every rate, so the velocity is multiplied by 1 and the jiggle never decays — finite, so ' +
+      'the refusal is rigc\'s call and the walk is what keeps its arm `behavioural`. It was accepted as a choice until ' +
+      '#1422 measured two such links on one chain resonating without limit: a step on the unit circle is not a rig that ' +
+      'holds its jiggle, it is one that keeps every push',
   );
 
   // T110 — a setup `damping` of 0: green, finite, and the velocity is zero after every step.
@@ -24650,63 +24887,69 @@ function runConstraintAndDeformSuite(): number {
       'the offset follows the bone with no overshoot, which is a rig and not a fault',
   );
 
-  // T111 — keys of 1 and of 0 over a setup of 0.85 compile, pose, and are read by A23.
+  // T111 — a key of 0 over a setup of 0.85 compiles and poses; a key of 1 is refused (issue #1422);
+  // A23 reads the key, naming 0 moved just below its end and 1 planted as it is.
   const keyedProbes: string[] = [];
   const keyedSeen: string[] = [];
-  for (const [end, outside] of [[1, 1 + JUST_OUTSIDE], [0, 0 - JUST_OUTSIDE]] as const) {
-    END_RATES.forEach((fps) => {
-      const run = endRun(restingDamping, end, fps);
-      keyedProbes.push(...run.faults.map((f) => `key ${end} at ${fps} fps: ${f}`));
-      if (run.walk.length > 0 && run.walk.some((s) => s.damping !== end)) keyedProbes.push(`key ${end} at ${fps} fps: the runtime did not pose the key`);
-    });
-    // A23 reads the key: the same emitted key moved just past the end is named.
-    // A refusal is a string rather than a throw, for `spanPosable`'s reason: a
-    // re-narrowed bound refuses the spec this plant starts from, and a throw
-    // would take the suite down instead of printing this line red.
-    let planted: ReturnType<typeof validate> | null = null;
+  END_RATES.forEach((fps) => {
+    const run = endRun(restingDamping, 0, fps);
+    keyedProbes.push(...run.faults.map((f) => `key 0 at ${fps} fps: ${f}`));
+    if (run.walk.length > 0 && run.walk.some((s) => s.damping !== 0)) keyedProbes.push(`key 0 at ${fps} fps: the runtime did not pose the key`);
+  });
+  // The compiler refuses a key of 1 by the same row, with the arm's reason.
+  const keyedOne = gateProbeOrRefusal(endProbe(restingDamping, END_RATES[0]), endMotion(1), []);
+  const oneSays = keyedOne.refused ?? '';
+  if (!oneSays.includes(`damping key at t=0 is 1; must be ${dampingRow?.statesKeyed}`) || !oneSays.includes('lie ON the unit circle')) {
+    keyedProbes.push(`a key of 1 was not refused by the compiler with the row's bound and its reason at 1: ${keyedOne.refused ?? 'it compiled'}`);
+  } else keyedSeen.push(`the compiler refuses a key of 1: "${oneSays.slice(0, 90)}…"`);
+  // A23 reads the key: the emitted key of 0, planted at 1 and just below 0. A
+  // refusal is a string rather than a throw, for `spanPosable`'s reason: a
+  // re-narrowed bound refuses the spec this plant starts from, and a throw
+  // would take the suite down instead of printing this line red.
+  for (const planted of [1, 0 - JUST_OUTSIDE]) {
+    let report: ReturnType<typeof validate> | null = null;
     let plantRefused: string | null = null;
     try {
-      planted = gateProbeArtifacts(
+      report = gateProbeArtifacts(
         endProbe(restingDamping, END_RATES[0]),
-        endMotion(end),
+        endMotion(0),
         (skeleton) => {
           const physics = (skeleton.animations as Record<string, Record<string, unknown>>).jig.physics as Record<string, Record<string, Array<Record<string, unknown>>>>;
-          for (const key of physics.jiggle.damping) key.value = outside;
+          for (const key of physics.jiggle.damping) key.value = planted;
         },
         'spine',
-        { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', 'damping').forEach((key) => (key.value = outside)) },
+        { forge: (doc) => void docPhysicsKeys(doc, 'jig', 'jiggle', 'damping').forEach((key) => (key.value = planted)) },
       );
     } catch (err) {
       plantRefused = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
     }
-    if (planted === null) {
-      keyedProbes.push(`the key of ${end} could not be compiled to plant on: ${plantRefused}`);
+    if (report === null) {
+      keyedProbes.push(`the key of 0 could not be compiled to plant ${planted} on: ${plantRefused}`);
       continue;
     }
-    const named = planted.failures.filter(
+    const named = report.failures.filter(
       (f) =>
         f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE' &&
         f.detail.includes('animation "jig" physics "jiggle" damping key at t=') &&
         f.detail.includes(`; must be ${dampingRow?.statesKeyed}`),
     );
-    if (named.length === 0) keyedProbes.push(`the key of ${end} moved to ${outside} in the emitted file was not named by A23`);
-    else keyedSeen.push(`${outside}: "${named[0].detail.slice(0, 120)}…"`);
+    if (named.length === 0) keyedProbes.push(`the key planted at ${planted} in the emitted file was not named by A23`);
+    else keyedSeen.push(`${planted}: "${named[0].detail.slice(0, 120)}…"`);
   }
   const keyedOk = keyedProbes.length === 0;
   say(
-    'T111_A_DAMPING_KEY_OF_1_OR_0_COMPILES_POSES_AND_IS_READ_BY_A23_WHICH_NAMES_IT_MOVED_JUST_PAST_THE_END',
+    'T111_A_DAMPING_KEY_OF_0_COMPILES_AND_POSES_A_KEY_OF_1_IS_REFUSED_AND_A23_NAMES_EITHER_PLANTED_IN_A_FILE',
     keyedOk,
     probeDetail(
       keyedOk,
       keyedProbes,
-      `keys of 1 and 0 over a setup of ${restingDamping}, at ${END_RATES.join(', ')} fps: compiled, gated green, posed by ` +
-        `the runtime at the keyed number on every step and finite; moved ${JUST_OUTSIDE} past either end in the ` +
-        `emitted file, A23 names them — ${keyedSeen.join('; ')}`,
+      `a key of 0 over a setup of ${restingDamping}, at ${END_RATES.join(', ')} fps: compiled, gated green, posed by the ` +
+        `runtime at 0 on every step and finite; ${keyedSeen.join('; ')}`,
       (count) => `${count} clause(s) of the keyed ends did not hold:`,
     ),
-    'a key is where a rig migrated from 4.2 states the value, and ' +
-      'the half that proves A23 reads the key at all is the plant: an arm that stopped reading timelines would pass the ' +
-      'ends for the wrong reason',
+    'a key is where a rig migrated from 4.2 states 1, so it is refused where it is written — by the compiler, with the ' +
+      'row\'s reason — and named where it is not, by A23 in a file rigc did not write. The half that proves A23 reads ' +
+      'the key at all is the plant: an arm that stopped reading timelines would pass both for the wrong reason',
   );
 
   // T112 — A23's setup sentence at either end reads its bound off the row.
@@ -24724,13 +24967,13 @@ function runConstraintAndDeformSuite(): number {
       // The same setup value planted into the document (issue #1025); only beside a break that fires.
       fires ? { forge: (doc) => void (doc.constraints as DocRecord[]).forEach((c) => c.kind === 'physics' && (c.damping = value)) } : undefined,
     );
-  for (const value of [1 + JUST_OUTSIDE, 0 - JUST_OUTSIDE]) {
+  for (const value of [1 + JUST_OUTSIDE, 1, 0 - JUST_OUTSIDE]) {
     const hits = plantSetup(value, true).failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE');
     const named = hits.filter((f) => f.detail.includes('physics "jiggle" has damping ') && f.detail.includes(`; must be ${dampingRow?.states}`));
     if (named.length === 0) setupProbes.push(`a setup damping of ${value}: ${hits.length} A23 failure(s), none naming the row's bound — ${hits.map((f) => f.detail).join(' | ')}`);
     else setupSeen.push(`"${named[0].detail}"`);
   }
-  for (const value of [1, 0]) {
+  for (const value of [0]) {
     const report = plantSetup(value);
     if (report.failures.length !== 0 || !report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE')) {
       setupProbes.push(`a setup damping of ${value} planted in the emitted file: ${report.failures.map((f) => `${f.assertion}: ${f.detail}`).join(' | ') || 'A23 did not pass'}`);
@@ -24738,17 +24981,18 @@ function runConstraintAndDeformSuite(): number {
   }
   const setupOk = setupProbes.length === 0;
   say(
-    'T112_A23_PASSES_A_SETUP_DAMPING_OF_1_OR_0_IN_A_FILE_RIGC_DID_NOT_WRITE_AND_NAMES_THE_ROWS_BOUND_JUST_PAST_EITHER_END',
+    'T112_A23_PASSES_A_SETUP_DAMPING_OF_0_IN_A_FILE_RIGC_DID_NOT_WRITE_AND_NAMES_THE_ROWS_BOUND_AT_1_AND_JUST_PAST_EITHER_END',
     setupOk,
     probeDetail(
       setupOk,
       setupProbes,
-      `planted as the setup pose of an emitted file, 1 and 0 gate green and ${JUST_OUTSIDE} past either end reads ${setupSeen.join('; ')}`,
+      `planted as the setup pose of an emitted file, 0 gates green, and 1 and ${JUST_OUTSIDE} past either end read ${setupSeen.join('; ')}`,
       (count) => `${count} clause(s) of the setup arm did not hold:`,
     ),
     'an import is judged by A23 alone, so the setup arm has to take the same two ends the compiler does, and say the ' +
       'bound the row states rather than a sentence of its own that can drift from it — which is how "outside (0,1) it ' +
-      'never settles" came to call a finite, deliberate 1 a fault',
+      'never settles" once refused 0 with a reason that is false of it. 1 is refused again since #1422, by the row and ' +
+      'with the row\'s own reason, which is what this reads',
   );
 
   // --- each way out of a physics bound states its basis (issue #798) -------
@@ -64663,12 +64907,13 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
     );
   }
 
-  // --- `damping` just past either end of `[0, 1]` (issue #794) -------------
+  // --- `damping` just past either end of `[0, 1)` (issues #794, #1422) ------
   //
-  // 0 and 1 moved inside the bound; what is left outside is still refused, and
-  // with a sentence that opens on the bound's own reason and says what the two
-  // ends DO rather than calling them faults. The bound and the reason are typed
-  // here rather than read off the row, because they are the claim under test.
+  // 0 and 1 moved inside the bound with #794 and 1 moved back out with #1422;
+  // what is outside is refused with a sentence that opens on the bound's own
+  // reason, says what 1 does, and says what 0 does rather than calling it a
+  // fault. The bound and the reason are typed here rather than read off the
+  // row, because they are the claim under test.
   {
     const physicsProbe = writeProbeRig(PHYSICS_TIMELINE_RIG);
     const dampingKey = (value: number): Record<string, unknown> => ({
@@ -64679,21 +64924,21 @@ function runMotionParseSuite(): { failures: number; cases: number; specs: number
     });
     const ends: Array<[name: string, value: number, fragments: string[], why: string]> = [
       [
-        'MP50_A_DAMPING_KEY_JUST_ABOVE_1_IS_REFUSED_WITH_THE_CLOSED_BOUND_AND_THE_DIVERGENCE_AS_ITS_REASON',
+        'MP50_A_DAMPING_KEY_JUST_ABOVE_1_IS_REFUSED_WITH_THE_BOUND_AND_THE_DIVERGENCE_AS_ITS_REASON',
         1.0001,
         [
-          'physics constraint "jiggle" damping key at t=0 is 1.0001; must be inside [0, 1] — the per-step decay is `damping ** (60 * step)`',
+          'physics constraint "jiggle" damping key at t=0 is 1.0001; must be inside [0, 1) — the per-step decay is `damping ** (60 * step)`',
           'so above 1 every velocity grows on every step and the offset diverges',
-          'at 1 the velocity never decays',
+          'at 1 the per-step decay is 1 at every rate, so no velocity ever decays',
         ],
-        'the end moved inside and the value beside it did not: above 1 every velocity is multiplied up on every step, ' +
-          'which is the reason the bound exists, so it is the first thing the sentence says',
+        'above 1 every velocity is multiplied up on every step, which is the reason the bound exists, so it is the first ' +
+          'thing the sentence says; 1 itself is out too since #1422, and the sentence says why',
       ],
       [
-        'MP51_A_DAMPING_KEY_JUST_BELOW_0_IS_REFUSED_WITH_THE_CLOSED_BOUND_AND_THE_FRACTIONAL_POWER_AS_ITS_REASON',
+        'MP51_A_DAMPING_KEY_JUST_BELOW_0_IS_REFUSED_WITH_THE_BOUND_AND_THE_FRACTIONAL_POWER_AS_ITS_REASON',
         -0.0001,
         [
-          'physics constraint "jiggle" damping key at t=0 is -0.0001; must be inside [0, 1] — the per-step decay is `damping ** (60 * step)`',
+          'physics constraint "jiggle" damping key at t=0 is -0.0001; must be inside [0, 1) — the per-step decay is `damping ** (60 * step)`',
           'which is NaN (`(-0.5) ** (60 / 45)`)',
           'at 0 every velocity is zeroed on every step',
         ],
@@ -81409,9 +81654,9 @@ function runCurrencySuite(): number {
   // --- CUR95: the interval the docs state for `damping` is the row's (#794) --
   //
   // The guide quotes `damping`'s bound in more than one section, and the row it
-  // quotes moved from `(0, 1)` to `[0, 1]`. A quote left behind tells an author
-  // that a finite, deliberate 1 — the value 4.2's parser gives an omitted
-  // `damping` — is refused, which is the refusal #794 removed.
+  // quotes moved from `(0, 1)` to `[0, 1]` with #794 and to `[0, 1)` with #1422.
+  // A quote left behind states a bound the tool does not hold: the closed one
+  // tells an author that 1 is accepted, which #1422 measured resonating.
   {
     const docPaths = ['README.md', ...trackedIn(root, 'docs', (name) => name.endsWith('.md'))];
     const dampingDocs = docPaths.map((path) => [path, readFileSync(join(root, path), 'utf8')] as const);
@@ -81437,8 +81682,11 @@ function runCurrencySuite(): number {
     let note = '';
     if (probes.length === 0) {
       const rowRaised = raisedBy(scanDampingBound(dampingDocs, states.includes('[') ? 'inside (0, 1)' : 'inside [0, 1]').faults, { was: standing.faults });
+      // The guide's first quote put back to an interval the row does not state — the closed one #1422 left, or the
+      // half-open one where the row states another.
+      const stale = states.includes('[0, 1)') ? '[0, 1]' : '[0, 1)';
       const reverted = dampingDocs.map(([path, text]) =>
-        [path, path === 'docs/AUTHORING.md' ? text.replace(/(`damping`[^.|;]{0,40}?`?)\[0, 1\]/, '$1(0, 1)') : text] as const,
+        [path, path === 'docs/AUTHORING.md' ? text.replace(/(`damping`[^.|;]{0,40}?`?)[[(]0, ?1[\])]/, `$1${stale}`) : text] as const,
       );
       const quoteRaised = raisedBy(scanDampingBound(reverted, states).faults, { was: standing.faults });
       if (rowRaised.length !== standing.quotes) probes.push(`the row's interval exchanged raised ${rowRaised.length} fault(s) and this control requires one per quote, ${standing.quotes}`);
@@ -81455,7 +81703,7 @@ function runCurrencySuite(): number {
         `${standing.quotes} quote(s) of \`damping\`'s interval across README.md and docs/, each ${JSON.stringify(states)}'s — and ${note}`,
       ),
       'the bound is one row read by the compiler and by A23, and the guide is the only other place an author learns it: ' +
-        'a quote that kept the open interval after the row closed it is a guide refusing what the tool accepts',
+        'a quote that kept an interval after the row moved is a guide stating a bound the tool does not hold, either way',
     );
   }
 
@@ -94168,7 +94416,11 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
     const anims = { a: { bones: swing, ...(Object.keys(tl).length > 0 ? { physics: tl } : {}) } };
     return { pair: stepPair(bones, [{ type: 'physics', name: 'k', bone: 'b', ...constraint }], anims), options: stepOptions(pick([...STEP_DTS, R(0.005, 0.05)]), 9, pick(['grid', 'irr'])) };
   };
-  /** One setting's random value, inside the range its row of `docs/AUTHORING.md` §4.4 admits. */
+  /**
+   * One setting's random value, inside the range its row of `docs/AUTHORING.md` §4.4 admits — but for
+   * `damping`, whose draw, rounded to three places, can land on 1, which that row stopped admitting with
+   * issue #1422. These are poser probes, not gate verdicts, and the runtime plays 1, so it stays drawn.
+   */
   const settingValue = (rnd: () => number, f: string): number => {
     const R = within(rnd);
     const pick = pickOf(rnd);

@@ -74,7 +74,8 @@ const SETUP_POSE_SAYS: Record<string, (pose: PhysicsSetup, animations: number, r
   // on the arm's own words, which `T100` holds.
   strength: (pose, _animations, rule) => `has strength ${pose.strength}; ${setupBasisSays(rule, pose.strength)}`,
   // The bound is read off the row, so the setup pose and a key cannot state two
-  // intervals; the reason is the arm the value took, since the ends are inside (#794).
+  // intervals; the reason is the arm the value took — above 1, at 1 (issue
+  // #1422, inside from #794 until then) or below 0.
   damping: (pose, _animations, rule) =>
     `has damping ${pose.damping}; must be ${rule.states} — the per-step decay is \`damping ** (60 * step)\`, and ` +
     setupBasisSays(rule, pose.damping),
@@ -92,10 +93,11 @@ function setupBasisSays(rule: PhysicsPoseRule, poseValue: number): string {
 
 // Every failure mode here is silent. The five component fields default to
 // 0, so a constraint can drive nothing at all; `mix` 0 mutes it; `mass` 0
-// becomes an infinite massInverse; and `damping` above 1 never settles, which
-// on a mesh-driving bone means the canvas re-rasterises forever. 1 itself is
-// inside the bound since issue #794: it never decays, which is finite and a
-// choice, and what it costs a consumer's frame is the consumer's to judge.
+// becomes an infinite massInverse; and `damping` at or above 1 never settles,
+// which on a mesh-driving bone means the canvas re-rasterises forever. 1 itself
+// was inside the bound from issue #794 to #1422, as a jiggle held rather than a
+// fault; it is out because a decay of 1 puts the step's eigenvalues on the unit
+// circle, and a chain of such links was measured resonating without limit.
 //
 // 🔑 **Two arms, one criterion.** The second arm below reads every physics
 // TIMELINE key, and it is written against `PHYSICS_POSE_RULES` — the table
@@ -410,9 +412,69 @@ export function a23PhysicsConstraintEffective({ fail, skip, stats }: Verdicts, f
       if (combo.strength.value === setup.strength.value && combo.massInverse.value === setup.massInverse.value && combo.damping.value === setup.damping.value) continue;
       const at = physicsStepStability(combo.strength.value, combo.massInverse.value, combo.damping.value, physics.step);
       if (at.stable) continue;
+      // A decay rounded to 1 by the setup damping itself is the setup line's, whatever else this animation keys.
+      if (!(at.d < 1) && at.k < at.bound && combo.damping.from === 'setup') continue;
       fail(
         'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
         `animation "${animation}" can pose physics "${facts.constraints[index]?.name ?? `#${index}`}" at ${runawaySays(combo, physics.step, at)}`,
+      );
+    }
+  }
+
+  // --- strength held at 0 for as long as an animation plays (issue #1422) ---
+  //
+  // A strength KEY of 0 is accepted (issue #727) because it releases the
+  // constraint for a span and a later key pulls the offset back. An animation
+  // whose strength timelines pose 0 at EVERY time has no later key: [measured on
+  // #1422, x drive, the runtime's default world, spine-core and rigc's core
+  // identical bit for bit] the offset grows exactly linearly while it plays —
+  // 1.33e4 at 60 s, 5.33e4 at 240 s, 1.33e5 at 600 s — and A10's walk of
+  // max(duration, 1) s sees a finite number and passes it.
+  //
+  // 🔑 **"Every time it plays", not "looped".** Whether an animation loops is
+  // not in the artifact: skeleton JSON has no loop flag, the motion spec's
+  // `loop` is a player hint the compiler never reads (`MotionAnimation.loop`),
+  // and an editor export carries neither — and when it plays, and for how long,
+  // is the consumer's. The criterion that needs none of that is the one the
+  // runtime makes true either way: looped, the animation never leaves its
+  // values; played once, a track holds its last frame, which is 0. So the
+  // clause reads the timeline alone — every key and every Bézier sample, as
+  // the pose field it lands in, and the first key at t = 0, since before a
+  // later first key the timeline poses the setup value, which the strength row
+  // holds above 0.
+  //
+  // Per animation and constraint: when two strength timelines reach one
+  // constraint in one animation (a named one and the global one), it is held
+  // only if both are — a timeline that lifts it is a later key for the other.
+  // A constraint driving nothing is named by the first clause, and one resting
+  // at strength 0 or below by its row, so neither is read here.
+  const strengthRule = physicsRuleFor('strength');
+  const heldAtZero = new Map<string, Map<number, { keys: number; held: boolean }>>();
+  for (const timeline of facts.timelines) {
+    if (timeline.kind !== 'physics' || timeline.word !== 'strength') continue;
+    const first = timeline.frames[0];
+    const posed = (value: number): number => (timeline.posed === undefined ? value : timeline.posed(value));
+    const held = first !== undefined && first.time <= 0 && timeline.channelValues(0).every((value) => posed(value) === 0);
+    const byConstraint = heldAtZero.get(timeline.animation) ?? new Map<number, { keys: number; held: boolean }>();
+    heldAtZero.set(timeline.animation, byConstraint);
+    for (const index of timeline.reach) {
+      const was = byConstraint.get(index);
+      byConstraint.set(index, { keys: (was?.keys ?? 0) + timeline.frames.length, held: (was?.held ?? true) && held });
+    }
+  }
+  for (const [animation, byConstraint] of heldAtZero) {
+    for (const [index, { keys, held }] of byConstraint) {
+      const constraint = facts.constraints[index];
+      const physics = constraint?.physics;
+      if (!held || constraint === undefined || physics === undefined || strengthRule === undefined) continue;
+      if (!PHYSICS_COMPONENTS.some((k) => physics.components[k] > 0) || !strengthRule.poseOk(physics.setup.strength)) continue;
+      fail(
+        'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+        `animation "${animation}" poses physics "${constraint.name}" strength 0 at every time it plays — ${keys} key(s) from t=0, ` +
+          `every one 0 and no curve between them lifting it, so ${physicsOutsideSays(strengthRule, 0)}: a strength key of 0 is ` +
+          'accepted for a span because a later key pulls the offset back, and this animation has none, so for as long as it ' +
+          'plays, looped or held on its last frame, a push (wind, gravity, the bone moving) carries the offset away and it ' +
+          'grows without limit; key strength above 0 somewhere in the animation, or remove the timeline',
       );
     }
   }
@@ -453,10 +515,23 @@ function plain(value: number): string {
  * The stability clause's sentence: the four authored numbers, `k` and the bound
  * as the runtime forms them, what the step does at that pose, and the four
  * levers that move it back under the bound.
+ *
+ * ⚠️ One pose fails with `k` under the bound: a damping the row accepts — below
+ * 1 — whose decay `damping ** (60 * step)` the runtime's doubles round to exactly
+ * 1 (issue #1422: the largest double below 1 does from fps 121 on). That is the
+ * damping row's own fault, a velocity that never decays, reached through the
+ * rate, so it says so rather than printing a `k` that is under its bound.
  */
 function runawaySays(combo: StabilityCombo, step: number, at: PhysicsStepStability): string {
   const src = (c: Candidate): string => (c.from === 'setup' ? '' : ` (${c.from})`);
   const fps = plain(1 / step);
+  if (!(at.d < 1)) {
+    return (
+      `damping ${combo.damping.value}${src(combo.damping)} at fps ${fps} — damping^(60·step) = ${at.d} as the runtime forms it, ` +
+      'so although the damping is below 1 no velocity ever decays: the step\'s eigenvalues lie on the unit circle, the fault ' +
+      'the damping row refuses 1 for, reached here by rounding; lower damping or lower fps'
+    );
+  }
   const places = apart(at.k, at.bound, 4);
   return (
     `strength ${combo.strength.value}${src(combo.strength)}, mass ${plain(1 / combo.massInverse.value)} (massInverse ${combo.massInverse.value})${src(combo.massInverse)}, ` +

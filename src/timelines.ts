@@ -476,7 +476,7 @@ export interface PhysicsPoseRule {
    * the value, and the row's `why` — the key's sentence — opens with the arms a
    * key can still take. Until this field existed `src/types.ts` said of all four
    * rows that "the bounds are the runtime's, not a policy", which is true of two
-   * of the eight ways out.
+   * of the nine ways out.
    */
   basis: readonly PhysicsBoundBasis[];
   /** The bound in words, for a message: what the value has to be. */
@@ -517,7 +517,7 @@ const STRENGTH_OUTSIDE: readonly PhysicsOutsideArm[] = [
 ];
 
 /**
- * The eight ways out of the four bounds, each with its basis (issue #798). They
+ * The nine ways out of the four bounds, each with its basis (issue #798). They
  * are named constants rather than literals inside the rows because each row's
  * `why` quotes its own — the key's sentence and `A23`'s setup sentence are then
  * one text about one number, as `STRENGTH_OUTSIDE` already made them for two.
@@ -531,7 +531,8 @@ const STRENGTH_OUTSIDE: readonly PhysicsOutsideArm[] = [
  * exactly where the rig with no constraint does, on every step; `mix` −0.5 is
  * finite and moves the bone by exactly −1× what +0.5 moves it by; `damping` 2 is
  * finite over the walk (Infinity only at step 1,065); `damping` −0.5 at 45 fps is
- * NaN at step 2. `T113` re-takes all eight on every run.
+ * NaN at step 2. The ninth, `damping` 1 (issue #1422), is finite on every step
+ * and its velocity never decays. `T113` re-takes all nine on every run.
  */
 const MIX_BELOW_0: PhysicsBoundBasis = {
   kind: 'behavioural',
@@ -584,6 +585,33 @@ const DAMPING_ABOVE_1: PhysicsBoundBasis = {
   witness: { value: 2 },
   does: 'above 1 every velocity grows on every step and the offset diverges',
 };
+/**
+ * `damping` at exactly 1 (issue #1422) — inside the bound from #794 until then.
+ *
+ * 🔑 The decay `damping ** (60 * step)` is 1 at every rate, so the step map
+ * `physicsStepStability` derives has determinant 1, and for every `k` under the
+ * bound its two eigenvalues are a complex pair of modulus √1 = 1: ON the unit
+ * circle, where every other damping puts them inside it. Nothing an excitation
+ * puts into the offset ever decays, so the rig is marginal at best — and the
+ * excitation is not benign. [measured on issue #1422, spine-core and rigc's core
+ * identical bit for bit, x drive, inertia 1, fps 30, strength 100, the runtime's
+ * default world, 600 s at 60 Hz] one such link held its peak offset at 40.3 for
+ * the whole walk; two identical ones on one chain grew it LINEARLY, 6.03e3 at
+ * 60 s to 6.09e4 at 600 s; three ran past 10⁶ at 316 s. The parent's undamped
+ * oscillation reaches the child through inertia at exactly the child's own
+ * frequency. Detuning the second link's strength by 1 % held it flat, which is
+ * why the refusal is of the value and not of a pair: equal maps are the edge,
+ * and no authored number states how close is too close.
+ */
+const DAMPING_AT_1: PhysicsBoundBasis = {
+  kind: 'behavioural',
+  when: (v) => v === 1,
+  witness: { value: 1 },
+  does:
+    'at 1 the per-step decay is 1 at every rate, so no velocity ever decays: the step\'s two eigenvalues lie ON the unit ' +
+    'circle (modulus √1 = 1) rather than inside it, so nothing a push puts in (wind, gravity, a key, the bone moving) ever ' +
+    'dies out, and two such constraints on one chain stepping alike resonate and grow without limit',
+};
 const DAMPING_BELOW_0: PhysicsBoundBasis = {
   kind: 'arithmetic',
   when: (v) => v < 0,
@@ -626,8 +654,8 @@ const DAMPING_BELOW_0: PhysicsBoundBasis = {
  *
  * 🔎 Each row's `basis` says, per way out, whether the runtime's arithmetic
  * fails there or the value runs and rigc refuses what it does (issue #798). Of
- * the eight ways out, two are arithmetic — `mass` at 0 and `damping` below 0 —
- * and six are rigc's call.
+ * the nine ways out, two are arithmetic — `mass` at 0 and `damping` below 0 —
+ * and seven are rigc's call.
  */
 export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
   {
@@ -697,7 +725,7 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     timeline: 'damping',
     field: 'damping',
     toPose: (v) => v,
-    poseOk: (v) => v >= 0 && v <= 1,
+    poseOk: (v) => v >= 0 && v < 1,
     keyOk: null,
     inertAtSetup: false,
     outside: null,
@@ -705,22 +733,27 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
     // above 1 is a run-away, finite until the velocity overflows (step 1,065
     // for a setup of 2 at 60 fps), so it is behavioural by the line
     // `PhysicsBoundBasis` draws — the card that asked for the bases (#798)
-    // counted it arithmetic, and the walk says otherwise.
-    basis: [DAMPING_ABOVE_1, DAMPING_BELOW_0],
-    states: 'inside [0, 1]',
-    statesKeyed: 'inside [0, 1]',
-    // 🔑 The interval is CLOSED (issue #794). `1 ** x` is 1 and `0 ** x` is 0
-    // for every positive exponent, so both ends are finite at every `fps` and
-    // both are rigs somebody can mean: 1 holds the jiggle, 0 follows the bone
-    // with no overshoot. [measured] through spine-core on the generated physics
-    // fixture, 120 steps from `Physics.reset` at 60, 45 and 30 fps under a
-    // displacing animation, as a setup value and as a key: every pose value
-    // finite, the velocity never 0 at 1 and 0 after every step at 0. And 1 is
-    // not only a choice: it is 4.2's own parser default for an omitted
+    // counted it arithmetic, and the walk says otherwise. 1 itself is
+    // behavioural too: finite on every step, and never decaying.
+    basis: [DAMPING_ABOVE_1, DAMPING_AT_1, DAMPING_BELOW_0],
+    states: 'inside [0, 1)',
+    statesKeyed: 'inside [0, 1)',
+    // 🔑 The interval is HALF-OPEN (issue #1422): 0 is in and 1 is out. `0 ** x`
+    // is 0 for every positive exponent, so 0 follows the bone with no overshoot
+    // at every `fps` — a rig somebody can mean. 1 was inside from #794 to #1422,
+    // on the argument that `1 ** x` is 1 and finite at every rate, a jiggle held
+    // rather than a fault. Finite it is — [measured] through spine-core on the
+    // generated physics fixture, 120 steps from `Physics.reset` at 60, 45 and
+    // 30 fps, every pose value finite and the velocity never 0 — and that is why
+    // its arm is behavioural. What the argument missed is that a step whose
+    // decay is 1 has its eigenvalues on the unit circle, so nothing that excites
+    // it ever dies out, and a chain of such links resonates: `DAMPING_AT_1` has
+    // the measurement. ⚠️ 1 is also 4.2's own parser default for an omitted
     // `damping` (`SkeletonJson.js:242` in 4.2.120,
     // `getValue(constraintMap, "damping", 1)`; 4.3.13 reads 0.85 at `:308`), so a
-    // rig migrated from 4.2 that keys "the default" writes 1 and the editor
-    // exports it as it is. The open interval this replaced refused that rig.
+    // rig migrated from 4.2 that keys "the default" writes 1 and is refused; at
+    // #1422 none of the public recipes, the gallery, the twelve example exports,
+    // the trailer rig or the parts recipes states it, at rest or keyed.
     //
     // ⚠️ The frame-rate half is why the bound cannot be checked by playing a rig
     // at 60 fps (issue #748): `step` is `1 / fps`, the constraint's own rate, so
@@ -734,9 +767,9 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
       "every rate — finite on every step until the velocity overflows, so refusing it is rigc's call rather than the " +
       "runtime's. Below 0 the result depends on `fps`: where `60 / fps` is a " +
       'whole number a negative base stays finite — at 60 fps it is the velocity\'s sign flipped each step, which can ' +
-      `look like a jiggle settling — and ${DAMPING_BELOW_0.expression} (\`(-0.5) ** (60 / 45)\`), so a rig tried only at 60 fps never shows the failure. The two ends are ` +
-      'values the runtime plays at every rate: at 1 the velocity never decays, so the jiggle holds for as long as it ' +
-      'runs, and at 0 every velocity is zeroed on every step, so the offset follows the bone with no overshoot',
+      `look like a jiggle settling — and ${DAMPING_BELOW_0.expression} (\`(-0.5) ** (60 / 45)\`), so a rig tried only at 60 fps never shows the failure. ` +
+      `And ${DAMPING_AT_1.does} — finite on every step as well, so that refusal is rigc's call too. 0 is inside: ` +
+      'at 0 every velocity is zeroed on every step, so the offset follows the bone with no overshoot',
   },
 ];
 
@@ -746,11 +779,11 @@ export interface PhysicsStepStability {
   readonly k: number;
   /** The per-step velocity decay, `damping ** (60 * step)` — the runtime's own expression. */
   readonly d: number;
-  /** `2 · (1 + d)`: the step is stable exactly when `k` is below it. */
+  /** `2 · (1 + d)`: for `d` below 1 the step is stable exactly when `k` is below it. */
   readonly bound: number;
   /** The largest magnitude among the step map's two eigenvalues — what one step multiplies an undisturbed offset by, at most. */
   readonly growth: number;
-  /** `k < bound`, strictly. */
+  /** `k < bound` and `d < 1`, both strictly. */
   readonly stable: boolean;
 }
 
@@ -766,9 +799,22 @@ export interface PhysicsStepStability {
  * additive — wind and gravity set how far the offset goes, never whether it
  * comes back — so with `u = v·step` the step is the linear map
  * `[offset; u] ← [[1 − k, 1], [−k·d, d]]·[offset; u]`, `k = strength·m·step`:
- * trace `1 − k + d`, determinant `d`. For `d` in `[0, 1]` (the damping row's own
- * bound) both eigenvalues lie inside the unit circle exactly when
- * `0 < k < 2·(1 + d)`. The lower end is the strength row's; this is the upper.
+ * trace `1 − k + d`, determinant `d`. For `d` in `[0, 1)` both eigenvalues lie
+ * inside the unit circle exactly when `0 < k < 2·(1 + d)`. The lower end is the
+ * strength row's; this is the upper.
+ *
+ * ⚠️ **Not at `d = 1`** — this comment said `[0, 1]` until issue #1422, and it
+ * was false at that end. The determinant is `d`, so at `d = 1` the product of the
+ * two eigenvalues is 1, and for every `0 < k < 4` they are a complex pair of
+ * modulus `√d` = 1: on the circle, not inside it. One such link never decays
+ * (marginal), and two on one chain stepping alike resonate and grow without
+ * limit — measured on #1422, and the reason the damping row now ends below 1
+ * (`DAMPING_AT_1`). `d` is 1 for a `damping` of 1 at every rate, and — in the
+ * runtime's own doubles — for a `damping` a hair under 1 at a high enough rate:
+ * [measured] the largest double below 1 gives `d` exactly 1 from fps 121 on,
+ * while the largest float32 below 1, which is all a key can hold, needs about
+ * 6.4·10¹⁰. The runtime then multiplies every velocity by exactly 1, so `stable`
+ * requires `d < 1` as well, and A23 names that case by the decay it reached.
  *
  * ⚠️ **Strict.** At `k = 2·(1 + d)` one eigenvalue is exactly −1: the offset
  * flips sign every step and never settles, and at `d = 1` the two coincide and
@@ -798,7 +844,7 @@ export function physicsStepStability(strength: number, massInverse: number, damp
   const trace = 1 - k + d;
   const disc = trace * trace - 4 * d;
   const growth = disc >= 0 ? Math.max(Math.abs(trace + Math.sqrt(disc)), Math.abs(trace - Math.sqrt(disc))) / 2 : Math.sqrt(d);
-  return { k, d, bound, growth, stable: k < bound };
+  return { k, d, bound, growth, stable: k < bound && d < 1 };
 }
 
 /**
