@@ -165,7 +165,7 @@ authored to be correct. So such a block names the edit on the line above its
 fence, the selftest runs it, and you can read it:
 
 ```markdown
-**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
+**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile rig-play`.
 ```
 
 Every replacement is a replace-*all*, and the block below has to be one of the

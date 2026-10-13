@@ -145,7 +145,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
     // ⭐ Who names it is read off the two bodies, not chosen. Both ask
     // `readPngHeader` (`pngProblem`, the one reader of a page's identity) the
     // same question about the same file, A06 runs under both profiles and this
-    // rule under `spine-html` alone, and A06 FAILs on every page for which it
+    // rule under `rig-play` alone, and A06 FAILs on every page for which it
     // answers with a problem — so on every input that reaches this branch, A06
     // has already named the file and the report is red. A FAIL here would be
     // the second naming and a PASS a certificate over alpha nobody read, so
@@ -246,7 +246,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
               `${region.y} is not where "${region.name}"'s texels are on this file and this rule states ` +
               'nothing about whether it can draw a transparent pixel. The page grid is ' +
               "A06_ATLAS_PAGE_SIZE_MATCHES_PNG's to judge, and it names the ratio and how to declare the page " +
-              'honestly. This is renderer policy, and it belongs to --profile spine-html: the default ' +
+              'honestly. This is renderer policy, and it belongs to --profile rig-play: the default ' +
               '--profile spine does not run this check.',
           );
         }
@@ -280,7 +280,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
               `${plate.width}x${plate.height}, so it states nothing about whether "${region.name}" can draw a ` +
               "transparent pixel. A region's rectangle is A06_ATLAS_PAGE_SIZE_MATCHES_PNG's to judge, and one " +
               'that runs off its page is refused there by name. This is renderer policy, and it belongs to ' +
-              '--profile spine-html: the default --profile spine does not run this check.',
+              '--profile rig-play: the default --profile spine does not run this check.',
           );
           continue;
         }
@@ -298,7 +298,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
           'A19_OVERLAY_PNGS_HAVE_ALPHA',
           `part "${region.name}" is opaque in ${over}, so it would paint a solid rectangle over whatever is ` +
             `drawn behind it. Re-export the part with transparency and pack again. ${exemption} This is ` +
-            'renderer policy, and it belongs to --profile spine-html: the default --profile spine does not run ' +
+            'renderer policy, and it belongs to --profile rig-play: the default --profile spine does not run ' +
             'this check.',
         );
       }
@@ -316,7 +316,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
           `(${colourTypeName(info.colourType)}) with no tRNS chunk, so it would paint a solid rectangle over ` +
           'whatever is drawn behind it. Re-export it with transparency — as RGBA, or as an indexed or greyscale ' +
           `PNG that keeps its tRNS chunk. ${exemption} This is renderer policy, and it belongs to --profile ` +
-          'spine-html: the default --profile spine does not run this check.',
+          'rig-play: the default --profile spine does not run this check.',
       );
       continue;
     }
@@ -352,7 +352,7 @@ export function a19OverlayPngsHaveAlpha({ fail: failed, skip }: Verdicts, { atla
       `part image "${page.name}" is opaque in every one of its ${plate.width}x${plate.height} texels, so it ` +
         `would paint a solid rectangle over whatever is drawn behind it: its file can hold transparency — ${holds} ` +
         '— and no texel uses it. Re-export the part with the transparency it is meant to have. ' +
-        `${exemption} This is renderer policy, and it belongs to --profile spine-html: the default --profile ` +
+        `${exemption} This is renderer policy, and it belongs to --profile rig-play: the default --profile ` +
         'spine does not run this check.',
     );
   }

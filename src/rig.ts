@@ -426,7 +426,7 @@ export interface RigSlot {
   attachment?: string | null;
   /** `rrggbbaa`. Default opaque white. */
   color?: string;
-  /** Two-colour tint, `rrggbb`. 🚫 `A12_NO_DARK_COLOR` under `spine-html`. */
+  /** Two-colour tint, `rrggbb`. 🚫 `A12_NO_DARK_COLOR` under `rig-play`. */
   dark?: string;
   /** Default `normal`. Only the first letter's case is free (`RigSlotBlend`). */
   blend?: RigSlotBlend;

@@ -539,7 +539,7 @@ which `rigc explain` prints as a parent column (§9.2).
 ⭐ **The same reasoning puts the head's pivot one link above the mesh.** A head
 rotates about the top of the neck, not about the middle of its own face, so the
 roll belongs on a `headroll` bone above `head`. There is a rule that enforces it
-under `--profile spine-html`: `A15_IDLE_NO_MESH_BONE_KEYS` refuses an `idle` that
+under `--profile rig-play`: `A15_IDLE_NO_MESH_BONE_KEYS` refuses an `idle` that
 keys a bone driving a mesh — its own slot bone or its control bone — because that
 renderer must never idle-skip a mesh. Keying the pivot one link up satisfies it,
 and **the rig that satisfies the assertion is the better rig anyway.**
@@ -852,7 +852,7 @@ in the experiment came close to that ratio.
 
 ⚠️ **A `clipping` attachment would lift the iris's travel ceiling and you cannot
 have one.** Spine has them (AUTHORING §3.4) but `A11_NO_CLIPPING_ATTACHMENTS`
-refuses one under `--profile spine-html`, so a rig carrying one builds on only one
+refuses one under `--profile rig-play`, so a rig carrying one builds on only one
 of the two profiles. The ceiling is then geometric: in the worked example the
 iris's ink ring has radius 28.5 against a socket opening 36 half-wide, so
 `36 − 28.5 = 7.5` units is as far as it can travel before it crosses its own lash.
@@ -1473,7 +1473,7 @@ bun install                                     # once
 
 bun cli.ts build --rig gallery/portrait/rig.json \
                  --motion gallery/portrait/motion.json \
-                 --out gallery/portrait/build --profile spine-html
+                 --out gallery/portrait/build --profile rig-play
 bun cli.ts render --candidate gallery/portrait/build --fps 25 --max 640 \
                  --out gallery/portrait/render
 ```
@@ -1481,8 +1481,8 @@ bun cli.ts render --candidate gallery/portrait/build --fps 25 --max 640 \
 ```
   MESH  head         authored 25 vertices / 32 triangles  (budget 32)  bones=[head]  attachments=[head]  covers 100.00% of the art, reaching 95.90px past it
   MESH  hair_bang    authored 15 vertices / 16 triangles  (budget 32)  bones=[bang]  attachments=[hair_bang]  covers 100.00% of the art, reaching 55.22px past it
-  ..    validate (spine-core round trip + machine assertions, profile spine-html)
-  ..    profile spine-html — every assertion applies
+  ..    validate (spine-core round trip + machine assertions, profile rig-play)
+  ..    profile rig-play — every assertion applies
 ```
 
 Green — the profile line above says so in the tool's own words.
@@ -1515,7 +1515,7 @@ for (const k of d.keys) if (k.transform) {
 await Bun.write("/tmp/swapped.motion.json", JSON.stringify(m, null, 2));
 '
 bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/swapped.motion.json \
-                 --out /tmp/swapped --profile spine-html
+                 --out /tmp/swapped --profile rig-play
 
 # (b) FOLD IT: evaluate the same closed form at 40°, past the 31.37° of §4.2,
 #     so the two far columns swap order and the mesh turns inside out. Since
@@ -1527,23 +1527,23 @@ for (const k of d.keys) if (k.transform) k.transform.degrees = 40;
 await Bun.write("/tmp/folded.motion.json", JSON.stringify(m, null, 2));
 '
 bun cli.ts build --rig gallery/portrait/rig.json --motion /tmp/folded.motion.json \
-                 --out /tmp/folded --profile spine-html
+                 --out /tmp/folded --profile rig-play
 ```
 
 **What comes back from both:**
 
 | | good | (a) one band inverted | (b) mesh folded |
 | --- | --- | --- | --- |
-| `--profile spine-html`, **without `A39`** | green | **green, and the same counts** | **green, and the same counts** |
+| `--profile rig-play`, **without `A39`** | green | **green, and the same counts** | **green, and the same counts** |
 | `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` | PASS | **PASS** | **PASS** |
 | the `MESH` coverage line | 100.00%, 95.90px past | **byte-identical** | **byte-identical** |
 | `A39_DEFORM_KEEPS_TRIANGLE_WINDING` | PASS | PASS | **FAIL, both keys, 8 of 32 triangles** |
-| `--profile spine-html`, **with `A39`** | green | green | **refused, and nothing written** |
+| `--profile rig-play`, **with `A39`** | green | green | **refused, and nothing written** |
 | the `DEFORM` block, `head` key 1 `area` | x0.637174 … x1.319122 | **x0.765250 … x1.362834** | **x−0.288121 … x1.820211** |
 | … and its `winding` | 32 of 32 kept | 32 of 32 kept | **24 of 32 kept** |
 
 🚨 **All three were green, and the coverage line is the same string in all three,
-because it reports the SETUP pose.** The `--profile spine-html` row with `A39` is
+because it reports the SETUP pose.** The `--profile rig-play` row with `A39` is
 the only verdict that separates them, and the two rows above it measure only the
 setup geometry: `A35` is silent about build (b). `A35` checks that a deform run *fits* its
 attachment — an honest and useful check, and orthogonal to whether the numbers in
@@ -1609,7 +1609,7 @@ bun cli.ts explain --rig gallery/portrait/rig.json \
 legitimate counter-example is the fold, which is `A39`'s.
 
 **`A39_DEFORM_KEEPS_TRIANGLE_WINDING` closes the half of that gap the fold
-lives in** — `--profile spine-html`. Build (b) above is refused
+lives in** — `--profile rig-play`. Build (b) above is refused
 by name, on both its keys, with the triangles listed:
 
 ```
@@ -1711,7 +1711,7 @@ bun cli.ts check --candidate /tmp/folded            --frames gallery/portrait/re
 ```
 
 ⚠️ **The third of those needs a build §9.2's own command will not write.** Build (b)
-under `--profile spine-html` is refused and nothing
+under `--profile rig-play` is refused and nothing
 lands in `/tmp/folded` — which is the row above it in §9.2's table, working. Take
 that candidate from the **default** profile, where `A39` reads `PROF` and the
 artifact is written — a profile selects which assertions apply and not what is
@@ -1840,7 +1840,7 @@ it come off:
 
 `spine` is the default, so that is the `build` above with no `--profile` on it —
 the report names what the profile leaves out rather than this page counting it.
-§9.2 runs the same rig under `--profile spine-html` and quotes what comes back
+§9.2 runs the same rig under `--profile rig-play` and quotes what comes back
 there; `A13_MESH_BUDGET` and `A15_IDLE_NO_MESH_BONE_KEYS` are among the rules
 the default profile excludes.
 

@@ -38,7 +38,7 @@ bun cli.ts preview --candidate gallery/nod/build --out gallery/nod/preview.html
 ```
 
 `build` gates green under both profiles — `--profile spine` (the default) and
-`--profile spine-html` — with **no declared exemption**. Nothing built is
+`--profile rig-play` — with **no declared exemption**. Nothing built is
 committed; the three output paths above are in `.gitignore`.
 
 To redraw the art (needs `rsvg-convert` from librsvg — `brew install librsvg`,
@@ -214,13 +214,13 @@ angle at which it fires is an independent check. The green side of the bracket:
 
 ```sh
 sed 's/"degrees": 12/"degrees": 33/g' gallery/nod/motion.json > /tmp/nod-33.json
-bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-33.json --out /tmp/b33 --profile spine-html   # green
+bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-33.json --out /tmp/b33 --profile rig-play   # green
 ```
 
 `33°` gates green; `34°` does not, and the refusal names the pair the closed form
 names:
 
-**Reproduce it:** replace `"degrees": 12` with `"degrees": 34` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
+**Reproduce it:** replace `"degrees": 12` with `"degrees": 34` in `gallery/nod/motion.json`, then run `build --profile rig-play`.
 ```
 FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "bow" deform head/head key 2
 (t=0.6000000238418579s): 2 of 8 triangle(s) reverse winding — triangle 6 [7,6,5] 5320.002 ->
@@ -402,7 +402,7 @@ The same sweep here, on every `wave` amplitude in the spec at once:
 ```sh
 for a in 100 400 4000; do
   sed -E "s/\"amplitude\": [0-9]+,/\"amplitude\": $a,/g" gallery/nod/motion.json > /tmp/nod-amp$a.json
-  bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-amp$a.json --out /tmp/b-amp$a --profile spine-html
+  bun cli.ts build --rig gallery/nod/rig.json --motion /tmp/nod-amp$a.json --out /tmp/b-amp$a --profile rig-play
 done
 bun cli.ts explain --rig gallery/nod/rig.json --motion /tmp/nod-amp4000.json --out /tmp/b-amp4000
 ```
@@ -438,7 +438,7 @@ artifact to read and the refusal below is the whole output:
 ```sh
 for wl in 80 160; do
   sed "s/\"wavelength\": 320/\"wavelength\": $wl/g" gallery/nod/motion.json > /tmp/nod-wl$wl.json
-  bun cli.ts build   --rig gallery/nod/rig.json --motion /tmp/nod-wl$wl.json --out /tmp/b-wl$wl --profile spine-html
+  bun cli.ts build   --rig gallery/nod/rig.json --motion /tmp/nod-wl$wl.json --out /tmp/b-wl$wl --profile rig-play
   bun cli.ts explain --rig gallery/nod/rig.json --motion /tmp/nod-wl$wl.json --out /tmp/b-wl$wl
 done
 ```
@@ -463,7 +463,7 @@ and the row above is what the compiler says instead:
 Its own path to the patched motion spec sits between `error:` and `animation`
 and is cut here, because it is a different string on every machine:
 
-**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile spine-html`.
+**Reproduce it:** replace `"wavelength": 320` with `"wavelength": 80` in `gallery/nod/motion.json`, then run `build --profile rig-play`.
 ```
 rigc compile error: animation "idle" deform default/ear_l/ear_l (t=0): transform wave states
 amplitude=10 wavelength=80 phase=0 along=y axis=x, and every one of this attachment's 22
@@ -606,13 +606,13 @@ feature.
 | Check | Result |
 | --- | --- |
 | `build --profile spine` | green — the run's own verdict is quoted below the table; 2 animations |
-| `build --profile spine-html` | green — same, including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
+| `build --profile rig-play` | green — same, including `A39_DEFORM_KEEPS_TRIANGLE_WINDING` and `A15_IDLE_NO_MESH_BONE_KEYS`, both PASS |
 | `A18_DETERMINISTIC_EMIT` | green on a second independent compile; the selftest's gallery suite compiles it three times |
 | mesh coverage | **100.00 %** on all three meshes: nothing of any drawing is outside its triangles |
 | `render --fps 12 --max 640` | 25 + 23 frames, looked at as contact sheets three times, plus 1:1 frames at the nod extreme, the anticipation and both ripple phases |
 | `loop_seam.ts` | **0 / 255** on both animations, `idle` at 12 fps and `bow` at the 15 the tool named, at six `--max` sizes — the whole section below |
 | `preview` | boots, 406.7 KiB with ten pages embedded |
-| `bun run selftest` | green, with the two rows for this example being `GALLERY_EXAMPLE_IS_GREEN[nod/spine]` and `[nod/spine-html]`. Its summary says every gallery example compiled three times and gated green under **both** profiles |
+| `bun run selftest` | green, with the two rows for this example being `GALLERY_EXAMPLE_IS_GREEN[nod/spine]` and `[nod/rig-play]`. Its summary says every gallery example compiled three times and gated green under **both** profiles |
 
 **The two verdicts, verbatim** — the report's last rule line and the summary under
 it. Quoted rather than paraphrased, so the selftest's transcript gate re-runs both
@@ -627,11 +627,11 @@ PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
 ..    51 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 16 not in profile "spine"
 ```
 
-`rigc build --profile spine-html`:
+`rigc build --profile rig-play`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "spine-html"
+..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
 ```
 
 **Mesh overshoot is large and is not a defect.** `head` reports
@@ -790,7 +790,7 @@ there would move the plate **twice**. FACE §3 states the rule and this is it on
 the vertical axis.
 
 **`earbase_l` and `ear_l` sit at the same point, and the extra bone is not
-redundant.** `ear_l` is the ear mesh's slot bone, so under `--profile spine-html`
+redundant.** `ear_l` is the ear mesh's slot bone, so under `--profile rig-play`
 `A15_IDLE_NO_MESH_BONE_KEYS` refuses an `idle` that keys it — a mesh must never
 idle-skip. The sway is keyed one link up, on `earbase_l`, which the assertion is
 satisfied by and which is also where an ear actually hinges. **The rig that

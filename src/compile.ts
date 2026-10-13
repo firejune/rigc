@@ -1420,7 +1420,7 @@ const SLIDER_TRACKS: Record<string, ValueTrackShape> = {
  * refused by `A12_NO_DARK_COLOR`, and that is not a contradiction — A12 is filed
  * `renderer` in `ASSERTION_KIND`, so it states what ONE renderer ignores rather
  * than what is wrong. The `spine` profile `build` runs reports it `PROF` and
- * never applies it; `--profile spine-html` is where it fires. Emitting a
+ * never applies it; `--profile rig-play` is where it fires. Emitting a
  * construct one consumer drops is exactly what a profile is for.
  */
 export const SLOT_TRACKS: Record<string, 'attachment' | SlotColourShape> = {

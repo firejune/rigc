@@ -2168,7 +2168,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
   // record a non-zero exit as a HOLE, and a HOLE does not move the exit code,
   // so a package whose installed `build` was broken printed green).
   // `--report` beside `--out` (issue #1213): the installed build writes the document a dependant reads in place of the sentences.
-  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', CORE_OUT, '--profile', 'spine-html', '--pack', '--report', CORE_REPORT], home);
+  const coreBuild = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', CORE_OUT, '--profile', 'rig-play', '--pack', '--report', CORE_REPORT], home);
   output += coreBuild.out;
   const coreDir = join(home, CORE_OUT);
   const coreWants = ['skeleton.json', 'skeleton.atlas', 'skeleton.model.json', 'skeleton.png'];
@@ -2227,10 +2227,10 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 
   // The build. Every flag is one a stranger would reach for: `--pack` writes a
   // real page PNG and validates the packed atlas as well as the loose one, and
-  // `--profile spine-html` runs every rule the package has rather than the
+  // `--profile rig-play` runs every rule the package has rather than the
   // twenty-seven the default profile keeps.
   const outDir = join(home, FULL_OUT);
-  const build = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', FULL_OUT, '--profile', 'spine-html', '--pack'], home);
+  const build = run(bin, ['build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', FULL_OUT, '--profile', 'rig-play', '--pack'], home);
   output += build.out;
   if (build.status !== 0) {
     fault('build', `SMOKE_BUILD_EXIT_0: \`node_modules/.bin/rigc build\` exited ${build.status}. ${build.out.trim().slice(0, 6000)}`);
@@ -2314,7 +2314,7 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
 
   // Read it back with the installed CLI, which is the other half of the claim:
   // the package can validate what somebody else's build wrote.
-  const validate = run(bin, ['validate', 'build', '--profile', 'spine-html'], home);
+  const validate = run(bin, ['validate', 'build', '--profile', 'rig-play'], home);
   output += validate.out;
   if (validate.status !== 0) {
     fault('validate', `SMOKE_VALIDATE_READS_BACK: \`node_modules/.bin/rigc validate build\` exited ${validate.status}. ${validate.out.trim().slice(0, 4000)}`);

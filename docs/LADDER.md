@@ -49,7 +49,7 @@ Three things follow from that ordering and each is a reason, not a preference:
 
 **Stage 1 — validity.** `bench` runs `validate --profile spine` on the candidate.
 This is the only part with a pass/fail: a candidate that is not valid Spine 4.3
-has not cleared anything. The `spine-html` profile is deliberately *not* used —
+has not cleared anything. The `rig-play` profile is deliberately *not* used —
 the thing being reproduced is an editor export, and this project's renderer
 policy would fail rungs for reasons the rung is not about.
 

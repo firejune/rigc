@@ -572,7 +572,7 @@ The same rig keys `headroll` and never `head`: *"a head rotates about the top of
 neck, not about the middle of its own face."* A renderer policy assertion
 (`A15_IDLE_NO_MESH_BONE_KEYS`, AUTHORING §5) forced that answer independently — two
 arguments, one bone. ⚠️ **It is a renderer rule, so like §10.3's `A25` it only fires
-under `--profile spine-html`**; under `--profile spine` it reports `PROF` and the
+under `--profile rig-play`**; under `--profile spine` it reports `PROF` and the
 structural argument is the only one you get. [FACE.md](FACE.md) §3 is the same bone
 from the mesh's side.
 
@@ -1201,7 +1201,7 @@ Declare the pair in `invariants.detached` (AUTHORING §3.7) and it fires:
 
 ```bash
 rigc build --rig detached.rig.json --motion stack.motion.json --images parts \
-           --out det --profile spine-html
+           --out det --profile rig-play
 ```
 
 ```
@@ -1414,7 +1414,7 @@ rigc build --rig stack.rig.json --motion stack.motion.json --images parts --out 
 #  ..    pages=4 regions=4 bones=6 slots=5 animations=4 version=4.3.13 …  profile=spine
 ```
 
-✅ It is green under **both** profiles, so `--profile spine-html` is available for
+✅ It is green under **both** profiles, so `--profile rig-play` is available for
 §10.3 without any unrelated failure in the report.
 
 ### The three variants the sections build

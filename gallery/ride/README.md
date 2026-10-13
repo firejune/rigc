@@ -23,7 +23,7 @@ bun cli.ts preview --candidate gallery/ride/build --out gallery/ride/preview.htm
 ```
 
 `build` gates green under both profiles — `--profile spine` (the default) and
-`--profile spine-html`. `render` writes a PNG per sample plus a `contact.png`
+`--profile rig-play`. `render` writes a PNG per sample plus a `contact.png`
 per animation; `preview` writes one HTML file that plays the artifact in the
 official Spine Web Player. Nothing built is committed: the three output paths
 above are in `.gitignore`.

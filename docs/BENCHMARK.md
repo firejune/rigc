@@ -1085,7 +1085,7 @@ So `validate` and `build` take a `--profile`:
 | Profile | Runs | For |
 | --- | --- | --- |
 | `spine` | the 35 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `spine-html` | all 51 — those 35 plus 8 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `rig-play` | all 51 — those 35 plus 8 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
 `ASSERTION_NAMES.length` is 51 and `assertionCountForProfile('spine')` is 35, so a
@@ -1097,10 +1097,10 @@ the artifact imports into the Spine editor and plays in any 4.3 runtime, and
 that is what the 35 validity rules are about. The other 16 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
-`--profile spine-html` when you want them.
+`--profile rig-play` when you want them.
 
 The **Profile** column below says which is which — `both` = validity, `renderer` and
-`archetype` = `spine-html` only, and **`both ◑`** = a mixed assertion whose validity
+`archetype` = `rig-play` only, and **`both ◑`** = a mixed assertion whose validity
 half always runs while its policy clauses are gated (A06's `pma`/rotation/full-page
 clauses and A20's "a mesh must be weighted at all"; A08 carried "the two names must be
 identical" until [#574](https://github.com/rig-c/core/issues/574) retired it as a
@@ -1130,7 +1130,7 @@ the renderer policy*.
 | `A17_ATLAS_PAGE_FILES_EXIST` | both | every page the atlas declares is a file on disk |
 | `A18_DETERMINISTIC_EMIT` | both | a second, independent compile of the same inputs is byte-identical. SKIPs when re-gating artifacts already on disk |
 | `A19_OVERLAY_PNGS_HAVE_ALPHA` | renderer | every overlay part draws a transparent pixel somewhere, and the **texels** say so on both routes ([#777](https://github.com/rig-c/core/issues/777)): a loose page is read whole, a region on a shared page over its own rectangle. The header is the fast negative — a file with no alpha channel (colour type 4 or 6) **and** no `tRNS` chunk, which is where indexed and greyscale PNGs keep theirs, is refused unopened. A file that could be transparent and is not is refused by its texels — `is opaque in every one of its 200x80 texels` … `its file can hold transparency — colour type 6 (truecolour + alpha) carries an alpha channel — and no texel uses it` — so an RGBA part at full alpha everywhere fails loose exactly as it fails packed. Only the base plate may be opaque: the one the build names (a cut manifest's part whose window is the crop), or, when it names none, the region covering the stage. With neither — a stageless rig-spec build — an opaque part is refused with *"the build names no base plate. Either would decide it"*, and the sentence names both ([#770](https://github.com/rig-c/core/issues/770)) |
-| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `spine-html` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
+| `A20_MESH_WEIGHTS_COHERENT` | both ◑ | every weighted vertex has at least one bone, no negative weight, bone indices in range, and each vertex's weights sum to 1. `rig-play` also requires that a mesh be weighted at all and that no binding sit at weight 0 |
 | `A21_MESH_RIM_PINNED` | archetype | a ring mesh's rim vertices are pinned to the anchor bone and its hull is a real ring; a ribbon's entry row stays put; a contour's outline — which is every vertex it has — is pinned. **SKIPs on authored geometry** — rigc did not place its rim |
 | `A22_MESH_UVS_IN_UNIT_RANGE` | both | every UV lies inside its region |
 | `A23_PHYSICS_CONSTRAINT_EFFECTIVE` | both | each physics constraint actually drives a component, is not left muted — resting at `mix: 0` with no animation keying that `mix` above 0 — has non-zero mass, and has `damping < 1` so it settles |
@@ -1218,7 +1218,7 @@ commands:
 ```bash
 bun cli.ts explain  --cut my_cut --cuts path/to/cuts.json   # the compiled rig as a table
 bun cli.ts validate path/to/spine                           # re-gate artifacts already on disk
-bun cli.ts validate --profile spine-html path/to/spine      # …and this project's policy too (see Profiles)
+bun cli.ts validate --profile rig-play path/to/spine      # …and this project's policy too (see Profiles)
 bun cli.ts diff candidate.json reference.json               # structural comparison
 bun cli.ts check --candidate path/to/spine \
                  --frames bench/reference/3-timing-and-spacing   # against pictures
@@ -1235,7 +1235,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 35 validity rules; `--profile spine-html` adds this project's renderer and
+the 35 validity rules; `--profile rig-play` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see

@@ -190,7 +190,7 @@ it asserts 0 and interpolates down to it.
 | | |
 | --- | --- |
 | `rigc build --profile spine` | green — the run's own verdict is quoted below the table, and `A34_CONSTRAINT_TIMELINE_TARGETS` is among the rules it measured |
-| `rigc build --profile spine-html` | green as well — same. Nothing here needs the default profile to pass |
+| `rigc build --profile rig-play` | green as well — same. Nothing here needs the default profile to pass |
 | `rigc render` | 19 frames at 20 fps, contact sheet **looked at** twice — the first pass caught a 56-unit foot lift that splayed the knees, and a far arm swung out far enough to read as a plank |
 | loop seam | **at `--max 288`**, which is 230×288 here: **0 / 255** max channel difference, 0 pixels differing of 66 240, at both 20 fps (19 frames) and 30 fps (28 frames) — both rates land on the 0.9 s duration (18 and 27 samples), so both are seam readings and not comparisons against some other time ([#337](https://github.com/rig-c/core/issues/337)). The last frame is the first frame to the byte. 📏 The `--max` is part of the figure: a seam reading is scale-relative and a zero at one size is not a zero at every size ([#336](https://github.com/rig-c/core/issues/336)) |
 | the bone series | `t = 0.900` is identical to `t = 0.000` on every bone, so the seam is closed in the pose and not only in the pixels |
@@ -212,11 +212,11 @@ PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
 ..    51 assertions: 15 measured (15 passed, 0 failed), 20 skipped, 16 not in profile "spine"
 ```
 
-`rigc build --profile spine-html`:
+`rigc build --profile rig-play`:
 
 ```
 SKIP  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: the rig "walk" declares no axes (invariants.axes)
-..    51 assertions: 21 measured (21 passed, 0 failed), 30 skipped, 0 not in profile "spine-html"
+..    51 assertions: 21 measured (21 passed, 0 failed), 30 skipped, 0 not in profile "rig-play"
 ```
 
 ---

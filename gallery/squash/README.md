@@ -79,7 +79,7 @@ and the second is the one that matters for a `deform` example:
 
 `A20_MESH_WEIGHTS_COHERENT` accepts it: an unweighted mesh is valid Spine
 (spineboy ships two), and the requirement that a mesh be weighted at all is the
-`spine-html` generator policy, not validity.
+`rig-play` generator policy, not validity.
 
 ### 🚨 The rim is **not** on the silhouette, and this is the trap
 
@@ -245,7 +245,7 @@ At `0.4` the blink would have missed frame 10, which is the impact frame.
 | | |
 | --- | --- |
 | `rigc build --profile spine` | green — the run's own verdict is quoted below the table, and `A35_DEFORM_KEYS_FIT_THE_ATTACHMENT` is among the rules it measured |
-| `rigc build --profile spine-html` | green as well — same, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
+| `rigc build --profile rig-play` | green as well — same, including `A13_MESH_BUDGET` against this rig's declared `invariants.meshTriangles: 8` |
 | the deformed geometry, measured | the mesh's rim box is **220.0 × 220.0** at the apex and **264.0 × 162.8** at the impact — exactly `1.20 × 220` and `0.74 × 220`, so the affine transform in the spec is the one that reaches the screen |
 | the transform against the table it replaced | all **54** emitted deform numbers of the three keyed shapes compared against the hand-written run this example shipped: worst difference **0.0004 px**, i.e. identical at three decimals ([#294](https://github.com/rig-c/core/issues/294)) |
 | the contact point | rim vertex 6 sits at world y **44.0** at the impact and 44.0 in the setup pose — unmoved, as its `(0, 0)` offset says |
@@ -270,11 +270,11 @@ PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
 ..    51 assertions: 17 measured (17 passed, 0 failed), 18 skipped, 16 not in profile "spine"
 ```
 
-`rigc build --profile spine-html`:
+`rigc build --profile rig-play`:
 
 ```
 SKIP  A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: the rig "squash" declares no axes (invariants.axes)
-..    51 assertions: 25 measured (25 passed, 0 failed), 26 skipped, 0 not in profile "spine-html"
+..    51 assertions: 25 measured (25 passed, 0 failed), 26 skipped, 0 not in profile "rig-play"
 ```
 
 ---

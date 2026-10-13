@@ -619,13 +619,13 @@ and `bun run fetch-examples`. The reasoning behind them is in
 [the benchmark dossier](https://github.com/rig-c/core/blob/main/docs/BENCHMARK.md).
 
 `build` and `validate` both default to `--profile spine` — the 35 validity rules, which
-ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile spine-html`
+ask *is this valid Spine 4.3 that any runtime plays correctly?* `--profile rig-play`
 adds all 51: the other 16 are one renderer's policy and one canvas budget's, and they
 fire on perfectly correct editor-produced Spine data, which is why they are opt-in.
 ⇒ **That reason is about foreign data and does not carry to a rig you are authoring
-yourself: author under `--profile spine-html` and read the extra 16 as findings, and
+yourself: author under `--profile rig-play` and read the extra 16 as findings, and
 gate the release under `--profile spine`.** A `deform` key that folds a mesh inside
-out is written out under the default and refused by name under `spine-html`, which
+out is written out under the default and refused by name under `rig-play`, which
 is the shape of what that split buys you. A report always names
 the profile it ran and lists what that profile left out.
 

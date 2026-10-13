@@ -1000,12 +1000,12 @@ other one is this project's own renderer and archetype policy.
 | **archetype policy** (8) | `A21_MESH_RIM_PINNED`, `A24_AXIS_SPACE_STROKE`, `A25_DETACHED_BONE_PARENTAGE`, `A26_SLOT_DRAW_ORDER`, `A28_RIBBON_ROWS_SHARE_WEIGHTS`, `A29_STROKE_WITHIN_CONTACT_DEPTH`, `A30_STROKE_WITHIN_CAP_CONTAINMENT`, `A39_DEFORM_KEEPS_TRIANGLE_WINDING` |
 
 Two further rules — **`A06`** and **`A20`** — are *mixed*: their validity clauses run
-in both profiles and their policy clauses only under `spine-html`. `A06`'s
+in both profiles and their policy clauses only under `rig-play`. `A06`'s
 size-vs-PNG check is validity; rotation and premultiplied alpha are policy (two
 regions over the same texels was a policy clause of `A06` until it became `A49`). `A20`'s weight coherence is validity; requiring a mesh to be
 weighted at all is policy.
 
-⚠️ **`--profile spine-html` on foreign data produces a wall of failures that mean
+⚠️ **`--profile rig-play` on foreign data produces a wall of failures that mean
 nothing about the file.** Same `spineboy-pro.json`, same atlas, one flag changed — the
 run ends `rigc: 13 assertion(s) failed`, and this is the tally with one real message
 per rule — `A06` takes a page that is one part covering it exactly *or a tiling of
@@ -1019,7 +1019,7 @@ regions*, so a packed atlas passes both profiles and the wall is policy only:
 
 Every one of those is a correct statement about a correct file: a bone *does* key a
 mesh, a mesh *is* unweighted, a clipping attachment *is* present.
-⇒ **Do not run `spine-html` against
+⇒ **Do not run `rig-play` against
 somebody's export unless they asked whether it satisfies this project's renderer
 policy**, which is a different question from whether their file is valid.
 
@@ -1264,7 +1264,7 @@ something is invisible to every measure in that report. Pair it with a `check` a
 frames rendered from the original.
 
 ⚠️ **Do not rename toward what a rule seems to want.** `A27`'s
-region-name-matches-page-filename is `spine-html` policy (§3.3): under the default
+region-name-matches-page-filename is `rig-play` policy (§3.3): under the default
 profile it does not fire, and renaming somebody's attachments to satisfy a policy they
 never opted into is a change with no benefit to them.
 

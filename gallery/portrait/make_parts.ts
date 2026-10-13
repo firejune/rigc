@@ -142,7 +142,8 @@ const EYE = `
  * because the eye carries no `clipping` attachment and therefore nothing trims
  * an iris that walks off its own white. Spine has one (AUTHORING §3.4) and it
  * would lift this ceiling — but `A11_NO_CLIPPING_ATTACHMENTS` refuses one under
- * the `spine-html` profile, since that renderer skips clips silently, so a
+ * the `rig-play` profile, since the renderer it was written for, spine-html
+ * 0.4.1, skipped clips silently, so a
  * gallery example that reached for it would only build on one of the two
  * profiles the gallery bar asks for. The arithmetic instead:
  *
