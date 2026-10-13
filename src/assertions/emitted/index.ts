@@ -3,14 +3,15 @@
  * step 4e of #380) — the half of the gate the entry that links none of
  * spine-core runs beside the model side (`../model/index.ts`).
  *
- * ⭐ **Every one of the 50 is accounted for, by name.** The model side runs
+ * ⭐ **Every assertion in the registry is accounted for, by name.** The model side runs
  * the moved assertions (`MOVED_ASSERTIONS`) over the document. What is left —
  * the complement, read off `ASSERTION_KIND` rather than listed — is the
- * round trip's own: A00, A01, A02, A05, A07, A16, A18, A31, A35 at the time of
+ * round trip's own: A00, A01, A02, A05, A07, A16, A18, A31, A35, A52 at the time of
  * writing. Each of those but one reads the raw text, not what spine-core
  * loaded: the atlas's line layout (A07), the skeleton JSON's draw-order
- * offsets, deform runs, version label, legacy arrays, legacy bone key and
- * curve arrays (A31, A35, A16, A01, A02, A05), and A18's second compile. So
+ * offsets, deform runs, weighted runs' bone order, version label, legacy arrays,
+ * legacy bone key and curve arrays (A31, A35, A52, A16, A01, A02, A05), and A18's
+ * second compile. So
  * each is restated here over the same text, by a body under `../bodies/` that
  * is the round trip's clause word for word, and prints the round trip's line
  * (`RC28` holds the two on every recipe and on each assertion's mutants).
@@ -35,6 +36,7 @@ import { a16SkeletonVersion43 } from '../bodies/a16.ts';
 import { a18DeterministicEmit } from '../bodies/a18.ts';
 import { a31DrawOrderOffsetsResolve } from '../bodies/a31.ts';
 import { a35DeformKeysFitTheAttachment } from '../bodies/a35.ts';
+import { a52WeightedVerticesShareOneBoneOrder } from '../bodies/a52.ts';
 import { parseAtlasText } from '../../atlas.ts';
 
 /** What the restated rules read: the emitted texts, the document written beside them, and a second compile's three. */
@@ -72,6 +74,7 @@ export const EMITTED_TEXT_RULES: ReadonlyArray<{ code: string; run: (v: Verdicts
   { code: 'A07_ATLAS_TEXT_SHAPE', run: (v, t) => a07AtlasTextShape(v, t.input.atlasText) },
   { code: 'A31_DRAW_ORDER_OFFSETS_RESOLVE', run: (v, t) => a31DrawOrderOffsetsResolve(v, t.raw) },
   { code: 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', run: (v, t) => a35DeformKeysFitTheAttachment(v, t.raw) },
+  { code: 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER', run: (v, t) => a52WeightedVerticesShareOneBoneOrder(v, t.raw) },
   { code: A00, run: (v) => v.skip(A00, SKIP_NO_ROUND_TRIP) },
   { code: 'A16_SKELETON_VERSION_4_3', run: (v, t) => a16SkeletonVersion43(v, t.raw) },
   { code: 'A01_NO_LEGACY_TOPLEVEL_CONSTRAINT_ARRAYS', run: (v, t) => a01NoLegacyToplevelConstraintArrays(v, t.raw) },

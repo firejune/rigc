@@ -7,7 +7,7 @@ Guidance for AI-assisted sessions working on this repository.
 rigc compiles a **rig spec** plus a motion spec — and, for a cut with measured art
 behind it, a cut manifest — into Spine 4.3 skeleton data and a one-part-per-page
 atlas, then round-trips the result through `@esotericsoftware/spine-core` and
-49 named assertions before anything is written. Read [README.md](README.md) for
+50 named assertions before anything is written. Read [README.md](README.md) for
 the formats, the CLI and the assertion list; [`src/rig.ts`](src/rig.ts) is the
 rig spec's own documentation.
 
@@ -58,15 +58,15 @@ sincere about it. rigc exists to convert that silence into a named failure.
   the emitted text, which `cli_core.ts build` runs where it is not (the published
   package, since 2.0.0: `spine-core` is a devDependency). The second supplier is
   admitted on measurement, not on its word, and the measurement's scope is
-  stated rather than rounded up: of the 49 assertions, the 40 the model side
-  runs are held to the round trip's verdict lines by `verdict_gate`, the 8
-  restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A18) by
+  stated rather than rounded up: of the 50 assertions, the 40 the model side
+  runs are held to the round trip's verdict lines by `verdict_gate`, the 9
+  restated over the emitted text (A01, A02, A05, A07, A16, A31, A35, A52, A18) by
   `RC28`, and `A00_ROUNDTRIP_PARSE` — the parse by the official runtime — does
   not run on the core build and is reported as a SKIP that says so — in its
   place the model side runs its own two parse rules, `A00_MODEL_READ` and
   `A00_MODEL_REGIONS_ON_PAGES`, outside the registry and held by `verdict_gate`
   to accept and refuse what A00 does, so that report counts 42 rules on the model side
-  and totals 51 on the core entry, each with a row in AUTHORING §5.2. `core_gate`
+  and totals 52 on the core entry, each with a row in AUTHORING §5.2. `core_gate`
   holds rigc's poser to spine-core's poses at tolerance 0. CI runs all of that
   on every change over the public recipes and every selftest call; the 14
   production rigs are measured by hand with private recipes CI does not have,
@@ -297,7 +297,12 @@ nothing. Its *refusals* are gated, because they are the half a machine with no
 editor can answer for: the suite points the tool at stubs in a temp directory and
 reads what comes back, including the case that must *not* be refused — an editor
 at an unfamiliar path, which is who `--editor` exists for. The trip itself is run
-by hand, on a machine that has the editor.
+by hand, on a machine that has the editor. Before a landing it covers the
+production rigs and one **parts-built** rig, the exam's task-01 painting through
+`@rig-c/parts`. Editor-authored rigs are already in the editor's own shape, so a
+refusal that only a generated rig carries cannot appear on them. Issue #1407 was
+one: green builds whose meshes listed their bones in two orders, which the editor
+refused to import.
 
 Where its fixtures come from, in three tiers:
 

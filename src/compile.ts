@@ -162,6 +162,7 @@ import {
   type ModelSlot,
   type ModelStage,
   type ModelTimelines,
+  type ModelVertexAttachment,
   type ModelVertices,
   type SkinTable,
   type SkinTableEntry,
@@ -3695,6 +3696,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
   }
 
+  // One bone order per weighted attachment (issue #1407), on the finished
+  // model, so the document, both posers and the Spine file read one order.
+  oneBoneOrderPerAttachment(bones, skins, animations, deformTransforms);
+
   // The fields the model carries as `CompileResult` carries them, by reference:
   // one object, so the result and its model cannot say two different things.
   const carried: CarriedFromCompileResult = {
@@ -4449,6 +4454,142 @@ function bindRawRun(run: readonly number[], bones: readonly ModelBone[], where: 
     out.push(vertex);
   }
   return out;
+}
+
+/**
+ * Whether one bone order fits every vertex of a weighted attachment: no vertex
+ * lists a bone twice, and no two vertices — directly or through a chain of
+ * others — list two bones in opposite orders. Read off the bindings by name;
+ * `A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER` re-derives the same question
+ * from the emitted indices, on purpose with its own code.
+ */
+function bindingsShareOneBoneOrder(bindings: readonly ModelBinding[][]): boolean {
+  const after = new Map<string, Set<string>>();
+  for (const vertex of bindings) {
+    if (new Set(vertex.map((b) => b.bone)).size !== vertex.length) return false;
+    for (let i = 1; i < vertex.length; i++) {
+      const from = vertex[i - 1].bone;
+      if (!after.has(from)) after.set(from, new Set());
+      after.get(from)!.add(vertex[i].bone);
+    }
+  }
+  const state = new Map<string, 'open' | 'done'>();
+  const acyclicFrom = (bone: string): boolean => {
+    state.set(bone, 'open');
+    for (const next of after.get(bone) ?? []) {
+      const seen = state.get(next);
+      if (seen === 'open') return false;
+      if (seen === undefined && !acyclicFrom(next)) return false;
+    }
+    state.set(bone, 'done');
+    return true;
+  };
+  for (const bone of after.keys()) if (!state.has(bone) && !acyclicFrom(bone)) return false;
+  return true;
+}
+
+/**
+ * Write every weighted attachment whose vertices admit no single bone order
+ * with each vertex's influences in ascending bone order (issue #1407) — the
+ * one rewrite of a spec's binding order the compiler makes, and the reason it
+ * makes it.
+ *
+ * ⭐ **What the Spine editor refuses is a cycle, not a descending pair.**
+ * Measured with Spine 4.3.26 Professional through `tools/editor_roundtrip.ts`:
+ * an attachment where one vertex lists bones `a, b` and another `b, a` — or
+ * three vertices `a, b` · `b, c` · `c, a`, or one vertex `a, a` — is refused
+ * on import (`Error reading attachment: <name>` · `Index -2 out of bounds`),
+ * on a mesh, a bounding box, a clipping polygon and a path alike; the same
+ * rig with every vertex in DESCENDING order imports, exports and checks, and
+ * four of the twelve editor exports in this tree's example corpus list bones
+ * out of ascending order, every one of them in a single order per attachment.
+ * So an attachment that already has one order keeps the spec's, and its bytes
+ * do not move; one that has none takes ascending order, which every vertex
+ * shares by construction.
+ *
+ * 🔒 **On the model, not in the emitter.** The document, rigc's poser and the
+ * Spine file must read one order: a weighted vertex is `Σ wᵢ·Mᵢ·bindᵢ`, and
+ * summed in two orders its last bits differ — sorting in the emitter alone
+ * was measured to put the two posers 1–2 ulp apart on a parts-built rig.
+ *
+ * 🔸 A deform key on such an attachment is one `x, y` per INFLUENCE, in the
+ * influences' order, so each key's run is moved with them: spread over the
+ * deform array, permuted pair by pair, and cut back to the first and last
+ * index it covers, an index it does not cover written as the 0 the runtime
+ * reads there. The report of a generated run (`expanded`) is moved the same
+ * way, so it still carries what was emitted.
+ */
+function oneBoneOrderPerAttachment(
+  bones: readonly ModelBone[],
+  skins: readonly ModelSkin[],
+  animations: ReadonlyMap<string, CompiledAnimation>,
+  deformTransforms: CompileResult['deformTransforms'],
+): void {
+  const position = new Map(bones.map((bone, i) => [bone.name, i] as const));
+  /** Per reordered attachment record: where each influence went, old influence index -> new. */
+  const moved = new Map<ModelVertexAttachment, number[]>();
+  for (const skin of skins) {
+    for (const perSlot of Object.values(skin.attachments)) {
+      for (const record of Object.values(perSlot)) {
+        if (!isModelVertexAttachment(record) || !record.vertices.weighted || moved.has(record)) continue;
+        if (bindingsShareOneBoneOrder(record.vertices.bindings)) continue;
+        const to: number[] = [];
+        let at = 0;
+        const bindings = record.vertices.bindings.map((vertex) => {
+          const order = vertex.map((_, i) => i).sort((p, q) => position.get(vertex[p].bone)! - position.get(vertex[q].bone)! || p - q);
+          const rank = new Array<number>(vertex.length);
+          order.forEach((from, k) => (rank[from] = k));
+          for (let i = 0; i < vertex.length; i++) to.push(at + rank[i]);
+          at += vertex.length;
+          return order.map((i) => vertex[i]);
+        });
+        record.vertices = { weighted: true, bindings };
+        moved.set(record, to);
+      }
+    }
+  }
+  if (moved.size === 0) return;
+  /** A run moved with its influences: `start` and `run` over a deform array of `to.length` pairs. */
+  const movedRun = (start: number, run: readonly number[], to: readonly number[]): { start: number; run: number[] } => {
+    const spread = new Map<number, number>();
+    run.forEach((value, i) => {
+      const index = start + i;
+      spread.set(to[index >> 1] * 2 + (index & 1), value);
+    });
+    const indices = [...spread.keys()];
+    const first = Math.min(...indices);
+    const last = Math.max(...indices);
+    const out: number[] = [];
+    for (let i = first; i <= last; i++) out.push(spread.get(i) ?? 0);
+    return { start: first, run: out };
+  };
+  const recordOf = (skin: string, slot: string, placeholder: string): ModelVertexAttachment | undefined => {
+    const record = skins.find((s) => s.name === skin)?.attachments[slot]?.[placeholder];
+    return record !== undefined && isModelVertexAttachment(record) && moved.has(record) ? record : undefined;
+  };
+  for (const animation of animations.values()) {
+    for (const [skin, bySlot] of animation.attachments) {
+      for (const [slot, byPlaceholder] of bySlot) {
+        for (const [placeholder, timelines] of byPlaceholder) {
+          const record = recordOf(skin, slot, placeholder);
+          if (record === undefined || timelines.deform === undefined) continue;
+          const to = moved.get(record)!;
+          timelines.deform = timelines.deform.map((key) => {
+            if (!Array.isArray(key.vertices) || key.vertices.length === 0) return key;
+            const { start, run } = movedRun(typeof key.offset === 'number' ? key.offset : 0, key.vertices as number[], to);
+            // The key's fields in the order `compileDeformTrack` inserts them: `time`, `offset`, `vertices`, then the curve.
+            const rest = Object.fromEntries(Object.entries(key).filter(([field]) => field !== 'time' && field !== 'offset' && field !== 'vertices'));
+            return { time: key.time, ...(start !== 0 ? { offset: start } : {}), vertices: run, ...rest };
+          });
+        }
+      }
+    }
+  }
+  for (const report of deformTransforms) {
+    const record = recordOf(report.skin, report.slot, report.attachment);
+    if (record === undefined || report.expanded === undefined) continue;
+    report.expanded = movedRun(0, report.expanded, moved.get(record)!).run;
+  }
 }
 
 /** Every number of a weighted binding list on the float32 grid — what `.map(f32)` did to the run. */

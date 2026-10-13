@@ -156,6 +156,7 @@ import type { ConstraintTargetFacts, TargetAnimation, TargetKeyArray } from './a
 import { a34ConstraintTimelineTargets } from './assertions/bodies/a34.ts';
 import { a40SlidersComposeOnASharedTarget } from './assertions/bodies/a40.ts';
 import { a10NoNanAfterStepping } from './assertions/bodies/a10.ts';
+import { a52WeightedVerticesShareOneBoneOrder } from './assertions/bodies/a52.ts';
 import type { SteppedFrame, SteppedPoseFacts } from './assertions/facts/stepped_poses.ts';
 
 export type { Failure } from './assertions/harness.ts';
@@ -2459,6 +2460,11 @@ export function validate(input: ValidateInput): ValidateReport {
       );
     }
   });
+
+  // A52 (issue #1407) reads the raw text as A31 and A35 do: the order a weighted
+  // run lists its bones in is a fact of the file the Spine editor refuses and
+  // spine-core loads, so it runs whether or not the round trip does.
+  check('A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER', () => a52WeightedVerticesShareOneBoneOrder(verdicts, raw));
 
   // --- A: the round trip ----------------------------------------------------
   // The two loaded objects come back OUT of the assertion rather than being
