@@ -352,14 +352,15 @@ export type BoneProperty =
  * export; `PHYSICS_TRACKS` in `compile.ts` carries the argument.
  *
  * 🔒 **Four of them have a compile-time range** (issue #610): `mass` must be
- * `> 0`, `damping` inside the closed `[0, 1]`, and `mix` and `strength` `0` or
- * more. The bounds are `PHYSICS_POSE_RULES` in `src/timelines.ts`, and each row's
+ * `> 0`, `damping` inside the half-open `[0, 1)` (issue #1422; closed from #794),
+ * and `mix` and `strength` `0` or more. The bounds are `PHYSICS_POSE_RULES` in `src/timelines.ts`, and each row's
  * `basis` says, per way out, whose they are (issue #798). Two are the
  * runtime's arithmetic: a `mass` of 0 is an infinite `massInverse` and NaN from
  * the first step, and a `damping` below 0 is a negative base under a fractional
- * exponent at any `fps` where `60 / fps` is not whole. The other six are rigc's
+ * exponent at any `fps` where `60 / fps` is not whole. The other seven are rigc's
  * call — the rig runs, finitely, and runs wrongly: `mass` below 0 and
  * `strength` below 0 run away, `damping` above 1 diverges until it overflows,
+ * `damping` at 1 never decays and resonates on a chain,
  * `mix` below 0 is the jiggle inverted, and a setup `mix` or `strength` of 0 is
  * a constraint muted or pulled back by nothing. `inertia`, `wind`, `gravity`
  * and the top of `mix` are bounded nowhere, because the runtime documents
