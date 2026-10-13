@@ -33,10 +33,12 @@ import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
 import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
 import { FOLDS_FILE, foldLine, foldsFileOf, foldsOf, foldsText, setupFaultLine } from '../folds.ts';
+import { AngleRangeError, angleRangeLine, type AngleRangeReading, angleRangesOf, type BonePair, readBonePairs } from '../anglerange.ts';
+import { outsideLine, outsideViewport, pinnedRecord, readViewportBox, viewportOfFramesFile, ViewportError } from '../viewportpin.ts';
 import { PASS_THROUGH_FILE, passFrameLine, type PassPair, passSummaryLine, passThroughFileOf, passThroughOf, passThroughText, PassThroughError, readPassPairs } from '../passthrough.ts';
 import { environmentCollisions, environmentFrame, EnvironmentError, environmentResponse, readEnvironmentSchedule, type EnvironmentStep } from '../environment.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
-import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
+import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, frameSetDir, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser, type Viewport, viewportFor } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
 import { cmdRepack } from './repack.ts';
@@ -558,6 +560,59 @@ function readPassThroughFlag(raw: string | undefined, facts: SkeletonFacts): Pas
 }
 
 /**
+ * `--angle-range`'s pairs, read against the skeleton's bones (issue #1414,
+ * `../anglerange.ts`), or refused as a usage error before anything is posed: a
+ * malformed list, an empty name, a bone the skeleton does not have, a bone read
+ * against itself, a pair named twice — each by its entry. `undefined` without the flag.
+ */
+function readAngleRangeFlag(raw: string | undefined, facts: SkeletonFacts): BonePair[] | undefined {
+  if (raw === undefined) return undefined;
+  try {
+    return readBonePairs(raw, facts.bones.map((bone) => bone.name));
+  } catch (err) {
+    if (err instanceof AngleRangeError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/** A box `render` was given rather than fitting one (issue #1414): the box flag's numbers, or an earlier render's grid. */
+type GivenViewport =
+  | { by: '--viewport'; box: { x: number; y: number; width: number; height: number } }
+  | { by: '--viewport-from'; path: string; viewport: Viewport };
+
+/**
+ * `--viewport` and `--viewport-from`, read before anything is read off the
+ * candidate (`../viewportpin.ts`): the two together are refused, and so is
+ * `--max` beside `--viewport-from`, whose file already fixes the pixel size; a
+ * malformed box, a path with no `frames.json` and a file whose grid is not one
+ * are refused by name. `undefined` without either flag.
+ */
+function readGivenViewport(flags: Record<string, string>): GivenViewport | undefined {
+  const box = flags.viewport;
+  const from = flags['viewport-from'];
+  if (box !== undefined && from !== undefined) {
+    throw new UsageError('--viewport and --viewport-from both give the box the frames are of; give one of them');
+  }
+  try {
+    if (box !== undefined) return { by: '--viewport', box: readViewportBox(box) };
+    if (from === undefined) return undefined;
+    if (flags.max !== undefined) {
+      throw new UsageError(
+        `--viewport-from takes no --max: the frames.json it reads fixes the pixel size as well as the box, so --max ${flags.max} ` +
+          'would put this render on another grid. Give --viewport <x,y,w,h> with --max for a box at another size',
+      );
+    }
+    const given = resolve(from);
+    const path = existsSync(given) && statSync(given).isDirectory() ? join(given, FRAMES_SIDECAR) : given;
+    if (!existsSync(path)) throw new UsageError(`--viewport-from ${from}: no ${FRAMES_SIDECAR} at ${path} — it takes an earlier render's ${FRAMES_SIDECAR}, or the directory \`render --out\` wrote it into`);
+    return { by: '--viewport-from', path, viewport: viewportOfFramesFile(readJsonFile(path), path) };
+  } catch (err) {
+    if (err instanceof ViewportError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/**
  * render — the frame series, drawn by the same rasteriser `check` measures with.
  *
  * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
@@ -575,6 +630,8 @@ export function cmdRender(flags: Record<string, string>): void {
   // Read before anything is read off the candidate, so a malformed schedule is refused before a line is printed.
   const environment = readEnvironmentFlag(flags);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
+  // A box given rather than fitted (issue #1414), read before a line is printed, so a malformed one is refused first.
+  const given = readGivenViewport(flags);
   const outRoot = resolve(flags.out ?? 'render');
   const geometry = flags.geometry !== undefined;
   // The fold reading (issue #1383) is its own flag rather than a part of --geometry, so a caller that asked for
@@ -644,6 +701,8 @@ export function cmdRender(flags: Record<string, string>): void {
   const skin = readSkinFlag(flags, [...facts.skins]);
   const subset = readSlotSubsetFlags(flags, facts, skin);
   const passPairs = readPassThroughFlag(passThrough, facts);
+  // The angle reading (issue #1414) reads bones, which a subset of the drawn slots does not change, so it takes --slot/--hide.
+  const anglePairs = readAngleRangeFlag(flags['angle-range'], facts);
   // One object, so the framing and the frames cannot be posed under two
   // different skins — which would frame one shot with another shot's box.
   // Not annotated `PoseOptions`: that name is `src/pose.ts`'s in this file, and
@@ -687,14 +746,22 @@ export function cmdRender(flags: Record<string, string>): void {
     // sits at one point — every drawn bone unposed by the skin, or collapsed — as
     // an `UnframeablePoseError` (issue #997); neither reaches this. The roster is what
     // lets the second name the skins that pose a bone, whichever poser draws.
-    const viewport = framingViewport(poser, maxSide, pose, roster);
-    if (!viewport) {
+    const fitted = framingViewport(poser, maxSide, pose, roster);
+    if (!fitted) {
       throw new UsageError(
         `${skeletonPath} posed no drawable attachment in any animation or in its setup pose${
           skin === undefined ? '' : ` under skin ${JSON.stringify(skin)}`
         } — there is nothing to draw`,
       );
     }
+    // ⭐ A given box replaces the fitted one, and the framing still runs: it is what refuses a pose with nothing to draw,
+    // one that is not finite and one with no extent, and a box given over such a pose would draw it in silence.
+    const viewport =
+      given === undefined
+        ? fitted
+        : given.by === '--viewport'
+          ? viewportFor(given.box.x, given.box.y, given.box.x + given.box.width, given.box.y + given.box.height, maxSide)
+          : given.viewport;
 
     // `sampleAll` covers the skeleton with no animation at all, which files its one
     // setup-pose frame under the reserved name. Narrowing to one animation reuses
@@ -703,7 +770,10 @@ export function cmdRender(flags: Record<string, string>): void {
     // `--geometry` rides on the SAME call (issue #864): the bones and the whole
     // attachments are read off the skeleton at the step that drew each frame, so
     // the export's grid is this frame set's by construction.
-    const sampling = geometry ? { ...pose, bones: true, geometry: true } : folds || passPairs !== undefined ? { ...pose, geometry: true } : pose;
+    // The bones ride along for --geometry and --angle-range, the whole attachments for --geometry and the two readings off them.
+    const wantsBones = geometry || anglePairs !== undefined;
+    const wantsGeometry = geometry || folds || passPairs !== undefined;
+    const sampling = !wantsBones && !wantsGeometry ? pose : { ...pose, ...(wantsBones ? { bones: true } : {}), ...(wantsGeometry ? { geometry: true } : {}) };
     const sampled: Map<string, Frame[]> =
       only === undefined
         ? sampleAll(poser, fps, sampling)
@@ -756,9 +826,22 @@ export function cmdRender(flags: Record<string, string>): void {
         }
       }
     }
-    return { viewport, sampled, geometryTexts, foldReadings, passReadings };
+    // The angle reading, off the very bones the frames were posed with — one per set, every pair the flag names.
+    const angleReadings = new Map<string, AngleRangeReading[]>();
+    if (anglePairs !== undefined) {
+      for (const [name, frames] of sampled) {
+        const read = frames.map((frame) => ({ index: frame.index, time: frame.time, bones: frame.bones ?? [] }));
+        try {
+          angleReadings.set(name, angleRangesOf(anglePairs, read, JSON.stringify(name)));
+        } catch (err) {
+          if (err instanceof AngleRangeError) throw new UsageError(err.message);
+          throw err;
+        }
+      }
+    }
+    return { viewport, fitted, sampled, geometryTexts, foldReadings, passReadings, angleReadings };
   });
-  const { viewport, sampled, geometryTexts, foldReadings, passReadings } = posed.value;
+  const { viewport, fitted, sampled, geometryTexts, foldReadings, passReadings, angleReadings } = posed.value;
   console.log(`  ..    poser    ${posed.note}`);
   if (environment !== undefined) {
     const response = environmentResponse(skeletonText);
@@ -769,6 +852,17 @@ export function cmdRender(flags: Record<string, string>): void {
   }
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
   if (!facts.declaresStage) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
+  // A given box (issue #1414): said with the box it replaced, and every slot it leaves part of out, by set and frame.
+  const outside = given === undefined ? [] : outsideViewport(sampled, viewport);
+  if (given !== undefined) {
+    const f = (n: number): string => String(Number(n.toFixed(4)));
+    const box = (v: Viewport): string => `world x ${f(v.minX)}..${f(v.maxX)}, y ${f(v.minY)}..${f(v.maxY)}`;
+    console.log(
+      `  ..    viewport given by ${given.by}${given.by === '--viewport-from' ? ` ${given.path}` : ''}: ${box(viewport)} at ${f(viewport.scale)} px per unit, y up ` +
+        `(fitted, the box would be ${box(fitted)}) — ${outside.length === 0 ? 'every drawn piece of every frame is inside it' : `${outside.length} slot(s) reach past it, named below`}`,
+    );
+    for (const reading of outside) console.log(`  ..    outside  ${outsideLine(reading, fps)}`);
+  }
 
   mkdirSync(outRoot, { recursive: true });
   const sets: FrameSet[] = [];
@@ -777,7 +871,7 @@ export function cmdRender(flags: Record<string, string>): void {
   for (const [name, frames] of sampled) {
     // Same naming as a reference render: the protocol rate says nothing, any
     // other rate says itself, so two rates of one animation sit side by side.
-    const dirName = fps === PROTOCOL_FPS ? name : `${name}@${fps}fps`;
+    const dirName = frameSetDir(name, fps);
     const dir = join(outRoot, dirName);
     // Cleared rather than written over: a shorter animation would otherwise leave
     // the tail of a longer previous run on disk, and stale frames in a frame set
@@ -826,6 +920,9 @@ export function cmdRender(flags: Record<string, string>): void {
       console.log(`  ..    pass     ${passSummaryLine(passReading?.animation ?? null, fps, pair)}`);
       for (const frame of pair.frames) console.log(`  ..    pass     ${passFrameLine(passReading?.animation ?? null, pair, frame)}`);
     }
+    for (const reading of angleReadings.get(name) ?? []) {
+      console.log(`  ..    angle    ${angleRangeLine(name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name, fps, reading)}`);
+    }
   }
 
   // The sidecar is what makes this a frame SET rather than a pile of pictures:
@@ -843,6 +940,8 @@ export function cmdRender(flags: Record<string, string>): void {
     ...subsetFields(subset),
     // Written only when a schedule was given (issue #1416): a render without one says nothing and stays the bytes it was.
     ...(environment === undefined ? {} : { environment: environment.steps }),
+    // Written only when the box was given (issue #1414): a fitted render says nothing and stays the bytes it was.
+    ...(given === undefined ? {} : { pinned: pinnedRecord(given.by, outside) }),
     background: BACKGROUND,
     // The one spelling `geometry.json` repeats, so the two files cannot state
     // two boxes for one grid.
@@ -896,12 +995,12 @@ export function cmdInspect(flags: Record<string, string>): void {
   let frame: InspectFrame = { kind: 'shot' };
   if (flags.zoom !== undefined) frame = { kind: 'zoom', ...readZoom(flags.zoom) };
   if (flags.viewport !== undefined) {
-    const parts = flags.viewport.split(',').map((s) => Number(s.trim()));
-    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
-      throw new UsageError('--viewport takes four numbers: <x>,<y>,<width>,<height> — the world box, y up');
+    try {
+      frame = { kind: 'viewport', ...readViewportBox(flags.viewport) };
+    } catch (err) {
+      if (err instanceof ViewportError) throw new UsageError(err.message);
+      throw err;
     }
-    if (parts[2] <= 0 || parts[3] <= 0) throw new UsageError('--viewport width and height must be positive');
-    frame = { kind: 'viewport', x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
   }
   const target = resolve(flags.out ?? DEFAULT_INSPECT_OUT);
   const out = existsSync(target) && statSync(target).isDirectory() ? join(target, DEFAULT_INSPECT_OUT) : target;

@@ -115,6 +115,17 @@ export const SETUP_POSE_DIR = 'setup';
  * rate writes `<animation>/`, and any other rate writes `<animation>@<fps>fps/`.
  */
 export const PROTOCOL_FPS = 12;
+
+/**
+ * The directory a frame set of `animation` sampled at `fps` is written to under
+ * the render root: the animation's own name at the protocol rate, and
+ * `<animation>@<fps>fps` at any other — so two rates of one animation sit side by
+ * side. `render` and `bench/render_reference.ts` both name their sets through
+ * it, and `render --help` and AUTHORING §0 say what it does (issue #1414).
+ */
+export function frameSetDir(animation: string, fps: number): string {
+  return fps === PROTOCOL_FPS ? animation : `${animation}@${fps}fps`;
+}
 /** The rate the framing box is measured at, whatever `--fps` writes frames at. */
 export const FRAMING_FPS = 60;
 
@@ -222,6 +233,18 @@ export interface FramesSidecar {
    * it as a reference by name.
    */
   environment?: EnvironmentStep[];
+  /**
+   * The box was given rather than fitted, when `render --viewport` or
+   * `render --viewport-from` gave it (issue #1414): which flag, and every slot
+   * that reaches past the box, by set and frame — what lies past it is not in
+   * the frames, since each frame is the box.
+   *
+   * ⭐ Absent on a fitted render, for `skin`'s reason: every frame set written
+   * before the field existed says the same, and a fitted box is measured over
+   * the rig's own poses (every animation at `FRAMING_FPS`), padded, rather than
+   * stated by anyone.
+   */
+  pinned?: PinnedViewport;
   /** The colour the frames were cleared to, straight RGBA 0..255. */
   background: RGBA;
   viewport: {
@@ -236,6 +259,13 @@ export interface FramesSidecar {
     pixelHeight: number;
   };
   sets: FrameSet[];
+}
+
+/** How a given box was given, and what it leaves out — `FramesSidecar.pinned`. */
+export interface PinnedViewport {
+  by: '--viewport' | '--viewport-from';
+  /** Every slot whose drawn geometry reaches past the box, per set, in the order the sets were drawn and the slots first reached past it. */
+  outside: Array<{ set: string; slot: string; frames: number[] }>;
 }
 
 // ---------------------------------------------------------------------------

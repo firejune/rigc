@@ -39,6 +39,7 @@ import { compile, CompileError, droppedStateReason, headerBoundsOf, type Compile
 import { depthStepLevels, type FoldLimit, type TurnCeiling } from '../depth.ts';
 import { FOLDS_FILE } from '../folds.ts';
 import { PASS_THROUGH_FILE, PASS_THROUGH_RUN } from '../passthrough.ts';
+import { readViewportBox, ViewportError } from '../viewportpin.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
@@ -675,12 +676,12 @@ function readCheckFlags(
     out.fps = fps;
   }
   if (flags.viewport !== undefined) {
-    const parts = flags.viewport.split(',').map((s) => Number(s.trim()));
-    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
-      throw new UsageError('--viewport takes four numbers: <x>,<y>,<width>,<height> — the world box, y up');
+    try {
+      out.viewport = readViewportBox(flags.viewport);
+    } catch (err) {
+      if (err instanceof ViewportError) throw new UsageError(err.message);
+      throw err;
     }
-    if (parts[2] <= 0 || parts[3] <= 0) throw new UsageError('--viewport width and height must be positive');
-    out.viewport = { x: parts[0], y: parts[1], width: parts[2], height: parts[3] };
   }
   if (flags.as !== undefined) out.as = flags.as;
   // The name is not checked against the candidate here: `check` owns that
@@ -1021,6 +1022,17 @@ const FLAG_MEANINGS: Record<string, string> = {
     'world units, one texel of the coarser drawing to a step — each with the depth and the world box. One line per pair, and one per frame that passes through. ' +
     'The order is the declaration: the first name must draw over the second for a frame to be read. A reading, not a gate. ' +
     'An unknown slot, a slot that draws on no frame, a malformed list and a pair named twice are refused by name. Not with --slot/--hide',
+  'angle-range':
+    'also read, for each <bone>:<relative-to> pair, the range of the first bone\'s world direction against the second\'s over each set\'s ' +
+    'frames — its rotationX less the other\'s, followed from frame to frame so a sweep past ±180° reads as itself — and print one line per ' +
+    'pair per set: the lowest and the highest angle in degrees, the span, and the frame each was first reached on. Read on the frames\' own ' +
+    'grid, so a peak between two frames is not read. A reading, not a gate: nothing is written. An unknown bone, a bone against itself, ' +
+    'a malformed list and a pair named twice are refused by name, and so is a bone with no direction on a frame (a world matrix of zero)',
+  'viewport-from':
+    "draw on an earlier render's grid exactly — the box, the scale and the pixel size its frames.json records (the file, or the " +
+    'directory `render --out` wrote it into) — so a world point lands on the same pixel in both renders. A slot that reaches past ' +
+    'the box is named as under --viewport, and frames.json records the same under `pinned`. Not with --viewport, and not with --max: ' +
+    'the file fixes the pixel size',
   environment:
     'the world the rig\'s physics answers, in time: a file { "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, ' +
     '"wind"?: [x, y], "gravity"?: [x, y] }, …] }, x right and y down, each step holding from its t until the next and set ' +
@@ -1211,6 +1223,8 @@ const FLAG_VALUES: Record<string, string> = {
   poser: 'core|spine',
   environment: '<schedule.json>',
   'pass-through': '<cloth>:<leg>[,<cloth>:<leg>…]',
+  'angle-range': '<bone>:<relative-to>[,…]',
+  'viewport-from': '<frames.json|dir>',
   reference: '<dir|skeleton.json>',
   'reference-atlas': '<path>',
   bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
@@ -1618,11 +1632,24 @@ export const COMMANDS: CommandDoc[] = [
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
       'rigc render … --environment <schedule.json>   (the wind and gravity the physics answers, in time)',
       'rigc render … --pass-through <cloth>:<leg>[,…]   (the frames where a cloth drawn over a leg passes through it)',
+      'rigc render … --angle-range <bone>:<relative-to>[,…]   (how far a bone turns against another, per animation)',
+      'rigc render … --viewport <x,y,w,h> | --viewport-from <frames.json>   (a box given, not fitted: two renders on one pixel grid)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'pass-through', 'environment', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'viewport', 'viewport-from', 'geometry', 'folds', 'pass-through', 'angle-range', 'environment', 'poser', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
-      fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
+      fps: {
+        meaning:
+          `frames per second to sample the animation at (default ${PROTOCOL_FPS}). A set drawn at any rate but the default is written to ` +
+          '`<anim>@<fps>fps/` rather than `<anim>/`, so two rates sit side by side: `--fps 24` writes `<anim>@24fps/`, and the default 12 writes `<anim>/`',
+      },
+      viewport: {
+        meaning:
+          'draw every frame over this world box, y up — x,y its bottom-left corner, the numbers frames.json\'s `viewport` records — ' +
+          'instead of the box fitted to the rig; its pixel size follows from --max. A slot that reaches past the box is named by set and ' +
+          'frame, with how far and on which side: what lies past it is not drawn, since each frame is the box. frames.json records that ' +
+          'the box was given, and those slots, under `pinned`. Not with --viewport-from',
+      },
     },
   },
   {
