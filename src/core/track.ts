@@ -26,7 +26,8 @@
  *
  * - **Held** (`loop: false`): the raw entry's walk — the track time the
  *   running sum of the steps, the animation time held at the duration, the
- *   physics clock moved by the step, events over `(previous animation time,
+ *   physics clock moved by the step (or by `clock`, *The physics clock*
+ *   below), events over `(previous animation time,
  *   animation time]` (`./raw.ts`, *One step*). `CO46` holds it to
  *   `poseRawAnimation` pose for pose, every field, bit for bit.
  * - **Looped** (`loop: true`): A10's looping walk's time, clock and `reset`
@@ -135,6 +136,44 @@
  *   children, the meshes they carry and the physics do not.
  * - **Pose 0 not adjusted** under `reset: 'animation'`.
  *
+ * ## The physics clock (issue #1396)
+ *
+ * `clock` is what each step moves the skeleton's physics clock by — the time
+ * a physics constraint integrates — with `poseRawAnimationEach`'s meaning.
+ * Absent, it is the step itself, and every pose is the one the track posed
+ * before the option existed (`CO46`–`CO50`, unchanged). `physicsClockStep` is
+ * the render's clock (issue #1380), for a player stepping at a fixed rate.
+ * The track time, the animation time, the wrap, the events and `trackTime`
+ * stay on the running sum of the steps: the clock moves the physics and
+ * nothing else.
+ *
+ * - **Why the track takes it.** Stepped at a fixed rate whose frame lasts a
+ *   whole number of physics steps, a spring shows the render's defect. On the
+ *   public trailer's `show`, read with play#103's detector, the frame clock
+ *   adds outlier poses 5, 11–13, 44–45 and 187–189 at a fixed 1/20 and 8,
+ *   15–17, 31–33 and 505–507 at 1/60, and `clock: physicsClockStep` removes
+ *   every one (the PR of issue #1396 carries the table). A player scaling its
+ *   own `dt` instead moves the animation time too: a key at 0.5 s fires on
+ *   the tenth step of 1/20 where the render and the runtime fire it on the
+ *   eleventh, and the player stops agreeing with `rigc render`.
+ * - **The reset.** Pose 0 under `reset: 'animation'` is a step of 0 and moves
+ *   the clock by `clock(0)`, as the render's walk does — 0 for
+ *   `physicsClockStep`; under `setup` nothing is stepped. A physics `reset`
+ *   key restarts a constraint's time from the clock as it stands, so it is
+ *   read on the same clock as every other step.
+ * - **The seek** stays the caller's — open, then step to the time — and its
+ *   steps go through the same clock, so a seek's physics is the physics of
+ *   the steps it took.
+ * - **A clock that returns no time** — not finite, or below 0 — refuses the
+ *   step by name after the track time has moved, so the track stays refused.
+ *
+ * `CO53` holds the mechanism on LS05's spring probe (every constraint update
+ * takes the steps exact arithmetic takes; the frame clock is red), `CO54` the
+ * poses (equal to the render's walk, to `poseRawAnimationEach` on the same
+ * clock, between the two live entries, and to spine-core with its
+ * `AnimationState` updated by the step and its `Skeleton` by the clock), and
+ * `CO55` that the times and the events are those of the walk without it.
+ *
  * ## The oracle chain
  *
  * Nothing here is held to spine-core directly but the events: the live track
@@ -153,15 +192,17 @@
  * history, so a seek is "open, then step to the time".
  */
 import { CoreInputError, type CompiledDocument } from './index.ts';
-import { openRawTrack, stepRawTrack, type RawPose, type RawReset, type TrackState, type WalkMode } from './raw.ts';
+import { checkedClock, openRawTrack, stepRawTrack, type RawPose, type RawReset, type TrackState, type WalkMode } from './raw.ts';
 import type { LocalAdjust, TimelinePlant } from './animation.ts';
 export type { AdjustableLocals, BoneLocals, LocalAdjust } from './animation.ts';
 
-/** How a live track is opened: whether it loops, and where its physics is reset (`RawReset`) — both the caller's, neither with a default — and the caller's adjustment of every pose's bone locals (the header's *The adjustment*). */
+/** How a live track is opened: whether it loops, and where its physics is reset (`RawReset`) — both the caller's, neither with a default — the caller's adjustment of every pose's bone locals (the header's *The adjustment*), and what each step moves the physics clock by (the header's *The physics clock*). */
 export interface TrackOptions {
   loop: boolean;
   reset: RawReset;
   adjust?: LocalAdjust;
+  /** What each step of `dt` moves the skeleton's physics clock by — `physicsClockStep` is the render's; absent, the step itself. The track time, the animation time and the events stay on the running sum of the steps. */
+  clock?: (dt: number) => number;
 }
 
 /** A live track (`openTrack`): pose 0, then one pose per `step`. */
@@ -191,7 +232,10 @@ export function openTrack(doc: CompiledDocument, animation: string, options: Tra
   if (typeof options !== 'object' || options === null || typeof options.loop !== 'boolean') throw new CoreInputError(`the live track's options.loop is ${JSON.stringify((options as Partial<TrackOptions> | null)?.loop)}, not true or false`);
   if (options.reset !== 'animation' && options.reset !== 'setup') throw new CoreInputError(`the live track's options.reset is ${JSON.stringify(options.reset)}, not "animation" or "setup"`);
   if (options.adjust !== undefined && typeof options.adjust !== 'function') throw new CoreInputError(`the live track's options.adjust is ${typeof options.adjust}, not a function`);
-  const { track, first } = openRawTrack(doc, animation, plant, options.reset, options.loop ? LOOPED : HELD, options.adjust);
+  if (options.clock !== undefined && typeof options.clock !== 'function') throw new CoreInputError(`the live track's options.clock is ${typeof options.clock}, not a function`);
+  const mode = options.loop ? LOOPED : HELD;
+  const clock = options.clock === undefined ? undefined : checkedClock(options.clock, 'the live track\'s');
+  const { track, first } = openRawTrack(doc, animation, plant, options.reset, clock === undefined ? mode : { ...mode, clock: (dt) => clock(dt) }, options.adjust);
   return new Track(track, first);
 }
 

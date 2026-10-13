@@ -257,7 +257,7 @@ export interface WalkMode {
   keep: boolean;
   /** A plant only (the core suite's `CO26`): the animation time a looping step applies at, from its track time, the duration and the track time before it — `loopedTime` unless given. */
   time?: (trackTime: number, duration: number, before: number) => number;
-  /** What the physics clock moves by, from the step and how far the animation time moved — the step itself unless given: a plant (`CO26`), or the render's offline clock passed to `poseRawAnimationEach` (issue #1380). */
+  /** What the physics clock moves by, from the step and how far the animation time moved — the step itself unless given: a plant (`CO26`), the render's offline clock passed to `poseRawAnimationEach` (issue #1380), or a live track's `clock` option (`./track.ts`, issue #1396). */
   clock?: (dt: number, moved: number) => number;
   /** A plant only (`CO26`): `false` fires no `reset` key across the wrap — the reading the walk was measured against and rejected. */
   wrapResets?: boolean;
@@ -559,6 +559,20 @@ export const PHYSICS_CLOCK_LEAD = 2 ** -30;
 /** What one frame of `step` seconds moves a render's physics clock by — `PHYSICS_CLOCK_LEAD`; both render posers and the mesh comparison step with it. */
 export function physicsClockStep(step: number): number {
   return step + step * PHYSICS_CLOCK_LEAD;
+}
+
+/**
+ * A live track's `clock` option (issue #1396, `./track.ts` and `./tracks.ts`):
+ * the caller's function, called with each step, its answer checked before the
+ * skeleton's clock moves by it — a finite time at or above 0, or the step
+ * refused by name, as a step itself is. `who` names the track in the refusal.
+ */
+export function checkedClock(clock: (dt: number) => number, who: string): (dt: number) => number {
+  return (dt) => {
+    const moved = clock(dt);
+    if (typeof moved !== 'number' || !Number.isFinite(moved) || moved < 0) throw new CoreInputError(`${who} clock moved the physics by ${String(moved)} for a step of ${dt}, not a finite time at or above 0`);
+    return moved;
+  };
 }
 
 /**

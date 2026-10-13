@@ -4927,8 +4927,15 @@ that poses through its posers (`check`, `bonedist`, `inspect`, `--geometry`), ru
 the physics clock `2⁻³⁰` faster than the frames, so every such frame takes the steps
 exact arithmetic takes; the animation time is unchanged. A spring that has converged
 by the loop point therefore closes, which the loop-seam suite's `LS06` holds at all
-five rates. A player with a real clock is a different question and rigc does not
-answer it.
+five rates. A player that steps the core entry's live tracks at a fixed rate — a
+capture, an export, a test harness — is the render's case and takes the render's
+clock: `openTrack` and `openTracks` accept `clock`, what each step moves the physics
+clock by, and `physicsClockStep` (with `PHYSICS_CLOCK_LEAD`) is exported from
+`rig-c/core` to pass to it (issue #1396). It moves the physics alone — the track
+time, the animation time and the events stay on the steps, so the player keeps
+agreeing with `render` — and left out, a track steps the physics by the step itself,
+exactly as before. Which clock a player with a real clock uses is the player's
+question, and rigc does not answer it.
 
 `mix` is a player-side `AnimationStateData` config and is **not** emitted into
 skeleton JSON, so the parser is the only check it gets: it is
