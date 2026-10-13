@@ -32,10 +32,10 @@
  * did not already have the fixtures.
  *
  * So the fixtures are written fresh into a temp directory on every run, by
- * [`fixtures/public.ts`](fixtures/public.ts). Six of them, one per shape the
+ * [`fixtures/public.ts`](fixtures/public.ts). Seven of them, one per shape the
  * assertions care about: `overlay_probe`, `articulated_probe`,
- * `contained_probe`, `segments_probe` (with no manifest), `skirt_probe` and
- * `pass_through_probe`. Two further suites build their own even smaller rigs inline
+ * `contained_probe`, `segments_probe` (with no manifest), `skirt_probe`,
+ * `pass_through_probe` and `leg_stop_probe`. Two further suites build their own even smaller rigs inline
  * (static rigs, draw-order timelines).
  *
  * Other suites measure against the official Spine example corpus that
@@ -371,6 +371,7 @@ import {
   RIG_TYPES,
   parseRigSpec,
   resolveBoneInherit,
+  type RigSpec,
 } from './src/rig.ts';
 import { compareTurnFields, DEPTH_TONE_IDENTITY, depthStepLevels, foldPrecedes, turnCeiling, type FieldAgreement, type FoldLimit } from './src/depth.ts';
 import {
@@ -705,6 +706,8 @@ import {
   articulatedFixture,
   containedFixture,
   overlayFixture,
+  LEG_STOP_PLATE,
+  legStopFixture,
   PASS_PLATE,
   passThroughFixture,
   placeFixturesUnder,
@@ -135536,6 +135539,259 @@ function runRenderNamingSuite(): number {
 }
 
 // ---------------------------------------------------------------------------
+// leg-stop — a swinging chain held off a leg by one declaration (issue #1413)
+// ---------------------------------------------------------------------------
+
+import { expandStops, type StopPlant } from './src/stop.ts';
+
+type StopJson = Record<string, unknown>;
+
+/** The declared probe's one stop, the bone of a name, the constraint of a name — what a refusal edits. */
+const stopEntry = (rig: StopJson): StopJson => (rig.stops as StopJson[])[0];
+const stopBone = (rig: StopJson, name: string): StopJson => (rig.bones as StopJson[]).find((b) => b.name === name) as StopJson;
+
+/**
+ * Every malformed stop `stops` refuses (issue #1413 Bar 3), each an edit of the
+ * declared probe and the words its refusal must carry: the field and the value.
+ * `motion` is the probe's motion spec, edited by the one refusal that is the
+ * compiler's rather than the expansion's.
+ */
+function legStopRefusals(): Array<{ code: string; edit: (rig: StopJson, motion: StopJson) => void; says: string; what: string }> {
+  const { skirt, root, thighX, touch } = LEG_STOP_PLATE;
+  const rootX = root[0] - skirt.width / 2;
+  const physicsOn = (rig: StopJson, bone: string): void => {
+    (rig.constraints as StopJson[]).push({ type: 'physics', name: `${bone}_phys`, bone, rotate: 1, mix: 1 });
+  };
+  /** A second stop over the still `side` chain, its links swung so the stop reads them. */
+  const sideStop = (rig: StopJson, chain: string): void => {
+    physicsOn(rig, 'side0');
+    physicsOn(rig, 'side1');
+    stopBone(rig, 'side1_ctl').parent = 'side0_d';
+    (rig.stops as StopJson[]).push({ chain, links: ['side0', 'side1'], against: 'thigh', at: [...touch], inward: 0, outward: 60, lower: { inward: 0, outward: 30 } });
+  };
+  return [
+    { code: 'LG04_A_STOP_WITH_NO_CHAIN_NAME_IS_REFUSED', edit: (rig) => void delete stopEntry(rig).chain, says: 'stops[0] needs a "chain"', what: 'no "chain"' },
+    { code: 'LG05_AN_UNKNOWN_LINK_IS_REFUSED_BY_NAME', edit: (rig) => void ((stopEntry(rig).links as string[])[0] = 'hem9'), says: 'links[0] names bone "hem9", which this rig does not declare', what: 'links[0] "hem9"' },
+    { code: 'LG06_AN_UNKNOWN_AGAINST_IS_REFUSED_BY_NAME', edit: (rig) => void (stopEntry(rig).against = 'knee'), says: '"against" names bone "knee", which this rig does not declare', what: 'against "knee"' },
+    { code: 'LG07_INWARD_ABOVE_OUTWARD_IS_REFUSED', edit: (rig) => void (stopEntry(rig).inward = 70), says: '"inward" 70 is greater than "outward" 60', what: 'inward 70 over outward 60' },
+    { code: 'LG08_A_LOWER_INWARD_ABOVE_ITS_OUTWARD_IS_REFUSED', edit: (rig) => void ((stopEntry(rig).lower as StopJson).inward = 40), says: '"lower.inward" 40 is greater than "lower.outward" 30', what: 'lower.inward 40 over lower.outward 30' },
+    { code: 'LG09_A_BOUND_PAST_A_HALF_TURN_IS_REFUSED', edit: (rig) => void (stopEntry(rig).outward = 179), says: '"outward" 179 puts "hem0_d"\'s bound at', what: 'outward 179, past ±180° once the rest angle is added' },
+    { code: 'LG10_A_LINK_STOPPED_TWICE_IS_REFUSED', edit: (rig) => void (rig.stops as StopJson[]).push({ ...stopEntry(rig), chain: 'hem_again' }), says: 'links[0] "hem0" is already stopped by stop "hem"', what: 'a second stop over "hem0"' },
+    { code: 'LG11_A_STOP_WITH_NO_POINT_IS_REFUSED', edit: (rig) => void delete stopEntry(rig).at, says: 'states no "at"', what: 'no "at"' },
+    { code: 'LG12_A_POINT_THAT_IS_NOT_TWO_NUMBERS_IS_REFUSED', edit: (rig) => void (stopEntry(rig).at = [touch[0]]), says: `states "at" [${touch[0]}]; it is [x, y]`, what: `"at" [${touch[0]}]` },
+    { code: 'LG13_A_STOP_WITH_NO_OUTWARD_IS_REFUSED', edit: (rig) => void delete stopEntry(rig).outward, says: 'states no "outward"', what: 'no "outward"' },
+    { code: 'LG14_A_CHAIN_OF_TWO_WITH_NO_LOWER_IS_REFUSED', edit: (rig) => void delete stopEntry(rig).lower, says: 'states no "lower"', what: 'no "lower" on two links' },
+    { code: 'LG15_A_LOWER_ON_ONE_LINK_IS_REFUSED', edit: (rig) => void (stopEntry(rig).links = ['hem0']), says: 'states "lower" and its chain has one link', what: '"lower" on one link' },
+    { code: 'LG16_THE_ROOT_AS_A_LINK_IS_REFUSED', edit: (rig) => void Object.assign(stopEntry(rig), { links: ['root'], lower: undefined }), says: 'links[0] "root" is the skeleton\'s root', what: 'links ["root"]' },
+    { code: 'LG17_A_LINK_PLACED_FROM_THE_MANIFEST_IS_REFUSED', edit: (rig) => void (stopBone(rig, 'hem1').from = { anchor: 'hem' }), says: 'links[1] "hem1" takes its place from the manifest', what: '"from" on "hem1"' },
+    { code: 'LG18_A_GENERATED_BONE_ALREADY_DECLARED_IS_REFUSED', edit: (rig) => void (rig.bones as StopJson[]).push({ name: 'hem_touch', parent: 'root' }), says: 'generates bone "hem_touch", which this rig already declares', what: 'a bone "hem_touch" declared' },
+    { code: 'LG19_A_GENERATED_CONSTRAINT_ALREADY_DECLARED_IS_REFUSED', edit: (rig) => void (rig.constraints as StopJson[]).push({ type: 'transform', name: 'hem0_clamp', source: 'side0', bones: ['side1'], properties: { rotate: { to: { rotate: {} } } } }), says: 'generates transform constraint "hem0_clamp", which this rig already declares', what: 'a transform "hem0_clamp" declared' },
+    { code: 'LG20_TWO_STOPS_OF_ONE_CHAIN_NAME_ARE_REFUSED', edit: (rig) => sideStop(rig, 'hem'), says: 'generates bone "hem_stop", which stop "hem" generates too', what: 'a second stop called "hem"' },
+    { code: 'LG21_A_LINK_NOTHING_SWINGS_IS_REFUSED', edit: (rig) => void (rig.constraints = (rig.constraints as StopJson[]).filter((c) => c.bone !== 'hem1')), says: 'links[1] "hem1" is written by no constraint of this rig spec', what: 'no constraint on "hem1"' },
+    { code: 'LG22_A_LOWER_LINK_NOT_BELOW_THE_DRAWN_LINK_IS_REFUSED', edit: (rig) => void (stopBone(rig, 'hem1_ctl').parent = 'hem0'), says: 'links[1] "hem1" does not hang below "hem0_d"', what: '"hem1_ctl" under "hem0"' },
+    { code: 'LG23_AN_AGAINST_THE_STOP_MOVES_IS_REFUSED', edit: (rig) => void (stopEntry(rig).against = 'hem1_ctl'), says: '"against" "hem1_ctl" hangs below "hem0_d", which the stop moves', what: 'against "hem1_ctl"' },
+    { code: 'LG24_A_POINT_ON_THE_LINKS_OWN_LINE_IS_REFUSED', edit: (rig) => void (stopEntry(rig).at = [rootX - thighX, touch[1]]), says: 'lies on "hem0"\'s own line at the setup pose', what: 'a point straight below the root' },
+    { code: 'LG25_A_POINT_ON_THE_LINKS_ROOT_IS_REFUSED', edit: (rig) => void (stopEntry(rig).at = [rootX - thighX, -root[1]]), says: 'sits on the root of "hem0"', what: 'a point on the root' },
+    { code: 'LG26_A_SCALED_FRAME_PARENT_IS_REFUSED', edit: (rig) => void (stopBone(rig, 'hem0_ctl').scaleX = 2), says: '"hem0_ctl", where the frame hangs, is scaled unevenly, sheared or reflected', what: '"hem0_ctl" scaleX 2' },
+    { code: 'LG27_A_REFLECTED_BONE_BETWEEN_LINKS_IS_REFUSED', edit: (rig) => void (stopBone(rig, 'hem1_ctl').scaleY = -1), says: '"hem1_ctl", between links[1] "hem1" and the drawn link above it', what: '"hem1_ctl" scaleY -1' },
+    {
+      code: 'LG28_A_LINK_BELOW_A_LATER_STOP_IS_REFUSED',
+      edit: (rig) => {
+        sideStop(rig, 'side');
+        stopBone(rig, 'hem0_ctl').parent = 'side0_d';
+      },
+      says: '"hem0" hangs below "side_stop", which a later stop generates',
+      what: '"hem0_ctl" under the drawn link of a stop listed after it',
+    },
+    {
+      code: 'LG29_A_STOPPED_LINK_SWUNG_FROM_THE_MOTION_TABLE_IS_REFUSED',
+      edit: (_rig, motion) => void (motion.physics = { hem1_extra: { bone: 'hem1', rotate: 1 } }),
+      says: 'drives "hem1", a link stop "hem" holds, from the physics table',
+      what: 'a motion-table physics constraint on "hem1"',
+    },
+  ];
+}
+
+function runLegStopSuite(): number {
+  console.log('\n── leg-stop: a swinging chain held off a leg by one declaration (issue #1413) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const probe = legStopFixture();
+  const read = (path: string): StopJson => JSON.parse(readFileSync(path, 'utf8')) as StopJson;
+  const optsOf = (rigPath: string, motionPath = probe.motionPath): CompileOptions => ({ rigPath, motionPath, imagesDir: probe.imagesDir, outDir: probe.outDir });
+  const written = (name: string, spec: StopJson): string => {
+    const path = join(probe.dir, `${name}.rig.json`);
+    writeJsonAsAuthored(path, spec);
+    return path;
+  };
+  const pre: string[] = [];
+  const compiled = (what: string, rigPath: string): ReturnType<typeof compile> | null => {
+    try {
+      return compile(optsOf(rigPath));
+    } catch (err) {
+      pre.push(`the ${what} did not compile: ${(err as Error).message}`);
+      return null;
+    }
+  };
+  const declared = compiled('declared probe', probe.rigPath);
+  const hand = compiled('hand-written network', probe.handRigPath);
+  const free = compiled('unstopped probe', probe.freeRigPath);
+  /** The declared probe expanded with a plant and written out as plain bones and constraints — the route a planted network is compiled by. */
+  const plantedPath = (name: string, plant: StopPlant): string => {
+    const spec = expandStops(read(probe.rigPath) as unknown as RigSpec, probe.rigPath, plant) as unknown as StopJson;
+    delete spec.stops;
+    return written(name, spec);
+  };
+
+  // LG01 — Bar 1: one declaration emits the network written out by hand, byte for byte.
+  {
+    const probes = [...pre];
+    if (declared !== null && hand !== null && free !== null) {
+      if (declared.skeletonText !== hand.skeletonText) probes.push('the declared probe\'s skeleton.json is not the hand-written network\'s bytes');
+      if (declared.atlasText !== hand.atlasText) probes.push('the declared probe\'s atlas is not the hand-written network\'s bytes');
+      if (hand.skeletonText === free.skeletonText) probes.push('the hand-written network emits the unstopped probe\'s bytes — the comparison would hold with no network at all');
+      const unplanted = compiled('declared probe expanded and written out', plantedPath('expanded', {}));
+      if (unplanted !== null && unplanted.skeletonText !== hand.skeletonText) probes.push('the expansion written out as plain bones and constraints is not the hand-written network\'s bytes — the route the plants below take is not honest');
+    }
+    const ok = probes.length === 0;
+    say(
+      'LG01_ONE_DECLARATION_EMITS_THE_NETWORK_WRITTEN_BY_HAND',
+      ok,
+      probeDetail(ok, probes, 'the probe with `stops: [{ chain: "hem", … }]` emits the skeleton and atlas of the same probe with hem_touch, hem_stop, hem0_rel, hem0_d, hem1_d, hem_stop_aim, hem0_rel_copy, hem0_clamp and hem1_clamp written out — every bone, constraint, order and value, its angles worked by hand with atan2 (`legStopHandNetwork`); and the expansion written out as a rig of plain bones compiles to the same bytes'),
+      'issue #1413 Bar 1: the declaration is spelling for the network a dancer\'s skirt was tuned with — exactly that network and nothing else',
+    );
+  }
+
+  // LG02 — Bar 2: the unstopped chain passes through the leg, the stopped one does not, on both posers.
+  const total = Math.round(LEG_STOP_PLATE.duration * PROTOCOL_FPS) + 1;
+  const passReading = (candidate: string, out: string, poser: string): PairReading | string => {
+    const run = runCli(['render', '--candidate', candidate, '--animation', 'swing', '--pass-through', 'skirt:leg', '--poser', poser, '--max', '64', '--out', out]);
+    if (run.status !== 0) return `render --poser ${poser} of ${candidate} exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`;
+    const path = join(out, 'swing', PASS_THROUGH_FILE);
+    if (!existsSync(path)) return `render --poser ${poser} wrote no ${PASS_THROUGH_FILE} at ${path}`;
+    const pair = (JSON.parse(readFileSync(path, 'utf8')) as PassThroughFile).pairs.find((p) => p.cloth === 'skirt' && p.leg === 'leg');
+    return pair ?? `${path} holds no "skirt:leg" pair`;
+  };
+  const builtAndRead = (name: string, rigPath: string): { core: PairReading | string; spine: PairReading | string; same: boolean } => {
+    const out = join(probe.dir, `built_${name}`);
+    const build = runCli(['build', '--rig', rigPath, '--motion', probe.motionPath, '--images', probe.imagesDir, '--out', out]);
+    if (build.status !== 0) {
+      const why = `the ${name} probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`;
+      return { core: why, spine: why, same: false };
+    }
+    const core = passReading(out, join(probe.dir, `read_${name}_core`), 'core');
+    const spine = passReading(out, join(probe.dir, `read_${name}_spine`), 'spine');
+    const file = (poser: string): string => join(probe.dir, `read_${name}_${poser}`, 'swing', PASS_THROUGH_FILE);
+    return { core, spine, same: existsSync(file('core')) && existsSync(file('spine')) && readFileSync(file('core')).equals(readFileSync(file('spine'))) };
+  };
+  const passingOf = (r: PairReading | string): string => (typeof r === 'string' ? r : `${r.frames.length} of ${r.over} frame(s) read`);
+  {
+    const probes: string[] = [];
+    const freeRead = builtAndRead('free', probe.freeRigPath);
+    const stoppedRead = builtAndRead('stopped', probe.rigPath);
+    for (const [rig, reading, wantPassing] of [['unstopped', freeRead, true], ['stopped', stoppedRead, false]] as const) {
+      for (const poser of ['core', 'spine'] as const) {
+        const r = reading[poser];
+        if (typeof r === 'string') probes.push(r);
+        else {
+          if (r.over !== total) probes.push(`the ${rig} probe on --poser ${poser}: the cloth was read on ${r.over} frame(s), required all ${total} — a reading of nothing would pass for 0`);
+          if (wantPassing && r.frames.length === 0) probes.push(`the ${rig} probe on --poser ${poser} passes through on no frame — the pair has no positive side`);
+          if (!wantPassing && r.frames.length > 0) probes.push(`the ${rig} probe on --poser ${poser} passes through on frame(s) [${r.frames.map((f) => f.index).join(', ')}]`);
+        }
+      }
+      if (!reading.same) probes.push(`the ${rig} probe's ${PASS_THROUGH_FILE} is not one file on the two posers`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'LG02_THE_UNSTOPPED_CHAIN_PASSES_THROUGH_THE_LEG_AND_THE_STOPPED_ONE_DOES_NOT',
+      ok,
+      probeDetail(ok, probes, `"swing" turns hem0_ctl ${LEG_STOP_PLATE.swing}° toward the leg and back: unstopped, "skirt:leg" passes through on ${passingOf(freeRead.core)}; stopped, on ${passingOf(stoppedRead.core)} — each on the core and on spine-core, one ${PASS_THROUGH_FILE} on both, every frame read, and both probes built through the whole gate (A18 included)`),
+      'issue #1413 Bar 2: the stand-in for a collider is measured as one — the same swing through the same leg, with and without the stop, read by `render --pass-through`',
+    );
+  }
+
+  // LG03 — Bar 4: an empty `stops` emits what no `stops` emits.
+  {
+    const probes = [...pre];
+    if (free !== null) {
+      const spec = read(probe.freeRigPath);
+      spec.stops = [];
+      try {
+        const empty = compile(optsOf(written('empty_stops', spec)));
+        if (empty.skeletonText !== free.skeletonText || empty.atlasText !== free.atlasText) probes.push('`stops: []` moved a byte of the unstopped probe');
+      } catch (err) {
+        probes.push(`\`stops: []\` did not compile: ${(err as Error).message}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'LG03_AN_EMPTY_STOPS_LIST_MOVES_NO_BYTE',
+      ok,
+      probeDetail(ok, probes, 'the unstopped probe with `stops: []` emits its own skeleton and atlas, byte for byte'),
+      'issue #1413 Bar 4: no stop, no moved byte — the hash bases hold the corpus to it; this holds the empty list',
+    );
+  }
+
+  // LG04–LG29 — Bar 3: each malformed stop is refused naming the field and the value.
+  for (const refusal of legStopRefusals()) {
+    const rig = read(probe.rigPath);
+    const motion = read(probe.motionPath);
+    refusal.edit(rig, motion);
+    const motionPath = join(probe.dir, `${refusal.code}.motion.json`);
+    writeJsonAsAuthored(motionPath, motion);
+    let message: string | null = null;
+    try {
+      compile(optsOf(written(refusal.code, rig), motionPath));
+    } catch (err) {
+      message = err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+    const ok = message !== null && message.includes(refusal.says);
+    say(
+      refusal.code,
+      ok,
+      ok ? `${refusal.what}: refused with ${message}` : `${refusal.what}: expected a refusal naming ${JSON.stringify(refusal.says)}, got ${message ?? 'a clean compile'}`,
+      'issue #1413 Bar 3: a stop the expansion cannot honour is refused by name — the field and the value — never built as a plausible network',
+    );
+  }
+
+  // LG30–LG32 — a planted wrong expansion goes red: its bytes are not the hand-written network's, and the swapped range lets the hem back into the leg.
+  for (const [code, plant, what] of [
+    ['LG30_A_RANGE_TAKEN_THE_WRONG_WAY_ROUND_IS_RED', { swapRange: true }, 'inward taken the other way round'],
+    ['LG31_A_FRAME_AIMED_AT_THE_LEG_BONE_IS_RED', { aimAtAgainst: true }, 'the frame aimed at the leg bone\'s origin, not the point'],
+    ['LG32_CONSTRAINTS_APPENDED_PAST_THE_SWINGS_ARE_RED', { appendConstraints: true }, 'every generated constraint after the last physics'],
+  ] as const) {
+    const probes: string[] = [...pre];
+    let planted: string | null = null;
+    if (pre.length === 0 && hand !== null) {
+      const path = plantedPath(code, plant);
+      planted = path;
+      try {
+        if (compile(optsOf(path)).skeletonText === hand.skeletonText) probes.push(`${what} emits the hand-written network's bytes`);
+      } catch (err) {
+        probes.push(`${what} did not compile: ${(err as Error).message}`);
+      }
+    }
+    let reading = '';
+    if (code === 'LG30_A_RANGE_TAKEN_THE_WRONG_WAY_ROUND_IS_RED' && planted !== null) {
+      const r = builtAndRead('swapped', planted);
+      reading = `; built and read, "skirt:leg" passes through on ${passingOf(r.core)}`;
+      if (typeof r.core === 'string' || r.core.frames.length === 0) probes.push(`${what} reads ${passingOf(r.core)} on the core — LG02's stopped side would hold it`);
+    }
+    const ok = probes.length === 0;
+    say(
+      code,
+      ok,
+      ok ? `${JSON.stringify(plant)} planted: LG01's comparison names it — the skeleton is not the hand-written network's${reading}; unplanted it is` : probes.join('\n          '),
+      'issue #1413: a control nobody has seen fail is not a control — the plausible wrong networks are planted and caught',
+    );
+  }
+
+  return bad;
+}
+
+// ---------------------------------------------------------------------------
 // inspect — a picture for an agent to read, and its legend (issue #1357)
 // ---------------------------------------------------------------------------
 
@@ -137363,6 +137619,7 @@ function main(): void {
   tally.of('render-viewport', runRenderViewportSuite);
   tally.of('angle-range', runAngleRangeSuite);
   tally.of('render-naming', runRenderNamingSuite);
+  tally.of('leg-stop', runLegStopSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);

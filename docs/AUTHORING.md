@@ -4321,6 +4321,97 @@ physics, no skin set. `A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS` holds it (§5.2)
   declaration the profile did not read would be one nothing reads. The
   declaration is a statement to the gate and changes no emitted Spine byte.
 
+### 3.8 `stops` — a swinging chain held off a leg
+
+Spine has no collider and no angle limit — a physics constraint's `limit` is a
+velocity cap — so a skirt chain that physics swings carries its hem straight
+through the thigh it hangs in front of, on a build that passes every assertion.
+`render --pass-through` (§8.5) names those frames. A **stop** is the stand-in:
+a point on the leg, a frame that aims at it from the chain's root, the swinging
+link's rotation copied onto that frame, and the **drawn** link — the bone the
+mesh is weighted to — held by a transform clamp, so it may swing away from the
+leg and not past its rest angle toward it. One entry here is that network,
+written once:
+
+```json
+"stops": [
+  {
+    "chain": "hem",
+    "links": ["hem0", "hem1"],
+    "against": "thigh",
+    "at": [-10, -84],
+    "inward": 0,
+    "outward": 60,
+    "lower": { "inward": 0, "outward": 30 }
+  }
+]
+```
+
+| Field | What it is |
+| --- | --- |
+| `chain` | the name the point, the frame and the aim are called after |
+| `links` | the chain's swinging links, root first — each written by a constraint in the rig spec's `constraints` (its physics, or whatever swings it), each one below the first hanging from the drawn link of the one above |
+| `against` | the bone the point rides on — the leg |
+| `at` | the point, `[x, y]` in `against`'s local space, as a bone's `x`/`y` are in its parent's. Put it on the leg's outer edge at the hem's height |
+| `inward`, `outward` | the first drawn link's range, as its two ends, in degrees from its rest angle, counted **positive away from the point**. `inward: 0, outward: 60` is "never past rest toward the leg, up to 60° away"; `inward: -5` lets it turn 5° past rest toward the leg |
+| `lower` | `{ "inward", "outward" }`: each lower drawn link's range off its own rest bend, the same way round. Required when `links` has more than one, refused when it has one |
+
+Every field is required and none has a default. **Inward** is the turn from the
+first link toward the aim line — toward the point, which is on the leg — read off
+the setup pose, so a stop on the left side of a skirt and one on the right need no
+sign of their own.
+
+**What it expands to.** Before anything else reads the rig, `parseRigSpec`
+replaces the entry with bones and constraints — nothing downstream knows a stop
+was there, and the build is byte for byte the build of the same network written
+by hand (`LG01`):
+
+| Generated | Kind | What it is |
+| --- | --- | --- |
+| `<chain>_touch` | bone | the point: parent `against`, `x`/`y` from `at`. Listed after every other bone |
+| `<chain>_stop` | bone | the frame: the first link's parent, `x`, `y` and `length`, rotated at the point. Listed just before the first link |
+| `<link>_rel` | bone | a child of the frame, `length` the link's, rotated by the link's rest angle off the aim line. Just after the first link |
+| `<link>_d` | bone | the first link's **drawn** link — the same as `_rel`, just after it. For each lower link, its drawn link: a sibling with the link's own `length`, `x`, `y`, `rotation`, scale, shear and `inherit`, just after that link |
+| `<chain>_stop_aim` | ik | aims the frame at the point (`mix` 1). Just before the last constraint that writes the first link |
+| `<link>_rel_copy` | transform | gives `_rel` the first link's world rotation (`mixRotate` 1). Just after that constraint |
+| `<link>_clamp` | transform | local to local, `clamp: true`: gives the drawn link its source's turn, held to the range — the first link's from `_rel`, each lower link's from the link. Just after `_rel_copy` for the first, just after the last constraint that writes the link for a lower one |
+
+So a chain with a stop is authored with each link's parent below the drawn link
+above it — `hem1`'s control bone under `hem0_d` — and its mesh weighted to the
+`_d` bones; those names are the expansion's, and the build refuses a name it
+generates that the rig already declares. The order is the point of the
+placement: the frame is aimed before the link swings, and each swing is copied
+and clamped before anything below reads the drawn link.
+
+The frame's angles are read off the setup pose the rig spec states — its bones as
+written, no constraint applied, in the exact frame `src/transform.ts` measures in — so at rest the drawn
+link lies on the link and the clamp's bounds are its rest angle moved by
+`inward` and `outward`. A bone the angles are read through that takes its place
+`from` a manifest is refused: its numbers are not known until the compile.
+
+⚠️ **The link's swing has to be declared in the rig spec.** The motion spec's
+`physics` table (§4.6) is emitted after every rig constraint, past the copy and
+the clamp, which would then read the link before it swings; a link only that
+table drives is refused as one nothing swings, and a table entry on a stopped link
+is refused by name.
+
+Refused, each naming the stop, the field and the value (§5.1): a missing
+`chain`, `links`, `against`, `at`, `inward`, `outward` or (on a chain of two or
+more) `lower`; a `lower` on one link; a link or an `against` the rig does not
+declare; a link stopped twice; the root as a link; `at` that is not two numbers;
+`inward` above `outward`, at either range; a bound past ±180° once the rest angle
+is added (the clamp reads a local rotation in (−180, 180]); a generated bone or
+constraint name already declared, or generated by two stops; a link no rig
+constraint writes; a lower link not below the drawn link above it; an `against`
+that hangs below the chain; a point on the link's root or on its own line at
+rest; a frame parent scaled unevenly, sheared or reflected, or such a bone
+between two links; a link below a bone a later stop generates; a `from` bone in
+the angles' path.
+
+The stop decides nothing about *when* — it is what the object can do. Read it
+with `render --pass-through <cloth>:<leg>` (§8.5) on the motion that swung
+through before.
+
 ---
 
 ## 4. The motion spec, field by field
@@ -6676,6 +6767,22 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `ik constraint "X" names 3 bones ("a", "b", "c"); the solver applies one or two, so a constraint over 3 moves nothing — name one bone, or two where the second is the first's child` | §3.5 — the constraint's `bones` is what changes: one bone, or a parent and its child. The runtime's ik update has a case for one bone and one for two, so a longer list loads, sits in the update cache and applies nothing — [measured] every bone posed exactly where the same rig with no constraint has it. A longer chain is several constraints, each over one bone or a pair |
 | `ik constraint "X": "B" is not a child of "A" ("C" stands between), so the two-bone solve is not of the chain drawn — name "B"'s own parent as the first bone, or make "B" a child of "A"` (also `("A" is not above it; its parent is "P")`, `("B" has no parent)`) | §3.5 — the constraint's `bones` is what changes, or `B`'s `parent`. The two-bone solve places `B` through `A`'s matrix from `B`'s own local offset, so what stands between them is left out of the triangle it solves — [measured] a bone between them at `B`'s origin left the tip up to 2.60 off the target, and one at `A`'s origin landed only while it held its identity |
 | `physics constraint "X" is declared in both the rig spec and the motion spec's physics table` | §4.6 — the rig spec declares a physics constraint's structure and the motion spec's `physics` table declares one outright; pick the file it belongs in. Per kind, like every other constraint name: an `ik` "X" in the rig spec beside a `physics` "X" here is two constraints and is not this error |
+| `stops[i] needs a "chain" …` / `stop "C" states "links" …; it is the chain's swinging links, root first …` / `stop "C" needs "against" …` / `stop "C" states no "at" …` / `stop "C" states no "inward"` (or `"outward"`, `"lower.inward"`, `"lower.outward"`) / `stop "C" states no "lower" …` | §3.8 — state the field; a stop has no defaults. `at` is `[x, y]` in `against`'s local space, and `lower` is required on a chain of two or more links |
+| `stop "C" states "at" [V]; it is [x, y], two numbers in "A"'s local space` | §3.8 — two numbers |
+| `stop "C" states "lower" and its chain has one link …` | §3.8 — remove `lower`, or list the links below the first |
+| `stop "C": links[k] names bone "X", which this rig does not declare` / `stop "C": "against" names bone "X", which this rig does not declare` | §3.8 — fix the name; both resolve against the rig spec's own `bones` |
+| `stop "C": links[k] "X" is already stopped by stop "D" …` | §3.8 — a link has one drawn link and one clamp; stop it once |
+| `stop "C": links[k] "X" is the skeleton's root …` / `… takes its place from the manifest ("from") …` | §3.8 — a link hangs from a parent, and its drawn link copies its stated `x`, `y` and `rotation`; state them. The same `from` refusal names a bone the stop's angles are read through |
+| `stop "C": "inward" N is greater than "outward" M …` (also `"lower.inward"`) | §3.8 — the range is `[inward, outward]`, counted positive away from the point; `inward` is the lower end |
+| `stop "C": "outward" N puts "L_d"'s bound at B°, past ±180° …` (also `"inward"`, `"lower.…"`) | §3.8 — the clamp reads a local rotation in (−180, 180]; the bound is the drawn link's rest angle moved by the range, so narrow the range |
+| `stop "C" generates bone "X", which this rig already declares …` / `… generates ik constraint "X" …` / `… generates transform constraint "X" …` / `… which stop "D" generates too …` | §3.8 — the names are the expansion's (`<chain>_touch`, `<chain>_stop`, `<chain>_stop_aim`, `<link>_rel`, `<link>_rel_copy`, `<link>_d`, `<link>_clamp`); rename the bone or constraint, or the `chain` |
+| `stop "C": links[k] "X" is written by no constraint of this rig spec …` | §3.8 — declare what swings the link (a physics constraint, usually) in the rig spec's `constraints`; the motion spec's `physics` table is emitted after the clamp |
+| `stop "C": links[k] "X" does not hang below "P_d", the drawn link of links[k-1] …` | §3.8 — parent the link (or its control bone) below the drawn link above it, so the clamp that holds that one carries it |
+| `stop "C": "against" "A" hangs below "B", which the stop moves …` | §3.8 — name the leg; a point on the chain would swing with it |
+| `stop "C": "at" [x, y] on "A" sits on the root of "L" …` / `… lies on "L"'s own line at the setup pose …` | §3.8 — move the point onto the leg's edge beside the hem; on the link's line it has no side to call inward |
+| `stop "C": "P", where the frame hangs, is scaled unevenly, sheared or reflected …` / `stop "C": "B", between links[k] "L" and the drawn link above it, is scaled unevenly, sheared, reflected or inherits other than normally …` | §3.8 — the stop's angles add only through a rotation and an even scale; take the scale off that bone |
+| `stop "C": "L" hangs below "B", which a later stop generates …` | §3.8 — list that stop first |
+| `physics constraint "X" drives "L", a link stop "C" holds, from the physics table …` | §3.8, §4.6 — declare the constraint in the rig spec's `constraints`, where the stop's copy and clamp are placed after it |
 | `skin "S" lists "X" under "transform", but the rig declares it as a "ik" constraint — a skin looks its constraints up by name AND type, so this one is a miss and the loader throws` | §3.4.8 — move the name to the list named after the constraint's own kind. A name the rig declares under **no** kind is the other miss and says so (`skin "S" activates ik constraint "X", which this rig does not declare`). ⚠️ A name listed by **several skins** is not an error: the lists are per-skin sets and a bone or constraint in two of them is active under either |
 | `slot "X" names bone "Y", which this rig does not declare` | add the bone, or fix the slot's `bone` |
 | `no setup pose for slot "X": give the motion spec a \`setup\` entry or the rig slot an \`attachment\`` | R3 — pick one file and declare it there. A slot **nothing** fills is exempt: its setup pose can only be "show nothing" and is not asked for |

@@ -3205,6 +3205,17 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       if (!boneNames.has(spec.bone)) {
         throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
       }
+      // A stop's copy and clamps sit right after the rig constraint that swings
+      // each link (`src/stop.ts`); this table is emitted after every rig
+      // constraint, so a swing here would run after the clamp meant to hold it.
+      const stop = (rig.stops ?? []).find((s) => s.links.includes(spec.bone));
+      if (stop !== undefined) {
+        throw new CompileError(
+          `physics constraint "${name}" drives "${spec.bone}", a link stop "${stop.chain}" holds, from the physics table — ` +
+            "the table is emitted after every rig constraint, past the stop's copy and clamp, which would read the link " +
+            'before this swings it; declare the constraint in the rig spec\'s "constraints"',
+        );
+      }
       // Every component and parameter the table states is held, 0 and the
       // parser's default included; which of them Spine leaves out is the
       // emitter's (`emitConstraint`). `components` is the report's list of the

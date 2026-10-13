@@ -288,6 +288,26 @@ export function toWorld(m: BoneTransform, localX: number, localY: number): [numb
 }
 
 /**
+ * The direction of a displacement, in degrees CCW from +x, y up, in (-180, 180]
+ * — radians to degrees by the exact frame's division (`EXACT_FRAME_ARITHMETIC`),
+ * so an angle read here off `computeExactFrameTransforms` and that frame's own
+ * `worldRotation` are one arithmetic. Not rounded, for `toWorld`'s reason.
+ */
+export function directionDegrees(dx: number, dy: number): number {
+  return EXACT_FRAME_ARITHMETIC.degreesOf(Math.atan2(dy, dx));
+}
+
+/**
+ * A world displacement's direction in a bone's local space — the rotation a
+ * child of that bone states to point along it. `toBoneLocalVector`, then
+ * `directionDegrees`; a stop's frame (`src/stop.ts`) is aimed with it.
+ */
+export function localDirectionDegrees(m: BoneTransform, worldDX: number, worldDY: number): number {
+  const [lx, ly] = toBoneLocalVector(m, worldDX, worldDY);
+  return directionDegrees(lx, ly);
+}
+
+/**
  * Normalise degrees into (-180, 180], which is how an editor shows a rotation.
  *
  * Not rounded, for `toBoneLocal`'s reason: a caller that emits the angle
