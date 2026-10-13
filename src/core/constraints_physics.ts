@@ -189,6 +189,34 @@
  * reading is rejected as a schedule no player runs; the core suite's `SC`
  * controls plant it and turn the probe red on the steps after the key.
  *
+ * ## The environment (issue #1416)
+ *
+ * A constraint's `wind` and `gravity` are not forces: they are how strongly it
+ * answers two directions the SKELETON carries — spine-core 4.3.13's
+ * `Skeleton.windX, windY` and `gravityX, gravityY`, initially `1, 0` and `0,
+ * 1` (`DEFAULT_PHYSICS_ENVIRONMENT`). The step weighs them as the runtime
+ * does: for `x` and `y`, `ax = (wind·windX + gravity·gravityX)·R` and `ay =
+ * (wind·windY + gravity·gravityY)·R`, `velocity += (ax − offset·strength)·…`
+ * on `x` and `−= (ay + offset·strength)·…` on `y`; for the rotation and the
+ * scale the same two sums without `R`, `(ax·sin + ay·cos)·length/R` and `ax·cos
+ * − ay·sin` in place of the wind and gravity terms above. The skeleton's own
+ * scale, which the runtime multiplies the `x` and `y` sums by, is 1 here. So
+ * the environment's y points DOWN — `[0, 1]` pulls toward the bottom of the
+ * screen — and with the initial values every expression is the one this file
+ * computed before the environment existed: `wind·1 + gravity·0` is `wind` for
+ * every finite `gravity` (a `wind` of −0 aside, which it reads as +0, as the
+ * runtime does), and the render and emit bases did not move.
+ *
+ * The consumer sets it (`setEnvironment` on a live track, `./track.ts`), and
+ * moves the rig from outside with `translatePhysics` and `rotatePhysics` —
+ * `Skeleton.physicsTranslate` and `physicsRotate`, which shift what each
+ * constraint last saw (`ux, uy, cx, cy`) so its next update reads the bone as
+ * having moved. A constraint with no state yet is pending, and its first
+ * update overwrites both, so it is left alone, as the runtime's translation of
+ * it is read by nothing. The core suite's `CO56` holds all of it to spine-core
+ * given the same values at tolerance 0, and `CO57` that nothing set poses what
+ * was posed before.
+ *
  * ## What is not exact, and why
  *
  * Over 3,000 random rigs of three shapes (all five inherit modes; ik and
@@ -215,6 +243,9 @@
  */
 import { channelAt, keyIndexAt, poseAnimations, sampleTime, type CoreAnimationPose, type CoreCurve, type CoreKey, type SamplePhase, type TimelinePlant } from './animation.ts';
 import { RUNTIME_PI, type CoreWorld } from './world.ts';
+
+/** Degrees to radians as the runtime converts them (`MathUtils.degRad`, `pi / 180` with the runtime's pi). */
+const RUNTIME_RAD = RUNTIME_PI / 180;
 import { previousPassSlotBones, type CoreConstraintRecord } from './constraints.ts';
 import { activeBones, type CompiledDocument } from './index.ts';
 
@@ -577,6 +608,71 @@ export interface PhysicsStepContext {
   keyedNow?: Set<string>;
   /** A plant only (issue #1049, `sliderPhysicsFromCurrent: false`): each physics record's setup values, before the step's own animation. */
   setupRecords?: Map<string, CorePhysicsRecord>;
+  /**
+   * The world every constraint answers (issue #1416, the header's *The
+   * environment*): the skeleton's wind and gravity directions, as a caller set
+   * them on the live track. Absent, spine-core's own initial values
+   * (`DEFAULT_PHYSICS_ENVIRONMENT`), which is every walk but a live one a
+   * caller set it on.
+   */
+  env?: PhysicsEnvironment;
+}
+
+/**
+ * The world a physics constraint answers (issue #1416): spine-core 4.3.13's
+ * four skeleton fields `windX`, `windY`, `gravityX` and `gravityY`, as
+ * `wind: [windX, windY]` and `gravity: [gravityX, gravityY]` — the
+ * DIRECTIONS the constraints' own `wind` and `gravity` act along, which are
+ * each constraint's response to them (the header's *The environment*). In the
+ * runtime's convention: x to the right, **y down** — a positive y component
+ * pulls a constraint toward the bottom of the screen, as `gravity: [0, 1]`
+ * does.
+ */
+export interface PhysicsEnvironment {
+  readonly wind: readonly [number, number];
+  readonly gravity: readonly [number, number];
+}
+
+/** spine-core 4.3.13's initial `Skeleton.windX, windY, gravityX, gravityY` — `1, 0, 0, 1` — the world of every walk nobody set one on. */
+export const DEFAULT_PHYSICS_ENVIRONMENT: PhysicsEnvironment = Object.freeze({ wind: Object.freeze([1, 0] as const), gravity: Object.freeze([0, 1] as const) });
+
+/**
+ * `Skeleton.physicsTranslate(x, y)` on the states in `ctx` (issue #1416): every
+ * constraint's next update sees its bone moved by `(x, y)` in the skeleton's
+ * world (y up) — the consumer moved the whole rig by that much since the last
+ * pose. A constraint with no state yet has not been updated, and its first
+ * update is pending, so the runtime's translation of it is read by nothing.
+ */
+export function translatePhysics(ctx: PhysicsStepContext, x: number, y: number): void {
+  for (const s of ctx.states.values()) {
+    s.ux -= x;
+    s.uy -= y;
+    s.cx -= x;
+    s.cy -= y;
+  }
+}
+
+/**
+ * `Skeleton.physicsRotate(x, y, degrees)` on the states in `ctx` (issue
+ * #1416): every constraint's next update sees its bone turned by `degrees`
+ * (counter-clockwise, the runtime's pi) about `(x, y)` in the skeleton's world —
+ * a translation of each constraint by how far that turn carries the origin it
+ * last saw, as `PhysicsConstraint.rotate` computes it.
+ */
+export function rotatePhysics(ctx: PhysicsStepContext, x: number, y: number, degrees: number): void {
+  const r = degrees * RUNTIME_RAD;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  for (const s of ctx.states.values()) {
+    const dx = s.cx - x;
+    const dy = s.cy - y;
+    const tx = dx * cos - dy * sin - dx;
+    const ty = dx * sin + dy * cos - dy;
+    s.ux -= tx;
+    s.uy -= ty;
+    s.cx -= tx;
+    s.cy -= ty;
+  }
 }
 
 /** A constraint's state in `ctx`, created fresh on its first update. */
@@ -634,6 +730,7 @@ export function stepPhysics(r: CorePhysicsRecord, w: CoreWorld, length: number, 
   s.lastTime = ctx.time;
   const bx = w.worldX;
   const by = w.worldY;
+  const env = ctx.env ?? DEFAULT_PHYSICS_ENVIRONMENT;
   let z = 0;
   if (s.pending) {
     s.pending = false;
@@ -664,16 +761,19 @@ export function stepPhysics(r: CorePhysicsRecord, w: CoreWorld, length: number, 
         const e = r.strength;
         const wind = r.wind * f;
         const g = r.gravity * f;
+        // The environment's directions (issue #1416), as the runtime weighs them; the skeleton's scale is 1 here, so its factor is left out.
+        const ax = wind * env.wind[0] + g * env.gravity[0];
+        const ay = wind * env.wind[1] + g * env.gravity[1];
         const xs = s.xOffset;
         const ys = s.yOffset;
         do {
           if (x) {
-            s.xVelocity += (wind - s.xOffset * e) * m;
+            s.xVelocity += (ax - s.xOffset * e) * m;
             s.xOffset += s.xVelocity * t;
             s.xVelocity *= d;
           }
           if (y) {
-            s.yVelocity -= (g + s.yOffset * e) * m;
+            s.yVelocity -= (ay + s.yOffset * e) * m;
             s.yOffset += s.yVelocity * t;
             s.yVelocity *= d;
           }
@@ -720,20 +820,20 @@ export function stepPhysics(r: CorePhysicsRecord, w: CoreWorld, length: number, 
         if (d === -1) d = Math.pow(r.damping, 60 * t);
         const m = r.massInverse * t;
         const e = r.strength;
-        const wind = r.wind;
-        const g = r.gravity;
+        const ax = r.wind * env.wind[0] + r.gravity * env.gravity[0];
+        const ay = r.wind * env.wind[1] + r.gravity * env.gravity[1];
         const h = l / f;
         const rs = s.rotateOffset;
         const ss = s.scaleOffset;
         for (;;) {
           a -= t;
           if (scaleX) {
-            s.scaleVelocity += (wind * c - g * sn - s.scaleOffset * e) * m;
+            s.scaleVelocity += (ax * c - ay * sn - s.scaleOffset * e) * m;
             s.scaleOffset += s.scaleVelocity * t;
             s.scaleVelocity *= d;
           }
           if (rotateOrShearX) {
-            s.rotateVelocity -= ((wind * sn + g * c) * h + s.rotateOffset * e) * m;
+            s.rotateVelocity -= ((ax * sn + ay * c) * h + s.rotateOffset * e) * m;
             s.rotateOffset += s.rotateVelocity * t;
             s.rotateVelocity *= d;
             if (a < t) break;

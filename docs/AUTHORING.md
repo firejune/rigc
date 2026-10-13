@@ -4953,6 +4953,41 @@ agreeing with `render` — and left out, a track steps the physics by the step i
 exactly as before. Which clock a player with a real clock uses is the player's
 question, and rigc does not answer it.
 
+🌬️ **`wind` and `gravity` are the constraint's response; the world is the
+consumer's** (issue #1416). In 4.3 the two are not forces but how strongly the
+constraint answers two directions the *skeleton* carries — `Skeleton.windX,
+windY` and `gravityX, gravityY`, which start at `1, 0` and `0, 1` — so a
+constraint stating `wind: 20` is pushed along whatever direction the player
+sets, times 20 (and on `x` and `y` times `referenceScale`; on a rotation, at
+a lever of the bone's `length` over `referenceScale`). A live track of the
+core entry sets that direction with `setEnvironment({ wind: [x, y], gravity:
+[x, y] })` — x to the right, **y down**, either half left out to keep the one
+that stands — and the Spine export carries only the response, so an official
+runtime whose `Skeleton` is given the same four numbers poses what the core
+poses, to the bit (`CO56`). Two consequences an author has to know:
+
+- **A constraint stating `wind: 0` feels no wind**, whatever the player sets.
+  State a `wind` on every link that should answer a gust; leave it 0 on one
+  that should not.
+- **Until the player sets one, `wind` pushes to the right.** The initial
+  direction is the runtime's `[1, 0]`, not `[0, 0]`, so a rig stating `wind`
+  leans at rest on every player that never calls `setEnvironment` — the
+  official runtimes included. A player that wants calm at rest sets `wind:
+  [0, 0]` and blows by setting it back. rigc does not change the initial
+  value: that would make the export pose differently in the runtime than in
+  the core.
+
+Moving the rig is the consumer's too: `physicsTranslate(x, y)` and
+`physicsRotate(x, y, degrees)` on a live track are the runtime's methods of
+those names — the whole rig moved or turned since the last pose, in the
+skeleton's world (y up, degrees counter-clockwise) — and every constraint's
+next update sees its bone move by that much, so a rig walked across the screen
+trails its coat. A player forwards what spine-core's `SkeletonPhysicsMovement`
+forwards: its display object's change of position since the last frame in the
+skeleton's units and axes, and its change of rotation as `physicsRotate(0, 0,
+Δ)`, before the `step` that poses the frame. Nothing set, every pose is the
+one the track posed before these existed (`CO57`).
+
 `mix` is a player-side `AnimationStateData` config and is **not** emitted into
 skeleton JSON, so the parser is the only check it gets: it is
 `{ "default": <seconds>, "pairs"?: [["<from>", "<to>", <seconds>], …] }`, and a

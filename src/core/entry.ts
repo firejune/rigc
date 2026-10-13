@@ -18,7 +18,9 @@
  * ⚠️ A symbol is listed here only because a dependant was seen using it,
  * or asked for it in writing before it could be (`openTrack`, issue #1276;
  * `openTracks`, issue #1336; `physicsClockStep` and `PHYSICS_CLOCK_LEAD`,
- * the clock a live track's `clock` option takes, issue #1396).
+ * the clock a live track's `clock` option takes, issue #1396;
+ * `PhysicsEnvironment`, what a live track's `setEnvironment` takes, issue
+ * #1416).
  * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` rows for
  * `./core`, and a symbol added here and not there is not promised.
  */
@@ -28,7 +30,7 @@ export { poseRawSetup, poseRawAnimation, poseRawAnimationEach, loopedTime, setup
 export type { RawPose, RawBone, RawDrawn, RawClip, RawClipped, RawEvent, RawReset } from './raw.ts';
 export { poseWalkSetup, poseLoopingWalk } from './walk.ts';
 export { openTrack } from './track.ts';
-export type { LiveTrack, TrackOptions, AdjustableLocals, BoneLocals, LocalAdjust } from './track.ts';
+export type { LiveTrack, TrackOptions, AdjustableLocals, BoneLocals, LocalAdjust, PhysicsEnvironment } from './track.ts';
 export { openTracks } from './tracks.ts';
 export type { LiveTracks, TracksOptions, MixOptions, QueueOptions, TrackEntryView } from './tracks.ts';
 export type { WalkPose } from './walk.ts';

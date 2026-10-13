@@ -164,7 +164,8 @@ import { activeBones, CoreInputError, rawNumber, readColour, shownAttachment, ty
 import { channelAt, keyIndexAt, SLOT_COLOUR_TIMELINES, slotRowsFrom, steppedLocalsWorld, type BoneTimelineKind, type CoreKey, type LocalAdjust, type SlotBase, type SlotColourKind, type TimelinePlant } from './animation.ts';
 import { deformAt, setupArray, type CoreAttachmentTimeline } from './deform.ts';
 import { eventsFired, type CoreEventKey, type CoreEventRow } from './events.ts';
-import { checkedClock, openRawTracksPath, type RawPose, type RawReset, type RawTracksPath } from './raw.ts';
+import { checkedClock, environmentOf, openRawTracksPath, rotateOn, setEnvironmentOn, translateOn, type RawPose, type RawReset, type RawTracksPath } from './raw.ts';
+import type { PhysicsEnvironment } from './constraints_physics.ts';
 import { slotTimelinesApply } from './skins.ts';
 
 /** How the live tracks are opened: where the physics is reset (`RawReset`, the caller's, no default), the caller's adjustment of every pose's bone locals, and what each step moves the physics clock by (the header's *The physics clock*). */
@@ -228,6 +229,14 @@ export interface LiveTracks {
   current(track: number): TrackEntryView | null;
   /** The running sum of the steps taken, 0 before the first. */
   readonly trackTime: number;
+  /** Sets the world every physics constraint answers from the next pose on, as `LiveTrack.setEnvironment` (`./track.ts`, *The environment*). */
+  setEnvironment(environment: Partial<PhysicsEnvironment>): void;
+  /** The environment the next pose answers. */
+  readonly environment: PhysicsEnvironment;
+  /** spine-core's `Skeleton.physicsTranslate`, as `LiveTrack.physicsTranslate`. */
+  physicsTranslate(x: number, y: number): void;
+  /** spine-core's `Skeleton.physicsRotate`, as `LiveTrack.physicsRotate`. */
+  physicsRotate(x: number, y: number, degrees: number): void;
 }
 
 /**
@@ -1331,6 +1340,25 @@ class Tracks implements LiveTracks {
 
   get trackTime(): number {
     return this.time;
+  }
+
+  get environment(): PhysicsEnvironment {
+    return environmentOf(this.path.ctx);
+  }
+
+  setEnvironment(environment: Partial<PhysicsEnvironment>): void {
+    this.live('setEnvironment');
+    setEnvironmentOn(this.path.ctx, environment, 'the live tracks\'');
+  }
+
+  physicsTranslate(x: number, y: number): void {
+    this.live('physicsTranslate');
+    translateOn(this.path.ctx, x, y, 'the live tracks\'');
+  }
+
+  physicsRotate(x: number, y: number, degrees: number): void {
+    this.live('physicsRotate');
+    rotateOn(this.path.ctx, x, y, degrees, 'the live tracks\'');
   }
 
   private live(call: string): void {

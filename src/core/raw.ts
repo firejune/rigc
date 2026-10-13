@@ -116,7 +116,7 @@
 import { activeBones, CoreInputError, drawWalkOf, poseSetup, rawNumber, readColour, shownAttachment, sourceOfDoc, underNoSkin, type CompiledDocument, type CorePlant, type CoreSlotRow } from './index.ts';
 import { posedBoneWorld, posedBoneWorldAlone, posedSlots, type CoreAnimationTimelines, type LocalAdjust, type TimelinePlant } from './animation.ts';
 import { constraintsAbsentWhy, pathAnimationsWhy } from './constraints.ts';
-import { freshStepContext, steppedPreviousPassWhy } from './constraints_physics.ts';
+import { freshStepContext, rotatePhysics, steppedPreviousPassWhy, translatePhysics, DEFAULT_PHYSICS_ENVIRONMENT, type PhysicsEnvironment, type PhysicsStepContext } from './constraints_physics.ts';
 import { attachmentStates } from './deform.ts';
 import { drawOrderAt, type CoreDrawOrderKey } from './draw_order.ts';
 import { eventsFired, type CoreEventRow } from './events.ts';
@@ -573,6 +573,53 @@ export function checkedClock(clock: (dt: number) => number, who: string): (dt: n
     if (typeof moved !== 'number' || !Number.isFinite(moved) || moved < 0) throw new CoreInputError(`${who} clock moved the physics by ${String(moved)} for a step of ${dt}, not a finite time at or above 0`);
     return moved;
   };
+}
+
+/**
+ * A live track's `setEnvironment` (issue #1416, `./track.ts` and `./tracks.ts`):
+ * the world every physics constraint answers from the next pose on, set on the
+ * track's physics context — `wind` and `gravity` each a pair of finite numbers,
+ * either left out to keep the one that stands, and nothing else — or refused by
+ * name, before anything moves. The pair is copied: the caller's array changed
+ * later moves nothing.
+ */
+export function setEnvironmentOn(ctx: PhysicsStepContext, env: unknown, who: string): void {
+  if (typeof env !== 'object' || env === null || Array.isArray(env)) throw new CoreInputError(`${who} setEnvironment was given ${env === null ? 'null' : Array.isArray(env) ? 'an array' : typeof env}, not an object { wind?: [x, y], gravity?: [x, y] }`);
+  const given = env as Record<string, unknown>;
+  for (const key of Object.keys(given)) {
+    if (key !== 'wind' && key !== 'gravity') throw new CoreInputError(`${who} setEnvironment names "${key}", which is not one of [wind, gravity]`);
+  }
+  const pair = (key: 'wind' | 'gravity'): readonly [number, number] | undefined => {
+    const v = given[key];
+    if (v === undefined) return undefined;
+    if (!Array.isArray(v) || v.length !== 2 || v.some((n) => typeof n !== 'number' || !Number.isFinite(n))) throw new CoreInputError(`${who} setEnvironment's ${key} is ${JSON.stringify(v)}, not a pair of finite numbers [x, y] (x to the right, y down)`);
+    return Object.freeze([v[0] as number, v[1] as number] as const);
+  };
+  const wind = pair('wind');
+  const gravity = pair('gravity');
+  const standing = ctx.env ?? DEFAULT_PHYSICS_ENVIRONMENT;
+  ctx.env = Object.freeze({ wind: wind ?? standing.wind, gravity: gravity ?? standing.gravity });
+}
+
+/** The environment a live track's physics answers now (`setEnvironmentOn`): spine-core's initial one where none was set. */
+export function environmentOf(ctx: PhysicsStepContext): PhysicsEnvironment {
+  return ctx.env ?? DEFAULT_PHYSICS_ENVIRONMENT;
+}
+
+/** A live track's `physicsTranslate` (issue #1416): `x` and `y` finite, or refused by name before anything moves; then `translatePhysics`. */
+export function translateOn(ctx: PhysicsStepContext, x: number, y: number, who: string): void {
+  for (const [k, v] of [['x', x], ['y', y]] as const) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new CoreInputError(`${who} physicsTranslate's ${k} is ${String(v)}, not a finite distance in the skeleton's world`);
+  }
+  translatePhysics(ctx, x, y);
+}
+
+/** A live track's `physicsRotate` (issue #1416): `x`, `y` and `degrees` finite, or refused by name before anything moves; then `rotatePhysics`. */
+export function rotateOn(ctx: PhysicsStepContext, x: number, y: number, degrees: number, who: string): void {
+  for (const [k, v] of [['x', x], ['y', y], ['degrees', degrees]] as const) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new CoreInputError(`${who} physicsRotate's ${k} is ${String(v)}, not a finite number`);
+  }
+  rotatePhysics(ctx, x, y, degrees);
 }
 
 /**
