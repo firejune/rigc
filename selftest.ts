@@ -442,6 +442,12 @@ import {
   type SourceFrame,
   type SourceMesh,
   type Termination,
+  influenceShares,
+  segmentDistance,
+  segmentShares,
+  type EntrySegment,
+  type InfluencePlant,
+  type SegmentsInfluence,
 } from './src/mesh.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasterPlant, type StepRasterTally } from './src/meshrasters.ts';
@@ -698,6 +704,9 @@ import {
   placeFixturesUnder,
   SEGMENTS_PLATE,
   segmentsFixture,
+  SKIRT_INFLUENCE,
+  SKIRT_PLATE,
+  skirtFixture,
   type Fixture,
 } from './fixtures/public.ts';
 import { BLINK, BLINK_BOUND, BLINK_T, blinkAlpha, blinkEdgeSamples, blinkReductionInput, blinkShare, blinkSource, carriedShare as blinkCarriedShare, edgeDisplacement as blinkEdgeDisplacement, simplifiedLine } from './fixtures/blink.ts';
@@ -39133,7 +39142,308 @@ function runSegmentsMeshSuite(): number {
       : missed.map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`).join(' | '),
     'the one the brief left open is the sixth: a vertex every share of which the falloff dropped is refused rather than handed the largest, because a bone the falloff did not keep is a weight nobody decided',
   );
+
+  // An absent `influence` leaves every vertex on the `falloff` model (issue #1415): the probe's weights, read
+  // off the artifact, are `segmentShares` over the segments spine-core poses at setup — and `influenceShares`
+  // over the same segments, the plant, is told apart from them.
+  const probePosedSegments: EntrySegment[] = [];
+  const probeBones = (generator.bones as string[][]).flat();
+  (generator.bones as string[][]).forEach((chain, entry) =>
+    chain.forEach((name, k) => {
+      const pose = posed.findBone(name)!.appliedPose;
+      const next = k + 1 < chain.length ? posed.findBone(chain[k + 1])!.appliedPose : null;
+      const length = posed.findBone(name)!.data.length;
+      probePosedSegments.push({
+        bone: probeBones.indexOf(name),
+        entry,
+        a: [pose.worldX, pose.worldY],
+        b: next ? [next.worldX, next.worldY] : [pose.worldX + pose.a * length, pose.worldY + pose.c * length],
+      });
+    }),
+  );
+  const probeFalloff = { power: 2, radius: falloff.radius, maxBones: falloff.maxBones, minWeight: falloff.minWeight };
+  const sharesOff = (v: number, planted: boolean): Map<string, number> => {
+    const at = worldVertex(posed, 'cloth', v);
+    const got = planted
+      ? influenceShares(at, probePosedSegments, { radius: 40, across: true, max: falloff.maxBones, shape: 'smooth' })
+      : segmentShares(at, probePosedSegments, probeFalloff);
+    return new Map('weights' in got ? got.weights.map((w) => [probeBones[w.control ?? 0], w.weight] as const) : []);
+  };
+  let firstDeparture = '';
+  const departures = (planted: boolean): number => {
+    let off = 0;
+    runs.forEach((at, v) => {
+      const want = sharesOff(v, planted);
+      const n = emitted.vertices![at];
+      let differs = n !== want.size;
+      const got: string[] = [];
+      // A bone the recomputation swapped for another at the same distance is the float32 setup pose breaking an
+      // exact tie the compiler's doubles kept (equal pulls keep the first-named bone): the same share on a twin.
+      const reachOf = (bone: string): number =>
+        Math.min(...probePosedSegments.filter((sg) => probeBones[sg.bone] === bone).map((sg) => segmentDistance(worldVertex(posed, 'cloth', v), sg.a, sg.b)));
+      const twins = [...want.keys()].filter((b) => ![...Array(n).keys()].some((k) => boneNames[emitted.vertices![at + 1 + k * 4]] === b));
+      for (let k = 0; k < n; k++) {
+        const bone = boneNames[emitted.vertices![at + 1 + k * 4]];
+        const weight = emitted.vertices![at + 4 + k * 4];
+        const twin = twins.find((b) => Math.abs(reachOf(b) - reachOf(bone)) < 1e-3 && Math.abs((want.get(b) ?? NaN) - weight) <= 2e-6);
+        const w = want.get(bone) ?? (twin === undefined ? undefined : want.get(twin));
+        got.push(`${bone} ${weight}`);
+        if (w === undefined || Math.abs(w - weight) > 2e-6) differs = true;
+      }
+      if (differs) off++;
+      if (differs && !planted && firstDeparture === '') {
+        firstDeparture = `; vertex ${v} emits [${got.join(', ')}] and the recomputation says [${[...want].map(([b, w]) => `${b} ${w}`).join(', ')}]`;
+      }
+    });
+    return off;
+  };
+  const keptOff = departures(false);
+  const plantedOff = departures(true);
+  say(
+    'SG07_WITHOUT_AN_INFLUENCE_BLOCK_EVERY_VERTEX_KEEPS_THE_FALLOFF_WEIGHTS',
+    keptOff === 0 && plantedOff > 0,
+    `${keptOff} of ${runs.length} emitted vertices depart from segmentShares over the setup pose's segments ` +
+      `(2e-6, the grid and float32); the plant — the same vertices through influenceShares — departs on ${plantedOff}` +
+      firstDeparture,
+    'the new block is a second weighting beside the first, and an absent one must leave the first exactly where it was: a vertex quietly moved onto the influence model would close at one and gate green',
+  );
+
+  runSkirtInfluenceCases(say);
   return bad;
+}
+
+/** The skirt probe's rig spec, parsed, for the cases that edit it. */
+type SkirtRigSpec = {
+  bones: Array<Record<string, unknown>>;
+  skins: { default: { skirt: { skirt: Record<string, unknown> & { generator: Record<string, unknown> } } } };
+};
+
+/** One vertex's bindings by bone name, and where it sits at the setup pose. */
+interface NamedVertex {
+  at: [number, number];
+  bindings: Array<{ bone: string; weight: number }>;
+}
+
+/** What the influence promises, counted over a set of vertices — every figure 0 on a kept build. */
+interface InfluenceFaults {
+  /** Vertices binding more bones than `max`. */
+  overCap: number;
+  /** The worst `|sum - 1|` of a vertex's weights. */
+  worstSum: number;
+  /** Bindings on a link whose segment is `radius` or farther from the vertex (1e-3 of slack for float32 binds). */
+  outOfReach: number;
+  /** The farthest binding found, in world units — a reading, so a cap that is never tested says so. */
+  farthest: number;
+  /** Vertices binding links of more than one chain. */
+  multiChain: number;
+  /** Vertices whose bones are not listed in the order `bones` names them. */
+  outOfOrder: number;
+  /** Vertices binding exactly `max` bones — the cap engaged. */
+  atCap: number;
+}
+
+/**
+ * The skirt's controls (issue #1415): a wide `influence` builds and gates green,
+ * and each of its four promises — the cap, the sum, the reach, one chain under
+ * `across: false` — is read off the artifact against the setup pose spine-core
+ * poses, and then shown to go red on weights a plant broke exactly that step of.
+ */
+function runSkirtInfluenceCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
+  const probe = skirtFixture();
+  const base = JSON.parse(readFileSync(probe.rigPath, 'utf8')) as SkirtRigSpec;
+  const chains = base.skins.default.skirt.skirt.generator.bones as string[][];
+  const flat = chains.flat();
+  const chainOf = new Map(chains.flatMap((chain, c) => chain.map((name) => [name, c] as const)));
+  let variant = 0;
+  const build = (influence: Record<string, unknown>): { built: CompileResult; opts: Options; gate: (p: ValidateProfile) => ReturnType<typeof validate> } => {
+    const rig = structuredClone(base);
+    rig.skins.default.skirt.skirt.generator.influence = influence;
+    const rigPath = join(probe.dir, `variant_${variant}.rig.json`);
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    const opts: Options = { rigPath, motionPath: probe.motionPath, outDir: join(probe.dir, `variant_${variant++}`), imagesDir: probe.imagesDir };
+    const built = compile(opts);
+    const again = compile({ ...opts, outDir: `${opts.outDir}_again` });
+    const gate = (profile: ValidateProfile): ReturnType<typeof validate> =>
+      validate({
+        skeletonText: built.skeletonText,
+        atlasText: built.atlasText,
+        atlasDir: opts.outDir,
+        declaredDurations: built.declaredDurations,
+        rig: built.rig,
+        profile,
+        modelText: modelDocument(built.model, built.skeletonText, built.atlasText),
+        reEmit: gateTextsOf(again),
+      });
+    return { built, opts, gate };
+  };
+  const wide = build({ ...SKIRT_INFLUENCE });
+  const narrow = build({ ...SKIRT_INFLUENCE, max: 2 });
+  const own = build({ ...SKIRT_INFLUENCE, across: false });
+  const verdicts = [wide, narrow, own].map((b) => ({ plain: b.gate('spine'), policy: b.gate('rig-play') }));
+  const red = verdicts.flatMap((v) => [...v.plain.failures, ...v.policy.failures]);
+  const allPassed = (code: string): boolean => verdicts.every((v) => v.plain.passed.includes(code) && v.policy.passed.includes(code));
+  const wideMesh = wide.built.meshes.find((m) => m.slot === 'skirt');
+  say(
+    'SG08_CONTROL_A_SKIRT_UNDER_AN_INFLUENCE_BLOCK_GATES_GREEN_AT_MAX_6_MAX_2_AND_ON_ITS_OWN_CHAIN',
+    red.length === 0 &&
+      allPassed('A20_MESH_WEIGHTS_COHERENT') &&
+      allPassed('A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER') &&
+      allPassed('A18_DETERMINISTIC_EMIT') &&
+      wideMesh?.influence?.reach !== undefined,
+    red.length === 0
+      ? `three builds of the ${SKIRT_PLATE.chains}x${SKIRT_PLATE.links}-link skirt (${wideMesh?.vertices} vertices / ${wideMesh?.triangles} triangles); ` +
+          `A20, A52 and A18 passed on each under both profiles; at max ${SKIRT_INFLUENCE.max} ${wideMesh?.influence?.reach?.capped} vertices ` +
+          `had more links in reach than the cap (widest ${wideMesh?.influence?.reach?.widest})`
+      : `[${red.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}]`,
+    'every control below reads these builds; A52 is the rule a many-bone weighting is likeliest to break, so it is named rather than assumed',
+  );
+  if (red.length > 0) {
+    console.log('  SKIP  SG_EVERY_SKIRT_CONTROL_BELOW_SG08  (the skirt did not gate green, so there is no artifact to read)');
+    return;
+  }
+
+  // The artifact's vertices, and the setup pose's links, through spine-core.
+  const readBuild = (b: { built: CompileResult; opts: Options }): { vertices: NamedVertex[]; segments: EntrySegment[] } => {
+    const skeleton = JSON.parse(b.built.skeletonText) as SpineSkeletonJson;
+    const names = skeleton.bones.map((bone) => bone.name);
+    const emitted = (skeleton.skins.find((sk) => sk.name === 'default')?.attachments?.skirt?.skirt ?? {}) as { vertices?: number[] };
+    const posable = posableFromText(b.built.skeletonText, b.built.atlasText, b.opts.outDir);
+    const posed = new Skeleton(posable.data);
+    posed.setupPose();
+    posed.updateWorldTransform(Physics.none);
+    const vertices = weightRuns(emitted.vertices ?? []).map((at, v) => {
+      const n = emitted.vertices![at];
+      const bindings: NamedVertex['bindings'] = [];
+      for (let k = 0; k < n; k++) bindings.push({ bone: names[emitted.vertices![at + 1 + k * 4]], weight: emitted.vertices![at + 4 + k * 4] });
+      return { at: worldVertex(posed, 'skirt', v), bindings };
+    });
+    const segments: EntrySegment[] = [];
+    chains.forEach((chain, entry) =>
+      chain.forEach((name, k) => {
+        const bone = posed.findBone(name)!;
+        const pose = bone.appliedPose;
+        const next = k + 1 < chain.length ? posed.findBone(chain[k + 1])!.appliedPose : null;
+        segments.push({
+          bone: flat.indexOf(name),
+          entry,
+          a: [pose.worldX, pose.worldY],
+          b: next ? [next.worldX, next.worldY] : [pose.worldX + pose.a * bone.data.length, pose.worldY + pose.c * bone.data.length],
+        });
+      }),
+    );
+    return { vertices, segments };
+  };
+  const faultsOf = (vertices: readonly NamedVertex[], segments: readonly EntrySegment[], max: number, radius: number): InfluenceFaults => {
+    const segOf = new Map<string, EntrySegment[]>();
+    for (const s of segments) segOf.set(flat[s.bone], [...(segOf.get(flat[s.bone]) ?? []), s]);
+    const faults: InfluenceFaults = { overCap: 0, worstSum: 0, outOfReach: 0, farthest: 0, multiChain: 0, outOfOrder: 0, atCap: 0 };
+    for (const { at, bindings } of vertices) {
+      if (bindings.length > max) faults.overCap++;
+      if (bindings.length === max) faults.atCap++;
+      let sum = 0;
+      for (const { bone, weight } of bindings) {
+        sum += weight;
+        const d = Math.min(...(segOf.get(bone) ?? []).map((s) => segmentDistance(at, s.a, s.b)));
+        faults.farthest = Math.max(faults.farthest, d);
+        if (!(d < radius + 1e-3)) faults.outOfReach++;
+      }
+      faults.worstSum = Math.max(faults.worstSum, Math.abs(sum - 1));
+      if (new Set(bindings.map((b) => chainOf.get(b.bone))).size > 1) faults.multiChain++;
+      const order = bindings.map((b) => flat.indexOf(b.bone));
+      if (order.some((o, k) => k > 0 && o <= order[k - 1])) faults.outOfOrder++;
+    }
+    return faults;
+  };
+  const planted = (vertices: readonly NamedVertex[], segments: readonly EntrySegment[], influence: SegmentsInfluence, plant: InfluencePlant): NamedVertex[] =>
+    vertices.map(({ at }) => {
+      const got = influenceShares(at, segments, influence, plant);
+      return { at, bindings: 'weights' in got ? got.weights.map((w) => ({ bone: flat[w.control ?? 0], weight: w.weight })) : [] };
+    });
+
+  const wideRead = readBuild(wide);
+  const narrowRead = readBuild(narrow);
+  const ownRead = readBuild(own);
+  const spec = { ...SKIRT_INFLUENCE } as SegmentsInfluence;
+  const wideFaults = faultsOf(wideRead.vertices, wideRead.segments, spec.max, spec.radius);
+  const narrowFaults = faultsOf(narrowRead.vertices, narrowRead.segments, 2, spec.radius);
+  const ownFaults = faultsOf(ownRead.vertices, ownRead.segments, spec.max, spec.radius);
+  const narrowSpec = { ...spec, max: 2 };
+  const capPlant = faultsOf(planted(narrowRead.vertices, narrowRead.segments, narrowSpec, { ignoreCap: true }), narrowRead.segments, 2, spec.radius);
+  say(
+    'SG09_NO_VERTEX_BINDS_MORE_LINKS_THAN_MAX_AND_THE_CAP_IS_REACHED',
+    wideFaults.overCap === 0 && narrowFaults.overCap === 0 && wideFaults.atCap > 0 && narrowFaults.atCap > 0 && capPlant.overCap > 0,
+    `max ${spec.max}: ${wideFaults.overCap} over, ${wideFaults.atCap} at the cap; max 2: ${narrowFaults.overCap} over, ` +
+      `${narrowFaults.atCap} at the cap; planted (the cap ignored, max 2): ${capPlant.overCap} vertices over — the check goes red`,
+    'A20 knows nothing of the cap, and a cap never reached is a cap never tested: both builds have vertices with more links in reach than they keep',
+  );
+  const sumPlant = faultsOf(planted(wideRead.vertices, wideRead.segments, spec, { skipNormalise: true }), wideRead.segments, spec.max, spec.radius);
+  say(
+    'SG10_EVERY_VERTEX_CLOSES_AT_ONE',
+    Math.max(wideFaults.worstSum, narrowFaults.worstSum, ownFaults.worstSum) < 1e-6 && sumPlant.worstSum > 1e-3,
+    `worst |sum - 1| ${wideFaults.worstSum.toExponential(2)} (max ${spec.max}), ${narrowFaults.worstSum.toExponential(2)} (max 2), ` +
+      `${ownFaults.worstSum.toExponential(2)} (own chain); planted (the pulls unnormalised): ${sumPlant.worstSum.toFixed(4)}, past A20's 1e-3`,
+    'the strongest link closes each vertex on the 6-decimal grid, so the file holds 1 to float32, a thousand times inside the tolerance A20 allows',
+  );
+  const reachPlant = faultsOf(planted(wideRead.vertices, wideRead.segments, spec, { ignoreReach: true }), wideRead.segments, spec.max, spec.radius);
+  say(
+    'SG11_NO_LINK_AT_OR_PAST_THE_RADIUS_EVER_BINDS',
+    wideFaults.outOfReach === 0 && narrowFaults.outOfReach === 0 && ownFaults.outOfReach === 0 && wideFaults.farthest > spec.radius / 2 && reachPlant.outOfReach > 0,
+    `${wideFaults.outOfReach + narrowFaults.outOfReach + ownFaults.outOfReach} binding(s) at or past radius ${spec.radius} over the three builds; ` +
+      `the farthest kept binding is ${wideFaults.farthest.toFixed(3)} from its vertex; planted (the reach ignored): ${reachPlant.outOfReach} binding(s) past it`,
+    'the reach is the one promise a falloff without compact support cannot make, and the distance here is spine-core\'s setup pose, not the compiler\'s',
+  );
+  const acrossPlant = faultsOf(planted(ownRead.vertices, ownRead.segments, { ...spec, across: false }, { ignoreAcross: true }), ownRead.segments, spec.max, spec.radius);
+  say(
+    'SG12_ACROSS_FALSE_KEEPS_EACH_VERTEX_ON_ONE_CHAIN',
+    ownFaults.multiChain === 0 && wideFaults.multiChain > 0 && acrossPlant.multiChain > 0,
+    `across false: ${ownFaults.multiChain} vertex(es) binding two chains; across true: ${wideFaults.multiChain} do; ` +
+      `planted (across ignored): ${acrossPlant.multiChain}`,
+    'a chain that should move its own strip and pulls its neighbour\'s cloth still closes at one and gates green',
+  );
+  say(
+    'SG13_EVERY_VERTEX_LISTS_ITS_BONES_IN_THE_ORDER_BONES_NAMES_THEM',
+    wideFaults.outOfOrder === 0 && narrowFaults.outOfOrder === 0 && ownFaults.outOfOrder === 0 && wideFaults.atCap > 0,
+    `${wideFaults.outOfOrder + narrowFaults.outOfOrder + ownFaults.outOfOrder} vertex(es) out of the named order over the three builds`,
+    'one order per attachment by construction, so A52 holds without the #1407 rewrite moving a byte: the order is the spec\'s, and a reader can find it there',
+  );
+
+  // Every refusal, by name.
+  let attempt = 0;
+  const refusal = (edit: (g: Record<string, unknown>) => void): string | null => {
+    const rig = structuredClone(base);
+    edit(rig.skins.default.skirt.skirt.generator);
+    const rigPath = join(probe.dir, `refusal_${attempt}.rig.json`);
+    writeFileSync(rigPath, `${JSON.stringify(rig, null, 2)}\n`);
+    try {
+      compile({ rigPath, motionPath: probe.motionPath, outDir: join(probe.dir, `refusal_${attempt++}`), imagesDir: probe.imagesDir });
+      return null;
+    } catch (err) {
+      return err instanceof CompileError ? err.message : `NOT a CompileError: ${(err as Error).message}`;
+    }
+  };
+  const inf = (g: Record<string, unknown>): Record<string, unknown> => g.influence as Record<string, unknown>;
+  const refusals: Array<[string, string | null, string]> = [
+    ['both falloff and influence', refusal((g) => (g.falloff = { radius: 4 })), 'states both "falloff" and "influence"'],
+    ['a radius of 0', refusal((g) => (inf(g).radius = 0)), '"influence.radius" is 0'],
+    ['no radius', refusal((g) => delete inf(g).radius), '"influence.radius" is absent'],
+    ['no across', refusal((g) => delete inf(g).across), '"influence.across" is absent'],
+    ['a max of 0', refusal((g) => (inf(g).max = 0)), '"influence.max" is 0'],
+    ['a fractional max', refusal((g) => (inf(g).max = 2.5)), '"influence.max" is 2.5'],
+    ['no shape', refusal((g) => delete inf(g).shape), '"influence.shape" is absent'],
+    ['a shape that is not one', refusal((g) => (inf(g).shape = 'cubic')), '"influence.shape" is "cubic"; one of "linear", "smooth"'],
+    ['across as a string', refusal((g) => (inf(g).across = 'yes')), 'across'],
+    ['a misspelt influence key', refusal((g) => (inf(g).radiu = 4)), '"radiu"'],
+    ['a vertex no link reaches', refusal((g) => (inf(g).radius = 4)), 'is reached by no link'],
+  ];
+  const missed = refusals.filter(([, got, want]) => got === null || !got.includes(want));
+  say(
+    'SG14_EVERY_WAY_TO_ASK_FOR_AN_INFLUENCE_THAT_CANNOT_EXIST_IS_REFUSED_BY_NAME',
+    missed.length === 0,
+    missed.length === 0
+      ? refusals.map(([label]) => label).join('; ')
+      : missed.map(([label, got, want]) => `${label}: expected "${want}", got ${got === null ? 'a clean compile' : got}`).join(' | '),
+    'no field of the block has a default, so each missing one is a refusal naming it — and a vertex the reach leaves bare is refused rather than handed the nearest link, a weight nobody decided',
+  );
 }
 
 // ---------------------------------------------------------------------------

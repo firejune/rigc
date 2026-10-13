@@ -458,6 +458,11 @@ export function meshInfluenceNote(m: CompileResult['meshes'][number]): string {
     `\n        influence  max ${inf.maxBones} bone(s) per vertex, mean ${inf.meanBones.toFixed(2)}, ` +
     `${inf.singleBone} of ${m.vertices} vertices (${single.toFixed(2)}%) on a single bone` +
     (unbound.length ? `; named and bound by no vertex: ${unbound.join(', ')}` : '') +
+    (inf.reach === undefined
+      ? ''
+      : `\n        reach      radius ${inf.reach.radius}px, ${inf.reach.shape}, ` +
+        `${inf.reach.across ? 'across entries' : 'nearest entry only'}, max ${inf.reach.max}: ` +
+        `${inf.reach.capped} of ${m.vertices} vertices had more links in reach than max (widest ${inf.reach.widest})`) +
     `\n        lattice    cell ${inf.cell}px, ${inf.cols}x${inf.rows} cells, ${inf.artCells} with art, ${inf.keptCells} kept` +
     (inf.islands > 1 || joined > 0
       ? ` (${inf.islands} island(s) joined into one outline, ${joined} cell(s) added that hold no art)`

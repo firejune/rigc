@@ -1679,6 +1679,20 @@ export interface CompileResult {
       artCells: number;
       keptCells: number;
       islands: number;
+      /**
+       * Present only when the mesh is weighted by an `influence` block (issue
+       * #1415): the block as stated, how many vertices had more links in reach
+       * than `max` — the vertices the cap dropped a link from — and the most
+       * links in reach at any one vertex, which is the `max` that would drop none.
+       */
+      reach?: {
+        radius: number;
+        across: boolean;
+        max: number;
+        shape: 'linear' | 'smooth';
+        capped: number;
+        widest: number;
+      };
     };
     /**
      * What a depth map put on this mesh's vertices, when one was named.

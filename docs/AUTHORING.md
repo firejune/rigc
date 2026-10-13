@@ -3119,13 +3119,15 @@ beside it say how a distance becomes a share.
 | --- | --- |
 | `cell` | **required.** The lattice's square, in the part's pixels — a whole number of at least 1. No default: it is a length on this art, and how fine a mesh the part needs is not something rigc can read off it |
 | `bones` | **required, at least one entry.** Which segments may pull the part. An entry is one of three forms, below |
-| `falloff` | **required**, because `radius` is: `{ "power"?, "radius", "maxBones"?, "minWeight"? }` |
+| `falloff` | **required unless `influence` is stated**, because `radius` is: `{ "power"?, "radius", "maxBones"?, "minWeight"? }`. Stated beside `influence`, refused — the two are two models of one share |
 | `radius` | **required.** Added to every distance before the power is taken, in the part's pixels, so a vertex ON a segment has a finite pull and the blend between two segments is about this wide. Positive |
 | `power` | the exponent a pull falls off by: `w = 1 / (d + radius)^power`. Positive. Default `2` |
 | `maxBones` | at most this many bones pull one vertex — the strongest ones. A whole number of at least 1. Default `4` |
 | `minWeight` | a share under this is dropped, and the kept shares normalised again. In `0.000001`..`1`, 1 excluded. Default `0.03` |
 | `alpha` | the alpha at or above which a pixel counts as art, `1`..`255`. Default `1` — `contour`'s own |
 | `anchor` | where the **slot bone** sits in the part's pixels, `[x, y]`, y down. Default the window's centre — the placement every generator on this route uses (the ⭐ above). State it when the art is not drawn centred on its bone: unlike a pinned generator, this one's weights depend on where the art is relative to the bones |
+
+| `influence` | instead of `falloff`: a pull that **reaches zero** at its own `radius` — `{ "radius", "across", "max", "shape" }`, every field required. Below |
 
 **The three forms of a `bones` entry**, each resolved by name against the rig:
 
@@ -3153,6 +3155,70 @@ the image size. Then, per vertex, `1 / (d + radius)^power` to the nearest point
 of each segment, the strongest `maxBones` kept and normalised, any share under
 `minWeight` dropped, the rest normalised again — so every vertex closes at 1 by
 construction. The emitted mesh is a weighted one, bound by name.
+
+##### `influence` — a vertex follows every link near it (cloth)
+
+`falloff`'s pull, `1 / (d + radius)^power`, is positive at **every** distance: a
+wider blend needs a larger `radius`, which flattens the blend everywhere at once,
+and a blend only ends where `minWeight` drops a share. A cloth surface wants the
+other model — each vertex blends the springs of the chains around it, so the
+sheet bends as one surface rather than as strips — and that needs a pull that
+falls to **exactly zero** at a stated distance. `influence` is that model.
+
+```json
+"generator": {
+  "kind": "segments",
+  "cell": 8,
+  "bones": [["skirt_0_0", "skirt_0_1", "skirt_0_2"], ["skirt_1_0", "skirt_1_1", "skirt_1_2"]],
+  "influence": { "radius": 40, "across": true, "max": 6, "shape": "smooth" }
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `radius` | **required.** How far a link reaches, in the part's pixels (on this route, the skeleton's units): a link whose segment is `radius` or farther from a vertex never pulls it. Positive. No default — a length on this art |
+| `across` | **required.** `true`: every link of every `bones` entry within `radius` pulls. `false`: only the links of **one** entry — the entry holding the link nearest the vertex, the earlier entry on a tie — so a chain moves its own strip and nothing across. No default: whether a chain may pull its neighbour's cloth is the decision |
+| `max` | **required.** At most this many links pull one vertex — the strongest; equal pulls keep the order `bones` first names their bones. A whole number of at least 1 |
+| `shape` | **required.** How a pull falls from 1 at `d = 0` to 0 at `d = radius`, with `x = d / radius`: `"linear"` is `1 - x`; `"smooth"` is `1 - x²(3 - 2x)`, which also arrives at both ends with zero slope, so a link enters and leaves a vertex's blend without a crease |
+
+Per vertex, in order: `d` is the distance to each link's **segment** — its
+nearest point, the reading `falloff` takes — at the setup pose; with `across:
+false` only the nearest entry's links stay; each link with `d < radius` pulls
+`shape(d / radius)` (a bone two segments name keeps the nearer, and a link whose
+pull is not above 0 in doubles — a hair inside the reach — pulls nothing); the
+strongest `max` are kept and normalised; a share the 6-decimal grid would write
+as 0 is dropped and the rest normalised again; the strongest closes the vertex
+at exactly 1. **The distance is to the segment, not to the bone's origin**,
+because a vertex on the middle of a link *is* on that link: an origin distance
+would put it half a link away, and hand the joint at the link's tip to the child
+whose origin sits there.
+
+🔸 **One bone order by construction.** Every vertex lists its bones in the order
+`bones` names them, so the attachment has one order and
+`A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER` holds without the compiler's
+ascending rewrite (§5.2) moving a byte — the order in the file is the spec's.
+
+`build` prints a `reach` line under the `influence` line: the block as stated,
+how many vertices had **more links in reach than `max`** — the vertices the cap
+dropped a link from — and the most links in reach at one vertex (`widest`),
+which is the `max` that would drop none:
+
+```
+        influence  max 6 bone(s) per vertex, mean 4.87, 0 of 450 vertices (0.00%) on a single bone
+        reach      radius 40px, smooth, across entries, max 6: 146 of 450 vertices had more links in reach than max (widest 10)
+```
+
+⚠️ **What a tight cap costs, measured.** On the selftest's `skirt_probe`
+(`fixtures/public.ts`: six chains of five links, a physics constraint on every
+link, the hip swayed) with `radius: 40`, `rotate` physics on and `render --folds`
+at 30 fps, `max: 2` turned 106 of the 816 triangles over on its worst frame and
+`max: 6` turned 4; `max: 6` with `radius: 20` (no vertex capped) turned 105, and
+`across: false` 91. With the physics removed the same sway folds none at either
+cap. So on that piece the folds followed how many neighbouring links a vertex
+blends — a narrow reach and a tight cap over a wide reach both fold — and a
+wide reach with a cap that drops few links folded least. One piece and one
+sway: it says what to look at with `render --folds` on your own, not what `max`
+your cloth needs.
 
 `build` and `explain` print what it measured, under the mesh's line. This is
 the selftest's own `segments_probe` (`fixtures/public.ts` in the repository) —
@@ -3199,6 +3265,9 @@ rows.
 | a chain link at its next link's origin | `… the two bones share their setup origin (…), so the link has no length and no direction to weight along` |
 | an empty chain, a span with a malformed end, an entry of none of the three forms | `is an empty chain`; `both ends are [x, y] in the part's pixels`; `an entry is a bone name, a chain as a list of bone names, or { "bone", "from", "to" }` |
 | no `falloff`, a `radius` or `power` at or below 0, a malformed `anchor`, a `cell` under 1, no `image` | each named by its field — `radius` has no default because it is a length on this art |
+| both `falloff` and `influence` | `the "segments" generator states both "falloff" and "influence" … a mesh is weighted by one of them: remove the other` |
+| an `influence` field absent or out of range — `radius` at or below 0, `across` not a boolean, `max` not a whole number of at least 1, `shape` not `"linear"` or `"smooth"` | each named with the value found and the one required: `"influence.max" is 0; it is how many links may pull one vertex …`, `"influence.shape" is "cubic"; one of "linear", "smooth" …` |
+| a vertex no link reaches under `influence` | `vertex 0, at (0, 0) in the part's pixels, is reached by no link — the nearest is "skirt_0_0" at 17.8885, and "influence.radius" is 4` — **refused, not handed the nearest link**: raise `radius` over that distance, or name a segment nearer that part of the art |
 | a part on a packed page that declares a `scale:` | refused: `cell` and `radius` are the part's pixels and this generator does not convert them to a page's texels. Build from the loose part, or a pack at scale 1 |
 
 #### 3.4.8 A skin that switches bones and constraints on

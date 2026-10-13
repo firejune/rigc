@@ -8,7 +8,7 @@
  * ships was a gate a fresh clone could not run — the tool's central claim,
  * demonstrable only by the one person who already had the fixtures.
  *
- * So the fixtures are generated. Four of them, and between them they carry every
+ * So the fixtures are generated. Five of them, and between them they carry every
  * structure the assertions have an opinion about:
  *
  *   - `overlay_probe`    — a base plate with alpha overlays pinned on top, one of
@@ -31,6 +31,10 @@
  *                          a `segments` generator over a plate of two islands,
  *                          under two bone chains, so the island join and the
  *                          distance weighting both run on every build of it.
+ *   - `skirt_probe`      — also with no manifest: one plate under six chains of
+ *                          five links, every link on a physics constraint, the
+ *                          mesh weighted by an `influence` block (issue #1415),
+ *                          and a hip sway for the physics to answer.
  *
  * 🚫 **None of this is art.** Every plate is a checkerboard with its own name
  * burned into it by `tools/plate.ts`, and no claim about seams, blending or style
@@ -746,7 +750,7 @@ export const SEGMENTS_PLATE = { width: 96, height: 64, rows: [8, 56], islands: [
 
 /**
  * One plate of TWO islands, meshed by the `segments` generator over two bone
- * chains — the fourth shape, and the only one with no manifest behind it.
+ * chains — the fourth shape, and the first with no manifest behind it.
  *
  * ⭐ Two islands because that is the case the generator exists to handle: a
  * layer the alpha splits in two is still one attachment, and the lattice has to
@@ -848,4 +852,123 @@ export function segmentsFixture(): SpecOnlyFixture {
   });
 
   return { rig: 'segments_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
+}
+
+// ---------------------------------------------------------------------------
+// skirt_probe (issue #1415)
+// ---------------------------------------------------------------------------
+
+/**
+ * The skirt probe's plate and chains: the plate's size, the chain count, the
+ * links per chain and each link's length, the first chain's column and the
+ * spacing between chains, all in the part's pixels.
+ */
+export const SKIRT_PLATE = { width: 192, height: 136, chains: 6, links: 5, link: 24, firstX: 16, spacing: 32, top: 8 } as const;
+
+/** The skirt's `influence` block at rest: the reach covers one neighbouring chain each side, and the cap is the wide one. */
+export const SKIRT_INFLUENCE = { radius: 40, across: true, max: 6, shape: 'smooth' } as const;
+
+/**
+ * A skirt: one opaque plate under SIX chains of FIVE links, every link on a
+ * physics constraint, swayed from the hip — the piece issue #1415 measures a
+ * wide `influence` against a narrow one on.
+ *
+ * ⭐ The chains hang straight down from the hip, `spacing` apart, so a vertex
+ * between two chains is the same distance from both and the reach decides
+ * whether it blends them: at `radius` 40 against a spacing of 32 a vertex on a
+ * chain reaches its neighbours' links and no further, which is what makes the
+ * cap a real choice — a vertex has more links in reach than a narrow `max`
+ * keeps. The sway turns and slides the hip, so the springs lag by how far
+ * each root swings, and adjacent chains move apart: the motion folds measure.
+ *
+ * Every link has a `length`, because a physics constraint on `rotate` steps
+ * off its tip (A23), and the last link's is what gives its chain a segment.
+ */
+export function skirtFixture(): SpecOnlyFixture {
+  const dir = makeDir('skirt_probe');
+  const imagesDir = join(dir, 'parts');
+  const { width, height, chains, links, link, firstX, spacing, top } = SKIRT_PLATE;
+  writePlate(join(imagesDir, 'skirt.png'), width, height, 'skirt');
+
+  const anchor: [number, number] = [width / 2, 0];
+  const bones: Array<Record<string, unknown>> = [{ name: 'root' }, { name: 'hip', parent: 'root', x: 0, y: 240 }];
+  const chainNames: string[][] = [];
+  const physics: Record<string, Record<string, unknown>> = {};
+  for (let c = 0; c < chains; c++) {
+    const names: string[] = [];
+    for (let k = 0; k < links; k++) {
+      const name = `skirt_${c}_${k}`;
+      names.push(name);
+      bones.push(
+        k === 0
+          ? { name, parent: 'hip', x: firstX + c * spacing - anchor[0], y: -(top - anchor[1]), rotation: -90, length: link }
+          : { name, parent: names[k - 1], x: link, y: 0, length: link },
+      );
+      physics[`${name}_swing`] = { bone: name, rotate: 1, inertia: 0.5, strength: 60, damping: 0.85, mass: 1, mix: 1 };
+    }
+    chainNames.push(names);
+  }
+
+  const rigPath = join(dir, 'skirt_probe.rig.json');
+  writeJson(rigPath, {
+    spec: 'rigc-rig/1',
+    name: 'skirt_probe',
+    images: 'parts',
+    skeleton: { width: 320, height: 320 },
+    invariants: { meshSlots: 1, meshTriangles: 1000 },
+    bones,
+    slots: [{ name: 'skirt', bone: 'hip', attachment: 'skirt' }],
+    skins: {
+      default: {
+        skirt: {
+          skirt: {
+            type: 'mesh',
+            image: 'skirt.png',
+            generator: { kind: 'segments', cell: 8, bones: chainNames, influence: { ...SKIRT_INFLUENCE }, anchor },
+          },
+        },
+      },
+    },
+  });
+
+  const motionPath = join(dir, 'skirt_probe.motion.json');
+  writeJson(motionPath, {
+    spec: 'rigc-motion/1',
+    archetype: 'skirt_probe',
+    cut: 'skirt_probe',
+    easings: {},
+    physics,
+    animations: {
+      sway: {
+        duration: 2,
+        loop: true,
+        tracks: [
+          {
+            bone: 'hip',
+            property: 'rotate',
+            keys: [
+              { t: 0, v: [0] },
+              { t: 0.5, v: [12] },
+              { t: 1, v: [0] },
+              { t: 1.5, v: [-12] },
+              { t: 2, v: [0] },
+            ],
+          },
+          {
+            bone: 'hip',
+            property: 'translate',
+            keys: [
+              { t: 0, v: [0, 0] },
+              { t: 0.5, v: [30, 0] },
+              { t: 1, v: [0, 0] },
+              { t: 1.5, v: [-30, 0] },
+              { t: 2, v: [0, 0] },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  return { rig: 'skirt_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
 }

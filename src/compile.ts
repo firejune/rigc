@@ -63,6 +63,8 @@ import {
   type RigEvent,
   type RigLinkedMeshAttachment,
   type RigMeshAttachment,
+  type RigSegmentsFalloff,
+  RIG_INFLUENCE_SHAPES,
   type RigMeshBinding,
   type RigPathAttachment,
   type RigRegionAttachment,
@@ -87,9 +89,12 @@ import {
   ringControlAngles,
   buildSegmentsLattice,
   segmentShares,
+  influenceShares,
   traceOutline,
   type MeshBoneRef,
-  type WorldSegment,
+  type EntrySegment,
+  type SegmentsInfluence,
+  type SegmentsFalloff,
   type MeshFitReport,
   type MeshGeometry,
   type MeshVertexWeight,
@@ -6502,6 +6507,95 @@ function finitePair(v: unknown): [number, number] | null {
     : null;
 }
 
+/** The `falloff` block's four numbers, each refused by name when it cannot be one. */
+function segmentsFalloffOf(f: RigSegmentsFalloff, where: string): SegmentsFalloff {
+  if (typeof f.radius !== 'number' || !Number.isFinite(f.radius) || !(f.radius > 0)) {
+    throw new CompileError(
+      `${where}: "falloff.radius" is ${JSON.stringify(f.radius)}; it is added to every distance before the power is ` +
+        "taken, a positive number of the part's pixels — at 0 a vertex on a segment would carry an infinite pull",
+    );
+  }
+  const power = f.power ?? SEGMENTS_DEFAULTS.power;
+  if (typeof power !== 'number' || !Number.isFinite(power) || !(power > 0)) {
+    throw new CompileError(
+      `${where}: "falloff.power" is ${JSON.stringify(power)}; it is the exponent a pull falls off with distance by, ` +
+        'a positive number — at 0 or below the far segment pulls as hard as the near one, or harder',
+    );
+  }
+  const maxBones = f.maxBones ?? SEGMENTS_DEFAULTS.maxBones;
+  if (typeof maxBones !== 'number' || !Number.isInteger(maxBones) || maxBones < 1) {
+    throw new CompileError(
+      `${where}: "falloff.maxBones" is ${JSON.stringify(maxBones)}; it is how many bones may pull one vertex, a ` +
+        'whole number of at least 1',
+    );
+  }
+  const minWeight = f.minWeight ?? SEGMENTS_DEFAULTS.minWeight;
+  if (typeof minWeight !== 'number' || !Number.isFinite(minWeight) || minWeight < SEGMENTS_WEIGHT_STEP || minWeight >= 1) {
+    throw new CompileError(
+      `${where}: "falloff.minWeight" is ${JSON.stringify(minWeight)}; it is the share under which a bone's pull ` +
+        `is dropped, so it lies in ${SEGMENTS_WEIGHT_STEP}..1 with 1 excluded — at 1 or above every share is dropped, ` +
+        `and under ${SEGMENTS_WEIGHT_STEP}, one step of the 6-decimal grid weights are written on, a kept binding ` +
+        'could be written as 0',
+    );
+  }
+  return { power, radius: f.radius, maxBones, minWeight };
+}
+
+/**
+ * The `influence` block's four fields (issue #1415), each refused by name: none
+ * has a default, because the reach and the cap are judgements about this
+ * cloth and the shape decides how a link enters a vertex's blend. Stated
+ * beside `falloff` it is refused too — the two are two models of one share.
+ */
+function segmentsInfluenceOf(
+  generator: Extract<NonNullable<RigMeshAttachment['generator']>, { kind: 'segments' }>,
+  where: string,
+): SegmentsInfluence {
+  const spec: unknown = generator.influence;
+  if (generator.falloff !== undefined) {
+    throw new CompileError(
+      `${where}: the "segments" generator states both "falloff" and "influence". Both turn a distance into a ` +
+        'share — "falloff" as 1 / (d + radius)^power over every segment, "influence" as a pull that reaches zero at ' +
+        'its "radius" — and a mesh is weighted by one of them: remove the other',
+    );
+  }
+  if (typeof spec !== 'object' || spec === null || Array.isArray(spec)) {
+    throw new CompileError(
+      `${where}: "influence" is ${JSON.stringify(spec)}; it is { "radius", "across", "max", "shape" }, every one required`,
+    );
+  }
+  const i = spec as Partial<Record<keyof SegmentsInfluence, unknown>>;
+  if (typeof i.radius !== 'number' || !Number.isFinite(i.radius) || !(i.radius > 0)) {
+    throw new CompileError(
+      `${where}: "influence.radius" is ${JSON.stringify(i.radius) ?? 'absent'}; it is how far a link reaches, in ` +
+        "the part's pixels, a positive number with no default — a length on this art: a link whose segment is that " +
+        'far from a vertex or farther never pulls it',
+    );
+  }
+  if (typeof i.across !== 'boolean') {
+    throw new CompileError(
+      `${where}: "influence.across" is ${JSON.stringify(i.across) ?? 'absent'}; it is true (every link within ` +
+        '"radius" pulls, across the entries of "bones") or false (only the links of the entry nearest the vertex), ' +
+        "with no default — whether a chain may pull its neighbour's cloth is the decision this field is",
+    );
+  }
+  if (typeof i.max !== 'number' || !Number.isInteger(i.max) || i.max < 1) {
+    throw new CompileError(
+      `${where}: "influence.max" is ${JSON.stringify(i.max) ?? 'absent'}; it is how many links may pull one vertex, ` +
+        'the strongest kept, a whole number of at least 1 with no default',
+    );
+  }
+  const shape = RIG_INFLUENCE_SHAPES.find((name) => name === i.shape);
+  if (shape === undefined) {
+    throw new CompileError(
+      `${where}: "influence.shape" is ${JSON.stringify(i.shape) ?? 'absent'}; one of ` +
+        `${RIG_INFLUENCE_SHAPES.map((name) => JSON.stringify(name)).join(', ')} — how a pull falls from 1 on a link ` +
+        'to 0 at "radius", with no default: "linear" is 1 - d/radius, "smooth" arrives at both ends with zero slope',
+    );
+  }
+  return { radius: i.radius, across: i.across, max: i.max, shape };
+}
+
 /**
  * Build a `segments` mesh: a lattice over the part's alpha, weighted by distance
  * to the bone segments `bones` names.
@@ -6550,45 +6644,18 @@ function buildSegmentsAttachment(
     );
   }
 
-  // -- the falloff -----------------------------------------------------------
+  // -- the influence (issue #1415), or else the falloff ----------------------
+  const influence = generator.influence === undefined ? null : segmentsInfluenceOf(generator, where);
   const falloffSpec: unknown = generator.falloff;
-  if (typeof falloffSpec !== 'object' || falloffSpec === null || Array.isArray(falloffSpec)) {
+  if (influence === null && (typeof falloffSpec !== 'object' || falloffSpec === null || Array.isArray(falloffSpec))) {
     throw new CompileError(
       `${where}: the "segments" generator states no "falloff" block. Its "radius" — added to every distance, in ` +
         "the part's pixels — has no default, because it is a length on this art: " +
-        '"falloff": { "radius": <pixels> } is the least it takes',
+        '"falloff": { "radius": <pixels> } is the least it takes (or an "influence" block, whose pull reaches zero ' +
+        'at its own "radius")',
     );
   }
-  const f = generator.falloff;
-  if (typeof f.radius !== 'number' || !Number.isFinite(f.radius) || !(f.radius > 0)) {
-    throw new CompileError(
-      `${where}: "falloff.radius" is ${JSON.stringify(f.radius)}; it is added to every distance before the power is ` +
-        "taken, a positive number of the part's pixels — at 0 a vertex on a segment would carry an infinite pull",
-    );
-  }
-  const power = f.power ?? SEGMENTS_DEFAULTS.power;
-  if (typeof power !== 'number' || !Number.isFinite(power) || !(power > 0)) {
-    throw new CompileError(
-      `${where}: "falloff.power" is ${JSON.stringify(power)}; it is the exponent a pull falls off with distance by, ` +
-        'a positive number — at 0 or below the far segment pulls as hard as the near one, or harder',
-    );
-  }
-  const maxBones = f.maxBones ?? SEGMENTS_DEFAULTS.maxBones;
-  if (typeof maxBones !== 'number' || !Number.isInteger(maxBones) || maxBones < 1) {
-    throw new CompileError(
-      `${where}: "falloff.maxBones" is ${JSON.stringify(maxBones)}; it is how many bones may pull one vertex, a ` +
-        'whole number of at least 1',
-    );
-  }
-  const minWeight = f.minWeight ?? SEGMENTS_DEFAULTS.minWeight;
-  if (typeof minWeight !== 'number' || !Number.isFinite(minWeight) || minWeight < SEGMENTS_WEIGHT_STEP || minWeight >= 1) {
-    throw new CompileError(
-      `${where}: "falloff.minWeight" is ${JSON.stringify(minWeight)}; it is the share under which a bone's pull ` +
-        `is dropped, so it lies in ${SEGMENTS_WEIGHT_STEP}..1 with 1 excluded — at 1 or above every share is dropped, ` +
-        `and under ${SEGMENTS_WEIGHT_STEP}, one step of the 6-decimal grid weights are written on, a kept binding ` +
-        'could be written as 0',
-    );
-  }
+  const falloff = influence === null ? segmentsFalloffOf(generator.falloff!, where) : null;
   const threshold = generator.alpha ?? SEGMENTS_DEFAULTS.alpha;
 
   // -- the lattice -----------------------------------------------------------
@@ -6650,7 +6717,7 @@ function buildSegmentsAttachment(
   const parentOf = new Map(ctx.bones.map((b) => [b.name, b.parent ?? null]));
   const named: string[] = [];
   const refs: MeshBoneRef[] = [];
-  const segments: WorldSegment[] = [];
+  const segments: EntrySegment[] = [];
   const boneOf = (name: unknown, at: string): { index: number; transform: BoneTransform } => {
     if (typeof name !== 'string' || !parentOf.has(name)) {
       throw new CompileError(`${where}: ${at} names mesh bone ${JSON.stringify(name)}, which is not in the rig's bone list`);
@@ -6680,7 +6747,7 @@ function buildSegmentsAttachment(
     const at = `"bones"[${i}]`;
     if (typeof entry === 'string') {
       const { index, transform } = boneOf(entry, at);
-      segments.push({ bone: index, a: [transform.worldX, transform.worldY], b: tipOf(entry, transform, at, false) });
+      segments.push({ bone: index, entry: i, a: [transform.worldX, transform.worldY], b: tipOf(entry, transform, at, false) });
       return;
     }
     if (Array.isArray(entry)) {
@@ -6692,7 +6759,7 @@ function buildSegmentsAttachment(
         const name = link.name as string;
         const origin: [number, number] = [link.transform.worldX, link.transform.worldY];
         if (k === links.length - 1) {
-          segments.push({ bone: link.index, a: origin, b: tipOf(name, link.transform, `${at}[${k}]`, true) });
+          segments.push({ bone: link.index, entry: i, a: origin, b: tipOf(name, link.transform, `${at}[${k}]`, true) });
           return;
         }
         const next = links[k + 1];
@@ -6714,7 +6781,7 @@ function buildSegmentsAttachment(
               `"${nextName}" its own position, or name "${name}" alone with a "length"`,
           );
         }
-        segments.push({ bone: link.index, a: origin, b });
+        segments.push({ bone: link.index, entry: i, a: origin, b });
       });
       return;
     }
@@ -6729,7 +6796,7 @@ function buildSegmentsAttachment(
             `${JSON.stringify(from === null ? span.from : span.to)}; both ends are [x, y] in the part's pixels, y down`,
         );
       }
-      segments.push({ bone: index, a: measuredAt(from[0], from[1]), b: measuredAt(to[0], to[1]) });
+      segments.push({ bone: index, entry: i, a: measuredAt(from[0], from[1]), b: measuredAt(to[0], to[1]) });
       return;
     }
     throw new CompileError(
@@ -6739,10 +6806,27 @@ function buildSegmentsAttachment(
   });
 
   // -- the weights -----------------------------------------------------------
-  const falloff = { power, radius: f.radius, maxBones, minWeight };
+  let capped = 0;
+  let widest = 0;
   const weights: MeshVertexWeight[][] = lattice.points.map(([px, py], v) => {
-    const got = segmentShares(measuredAt(px, py), segments, falloff);
+    if (influence !== null) {
+      const reached = influenceShares(measuredAt(px, py), segments, influence);
+      if ('weights' in reached) {
+        if (reached.inReach > influence.max) capped++;
+        widest = Math.max(widest, reached.inReach);
+        return reached.weights;
+      }
+      throw new CompileError(
+        `${where}: vertex ${v}, at (${px}, ${py}) in the part's pixels, is reached by no link — the nearest is ` +
+          `"${named[reached.nearest.bone]}" at ${reached.nearest.distance.toFixed(4)}, and "influence.radius" is ` +
+          `${influence.radius}${influence.across ? '' : ' (with "across": false, the nearest entry\'s links only)'}. ` +
+          'A vertex needs a link, and rigc will not hand it one the reach does not: raise "radius" over that distance, ' +
+          'or name a segment nearer this part of the art',
+      );
+    }
+    const got = segmentShares(measuredAt(px, py), segments, falloff!);
     if ('weights' in got) return got.weights;
+    const { maxBones, minWeight } = falloff!;
     throw new CompileError(
       `${where}: vertex ${v}, at (${px}, ${py}) in the part's pixels, keeps no bone — the ${got.dropped.length} ` +
         `strongest pull(s) share it as ${got.dropped.map((d) => `"${named[d.bone]}" ${d.share.toFixed(4)}`).join(', ')}, ` +
@@ -6803,6 +6887,7 @@ function buildSegmentsAttachment(
       artCells: lattice.report.artCells,
       keptCells: lattice.report.keptCells,
       islands: lattice.report.islands,
+      ...(influence === null ? {} : { reach: { ...influence, capped, widest } }),
     },
   });
   return {
