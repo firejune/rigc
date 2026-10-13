@@ -24,14 +24,15 @@
  * (`documentRig`) and the declared durations it states (`documentDurations`,
  * since cut 4c-3: A09 reads them) — and the model side over the document with
  * the same directory, reading the rig info and the durations off the document
- * itself (issue #1054), under `spine` and again under `rig-play` (A11 is a
- * renderer rule, and `spine` never runs it; the archetype rules A21 and A28
- * likewise). For each moved assertion and
+ * itself (issue #1054), under `spine` and again under `rig-play` (the
+ * renderer rules — A13 and A19 among them — and the archetype rules A21 and
+ * A28 run only under `rig-play`, and `spine` never runs them). For each moved
+ * assertion and
  * profile the row prints `IDENTICAL` or `DIFFERING` with both sides' lines.
  *
  * Beside the lines, the one fact a line cannot show: **the order** the skins'
- * entries are walked in (the region attachments' names and sizes and the
- * clipping count), read off both suppliers (`runtimeFacts`, `modelSkinEntries`)
+ * entries are walked in (the region attachments' names and sizes), read off
+ * both suppliers (`runtimeFacts`, `modelSkinEntries`)
  * and compared whole — an A03 that fails twice prints its two lines in that
  * order, and a rig no line fails on still has one. And since cut 4c-1, every
  * fact family that cut added, read off both suppliers and spelled whole
@@ -216,9 +217,9 @@ export function codeLines(report: ValidateReport | ModelReport, code: string): s
   return reportLines(report as ValidateReport).filter((line) => lineCode(line) === code);
 }
 
-/** A walk of the skins as one string: every region's name and size in order, then the clipping count. */
+/** A walk of the skins as one string: every region's name and size in order. */
 export function walkSpelling(facts: SkinEntryFacts): string {
-  return JSON.stringify([facts.regionAttachments.map((r) => [r.name, r.width, r.height]), facts.clippingCount]);
+  return JSON.stringify(facts.regionAttachments.map((r) => [r.name, r.width, r.height]));
 }
 
 /**

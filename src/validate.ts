@@ -84,7 +84,6 @@ import type { SkinEntryFacts } from './assertions/facts/skin_entries.ts';
 import type { AtlasPageFacts } from './assertions/facts/atlas_pages.ts';
 import type { SlotColourFacts, SlotTimelines } from './assertions/facts/slot_colour.ts';
 import { a03RegionWidthHeightFinite } from './assertions/bodies/a03.ts';
-import { a11NoClippingAttachments } from './assertions/bodies/a11.ts';
 import { a17AtlasPageFilesExist } from './assertions/bodies/a17.ts';
 import { a18DeterministicEmit } from './assertions/bodies/a18.ts';
 import { a45SeparableColorTimelinesOwnTheirChannelsAndPoseAsWritten } from './assertions/bodies/a45.ts';
@@ -108,7 +107,6 @@ import { a50StageBoxIsTheStage } from './assertions/bodies/a50.ts';
 import { a51BonesLieAlongTheirDeclaredAxis } from './assertions/bodies/a51.ts';
 import { inactiveAtSetup, type SetupWorldFacts } from './assertions/facts/setup_world.ts';
 import { SKIP_NO_STAGE_BOX, type StageBoxFacts } from './assertions/facts/stage_box.ts';
-import { a27RegionNameMatchesPageFilename } from './assertions/bodies/a27.ts';
 import type { MeshEntry as MeshAttachmentEntry, MeshFacts } from './assertions/facts/mesh_attachments.ts';
 import type { ClipEnd, PolygonEntry, PolygonFacts } from './assertions/facts/vertex_polygons.ts';
 import type { LinkEntry, LinkFacts } from './assertions/facts/linked_meshes.ts';
@@ -846,14 +844,12 @@ export function timelineAddCells(data: ReturnType<SkeletonJson['readSkeletonData
  */
 export function spineSkinEntries(data: ReturnType<SkeletonJson['readSkeletonData']>): SkinEntryFacts {
   const regionAttachments: RegionAttachment[] = [];
-  let clippingCount = 0;
   for (const skin of data.skins) {
     for (const entry of skin.getAttachments()) {
       if (entry.attachment instanceof RegionAttachment) regionAttachments.push(entry.attachment);
-      else if (entry.attachment instanceof ClippingAttachment) clippingCount++;
     }
   }
-  return { regionAttachments, clippingCount };
+  return { regionAttachments };
 }
 
 /**
@@ -2668,8 +2664,9 @@ export function validate(input: ValidateInput): ValidateReport {
     // `./assertions/bodies/a33.ts` (issue #1025, cut 4c-2).
     check('A33_VERTEX_ATTACHMENT_GEOMETRY', () => a33VertexAttachmentGeometry(verdicts, polygonFacts()));
 
-    // --- A11 / A13 / A14: renderer + canvas budgets ----
-    check('A11_NO_CLIPPING_ATTACHMENTS', () => a11NoClippingAttachments(verdicts, skinEntries));
+    // --- A13 / A14: canvas budgets ----
+    // A11 stood here until issue #1404 retired it: the player `rig-play` names
+    // draws a clipping attachment in both of its modes.
     // 📐 The two numbers come from the rig spec's `invariants`, never from here.
     // A mesh budget is one consumer's frame time written down — the editor's own
     // example projects ship meshes many times denser and they are valid — so a
@@ -3386,15 +3383,11 @@ export function validate(input: ValidateInput): ValidateReport {
   // what a `drawOrder` key's offsets are counted against.
   check('A26_SLOT_DRAW_ORDER', () => a26SlotDrawOrder(verdicts, rawSkeletonRoster(raw), input));
 
-  // --- A27: region name == the PNG's basename ------------------------------
-  //
-  // The join key is a chain of three names — attachment -> atlas region -> file —
-  // and A08 only holds the first link. The second was held by convention alone:
-  // an atlas could declare page `../plates/02_overlay.png` with a region
-  // called anything at all, every attachment could agree with it, and the rig
-  // would load with the wrong pixels under the right name. One part per page (A06
-  // forces it) makes the check exact.
-  check('A27_REGION_NAME_MATCHES_PAGE_FILENAME', () => a27RegionNameMatchesPageFilename(verdicts, { atlas }));
+  // A27 stood here until issue #1404 retired it. It held a page's only region
+  // to the page's file basename, a join no reader makes: spine-core and the
+  // player `rig-play` names both take a region off the page record the atlas
+  // states it under, and the player draws a region on a page named for
+  // something else in both of its modes.
 
   // --- A28: a ribbon's rows share their weights ----------------------------
   //

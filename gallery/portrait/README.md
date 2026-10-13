@@ -526,11 +526,12 @@ because changing what `gaze` looks like is an art decision this example has not
 re-made and not a transcription it was forced into — which is exactly the
 distinction [FINDINGS.md](FINDINGS.md) argued an instrument would buy.
 
-There is no `clipping` attachment holding the iris inside the white, and there
-could not be one: Spine has them ([§3.4](../../docs/AUTHORING.md)) and they
-would lift the 7-unit ceiling, but `A11_NO_CLIPPING_ATTACHMENTS` refuses one
-under `--profile rig-play`, so an example carrying one would build on only one
-of the two profiles the gallery bar asks for.
+There is no `clipping` attachment holding the iris inside the white. Spine has
+them ([§3.4](../../docs/AUTHORING.md)) and they would lift the 7-unit ceiling,
+but when this example was drawn the rule A11 refused one under `--profile
+rig-play`, so an example carrying one would have built on only one of the two
+profiles the gallery bar asks for. Issue #1404 retired A11 — the player that
+profile names draws clips in both of its modes — and the example was not redrawn.
 
 ---
 
@@ -567,14 +568,14 @@ instead of being kept by hand
 
 ```
 PROF  A30_STROKE_WITHIN_CAP_CONTAINMENT: archetype rule, not in profile "spine"
-..    51 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 16 not in profile "spine"
+..    49 assertions: 18 measured (18 passed, 0 failed), 17 skipped, 14 not in profile "spine"
 ```
 
 `rigc build --profile rig-play`:
 
 ```
 SKIP  A30_STROKE_WITHIN_CAP_CONTAINMENT: the manifest declares no `stroke.cap_containment_ceiling`, so this cut has no measured containment ceiling
-..    51 assertions: 27 measured (27 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
+..    49 assertions: 25 measured (25 passed, 0 failed), 24 skipped, 0 not in profile "rig-play"
 ```
 
 ---

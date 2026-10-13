@@ -2,10 +2,10 @@
  * The atlas as the page rules read it (issue #1025, step 4c of #380) — the
  * census's F20 and F21 whole: every page's name, declared size and `pma`, every
  * region's rectangle and the page it sits on, and the region a name resolves
- * to. A06, A19 and A27 read it; A17, which reads only the page names, keeps the
+ * to. A06, A19 and A49 read it; A17, which reads only the page names, keeps the
  * narrower `./atlas_pages.ts`.
  *
- * ⭐ **The order is a fact, and it is the file's.** A06 and A27 print one line
+ * ⭐ **The order is a fact, and it is the file's.** A06 prints one line
  * per offending page or region, and A06's overlap clause prints a pair in the
  * order it meets them, so `pages` and `regions` hold the atlas's own order —
  * pages as the file lists them, regions page by page in the file's order — and

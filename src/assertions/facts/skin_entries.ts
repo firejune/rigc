@@ -28,10 +28,8 @@ export interface RegionEntry {
   readonly path?: string;
 }
 
-/** What the skins hold, for A03, A11 and A19. */
+/** What the skins hold, for A03 and A19. */
 export interface SkinEntryFacts {
   /** Every region attachment of every skin, in the file's walk order (the header's ⭐). */
   readonly regionAttachments: readonly RegionEntry[];
-  /** How many clipping attachments the skins hold, every skin counted. */
-  readonly clippingCount: number;
 }
