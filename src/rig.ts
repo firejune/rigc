@@ -683,6 +683,53 @@ export interface RigSegmentsFalloff {
   minWeight?: number;
 }
 
+/** The two curves an `influence` pull falls to zero along — see `RigSegmentsInfluence.shape`. */
+export const RIG_INFLUENCE_SHAPES = ['linear', 'smooth'] as const;
+
+/**
+ * A falloff that **reaches zero** at a stated distance, so a vertex follows
+ * every chain link near it and no link far from it (issue #1415) — the model a
+ * cloth surface needs, where a vertex between two chains blends the springs of
+ * both and the surface bends as one sheet rather than as strips.
+ *
+ * Per vertex: `d` is the distance to each link's **segment** (its nearest
+ * point, the same distance `falloff` measures), read at the setup pose. A link
+ * with `d < radius` pulls `shape(d / radius)` — one whose pull is not above 0
+ * in doubles, a hair inside the reach, pulls nothing; the strongest `max` pulls are
+ * kept — equal pulls in the order `bones` first names their bones — and
+ * normalised; a share the 6-decimal grid would write as 0 is dropped and the
+ * rest normalised again. Each vertex lists its bones in the order `bones`
+ * names them, so the attachment has one bone order by construction (A52).
+ *
+ * ⭐ Every number is a field and none has a default: the reach and the cap are
+ * judgements about this cloth, and the shape is the one thing that decides
+ * how a link enters a vertex's blend.
+ */
+export interface RigSegmentsInfluence {
+  /**
+   * **Required.** How far a link reaches, in the part's pixels (the skeleton's
+   * units on this generator's route): a link whose segment is `radius` or
+   * farther from a vertex never pulls it. Positive.
+   */
+  radius: number;
+  /**
+   * **Required.** `true`: every link of every `bones` entry within `radius`
+   * pulls. `false`: only the links of ONE entry — the entry holding the link
+   * nearest the vertex, the earlier entry on a tie — so a chain moves its own
+   * strip and nothing across.
+   */
+  across: boolean;
+  /** **Required.** At most this many links pull one vertex — the strongest. A whole number of at least 1. */
+  max: number;
+  /**
+   * **Required.** How a pull falls from 1 at `d = 0` to 0 at `d = radius`, with
+   * `x = d / radius`: `"linear"` is `1 - x`; `"smooth"` is `1 - x²(3 - 2x)`,
+   * which also arrives at both ends with zero slope, so a link enters and leaves
+   * a vertex's blend without a crease.
+   */
+  shape: (typeof RIG_INFLUENCE_SHAPES)[number];
+}
+
 /**
  * A lattice over the part's alpha, weighted by distance to named bone segments
  * (`buildSegmentsLattice` and `segmentWeights` in [`mesh.ts`](mesh.ts)).
@@ -703,8 +750,14 @@ export interface RigSegmentsGenerator {
    * or a `RigSegmentSpan` stated outright.
    */
   bones: Array<string | string[] | RigSegmentSpan>;
-  /** The falloff — see `RigSegmentsFalloff`. `radius` is required, so the block is too. */
-  falloff: RigSegmentsFalloff;
+  /**
+   * The falloff — see `RigSegmentsFalloff`. Exactly one of `falloff` and
+   * `influence` is stated: both turn a distance into a share, in two models,
+   * and a mesh weighted by both would be weighted by neither.
+   */
+  falloff?: RigSegmentsFalloff;
+  /** A falloff that reaches zero at a stated distance — see `RigSegmentsInfluence`. */
+  influence?: RigSegmentsInfluence;
   /** Alpha at or above which a pixel counts as art, 1..255. Default 1 — `contour`'s own. */
   alpha?: number;
   /**
@@ -1965,8 +2018,9 @@ export const RIG_KEYS = {
   RigRibbonGenerator: ['kind', 'size', 'rows', 'chain'],
   RigContourGenerator: ['kind', 'tolerance', 'margin', 'maxVertices', 'alpha', 'depth', 'soft'],
   RigGridGenerator: ['kind', 'us', 'vs', 'cols', 'rows', 'depth', 'soft'],
-  RigSegmentsGenerator: ['kind', 'cell', 'bones', 'falloff', 'alpha', 'anchor'],
+  RigSegmentsGenerator: ['kind', 'cell', 'bones', 'falloff', 'influence', 'alpha', 'anchor'],
   RigSegmentsFalloff: ['power', 'radius', 'maxBones', 'minWeight'],
+  RigSegmentsInfluence: ['radius', 'across', 'max', 'shape'],
   RigSegmentSpan: ['bone', 'from', 'to'],
   RigMeshBias: ['axis_deg', 'ramp'],
   RigDepthMap: ['image', 'near', 'zScale', 'gamma', 'contrast', 'bias'],
@@ -2101,8 +2155,11 @@ export const RIG_TYPES = {
     soft: 'object',
   },
   RigGridGenerator: { kind: 'enum', us: 'number[]', vs: 'number[]', cols: 'number', rows: 'number', depth: 'object', soft: 'object' },
-  RigSegmentsGenerator: { kind: 'enum', cell: 'number', bones: 'mixed', falloff: 'object', alpha: 'number', anchor: 'number[]' },
+  RigSegmentsGenerator: {
+    kind: 'enum', cell: 'number', bones: 'mixed', falloff: 'object', influence: 'object', alpha: 'number', anchor: 'number[]',
+  },
   RigSegmentsFalloff: { power: 'number', radius: 'number', maxBones: 'number', minWeight: 'number' },
+  RigSegmentsInfluence: { radius: 'number', across: 'boolean', max: 'number', shape: 'enum' },
   RigSegmentSpan: { bone: 'string', from: 'number[]', to: 'number[]' },
   RigMeshBias: { axis_deg: 'number', ramp: 'number[]' },
   RigDepthMap: { image: 'string', near: 'enum', zScale: 'number', gamma: 'number', contrast: 'number', bias: 'number' },
@@ -2170,6 +2227,7 @@ export const RIG_ENUMS = {
   RigContourGenerator: { kind: { owner: 'checkRigSpecKeys' } },
   RigGridGenerator: { kind: { owner: 'checkRigSpecKeys' } },
   RigSegmentsGenerator: { kind: { owner: 'checkRigSpecKeys' } },
+  RigSegmentsInfluence: { shape: { owner: 'segmentsInfluenceOf' } },
   RigDepthMap: { near: { owner: 'sampleMeshDepth' } },
 } as const satisfies SpecEnumTable<typeof RIG_TYPES>;
 
@@ -2438,6 +2496,7 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
         at(gen.depth, 'RigDepthMap', `${who} generator.depth`, [...here, 'generator', 'depth']);
         at(gen.soft, 'RigSoftRegion', `${who} generator.soft`, [...here, 'generator', 'soft']);
         at(gen.falloff, 'RigSegmentsFalloff', `${who} generator.falloff`, [...here, 'generator', 'falloff']);
+        at(gen.influence, 'RigSegmentsInfluence', `${who} generator.influence`, [...here, 'generator', 'influence']);
         for (const [i, entry] of (Array.isArray(gen.bones) ? gen.bones : []).entries()) {
           at(entry, 'RigSegmentSpan', `${who} generator.bones[${i}]`, [...here, 'generator', 'bones', i]);
         }

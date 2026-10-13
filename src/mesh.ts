@@ -2432,3 +2432,139 @@ export function segmentShares(
   });
   return { weights };
 }
+
+// ---------------------------------------------------------------------------
+// influence — a falloff that reaches zero at a stated distance (issue #1415)
+// ---------------------------------------------------------------------------
+//
+// `segmentShares` above never lets a segment go: `1 / (d + r)^p` is positive at
+// every distance, so the only way to widen a blend is a larger `r`, which
+// flattens it everywhere at once, and the only way to end one is `minWeight`,
+// a share rather than a distance. A cloth surface wants the other model: a
+// vertex follows every link NEAR it, by a pull that falls to exactly zero at a
+// stated reach, so a link enters and leaves a vertex's blend continuously.
+//
+//   1. **Distance.** `d` is the distance from the vertex to each link's
+//      segment — its nearest point, `segmentDistance`, the same reading the
+//      falloff takes — at the setup pose. To the segment rather than to the
+//      bone's origin: a vertex on the middle of a link IS on that link, and an
+//      origin metric would put it half a link away while handing the joint at
+//      the link's tip to the child whose origin sits there.
+//   2. **Across.** With `across: false` only the entry (a chain, a bone, a
+//      span) holding the nearest link is kept — the earlier entry on a tie.
+//   3. **Reach.** A link with `d < radius` pulls `shape(d / radius)`, and one
+//      whose pull is not above 0 — a hair inside the reach, in doubles — pulls
+//      nothing and is out of reach; a bone two segments name keeps the nearer.
+//      A vertex no link reaches is refused by the caller, naming the nearest
+//      distance.
+//   4. **Cap.** The strongest `max` pulls are kept — equal pulls in the order
+//      the bones were first named — and normalised; a share the 6-decimal grid
+//      would write as 0 is dropped and the rest normalised again.
+//   5. **Order.** The kept bones are written in the order they were first
+//      named, on every vertex, so an attachment has one bone order by
+//      construction (`A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER`); the
+//      strongest closes the vertex at exactly 1 on the grid.
+
+/** One candidate segment with the `bones` entry it came from — what `across: false` chooses between. */
+export interface EntrySegment extends WorldSegment {
+  /** Index of the `bones` entry this segment belongs to. */
+  entry: number;
+}
+
+/** The four fields an `influence` block states — every one of them required by the caller. */
+export interface SegmentsInfluence {
+  radius: number;
+  across: boolean;
+  max: number;
+  shape: 'linear' | 'smooth';
+}
+
+/** A pull at `x = d / radius` in `[0, 1]`: 1 at the segment, 0 at the reach. */
+export function influencePull(shape: SegmentsInfluence['shape'], x: number): number {
+  return shape === 'linear' ? 1 - x : 1 - x * x * (3 - 2 * x);
+}
+
+/** The steps a selftest plant may switch off, one key each — never passed by a build. */
+export interface InfluencePlant {
+  ignoreCap?: true;
+  ignoreReach?: true;
+  ignoreAcross?: true;
+  skipNormalise?: true;
+}
+
+/** What `influenceShares` found at one vertex. */
+export type InfluenceShares =
+  | {
+      /** The bindings, in first-named bone order, closing at exactly 1 on the 6-decimal grid. */
+      weights: MeshVertexWeight[];
+      /** How many bones were in reach before the cap — over `max` means the cap dropped some. */
+      inReach: number;
+    }
+  | {
+      /** No link is within `radius`: the nearest one's distance, and its bone. */
+      nearest: { bone: number; distance: number };
+    };
+
+/**
+ * The shares on one vertex under an `influence` block — see the section header.
+ * `plant` exists for the selftest's negative controls: each key switches one
+ * step off, so a control can show its own check going red on weights that
+ * break exactly that step. A build never passes it.
+ */
+export function influenceShares(
+  p: readonly [number, number],
+  segments: readonly EntrySegment[],
+  influence: SegmentsInfluence,
+  plant: InfluencePlant = {},
+): InfluenceShares {
+  const distances = segments.map((s) => segmentDistance(p, s.a, s.b));
+  let home = -1;
+  let homeD = Infinity;
+  let nearestBone = 0;
+  distances.forEach((d, i) => {
+    if (d < homeD) {
+      homeD = d;
+      home = segments[i].entry;
+      nearestBone = segments[i].bone;
+    }
+  });
+  const byBone = new Map<number, number>();
+  segments.forEach((s, i) => {
+    if (!influence.across && plant.ignoreAcross === undefined && s.entry !== home) return;
+    const d = distances[i];
+    if (!(d < influence.radius) && plant.ignoreReach === undefined) return;
+    const was = byBone.get(s.bone);
+    if (was === undefined || d < was) byBone.set(s.bone, d);
+  });
+  // Strongest first; equal pulls by the order the bones were first named. A link a hair inside the reach can
+  // pull 0 — or a rounding's worth under it — in doubles (`1 - x²(3 - 2x)` at x one ulp under 1): it pulls
+  // nothing, so it is out of reach like the links past it, and no share is ever made up for it.
+  const pulls = [...byBone.entries()]
+    .map(([bone, d]) => ({ bone, pull: influencePull(influence.shape, Math.min(d / influence.radius, 1)) }))
+    .filter((e) => e.pull > 0 || plant.ignoreReach !== undefined)
+    .sort((x, y) => y.pull - x.pull || x.bone - y.bone);
+  if (pulls.length === 0) return { nearest: { bone: nearestBone, distance: homeD } };
+  const inReach = pulls.length;
+  const capped = plant.ignoreCap === undefined ? pulls.slice(0, influence.max) : pulls;
+  // Only the planted `ignoreReach` keeps a pull of 0 (a link at or past the reach): it is given one grid step,
+  // so the plant still binds that link, which is the plant's whole point.
+  const raw = capped.map((e) => ({ bone: e.bone, pull: e.pull > 0 ? e.pull : 0.000001 }));
+  let sum = 0;
+  for (const e of raw) sum += e.pull;
+  const normalise = plant.skipNormalise === undefined;
+  const first = raw.map((e) => ({ bone: e.bone, share: normalise ? e.pull / sum : e.pull }));
+  const kept = first.filter((e) => r6(e.share) !== 0);
+  let sum2 = 0;
+  for (const e of kept) sum2 += e.share;
+  const rounded = kept.map((e) => r6(normalise ? e.share / sum2 : e.share));
+  // `kept[0]` is the strongest — the filter keeps the order — and it closes the vertex at exactly 1.
+  if (normalise) {
+    let others = 0;
+    for (let k = 1; k < rounded.length; k++) others += rounded[k];
+    rounded[0] = r6(1 - others);
+  }
+  const weights: MeshVertexWeight[] = kept
+    .map((e, k) => ({ bone: 'control' as const, control: e.bone, weight: rounded[k] }))
+    .sort((x, y) => x.control - y.control);
+  return { weights, inReach };
+}
