@@ -33584,7 +33584,7 @@ function runPathAndSliderSuite(): number {
     // attachment fallback through `SkeletonData.defaultSkin` is `getAttachment`'s
     // and covers art alone. Measured here because it is now reachable — the pair
     // below was refused on the branch point — and because "list it in default so
-    // it is always on" is the reading the sentence in §3.4.1 has to close.
+    // it is always on" is the reading the sentence in §3.4.8 has to close.
     const defaultLong = { attachments: PATH_RIG.skins.default.attachments, bones: ['pauldron'], ik: ['pauldron-ik'] };
     const alsoDefault = skinnedBuild({
       default: defaultLong,
@@ -71232,7 +71232,7 @@ function runGuideSuite(): number {
         args: ['A20_MESH_WEIGHT_COHERENT'],
         status: 1,
         out: (o, e) =>
-          o === '' && /^FAIL {2}GUIDE_RULE_KNOWN: "A20_MESH_WEIGHT_COHERENT" — no row in docs\/AUTHORING\.md names it; the nearest: A20_MESH_WEIGHTS_COHERENT, [A-Z0-9_]+, [A-Z0-9_]+ \(see rigc guide GUIDE_RULE_KNOWN\)\n$/.test(e)
+          o === '' && /^FAIL {2}GUIDE_RULE_KNOWN: "A20_MESH_WEIGHT_COHERENT" — no row in docs\/AUTHORING\.md or docs\/INGEST\.md names it; the nearest: A20_MESH_WEIGHTS_COHERENT, [A-Z0-9_]+, [A-Z0-9_]+ \(see rigc guide GUIDE_RULE_KNOWN\)\n$/.test(e)
             ? null
             : 'not the GUIDE_RULE_KNOWN refusal with the three nearest real names, the right one first',
       },
@@ -77481,8 +77481,8 @@ function runCurrencySuite(): number {
         if (line === null) continue;
         const head = /^(#{1,6}) (.*)$/.exec(line);
         if (head !== null) {
-          // `####` or below: since issue #1397 the mesh generators' field tables sit under ##### headings, because
-          // §<n>.<m>.<k> counts the ####s of §3.4 and 3.4.1–3.4.3 have to be the first three of them.
+          // `####` or below: a field table may sit under a deeper heading too (`soft`, a ##### under §3.4.6), and a
+          // reader that stops at #### would drop it silently.
           heading = head[1].length >= 4 ? head[2] : null;
           inTable = false;
           continue;

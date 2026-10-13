@@ -422,7 +422,8 @@ export function guideAnswer(asked: string, texts: GuideTexts): GuideAnswer {
     return {
       ok: false,
       rule: GUIDE_RULE_KNOWN,
-      detail: `"${asked}" — no row in ${GUIDE_FILE} names it; the nearest: ${nearestNames(asked, rows.map((r) => r.rule)).join(', ')}`,
+      // The files actually searched, named (HQ on rig-c/parts#343): the guide, then each other document a rule table lives in.
+      detail: `"${asked}" — no row in ${[GUIDE_FILE, ...GUIDE_RULE_TABLES_ELSEWHERE.map((t) => t.file)].join(' or ')} names it; the nearest: ${nearestNames(asked, rows.map((r) => r.rule)).join(', ')}`,
     };
   }
   const lines: string[] = [];
