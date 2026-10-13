@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.55.0](https://github.com/rig-c/core/compare/v2.54.0...v2.55.0) (2026-10-13)
+
+
+### Features
+
+* **render:** rigc render --pass-through names every frame where a cloth slot drawn over a leg slot has its side running through the leg's drawn outline, a reading as --folds is ([#1413](https://github.com/rig-c/core/issues/1413)) ([#1428](https://github.com/rig-c/core/issues/1428)) ([c70f4a9](https://github.com/rig-c/core/commit/c70f4a92bd4b12c27136b1e142bcba1d2fc8b27d))
+* **validate:** A23 refuses damping 1 and an animation that holds strength at 0 for as long as it plays, the two runaways the step-stability clause could not see ([#1422](https://github.com/rig-c/core/issues/1422)) ([#1429](https://github.com/rig-c/core/issues/1429)) ([25cc02a](https://github.com/rig-c/core/commit/25cc02a312d13453b1913b78bb0de475a8a11714))
+
 ## [2.54.0](https://github.com/rig-c/core/compare/v2.53.0...v2.54.0) (2026-10-13)
 
 
