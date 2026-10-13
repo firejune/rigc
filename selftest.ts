@@ -714,7 +714,9 @@ import {
   SKIRT_PLATE,
   skirtFixture,
   type Fixture,
+  writePlate,
 } from './fixtures/public.ts';
+import { axisTurn, freshTurnRecord, recordTurn, type TurnRecord, WHIRL_HEADER, WHIRL_HZ, whirlLines, whirlReading, type WhirlAnimation, type WhirlPlant } from './src/whirl.ts';
 import { BLINK, BLINK_BOUND, BLINK_T, blinkAlpha, blinkEdgeSamples, blinkReductionInput, blinkShare, blinkSource, carriedShare as blinkCarriedShare, edgeDisplacement as blinkEdgeDisplacement, simplifiedLine } from './fixtures/blink.ts';
 import { exactDecimal, landingRates, maxSideOf, samplingOf } from './gallery/loop_seam.ts';
 import { decodePng, Plate, PNG_SIGNATURE, pngChunk, readPlate, type RGBA } from './tools/plate.ts';
@@ -133384,6 +133386,304 @@ function foldOddFaults(meshes: readonly MeshFolds[]): string[] {
   return faults;
 }
 
+/**
+ * The whirl probe (issue #1423): issue #1422's 1-link rotate drive under a
+ * parent swing, once per pair of `inertia` and `fps` its table measured, every
+ * chain in one rig — each its own anchor, link, slot and constraint, so no two
+ * chains share a bone and each poses as the 1-link rig it was measured as.
+ *
+ * - `a_<k>` — an anchor under the root; `swing` keys every anchor to ±`swing`°
+ *   at each whole second, eased, `quiet` keys none of them (it keys `other`).
+ * - `l_<k>` — the link under its anchor, `length` long at rotation −60, a
+ *   placeholder plate on it, driven on `rotate` alone by `p_<k>`: strength
+ *   100, mass 1, damping 0.85, wind 20, gravity 10, limit 5000, mix 1.
+ */
+const WHIRL_PROBE = {
+  inertias: [1, 2, 3, 10],
+  fps: [15, 30, 60],
+  length: 80,
+  swing: 15,
+  duration: 4,
+} as const;
+
+/**
+ * The figures issue #1422 measured on this probe (section *#1423 results*, the
+ * swing column) and #1423's bar names: the largest turn of the link in one
+ * step, by inertia and fps, at the precision the table states them. Not a
+ * derivation — the bar is a measurement, and `WH01` reads the reading against
+ * it AND against spine-core walked here, which is the derivation.
+ */
+const WHIRL_BAR: Readonly<Record<number, Readonly<Record<number, string>>>> = {
+  1: { 15: '2.53', 30: '2.29', 60: '4.10' },
+  2: { 15: '18.78', 30: '18.78', 60: '18.78' },
+  3: { 15: '35.61', 30: '35.61', 60: '35.61' },
+  10: { 15: '153.4', 30: '153.4', 60: '153.4' },
+};
+
+/** A probe chain's key: `i<inertia>_f<fps>`. */
+function whirlChain(inertia: number, fps: number): string {
+  return `i${inertia}_f${fps}`;
+}
+
+/** The whirl probe, built — its output directory and its work directory, or why it did not build. */
+function writeWhirlProbe(): { outDir: string; work: string; built: string[] } {
+  const { inertias, fps, length, swing, duration } = WHIRL_PROBE;
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-whirl-'));
+  writePlate(join(dir, 'link.png'), 24, 40, 'link');
+  const bones: unknown[] = [{ name: 'root' }, { name: 'other', parent: 'root', x: 20, y: 20, length: 10 }];
+  const slots: unknown[] = [{ name: 'o', bone: 'other', attachment: 'link' }];
+  const skin: Record<string, unknown> = { o: { link: { image: 'link.png' } } };
+  const physics: Record<string, unknown> = {};
+  const anchors: string[] = [];
+  let column = 0;
+  for (const inertia of inertias) {
+    for (const rate of fps) {
+      const k = whirlChain(inertia, rate);
+      anchors.push(`a_${k}`);
+      bones.push({ name: `a_${k}`, parent: 'root', x: 128 + 200 * column++, y: 60 });
+      bones.push({ name: `l_${k}`, parent: `a_${k}`, x: 30, rotation: -60, length });
+      slots.push({ name: `s_${k}`, bone: `l_${k}`, attachment: 'link' });
+      skin[`s_${k}`] = { link: { image: 'link.png', x: length / 2 } };
+      physics[`p_${k}`] = { bone: `l_${k}`, rotate: 1, inertia, strength: 100, damping: 0.85, mass: 1, wind: 20, gravity: 10, mix: 1, fps: rate, limit: 5000 };
+    }
+  }
+  const rigPath = join(dir, 'whirl.rig.json');
+  writeFileSync(rigPath, `${JSON.stringify({ spec: 'rigc-rig/1', name: 'whirl_probe', skeleton: { width: 128 + 200 * column, height: 256 }, bones, slots, skins: { default: skin } }, null, 2)}\n`);
+  const keys = Array.from({ length: duration + 1 }, (_v, t) => ({ t, v: [t % 2 === 0 ? swing : -swing], ...(t < duration ? { ease: 'swing' } : {}) }));
+  const motionPath = join(dir, 'whirl.motion.json');
+  writeFileSync(
+    motionPath,
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'whirl_probe',
+      cut: 'whirl_probe',
+      easings: { swing: [0.36, 0, 0.64, 1] },
+      groups: { anchors },
+      physics,
+      animations: {
+        quiet: { duration, loop: true, tracks: [{ bone: 'other', property: 'rotate', keys }] },
+        swing: { duration, loop: true, tracks: [{ group: 'anchors', property: 'rotate', keys }] },
+      },
+    }, null, 2)}\n`,
+  );
+  const outDir = join(dir, 'spine');
+  const build = runCli(['build', '--rig', rigPath, '--motion', motionPath, '--images', dir, '--out', outDir]);
+  const built = build.status === 0 ? [] : [`the whirl probe did not build (exit ${String(build.status)}): ${(build.stdout + build.stderr).trim().slice(-400)}`];
+  return { outDir, work: dir, built };
+}
+
+/**
+ * The reading through spine-core: the build's pair loaded by the runtime and
+ * walked as a player starts an animation — `setupPose`, `update(0)`,
+ * `Physics.reset`, then per step `update`, `setupPoseBones`, `apply`,
+ * `Skeleton.update`, `updateWorldTransform(Physics.update)` (CO56's recipe) —
+ * each constrained bone's largest |turn| and its step, by `axisTurn` over the
+ * runtime's own matrices.
+ */
+function whirlThroughSpine(data: SkeletonData, animation: string, steps: number, bones: readonly string[]): Map<string, { degrees: number; step: number }> {
+  const skeleton = new Skeleton(data);
+  const state = new AnimationState(new AnimationStateData(data));
+  state.setAnimation(0, animation, false);
+  skeleton.setupPose();
+  skeleton.update(0);
+  skeleton.updateWorldTransform(Physics.reset);
+  const read = (): Map<string, { a: number; c: number }> => new Map(bones.map((name) => {
+    const pose = (skeleton.findBone(name) as NonNullable<ReturnType<Skeleton['findBone']>>).appliedPose;
+    return [name, { a: pose.a, c: pose.c }] as const;
+  }));
+  const best = new Map<string, { degrees: number; step: number }>(bones.map((name) => [name, { degrees: 0, step: 0 }]));
+  let prev = read();
+  const dt = 1 / WHIRL_HZ;
+  for (let i = 1; i <= steps; i++) {
+    state.update(dt);
+    skeleton.setupPoseBones();
+    state.apply(skeleton);
+    skeleton.update(dt);
+    skeleton.updateWorldTransform(Physics.update);
+    const now = read();
+    for (const name of bones) {
+      const turn = Math.abs(axisTurn(prev.get(name) as { a: number; c: number }, now.get(name) as { a: number; c: number }));
+      if (turn > (best.get(name) as { degrees: number }).degrees) best.set(name, { degrees: turn, step: i });
+    }
+    prev = now;
+  }
+  return best;
+}
+
+/** How many decimals a bar figure states. */
+function barDecimals(figure: string): number {
+  const dot = figure.indexOf('.');
+  return dot < 0 ? 0 : figure.length - dot - 1;
+}
+
+/** Which of the probe's swing figures in `reading` are not the bar's, as sentences — empty when every one is. */
+function whirlBarFaults(reading: readonly WhirlAnimation[], label: string): string[] {
+  const swing = reading.find((a) => a.animation === 'swing');
+  if (swing === undefined) return [`${label}: no "swing" walk`];
+  const faults: string[] = [];
+  for (const inertia of WHIRL_PROBE.inertias) {
+    for (const rate of WHIRL_PROBE.fps) {
+      const k = whirlChain(inertia, rate);
+      const turn = swing.turns.find((t) => t.constraint === `p_${k}`);
+      const bar = WHIRL_BAR[inertia][rate];
+      const read = turn?.degrees === null || turn === undefined ? null : turn.degrees.toFixed(barDecimals(bar));
+      if (read !== bar) faults.push(`${label}: "p_${k}" (inertia ${inertia}, fps ${rate}) reads ${read ?? `nothing (${turn?.why ?? 'no line'})`}°, the bar ${bar}°`);
+    }
+  }
+  return faults;
+}
+
+function runWhirlSuite(): number {
+  console.log('\n── whirl: how far a physics bone turns in one step, read by explain (issue #1423) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const probe = writeWhirlProbe();
+  const pre = [...probe.built];
+  const docText = pre.length === 0 ? readFileSync(join(probe.outDir, MODEL_DOCUMENT_FILE), 'utf8') : null;
+  const reading = docText === null ? null : whirlReading(readModel(docText, 'the whirl probe'));
+  const explained = pre.length === 0 ? runCli(['explain', '--rig', join(probe.work, 'whirl.rig.json'), '--motion', join(probe.work, 'whirl.motion.json'), '--images', probe.work, '--out', join(probe.work, 'explain')]) : null;
+  if (explained !== null && explained.status !== 0) pre.push(`explain exited ${String(explained.status)}: ${explained.stderr.trim().slice(0, 300)}`);
+
+  // --- WH01: Bar 1 — the probe reads #1422's figures, through the core and through spine-core alike ---
+  {
+    const probes: string[] = [...pre];
+    let compared = 0;
+    if (probes.length === 0 && reading !== null && explained !== null) {
+      probes.push(...whirlBarFaults(reading, 'the core'));
+      // spine-core, walked here, step for step: the same figure and the same step, to the bit.
+      const data = loadOracleData(readFileSync(join(probe.outDir, 'skeleton.json'), 'utf8'), readFileSync(join(probe.outDir, 'skeleton.atlas'), 'utf8'), 'the whirl probe');
+      for (const walk of reading) {
+        const spine = whirlThroughSpine(data, walk.animation, walk.steps, walk.turns.map((t) => t.bone));
+        for (const t of walk.turns) {
+          const s = spine.get(t.bone);
+          compared++;
+          if (s === undefined || t.degrees !== s.degrees || t.step !== s.step) {
+            probes.push(`"${walk.animation}" "${t.constraint}": the core reads ${String(t.degrees)}° at step ${t.step}, spine-core ${String(s?.degrees)}° at step ${String(s?.step)}`);
+          }
+        }
+      }
+      // What explain prints is the reading: one line per constraint per animation, the swing figures the bar's.
+      const lines = explained.stdout.split('\n').filter((l) => l.includes('..    turn     '));
+      const want = whirlLines(reading).map((l) => `  ..    turn     ${l}`);
+      if (JSON.stringify(lines) !== JSON.stringify(want)) probes.push(`explain printed ${lines.length} turn line(s), the reading has ${want.length}: first ${JSON.stringify(lines[0] ?? null)}`);
+      if (!explained.stdout.includes(WHIRL_HEADER)) probes.push('explain printed no whirl header');
+      // Without the parent's motion inertia changes nothing (#1422's default column): `quiet` reads one figure per fps whatever the inertia —
+      // to nine significant figures, because inertia still multiplies the link's own rounding-sized motion (measured: the four differ
+      // from the 14th figure on), which is no motion of the parent's.
+      const quiet = reading.find((a) => a.animation === 'quiet');
+      for (const rate of WHIRL_PROBE.fps) {
+        const figures = new Set(WHIRL_PROBE.inertias.map((i) => quiet?.turns.find((t) => t.constraint === `p_${whirlChain(i, rate)}`)?.degrees?.toPrecision(9)));
+        if (figures.size !== 1) probes.push(`"quiet" at fps ${rate} reads ${[...figures].join(', ')}° across inertia ${WHIRL_PROBE.inertias.join(', ')} — with the anchors still, inertia has nothing to answer`);
+      }
+    }
+    const ok = probes.length === 0;
+    const swingLine = (i: number, f: number): string => reading?.find((a) => a.animation === 'swing')?.turns.find((t) => t.constraint === `p_${whirlChain(i, f)}`)?.degrees?.toFixed(2) ?? '?';
+    say(
+      'WH01_THE_PROBE_READS_THE_MEASURED_WHIRL_ON_BOTH_POSERS',
+      ok,
+      probeDetail(
+        ok,
+        probes.slice(0, 12),
+        `the 1-link rotate drive under a ±${WHIRL_PROBE.swing}° parent swing, ${WHIRL_PROBE.inertias.length * WHIRL_PROBE.fps.length} chains in one rig: "swing" reads inertia 1 at ${WHIRL_PROBE.fps.map((f) => `${swingLine(1, f)}° (fps ${f})`).join(', ')}, ` +
+          `inertia 2 ${swingLine(2, 60)}°, 3 ${swingLine(3, 60)}°, 10 ${swingLine(10, 60)}° at every fps — #1422's table; spine-core walked as a player starts each animation agrees on figure and step to the bit over ${compared} constraint-walk(s); ` +
+          'explain prints the reading line for line, and "quiet" reads one figure per fps whatever the inertia',
+      ),
+      'issue #1423: the editor keeps and poses inertia above 1, so the whirl is a reading; it has to read the turn #1422 measured, from the poses a player draws',
+    );
+  }
+
+  // --- WH02: Bar 2 — gallery/look's whip reads a figure, and the reading reaches no verdict ---
+  {
+    const probes: string[] = [];
+    const look = join(import.meta.dir, 'gallery', 'look');
+    const run = runCli(['explain', '--rig', join(look, 'rig.json'), '--motion', join(look, 'motion.json'), '--out', join(probe.work, 'look')]);
+    if (run.status !== 0) probes.push(`explain gallery/look exited ${String(run.status)}: ${run.stderr.trim().slice(0, 300)}`);
+    const turnLines = run.stdout.split('\n').filter((l) => l.includes('..    turn     '));
+    const figured = turnLines.filter((l) => /physics "whip" \(bone "ahoge_whip"\) turns at most \d+\.\d\d° in one step — step \d+ of \d+/.test(l));
+    if (figured.length === 0) probes.push(`no whip line with a figure among ${turnLines.length} turn line(s): ${JSON.stringify(turnLines)}`);
+    if (turnLines.some((l) => /\bSKIP\b/.test(l))) probes.push('a turn line says SKIP');
+    // Every animation a slider applies is named and not walked; every other is read.
+    const sliderTables = turnLines.filter((l) => l.includes('applies it at a value, not in time'));
+    if (sliderTables.length + figured.length !== turnLines.length) probes.push(`${turnLines.length} turn line(s), ${figured.length} with a figure and ${sliderTables.length} slider table(s)`);
+    // The reading decides nothing: `explain` is its one reader, and no module the gate or build runs imports it.
+    const importers: string[] = [];
+    const walkDir = (rel: string): void => {
+      for (const entry of readdirSync(join(import.meta.dir, rel), { withFileTypes: true })) {
+        const path = join(rel, entry.name);
+        if (entry.isDirectory()) walkDir(path);
+        else if (path.endsWith('.ts') && /from '[./]*whirl\.ts'/.test(readFileSync(join(import.meta.dir, path), 'utf8'))) importers.push(path);
+      }
+    };
+    walkDir('src');
+    if (JSON.stringify(importers) !== JSON.stringify([join('src', 'cli', 'core_commands.ts')])) probes.push(`src/whirl.ts is imported by [${importers.join(', ')}], required by src/cli/core_commands.ts alone (explain)`);
+    const ok = probes.length === 0;
+    say(
+      'WH02_GALLERY_LOOK_READS_ITS_WHIP_AND_THE_READING_DECIDES_NOTHING',
+      ok,
+      probeDetail(ok, probes, `explain gallery/look exits 0 and prints ${figured.length} whip line(s) with a figure (${figured.map((l) => l.trim().replace(/^\.\.\s+turn\s+/, '').split(':')[0]).join(', ')}), ${sliderTables.length} slider table(s) named and not walked, no SKIP; src/whirl.ts is imported by explain's module alone, so no assertion, build or exit reads it`),
+      'issue #1423 bar 2: the line has to be present on the gallery rig that ships a physics constraint, and a reading must not move a verdict',
+    );
+  }
+
+  // --- WH03: Bar 3 — a reading that ignores the parent's motion goes red against the bar ---
+  {
+    const probes: string[] = [...pre];
+    const red: string[] = [];
+    if (probes.length === 0 && docText !== null) {
+      const plants: Array<[string, WhirlPlant]> = [
+        ['the turn read in the parent bone\'s frame (its world turn less the parent\'s)', { frame: 'parent' }],
+        ['the walk render takes — the physics reset at the animation\'s first pose, so the parent\'s step from the setup pose is never taken', { reset: 'animation' }],
+      ];
+      for (const [label, plant] of plants) {
+        const faults = whirlBarFaults(whirlReading(readModel(docText, 'the whirl probe'), plant), label);
+        const inertia10 = faults.filter((f) => f.includes('inertia 10'));
+        if (faults.length === 0) probes.push(`${label}: read the bar's every figure`);
+        else red.push(`${label}: ${faults.length} of ${WHIRL_PROBE.inertias.length * WHIRL_PROBE.fps.length} figure(s) off the bar${inertia10.length > 0 ? `, e.g. ${inertia10[0].split(': ').slice(1).join(': ')}` : ''}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'WH03_A_READING_THAT_IGNORES_THE_PARENTS_MOTION_GOES_RED',
+      ok,
+      probeDetail(ok, probes, red.join('; ')),
+      "issue #1423 bar 3: the whirl is the link's inertia answering its parent's motion, so a reading blind to that motion must not reproduce the bar",
+    );
+  }
+
+  // --- WH04: a turn that is not a number is named from its step, never folded into the finite figure before it ---
+  {
+    const probes: string[] = [];
+    // Signed turns per step 1..4: the third is what the core hands on for a bone whose matrix overflowed.
+    const turns = [1, -5, Number.NaN, 7];
+    const record = freshTurnRecord();
+    turns.forEach((turn, i) => recordTurn(record, turn, i + 1, (i + 1) / WHIRL_HZ));
+    // The plant: the comparison alone, which is false for NaN and so walks past it.
+    const planted = freshTurnRecord();
+    turns.forEach((turn, i) => {
+      if (Math.abs(turn) > planted.degrees) Object.assign(planted, { degrees: Math.abs(turn), step: i + 1, time: (i + 1) / WHIRL_HZ });
+    });
+    const lineOf = (r: TurnRecord): string => {
+      const why = r.lost === null ? null : `its bone's world direction is not a number from step ${r.lost.step} (t=${r.lost.time.toFixed(4)}s)`;
+      return whirlLines([{ animation: 'a', steps: turns.length, refused: null, turns: [{ constraint: 'c', bone: 'b', degrees: why === null ? r.degrees : null, step: r.step, time: r.time, why }] }])[0];
+    };
+    const read = lineOf(record);
+    const plantedLine = lineOf(planted);
+    if (record.lost?.step !== 3) probes.push(`the record over [${turns.join(', ')}] is ${JSON.stringify(record)}, required lost from step 3`);
+    if (!read.includes('not read — its bone\'s world direction is not a number from step 3')) probes.push(`the line reads ${JSON.stringify(read)}`);
+    if (!plantedLine.includes('turns at most 7.00°')) probes.push(`the plant that drops NaN reads ${JSON.stringify(plantedLine)}, expected the finite 7.00° it would have printed`);
+    const ok = probes.length === 0;
+    say(
+      'WH04_A_TURN_THAT_IS_NOT_A_NUMBER_IS_NAMED_NOT_SKIPPED',
+      ok,
+      probeDetail(ok, probes, `over turns [${turns.join(', ')}] the record holds the loss from step 3, and the line says ${JSON.stringify(read.split(' — ')[1] ?? read)}; the plant that compares alone prints ${JSON.stringify(plantedLine.split(' turns ')[1] ?? plantedLine)} — the silence`),
+      'issue #1423: the core passes a non-finite bone matrix on, and a largest-so-far that never sees NaN would print a plausible figure for a bone that left the number line',
+    );
+  }
+  return bad;
+}
+
 function runFoldsSuite(): number {
   console.log('\n── folds: which mesh triangles turn over against the setup pose (issue #1383) ──');
   let bad = 0;
@@ -136077,6 +136377,7 @@ function main(): void {
   tally.of('inspect', runInspectSuite);
   tally.of('folds', runFoldsSuite);
   tally.of('pass-through', runPassThroughSuite);
+  tally.of('whirl', runWhirlSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
