@@ -942,6 +942,9 @@ export const DEFAULT_SKILLS_DIR = '.agents/skills';
 /** An install refused before its first write — nothing to install, or an entry in the way. Exit 1. */
 export class SkillsInstallError extends Error {}
 
+/** `guide` asked for a rule or a section the guide does not have (issue #1397): refused by name with the nearest real names. Exit 1. */
+export class GuideError extends Error {}
+
 // ---------------------------------------------------------------------------
 // usage / per-command help
 // ---------------------------------------------------------------------------
@@ -1742,6 +1745,23 @@ export const COMMANDS: CommandDoc[] = [
         meaning: `the .html ballot to write (default \`${DEFAULT_BALLOT}\`); a directory means "the default name in here"`,
       },
     },
+  },
+  {
+    name: 'guide',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      'rigc guide <RULE>             (the guide\'s row for the rule a failure line names — the line ends with this command)',
+      'rigc guide §<n> | §<n>.<m>    (one section of docs/AUTHORING.md: "## <n>.", or the m-th ### under it)',
+    ],
+    flags: [],
+    notes: [
+      'guide reads the docs/AUTHORING.md this command ships with, at the moment it runs, and',
+      'prints a slice of it — the row(s) whose first cell names the rule, each under the',
+      'file, section and heading it sits in, or one section as it stands. An ingest finding',
+      'code\'s row lives in docs/INGEST.md\'s finding-code table, and its answer names that',
+      'file. A name the guide does not have is refused with the nearest real names, exit 1.',
+    ],
   },
   {
     name: 'skills',
@@ -2888,6 +2908,12 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
   // there and what was required; the usage under it would bury that.
   if (err instanceof SkillsInstallError) {
     console.error(`rigc skills install: ${err.message}`);
+    process.exit(1);
+  }
+  // A rule or section the guide does not have (issue #1397): exit 1 like a lookup that found nothing, and the
+  // message names what was asked and the nearest real names — the usage under it would bury them.
+  if (err instanceof GuideError) {
+    console.error(`rigc guide: ${err.message}`);
     process.exit(1);
   }
   throw err;

@@ -52,6 +52,7 @@ import {
   SPINE_VERSION,
 } from './compile.ts';
 import { CompileError } from './errors.ts';
+import { guidePointer } from './guide.ts';
 import { physicsDrives } from './core/constraints_physics.ts';
 import { CHANNELS_BY_KIND } from './timelines.ts';
 import {
@@ -148,6 +149,17 @@ export const INGEST_GUTTERS: Record<IngestFindingKind, string> = {
   judgement: 'JUDGE',
   lossy: 'LOSS',
 };
+
+/**
+ * One finding as `ingest` and `repack` print it: the gutter padded to one width
+ * so the codes line up, the code, where, the detail, and the pointer to the
+ * code's row (issue #1397) — the one writer of the line, so both commands print
+ * the same one.
+ */
+export function findingLine(finding: IngestFinding): string {
+  const width = Math.max(...Object.values(INGEST_GUTTERS).map((gutter) => gutter.length));
+  return `  ${INGEST_GUTTERS[finding.kind].padEnd(width)} ${finding.code}: ${finding.where} — ${finding.detail}${guidePointer(finding.code)}`;
+}
 
 export interface IngestFinding {
   /** Stable code, so a table can count them and a doc can name one. */

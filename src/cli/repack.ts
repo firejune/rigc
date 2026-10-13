@@ -50,7 +50,7 @@
 import { parseAtlasText } from '../atlas.ts';
 import { relativeImagesPath } from '../compile.ts';
 import { CompileError } from '../errors.ts';
-import { ingest, INGEST_GUTTERS, IngestError, type IngestFinding, type IngestOptions, IngestSpecRefused, type IngestStage } from '../ingest.ts';
+import { findingLine, ingest, IngestError, type IngestFinding, type IngestOptions, IngestSpecRefused, type IngestStage } from '../ingest.ts';
 import { MODEL_DOCUMENT_FILE, pagesOfAtlas, spineFileSha256 } from '../model.ts';
 import { atlasRefusals, documentDisagreements, firstLineApart, type InputPage, keptPageRefusals, liftAtlas, polygonOwnedTexels, regionDifferences, REPACK_WORK_PREFIX, RepackError, skeletonDifferences } from '../repack.ts';
 import {
@@ -215,10 +215,9 @@ function stageLine(
 
 /** The findings `ingest` reported, in its own format, blockers first. */
 function findingLines(findings: readonly IngestFinding[]): string[] {
-  const width = Math.max(...Object.values(INGEST_GUTTERS).map((gutter) => gutter.length));
   const lines: string[] = [];
   for (const kind of ['blocker', 'judgement', 'lossy'] as const) {
-    for (const f of findings.filter((x) => x.kind === kind)) lines.push(`  ${INGEST_GUTTERS[kind].padEnd(width)} ${f.code}: ${f.where} — ${f.detail}`);
+    for (const f of findings.filter((x) => x.kind === kind)) lines.push(findingLine(f));
   }
   return lines;
 }

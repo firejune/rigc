@@ -228,7 +228,7 @@ FAIL  A39_DEFORM_KEEPS_TRIANGLE_WINDING: animation "bow" deform head/head key 2
 draws its texture backwards. Fix the key's offsets in the motion spec's deform timeline (a
 projection past its fold angle is the usual cause — docs/FACE.md §4.2 has the closed form), or, if
 this slot folds on purpose, declare it in the rig spec as invariants.deformMayFold: [{ "slot":
-"head", "why": … }]
+"head", "why": … }] (see rigc guide A39_DEFORM_KEEPS_TRIANGLE_WINDING)
 ```
 
 Vertices 4–7 are rows `−105` and `−140`: the outermost gap, bracketing the
