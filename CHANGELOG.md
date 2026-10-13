@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.56.0](https://github.com/rig-c/core/compare/v2.55.0...v2.56.0) (2026-10-13)
+
+
+### Features
+
+* **core:** rig-c/core exports bezierPolyline and BEZIER_PIECES, so a curve fitter can hold its tolerance to the polyline the poser evaluates rather than to a copy of it ([#1417](https://github.com/rig-c/core/issues/1417)) ([#1434](https://github.com/rig-c/core/issues/1434)) ([75d85c9](https://github.com/rig-c/core/commit/75d85c96ac32daace49f80efab6608c9480ba113))
+* **deform:** a deform transform can carry an envelope, a ramp along a stated axis or the attachment's soft mask, so a wave can ripple the hem and leave the waistband where it is ([#1413](https://github.com/rig-c/core/issues/1413)) ([#1431](https://github.com/rig-c/core/issues/1431)) ([8a9e6b7](https://github.com/rig-c/core/commit/8a9e6b7e0f6a799201948638a857f8f8feaa4d05))
+* **explain:** explain --lever-fold names the steps where an inertia lever divides by a nearly vanished length on a scaleX chain, and the jumps it causes, so a folded parent's blow-up is read rather than refused ([#1427](https://github.com/rig-c/core/issues/1427)) ([#1437](https://github.com/rig-c/core/issues/1437)) ([4076b93](https://github.com/rig-c/core/commit/4076b9354dc46da1542242ca21e218a2c5a3f1fe))
+* **explain:** rigc explain names the largest turn each physics constraint's bone makes in one step of each animation, so an inertia above 1 shows its whirl rather than being refused ([#1423](https://github.com/rig-c/core/issues/1423)) ([#1433](https://github.com/rig-c/core/issues/1433)) ([e6c0375](https://github.com/rig-c/core/commit/e6c03750f65ccb7d5b9aa2d15592bd10e4fcf23c))
+* **render:** render pins a world viewport across candidates and names what falls outside it, reads a bone's angle range against another, and the guide names its folder and geometry.json keys as written ([#1414](https://github.com/rig-c/core/issues/1414)) ([#1435](https://github.com/rig-c/core/issues/1435)) ([98f04d5](https://github.com/rig-c/core/commit/98f04d5f2f12fa96b16f18e4a241a909265ad5c8))
+* **rig:** a rig spec's stops declare a leg stop per cloth chain, which expands to the aim, copy and clamp network that keeps a hem out of a thigh, so it no longer has to be assembled by hand ([#1413](https://github.com/rig-c/core/issues/1413)) ([#1436](https://github.com/rig-c/core/issues/1436)) ([c1bc27c](https://github.com/rig-c/core/commit/c1bc27c8b79257ee83b7c99761cd57546443a68a))
+
 ## [2.55.0](https://github.com/rig-c/core/compare/v2.54.0...v2.55.0) (2026-10-13)
 
 
