@@ -40,6 +40,7 @@ import { FOLDS_FILE } from '../folds.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
+import { compileErrorLine } from '../guide.ts';
 import { PACKAGE_ROOT, readPackageMeta, readVersion } from '../package_meta.ts';
 import { DEFAULT_MAX_RESIDUAL, DEFAULT_SCALE_MAX, DEFAULT_SCALE_MIN } from '../pose.ts';
 import {
@@ -942,6 +943,9 @@ export const DEFAULT_SKILLS_DIR = '.agents/skills';
 /** An install refused before its first write — nothing to install, or an entry in the way. Exit 1. */
 export class SkillsInstallError extends Error {}
 
+/** `guide` asked for a rule or a section the guide does not have (issue #1397): a refusal by `GUIDE_RULE_KNOWN` or `GUIDE_SECTION_KNOWN`, whose message is the whole line. Exit 1. */
+export class GuideError extends Error {}
+
 // ---------------------------------------------------------------------------
 // usage / per-command help
 // ---------------------------------------------------------------------------
@@ -1742,6 +1746,23 @@ export const COMMANDS: CommandDoc[] = [
         meaning: `the .html ballot to write (default \`${DEFAULT_BALLOT}\`); a directory means "the default name in here"`,
       },
     },
+  },
+  {
+    name: 'guide',
+    runtime: false,
+    spineFormat: false,
+    usage: [
+      'rigc guide <RULE>             (the guide\'s row for the rule a failure line names — the line ends with this command)',
+      'rigc guide §<n> | §<n>.<m> | §<n>.<m>.<k>    (one section of docs/AUTHORING.md: "## <n>.", the m-th ### under it, the k-th #### under that)',
+    ],
+    flags: [],
+    notes: [
+      'guide reads the docs/AUTHORING.md this command ships with, at the moment it runs, and',
+      'prints a slice of it — the row(s) whose first cell names the rule, each under the',
+      'file, section and heading it sits in, or one section as it stands. An ingest finding',
+      'code\'s row lives in docs/INGEST.md\'s finding-code table, and its answer names that',
+      'file. A name the guide does not have is refused with the nearest real names, exit 1.',
+    ],
   },
   {
     name: 'skills',
@@ -2758,7 +2779,8 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
     process.exit(2);
   }
   if (err instanceof CompileError) {
-    console.error(`rigc compile error: ${err.message}`);
+    // Ends with ` (see rigc guide §5.1)` (issue #1397): a compile error names no rule, so it points at the section.
+    console.error(compileErrorLine(err.message));
     // The drops the compile recorded before it stopped, in the same line the
     // green build prints (issue #671). They were reported from the compile
     // RESULT alone, so the run that failed BECAUSE a file was missing was the
@@ -2888,6 +2910,13 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
   // there and what was required; the usage under it would bury that.
   if (err instanceof SkillsInstallError) {
     console.error(`rigc skills install: ${err.message}`);
+    process.exit(1);
+  }
+  // A rule or section the guide does not have (issue #1397): exit 1 like a lookup that found nothing, and the
+  // message names what was asked and the nearest real names — the usage under it would bury them.
+  if (err instanceof GuideError) {
+    // The message is the whole line — `FAIL  GUIDE_RULE_KNOWN: …` or `FAIL  GUIDE_SECTION_KNOWN: …`, with its pointer.
+    console.error(err.message);
     process.exit(1);
   }
   throw err;

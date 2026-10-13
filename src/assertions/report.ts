@@ -8,6 +8,7 @@
  */
 import type { AssertionProfile } from './kinds.ts';
 import type { VerdictLists } from './harness.ts';
+import { failLine } from '../guide.ts';
 
 export const VALIDATE_PROFILES: readonly AssertionProfile[] = ['spine', 'spine-html'];
 
@@ -41,7 +42,8 @@ export function reportLines(report: VerdictLists & { profile: AssertionProfile }
   for (const name of report.passed) lines.push(`  PASS  ${name}`);
   for (const s of report.skipped) lines.push(`  SKIP  ${s.assertion}: ${s.reason}`);
   for (const p of report.profileSkipped) lines.push(`  PROF  ${p.assertion}: ${p.kind} rule, not in profile "${report.profile}"`);
-  for (const f of report.failures) lines.push(`  FAIL  ${f.assertion}: ${f.detail}`);
+  // Each FAIL line ends with the command that prints the rule's row of the guide (issue #1397): `failLine`.
+  for (const f of report.failures) lines.push(failLine(f.assertion, f.detail));
   // How many of them MEASURED anything, which is the figure the rows above do
   // not hand a reader (issue #568). Counting `PASS` lines answers a different
   // question — before the sweep that closed #568 a run could print seven of

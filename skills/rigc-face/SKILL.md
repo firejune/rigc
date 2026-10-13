@@ -12,6 +12,12 @@ breathes, blinks, moves its eyes and turns a few degrees off axis. Every rule be
 is owned by [FACE.md](https://github.com/rig-c/core/blob/main/docs/FACE.md); this file says when to open it and what
 it will not do for you.
 
+📖 **A failure line ends with the command that prints its row of the guide** —
+` (see rigc guide <RULE>)`. Run that command first, before reading anything else:
+it prints that rule's row of the shipped guide and nothing else, and `rigc guide §<n>`
+(and `§<n>.<m>`, `§<n>.<m>.<k>`)
+prints one section of `docs/AUTHORING.md` — a compile error points at `§5.1`.
+
 ## Non-negotiables
 
 - **Validation is never bypassed.** `build` writes nothing on a red gate, and there

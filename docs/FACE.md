@@ -246,7 +246,7 @@ face. A cylinder is one number pretending to be a surface, and past a certain
 density the pretence is what fails.
 
 ⭐ **Two things arrive together, and both are generated rather than written.**
-[AUTHORING §3.4](AUTHORING.md#grid--a-lattice-over-the-part-window)'s `grid`
+[AUTHORING §3.4](AUTHORING.md#344-grid--a-lattice-over-the-part-window)'s `grid`
 generator builds the lattice from the column positions alone, and reproduces this
 example's hand-numbered 25 vertex pairs, 32 triangles and hull walk exactly. That
 is the prerequisite: a turn needs interior vertices to move, and
@@ -256,7 +256,7 @@ is the prerequisite: a turn needs interior vertices to move, and
 part's own pixel grid gives every mesh vertex its own `z`, sampled where the
 vertex actually is, and `yaw`/`pitch` project off it with the same closed form as
 §1 — only the source of `z` changes. What it buys is stated where it is authored:
-[AUTHORING §3.4](AUTHORING.md#depth--give-every-vertex-its-own-z-instead-of-one-cylinder-radius),
+[AUTHORING §3.4](AUTHORING.md#345-depth--give-every-vertex-its-own-z-instead-of-one-cylinder-radius),
 with the sampling order, the refusals and the one that matters most (a sheet cut
 to the art covers **none** of a contour mesh's vertices, because they all sit on
 the silhouette and outside it).

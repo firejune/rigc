@@ -14,6 +14,12 @@ the parse itself — and writes **only if every one is green**. You cannot see t
 rig you are authoring. The validator's messages and the shipped guides are the
 whole interface, and this skill only says which of them to open.
 
+📖 **A failure line ends with the command that prints its row of the guide** —
+` (see rigc guide <RULE>)`. Run that command first, before reading anything else:
+it prints that rule's row of the shipped guide and nothing else, and `rigc guide §<n>`
+(and `§<n>.<m>`, `§<n>.<m>.<k>`)
+prints one section of `docs/AUTHORING.md` — a compile error points at `§5.1`.
+
 ## Non-negotiables
 
 - **Validation is never bypassed.** `build` writes nothing on a red gate; there is

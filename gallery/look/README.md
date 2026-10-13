@@ -442,7 +442,7 @@ through `FromRotate.value`, which ends `if (value < 0) value += 360`, so the bon
 341.000° and maps to time 18.000s. This dial reaches only 0.950s..1.900s of the animation's 1.9s, and 94.7% of
 the circle — every reading above 19.000° — is held on the frame at 1.900s. The whole part of the range below
 0° is dead and nothing at runtime reports it. Add `"local": true` to read the bone's own rotation signed and
-unwrapped — that is the form a face axis wants — or move the range so it does not cross 0°.
+unwrapped — that is the form a face axis wants — or move the range so it does not cross 0°. (see rigc guide §5.1)
 ```
 
 ### ⭐ Both sliders are at `mix: 1`, and both `A39` and `A40` gate this rig

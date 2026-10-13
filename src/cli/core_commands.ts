@@ -26,7 +26,7 @@ import { surveyOfBuild } from '../deformbuild.ts';
 import type { DeformSurvey } from '../deformsurvey.ts';
 import { deformReportBlock } from '../deformreport.ts';
 import { type DiffAnimationPair, diffLines, diffSkeletons } from '../diff.ts';
-import { ingest, INGEST_GUTTERS, type IngestFinding, IngestSpecRefused, type IngestStage } from '../ingest.ts';
+import { findingLine, ingest, type IngestFinding, IngestSpecRefused, type IngestStage } from '../ingest.ts';
 import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
@@ -37,7 +37,8 @@ import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type
 import { type CompileResult } from '../types.ts';
 import { attachmentRegionJoins } from '../region_joins.ts';
 import { cmdRepack } from './repack.ts';
-import { ATLAS_ABSENT, COMMANDS, type CommandRun, modelTextBeside, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
+import { GUIDE_FILE, GUIDE_RULE_TABLES_ELSEWHERE, guideAnswer, refusalLine } from '../guide.ts';
+import { ATLAS_ABSENT, COMMANDS, type CommandRun, modelTextBeside, resolveBuild, type BuildGate, runBuild, PACKAGE_ROOT, DEFAULT_CHAINFIT_OUT, DEFAULT_POSE_OUT, DEFAULT_SKILLS_DIR, ExplainError, GuideError, meshBudget, meshDepthNote, meshFit, meshInfluenceNote, PAGE_GRID_UNLOCATED, readAnimationFlag, readJsonFile, readPoserFlag, readSkeletonText, readVersion, resolveCut, resolveDrawable, runCheck, SkillsInstallError, STAGELESS_FRAMING, UsageError, writeJson, documentStageBeside } from './shared.ts';
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -1492,12 +1493,9 @@ export function cmdIngest(flags: Record<string, string>, positional: string[]): 
   // read past a hundred DURATION lines to find it.
   // The gutter words are `INGEST_GUTTERS`, which is also the column
   // `docs/INGEST.md` §2.0's finding-code table is keyed on (issue #675); the
-  // pad to one width is this printer's, so the codes line up.
-  const width = Math.max(...Object.values(INGEST_GUTTERS).map((gutter) => gutter.length));
+  // line, its pad and its pointer to the code's row are `findingLine`'s (#1397).
   for (const kind of ['blocker', 'judgement', 'lossy'] as const) {
-    for (const finding of result.findings.filter((f) => f.kind === kind)) {
-      console.log(`  ${INGEST_GUTTERS[kind].padEnd(width)} ${finding.code}: ${finding.where} — ${finding.detail}`);
-    }
+    for (const finding of result.findings.filter((f) => f.kind === kind)) console.log(findingLine(finding));
   }
   console.log(`rigc: wrote ${join(outDir, 'rig.json')}`);
   console.log(`rigc: wrote ${join(outDir, 'motion.json')}`);
@@ -1700,6 +1698,36 @@ export function cmdSkills(flags: Record<string, string>, positional: string[]): 
 }
 
 // ---------------------------------------------------------------------------
+// guide — the row a failure line names, or one section (issue #1397)
+// ---------------------------------------------------------------------------
+
+/**
+ * `rigc guide <RULE>` / `rigc guide §<n>[.<m>]`: a slice of the `docs/AUTHORING.md`
+ * this package ships, read now — never a copy (`src/guide.ts` says why). A
+ * finding code's table is read from the shipped document it lives in, and the
+ * answer names that file.
+ */
+export function cmdGuide(flags: Record<string, string>, positional: string[]): void {
+  const flagged = Object.keys(flags);
+  if (flagged.length > 0) throw new UsageError(`guide takes no flags, and ${flagged.map((f) => `--${f}`).join(', ')} was given — name one rule or one §section`);
+  if (positional.length !== 1) {
+    throw new UsageError(
+      positional.length === 0
+        ? 'guide takes one rule name — the one a failure line names before its colon — or one §<n> / §<n>.<m>'
+        : `guide takes one rule name or one §section, and ${positional.length} were given: ${positional.map((p) => JSON.stringify(p)).join(', ')}`,
+    );
+  }
+  const elsewhere: Record<string, string> = {};
+  for (const table of GUIDE_RULE_TABLES_ELSEWHERE) {
+    const path = join(PACKAGE_ROOT, table.file);
+    if (existsSync(path)) elsewhere[table.file] = readFileSync(path, 'utf8');
+  }
+  const answer = guideAnswer(positional[0], { guide: readFileSync(join(PACKAGE_ROOT, GUIDE_FILE), 'utf8'), elsewhere });
+  if (!answer.ok) throw new GuideError(refusalLine(answer.rule, answer.detail));
+  for (const line of answer.lines) console.log(line);
+}
+
+// ---------------------------------------------------------------------------
 // build — the second entry's gate (issue #1060, step 4e of #380)
 // ---------------------------------------------------------------------------
 
@@ -1786,5 +1814,6 @@ export const CORE_COMMAND_RUNS: Readonly<Record<string, CommandRun>> = {
   inspect: ({ flags }) => cmdInspect(flags),
   pose: ({ flags }) => cmdPose(flags),
   chainfit: ({ flags }) => cmdChainFit(flags),
+  guide: ({ flags, positional }) => cmdGuide(flags, positional),
   skills: ({ flags, positional }) => cmdSkills(flags, positional),
 };

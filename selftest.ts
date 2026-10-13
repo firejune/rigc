@@ -283,6 +283,7 @@ import {
   ingest,
   IngestError,
   IngestSpecRefused,
+  findingLine,
   INGEST_GUTTERS,
   INGEST_VOCABULARY,
   UNSPELT_SLOT_TRACKS,
@@ -596,10 +597,27 @@ import {
   MANIFEST_ELEMENT_ID,
   resultFilename,
   TIE,
+  VOTE_RULES,
   VOTE_SPEC,
   type BallotManifest,
   type LedgerLine,
 } from './src/ballot.ts';
+import {
+  allRuleRows,
+  COMPILE_ERROR_SECTION,
+  GUIDE_RULES,
+  compileErrorLine,
+  failLine,
+  GUIDE_FILE,
+  GUIDE_RULE_TABLES_ELSEWHERE,
+  guideAnswer,
+  guidePointer,
+  guideSections,
+  numberingFaults,
+  type GuideRow,
+  type GuideSection,
+  type GuideTexts,
+} from './src/guide.ts';
 import { ATLAS_KEY, buildPreview, PLAYER_SCRIPT_URL, SKELETON_KEY, type PreviewGate } from './src/preview.ts';
 import {
   CHANNELS_BY_KIND,
@@ -15448,6 +15466,17 @@ function copyValueImportClosure(root: string, entry: string, dest: string): void
 }
 
 /** One line per case, in the same shape the fixture suites print. Returns 1 when it failed. */
+/**
+ * The opening of a guide row keyed on `code`, with or without the web anchor its
+ * first cell carries since issue #1397 (`| <a id="CODE"></a>\`CODE\` |`) — the one
+ * spelling every reader of a code-keyed row here matches, so a reader that wants
+ * the row is not also asserting the anchor's absence.
+ */
+const ROW_ANCHOR = '(?:<a id="[^"]*"><\\/a>)?';
+function ruleRowOf(line: string, code: string): boolean {
+  return new RegExp(`^\\| ${ROW_ANCHOR}\`${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\` \\|`).test(line);
+}
+
 function reportCase(name: string, ok: boolean, detail: string, why: string): number {
   if (ok) {
     console.log(`  PASS  ${name}`);
@@ -33555,7 +33584,7 @@ function runPathAndSliderSuite(): number {
     // attachment fallback through `SkeletonData.defaultSkin` is `getAttachment`'s
     // and covers art alone. Measured here because it is now reachable — the pair
     // below was refused on the branch point — and because "list it in default so
-    // it is always on" is the reading the sentence in §3.4.1 has to close.
+    // it is always on" is the reading the sentence in §3.4.8 has to close.
     const defaultLong = { attachments: PATH_RIG.skins.default.attachments, bones: ['pauldron'], ik: ['pauldron-ik'] };
     const alsoDefault = skinnedBuild({
       default: defaultLong,
@@ -64230,7 +64259,9 @@ function reportStatedByLines(stdout: string): ReportStatedByLines {
     }
     const pass = /^ {2}PASS {2}([A-Z0-9_]+)$/.exec(line);
     const skip = /^ {2}SKIP {2}([A-Z0-9_]+): (.*)$/.exec(line);
-    const fail = /^ {2}FAIL {2}([A-Z0-9_]+): (.*)$/.exec(line);
+    // A FAIL line ends with the pointer to its rule's row (issue #1397), and the document's `detail` stops before it:
+    // read the line only when the pointer names the line's own rule, so a line without one is no FAIL row at all here.
+    const fail = /^ {2}FAIL {2}([A-Z0-9_]+): (.*) \(see rigc guide \1\)$/.exec(line);
     const summary = /^ {2}\.\. {4}(\d+) assertions: (\d+) measured \((\d+) passed, (\d+) failed\), (\d+) skipped, (\d+) not in profile "([^"]+)"$/.exec(line);
     const here = /^ {2}\.\. {4}here: (\d+) rule\(s\) on the model side over the document, (\d+) of the round trip's own restated over the emitted text; not run: (.*?) — /.exec(line);
     const pack = /^ {2}\.\. {4}pack: (\S+) (\d+)x(\d+), (\d+) region\(s\), (\d+(?:\.\d+)?)% covered, padding (\d+)(, page edges free)?, shape (\S+)$/.exec(line);
@@ -64835,9 +64866,14 @@ function runCliSuite(): number {
     // value-taker. A regex that matched nothing would otherwise make both cases
     // below vacuously green — which is the failure mode this whole file exists
     // to refuse.
-    const emptyTables = commands.filter(
-      (command) => !tables.get(command)!.bare.includes('help') || tables.get(command)!.valued.length === 0,
-    );
+    // ⚠️ "At least one value-taker" held for every command until `guide` (issue #1397), which takes none: its
+    // table is `--help` alone. So the floor is the table's own size — every flag the command table documents for
+    // the command, plus `--help`, parsed off its page — which still refuses a regex that matched nothing.
+    const emptyTables = commands.filter((command) => {
+      const table = tables.get(command)!;
+      const documented = COMMANDS.find((doc) => doc.name === command)?.flags.length ?? 0;
+      return !table.bare.includes('help') || table.bare.length + table.valued.length !== documented + 1;
+    });
 
     /** Every switch any command documents, and the first command that documents each. */
     const switches = new Map<string, string>();
@@ -70832,6 +70868,438 @@ function readSkillInstallShapes(source: string, skills: string[], shipped: Set<s
   return { references, resolved, physical, faults };
 }
 
+// ---------------------------------------------------------------------------
+// guide — the row a failure line names, one ledger, one pointer (issue #1397)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every rule a rigc line can name, with what names it: the registry's
+ * assertions and the model side's two parse rules (a gate's `FAIL` line),
+ * `vote --record`'s refusals, and every finding code `src/ingest.ts` can print
+ * — read the way `IG25` reads them, composed codes expanded and a family kept
+ * as its family (`ATTACHMENT_<TYPE>`). A compile error names no rule (§5.1's
+ * tables are keyed on the message), so it adds nothing here.
+ */
+function emittableRules(ingestSource: string): Map<string, string> {
+  const rules = new Map<string, string>();
+  for (const code of ASSERTION_NAMES) rules.set(code, 'a gate FAIL line (the registry)');
+  for (const code of Object.keys(MODEL_PARSE_KIND)) rules.set(code, 'a gate FAIL line (the model side\'s parse)');
+  for (const code of VOTE_RULES) rules.set(code, 'a vote --record FAIL line');
+  for (const code of GUIDE_RULES) rules.set(code, 'a guide refusal');
+  for (const code of ingestFindingCodes(ingestSource).codes.keys()) rules.set(code, 'an ingest finding');
+  return rules;
+}
+
+/** The guide and the documents a rule table lives in, as texts, from `root` — what `rigc guide` reads. */
+function guideTextsAt(root: string): GuideTexts {
+  const elsewhere: Record<string, string> = {};
+  for (const table of GUIDE_RULE_TABLES_ELSEWHERE) {
+    const path = join(root, table.file);
+    if (existsSync(path)) elsewhere[table.file] = readFileSync(path, 'utf8');
+  }
+  return { guide: readFileSync(join(root, GUIDE_FILE), 'utf8'), elsewhere };
+}
+
+/**
+ * What the rule rows and the rules disagree about, one sentence each and named:
+ * a rule with no row, a rule with more than one, a row naming a rule nothing
+ * emits. One row per rule across every rule table — HQ's ruling on
+ * rig-c/parts#343 — so a rule documented in two tables is a fault, not two
+ * answers. A rule a family row answers for (`ATTACHMENT_POINT`) has no row of its
+ * own and needs none; the family row is the rule the source emits.
+ */
+function guideRowFaults(rules: ReadonlyMap<string, string>, rows: readonly GuideRow[]): string[] {
+  const faults: string[] = [];
+  for (const rule of [...rules.keys()].sort()) {
+    const own = rows.filter((row) => row.rule === rule);
+    if (own.length === 0) faults.push(`${rule}: ${rules.get(rule)} names it and no rule table has a row for it`);
+    else if (own.length > 1) faults.push(`${rule}: ${own.length} rows name it (${own.map((row) => `${row.file}:${row.line}`).join(', ')}), and one rule has one row`);
+  }
+  for (const row of rows) if (!rules.has(row.rule)) faults.push(`${row.rule}: ${row.file}:${row.line} is a row for it, and nothing the source can print names it`);
+  return faults;
+}
+
+/** Every row whose first cell does not open with its own rule's anchor, and every anchor id used twice — named. */
+function guideAnchorFaults(rows: readonly GuideRow[]): string[] {
+  const faults: string[] = [];
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    if (row.anchor === null) faults.push(`${row.rule}: ${row.file}:${row.line} has no <a id="${row.rule}"></a> at the start of its first cell`);
+    else if (row.anchor !== row.rule) faults.push(`${row.rule}: ${row.file}:${row.line} opens with <a id="${row.anchor}"></a>, where the rule's own name is required`);
+    if (row.anchor !== null) {
+      const key = `${row.file}#${row.anchor.toLowerCase()}`;
+      if (seen.has(key)) faults.push(`${row.anchor}: ${row.file}:${row.line} repeats the anchor ${seen.get(key)} carries — github.com lowercases ids, so the two are one link`);
+      else seen.set(key, `${row.file}:${row.line}`);
+    }
+  }
+  return faults;
+}
+
+/**
+ * Every place a module prints a coded failure line by hand rather than through
+ * the one writer — a template that opens `  FAIL  ${…`, or an ingest gutter
+ * padded into a line — outside `src/guide.ts` and `findingLine`. Named by file
+ * and line. A reader of the lines (`startsWith('  FAIL  ')`) writes nothing and
+ * is not one.
+ */
+function pointerBypasses(files: ReadonlyArray<{ path: string; text: string }>): string[] {
+  const faults: string[] = [];
+  for (const { path, text } of files) {
+    if (path === 'src/guide.ts') continue;
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/`\s*FAIL {2}\$\{/.test(line)) faults.push(`${path}:${i + 1} writes a FAIL line by hand — \`failLine\` writes it, with the pointer to the rule's row`);
+      if (/`rigc compile error: \$\{/.test(line)) faults.push(`${path}:${i + 1} writes a compile error line by hand — \`compileErrorLine\` writes it, with the pointer to §5.1`);
+      if (/INGEST_GUTTERS\[[^\]]*\]\.padEnd/.test(line) && !(path === 'src/ingest.ts' && /findingLine/.test(lines.slice(Math.max(0, i - 3), i + 1).join('\n')))) {
+        faults.push(`${path}:${i + 1} writes an ingest finding line by hand — \`findingLine\` writes it, with the pointer to the code's row`);
+      }
+    }
+  }
+  return faults;
+}
+
+/** Every `.ts` file under `dir`, relative to `root`, sorted — read off the disk, so a new module is in it before it is tracked. */
+function tsFilesUnder(root: string, dir: string): string[] {
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+      const path = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith('.ts')) out.push(path);
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+function runGuideSuite(): number {
+  console.log('\n── the guide: one ledger, the row a line names, and the pointer to it (issue #1397) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const root = import.meta.dir;
+  const texts = guideTextsAt(root);
+  const rows = allRuleRows(texts);
+  const rules = emittableRules(readFileSync(join(root, 'src/ingest.ts'), 'utf8'));
+  const caught = (what: string, raised: readonly string[], name: string, cases: string[], probes: string[]): void => {
+    const hit = raised.find((fault) => fault.includes(name));
+    if (hit === undefined) probes.push(`"${what}" (${name}) was planted and ` + 'not ' + `caught: it raised [${raised.join('; ')}]`);
+    else cases.push(`${what} -> ${hit}`);
+  };
+
+  // GD01 — the gate: every rule the source can emit has exactly one row, and no row names a rule it cannot.
+  {
+    const live = guideRowFaults(rules, rows);
+    const probes = [
+      ...live,
+      ...floorProbes(
+        [
+          [rules.size, ASSERTION_NAMES.length + VOTE_RULES.length + 20, `${rules.size} rule(s) were read off the source`],
+          [rows.length, rules.size, `${rows.length} rule row(s) were read off the guide and ${GUIDE_RULE_TABLES_ELSEWHERE.map((t) => t.file).join(', ')}`],
+          [rows.filter((row) => row.file !== GUIDE_FILE).length, 20, `${rows.filter((row) => row.file !== GUIDE_FILE).length} row(s) were read off the finding-code table`],
+        ],
+        'so a reader matched less than the tables hold, and two lists that agree about nothing agree',
+      ),
+    ];
+    const cases: string[] = [];
+    const first = rows.find((row) => row.file === GUIDE_FILE);
+    const vote = rows.find((row) => row.rule === VOTE_RULES[0]);
+    if (first === undefined || vote === undefined) probes.push('the guide has no assertion row or no vote row to plant on, so no plant was made');
+    else {
+      const removed = texts.guide.split('\n').filter((_, k) => k + 1 !== first.line).join('\n');
+      caught('a row removed', raisedBy(guideRowFaults(rules, allRuleRows({ ...texts, guide: removed })), { was: live }), first.rule, cases, probes);
+      const PHANTOM = 'A99_PHANTOM_PLANTED_BY_GD01';
+      const phantom = texts.guide.replace(first.text, () => `${first.text}\n${first.text.replaceAll(first.rule, PHANTOM)}`);
+      caught('a phantom row added', raisedBy(guideRowFaults(rules, allRuleRows({ ...texts, guide: phantom })), { was: live }), PHANTOM, cases, probes);
+      const doubled = texts.guide.replace(first.text, () => `${first.text}\n${vote.text}`);
+      caught('a second row for a rule that has one', raisedBy(guideRowFaults(rules, allRuleRows({ ...texts, guide: doubled })), { was: live }), vote.rule, cases, probes);
+    }
+    const held = probes.length === 0;
+    const where = [...new Set(rows.map((row) => row.file))].map((file) => `${rows.filter((row) => row.file === file).length} in ${file}`).join(', ');
+    say(
+      'GD01_EVERY_RULE_A_LINE_CAN_NAME_HAS_EXACTLY_ONE_ROW_AND_EVERY_ROW_NAMES_ONE',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${rules.size} rule(s) a line can name — ${ASSERTION_NAMES.length} assertion(s), ${Object.keys(MODEL_PARSE_KIND).length} model-side parse rule(s), ` +
+          `${VOTE_RULES.length} vote refusal(s), ${GUIDE_RULES.length} guide refusal(s), ` +
+          `${rules.size - ASSERTION_NAMES.length - Object.keys(MODEL_PARSE_KIND).length - VOTE_RULES.length - GUIDE_RULES.length} ingest finding code(s) — ` +
+          `each with exactly one of the ${rows.length} rule row(s) (${where}); over ${cases.length} plant(s): ${cases.join('; ')}`,
+        (count) => `${count} way(s) the rule rows and the rules disagree:`,
+      ),
+      'issue #1397: the guide is the only map from a named failure to the file that has to change, and the pointer on every line is a promise that a row is there — the seven vote refusals had none, and two assertions had two',
+    );
+  }
+
+  // GD02 — one writer: no module writes a coded failure line except through `failLine` / `findingLine`.
+  {
+    const sources = [...tsFilesUnder(root, 'src'), 'cli.ts', 'cli_core.ts'].map((path) => ({ path, text: readFileSync(join(root, path), 'utf8') }));
+    const live = pointerBypasses(sources);
+    const callers = (name: string): number =>
+      sources.reduce((n, { path, text }) => n + (path === 'src/guide.ts' ? 0 : [...text.matchAll(new RegExp(`(?<!function )\\b${name}\\(`, 'g'))].length), 0);
+    const probes = [
+      ...live,
+      ...floorProbes(
+        [
+          [sources.length, 50, `${sources.length} module(s) were read`],
+          [callers('failLine'), 2, `${callers('failLine')} call(s) of failLine — the gate's report and vote --record`],
+          [callers('findingLine'), 2, `${callers('findingLine')} call(s) of findingLine — ingest and repack`],
+          [callers('compileErrorLine'), 1, `${callers('compileErrorLine')} call(s) of compileErrorLine — the CLI's refusal chain`],
+        ],
+        'so the scan did not read the modules that print these lines',
+      ),
+    ];
+    const cases: string[] = [];
+    const plantOn = (path: string, line: string, mark: string): void => {
+      const planted = sources.map((s) => (s.path === path ? { path, text: `${s.text}\n${line}\n` } : s));
+      const at = `${path}:${sources.find((s) => s.path === path)!.text.split('\n').length + 1}`;
+      caught(mark, raisedBy(pointerBypasses(planted), { was: live }), at, cases, probes);
+    };
+    plantOn('src/cli/spine_commands.ts', "console.error(`  FAIL  ${'V00'}: planted`);", 'a FAIL line written by hand');
+    plantOn('src/cli/core_commands.ts', 'console.error(`rigc compile error: ${String(1)}`);', 'a compile error line written by hand');
+    plantOn('src/cli/repack.ts', "lines.push(`  ${INGEST_GUTTERS.blocker.padEnd(5)} X`); const y = INGEST_GUTTERS['blocker'].padEnd(5);", 'a finding line written by hand');
+    const held = probes.length === 0;
+    say(
+      'GD02_EVERY_LINE_THAT_NAMES_A_RULE_IS_WRITTEN_BY_THE_ONE_POINTER_WRITER',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${sources.length} module(s) under src/ and the two entries: no FAIL line, finding line or compile error line written by hand; failLine called ${callers('failLine')} time(s), ` +
+          `findingLine ${callers('findingLine')}, compileErrorLine ${callers('compileErrorLine')}; over ${cases.length} plant(s): ${cases.join('; ')}`,
+        (count) => `${count} line writer(s) that bypass the pointer:`,
+      ),
+      'issue #1397: "one function writes it" is what makes every line carry the same pointer; a second writer is a line without one',
+    );
+  }
+
+  // GD03 — the pointer is the shared form, and every rule it can name resolves through `guide` to one row.
+  {
+    const probes: string[] = [];
+    const FORM = ' (see rigc guide A20_MESH_WEIGHTS_COHERENT)';
+    if (guidePointer('A20_MESH_WEIGHTS_COHERENT') !== FORM) probes.push(`the pointer reads ${JSON.stringify(guidePointer('A20_MESH_WEIGHTS_COHERENT'))}, where the shared form is ${JSON.stringify(FORM)}`);
+    const fail = failLine('A20_MESH_WEIGHTS_COHERENT', 'mesh "x" vertex 12 weights sum to 0.9000');
+    if (fail !== `  FAIL  A20_MESH_WEIGHTS_COHERENT: mesh "x" vertex 12 weights sum to 0.9000${FORM}`) probes.push(`a FAIL line reads ${JSON.stringify(fail)}`);
+    const finding = findingLine({ code: 'DURATION', where: 'animation "idle"', detail: 'planted', kind: 'judgement' });
+    if (finding !== '  JUDGE DURATION: animation "idle" — planted (see rigc guide DURATION)') probes.push(`a finding line reads ${JSON.stringify(finding)}`);
+    const compiled = compileErrorLine('rig.json: a rig spec needs a "name"');
+    if (compiled !== 'rigc compile error: rig.json: a rig spec needs a "name" (see rigc guide §5.1)') probes.push(`a compile error line reads ${JSON.stringify(compiled)}`);
+    const section = guideAnswer(COMPILE_ERROR_SECTION, texts);
+    if (!section.ok) probes.push(`the section a compile error points at, ${COMPILE_ERROR_SECTION}, is refused: ${section.rule}: ${section.detail}`);
+    // Every rule, and one member of each family, through the command's own reader.
+    const asked = [...rules.keys()].map((rule) => (rule.includes('<') ? rule.replace(/<[A-Z]+>/g, 'POINT') : rule));
+    let resolved = 0;
+    for (const rule of asked) {
+      const answer = guideAnswer(rule, texts);
+      if (!answer.ok) probes.push(`${rule}: guide refuses it — ${answer.rule}: ${answer.detail}`);
+      else resolved++;
+    }
+    const cases: string[] = [];
+    const first = rows.find((row) => row.file === GUIDE_FILE);
+    if (first !== undefined) {
+      const removed = { ...texts, guide: texts.guide.split('\n').filter((_, k) => k + 1 !== first.line).join('\n') };
+      const answer = guideAnswer(first.rule, removed);
+      if (answer.ok) probes.push(`with ${first.rule}'s row removed, guide still answered it — the pointer would lead nowhere and say nothing`);
+      else cases.push(`${first.rule}'s row removed -> refused by ${answer.rule}: ${answer.detail.slice(0, 120)}…`);
+    }
+    const held = probes.length === 0 && resolved === asked.length;
+    say(
+      'GD03_THE_POINTER_IS_THE_SHARED_FORM_AND_EVERY_RULE_IT_CAN_NAME_RESOLVES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `the pointer is ${JSON.stringify(FORM)} for A20, on a FAIL line and on a finding line alike, and a compile error's ends ` +
+          `" (see rigc guide ${COMPILE_ERROR_SECTION})", which guide prints; ${resolved} of ${asked.length} rule(s) ` +
+          `(a family asked as its POINT member) answered by guide over the shipped texts; ${cases.join('; ')}`,
+        (count) => `${count} way(s) the pointer is not the form, or leads nowhere:`,
+      ),
+      'issue #1397 and rig-c/parts#343: the form is shared with rig-parts word for word — "that text, that spacing, nothing else" — and a pointer that resolves to no row is a line that lies',
+    );
+  }
+
+  // GD04 — the numbers the guide writes on its ### and #### headings are the positions §<n>.<m> and §<n>.<m>.<k> count.
+  {
+    const live = numberingFaults(texts.guide);
+    const sections = guideSections(texts.guide);
+    const subs = sections.filter((s) => s.heading.level === 3);
+    const subsubs = sections.filter((s) => s.heading.level === 4);
+    const numbered = (list: readonly GuideSection[]): number => list.filter((s) => /^\d/.test(s.heading.title)).length;
+    const probes = [
+      ...live,
+      ...floorProbes(
+        [
+          [subs.length, 40, `${subs.length} ### heading(s) were counted`],
+          [subsubs.length, 10, `${subsubs.length} #### heading(s) were counted`],
+        ],
+        'so the heading reader matched less than the guide holds',
+      ),
+    ];
+    const cases: string[] = [];
+    const lines = texts.guide.split('\n');
+    const at = (address: string): GuideSection | undefined => sections.find((s) => s.address === address);
+    const swap = (a: GuideSection, b: GuideSection, level: string): string =>
+      lines
+        .map((line, k) =>
+          k + 1 === a.heading.line
+            ? line.replace(`${level} ${a.address} `, `${level} ${b.address} `)
+            : k + 1 === b.heading.line
+              ? line.replace(`${level} ${b.address} `, `${level} ${a.address} `)
+              : line,
+        )
+        .join('\n');
+    const five2 = at('5.2');
+    const five3 = at('5.3');
+    const eleven1 = at('4.11.1');
+    const eleven2 = at('4.11.2');
+    const lettered = lines.findIndex((line) => /^##### 10\.6b /.test(line));
+    if (five2 === undefined || five3 === undefined || eleven1 === undefined || eleven2 === undefined || lettered < 0) {
+      probes.push('the guide has no §5.2/§5.3, no §4.11.1/§4.11.2 or no ##### 10.6b to plant on, so no plant was made');
+    } else {
+      caught('§5.2 and §5.3 written in each other\'s place', raisedBy(numberingFaults(swap(five2, five3, '###')), { was: live }), `${GUIDE_FILE}:${five2.heading.line} "### 5.3 `, cases, probes);
+      caught('§4.11.1 and §4.11.2 written in each other\'s place', raisedBy(numberingFaults(swap(eleven1, eleven2, '####')), { was: live }), `${GUIDE_FILE}:${eleven1.heading.line} "#### 4.11.2 `, cases, probes);
+      const raised = lines.map((line, k) => (k === lettered ? line.slice(1) : line));
+      caught('a lettered heading raised back to ####', raisedBy(numberingFaults(raised.join('\n')), { was: live }), `${GUIDE_FILE}:${lettered + 1} "#### 10.6b `, cases, probes);
+    }
+    const held = probes.length === 0;
+    say(
+      'GD04_EVERY_NUMBERED_HEADING_SITS_WHERE_GUIDE_COUNTS_IT',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${subs.length} ### heading(s) (${numbered(subs)} numbered) and ${subsubs.length} #### heading(s) (${numbered(subsubs)} numbered) under ` +
+          `${sections.filter((s) => s.heading.level === 2).length} numbered chapter(s), each number the one §<n>.<m> or §<n>.<m>.<k> counts it at; ` +
+          `over ${cases.length} plant(s): ${cases.join('; ')}`,
+        (count) => `${count} heading(s) whose written number is not where guide counts them:`,
+      ),
+      'HQ\'s rulings on rig-c/parts#343: §<n>.<m> is the m-th ### under ## <n>. and §<n>.<m>.<k> the k-th #### under that, counted when it is read — so a number written on a heading has to be that count, or `rigc guide §4.6` prints a heading that says 4.5.1',
+    );
+  }
+
+  // GD05 — the web anchor at the start of every rule row's first cell, the rule name verbatim.
+  {
+    const live = guideAnchorFaults(rows);
+    const probes = [...live];
+    const cases: string[] = [];
+    const first = rows.find((row) => row.file === GUIDE_FILE);
+    const id = first?.anchor ?? null;
+    if (first === undefined || id === null) probes.push('the guide has no anchored row to plant on, so no plant was made');
+    else {
+      const bare = texts.guide.replace(first.text, () => first.text.replace(`<a id="${id}"></a>`, ''));
+      caught('an anchor taken off', raisedBy(guideAnchorFaults(allRuleRows({ ...texts, guide: bare })), { was: live }), `${first.rule}: ${GUIDE_FILE}:${first.line} has no`, cases, probes);
+      const wrong = texts.guide.replace(first.text, () => first.text.replace(`<a id="${id}"></a>`, `<a id="${id.toLowerCase()}"></a>`));
+      caught('an anchor not spelled as its rule', raisedBy(guideAnchorFaults(allRuleRows({ ...texts, guide: wrong })), { was: live }), `${first.rule}: ${GUIDE_FILE}:${first.line} opens with`, cases, probes);
+    }
+    const held = probes.length === 0;
+    say(
+      'GD05_EVERY_RULE_ROW_OPENS_WITH_ITS_OWN_ANCHOR',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `${rows.length} rule row(s), each opening with <a id="<RULE>"></a> for its own rule, no id used twice in one file; over ${cases.length} plant(s): ${cases.join('; ')}`,
+        (count) => `${count} row(s) a link cannot land on:`,
+      ),
+      'issue #1397 change 4: a link to AUTHORING.md#<RULE> on github.com lands on the row only if the row carries the id',
+    );
+  }
+
+  // GD06 — the command, as an agent runs it, on each kind of name and through both entries.
+  {
+    const probes: string[] = [];
+    const cases: string[] = [];
+    const run = (entry: string, args: string[]): { status: number | null; stdout: string; stderr: string } => {
+      const r = spawnSync(process.execPath, [entry, 'guide', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+      return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+    };
+    const rowText = (rule: string): string => rows.find((row) => row.rule === rule)?.text ?? `(no row for ${rule})`;
+    const ingestRule = [...rules.keys()].find((rule) => rows.some((row) => row.rule === rule && row.file !== GUIDE_FILE)) ?? '';
+    const expectations: Array<{ what: string; args: string[]; status: number; out: (stdout: string, stderr: string) => string | null }> = [
+      { what: 'an assertion', args: ['A20_MESH_WEIGHTS_COHERENT'], status: 0, out: (o) => (o.startsWith(`${GUIDE_FILE} §5.2, line `) && o.includes(rowText('A20_MESH_WEIGHTS_COHERENT')) ? null : 'not its §5.2 row under the file and section') },
+      { what: 'a vote refusal', args: [VOTE_RULES[0]], status: 0, out: (o) => (o.includes(rowText(VOTE_RULES[0])) ? null : 'not its row') },
+      { what: 'an ingest finding code', args: [ingestRule], status: 0, out: (o) => (o.startsWith('docs/INGEST.md, line ') && o.includes(rowText(ingestRule)) ? null : 'not its row from docs/INGEST.md, naming that file') },
+      { what: 'a family member', args: ['ATTACHMENT_POINT'], status: 0, out: (o) => (o.includes('the row for the family ATTACHMENT_<TYPE>') ? null : 'not the family row, said as one') },
+      { what: 'a section', args: ['§5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §5 "5\. Reading a failure", lines \d+–\d+, [\d.]+ KB\n§5\.1 {2,}[\d.]+ KB {2}5\.1 /.test(o) && o.includes('\n## 5. Reading a failure\n') ? null : 'not §5 with its subsections listed and its text') },
+      { what: 'a ### listing its ####', args: ['§4.5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5 "4\.5 `keys` — times, values, curves", lines \d+–\d+, [\d.]+ KB\n§4\.5\.1 {2} *[\d.]+ KB {2}4\.5\.1 /.test(o) ? null : 'not §4.5 with its #### listed by address, size and title') },
+      { what: 'a ####', args: ['§4.5.1'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5\.1 "4\.5\.1 [^"]*", lines /.test(o) && o.includes('\n#### 4.5.1 ') && !o.includes('\n#### 4.5.2 ') ? null : 'not §4.5.1 alone') },
+      { what: 'a subsection', args: ['§5.2'], status: 0, out: (o) => (o.includes('\n### 5.2 Assertions') && !o.includes('\n### 5.3 ') ? null : 'not §5.2 alone') },
+      {
+        what: 'an unknown rule',
+        args: ['A20_MESH_WEIGHT_COHERENT'],
+        status: 1,
+        out: (o, e) =>
+          o === '' && /^FAIL {2}GUIDE_RULE_KNOWN: "A20_MESH_WEIGHT_COHERENT" — no row in docs\/AUTHORING\.md or docs\/INGEST\.md names it; the nearest: A20_MESH_WEIGHTS_COHERENT, [A-Z0-9_]+, [A-Z0-9_]+ \(see rigc guide GUIDE_RULE_KNOWN\)\n$/.test(e)
+            ? null
+            : 'not the GUIDE_RULE_KNOWN refusal with the three nearest real names, the right one first',
+      },
+      {
+        what: 'an unknown section',
+        args: ['§5.9'],
+        status: 1,
+        out: (o, e) =>
+          o === '' && /^FAIL {2}GUIDE_SECTION_KNOWN: "§5\.9" — no such section; the deepest that exists is §5 "5\. Reading a failure", whose sections are: §5\.1, §5\.2, (§5\.\d, )*§5\.\d \(see rigc guide GUIDE_SECTION_KNOWN\)\n$/.test(e)
+            ? null
+            : 'not the GUIDE_SECTION_KNOWN refusal naming §5 and its sections',
+      },
+    ];
+    for (const entry of ['cli.ts', 'cli_core.ts']) {
+      for (const want of expectations) {
+        const r = run(entry, want.args);
+        const wrong = r.status !== want.status ? `exit ${String(r.status)}, not ${want.status}` : want.out(r.stdout, r.stderr);
+        if (wrong !== null) probes.push(`${entry} guide ${want.args.join(' ')} (${want.what}): ${wrong} — ${JSON.stringify((r.stdout || r.stderr).slice(0, 200))}`);
+        else if (entry === 'cli.ts') cases.push(`${want.what} -> exit ${want.status}`);
+      }
+    }
+    const held = probes.length === 0;
+    say(
+      'GD06_GUIDE_ANSWERS_EVERY_KIND_OF_NAME_FROM_THE_SHIPPED_FILES_ON_BOTH_ENTRIES',
+      held,
+      probeDetail(
+        held,
+        probes,
+        `rigc guide through cli.ts and cli_core.ts: ${cases.join('; ')}`,
+        (count) => `${count} answer(s) that are not the shared form:`,
+      ),
+      'issue #1397 changes 1, 2 and 7, and the form on rig-c/parts#343: a rule\'s row under its heading, a section, the file a finding code is read from, and a refusal by name with the nearest real names, exit 1',
+    );
+  }
+
+  // GD07 — every shipped skill says, before its first section, that a failure line ends with the command to run first.
+  {
+    const skills = readdirSync(join(root, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && existsSync(join(root, 'skills', entry.name, 'SKILL.md')))
+      .map((entry) => `skills/${entry.name}/SKILL.md`)
+      .sort();
+    const missing = (text: string): boolean => {
+      const body = text.split('\n## ')[0];
+      return !body.includes('(see rigc guide <RULE>)') || !body.includes('Run that command first');
+    };
+    const probes = [
+      ...skills.filter((path) => missing(readFileSync(join(root, path), 'utf8'))).map((path) => `${path} does not say, before its first ## section, that a failure line ends with \`(see rigc guide <RULE>)\` and to run that command first`),
+      ...floorProbes([[skills.length, 1, `${skills.length} shipped skill(s) were read`]], 'so the skills/ directory was not read'),
+    ];
+    const cases: string[] = [];
+    if (skills.length > 0) {
+      const text = readFileSync(join(root, skills[0]), 'utf8');
+      if (missing(text.replace('Run that command first', 'Run it'))) cases.push(`${skills[0]} with the instruction reworded -> faulted`);
+      else probes.push(`${skills[0]} with the instruction reworded was ` + 'not ' + 'caught');
+    }
+    const held = probes.length === 0;
+    say(
+      'GD07_EVERY_SHIPPED_SKILL_SAYS_TO_RUN_THE_POINTER_FIRST_BEFORE_ITS_FIRST_SECTION',
+      held,
+      probeDetail(held, probes, `${skills.length} skill(s) (${skills.join(', ')}) each say it before their first section; ${cases.join('; ')}`, (count) => `${count} skill(s) that do not:`),
+      'issue #1397 change 6: an agent loads a skill before it meets its first failure, and the skill is where it learns that the line carries the command',
+    );
+  }
+
+  return bad;
+}
+
 function runSkillSurfaceSuite(): number {
   console.log('\n── the agent-skill surface: skills/ and .claude-plugin/ (issue #366) ──');
   let bad = 0;
@@ -76577,7 +77045,7 @@ function runCurrencySuite(): number {
         const after = lines.findIndex((line, k) => k > start && /^#{1,3} /.test(line));
         const out: Array<{ code: string; profile: string; line: number }> = [];
         for (let k = start + 1; k < (after < 0 ? lines.length : after); k++) {
-          const row = /^\| `([A-Z]\d\d_[A-Z\d_]+)` \| ([^|]*?) \|/.exec(lines[k]);
+          const row = /^\| (?:<a id="[^"]*"><\/a>)?`([A-Z]\d\d_[A-Z\d_]+)` \| ([^|]*?) \|/.exec(lines[k]);
           if (row !== null) out.push({ code: row[1], profile: row[2].replace('◑', '').trim(), line: k + 1 });
         }
         return out;
@@ -77013,7 +77481,9 @@ function runCurrencySuite(): number {
         if (line === null) continue;
         const head = /^(#{1,6}) (.*)$/.exec(line);
         if (head !== null) {
-          heading = head[1].length === 4 ? head[2] : null;
+          // `####` or below: a field table may sit under a deeper heading too (`soft`, a ##### under §3.4.6), and a
+          // reader that stops at #### would drop it silently.
+          heading = head[1].length >= 4 ? head[2] : null;
           inTable = false;
           continue;
         }
@@ -78515,7 +78985,7 @@ function runCurrencySuite(): number {
 
     // --- CUR58: the profile column, against the profiles that refuse it -------
     {
-      const row = /\| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \| ([^|]+?) \|/.exec(guide);
+      const row = /\| (?:<a id="[^"]*"><\/a>)?`A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \| ([^|]+?) \|/.exec(guide);
       const refusing = VALIDATE_PROFILES.filter((profile) => refusalUnder(profile, doubleFirstAtlasPageSize) !== null);
       const oracle = refusing.length === VALIDATE_PROFILES.length ? 'both' : refusing.join(' and ');
       const said = row === null ? null : row[1].trim();
@@ -78632,7 +79102,7 @@ function runCurrencySuite(): number {
     {
       const liveList = unknownSaid === null ? null : /it names ([^)]*?) when it meets them/.exec(unknownSaid);
       const named = liveList === null ? [] : liveList[1].split(/,\s*/).map((name) => name.trim()).filter(Boolean);
-      const row = /\| `A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \|[^\n]*?one of ([^\n]*?) by its signature/.exec(guide);
+      const row = /\| (?:<a id="[^"]*"><\/a>)?`A06_ATLAS_PAGE_SIZE_MATCHES_PNG` \|[^\n]*?one of ([^\n]*?) by its signature/.exec(guide);
       const listOf = (text: string): string[] => text.split(/,\s*/).map((name) => name.trim()).filter(Boolean);
       const taught = row === null ? [] : listOf(row[1]);
       const plantedRow = row === null ? [] : listOf(row[1].replace(/,\s*[^,]+$/, ''));
@@ -78963,7 +79433,7 @@ function runCurrencySuite(): number {
     const quotesIn = (text: string): string[] =>
       text
         .split('\n')
-        .filter((line) => line.startsWith('| `A19_OVERLAY_PNGS_HAVE_ALPHA` |'))
+        .filter((line) => ruleRowOf(line, 'A19_OVERLAY_PNGS_HAVE_ALPHA'))
         .flatMap((line) => [...line.matchAll(/\*"([^"]+)"\*/g)].map((m) => m[1]));
     const cases: Array<[string, string]> = [
       ['CUR74_THE_BASE_PLATE_SENTENCE_THE_GUIDE_QUOTES_IS_THE_ONE_A19_PRINTS', 'docs/AUTHORING.md'],
@@ -78973,7 +79443,7 @@ function runCurrencySuite(): number {
       const text = readFileSync(join(root, path), 'utf8');
       const quotes = quotesIn(text);
       const missing = quotes.filter((quote) => !live.includes(quote));
-      const planted = quotesIn(text.replace(/(\| `A19_OVERLAY_PNGS_HAVE_ALPHA` \|[^\n]*?\*")(\S+)/, '$1RENAMED'));
+      const planted = quotesIn(text.replace(/(\| (?:<a id="[^"]*"><\/a>)?`A19_OVERLAY_PNGS_HAVE_ALPHA` \|[^\n]*?\*")(\S+)/, '$1RENAMED'));
       const plantedMissing = planted.filter((quote) => !live.includes(quote));
       const probes = [
         ...(live === '' ? ['the stageless rig-spec backdrop printed no A19 refusal, so nothing was compared'] : []),
@@ -79400,7 +79870,7 @@ function runCurrencySuite(): number {
         skip: reason.includes(' — ') ? reason.slice(0, reason.indexOf(' — ')) : '',
       };
     });
-    const rowOf = (text: string, assertion: string): string => text.split('\n').find((line) => line.startsWith(`| \`${assertion}\` |`)) ?? '';
+    const rowOf = (text: string, assertion: string): string => text.split('\n').find((line) => ruleRowOf(line, assertion)) ?? '';
 
     // CUR85: the SKIP a declared constraint earns, in its §5.2 row.
     {
@@ -79488,7 +79958,7 @@ function runCurrencySuite(): number {
     const rowOf = (text: string): string =>
       text
         .split('\n')
-        .filter((line) => line.startsWith('| `A19_OVERLAY_PNGS_HAVE_ALPHA` |'))
+        .filter((line) => ruleRowOf(line, 'A19_OVERLAY_PNGS_HAVE_ALPHA'))
         .join('\n');
     const absent = (row: string): string[] => clauses.filter((clause) => !row.includes(`\`${clause}\``));
     const cases: Array<[string, string]> = [
@@ -79794,8 +80264,11 @@ function runCurrencySuite(): number {
     const compileText = readFileSync(join(root, compilePath), 'utf8');
     const flat = (text: string): string => text.replace(/\s+/g, ' ');
     const sectionOf = (text: string): string | null => {
-      const at = text.indexOf('\n### 10.6b ');
-      const end = at < 0 ? -1 : text.indexOf('\n### ', at + 1);
+      // A ##### under §10.6 since issue #1397, which counts §<n>.<m> and §<n>.<m>.<k> and holds the written numbers to
+      // the count: a lettered 10.6b is no count, so it sits below the levels that are addressed.
+      const at = text.indexOf('\n##### 10.6b ');
+      const ends = at < 0 ? [] : ['\n### ', '\n#### ', '\n##### '].map((mark) => text.indexOf(mark, at + 1)).filter((k) => k >= 0);
+      const end = ends.length === 0 ? -1 : Math.min(...ends);
       return at < 0 ? null : text.slice(at, end < 0 ? undefined : end);
     };
     /** A doc comment's text with its ` * ` gutters taken off, flattened. */
@@ -80239,7 +80712,7 @@ function runCurrencySuite(): number {
       ...saidOf([...lines, '', '', ...lines].join('\n') + '\n').filter((said) => said === 'consecutive blank lines'),
     ];
     const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
-    const rowOf = (text: string): string => text.split('\n').find((line) => line.startsWith(`| \`${A07}\``)) ?? '';
+    const rowOf = (text: string): string => text.split('\n').find((line) => ruleRowOf(line, A07)) ?? '';
     const missingFrom = (row: string): string[] => sentences.filter((said) => !row.includes(said)).map((said) => `the A07 row does not quote "${said}"`);
     const standing = missingFrom(rowOf(guide));
     const plantProbes = sentences.flatMap((said) => {
@@ -80371,7 +80844,7 @@ function runCurrencySuite(): number {
       .failures.filter((f) => f.assertion === A02)
       .map((f) => f.detail.replace(/^bone "[^"]*"/, 'bone "…"'));
     const guide = readFileSync(join(root, 'docs/AUTHORING.md'), 'utf8');
-    const rowOf = (text: string): string => text.split('\n').find((line) => line.startsWith(`| \`${A02}\``)) ?? '';
+    const rowOf = (text: string): string => text.split('\n').find((line) => ruleRowOf(line, A02)) ?? '';
     const missingFrom = (row: string): string[] => sentences.filter((said) => !row.includes(said)).map((said) => `the A02 row does not quote "${said}"`);
     const standing = missingFrom(rowOf(guide));
     const plantProbes = sentences.flatMap((said) => {
@@ -116933,14 +117406,17 @@ function runIngestSuite(): number {
     const rowsOf = (doc: string): string[] => doc.split('\n');
     const withoutRow = (code: string): string =>
       rowsOf(ingestPage)
-        .filter((line) => !line.startsWith(`| \`${code}\` |`))
+        .filter((line) => !ruleRowOf(line, code))
         .join('\n');
     const withInventedRow = (): string =>
-      ingestPage.replace(`| \`${sampleCode}\` |`, `| \`${INVENTED}\` | \`BLOCK\` | 1 | planted | planted |\n| \`${sampleCode}\` |`);
+      ingestPage.replace(
+        new RegExp(`^(?=\\| ${ROW_ANCHOR}\`${sampleCode}\` \\|)`, 'm'),
+        () => `| <a id="${INVENTED}"></a>\`${INVENTED}\` | \`BLOCK\` | 1 | planted | planted |\n`,
+      );
     const withFlippedGutter = (code: string): string =>
       rowsOf(ingestPage)
         .map((line) =>
-          line.startsWith(`| \`${code}\` |`) ? line.replace(INGEST_GUTTERS.blocker, INGEST_GUTTERS.lossy) : line,
+          ruleRowOf(line, code) ? line.replace(INGEST_GUTTERS.blocker, INGEST_GUTTERS.lossy) : line,
         )
         .join('\n');
     const faultsOf = (doc: string): string[] => findingCodeFaults(emitted.codes, findingCodeRows(doc));
@@ -120903,7 +121379,7 @@ function findingCodeRows(
   const section = ends < 0 ? rest : rest.slice(0, ends);
   const rows = new Map<string, { gutters: string[]; exit: string }>();
   const repeated: string[] = [];
-  for (const match of section.matchAll(/^\| `([A-Z_<>]+)` \|([^|]*)\|([^|]*)\|/gm)) {
+  for (const match of section.matchAll(/^\| (?:<a id="[^"]*"><\/a>)?`([A-Z_<>]+)` \|([^|]*)\|([^|]*)\|/gm)) {
     const code = match[1];
     if (rows.has(code)) {
       repeated.push(code);
@@ -132356,6 +132832,7 @@ function main(): void {
   tally.of('editor-roundtrip', runEditorRoundtripSuite);
   tally.of('shipped-doc', runShippedDocSuite);
   tally.of('agent-skill', runSkillSurfaceSuite);
+  tally.of('guide', runGuideSuite);
   tally.of('currency', runCurrencySuite);
   tally.of('gallery-transcript', runGalleryTranscriptSuite);
   const docsQuotes = tally.of('docs-transcript', runDocsQuoteSuite, { failures: (value) => value.failures });
