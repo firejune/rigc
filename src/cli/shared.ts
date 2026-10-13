@@ -65,6 +65,7 @@ import { InspectError, DEFAULT_SHOW, DIM_KEEP, INSPECT_DEFAULT_FPS, ON_GRID_FRAM
 import { NotAPngError } from '../png.ts';
 import { PoseError } from '../pose.ts';
 import { RepackError } from '../repack.ts';
+import { SplitError } from '../meshsplit.ts';
 import { SpineRuntimeError, SPINE_SIDE_ABSENT } from '../spine_side.ts';
 import type { CompileResult, DroppedState } from '../types.ts';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -1098,6 +1099,9 @@ const FLAG_MEANINGS: Record<string, string> = {
     `printed (default ${DEFAULT_MIN_LEVER_PX}); below it the bone is refused \`no-bracket\` naming the measured ` +
     'lever, because an angle read across a short lever turns a half-pixel anchor error into several degrees',
   animation: 'which animation to show; the default is every one for `render` and the first for `preview`',
+  attachment:
+    "the placeholder the mesh is filed under in its slot, as the rig spec's skin names it. Absent, the slot's one " +
+    'authored mesh in that skin; a slot holding none or several is refused naming them',
   skin:
     'pose under this skin, by the name the skeleton declares. Without it NO skin is set — every slot resolves ' +
     'through the default skin alone, so a slot whose art lives only in a named skin draws nothing. A name the ' +
@@ -1254,6 +1258,7 @@ const FLAG_VALUES: Record<string, string> = {
   'anchor-residual': '<0..1>',
   'inward-lever': '<px>',
   animation: '<name>',
+  attachment: '<name>',
   skin: '<name>',
   slot: '<name[,name…]>',
   hide: '<name[,name…]>',
@@ -1539,6 +1544,46 @@ export const COMMANDS: CommandDoc[] = [
           'against --out itself. Refused together with --art none, which writes no `image` for it to be the base of',
       },
     },
+  },
+  {
+    name: 'split',
+    runtime: false,
+    spineFormat: false,
+    usage: ['rigc split --rig <path> --motion <path> --slot <name> [--attachment <name>] [--skin <name>] --out <dir>'],
+    flags: ['rig', 'motion', 'slot', 'attachment', 'skin', 'out'],
+    overrides: {
+      out: {
+        value: '<dir>',
+        meaning:
+          'directory to write the proposal into — rig.json and motion.json, the two specs with the mesh split, and ' +
+          'split.json, where every original vertex and triangle went. Absent or empty, and refused otherwise: the ' +
+          "proposal never lands on top of a file, the author's own specs included",
+      },
+      slot: {
+        value: '<name>',
+        meaning: 'the slot whose mesh to split, as the rig spec declares it. A name it does not declare is refused with every one it does',
+      },
+      skin: {
+        meaning:
+          'the skin the mesh is filed under in the rig spec (default: default). A name the rig spec does not declare ' +
+          'is refused with the ones it does',
+      },
+    },
+    notes: [
+      'split reads the two specs — not a build: a mesh of several pieces does not build —',
+      'and finds the pieces of one authored mesh: triangles that share a vertex are one piece.',
+      'A mesh of one piece is said so on one line, exit 0, and nothing is written. Otherwise it',
+      'writes one mesh per piece: piece 1 (the piece whose first triangle is listed first) stays',
+      'in the slot, piece k gets a new slot <slot>_<k> on the same bone, after it in the draw',
+      "order, under the same placeholder. Each piece carries the original's uvs and weights (or",
+      'vertices) unchanged and its triangles renumbered — outline first where the hull rule',
+      'needs it — and every deform key is re-sliced to the new indices; colour and attachment',
+      'tracks on the slot are copied to the new slots. Nothing is invented: a deform index the',
+      'original run did not cover is written 0, which is what the parser held there. What the',
+      'split cannot carry is refused by name, exit 1 (docs/AUTHORING.md §3.4.11 lists it); a',
+      'name the specs do not have is refused with the names they do, exit 2. Nothing is ever',
+      'written over the specs it read: build the proposal, look at it, then adopt it.',
+    ],
   },
   {
     name: 'diff',
@@ -1943,6 +1988,16 @@ const USAGE_PARAGRAPHS: ReadonlyArray<{ about: readonly string[] | { flag: strin
       'Everything the spec format cannot hold is printed as a named finding and',
       'exits non-zero, with both files still written, because a spec plus a list of what',
       'is missing from it beats no spec at all.',
+    ],
+  },
+  {
+    about: ['split'],
+    lines: () => [
+      "split answers the refusal a mesh of several pieces meets at compile — the triangles'",
+      'outline is not one closed loop — with one mesh per piece, its uvs, weights, triangles',
+      'and deform keys renumbered, written beside the specs and never over them:',
+      '  rigc split --rig rig.json --motion motion.json --slot legs --out split/',
+      'Build what it wrote. See `rigc split --help`.',
     ],
   },
   {
@@ -2911,6 +2966,12 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
   // file that is not what a repack needs and 2 for an invocation that has to change.
   if (err instanceof RepackError) {
     console.error(`rigc repack: ${err.message}`);
+    process.exit(err.status);
+  }
+  // A split refused (issue #1414): a name the specs do not have (2 — the invocation has to change), or something
+  // the specs hold that the split cannot carry (1). The message names it, and the usage under it would bury that.
+  if (err instanceof SplitError) {
+    console.error(`rigc split: ${err.message}`);
     process.exit(err.status);
   }
   // A page or frame that is not a PNG rigc can read, from any command that

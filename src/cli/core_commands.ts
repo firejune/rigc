@@ -31,6 +31,8 @@ import { findingLine, ingest, type IngestFinding, IngestSpecRefused, type Ingest
 import { PARSER_DEFAULTS, parserReading } from '../keyorder.ts';
 import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
+import { splitMesh, SplitError } from '../meshsplit.ts';
+import { parseRigSpec } from '../rig.ts';
 import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
 import { FOLDS_FILE, foldLine, foldsFileOf, foldsOf, foldsText, setupFaultLine } from '../folds.ts';
 import { AngleRangeError, angleRangeLine, type AngleRangeReading, angleRangesOf, type BonePair, readBonePairs } from '../anglerange.ts';
@@ -2101,6 +2103,55 @@ export const MODEL_AND_TEXT_GATE: BuildGate = {
 };
 
 /**
+ * split — one authored mesh's pieces, proposed as one mesh each (issue #1414).
+ *
+ * Reads the two spec files and nothing else: a mesh of several pieces does not
+ * compile, so there is no build to read. Writes the proposal — both specs and
+ * `split.json` — into an `--out` that is absent or empty, which is the whole of
+ * how it never overwrites anything: there is no in-place flag, because the
+ * specs it read are the only statement of what the proposal must reproduce,
+ * and a proposal nobody has built yet is not something to put over them.
+ */
+function cmdSplit(flags: Record<string, string>): void {
+  for (const flag of ['rig', 'motion', 'slot', 'out'] as const) {
+    if (flags[flag] === undefined) throw new UsageError(`split needs --${flag}`);
+  }
+  const rigPath = resolve(flags.rig);
+  const motionPath = resolve(flags.motion);
+  const outDir = resolve(flags.out);
+  for (const [flag, path] of [['rig', rigPath], ['motion', motionPath]] as const) {
+    if (!existsSync(path) || !statSync(path).isFile()) throw new SplitError(`--${flag} ${path}: no file there`, 2);
+  }
+  if (existsSync(outDir) && (!statSync(outDir).isDirectory() || readdirSync(outDir).length > 0)) {
+    throw new SplitError(
+      `--out ${outDir} ${statSync(outDir).isDirectory() ? `holds ${readdirSync(outDir).length} entr${readdirSync(outDir).length === 1 ? 'y' : 'ies'}` : 'is a file'}; ` +
+        'the proposal is written into an absent or empty directory only, so it never lands on top of a file — the specs it read included',
+      2,
+    );
+  }
+  const rig = parseRigSpec(readJsonFile(rigPath), rigPath);
+  const motion = parseMotionSpec(readJsonFile(motionPath), motionPath);
+  // The rig spec's `images` is relative to the rig file, and the proposal is written somewhere else: restate it from
+  // there, so every `image` resolves to the file it resolved to before.
+  const imagesDir = resolve(dirname(rigPath), rig.images ?? '.');
+  const images = relativeImagesPath(outDir, imagesDir);
+  console.log(`rigc split ${rigPath}`);
+  console.log(`  ..    motion   ${motionPath}`);
+  const result = splitMesh({ rig, motion, slot: flags.slot, ...(flags.attachment === undefined ? {} : { attachment: flags.attachment }), ...(flags.skin === undefined ? {} : { skin: flags.skin }), images });
+  if (result.kind === 'whole') {
+    console.log(`rigc split: ${result.line}`);
+    return;
+  }
+  for (const line of result.lines) console.log(`  ..    ${line}`);
+  console.log(`  ..    images   ${images}  (the rig spec's own, restated from ${outDir} — it resolves to ${imagesDir})`);
+  mkdirSync(outDir, { recursive: true });
+  writeJson(join(outDir, 'rig.json'), result.rig);
+  writeJson(join(outDir, 'motion.json'), result.motion);
+  writeJson(join(outDir, 'split.json'), result.record);
+  console.log(`rigc: build it with  rigc build --rig ${join(outDir, 'rig.json')} --motion ${join(outDir, 'motion.json')} --out <dir>`);
+}
+
+/**
  * The bodies the second entry runs under a name whose full-entry body is the
  * runtime's (`runtime.core` in `COMMANDS`, issue #1060) — registered by
  * `cli_core.ts` alone, beside `CORE_COMMAND_RUNS`. `build` is `runBuild` with
@@ -2121,6 +2172,7 @@ export const CORE_ENTRY_RUNS: Readonly<Record<string, CommandRun>> = {
 export const CORE_COMMAND_RUNS: Readonly<Record<string, CommandRun>> = {
   explain: ({ flags }) => cmdExplain(flags),
   ingest: ({ flags, positional }) => cmdIngest(flags, positional),
+  split: ({ flags }) => cmdSplit(flags),
   diff: ({ flags, lists, positional }) => cmdDiff(flags, lists, positional),
   check: ({ flags }) => cmdCheck(flags),
   render: ({ flags }) => cmdRender(flags),

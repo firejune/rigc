@@ -2304,7 +2304,7 @@ these messages prints the outline walk, because the walk is the fix:
 | a stated `hull` that disagrees | `hull 25 disagrees with the triangles, whose outline has 16 vertices (0 → 1 → 2 → …). Delete "hull" and rigc derives it, or state 16` |
 | outline vertices that are not the first `hull` of the list | `hull vertices must come first; vertex 19 is on the boundary and vertex 6 is not. The triangles' outline runs 0 → 1 → 2 → 3 → 4 → 9 → 14 → 19 → 24 → 23 → 22 → 21 → 20 → 15 → 10 → 5: list those 16 vertices first, in that order, then the 9 interior vertices` |
 | outline vertices that are first but zigzag | `hull vertices must trace the outline in order; the triangles' outline runs 0 → 1 → 3 → 5 → … → 4 → 2, so vertex 3 has to follow vertex 1 in the list, and vertex 2 does. Renumber the vertices along that walk` |
-| triangles with no single outline | `the triangles do not tile the outline: 25 vertices with a 16-vertex outline tile as 32 triangles and there are 33` — an unused vertex or a doubled interior triangle; or `the triangles' outline is not one closed loop: vertex 4 has 4 boundary edges` — a pinch, a hole, or a doubled triangle on the perimeter |
+| triangles with no single outline | `the triangles do not tile the outline: 25 vertices with a 16-vertex outline tile as 32 triangles and there are 33` — an unused vertex or a doubled interior triangle; or `the triangles' outline is not one closed loop: vertex 4 has 4 boundary edges` — a pinch, a hole, or a doubled triangle on the perimeter. Triangles in pieces that share no vertex get the same sentence and then `— the triangles are 2 pieces that share no vertex …` naming `rigc split`, which writes one mesh per piece (§3.4.11) |
 
 🚨 **A row-major grid is the case this catches**: a 5×5 grid's perimeter is 16 of
 its 25 vertices, interleaved with the interior, so no `hull` can describe that
@@ -3551,6 +3551,91 @@ in every editor export, so under `--atlas-in` a stated size that disagrees with 
 packed region is still refused.
 `A46_SEQUENCE_ATTACHMENTS_SHOW_THE_FRAME_THE_FILE_STATES` (§5.2) holds the block and
 every frame the timelines show against the file.
+
+#### 3.4.11 `split` — one mesh per piece, when the triangles are several
+
+One mesh is one outline (the `hull` rule above), so a mesh whose triangles fall into
+pieces that share no vertex is refused at compile — typically after the transparent
+triangles that bridged two legs were deleted:
+
+```
+rigc compile error: skin "default" slot "legs" attachment "legs": the triangles' outline is not one closed
+  loop: the walk from vertex 0 closes after 8 of 16 boundary vertices — the triangles are 2 pieces that share no
+  vertex, and one mesh is one outline: `rigc split --rig <rig> --motion <motion> --slot legs --attachment legs
+  --out <dir>` writes one mesh per piece, its deform keys renumbered (AUTHORING §3.4.11) (see rigc guide §5.1)
+```
+
+The fix is one mesh per piece, and every number in it is a renumbering: each piece's
+`uvs`, its `weights` (or `vertices`), its `triangles`, and every `deform` key that
+moved it (§4.11). `rigc split` writes that proposal from the two spec files — not from
+a build, because a mesh of several pieces has none:
+
+```bash
+rigc split --rig rig.json --motion motion.json --slot legs --out split/
+# rigc split /abs/rig.json
+#   ..    motion   /abs/motion.json
+#   ..    mesh     skin "default" slot "legs" attachment "legs": 18 vertices, 16 triangles, 2 pieces (triangles that share a vertex are one piece)
+#   ..    piece 1  slot "legs" (the original slot): 9 vertices, 8 triangles, hull 8 — original order kept: [3, 4, 5, 6, 7, 8, 9, 16, 17]
+#   ..    piece 2  slot "legs_2" (new, drawn after "legs"): 9 vertices, 8 triangles, hull 8 — renumbered outline first, as the hull rule needs: piece vertex 0.. is original 0 → 1 → 2 → 15 → 10 → 11 → 12 → 13, then the interior [14]
+#   ..    deform   animation "walk": 5 key(s) re-sliced into 2 timelines — "legs" 3 with a run, "legs_2" 2 with a run
+#   ..    track    animation "walk": slot "legs" "rgba" copied to "legs_2"
+#   ..    images   ../  (the rig spec's own, restated from /abs/split — it resolves to /abs)
+# rigc: wrote /abs/split/rig.json
+# rigc: wrote /abs/split/motion.json
+# rigc: wrote /abs/split/split.json
+# rigc: build it with  rigc build --rig /abs/split/rig.json --motion /abs/split/motion.json --out <dir>
+```
+
+What it decides, and the one reason for each:
+
+| | |
+| --- | --- |
+| a piece | triangles that share a vertex — nothing else: no distance, no art, no threshold. Two triangles touching at one vertex are one piece, and that piece is refused for its pinch as the compiler would refuse it |
+| which piece is 1 | the one whose first triangle is listed first. Spine draws a mesh's triangles in list order, so that is the piece the original drew first; when the pieces' triangles interleave in the list, an `order` line says the split draws each piece whole and where they overlap the stacking can differ |
+| where the pieces go | piece 1 stays in the slot under its placeholder, so everything naming the slot keeps its meaning; piece k gets a new slot **`<slot>_<k>`** on the same bone with the same colour, dark colour and blend, directly after the original in `slots` — the draw order — filled under the **same placeholder**, so `name`, `path` and `image` resolve as before. A derived name the rig already declares is refused by name |
+| a piece's vertex order | the original's relative order when it already lists the piece's outline first and in order; otherwise the outline walk, then the interior in original order — the order the `hull` refusals ask for, so the piece builds without a second edit |
+| `hull`, `edges` | `hull` is left out (rigc derives it); stated `edges` are split with their vertices, and an edge joining two pieces is refused |
+| a deform key | its run re-sliced: each number goes to its vertex's piece at the vertex's new index, written as `offset` + `vertices`, and an index inside a piece's new run that the original run did not cover is written **`0`** — what the parser held there, because a key is a sparse edit and both encodings are offsets from setup. A piece the run did not reach gets the key with no `vertices`, the setup pose, which is what the original did to it. Every piece keeps the key's time and curve |
+| colour and attachment tracks on the slot | copied to every new slot; an `attachment` key showing the split placeholder shows each piece, any other shows nothing in the new slots. `setup` (or the slot's `attachment`) the same way |
+| `invariants.deformMayFold` naming the slot | its entry copied to the new slots. `invariants.meshSlots` is named and left as stated |
+| a vertex no triangle names | no piece can hold it and still build, and it draws nothing in either rig: dropped, and named on a `dropped` line and in `split.json` |
+| `images` | restated from `--out`, so every `image` resolves to the file it resolved to before |
+
+It writes three files into an `--out` that is **absent or empty** — `rig.json` and
+`motion.json`, your two specs with the mesh split and nothing else changed but
+`images`, and `split.json` (`rigc-split/1`): for each piece its slot, placeholder,
+`vertices` (piece vertex `j` is original vertex `vertices[j]`), `triangles` (original
+triangle indices) and `hull`, and the `dropped` vertices. There is no in-place flag:
+your specs are the only statement of what the proposal must reproduce, so it is
+written beside them, never over them. Build it and look before adopting it.
+
+A mesh of one piece is said so on one line — `rigc split: skin "default" slot "legs"
+attachment "legs" is one piece — …; nothing to split, and nothing written` — exit 0.
+A slot, attachment or skin the specs do not have is refused with the names they do,
+exit 2. What the split cannot carry is refused by name, exit 1, because each needs a
+decision the specs do not state:
+
+| Refused | Why |
+| --- | --- |
+| a `generator` mesh | a generator builds one outline by construction; there are no authored triangles |
+| a `sequence` on the mesh, or a sequence timeline on it | which frames each piece shows is not stated |
+| `"boneIndexing": "raw"` | write the weights by name (`weights`) and split that |
+| a deform key stated as a `transform` (§4.11.1) | the model is evaluated over the whole attachment's geometry, and splitting changes the geometry it reads; state it as a `vertices` run |
+| a `fromVertex` key over a vertex with two or more bones, a run past the array | the compiler refuses the key; so does the split |
+| the slot filled in another skin | the new slots would show this skin's pieces under that skin too |
+| a linked mesh borrowing the mesh | its geometry would have to be one of the pieces |
+| a clip whose range ends at the slot | the new slots would fall outside it |
+| a draw-order key, or a slot-property track on a `group`, naming the slot | where the new slots go then is not stated |
+| a piece that is not one mesh either (a pinch, a hole) | splitting does not fix it; the message is the outline refusal for that piece |
+
+⭐ **What makes the proposal exact rather than plausible**: a piece's vertices carry
+the original's entries unchanged, so posing the split rig puts every piece vertex where
+the original put its vertex. The selftest holds that at tolerance 0 — the setup pose and
+every frame of every animation, deform keys, colour and attachment keys included, on
+the core and on spine-core — on a public probe of two legs, against the same mesh with
+its bridge still in (deleting triangles moves no vertex, so that mesh is the original
+every frame is held to), and plants a renumbering off by one and a deform key left
+un-renumbered to see each go red (`SPL01`–`SPL11`).
 
 ### 3.5 `constraints` — 4.3's single typed array
 
@@ -6892,7 +6977,7 @@ or the key's position in its own track. These are the frequent ones, verbatim:
 | `hull N disagrees with the triangles, whose outline has K vertices (0 → …)` | §3.4 — delete `hull`, or state K |
 | `hull vertices must come first; vertex i is on the boundary and vertex j is not. The triangles' outline runs …: list those K vertices first, in that order, then the M interior vertices` | §3.4 — renumber the vertices: the printed walk first, then the interior |
 | `hull vertices must trace the outline in order; the triangles' outline runs …, so vertex a has to follow vertex b in the list, and vertex c does` | §3.4 — renumber along the printed walk |
-| `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles` |
+| `the triangles do not tile the outline: …` / `the triangles' outline is not one closed loop: …` | §3.4 — a doubled triangle, an unused vertex, a pinch or a hole in `triangles`. When the message goes on `— the triangles are N pieces that share no vertex …`, the mesh is several meshes: `rigc split` writes one per piece (§3.4.11) |
 | `vertex N binds bone "X", which the rig does not declare as a bone` | §3.4 — an authored mesh's `weights` bind by NAME, like everything else in a rig spec. Fix the spelling, or declare the bone. The message names the skin, the slot, the placeholder and the vertex, because an index would name none of them |
 | `vertex N binds bone index I, which is not in the bone list` | §3.4 — a `"boneIndexing": "raw"` run on a mesh, bounding box, clipping polygon or path names a bone by its place in the bone array, and I is no place in it: past the end, negative or not a whole number. Count the rig's `bones` from 0, or give the bindings by name as `weights`, which cannot miss this way. ⚠️ **Refused earlier, not newly** (issue #917): the run is decoded to bone names once, when the attachment is built, and this is where an index that names no bone stops. Before that a mesh compiled and `A20` named the index at the gate, a bounding box, clipping polygon or path with its `lengths` stated compiled and `A33` named it, and only a path whose `lengths` rigc measures refused here, in this sentence. `MV04` plants it on each of the four kinds |
 | `the raw weighted run has a bone count of C at index I` / `the raw weighted run is truncated — vertex N claims C bone(s) and the array ends first` / `the raw weighted run decodes to N vertices but there are M uv pairs` | §3.4 — a mesh's `"boneIndexing": "raw"` run is not `boneCount, (index, x, y, weight) × boneCount` per vertex, one vertex per uv pair. These are the polygon's three sentences (whose last clause there reads `but vertexCount is M`), now asked of a mesh as well. Fix the run, or give the bindings by name as `weights`. ⚠️ **Refused earlier, not newly** (issue #917): the mesh run is decoded to bone names when the mesh is built, and a run that does not decode cannot be. Before that it compiled and `A20` named it at the gate (`has weights for 5 vertices but 4 uv pairs`, `vertex 3 has weight NaN`). `MV04` plants each |
