@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.54.0](https://github.com/rig-c/core/compare/v2.53.0...v2.54.0) (2026-10-13)
+
+
+### Features
+
+* **render:** rigc render --environment draws a rig under a schedule of wind and gravity, posed the same through rigc's core and through spine-core, so a gust can be watched rather than assumed ([#1416](https://github.com/rig-c/core/issues/1416)) ([#1426](https://github.com/rig-c/core/issues/1426)) ([ab0b424](https://github.com/rig-c/core/commit/ab0b4246fd6339804ef3e6d7c188109d4eabab43))
+* **validate:** A23 refuses a physics constraint whose step cannot settle, strength·massInverse·step² at or past 2·(1 + damping^(60·step)), at setup and on each animation's worst keyed combination ([#1416](https://github.com/rig-c/core/issues/1416)) ([#1424](https://github.com/rig-c/core/issues/1424)) ([b10ecf2](https://github.com/rig-c/core/commit/b10ecf2d53cc602c4a9b59435e38a4e11ce111f2))
+
 ## [2.53.0](https://github.com/rig-c/core/compare/v2.52.0...v2.53.0) (2026-10-13)
 
 
