@@ -20,7 +20,11 @@
  * `openTracks`, issue #1336; `physicsClockStep` and `PHYSICS_CLOCK_LEAD`,
  * the clock a live track's `clock` option takes, issue #1396;
  * `PhysicsEnvironment`, what a live track's `setEnvironment` takes, issue
- * #1416).
+ * #1416; `bezierPolyline` and `BEZIER_PIECES`, the polyline the poser draws
+ * a Bézier segment as, so that a fitter holds its tolerance to the poser's
+ * own evaluation rather than to a mirror of it, issue #1417 — re-exported,
+ * never copied, because a copy is the drift the request exists to remove;
+ * `CA12` holds the identity).
  * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` rows for
  * `./core`, and a symbol added here and not there is not promised.
  */
@@ -39,4 +43,5 @@ export type { DrawnRegion, UvPage, UvRegion, UvSource } from './uvs.ts';
 export { clipThrough, clipShapeOf, convexWhy, REGION_UVS, REGION_TRIANGLES } from './clipping.ts';
 export type { ClipShape, ClipResult } from './clipping.ts';
 export { eventsFired } from './events.ts';
+export { bezierPolyline, BEZIER_PIECES } from './animation.ts';
 export type { ModelPage, ModelPageRegion } from '../model.ts';
