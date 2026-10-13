@@ -32,6 +32,9 @@
  * - `invariants` — the structural facts skeleton JSON cannot state about itself,
  *   which the validator's archetype assertions read. Nothing in the file says
  *   "this bone carries the cut's axis" or "this parentage is forbidden".
+ * - `stops` — a swinging chain held off a leg, one declaration for the network
+ *   of bones and constraints it stands for (`RigStop`), expanded into plain
+ *   bones and constraints before anything else reads the rig.
  *
  * ## What a field's PRESENCE means
  *
@@ -61,6 +64,7 @@
  */
 import { ikShapeFault } from './assertions/bodies/a47.ts';
 import { CompileError, NotImplementedError } from './errors.ts';
+import { expandStops } from './stop.ts';
 import { dottedPath, refuseNumbersTheFileCannotCarry, refuseUnknownKeys, refuseValuesOfTheWrongType, refuseValuesOutsideTheirSet } from './keys.ts';
 import type { ShapeVisit, SpecEnumTable, SpecValueType } from './keys.ts';
 
@@ -1888,6 +1892,69 @@ export interface RigDeformFoldExemption {
 }
 
 // ---------------------------------------------------------------------------
+// stops — a swinging chain held off a leg (issue #1413)
+// ---------------------------------------------------------------------------
+
+/**
+ * One chain held off a leg: the network [`src/stop.ts`](stop.ts) expands it to,
+ * written once instead of by hand. Spine has no collider and no angle limit, so
+ * a physics-driven skirt chain swings its hem through the thigh it hangs in
+ * front of; this holds the chain's DRAWN links — the bones its mesh is
+ * weighted to — so they may swing away from the leg and not toward it past
+ * their rest angle.
+ *
+ * It expands, before anything else reads the rig, to exactly:
+ *
+ *   - `<chain>_touch` — a point bone, child of `against`, at `at`;
+ *   - `<chain>_stop` — a frame hung where the first link hangs (its parent,
+ *     `x`, `y` and `length`), aimed at the point by the ik constraint
+ *     `<chain>_stop_aim`;
+ *   - `<link>_rel` — a child of the frame that the transform constraint
+ *     `<link>_rel_copy` gives the first link's world rotation;
+ *   - `<link>_d` — the first link's drawn link, a child of the frame, which the
+ *     transform constraint `<link>_clamp` gives `_rel`'s turn in the frame,
+ *     clamped to the range;
+ *   - for each link below the first, `<link>_d` — its drawn link, a sibling
+ *     with its stated transform — and `<link>_clamp`, which gives it the link's
+ *     own turn, clamped to `lower`.
+ *
+ * So a chain's next link hangs from the drawn link above it: author the chain
+ * with each link's parent below `<previous link>_d`, and weight the mesh to the
+ * `_d` bones. What the expansion derives, it derives from the setup pose this
+ * file states (`src/stop.ts` lists it); nothing is measured off the art.
+ */
+export interface RigStop {
+  /** The name the point, the frame and the aim are called after. */
+  chain: string;
+  /**
+   * The chain's swinging links, root first: each one written by a constraint
+   * in `constraints` (its swing), each below the first hanging from the drawn
+   * link of the one above. Resolved by name.
+   */
+  links: string[];
+  /** The bone the point rides on — the leg. Resolved by name. */
+  against: string;
+  /** The point, `[x, y]` in `against`'s local space. Required: the compiler places no point. */
+  at: [number, number];
+  /**
+   * The first drawn link's range, as its two ends: degrees from its rest angle
+   * to the aim line, counted positive AWAY from the point. `inward: 0,
+   * outward: 60` — never past rest toward the leg, up to 60° away from it.
+   * Both required, `inward` not above `outward`.
+   */
+  inward: number;
+  outward: number;
+  /** Each lower drawn link's range off its own rest bend, the same way round. Required when `links` has more than one. */
+  lower?: RigStopLower;
+}
+
+/** A lower link's range — `RigStop.lower`. */
+export interface RigStopLower {
+  inward: number;
+  outward: number;
+}
+
+// ---------------------------------------------------------------------------
 // the file
 // ---------------------------------------------------------------------------
 
@@ -1932,6 +1999,12 @@ export interface RigSpec {
    */
   events?: Record<string, RigEvent>;
   invariants?: RigInvariants;
+  /**
+   * Chains held off a leg — see `RigStop`. Expanded by `parseRigSpec` into
+   * bones and constraints before anything else reads them; kept as written,
+   * and emitted nowhere.
+   */
+  stops?: RigStop[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1960,7 +2033,9 @@ function isObj(v: unknown): v is Record<string, unknown> {
  * fault.
  */
 export const RIG_KEYS = {
-  RigSpec: ['spec', 'name', 'note', 'skeleton', 'images', 'bones', 'slots', 'skins', 'constraints', 'events', 'invariants'],
+  RigSpec: ['spec', 'name', 'note', 'skeleton', 'images', 'bones', 'slots', 'skins', 'constraints', 'events', 'invariants', 'stops'],
+  RigStop: ['chain', 'links', 'against', 'at', 'inward', 'outward', 'lower'],
+  RigStopLower: ['inward', 'outward'],
   RigSkeletonHeader: ['x', 'y', 'width', 'height', 'fps', 'referenceScale', 'images', 'audio', 'stageBox'],
   RigStageBox: ['slot', 'attachment'],
   RigBone: ['name', 'parent', 'length', 'x', 'y', 'rotation', 'scaleX', 'scaleY', 'shearX', 'shearY', 'inherit', 'skin', 'color', 'icon', 'from'],
@@ -2060,8 +2135,10 @@ type RigTypeTable = {
 export const RIG_TYPES = {
   RigSpec: {
     spec: 'enum', name: 'string', note: 'string', skeleton: 'object', images: 'string', bones: 'object[]', slots: 'object[]',
-    skins: 'map of object', constraints: 'object[]', events: 'map of object', invariants: 'object',
+    skins: 'map of object', constraints: 'object[]', events: 'map of object', invariants: 'object', stops: 'object[]',
   },
+  RigStop: { chain: 'string', links: 'string[]', against: 'string', at: 'number[]', inward: 'number', outward: 'number', lower: 'object' },
+  RigStopLower: { inward: 'number', outward: 'number' },
   RigSkeletonHeader: {
     x: 'number', y: 'number', width: 'number | null', height: 'number | null', fps: 'number', referenceScale: 'number',
     images: 'string', audio: 'string | null', stageBox: 'object',
@@ -2405,6 +2482,12 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
     at(event, 'RigEvent', `event "${name}"`, ['events', name]);
   }
 
+  for (const [i, stop] of (Array.isArray(raw.stops) ? raw.stops : []).entries()) {
+    const who = isObj(stop) && typeof stop.chain === 'string' ? `stop "${stop.chain}"` : `stops[${i}]`;
+    at(stop, 'RigStop', who, ['stops', i]);
+    if (isObj(stop)) at(stop.lower, 'RigStopLower', `${who}'s "lower"`, ['stops', i, 'lower']);
+  }
+
   if (isObj(raw.invariants)) {
     at(raw.invariants, 'RigInvariants', '"invariants"', ['invariants']);
     for (const [i, rule] of (Array.isArray(raw.invariants.detached) ? raw.invariants.detached : []).entries()) {
@@ -2528,6 +2611,11 @@ function rigPlace(raw: Record<string, unknown>): (path: ReadonlyArray<string | n
       if (head === 'bones') return `${named(raw.bones, second, 'bone', 'bones')}${rest(path.slice(2))}`;
       if (head === 'slots') return `${named(raw.slots, second, 'slot', 'slots')}${rest(path.slice(2))}`;
       if (head === 'constraints') return `${named(raw.constraints, second, 'constraint', 'constraints')}${rest(path.slice(2))}`;
+      if (head === 'stops') {
+        const node = Array.isArray(raw.stops) ? raw.stops[second] : undefined;
+        const who = isObj(node) && typeof node.chain === 'string' ? `stop ${JSON.stringify(node.chain)}` : `stops[${second}]`;
+        return `${who}${rest(path.slice(2))}`;
+      }
     }
     if (head === 'events' && typeof second === 'string') return `event ${JSON.stringify(second)}${rest(path.slice(2))}`;
     if (head === 'skins' && typeof second === 'string') {
@@ -2609,7 +2697,11 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`);
   }
 
-  const spec = raw as unknown as RigSpec;
+  // `stops` first, ahead of every name this function resolves: a chain's next
+  // link hangs from the drawn link a stop generates, so the bones below are
+  // read as the expansion lays them out — and every reader after this one sees
+  // ordinary bones and constraints (`src/stop.ts`).
+  const spec = expandStops(raw as unknown as RigSpec, where);
 
   // The stage, stated or stated absent. Half a statement is refused here rather
   // than resolved in `compile`, because which half was meant is not derivable

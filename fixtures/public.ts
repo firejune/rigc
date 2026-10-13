@@ -8,7 +8,7 @@
  * ships was a gate a fresh clone could not run — the tool's central claim,
  * demonstrable only by the one person who already had the fixtures.
  *
- * So the fixtures are generated. Five of them, and between them they carry every
+ * So the fixtures are generated. Seven of them, and between them they carry every
  * structure the assertions have an opinion about:
  *
  *   - `overlay_probe`    — a base plate with alpha overlays pinned on top, one of
@@ -35,6 +35,13 @@
  *                          five links, every link on a physics constraint, the
  *                          mesh weighted by an `influence` block (issue #1415),
  *                          and a hip sway for the physics to answer.
+ *   - `pass_through_probe` — a skirt region swung through a leg region it is
+ *                          drawn over, with a second copy of the leg drawn over
+ *                          it, a draw-order key and a squashed hip — what
+ *                          `render --pass-through` is held to (issue #1413).
+ *   - `leg_stop_probe`   — a skirt chain swung into a leg three ways: held by a
+ *                          `stops` declaration, held by the same network written
+ *                          by hand, and not held (issue #1413).
  *
  * 🚫 **None of this is art.** Every plate is a checkerboard with its own name
  * burned into it by `tools/plate.ts`, and no claim about seams, blending or style
@@ -1083,4 +1090,219 @@ export function passThroughFixture(): SpecOnlyFixture {
   });
 
   return { rig: 'pass_through_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine') };
+}
+
+// ---------------------------------------------------------------------------
+// leg_stop_probe
+// ---------------------------------------------------------------------------
+
+/**
+ * The leg-stop probe's numbers (issue #1413), world units, every plate one texel
+ * to a unit inside `writePlate`'s transparent margin of `margin`:
+ *
+ * - `skirt` is hung from `hip` by its top edge (its top centre sits on the bone)
+ *   and meshed over two chains: `hem` on its left side, rooted at `root` (the
+ *   plate's pixels) and swinging, and `side` at the mirrored column, still; each
+ *   chain `links` links of `link` units, hanging straight down.
+ * - `leg` hangs from `thigh`, a child of the root at `thighX`, drawn under the
+ *   skirt: at rest its drawn left edge is inside the skirt's.
+ * - `touch` is the point on the leg's drawn left edge at the hem chain's tip
+ *   height, in `thigh`'s local space — where the stop's frame aims.
+ * - `swing` turns `hem`'s control bone that many degrees counter-clockwise —
+ *   toward the leg — and back over `duration` seconds, so the skirt's side passes
+ *   into the leg; `inward`/`outward` and `lower` are the stop's ranges.
+ */
+export const LEG_STOP_PLATE = {
+  skirt: { width: 64, height: 96 },
+  leg: { width: 24, height: 120 },
+  hipY: 200,
+  thighX: -14,
+  root: [4, 4],
+  links: 2,
+  link: 40,
+  touch: [-10, -84],
+  swing: 20,
+  duration: 2,
+  inward: 0,
+  outward: 60,
+  lower: { inward: 0, outward: 30 },
+} as const;
+
+/** A spec-only fixture with the stop's two companions: the same network written by hand, and the chain with no stop. */
+export interface LegStopFixture extends SpecOnlyFixture {
+  /** The rig with the network the declaration expands to written out bone by bone (LG01). */
+  handRigPath: string;
+  /** The rig with no stop at all: the mesh weighted to the swinging links themselves (LG02). */
+  freeRigPath: string;
+}
+
+/**
+ * The network a stop on `hem` stands for, written by hand from `LEG_STOP_PLATE`
+ * with plain trigonometry — never by calling the expansion, or LG01 would be the
+ * expansion agreeing with itself. `hip` and `thigh` are unrotated and sit at one
+ * height, and `hem0_ctl` points straight down (−90°), so the aim line, the
+ * frame's rotation in `hem0_ctl` and the link's rest angle off the aim line are
+ * each one `atan2` and a subtraction.
+ */
+export function legStopHandNetwork(): { bones: Array<Record<string, unknown>>; constraints: Array<Record<string, unknown>> } {
+  const { skirt, root, link, touch, thighX, inward, outward, lower } = LEG_STOP_PLATE;
+  const degrees = (r: number): number => r / (Math.PI / 180);
+  const rootLocal: [number, number] = [root[0] - skirt.width / 2, -root[1]];
+  const dx = thighX + touch[0] - rootLocal[0];
+  const dy = touch[1] - rootLocal[1];
+  const aim = degrees(Math.atan2(dy, dx));
+  const rest = -90 - aim;
+  const sign = rest < 0 ? 1 : -1;
+  const first = [rest - sign * outward, rest - sign * inward].sort((a, b) => a - b);
+  const below = [0 - sign * lower.outward, 0 - sign * lower.inward].sort((a, b) => a - b);
+  const clamp = (name: string, source: string, target: string, [lo, hi]: number[]): Record<string, unknown> => ({
+    name,
+    type: 'transform',
+    source,
+    bones: [target],
+    localSource: true,
+    localTarget: true,
+    clamp: true,
+    properties: { rotate: { offset: lo, to: { rotate: { offset: lo, max: hi, scale: 1 } } } },
+    mixRotate: 1,
+  });
+  return {
+    bones: [
+      { name: 'hem_stop', parent: 'hem0_ctl', length: link, rotation: aim + 90 },
+      { name: 'hem0_rel', parent: 'hem_stop', length: link, rotation: rest },
+      { name: 'hem0_d', parent: 'hem_stop', length: link, rotation: rest },
+      { name: 'hem1_d', parent: 'hem1_ctl', length: link },
+      { name: 'hem_touch', parent: 'thigh', x: touch[0], y: touch[1] },
+    ],
+    constraints: [
+      { name: 'hem_stop_aim', type: 'ik', bones: ['hem_stop'], target: 'hem_touch', mix: 1 },
+      { name: 'hem0_rel_copy', type: 'transform', source: 'hem0', bones: ['hem0_rel'], properties: { rotate: { to: { rotate: {} } } }, mixRotate: 1 },
+      clamp('hem0_clamp', 'hem0_rel', 'hem0_d', first),
+      clamp('hem1_clamp', 'hem1', 'hem1_d', below),
+    ],
+  };
+}
+
+/**
+ * A skirt chain swung through a leg, three ways: held by a `stops` declaration,
+ * held by the same network written by hand, and not held at all — the pair
+ * issue #1413's leg stop is read with (`render --pass-through`), and the
+ * equality its expansion is held to. Each link swings by a physics constraint
+ * the rig spec declares, which is what a stop holds.
+ */
+export function legStopFixture(): LegStopFixture {
+  const dir = makeDir('leg_stop_probe');
+  const imagesDir = join(dir, 'parts');
+  const { skirt, leg, hipY, thighX, root, links, link, touch, swing, duration, inward, outward, lower } = LEG_STOP_PLATE;
+  writePlate(join(imagesDir, 'skirt.png'), skirt.width, skirt.height, 'skirt');
+  writePlate(join(imagesDir, 'leg.png'), leg.width, leg.height, 'leg');
+
+  const anchor: [number, number] = [skirt.width / 2, 0];
+  /** One chain as authored: each link under its control bone, each control below `above(k - 1)`. */
+  const chain = (prefix: string, column: number, above: (k: number) => string): Array<Record<string, unknown>> => {
+    const out: Array<Record<string, unknown>> = [];
+    for (let k = 0; k < links; k++) {
+      out.push(
+        k === 0
+          ? { name: `${prefix}0_ctl`, parent: 'hip', x: column - anchor[0], y: -(root[1] - anchor[1]), rotation: -90, length: link }
+          : { name: `${prefix}${k}_ctl`, parent: above(k - 1), x: link, y: 0, length: link },
+        { name: `${prefix}${k}`, parent: `${prefix}${k}_ctl`, length: link },
+      );
+    }
+    return out;
+  };
+  const names = (prefix: string, suffix = ''): string[] => Array.from({ length: links }, (_, k) => `${prefix}${k}${suffix}`);
+  const head = [{ name: 'root' }, { name: 'hip', parent: 'root', x: 0, y: hipY }, { name: 'thigh', parent: 'root', x: thighX, y: hipY }];
+  const side = chain('side', skirt.width - root[0], (k) => `side${k}`);
+  const swung = names('hem').map((bone) => ({ type: 'physics', name: `${bone}_phys`, bone, rotate: 1, inertia: 0.5, strength: 80, damping: 0.85, mass: 1, mix: 1 }));
+  const rigOf = (bones: Array<Record<string, unknown>>, hem: string[], constraints: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    spec: 'rigc-rig/1',
+    name: 'leg_stop_probe',
+    images: 'parts',
+    skeleton: { width: 160, height: 240 },
+    invariants: { meshSlots: 1, meshTriangles: 1000 },
+    bones,
+    slots: [
+      { name: 'leg', bone: 'thigh', attachment: 'leg' },
+      { name: 'skirt', bone: 'hip', attachment: 'skirt' },
+    ],
+    skins: {
+      default: {
+        leg: { leg: { image: 'leg.png', y: -leg.height / 2 } },
+        skirt: {
+          skirt: {
+            type: 'mesh',
+            image: 'skirt.png',
+            generator: { kind: 'segments', cell: 8, bones: [hem, names('side')], influence: { radius: 40, across: true, max: 4, shape: 'smooth' }, anchor },
+          },
+        },
+      },
+    },
+    constraints,
+    ...extra,
+  });
+  const stopped = chain('hem', root[0], (k) => `hem${k}_d`);
+
+  const rigPath = join(dir, 'leg_stop_probe.rig.json');
+  writeJson(
+    rigPath,
+    rigOf([...head, ...stopped, ...side], names('hem', '_d'), swung, {
+      stops: [{ chain: 'hem', links: names('hem'), against: 'thigh', at: [touch[0], touch[1]], inward, outward, lower: { ...lower } }],
+    }),
+  );
+
+  // The same rig with the network written out where the expansion puts it: the
+  // frame before the first link, its `_rel` and `_d` after it, a lower link's
+  // `_d` after that link, the point last; the aim before the first link's swing,
+  // the copy and the clamp after it, a lower link's clamp after its swing.
+  const hand = legStopHandNetwork();
+  const pick = (list: Array<Record<string, unknown>>, name: string): Record<string, unknown> => list.find((b) => b.name === name) as Record<string, unknown>;
+  const handBones: Array<Record<string, unknown>> = [...head];
+  for (const bone of stopped) {
+    if (bone.name === 'hem0') handBones.push(pick(hand.bones, 'hem_stop'));
+    handBones.push(bone);
+    if (bone.name === 'hem0') handBones.push(pick(hand.bones, 'hem0_rel'), pick(hand.bones, 'hem0_d'));
+    if (bone.name === 'hem1') handBones.push(pick(hand.bones, 'hem1_d'));
+  }
+  handBones.push(...side, pick(hand.bones, 'hem_touch'));
+  const handConstraints = [
+    pick(hand.constraints, 'hem_stop_aim'),
+    swung[0],
+    pick(hand.constraints, 'hem0_rel_copy'),
+    pick(hand.constraints, 'hem0_clamp'),
+    swung[1],
+    pick(hand.constraints, 'hem1_clamp'),
+  ];
+  const handRigPath = join(dir, 'leg_stop_probe.hand.rig.json');
+  writeJson(handRigPath, rigOf(handBones, names('hem', '_d'), handConstraints));
+
+  const freeRigPath = join(dir, 'leg_stop_probe.free.rig.json');
+  writeJson(freeRigPath, rigOf([...head, ...chain('hem', root[0], (k) => `hem${k}`), ...side], names('hem'), swung));
+
+  const motionPath = join(dir, 'leg_stop_probe.motion.json');
+  writeJson(motionPath, {
+    spec: 'rigc-motion/1',
+    archetype: 'leg_stop_probe',
+    cut: 'leg_stop_probe',
+    easings: {},
+    animations: {
+      swing: {
+        duration,
+        loop: false,
+        tracks: [
+          {
+            bone: 'hem0_ctl',
+            property: 'rotate',
+            keys: [
+              { t: 0, v: [0] },
+              { t: duration / 2, v: [swing] },
+              { t: duration, v: [0] },
+            ],
+          },
+        ],
+      },
+    },
+  });
+
+  return { rig: 'leg_stop_probe', dir, rigPath, motionPath, imagesDir, outDir: join(dir, 'spine'), handRigPath, freeRigPath };
 }
