@@ -73,7 +73,12 @@
  *   out fires none** — not "until the mix passes half way": `eventThreshold`
  *   defaults to 0 and an entry's events are applied only while `mix <
  *   eventThreshold`, which no mix is. `complete` is not carried (issue #1276).
- * - **Physics** steps on top of the mixed locals, as on one track.
+ * - **Physics** steps on top of the mixed locals, as on one track — and on
+ *   the same clock: `TracksOptions.clock`, what each step moves the physics
+ *   clock by, has the single track's meaning (`./track.ts`, *The physics
+ *   clock*, issue #1396). The entries' track times, the mixes, the queue and
+ *   the events stay on the steps; `start()` under `reset: 'animation'` moves
+ *   the clock by `clock(0)`.
  *
  * `CO51` holds all of it to spine-core 4.3.13 at tolerance 0 — every bone's
  * world transform, every drawn attachment's world vertices, every slot's
@@ -159,13 +164,15 @@ import { activeBones, CoreInputError, rawNumber, readColour, shownAttachment, ty
 import { channelAt, keyIndexAt, SLOT_COLOUR_TIMELINES, slotRowsFrom, steppedLocalsWorld, type BoneTimelineKind, type CoreKey, type LocalAdjust, type SlotBase, type SlotColourKind, type TimelinePlant } from './animation.ts';
 import { deformAt, setupArray, type CoreAttachmentTimeline } from './deform.ts';
 import { eventsFired, type CoreEventKey, type CoreEventRow } from './events.ts';
-import { openRawTracksPath, type RawPose, type RawReset, type RawTracksPath } from './raw.ts';
+import { checkedClock, openRawTracksPath, type RawPose, type RawReset, type RawTracksPath } from './raw.ts';
 import { slotTimelinesApply } from './skins.ts';
 
-/** How the live tracks are opened: where the physics is reset (`RawReset`, the caller's, no default) and the caller's adjustment of every pose's bone locals. */
+/** How the live tracks are opened: where the physics is reset (`RawReset`, the caller's, no default), the caller's adjustment of every pose's bone locals, and what each step moves the physics clock by (the header's *The physics clock*). */
 export interface TracksOptions {
   reset: RawReset;
   adjust?: LocalAdjust;
+  /** What each step of `dt` moves the skeleton's physics clock by — `physicsClockStep` is the render's; absent, the step itself. Every entry's track time, the mixes, the queue and the events stay on the steps. */
+  clock?: (dt: number) => number;
 }
 
 /**
@@ -1299,7 +1306,9 @@ function delayOf(v: number, call: string): number {
 export function openTracks(doc: CompiledDocument, options: TracksOptions, plant: TracksPlant = {}): LiveTracks {
   if (typeof options !== 'object' || options === null || (options.reset !== 'animation' && options.reset !== 'setup')) throw new CoreInputError(`the live tracks' options.reset is ${JSON.stringify((options as Partial<TracksOptions> | null)?.reset)}, not "animation" or "setup"`);
   if (options.adjust !== undefined && typeof options.adjust !== 'function') throw new CoreInputError(`the live tracks' options.adjust is ${typeof options.adjust}, not a function`);
-  return new Tracks(doc, options.reset, options.adjust, plant, openRawTracksPath(doc, plant));
+  if (options.clock !== undefined && typeof options.clock !== 'function') throw new CoreInputError(`the live tracks' options.clock is ${typeof options.clock}, not a function`);
+  const clock = options.clock === undefined ? undefined : checkedClock(options.clock, 'the live tracks\'');
+  return new Tracks(doc, options.reset, options.adjust, clock, plant, openRawTracksPath(doc, plant));
 }
 
 class Tracks implements LiveTracks {
@@ -1313,6 +1322,7 @@ class Tracks implements LiveTracks {
     private readonly doc: CompiledDocument,
     private readonly reset: RawReset,
     private readonly adjust: LocalAdjust | undefined,
+    private readonly clock: ((dt: number) => number) | undefined,
     private readonly plant: TracksPlant,
     private readonly path: RawTracksPath,
   ) {
@@ -1426,7 +1436,7 @@ class Tracks implements LiveTracks {
     const { doc, path } = this;
     const ctx = path.ctx;
     const before = ctx.time;
-    ctx.time += dt;
+    ctx.time += this.clock === undefined ? dt : this.clock(dt);
     const pose = new Pose(doc, this.plant);
     const animationTime = this.mixer.apply(pose);
     const mixed = new Map(doc.slots.map((s, k) => [s.name, { deform: pose.slots[k].deform, seen: pose.slots[k].seen }]));

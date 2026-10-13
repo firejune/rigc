@@ -322,6 +322,23 @@ plain timeline, the hold blind to the alpha mixing in, the holds as if no entry
 added, an alpha threshold on attachments — and CO51's script with alpha 1 and
 additive false stated equals it unstated on 3,094 poses, bit for bit.
 
+**The live tracks' physics clock** ([#1396](https://github.com/rig-c/core/issues/1396))
+is the render's clock (#1380) offered to a player: `clock` on `TrackOptions` and
+`TracksOptions` is what each step moves the skeleton's physics clock by, and the
+track time, the animation time and the events stay on the steps. Held three ways
+on LS05's spring probe at 12, 20, 24, 30 and 60 fps. The mechanism: 9,344
+constraint updates through both live entries, held and looped, opened with
+`clock: physicsClockStep`, each take the whole steps exact arithmetic takes, and
+the same walks without the option mis-step on 20 of 20 (`CO53`). The poses:
+3,496 `openTrack` poses equal `poseRawAnimationEach`'s on the same clock bit for
+bit, 1,748 of them the render's walk, `openTracks`' track 0 equals `openTrack`
+on as many, and 4,692 looping poses equal spine-core's with its `AnimationState`
+updated by the step and its `Skeleton` by `physicsClockStep` of it — while the
+same spine-core updated by the step itself reads off on 20 of 20 walks (`CO54`).
+The scope: 13,648 poses whose times, events and entry times are identical with
+and without the clock, and the player scaling its own `dt` instead reads the
+times off on 48 of 48 walks and fires a key a step early on 40 (`CO55`).
+
 **What no public row reaches.** `bun tools/core_gate.ts` over the 19 public rows prints
 a HOLE for each of these (2026-10-01; the tool's own lines are the current list, each
 saying what holds it instead, where anything does). Some are reached by the private

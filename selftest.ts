@@ -88898,7 +88898,7 @@ function noSkinSeedSkeleton(rnd: () => number, mode: 'none' | 'plain' | 'members
  */
 const CORE_UNITS = [
   'CO08', 'CO14', 'CO18', 'CL04', 'CA06', 'CA08', 'CO19', 'CC09', 'CC10', 'CQ10', 'CK07', 'CK09', 'CP10',
-  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO29+CO30', 'CO31+CO32',
+  'CK15', 'CD06', 'CD11', 'CU04', 'CC13', 'CR06', 'CR12', 'CY01', 'CO27', 'CO25+CO26', 'CO53+CO54+CO55', 'CO29+CO30', 'CO31+CO32',
 ] as const;
 type CoreUnitName = (typeof CORE_UNITS)[number];
 
@@ -88911,7 +88911,7 @@ type CoreUnitName = (typeof CORE_UNITS)[number];
  */
 const CORE_UNITS_HEAVIEST_FIRST: CoreUnitName[] = [
   'CO31+CO32', 'CO25+CO26', 'CO27', 'CD11', 'CO08', 'CO29+CO30', 'CA08', 'CU04', 'CR06', 'CD06', 'CK09', 'CO14',
-  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10',
+  'CO18', 'CL04', 'CA06', 'CP10', 'CY01', 'CC10', 'CK15', 'CO19', 'CC13', 'CR12', 'CC09', 'CK07', 'CQ10', 'CO53+CO54+CO55',
 ];
 
 /**
@@ -101376,6 +101376,11 @@ function runCoreSuite(child: CoreUnitChild | null = null): number {
         );
       }
     }
+  });
+
+  unit('CO53+CO54+CO55', () => {
+    // The live tracks' physics clock (issue #1396): `trackClockCases`, beside the spring probe it shares with LS05–LS06.
+    trackClockCases(say, built.filter((b) => b.exits.every((e) => e === 0)));
   });
 
   unit('CO29+CO30', () => {
@@ -114527,6 +114532,51 @@ import { PHYSICS_CLOCK_LEAD, physicsClockStep } from './src/render_core.ts';
  * frames 16, 5, 2, 5 and 5 of 12, 20, 24, 30 and 60 fps on this probe as on the
  * trailer (issue #1380), within its first 1.4 s.
  */
+/**
+ * The spring probe LS05–LS06 measure and CO53–CO55 step through the live
+ * tracks (issues #1380, #1396), built into `dir` (the header above says what
+ * it is): the build's directory, or why it did not build.
+ */
+function buildSpringLoopProbe(dir: string, lead: number, period: number): { out: string } | { why: string } {
+  mkdirSync(join(dir, 'images'));
+  copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(dir, 'images', 'tip.png'));
+  writeFileSync(
+    join(dir, 'rig.json'),
+    `${JSON.stringify({
+      spec: 'rigc-rig/1',
+      name: 'springloop',
+      images: 'images',
+      skeleton: { width: 256, height: 256 },
+      bones: [
+        { name: 'root' },
+        { name: 'swing', parent: 'root', x: 128, y: 220 },
+        { name: 'c0', parent: 'swing', rotation: -90, length: 60 },
+        { name: 'c1', parent: 'c0', x: 60, length: 60 },
+      ],
+      slots: [{ name: 'tip', bone: 'c1', attachment: 'tip' }],
+      skins: { default: { tip: { tip: { image: 'tip.png', x: 30 } } } },
+    })}\n`,
+  );
+  const halfSwings = (lead + period) / (period / 2);
+  const keys = Array.from({ length: halfSwings + 1 }, (_, k) => ({ t: (k * period) / 2, v: [k % 2 === 0 ? 12 : -12], ...(k < halfSwings ? { ease: 'swing' } : {}) }));
+  const spring = { rotate: 1, inertia: 0.5, strength: 60, damping: 0.8, mass: 1, mix: 1 };
+  writeFileSync(
+    join(dir, 'motion.json'),
+    `${JSON.stringify({
+      spec: 'rigc-motion/1',
+      archetype: 'springloop',
+      cut: 'springloop',
+      easings: { swing: [0.36, 0, 0.64, 1] },
+      physics: { c0_spring: { bone: 'c0', ...spring }, c1_spring: { bone: 'c1', ...spring } },
+      animations: { loop: { duration: lead + period, loop: true, tracks: [{ bone: 'swing', property: 'rotate', keys }] } },
+    })}\n`,
+  );
+  const out = join(dir, 'build');
+  const built = runCli(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', out]);
+  if (built.status !== 0) return { why: `the spring probe did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}` };
+  return { out };
+}
+
 function physicsClockCases(say: (name: string, ok: boolean, detail: string, why: string) => void): void {
   const RATES = [12, 20, 24, 30, 60];
   const lead = 4;
@@ -114534,47 +114584,13 @@ function physicsClockCases(say: (name: string, ok: boolean, detail: string, why:
   const springs = ['c0', 'c1'];
   const dir = mkdtempSync(join(harnessTemp(), 'rigc-physics-clock-'));
   try {
-    mkdirSync(join(dir, 'images'));
-    copyFileSync(join(OVERLAY.dir, 'parts', 'lens_l_shut.png'), join(dir, 'images', 'tip.png'));
-    writeFileSync(
-      join(dir, 'rig.json'),
-      `${JSON.stringify({
-        spec: 'rigc-rig/1',
-        name: 'springloop',
-        images: 'images',
-        skeleton: { width: 256, height: 256 },
-        bones: [
-          { name: 'root' },
-          { name: 'swing', parent: 'root', x: 128, y: 220 },
-          { name: 'c0', parent: 'swing', rotation: -90, length: 60 },
-          { name: 'c1', parent: 'c0', x: 60, length: 60 },
-        ],
-        slots: [{ name: 'tip', bone: 'c1', attachment: 'tip' }],
-        skins: { default: { tip: { tip: { image: 'tip.png', x: 30 } } } },
-      })}\n`,
-    );
-    const halfSwings = (lead + period) / (period / 2);
-    const keys = Array.from({ length: halfSwings + 1 }, (_, k) => ({ t: (k * period) / 2, v: [k % 2 === 0 ? 12 : -12], ...(k < halfSwings ? { ease: 'swing' } : {}) }));
-    const spring = { rotate: 1, inertia: 0.5, strength: 60, damping: 0.8, mass: 1, mix: 1 };
-    writeFileSync(
-      join(dir, 'motion.json'),
-      `${JSON.stringify({
-        spec: 'rigc-motion/1',
-        archetype: 'springloop',
-        cut: 'springloop',
-        easings: { swing: [0.36, 0, 0.64, 1] },
-        physics: { c0_spring: { bone: 'c0', ...spring }, c1_spring: { bone: 'c1', ...spring } },
-        animations: { loop: { duration: lead + period, loop: true, tracks: [{ bone: 'swing', property: 'rotate', keys }] } },
-      })}\n`,
-    );
-    const out = join(dir, 'build');
-    const built = runCli(['build', '--rig', join(dir, 'rig.json'), '--motion', join(dir, 'motion.json'), '--out', out]);
-    if (built.status !== 0) {
-      const why = `the spring probe did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}`;
-      say('LS05_EVERY_RENDER_FRAME_TAKES_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AND_THE_FRAME_CLOCK_IS_RED_ON_THE_TIES', false, why, 'issue #1380');
-      say('LS06_A_LOOPING_SPRING_RENDERS_CONTINUOUS_IN_ITS_CLOCK_AND_CLOSES_AND_THE_FRAME_CLOCK_IS_RED_BY_FRAME_AND_BONE', false, why, 'issue #1380');
+    const probe = buildSpringLoopProbe(dir, lead, period);
+    if ('why' in probe) {
+      say('LS05_EVERY_RENDER_FRAME_TAKES_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AND_THE_FRAME_CLOCK_IS_RED_ON_THE_TIES', false, probe.why, 'issue #1380');
+      say('LS06_A_LOOPING_SPRING_RENDERS_CONTINUOUS_IN_ITS_CLOCK_AND_CLOSES_AND_THE_FRAME_CLOCK_IS_RED_BY_FRAME_AND_BONE', false, probe.why, 'issue #1380');
       return;
     }
+    const out = probe.out;
     const modelText = readFileSync(join(out, MODEL_DOCUMENT_FILE), 'utf8');
     const atlasText = readFileSync(join(out, 'skeleton.atlas'), 'utf8');
     const doc = noSkinView(readModel(modelText, MODEL_DOCUMENT_FILE));
@@ -114712,6 +114728,338 @@ function physicsClockCases(say: (name: string, ok: boolean, detail: string, why:
         'second difference at 60 fps after the fix, while a tie at 24 fps put one at only 1.95x before it, so no k separates them; moving the clock by a ' +
         'quantity far below any frame is the test only a tie fails',
     );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * CO53–CO55 (issue #1396): the live tracks' physics clock — `TrackOptions.clock`
+ * and `TracksOptions.clock`, what each step moves the skeleton's physics clock
+ * by, which a player stepping at a fixed rate passes `physicsClockStep`, the
+ * render's (issue #1380). CO53 holds the mechanism on LS05's spring probe —
+ * every constraint update takes the whole steps exact arithmetic takes — CO54
+ * the clocked poses to the render's walk, to `poseRawAnimationEach` under the
+ * same clock, to each other and to spine-core stepped the same way, and CO55
+ * that the clock moves the physics and nothing else: the track time, the
+ * animation time, the events and every entry's times are those of the walk
+ * without it. Each plants the reading the issue rejects: the frame clock
+ * (the option ignored) in CO53 and CO54, and the player scaling its own `dt`
+ * (the clock applied to the animation time too) in CO55.
+ */
+function trackClockCases(say: (name: string, ok: boolean, detail: string, why: string) => void, builtGreen: readonly BuiltRow[]): void {
+  const RATES = [12, 20, 24, 30, 60];
+  const lead = 4;
+  const period = 4;
+  const springs = ['c0', 'c1'];
+  const names = [
+    'CO53_A_LIVE_TRACK_ON_THE_RENDERS_CLOCK_TAKES_THE_PHYSICS_STEPS_EXACT_ARITHMETIC_GIVES_AND_THE_FRAME_CLOCK_IS_RED_ON_THE_TIES',
+    'CO54_A_LIVE_TRACK_ON_THE_RENDERS_CLOCK_POSES_THE_RENDERS_WALK_AND_SPINE_CORES_STEPPED_THE_SAME_WAY_BIT_FOR_BIT',
+    'CO55_THE_CLOCK_MOVES_THE_PHYSICS_ALONE_AND_A_DT_SCALED_BY_THE_PLAYER_IS_RED_ON_THE_TIMES_AND_THE_EVENTS',
+  ];
+  /** Every number by its exact double (`-0` apart from `0`), so two poses compare bit for bit. */
+  const bits = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+  type Kind = 'held track' | 'looped track' | 'held tracks' | 'looped tracks';
+  const KINDS: Kind[] = ['held track', 'looped track', 'held tracks', 'looped tracks'];
+  /** A live walk over `steps`: pose 0, then one per step, each handed to `visit`; `clock` passed as the option when given; on the tracks, `current(0)`'s times beside each pose. */
+  const liveEach = (doc: CompiledDocument, name: string, kind: Kind, steps: readonly number[], reset: RawReset, clock: ((dt: number) => number) | undefined, plant: TimelinePlant, visit: (pose: RawPose, i: number, entry: string) => void): void => {
+    const option = clock === undefined ? {} : { clock };
+    if (kind === 'held tracks' || kind === 'looped tracks') {
+      const t = openTracks(doc, { reset, ...option }, plant);
+      t.setAnimation(0, name, { loop: kind === 'looped tracks', mixDuration: 0 });
+      const entry = (): string => {
+        const e = t.current(0);
+        return e === null ? 'none' : bits([e.trackTime, e.animationTime]);
+      };
+      visit(t.start(), 0, entry());
+      steps.forEach((dt, i) => visit(t.step(dt), i + 1, entry()));
+      return;
+    }
+    const t = openTrack(doc, name, { loop: kind === 'looped track', reset, ...option }, plant);
+    visit(t.first, 0, bits([t.trackTime, t.animationTime]));
+    steps.forEach((dt, i) => {
+      const pose = t.step(dt);
+      visit(pose, i + 1, bits([t.trackTime, t.animationTime]));
+    });
+  };
+  const liveWalk = (doc: CompiledDocument, name: string, kind: Kind, steps: readonly number[], reset: RawReset, clock: ((dt: number) => number) | undefined): Array<{ pose: RawPose; entry: string }> => {
+    const out: Array<{ pose: RawPose; entry: string }> = [];
+    liveEach(doc, name, kind, steps, reset, clock, {}, (pose, _i, entry) => out.push({ pose, entry }));
+    return out;
+  };
+  const dir = mkdtempSync(join(harnessTemp(), 'rigc-track-clock-'));
+  try {
+    const probe = buildSpringLoopProbe(dir, lead, period);
+    if ('why' in probe) {
+      for (const name of names) say(name, false, probe.why, 'issue #1396');
+      return;
+    }
+    const modelText = readFileSync(join(probe.out, MODEL_DOCUMENT_FILE), 'utf8');
+    const doc = noSkinView(readModel(modelText, 'the spring probe'));
+    const spineData = loadOracleData(readFileSync(join(probe.out, 'skeleton.json'), 'utf8'), readFileSync(join(probe.out, 'skeleton.atlas'), 'utf8'), 'the spring probe');
+    const frames = (fps: number): number[] => new Array<number>(Math.round((lead + period) * fps)).fill(1 / fps);
+
+    // --- CO53: the mechanism, read off each constraint's own state (LS05's reading, on the live tracks) ---
+    {
+      const misSteps = (kind: Kind, fps: number, clock: ((dt: number) => number) | undefined): { updates: number; wrong: string[] } => {
+        let frame = 0;
+        let updates = 0;
+        const wrong: string[] = [];
+        const recorder = (...args: Parameters<typeof stepPhysics>): boolean => {
+          const [r, , , ctx] = args;
+          const s = physicsState(ctx, r.name);
+          const owed = s.remaining + Math.max(ctx.time - s.lastTime, 0);
+          const moved = stepPhysics(...args);
+          if (ctx.phase === 'update' && frame >= 1) {
+            const f = Math.round(1 / r.step);
+            const taken = Math.round((owed - s.remaining) / r.step);
+            const exact = Math.floor((frame * f) / fps) - Math.floor(((frame - 1) * f) / fps);
+            updates++;
+            if (taken !== exact) wrong.push(`${r.name} (bone ${r.bone}) at frame ${frame} took ${taken} step(s) where exact arithmetic takes ${exact}`);
+          }
+          return moved;
+        };
+        liveEach(doc, 'loop', kind, frames(fps), 'animation', clock, { physicsStep: recorder }, (_pose, i) => {
+          frame = i + 1;
+        });
+        return { updates, wrong };
+      };
+      const probes: string[] = [];
+      const planted: string[] = [];
+      let updates = 0;
+      for (const kind of KINDS) {
+        for (const fps of RATES) {
+          const clocked = misSteps(kind, fps, physicsClockStep);
+          updates += clocked.updates;
+          if (clocked.updates === 0) probes.push(`${kind} at ${fps} fps: no physics update was read`);
+          probes.push(...clocked.wrong.slice(0, 2).map((w) => `${kind} at ${fps} fps on the render's clock: ${w}`));
+          const frameClock = misSteps(kind, fps, undefined);
+          if (frameClock.wrong.length === 0) probes.push(`${kind} at ${fps} fps, the frame clock planted (the option ignored): NOTHING — no tie was read`);
+          else planted.push(`${kind} at ${fps} fps: ${frameClock.wrong.length} update(s), first ${frameClock.wrong[0]}`);
+        }
+      }
+      const ok = probes.length === 0;
+      say(
+        names[0],
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${updates} constraint update(s) of LS05's spring probe at ${RATES.join(', ')} fps through openTrack held and looped and openTracks' track 0 held and looped, each opened with clock: physicsClockStep: every one took the whole steps exact arithmetic takes. ` +
+            `The frame clock planted — the same walks opened without the option — is red on ${planted.length} of ${KINDS.length * RATES.length} walk(s); per kind, the first rate:\n          ${planted.filter((_p, k) => k % RATES.length === 0).join('\n          ')}`,
+        ),
+        'issue #1396: a player that steps a live track at a fixed rate — a capture, an export, a test harness, a "step one frame" control — hands the physics a frame lasting a whole number of physics steps, and the tie between zero time left and a whole step left is decided by rounding (issue #1380). The track takes the render\'s clock the way poseRawAnimationEach does; this reads the constraint\'s own step count, the mechanism rather than a symptom of it',
+      );
+    }
+
+    // --- CO54: the poses — the render's walk, poseRawAnimationEach, each other and spine-core, all on one clock ---
+    {
+      const probes: string[] = [];
+      const tally = { walks: 0, poses: 0, renderPoses: 0, tracksPoses: 0, spinePoses: 0, refused: 0, frameRed: 0, frameWalks: 0, spineFrameRed: 0 };
+      type Subject = { label: string; doc: CompiledDocument; name: string; lists: Array<[string, number[]]> };
+      const subjects: Subject[] = [{ label: 'the spring probe', doc, name: 'loop', lists: RATES.map((fps): [string, number[]] => [`${fps} fps`, frames(fps)]) }];
+      for (const b of builtGreen) {
+        const view = noSkinView(readModel(readFileSync(join(b.out, MODEL_DOCUMENT_FILE), 'utf8'), b.name));
+        if (!view.constraints.some((c) => c.kind === 'physics')) continue;
+        for (const anim of view.animations) {
+          const n = Math.max(1, Math.round(anim.timelines.duration * 20));
+          subjects.push({ label: `${b.name} "${anim.name}"`, doc: view, name: anim.name, lists: [['20 fps held past the duration', new Array<number>(2 * n + 3).fill(1 / 20)], ['60 fps', new Array<number>(3 * n).fill(1 / 60)]] });
+        }
+      }
+      for (const s of subjects) {
+        for (const [label, steps] of s.lists) {
+          for (const reset of ['animation', 'setup'] as const) {
+            tally.walks++;
+            const held = liveWalk(s.doc, s.name, 'held track', steps, reset, physicsClockStep).map((w) => w.pose);
+            let off = -1;
+            poseRawAnimationEach(s.doc, s.name, steps, {}, reset, (want, i) => {
+              tally.poses++;
+              if (off < 0 && bits(want) !== bits(held[i])) off = i;
+            }, physicsClockStep);
+            if (off >= 0) probes.push(`${s.label} ${label}, reset at the ${reset}: openTrack on the render's clock differs at pose ${off} from poseRawAnimationEach on it`);
+            if (reset === 'animation') {
+              let renderOff = -1;
+              CORE_RAW_WALK(s.doc, s.name, steps, {}, (want, i) => {
+                tally.renderPoses++;
+                if (renderOff < 0 && bits(want) !== bits(held[i])) renderOff = i;
+              });
+              if (renderOff >= 0) probes.push(`${s.label} ${label}: openTrack on the render's clock differs at pose ${renderOff} from the render's walk`);
+              // The planted frame clock: the option ignored. Read on the spring probe only, where every rate ties.
+              if (s.doc === doc) {
+                tally.frameWalks++;
+                const frameClock = liveWalk(s.doc, s.name, 'held track', steps, reset, undefined).map((w) => w.pose);
+                if (frameClock.some((p, i) => bits(p.bones) !== bits(held[i].bones))) tally.frameRed++;
+                else probes.push(`${s.label} ${label}: the frame clock planted posed the render's walk, so the control cannot tell them apart`);
+              }
+            }
+            try {
+              const tracks = liveWalk(s.doc, s.name, 'held tracks', steps, reset, physicsClockStep).map((w) => w.pose);
+              tally.tracksPoses += tracks.length;
+              const tracksOff = tracks.findIndex((p, i) => bits(p) !== bits(held[i]));
+              if (tracksOff >= 0 || tracks.length !== held.length) probes.push(`${s.label} ${label}, reset at the ${reset}: openTracks' track 0 on the render's clock differs at pose ${tracksOff} from openTrack on it`);
+            } catch (err) {
+              if (!(err instanceof CoreInputError)) throw err;
+              tally.refused++;
+            }
+          }
+        }
+      }
+      // spine-core stepped the same way: AnimationState over its time steps, Skeleton.update over the clock's — looping, both resets.
+      const flatBones = (bones: ReadonlyArray<{ name: string; a: number; b: number; c: number; d: number; worldX: number; worldY: number }>): string => bits(bones.map((b) => [b.name, b.a, b.b, b.c, b.d, b.worldX, b.worldY]));
+      const spineLoop = (steps: readonly number[], reset: RawReset, clock: (dt: number) => number): string[] => {
+        const sk = new Skeleton(spineData);
+        const st = new AnimationState(new AnimationStateData(spineData));
+        st.setAnimation(0, 'loop', true);
+        sk.setupPose();
+        if (reset === 'animation') st.apply(sk);
+        sk.update(0);
+        sk.updateWorldTransform(Physics.reset);
+        const read = (): string => flatBones(sk.bones.map((b) => ({ name: b.data.name, a: b.appliedPose.a, b: b.appliedPose.b, c: b.appliedPose.c, d: b.appliedPose.d, worldX: b.appliedPose.worldX, worldY: b.appliedPose.worldY })));
+        const out = [read()];
+        for (const dt of steps) {
+          st.update(dt);
+          sk.setupPoseBones();
+          st.apply(sk);
+          sk.update(clock(dt));
+          sk.updateWorldTransform(Physics.update);
+          out.push(read());
+        }
+        return out;
+      };
+      for (const fps of RATES) {
+        for (const reset of ['animation', 'setup'] as const) {
+          const want = spineLoop(frames(fps), reset, physicsClockStep);
+          const frameSpine = spineLoop(frames(fps), reset, (dt) => dt);
+          for (const kind of ['looped track', 'looped tracks'] as const) {
+            const got = liveWalk(doc, 'loop', kind, frames(fps), reset, physicsClockStep).map((w) => flatBones(w.pose.bones));
+            tally.spinePoses += got.length;
+            const off = want.findIndex((w, i) => w !== got[i]);
+            if (off >= 0) probes.push(`${kind} at ${fps} fps, reset at the ${reset}: pose ${off}'s bones differ from spine-core's AnimationState stepped by the frame and its Skeleton by physicsClockStep`);
+            if (frameSpine.some((w, i) => w !== got[i])) tally.spineFrameRed++;
+          }
+        }
+      }
+      if (tally.spineFrameRed < 2 * 2 * RATES.length) probes.push(`spine-core on the frame clock agreed with the clocked tracks on ${2 * 2 * RATES.length - tally.spineFrameRed} walk(s), so its oracle cannot tell the clocks apart there`);
+      probes.push(
+        ...floorProbes(
+          [
+            [subjects.length - 1, 1, `${subjects.length - 1} built row animation(s) with a physics constraint`],
+            [tally.tracksPoses, 1, `${tally.tracksPoses} openTracks pose(s) held`],
+            [tally.frameRed, RATES.length, `${tally.frameRed} of ${tally.frameWalks} frame-clock walk(s) red`],
+          ],
+          'so the clocked tracks were not held where they decide',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        names[1],
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `${subjects.length} subject(s) — LS05's spring probe at ${RATES.join(', ')} fps and every built row's animations on a physics rig at 20 fps held past the duration and at 60 fps — ${tally.walks} walk(s) under both resets, every one opened with clock: physicsClockStep: ` +
+            `${tally.poses} openTrack pose(s) equal to poseRawAnimationEach's on the same clock in every field, bit for bit, ${tally.renderPoses} of them to the render's walk (CORE_RAW_WALK); ${tally.tracksPoses} openTracks track-0 pose(s) equal to openTrack's (${tally.refused} walk(s) of animations the tracks refuse by name); ` +
+            `looping, ${tally.spinePoses} pose(s) of openTrack and openTracks equal at tolerance 0 in every bone's world transform to spine-core 4.3.13's AnimationState updated by each step and its Skeleton by physicsClockStep of it. ` +
+            `The frame clock planted (the option ignored) is off the render's walk on ${tally.frameRed} of ${tally.frameWalks} spring-probe walk(s), and spine-core's Skeleton updated by the step itself off the clocked tracks on ${tally.spineFrameRed} of ${2 * 2 * RATES.length}`,
+        ),
+        'issue #1396: the clock is what lets a player agree with `rigc render` on a physics rig — the render keeps the animation on the frame sum and moves the physics by physicsClockStep (issue #1380) — and the runtime does the same when its AnimationState and its Skeleton are handed those two times',
+      );
+    }
+
+    // --- CO55: the clock moves the physics and nothing else ---
+    {
+      const probes: string[] = [];
+      // The spring probe with event keys on the times a running sum of 1/fps falls just short of — where a dt scaled by 1 + 2^-30
+      // reaches them a step early (read off the arithmetic at 12, 20, 24, 30 and 60 fps).
+      const forged = JSON.parse(modelText) as { events: Array<{ name: string }>; animations: Array<{ events: Array<{ time: number; name: string }> }> };
+      const keyTimes = [0.25, 0.5, 0.625, 1, 1.25, 1.5, 2.5, 3];
+      forged.events = [{ name: 'e' }];
+      forged.animations[0].events = keyTimes.map((time) => ({ time, name: 'e' }));
+      const evDoc = noSkinView(readModel(JSON.stringify(forged), 'the spring probe with events'));
+      const rnd = seededRandom(139601);
+      const lists: Array<[string, number[]]> = [
+        ...RATES.map((fps): [string, number[]] => [`${fps} fps past a cycle`, new Array<number>(Math.round((lead + period) * fps * 1.25)).fill(1 / fps)]),
+        ['seeded', Array.from({ length: 240 }, () => rnd() * 0.07)],
+      ];
+      const tally = { walks: 0, poses: 0, events: 0, physicsMoved: 0, dtRedTimes: 0, dtRedEvents: 0, early: 0 };
+      for (const kind of KINDS) {
+        for (const [label, steps] of lists) {
+          for (const reset of ['animation', 'setup'] as const) {
+            tally.walks++;
+            const plain = liveWalk(evDoc, 'loop', kind, steps, reset, undefined);
+            const clocked = liveWalk(evDoc, 'loop', kind, steps, reset, physicsClockStep);
+            const scaled = liveWalk(evDoc, 'loop', kind, steps.map(physicsClockStep), reset, undefined);
+            let moved = false;
+            const times = (w: { pose: RawPose; entry: string }): string => bits([w.pose.trackTime, w.pose.animationTime, w.entry]);
+            plain.forEach((p, i) => {
+              tally.poses++;
+              tally.events += p.pose.events.length;
+              const c = clocked[i];
+              if (times(p) !== times(c) && probes.length < 12) probes.push(`${kind} ${label}, reset at the ${reset}, pose ${i}: the clock moved the times — ${times(p)} without it, ${times(c)} with it`);
+              if (bits(p.pose.events) !== bits(c.pose.events) && probes.length < 12) probes.push(`${kind} ${label}, reset at the ${reset}, pose ${i}: the clock moved the events — ${bits(p.pose.events)} without it, ${bits(c.pose.events)} with it`);
+              if (springs.some((n) => bits(p.pose.bones.find((b) => b.name === n)) !== bits(c.pose.bones.find((b) => b.name === n)))) moved = true;
+            });
+            if (moved) tally.physicsMoved++;
+            if (scaled.some((p, i) => times(p) !== times(plain[i]))) tally.dtRedTimes++;
+            const earlyAt = scaled.findIndex((p, i) => bits(p.pose.events) !== bits(plain[i].pose.events));
+            if (earlyAt >= 0) {
+              tally.dtRedEvents++;
+              if (scaled[earlyAt].pose.events.length > plain[earlyAt].pose.events.length) tally.early++;
+            }
+          }
+        }
+      }
+      if (tally.dtRedTimes !== tally.walks) probes.push(`a dt scaled by the player left the times as they were on ${tally.walks - tally.dtRedTimes} of ${tally.walks} walk(s)`);
+      // The option refused by name: not a function, and a clock that returns no time — at the step, and every step after it.
+      const refusals: string[] = [];
+      let refusalChecks = 0;
+      const refused = (f: () => unknown, says: RegExp, what: string): void => {
+        refusalChecks++;
+        try {
+          f();
+          refusals.push(`${what}: accepted`);
+        } catch (err) {
+          if (!(err instanceof CoreInputError) || !says.test(err.message)) refusals.push(`${what}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      };
+      const notAFunction = { clock: 2 } as unknown as { clock: (dt: number) => number };
+      refused(() => openTrack(doc, 'loop', { loop: true, reset: 'animation', ...notAFunction }), /options\.clock is number, not a function/, 'openTrack with clock 2');
+      refused(() => openTracks(doc, { reset: 'animation', ...notAFunction }), /options\.clock is number, not a function/, 'openTracks with clock 2');
+      for (const [bad, says] of [[() => Number.NaN, /clock moved the physics by NaN for a step of 0\.05/], [() => -1, /clock moved the physics by -1 for a step of 0\.05/]] as const) {
+        const track = openTrack(doc, 'loop', { loop: true, reset: 'animation', clock: (dt) => (dt === 0 ? 0 : bad()) });
+        refused(() => track.step(0.05), says, `openTrack's clock returning ${bad()}`);
+        refused(() => track.step(0.05), /was refused at step 1/, `openTrack's step after its clock returned ${bad()}`);
+        const tracks = openTracks(doc, { reset: 'animation', clock: (dt) => (dt === 0 ? 0 : bad()) });
+        tracks.setAnimation(0, 'loop', { loop: true, mixDuration: 0 });
+        tracks.start();
+        refused(() => tracks.step(0.05), says, `openTracks' clock returning ${bad()}`);
+        refused(() => tracks.step(0.05), /were refused at step 1/, `openTracks' step after its clock returned ${bad()}`);
+      }
+      probes.push(...refusals);
+      probes.push(
+        ...floorProbes(
+          [
+            [tally.events, 1, `${tally.events} event(s) fired`],
+            [tally.physicsMoved, 1, `${tally.physicsMoved} walk(s) whose springs the clock moved`],
+            [tally.early, 1, `${tally.early} walk(s) where the scaled dt fired a key a step early`],
+          ],
+          'so the clock was not seen to move only the physics',
+        ),
+      );
+      const ok = probes.length === 0;
+      say(
+        names[2],
+        ok,
+        probeDetail(
+          ok,
+          probes.slice(0, 12),
+          `LS05's spring probe with ${keyTimes.length} event keys on times a running sum of 1/fps falls just short of, through openTrack held and looped and openTracks' track 0 held and looped, at ${RATES.join(', ')} fps past a cycle and on 240 seeded steps, under both resets: ${tally.walks} walk(s), ${tally.poses} pose(s), ${tally.events} event(s) — ` +
+            `opened with clock: physicsClockStep and without it, every pose's track time, animation time, events and (on the tracks) current(0)'s times identical, while the springs moved on ${tally.physicsMoved} of ${tally.walks} walk(s). ` +
+            `Planted, the player scaling its own dt by the same factor (the clock applied to the animation time too): the times off on ${tally.dtRedTimes} of ${tally.walks} walk(s), the events on ${tally.dtRedEvents}, a key fired a step early on ${tally.early}; the option refused by name when it is not a function and when it returns NaN or −1, and the track refused at every step after (${refusalChecks - refusals.length} of ${refusalChecks})`,
+        ),
+        'issue #1396: the clock is the physics clock\'s alone — a player scaling dt moves the track time, the animation time and the event firing with it, fires a key on a step boundary one frame early, and stops agreeing with `rigc render`, which keeps the animation on the frame sum',
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

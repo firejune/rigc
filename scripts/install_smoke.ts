@@ -425,6 +425,15 @@ const REQUESTED_IN_1276 = 'rig-play 1.0 plan, requested on issue #1276';
  * import surface*).
  */
 const REQUESTED_IN_1336 = 'rig-play player migration, requested on issue #1336';
+/**
+ * The render's physics clock on the core entry (issue #1396): the live tracks
+ * take a `clock` option, and the player asked on the issue for the clock the
+ * render steps with — `physicsClockStep` and `PHYSICS_CLOCK_LEAD` — to be
+ * importable from `rig-c/core` before it could pass it (play#103). The
+ * option is a field of `TrackOptions` and `TracksOptions`, which the rows
+ * above already name; this row holds the two symbols.
+ */
+const REQUESTED_IN_1396 = 'rig-play fixed-step clock, requested on issue #1396';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
   {
@@ -590,6 +599,7 @@ const OBSERVED_SYMBOLS: ObservedEntry[] = [
   },
   { entry: './core', observed: REQUESTED_IN_1276, needsRuntime: false, values: { openTrack: 'function' }, types: ['LiveTrack', 'TrackOptions'] },
   { entry: './core', observed: REQUESTED_IN_1336, needsRuntime: false, values: { openTracks: 'function' }, types: ['LocalAdjust', 'AdjustableLocals', 'BoneLocals', 'LiveTracks', 'TracksOptions', 'MixOptions', 'QueueOptions', 'TrackEntryView'] },
+  { entry: './core', observed: REQUESTED_IN_1396, needsRuntime: false, values: { physicsClockStep: 'function', PHYSICS_CLOCK_LEAD: 'constant' }, types: [] },
 ];
 
 /**

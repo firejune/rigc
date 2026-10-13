@@ -911,6 +911,18 @@ without adding to it: an entry's `alpha` and `additive` are fields of
 row keeps its symbols and no row is added for that issue: a row is keyed by
 the symbols an entry exports, and none was added.
 
+🤝 **A fourth, by the same exception**
+([#1396](https://github.com/rig-c/core/issues/1396)): `physicsClockStep` and
+`PHYSICS_CLOCK_LEAD`, the render's physics clock (issue
+[#1380](https://github.com/rig-c/core/issues/1380)), which the player asked
+to import from `rig-c/core` so that it can pass it to the live tracks' new
+option before it could be seen doing so (`REQUESTED_IN_1396`). The option
+itself — `clock` on `TrackOptions` and `TracksOptions`, what each step moves
+the physics clock by — is additive on types the rows above already name: left
+out, a track poses exactly what it posed before (`CO46`–`CO52` unchanged), so
+the row adds the two symbols and no type. The two live in `src/core/raw.ts`,
+which the entry already reached, so its closure gained no module (`CUR123`).
+
 The promise is "no runtime, and nothing a browser lacks", so it is held where
 that is true. With the runtime taken away, the smoke imports `rig-c/core`
 from the install and calls `readModel` then `poseRawSetup` on the build it

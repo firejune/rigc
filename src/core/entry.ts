@@ -17,13 +17,14 @@
  *
  * ⚠️ A symbol is listed here only because a dependant was seen using it,
  * or asked for it in writing before it could be (`openTrack`, issue #1276;
- * `openTracks`, issue #1336).
+ * `openTracks`, issue #1336; `physicsClockStep` and `PHYSICS_CLOCK_LEAD`,
+ * the clock a live track's `clock` option takes, issue #1396).
  * The list is `scripts/install_smoke.ts`'s `OBSERVED_SYMBOLS` rows for
  * `./core`, and a symbol added here and not there is not promised.
  */
 export { readModel, underSkin, underNoSkin, CoreInputError, CORE_DOCUMENT_SPEC, CORE_DOCUMENT_SPECS, CORE_BLEND_MODES, activeBones } from './index.ts';
 export type { CompiledDocument, CoreSlotRow, CoreBlendMode } from './index.ts';
-export { poseRawSetup, poseRawAnimation, poseRawAnimationEach, loopedTime, setupBounds } from './raw.ts';
+export { poseRawSetup, poseRawAnimation, poseRawAnimationEach, loopedTime, setupBounds, physicsClockStep, PHYSICS_CLOCK_LEAD } from './raw.ts';
 export type { RawPose, RawBone, RawDrawn, RawClip, RawClipped, RawEvent, RawReset } from './raw.ts';
 export { poseWalkSetup, poseLoopingWalk } from './walk.ts';
 export { openTrack } from './track.ts';
