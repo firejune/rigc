@@ -499,8 +499,26 @@ export function poseRawAnimation(doc: CompiledDocument, animation: string, steps
  * (`physicsClockStep` below, issue #1380); the track time and
  * the animation time are the steps' running sum either way.
  */
-export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void, clock?: (dt: number) => number): void {
-  walkEach(doc, animation, steps, plant, reset, clock === undefined ? RAW_MODE : { ...RAW_MODE, clock: (dt) => clock(dt) }, RAW_SHAPE, visit);
+export function poseRawAnimationEach(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, visit: (pose: RawPose, index: number) => void, clock?: (dt: number) => number, environment?: StepEnvironment): void {
+  walkEach(doc, animation, steps, plant, reset, clock === undefined ? RAW_MODE : { ...RAW_MODE, clock: (dt) => clock(dt) }, RAW_SHAPE, visit, environment);
+}
+
+/**
+ * What a batch walk sets on its physics before a pose (issue #1416, part C):
+ * pose `index`'s change to the world every physics constraint answers — either
+ * half, merged over the one standing as a live track's `setEnvironment` merges
+ * it (`setEnvironmentOn`) — or `undefined` for none. Pose 0 is the reset pose;
+ * pose `k + 1` is the one step `k` makes. `rigc render --environment` is the
+ * caller (`src/render_core.ts`), and spine-core's poser sets the same values on
+ * its `Skeleton` before the same update (`src/render.ts`), so the two posers
+ * see one world at every step.
+ */
+export type StepEnvironment = (index: number) => Partial<PhysicsEnvironment> | undefined;
+
+/** `environment`'s change for pose `index`, set on `ctx` as a live track sets one — validated and merged by `setEnvironmentOn`. */
+function setStepEnvironment(ctx: PhysicsStepContext, environment: StepEnvironment | undefined, index: number): void {
+  const change = environment?.(index);
+  if (change !== undefined) setEnvironmentOn(ctx, change, `the walk's, at pose ${index},`);
 }
 
 /**
@@ -755,10 +773,12 @@ function animationOf(doc: CompiledDocument, animation: string): CompiledDocument
  * `reset: 'setup'` pose 0 is the setup pose, reset; under `animation` it is the
  * animation applied at 0 and reset there, a step of 0 (`stepWalk`'s `first`).
  */
-function openWalk<P>(doc: CompiledDocument, anim: CompiledDocument['animations'][number], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, adjust?: LocalAdjust): { track: TrackState<P>; first: P } {
+function openWalk<P>(doc: CompiledDocument, anim: CompiledDocument['animations'][number], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, adjust?: LocalAdjust, before?: (ctx: PhysicsStepContext) => void): { track: TrackState<P>; first: P } {
   const why = constraintsAbsentWhy(doc) ?? pathAnimationsWhy(doc) ?? steppedPreviousPassWhy(doc);
   if (why !== null) throw new CoreInputError(`the raw walk leaves the bones out: ${why}`);
   const ctx = freshStepContext(plant.physicsStep);
+  // What the caller sets before pose 0 (issue #1416, part C): the batch walk's environment for the reset pose.
+  before?.(ctx);
   if (mode.loop && mode.wrapResets !== false) ctx.loop = true;
   const track: TrackState<P> = { doc, anim, duration: anim.timelines.duration, mode, plant, raw: { ...plant, ...roundPlant(mode) }, resolve: plant.shown ?? shownAttachment, shape, ctx, adjust, trackTime: 0, last: -1 };
   if (reset === 'setup') {
@@ -890,14 +910,17 @@ export function openRawTracksPath(doc: CompiledDocument, plant: TimelinePlant): 
 }
 
 /** `walkIn`'s walk, each pose assembled in `shape` and handed to `visit` in order as it is posed (`poseRawAnimationEach`): the walk opened, then stepped over `steps`. */
-function walkEach<P>(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, visit: (pose: P, index: number) => void): void {
+function walkEach<P>(doc: CompiledDocument, animation: string, steps: readonly number[], plant: TimelinePlant, reset: RawReset, mode: WalkMode, shape: PoseShape<P>, visit: (pose: P, index: number) => void, environment?: StepEnvironment): void {
   const anim = animationOf(doc, animation);
   const bad = steps.findIndex((s) => !Number.isFinite(s) || s < 0);
   if (bad >= 0) throw new CoreInputError(`step ${bad} is ${steps[bad]}, not a finite time at or above 0`);
-  const { track, first } = openWalk(doc, anim, plant, reset, mode, shape);
+  const { track, first } = openWalk(doc, anim, plant, reset, mode, shape, undefined, environment === undefined ? undefined : (ctx) => setStepEnvironment(ctx, environment, 0));
   let visited = 0;
   visit(first, visited++);
-  for (const dt of steps) visit(stepWalk(track, dt), visited++);
+  for (const dt of steps) {
+    setStepEnvironment(track.ctx, environment, visited);
+    visit(stepWalk(track, dt), visited++);
+  }
 }
 
 /**

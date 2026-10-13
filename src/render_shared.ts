@@ -38,6 +38,7 @@ import {
 import { spinePosingFor, type SpineSkeletonData } from './spine_side.ts';
 import { walkTimelines } from './timelines.ts';
 import { firstNonFinite, type PosedVertices, type WorldTransform } from './nonfinite.ts';
+import { environmentAt, type EnvironmentChange, type EnvironmentStep } from './environment.ts';
 
 // ---------------------------------------------------------------------------
 // the Spine side, through the seam (issue #1052)
@@ -211,6 +212,16 @@ export interface FramesSidecar {
   slots?: string[];
   /** The slots these frames leave out, when `render --hide` named them — see `slots`. */
   hidden?: string[];
+  /**
+   * The schedule the physics answered, when `render --environment` gave one
+   * (issue #1416) — its steps as read, each `{ t, wind?, gravity? }`.
+   *
+   * ⭐ Absent on a render without it, for `skin`'s reason: every frame set
+   * written before the field existed says the same. A frame set carrying it is
+   * a picture of the rig in a world `check` does not pose, so `check` refuses
+   * it as a reference by name.
+   */
+  environment?: EnvironmentStep[];
   /** The colour the frames were cleared to, straight RGBA 0..255. */
   background: RGBA;
   viewport: {
@@ -391,6 +402,19 @@ export interface PoseOptions {
    * second render writes.
    */
   unclipped?: boolean;
+  /**
+   * The world the physics answers, in time — `render --environment` (issue
+   * #1416, `./environment.ts`): each step's change set before the step that
+   * poses the first frame at or after its `t`, on the sampler's own frame grid,
+   * on whichever poser draws. Absent, nothing is set and every pose is the one
+   * it always was.
+   *
+   * ⭐ **It is part of the shot, so the framing reads it.** Unlike `slots` and
+   * `hidden`, which say which pixels are drawn of one pose, an environment
+   * changes the pose — a gust can carry a coat past the box a still rig fills —
+   * so `framingViewport` keeps it and the box holds what the frames draw.
+   */
+  environment?: readonly EnvironmentStep[];
 }
 
 /**
@@ -1025,8 +1049,10 @@ export interface Poser {
   /**
    * Animation `name` under `skin`, not looping: `visit(i, posed)` for every
    * `i` from 0 to `count`, the pose at `i/fps`. The caller has checked `name`.
+   * `environment(i)`, when given, is the change to the world the physics
+   * answers set before the step that poses frame `i` (issue #1416).
    */
-  animation(name: string, skin: string | undefined, fps: number, count: number, visit: (index: number, posed: Posed) => void): void;
+  animation(name: string, skin: string | undefined, fps: number, count: number, visit: (index: number, posed: Posed) => void, environment?: (index: number) => EnvironmentChange | undefined): void;
   /** The rest table for the (slot, attachment) pairs `shown` holds — see `AttachmentRest`. */
   rest(skin: string | undefined, shown: readonly AttachmentPose[][]): AttachmentRest[];
 }
@@ -1091,7 +1117,12 @@ export function sampleAnimation(source: PoseSource, name: string, fps: number, o
   const count = Math.round(animation.duration * fps);
   const draw = drawResolver(poser, opts);
   const frames: Frame[] = [];
-  poser.animation(name, opts?.skin, fps, count, (i, posed) => frames.push(frameOf(i, i * step, posed, draw(), opts)));
+  const visit = (i: number, posed: Posed): void => {
+    frames.push(frameOf(i, i * step, posed, draw(), opts));
+  };
+  // Without an environment the call is the one it always was, so a poser that takes none is asked nothing new.
+  if (opts?.environment === undefined) poser.animation(name, opts?.skin, fps, count, visit);
+  else poser.animation(name, opts.skin, fps, count, visit, environmentAt(opts.environment, fps));
   return frames;
 }
 
@@ -1411,6 +1442,8 @@ export interface GeometryFile {
   /** The animation, or `null` for a skeleton with none (its one frame is the setup pose). */
   animation: string | null;
   skin?: string;
+  /** The schedule the physics answered (`render --environment`, issue #1416) — `frames.json`'s own `environment`; absent without it. */
+  environment?: EnvironmentStep[];
   fps: number;
   /** The box the PNG frames beside this file were drawn over — `frames.json`'s own `viewport`. */
   viewport: FramesSidecar['viewport'];
@@ -1470,6 +1503,7 @@ export function geometryFileOf(
   frames: Frame[],
   viewport: Viewport,
   skin: string | undefined,
+  environment?: EnvironmentStep[],
 ): GeometryFile {
   const geometryFrame = (frame: Frame, where: string): Omit<GeometryFrame, 'index' | 'time'> => {
     if (frame.bones === undefined || frame.attachments === undefined) {
@@ -1493,6 +1527,7 @@ export function geometryFileOf(
     coordinates: GEOMETRY_COORDINATES,
     animation,
     ...(skin === undefined ? {} : { skin }),
+    ...(environment === undefined ? {} : { environment }),
     fps,
     viewport: sidecarViewport(viewport),
     bones: poser.bones.map(({ name, parent }) => ({ name, parent })),

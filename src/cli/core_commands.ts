@@ -32,6 +32,7 @@ import { MODEL_DOCUMENT_FILE, modelDocument } from '../model.ts';
 import { parseMotionSpec } from '../motion.ts';
 import { type InspectCompare, type InspectFrame, InspectError, inspectCandidate, INSPECT_DEFAULT_FPS, legendText, readBonePatterns, readShow, readTimes, readZoom } from '../inspect.ts';
 import { FOLDS_FILE, foldLine, foldsFileOf, foldsOf, foldsText, setupFaultLine } from '../folds.ts';
+import { environmentCollisions, environmentFrame, EnvironmentError, environmentResponse, readEnvironmentSchedule, type EnvironmentStep } from '../environment.ts';
 import { estimatePose, poseLines, type PoseOptions } from '../pose.ts';
 import { BACKGROUND, contactSheet, type Frame, FRAMES_SIDECAR, FRAMES_SPEC, type FrameSet, type FramesSidecar, framingViewport, GEOMETRY_FILE, geometryFileOf, geometryText, loadCandidate, POSER_NAMES, type PoserName, PROTOCOL_FPS, refuseUnchosen, renderFrame, sampleAll, sampleAnimation, SETUP_POSE_DIR, SHEET_FILE, SHEET_TILE, sidecarViewport, type SkeletonFacts, type SlotSubset, SlotSubsetError, throughPoser } from '../render_shared.ts';
 import { type CompileResult } from '../types.ts';
@@ -473,6 +474,72 @@ function readPositiveNumber(flags: Record<string, string>, key: string, fallback
 }
 
 /**
+ * `--environment <schedule.json>` read (issue #1416, `../environment.ts`), or
+ * refused as a usage error before anything is read off the candidate: a path
+ * with nothing at it, a file that is not a schedule, and every malformed entry,
+ * by its index, its field, the value found and what is required.
+ */
+function readEnvironmentFlag(flags: Record<string, string>): { path: string; steps: EnvironmentStep[] } | undefined {
+  const given = flags.environment;
+  if (given === undefined) return undefined;
+  const path = resolve(given);
+  if (!existsSync(path) || !statSync(path).isFile()) throw new UsageError(`--environment ${given}: nothing at ${path} — it takes a schedule file { "spec": "rigc-environment/1", "steps": [...] }`);
+  try {
+    return { path, steps: readEnvironmentSchedule(readFileSync(path, 'utf8'), given) };
+  } catch (err) {
+    if (err instanceof EnvironmentError) throw new UsageError(err.message);
+    throw err;
+  }
+}
+
+/**
+ * The refusals of a well-formed schedule that this candidate, at this rate,
+ * would quietly not draw (issue #1416) — each one a render that would print a
+ * plausible frame set showing nothing the schedule asked for:
+ *
+ * - a skeleton with no animation, whose one frame is the setup pose, where no
+ *   physics step runs;
+ * - a half the schedule changes that no physics constraint answers — none
+ *   states it non-zero and no animation keys it — so every frame would draw as
+ *   without the flag;
+ * - two steps on one frame of the render's grid, the first never posed;
+ * - a step after the last frame of every set drawn.
+ *
+ * `durations` are the poser's, of the sets this run draws.
+ */
+function environmentRefusal(given: string, steps: readonly EnvironmentStep[], skeletonText: string, fps: number, durations: ReadonlyArray<{ name: string; duration: number }>): string | null {
+  if (durations.length === 0) return `--environment ${given}: the skeleton has no animation — its one frame is the setup pose, where no physics step runs, so no environment moves it`;
+  const response = environmentResponse(skeletonText);
+  if (response.declared.length === 0) return `--environment ${given}: the skeleton declares no physics constraint, so no environment moves anything in it`;
+  for (const half of ['wind', 'gravity'] as const) {
+    const changing = steps.map((step, i) => (step[half] === undefined ? -1 : i)).filter((i) => i >= 0);
+    if (changing.length > 0 && response[half].length === 0) {
+      return (
+        `--environment ${given}: entry ${changing[0]} changes ${half}, and no physics constraint answers it — [${response.declared.map((n) => JSON.stringify(n)).join(', ')}] each state ${half} 0 and no animation keys it — ` +
+        `so every frame would draw as it does without the schedule. A constraint's own ${half} is its response (AUTHORING §4.6)`
+      );
+    }
+  }
+  const collision = environmentCollisions(steps, fps)[0];
+  if (collision !== undefined) {
+    return (
+      `--environment ${given}: entries [${collision.entries.join(', ')}] (t ${collision.entries.map((i) => steps[i].t).join(', ')}) land on one frame at ${fps} fps — frame ${collision.frame}, ` +
+      `t=${(collision.frame / fps).toFixed(4)}s — so entry ${collision.entries[0]} would never be posed. Raise --fps, or merge them`
+    );
+  }
+  const lastFrames = durations.map(({ name, duration }) => ({ name, last: Math.round(duration * fps) }));
+  const longest = lastFrames.reduce((a, b) => (b.last > a.last ? b : a));
+  const late = steps.findIndex((step) => environmentFrame(step.t, fps) > longest.last);
+  if (late >= 0) {
+    return (
+      `--environment ${given}: entry ${late}'s t ${steps[late].t} falls after the last frame of every set drawn — the longest, "${longest.name}", ends at frame ${longest.last}, ` +
+      `t=${(longest.last / fps).toFixed(4)}s at ${fps} fps — so it would change nothing`
+    );
+  }
+  return null;
+}
+
+/**
  * render — the frame series, drawn by the same rasteriser `check` measures with.
  *
  * The framing is measured across EVERY animation at `FRAMING_FPS` and not across
@@ -487,6 +554,8 @@ export function cmdRender(flags: Record<string, string>): void {
   const { skeletonPath, atlasPath, atlasText } = resolveDrawable(flags.candidate, flags.atlas);
   const atlasDir = dirname(atlasPath);
   const fps = readPositiveNumber(flags, 'fps', PROTOCOL_FPS, 1);
+  // Read before anything is read off the candidate, so a malformed schedule is refused before a line is printed.
+  const environment = readEnvironmentFlag(flags);
   const maxSide = readPositiveNumber(flags, 'max', 256, 16);
   const outRoot = resolve(flags.out ?? 'render');
   const geometry = flags.geometry !== undefined;
@@ -532,8 +601,9 @@ export function cmdRender(flags: Record<string, string>): void {
   // core poses — `skeleton.model.json` beside the pair — reads its names, its
   // subset roster and its pages without loading spine-core at all, and with a
   // rigc-compiled/2 document without its atlas either (issue #1020).
+  const skeletonText = readSkeletonText(skeletonPath);
   const { choice, facts, pages } = loadCandidate(
-    { skeletonText: readSkeletonText(skeletonPath), atlasText, atlasDir, label: skeletonPath },
+    { skeletonText, atlasText, atlasDir, label: skeletonPath },
     { skeleton: skeletonPath, atlas: atlasPath },
     posersAsked(flags),
   );
@@ -546,12 +616,17 @@ export function cmdRender(flags: Record<string, string>): void {
   // `src/render.ts` has one of its own. The inferred shape is the render one.
   // The subset rides on the same object and `framingViewport` takes it off, so
   // the frames draw the subset and the box is still the whole rig's.
+  // The environment rides on the same object for the same reason (issue #1416): the framing reads it, so the box holds
+  // what the frames under it draw.
   const pose =
-    skin === undefined && subset === undefined
+    skin === undefined && subset === undefined && environment === undefined
       ? undefined
-      : { ...(skin === undefined ? {} : { skin }), ...subsetFields(subset) };
+      : { ...(skin === undefined ? {} : { skin }), ...subsetFields(subset), ...(environment === undefined ? {} : { environment: environment.steps }) };
   if (skin !== undefined) console.log(`  ..    skin     ${skin}`);
   if (subset !== undefined) console.log(`  ..    ${subset.mode.padEnd(8)} ${subset.names.join(', ')}`);
+  if (environment !== undefined && facts.animations.length === 0) {
+    throw new UsageError(environmentRefusal(flags.environment, environment.steps, skeletonText, fps, []) ?? '');
+  }
 
   // Rigc's own core when the candidate is a rigc build, and spine-core
   // otherwise, or where the core refuses the input by name. Never silently:
@@ -565,6 +640,13 @@ export function cmdRender(flags: Record<string, string>): void {
   // re-poses the whole input on spine-core rather than leaving half of a frame
   // set drawn by each.
   const posed = throughPoser(choice, (poser, roster) => {
+    // A schedule this candidate would not draw is refused before anything is posed, off the durations of the poser that
+    // poses it (issue #1416) — a fallback re-runs this with the other poser's, which the core holds equal.
+    if (environment !== undefined) {
+      const drawn = poser.animations.filter((a) => only === undefined || a.name === only);
+      const refusal = environmentRefusal(flags.environment, environment.steps, skeletonText, fps, drawn);
+      if (refusal !== null) throw new UsageError(refusal);
+    }
     // `null` is a skeleton that posed no vertex at all. One that posed a vertex
     // it cannot frame — Infinity or NaN — is thrown from the framing as a
     // `GeometryError` naming the number (issue #873), and one whose every vertex
@@ -598,7 +680,7 @@ export function cmdRender(flags: Record<string, string>): void {
     if (geometry) {
       for (const [name, frames] of sampled) {
         const animation = name === SETUP_POSE_DIR && facts.animations.length === 0 ? null : name;
-        geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin)));
+        geometryTexts.set(name, geometryText(geometryFileOf(poser, animation, fps, frames, viewport, skin, environment?.steps)));
       }
     }
     // The fold reading, off the very attachments the frames were drawn from, against the rest table the geometry
@@ -616,6 +698,13 @@ export function cmdRender(flags: Record<string, string>): void {
   });
   const { viewport, sampled, geometryTexts, foldReadings } = posed.value;
   console.log(`  ..    poser    ${posed.note}`);
+  if (environment !== undefined) {
+    const response = environmentResponse(skeletonText);
+    console.log(
+      `  ..    world    ${environment.steps.length} step(s) from ${environment.path} (x right, y down; the runtime's wind [1, 0] and gravity [0, 1] before the first) — ` +
+        `wind answered by ${response.wind.join(', ') || 'none'}; gravity by ${response.gravity.join(', ') || 'none'}`,
+    );
+  }
   console.log(`  ..    ${viewport.width}x${viewport.height}px at ${fps} fps, ${sampled.size} set(s) -> ${outRoot}`);
   if (!facts.declaresStage) console.log(`  ..    ${STAGELESS_FRAMING.render}`);
 
@@ -682,6 +771,8 @@ export function cmdRender(flags: Record<string, string>): void {
     // Written only when a subset was asked for, for the same reason: a render of
     // every slot says nothing and stays the bytes it always was (issue #835).
     ...subsetFields(subset),
+    // Written only when a schedule was given (issue #1416): a render without one says nothing and stays the bytes it was.
+    ...(environment === undefined ? {} : { environment: environment.steps }),
     background: BACKGROUND,
     // The one spelling `geometry.json` repeats, so the two files cannot state
     // two boxes for one grid.

@@ -115548,6 +115548,7 @@ function runBallotSuite(): number {
  * invocations were at rates that do not land, and both read 0 by luck.
  */
 import { PHYSICS_CLOCK_LEAD, physicsClockStep } from './src/render_core.ts';
+import { ENVIRONMENT_SPEC, type EnvironmentChange, type EnvironmentStep } from './src/environment.ts';
 
 /**
  * LS05–LS06 (issue #1380): a render's physics clock never ends a frame on a
@@ -116521,6 +116522,369 @@ function trackEnvironmentCases(say: (name: string, ok: boolean, detail: string, 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * `render --environment` (issue #1416, part C): the world a rig's physics
+ * answers, in time, set before the step that poses each frame on both render
+ * posers. Three subjects, each answering a different half of the world: the
+ * wind probe (CO56's — every branch of the physics step answering wind and
+ * gravity, under a `referenceScale` of 50), gallery/look rebuilt with its
+ * `whip` answering wind (CO56's), and the articulated fixture, whose one
+ * gravity-responding link answers gravity alone. Each gets a calm → gust →
+ * calm schedule on the half it answers, its steps on frames of the protocol
+ * grid chosen as integers first, so where the gust lands is known without the
+ * resolver that places it.
+ *
+ * - RE01 renders each through the core and through `--poser spine` and holds
+ *   every file equal: `frames.json` and `geometry.json` byte for byte, every
+ *   PNG by its pixels — and that the two runs named the two posers.
+ * - RE02 holds that the gust did something, from its own frame and not before:
+ *   on the core, the gust render and the calm one agree on every frame before
+ *   the gust's and differ on the gust's; and it moved the rig against the
+ *   render without the flag. A plant that applies every change a frame late on
+ *   the core is red here — which a late reading on BOTH posers would also be,
+ *   where RE01 cannot see it.
+ * - RE03 plants each rejected reading on the core's side and holds it red
+ *   against spine-core: the schedule ignored, its y read up, each change a
+ *   frame late or a frame early. The unplanted core is the positive control.
+ * - RE04: the runtime's own world stated (wind [1, 0], gravity [0, 1] at 0) is
+ *   the render without the flag — every PNG byte, every geometry frame — and
+ *   the two files differ by the `environment` field alone.
+ * - RE05: every refusal by name, exit 2, nothing written; and `check` refuses
+ *   a frame set drawn under a schedule as a reference.
+ */
+function runRenderEnvironmentSuite(): number {
+  console.log('\n── render --environment: the world the physics answers, set alike on both posers (issue #1416) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const names = [
+    'RE01_A_SCHEDULE_RENDERS_THE_SAME_FRAMES_GEOMETRY_AND_FRAMES_JSON_THROUGH_THE_CORE_AND_SPINE_CORE',
+    'RE02_THE_GUST_MOVES_THE_RIG_FROM_ITS_OWN_FRAME_AND_NOT_BEFORE_AND_A_LATE_READING_IS_RED',
+    'RE03_EACH_REJECTED_READING_PLANTED_ON_THE_CORE_IS_RED_AGAINST_SPINE_CORE',
+    'RE04_THE_RUNTIMES_OWN_WORLD_STATED_IS_THE_RENDER_WITHOUT_THE_FLAG',
+    'RE05_A_SCHEDULE_THE_RENDER_WOULD_NOT_DRAW_IS_REFUSED_BY_NAME_AND_CHECK_REFUSES_ONE_AS_A_REFERENCE',
+  ];
+  const ORIGIN = 'issue #1416: the consumer sets the world and the rig answers; `render --environment` is the inspection path — the export\'s answer has to be the core\'s, from the frame the schedule names';
+  const FPS = PROTOCOL_FPS;
+  const bits = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-render-environment-'));
+  try {
+    // --- the subjects ----------------------------------------------------------
+    type Half = 'wind' | 'gravity';
+    type Subject = { label: string; out: string; halves: Half[]; core: (walk?: CoreRawWalk) => Poser; spine: Poser };
+    const problems: string[] = [];
+    const subjects: Subject[] = [];
+    const admit = (label: string, built: { out: string } | { why: string }, halves: Half[]): void => {
+      if ('why' in built) {
+        problems.push(built.why);
+        return;
+      }
+      const out = built.out;
+      const modelPath = join(out, MODEL_DOCUMENT_FILE);
+      const modelText = readFileSync(modelPath, 'utf8');
+      const atlasText = readFileSync(join(out, 'skeleton.atlas'), 'utf8');
+      const skeletonPath = join(out, 'skeleton.json');
+      const skeleton = { path: skeletonPath, bytes: readFileSync(skeletonPath) };
+      subjects.push({
+        label,
+        out,
+        halves,
+        core: (walk) => corePoser(modelText, atlasText, modelPath, skeleton, undefined, walk === undefined ? {} : { walk }),
+        spine: spinePoser(loadOracleData(readFileSync(skeletonPath, 'utf8'), atlasText, label)),
+      });
+    };
+    mkdirSync(join(work, 'probe'));
+    admit('the wind probe', buildWindProbe(join(work, 'probe')), ['wind', 'gravity']);
+    mkdirSync(join(work, 'responding'));
+    admit('gallery/look with whip wind 25 and gravity 30', buildRespondingLook(join(work, 'responding')), ['wind']);
+    const articulatedOut = join(work, 'articulated');
+    const articulated = runCli(['build', '--rig', ARTICULATED.rigPath, '--motion', ARTICULATED.motionPath, '--manifest', ARTICULATED.manifestPath, '--out', articulatedOut]);
+    admit(
+      `the ${ARTICULATED.rig} fixture`,
+      articulated.status === 0 ? { out: articulatedOut } : { why: `the ${ARTICULATED.rig} fixture did not build (exit ${String(articulated.status)}): ${articulated.stderr.trim().split('\n').slice(-1)[0] ?? ''}` },
+      ['gravity'],
+    );
+    if (problems.length > 0 || subjects.length < 3) {
+      for (const name of names) say(name, false, problems.join('; ') || `${subjects.length} subject(s) built`, ORIGIN);
+      return bad;
+    }
+
+    // The schedule, per subject: calm from 0, the gust from frame k1, calm again from frame k2 — frames of the
+    // protocol grid of its longest animation, chosen as integers, so t = k / FPS names frame k exactly.
+    const CALM = { wind: [0, 0] as [number, number], gravity: [0, 1] as [number, number] };
+    const GUST = { wind: [1.5, -0.4] as [number, number], gravity: [0.8, 0.6] as [number, number] };
+    const pick = (halves: Half[], world: typeof CALM): Omit<EnvironmentStep, 't'> => Object.fromEntries(halves.map((h) => [h, world[h]]));
+    type Plan = { steps: EnvironmentStep[]; calm: EnvironmentStep[]; k1: number; k2: number };
+    const planOf = (s: Subject): Plan => {
+      const last = Math.max(...s.core().animations.map((a) => Math.round(a.duration * FPS)));
+      const k1 = Math.max(1, Math.round(last / 3));
+      const k2 = Math.max(k1 + 1, Math.round((2 * last) / 3));
+      const calm: EnvironmentStep = { t: 0, ...pick(s.halves, CALM) };
+      return { steps: [calm, { t: k1 / FPS, ...pick(s.halves, GUST) }, { t: k2 / FPS, ...pick(s.halves, CALM) }], calm: [calm], k1, k2 };
+    };
+    const plans = new Map(subjects.map((s) => [s, planOf(s)]));
+    const scheduleFile = (s: Subject, label: string, steps: EnvironmentStep[]): string => {
+      const path = join(work, `${subjects.indexOf(s)}-${label}.json`);
+      writeFileSync(path, `${JSON.stringify({ spec: ENVIRONMENT_SPEC, steps })}\n`);
+      return path;
+    };
+
+    /** Every animation of `poser` sampled at the protocol rate with bones and geometry, under `steps` (none: no flag). */
+    type Sampled = Array<{ name: string; frames: Frame[] }>;
+    const sampled = (poser: Poser, steps?: EnvironmentStep[]): Sampled =>
+      poser.animations.map((a) => ({ name: a.name, frames: sampleAnimation(poser, a.name, FPS, { bones: true, geometry: true, ...(steps === undefined ? {} : { environment: steps }) }) }));
+    const flat = (f: Frame): string => bits([f.bones ?? null, f.attachments ?? null]);
+    /** The first frame two samplings of one poser's sets disagree on, per set by name (`-1`: none). */
+    const firstDiffering = (a: Sampled, b: Sampled): Map<string, number> =>
+      new Map(a.map(({ name, frames }) => {
+        const other = b.find((x) => x.name === name)?.frames ?? [];
+        return [name, frames.findIndex((f, i) => other[i] === undefined || flat(f) !== flat(other[i]))];
+      }));
+    /** The largest distance any drawn vertex moved between two samplings, world units. */
+    const displacement = (a: Sampled, b: Sampled): number => {
+      let max = 0;
+      for (const { name, frames } of a) {
+        const other = b.find((x) => x.name === name)?.frames ?? [];
+        frames.forEach((f, i) => {
+          (f.attachments ?? []).forEach((att, k) => {
+            const v = other[i]?.attachments?.[k]?.vertices ?? [];
+            for (let j = 0; j + 1 < att.vertices.length && j + 1 < v.length; j += 2) max = Math.max(max, Math.hypot(att.vertices[j] - v[j], att.vertices[j + 1] - v[j + 1]));
+          });
+        });
+      }
+      return max;
+    };
+
+    // --- RE01: through the CLI, the core and spine-core write the same files --------------------------------
+    const files = (root: string): string[] => {
+      const out: string[] = [];
+      const walk = (rel: string): void => {
+        for (const entry of readdirSync(join(root, rel), { withFileTypes: true })) {
+          const r = rel === '' ? entry.name : `${rel}/${entry.name}`;
+          if (entry.isDirectory()) walk(r);
+          else out.push(r);
+        }
+      };
+      walk('');
+      return out.sort();
+    };
+    const renders = new Map<Subject, string>();
+    {
+      const probes: string[] = [];
+      const rows: string[] = [];
+      for (const s of subjects) {
+        const plan = plans.get(s) as Plan;
+        const sched = scheduleFile(s, 'gust', plan.steps);
+        const coreDir = join(work, `${subjects.indexOf(s)}-render-core`);
+        const spineDir = join(work, `${subjects.indexOf(s)}-render-spine`);
+        const core = runCli(['render', '--candidate', s.out, '--geometry', '--environment', sched, '--out', coreDir]);
+        const spine = runCli(['render', '--candidate', s.out, '--geometry', '--environment', sched, '--poser', 'spine', '--out', spineDir]);
+        if (core.status !== 0 || spine.status !== 0) {
+          probes.push(`${s.label}: the renders exited ${String(core.status)} (core) and ${String(spine.status)} (spine): ${(core.stderr + spine.stderr).trim().split('\n').slice(-1)[0] ?? ''}`);
+          continue;
+        }
+        renders.set(s, coreDir);
+        if (!/\bposer {4}rigc core\b/.test(core.stdout)) probes.push(`${s.label}: the default render did not pose through the core — ${core.stdout.split('\n').find((l) => l.includes('poser')) ?? 'no poser line'}`);
+        if (!/\bposer {4}spine-core — --poser spine\b/.test(spine.stdout)) probes.push(`${s.label}: --poser spine did not pose through spine-core — ${spine.stdout.split('\n').find((l) => l.includes('poser')) ?? 'no poser line'}`);
+        if (!/\bworld {4}3 step\(s\)/.test(core.stdout)) probes.push(`${s.label}: the core render printed no world line for its 3 steps`);
+        const a = files(coreDir);
+        const b = files(spineDir);
+        if (bits(a) !== bits(b)) probes.push(`${s.label}: the two renders wrote different files: [${a.filter((f) => !b.includes(f)).join(', ')}] against [${b.filter((f) => !a.includes(f)).join(', ')}]`);
+        let frames = 0;
+        let differing = 0;
+        for (const f of a.filter((x) => b.includes(x))) {
+          const x = readFileSync(join(coreDir, f));
+          const y = readFileSync(join(spineDir, f));
+          if (/\/f\d{4}\.png$/.test(f)) frames++;
+          if (x.equals(y)) continue;
+          if (f.endsWith('.png') && Buffer.from(readPlate(join(coreDir, f)).data).equals(Buffer.from(readPlate(join(spineDir, f)).data))) continue;
+          if (/\/f\d{4}\.png$/.test(f)) differing++;
+          else probes.push(`${s.label}: ${f} differs between the core and spine-core`);
+        }
+        if (differing > 0) probes.push(`${s.label}: ${differing} of ${frames} frame(s) differ in their pixels between the core and spine-core`);
+        const sidecar = JSON.parse(readFileSync(join(coreDir, FRAMES_SIDECAR), 'utf8')) as FramesSidecar;
+        if (bits(sidecar.environment) !== bits(plan.steps)) probes.push(`${s.label}: frames.json records the environment ${bits(sidecar.environment)}, not the schedule's ${bits(plan.steps)}`);
+        rows.push(`${s.label} (${s.halves.join(' and ')}; gust from frame ${plan.k1} to ${plan.k2} at ${FPS} fps): ${sidecar.sets.length} set(s), ${frames} frame(s), ${differing} differing`);
+      }
+      const ok = probes.length === 0;
+      say(names[0], ok, probeDetail(ok, probes.slice(0, 12), `${rows.join('; ')} — every PNG equal in its pixels, frames.json and geometry.json byte for byte, the default render posed by the core and the other by spine-core, frames.json recording the schedule`), ORIGIN);
+    }
+
+    // --- RE02: the gust moved the rig, from its own frame and not before --------------------------------------
+    const lateWalk: CoreRawWalk = (doc, animation, steps, plant, visit, environment) =>
+      CORE_RAW_WALK(doc, animation, steps, plant, visit, environment === undefined ? undefined : (i) => environment(i - 1));
+    {
+      const probes: string[] = [];
+      const rows: string[] = [];
+      let lateRed = 0;
+      for (const s of subjects) {
+        const plan = plans.get(s) as Plan;
+        const core = s.core();
+        const gust = sampled(core, plan.steps);
+        const calm = sampled(core, plan.calm);
+        const none = sampled(core);
+        const reading = (first: Map<string, number>): string[] => {
+          const faults: string[] = [];
+          for (const [name, at] of first) if (at !== -1 && at !== plan.k1) faults.push(`"${name}" first differs from the calm render at frame ${at}, not at the gust's frame ${plan.k1}`);
+          if ([...first.values()].every((at) => at === -1)) faults.push('no set differs from the calm render');
+          return faults;
+        };
+        probes.push(...reading(firstDiffering(gust, calm)).map((p) => `${s.label}: ${p}`));
+        const moved = displacement(gust, none);
+        const gusted = displacement(gust, calm);
+        if (!(moved > 0) || !(gusted > 0)) probes.push(`${s.label}: the gust moved no vertex (${moved} against no flag, ${gusted} against calm)`);
+        if (reading(firstDiffering(sampled(s.core(lateWalk), plan.steps), calm)).length > 0) lateRed++;
+        rows.push(`${s.label}: first differing frame ${[...firstDiffering(gust, calm)].map(([n, at]) => `"${n}" ${at}`).join(', ')}, largest vertex move ${gusted.toFixed(3)} against calm and ${moved.toFixed(3)} against no flag`);
+      }
+      if (lateRed === 0) probes.push(`every change applied a frame late on the core read the gust from its own frame on all ${subjects.length} subject(s), so this reading cannot see a late schedule`);
+      const ok = probes.length === 0;
+      say(names[1], ok, probeDetail(ok, probes.slice(0, 12), `${rows.join('; ')} (world units) — and every change a frame late on the core red on ${lateRed} of ${subjects.length}`), ORIGIN);
+    }
+
+    // --- RE03: each rejected reading, planted on the core, is red against spine-core ----------------------------
+    {
+      const flipY = (c: EnvironmentChange | undefined): EnvironmentChange | undefined =>
+        c === undefined ? undefined : { ...(c.wind ? { wind: [c.wind[0], -c.wind[1]] as const } : {}), ...(c.gravity ? { gravity: [c.gravity[0], -c.gravity[1]] as const } : {}) };
+      const PLANTS: Array<[string, CoreRawWalk]> = [
+        ['the schedule ignored on the core', (doc, animation, steps, plant, visit) => CORE_RAW_WALK(doc, animation, steps, plant, visit)],
+        ['the environment\'s y read up', (doc, animation, steps, plant, visit, env) => CORE_RAW_WALK(doc, animation, steps, plant, visit, env === undefined ? undefined : (i) => flipY(env(i)))],
+        ['each change applied a frame late', lateWalk],
+        ['each change applied a frame early', (doc, animation, steps, plant, visit, env) => CORE_RAW_WALK(doc, animation, steps, plant, visit, env === undefined ? undefined : (i) => env(i + 1))],
+      ];
+      const probes: string[] = [];
+      const red = PLANTS.map(() => 0);
+      let sets = 0;
+      let poses = 0;
+      for (const s of subjects) {
+        const plan = plans.get(s) as Plan;
+        const want = sampled(s.spine, plan.steps);
+        const got = sampled(s.core(), plan.steps);
+        sets += want.length;
+        poses += want.reduce((n, x) => n + x.frames.length, 0);
+        for (const [name, at] of firstDiffering(got, want)) if (at !== -1) probes.push(`${s.label} "${name}": the core differs from spine-core at frame ${at}`);
+        PLANTS.forEach(([, walk], p) => {
+          if ([...firstDiffering(sampled(s.core(walk), plan.steps), want).values()].some((at) => at !== -1)) red[p]++;
+        });
+      }
+      PLANTS.forEach(([label], p) => {
+        if (red[p] === 0) probes.push(`${label} posed spine-core on all ${subjects.length} subject(s), so this control cannot tell the reading from the runtime's`);
+      });
+      const ok = probes.length === 0;
+      say(
+        names[2],
+        ok,
+        probeDetail(ok, probes.slice(0, 12), `${subjects.length} subject(s), ${sets} set(s), ${poses} pose(s) of the core equal to spine-core in every bone's world transform and every attachment's vertices under the schedule; planted on the core's side, each red: ${PLANTS.map(([label], p) => `${label} on ${red[p]} of ${subjects.length}`).join(', ')}`),
+        ORIGIN,
+      );
+    }
+
+    // --- RE04: the runtime's own world stated is the render without the flag ------------------------------------
+    {
+      const probes: string[] = [];
+      const s = subjects[0];
+      const sched = scheduleFile(s, 'runtime', [{ t: 0, wind: [1, 0], gravity: [0, 1] }]);
+      const stated = join(work, 're04-stated');
+      const bare = join(work, 're04-bare');
+      const a = runCli(['render', '--candidate', s.out, '--geometry', '--environment', sched, '--out', stated]);
+      const b = runCli(['render', '--candidate', s.out, '--geometry', '--out', bare]);
+      let pngs = 0;
+      if (a.status !== 0 || b.status !== 0) probes.push(`the renders exited ${String(a.status)} and ${String(b.status)}`);
+      else {
+        const fa = files(stated);
+        if (bits(fa) !== bits(files(bare))) probes.push('the two renders wrote different files');
+        for (const f of fa) {
+          if (f.endsWith('.png')) {
+            pngs++;
+            if (!readFileSync(join(stated, f)).equals(readFileSync(join(bare, f)))) probes.push(`${f} differs`);
+            continue;
+          }
+          const parsed = JSON.parse(readFileSync(join(stated, f), 'utf8')) as Record<string, unknown>;
+          if (parsed.environment === undefined) probes.push(`${f} records no environment`);
+          delete parsed.environment;
+          if (bits(parsed) !== bits(JSON.parse(readFileSync(join(bare, f), 'utf8')))) probes.push(`${f} differs from the render without the flag by more than its environment field`);
+        }
+      }
+      const ok = probes.length === 0;
+      say(names[3], ok, probeDetail(ok, probes.slice(0, 12), `${s.label}: wind [1, 0] and gravity [0, 1] stated at 0 against no flag — ${pngs} PNG(s) byte for byte, frames.json and geometry.json equal but for the environment field they record`), 'issue #1416: absent input is today\'s behaviour, and the runtime\'s own world named is the same world — the render bases (`render_hashes base --check`) hold the absent half on the gallery');
+    }
+
+    // --- RE05: refusals by name, exit 2, nothing written ------------------------------------------------------
+    {
+      const probes: string[] = [];
+      const probe = subjects[0];
+      const articulatedSubject = subjects[2];
+      let checks = 0;
+      const refusedWith = (what: string, candidate: string, schedule: string | object, says: RegExp, extra: string[] = []): void => {
+        checks++;
+        const path = typeof schedule === 'string' ? schedule : join(work, `re05-${checks}.json`);
+        if (typeof schedule !== 'string') writeFileSync(path, typeof (schedule as { raw?: string }).raw === 'string' ? (schedule as { raw: string }).raw : JSON.stringify(schedule));
+        const out = join(work, `re05-out-${checks}`);
+        const r = runCli(['render', '--candidate', candidate, '--environment', path, '--out', out, ...extra]);
+        if (r.status !== 2) probes.push(`${what}: exit ${String(r.status)}, not 2`);
+        if (!says.test(r.stderr)) probes.push(`${what}: stderr does not say ${says} — ${r.stderr.trim().split('\n').slice(-1)[0] ?? ''}`);
+        if (existsSync(out)) probes.push(`${what}: wrote ${out}`);
+      };
+      const spec = ENVIRONMENT_SPEC;
+      refusedWith('a path with nothing at it', probe.out, join(work, 'no-such-schedule.json'), /--environment .*no-such-schedule\.json: nothing at /);
+      refusedWith('a file that is not JSON', probe.out, { raw: '{ "spec": ' }, /: not JSON — /);
+      refusedWith('an array for the file', probe.out, [], /the file holds an array, not an object/);
+      refusedWith('another spec', probe.out, { spec: 'rigc-frames/1', steps: [{ t: 0, wind: [0, 0] }] }, /"spec" is "rigc-frames\/1"; render reads "rigc-environment\/1"/);
+      refusedWith('an unknown key at the top', probe.out, { spec, steps: [{ t: 0, wind: [0, 0] }], loop: true }, /the file names "loop", which is not one of \[spec, steps\]/);
+      refusedWith('no steps', probe.out, { spec, steps: [] }, /"steps" is \[\], not a non-empty array/);
+      refusedWith('an entry that is not an object', probe.out, { spec, steps: [1] }, /entry 0 of "steps" is a number 1, not an object/);
+      refusedWith('an unknown key in an entry', probe.out, { spec, steps: [{ t: 0, breeze: [1, 0] }] }, /entry 0 of "steps" names "breeze", which is not one of \[t, wind, gravity\]/);
+      refusedWith('an entry with no t', probe.out, { spec, steps: [{ wind: [1, 0] }] }, /entry 0 of "steps"'s "t" is nothing, not a finite time/);
+      refusedWith('a negative t', probe.out, { spec, steps: [{ t: -0.5, wind: [1, 0] }] }, /entry 0 of "steps"'s "t" is -0\.5, not a finite time in seconds at or above 0/);
+      refusedWith('a t not after the one before', probe.out, { spec, steps: [{ t: 1, wind: [1, 0] }, { t: 1, wind: [0, 0] }] }, /entry 1 of "steps"'s "t" is 1, not after entry 0's 1 — steps are listed in ascending time/);
+      refusedWith('a wind of one number', probe.out, { spec, steps: [{ t: 0, wind: [1] }] }, /entry 0 of "steps"'s "wind" is \[1\], not a pair of finite numbers \[x, y\] \(x to the right, y down\)/);
+      refusedWith('a gravity that is not finite', probe.out, { raw: `{ "spec": "${spec}", "steps": [{ "t": 0, "gravity": [0, 1e999] }] }` }, /entry 0 of "steps"'s "gravity" is \[0, Infinity\], not a pair of finite numbers/);
+      refusedWith('an entry that changes nothing', probe.out, { spec, steps: [{ t: 0 }] }, /entry 0 of "steps" \(t 0\) states neither "wind" nor "gravity", so it changes nothing/);
+      refusedWith('two entries on one frame', probe.out, { spec, steps: [{ t: 0.1, wind: [1, 0] }, { t: 0.15, wind: [0, 0] }] }, /entries \[0, 1\] \(t 0\.1, 0\.15\) land on one frame at 12 fps — frame 2, t=0\.1667s — so entry 0 would never be posed/);
+      refusedWith('an entry after every set\'s last frame', probe.out, { spec, steps: [{ t: 0, wind: [0, 0] }, { t: 1000, wind: [1, 0] }] }, /entry 1's t 1000 falls after the last frame of every set drawn — the longest, "\w+", ends at frame \d+/);
+      refusedWith('a wind no constraint answers', articulatedSubject.out, { spec, steps: [{ t: 0, wind: [1, 0] }] }, /entry 0 changes wind, and no physics constraint answers it — \[.*\] each state wind 0 and no animation keys it/);
+      // A build with no physics constraint, and one with no animation: the wind probe's rig under a motion that keys its swing and declares no physics, and one that declares nothing.
+      for (const [label, motion, says] of [
+        ['a skeleton with no physics constraint', { animations: { loop: { duration: 1, tracks: [{ bone: 'swing', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [10] }] }] } } }, /the skeleton declares no physics constraint, so no environment moves anything in it/],
+        ['a skeleton with no animation', { animations: {} }, /the skeleton has no animation — its one frame is the setup pose, where no physics step runs/],
+      ] as const) {
+        const dir = join(work, `re05-${label.replace(/\W+/g, '-')}`);
+        mkdirSync(dir);
+        const motionPath = join(dir, 'motion.json');
+        writeFileSync(motionPath, JSON.stringify({ spec: 'rigc-motion/1', archetype: 'windprobe', cut: 'windprobe', easings: {}, ...motion }));
+        const built = runCli(['build', '--rig', join(work, 'probe', 'rig.json'), '--motion', motionPath, '--out', join(dir, 'build')]);
+        if (built.status !== 0) {
+          checks++;
+          probes.push(`${label}: the probe did not build (exit ${String(built.status)}): ${built.stderr.trim().split('\n').slice(-1)[0] ?? ''}`);
+          continue;
+        }
+        refusedWith(label, join(dir, 'build'), { spec, steps: [{ t: 0, wind: [1, 0] }] }, says);
+      }
+      // check: a frame set drawn under a schedule is not a reference.
+      const reference = renders.get(probe);
+      let checkExit: number | null = null;
+      if (reference === undefined) probes.push('RE01 left no render under a schedule to hand check');
+      else {
+        const r = runCli(['check', '--candidate', probe.out, '--frames', reference]);
+        checkExit = r.status;
+        if (r.status === 0 || !/records that these frames were rendered under an environment schedule .* so the comparison would be a number about the difference between two worlds/.test(r.stderr)) {
+          probes.push(`check on a frame set drawn under a schedule: exit ${String(r.status)} — ${r.stderr.trim().split('\n').slice(-1)[0] ?? r.stdout.trim().split('\n').slice(-1)[0] ?? ''}`);
+        }
+      }
+      const ok = probes.length === 0;
+      say(
+        names[4],
+        ok,
+        probeDetail(ok, probes.slice(0, 12), `${checks} of ${checks} render(s) refused by name, exit 2 and no --out written: a path with nothing at it, not JSON, not an object, another spec, an unknown key at the top or in an entry, no steps, an entry not an object, no t, a negative t, a t not after the one before, a pair of one number, a number not finite, an entry changing nothing, two entries on one frame, an entry after every set's last frame, a half no constraint answers, no physics constraint, no animation — and check refusing a frame set drawn under a schedule as a reference by name, exit ${String(checkExit)}`),
+        'issue #1416: a schedule the render would quietly not draw prints a plausible frame set showing nothing it asked for, so each is a named failure before anything is posed',
+      );
+    }
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  return bad;
 }
 
 function runLoopSeamSuite(): number {
@@ -134675,6 +135039,7 @@ function main(): void {
   tally.of('generation', runGenerationSuite);
   tally.of('ingest', runIngestSuite);
   tally.of('loop-seam', runLoopSeamSuite);
+  tally.of('render-environment', runRenderEnvironmentSuite);
   tally.of('run-tally', () => runRunTallySuite(tally), { live: true, whole: true });
   tally.of('partial-run', () => runPartialRunSuite(tally));
   tally.of('gate-helper', runGateHelperSuite);

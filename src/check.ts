@@ -1286,6 +1286,18 @@ export function checkAgainstFrames(options: CheckOptions): CheckReport {
         `${options.skin === undefined ? 'with no --skin' : `with --skin ${JSON.stringify(options.skin)}`}.`,
     );
   }
+  // A frame set drawn under `render --environment` (issue #1416) is a picture of the rig in a world `check` does not
+  // pose: it poses the candidate under the runtime's own wind and gravity, so the score would be a number about the
+  // difference between two worlds. Refused by name, as a subset is, rather than scored.
+  const referenceEnvironment = located.sidecar?.environment;
+  if (referenceEnvironment !== undefined) {
+    throw new CheckError(
+      `${FRAMES_SIDECAR} records that these frames were rendered under an environment schedule (\`rigc render ` +
+        `--environment\`, ${Array.isArray(referenceEnvironment) ? referenceEnvironment.length : 0} step(s)), and check poses the candidate ` +
+        "under none — the runtime's own wind [1, 0] and gravity [0, 1] — so the comparison would be a number about the " +
+        'difference between two worlds. Render the reference frames without --environment.',
+    );
+  }
   if (referenceSkin === null && options.skin !== undefined) {
     notes.push(
       `the candidate is posed under skin ${JSON.stringify(options.skin)} and the reference frames record no skin ` +

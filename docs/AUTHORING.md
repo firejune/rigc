@@ -246,6 +246,7 @@ What the flags mean:
 | `--show`, `--dim`, `--at`, `--zoom` | `inspect` only — what it draws, whether the art is faded, which times of `--animation` it poses and the bone, slot or folds it frames to; §13 says each, with the refusals |
 | `--geometry` | `render` only: also write a `geometry.json` into each frame directory — per frame, every bone's world transform and every slot's region or mesh vertices in world units after skinning, plus each attachment's rest geometry and topology, on the frames' own grid and viewport. Every other file is byte for byte what the render writes without it. Refused with `--slot`/`--hide`, because the geometry is the whole pose whatever is drawn — **§8.2** |
 | `--folds` | `render` only: also read which mesh triangles **fold** — turn over against the setup pose — and write a `folds.json` into each frame directory: per mesh, the frames with a folded triangle, the worst frame's count and which triangles, by index, with their world box and setup-pose area. One printed line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. A reading, not a gate. Every other file is byte for byte what the render writes without it, `geometry.json` included. Refused with `--slot`/`--hide`, for `--geometry`'s reason — **§8.3** |
+| `--environment` | `render` only: the wind and gravity the rig's physics constraints answer, in time — a schedule file `{ "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, "wind"?: [x, y], "gravity"?: [x, y] }, …] }`, x right and **y down**, each step holding from its `t` until the next. Both posers set each change before the step that poses the first frame at or after its `t`, and draw the same frames, `geometry.json` and `frames.json` (`RE01`). `frames.json` and `geometry.json` record it, and the framing reads it. A malformed file, a half no physics constraint answers, two steps on one frame and a step after every set's last frame are refused by name, exit 2, nothing written; `check` refuses a frame set drawn under one as a reference. Without it every file is the bytes it always was. An inspection of the response the rig states, not a scene — **§8.4** |
 | `--poser` | `render`, `inspect`, `check` and `explain`: `core` or `spine` — on `render`, `inspect` and `check`, which implementation poses the frames (on `check`, the candidate's; the reference side is pixels either way). By default a **rigc build** (the `skeleton.model.json` `build` writes; its atlas, when one is named or present, the one beside it) is posed by rigc's own core and a **Spine export** by spine-core; the render prints a `poser` line saying which and why, and so does the check report (`check.json`'s `poser`, and the pictures' `frames.json` under `--out`; `bench --frames` prints the same line). A concave or an inverse clip is posed by the core, and so is a build rendered with no `--skin` whose default skin names a skin-required bone or constraint, or whose skins name no `default` one — posed as a fresh skeleton is, no skin's bones or constraints applied (the default skin's included) and every slot resolved through the default skin alone, so the second draws nothing and stops at `there is nothing to draw` (exit 2) under either poser (issue #1051). Where the input cannot carry the core, or the core refuses it, the render poses it through spine-core and the `poser` line says why, in one of these words: `no skeleton.model.json beside` (a Spine export) · `is not beside` (`--atlas` names an atlas outside the build's directory) · `does not describe` (a model document whose bones, slots or animations are not the skeleton's) · `is not the skeleton.json` (a `skeleton.json` whose SHA-256 is not the `spine.sha256` its model document records — edited or replaced after the build — both digests named) · `the polygon is not simple` (a clip polygon two of whose edges cross or touch, the slot named) · `depends on the runtime's previous pass` (a constraint moves a posed bone from a bone that a constraint writes into while that bone is inactive, all four named) · `--poser spine` (asked for). Any other refusal of the core's — an unreadable model document among them — reads `the core refused` and then the core's own words. `--poser core` on an input that cannot carry it is refused in the same words (exit 2, nothing written); `--poser spine` forces the runtime. A fallback whose pair the runtime cannot load — another build's `skeleton.json` or atlas beside this build's document, or an export beside an atlas it was not exported with — is not drawn: it is refused `… does not load against <the atlas>: spine-core draws this pair (<why>) and could not resolve it — "<the runtime's own words>"` — or, where the atlas names a page that is not there, `nothing at <the page>: …` — exit 2, nothing written, on `render`, `render --geometry`, `check` and `bench --frames` alike; under `--poser core` the same pair is that flag's refusal, in the words above (`RC18`; the `--candidate` row says what to change). The repository's selftest renders one probe per reason above and holds this list to the lines they print (`RC09`). Both posers draw the same frames, geometry and framing box to the bit on every corpus (issue #968), and `check` through either writes the same report, `check.json` and pictures but for the poser it names on every tree row. A rigc build the core poses reads nothing through spine-core on `render`, `render --geometry` and `check`, `--texture-from` included (and the check `bench --frames` folds in; `bench`'s own `validate`, like `build`'s, is the runtime's round trip by design): its bone tree, slot list and slot roster come off its model document; so do the order its animations and skins are listed in, its stage and its pages' `scale:` lines, on a `rigc-compiled/3` document (`editorOrder`, `stage`, `pages`) — a `/2` or `/1` document states none of those, so they come off its own `skeleton.json` and atlas, and the `poser` line then says `a rigc-compiled/2 document, which does not state the order its skins and animations are listed in or its stage, read from` and names both files; where each region sits and the page images it draws off the document's `pages` (a `rigc-compiled/1` document's off the atlas beside it, and the `poser` line then says `a rigc-compiled/1 document, which does not state where each region sits on its page: that is read from` and names the atlas); and a `--texture-from` atlas off rigc's own atlas reader. The runtime is loaded for a Spine export, `--poser spine` and a fallback the `poser` line names; a run that cannot load it there is refused naming the input and why it needs the runtime (exit 1; `RC11`, `RC13`, `RC34`). On the entry that links none of spine-core — the installed `rigc` without the runtime beside it, `bun cli_core.ts` in a clone — that refusal ends on the route to the entry that does (``the entry that links it runs them — installed, the same `rigc` once @esotericsoftware/spine-core is installed beside the package; from a source checkout, `bun cli.ts` ``); a runtime that is installed and fails to load is refused without it, since installing it is not what that reader has to do. On `explain` the flag chooses the `DEFORM` block's survey (§4.11.2): `core`, the default, reads the skeleton's structure — its deform timelines and their keys, curves and slots, the skin each is keyed under, the sliders — off the model document the compile writes and poses it through the core, and spine-core is not touched (`RC15`); `spine` parses and poses the Spine skeleton through spine-core. The two are the same survey to the byte on every corpus row (`DM12`). Where the core refuses the document, the survey falls back to spine-core and the block says so on a line of its own (`read and posed through spine-core: …`); `--poser core` there is refused instead (exit 2), and a run that cannot load the runtime where it needs it is refused naming the survey and why (exit 1), ending on the same route where the entry links none of it |
 | `--record` | `vote` only: a saved vote to check against its ballot and append to the ledger, instead of writing a ballot. This is the command's second mode; it takes no `--candidate` |
 | `--ballot` | `vote --record` only: the ballot the vote answers (default `ballot.html`). Its embedded manifest is what the vote is checked against, so the ballot file is the record of the question |
@@ -5075,6 +5076,10 @@ poses, to the bit (`CO56`). Two consequences an author has to know:
   value: that would make the export pose differently in the runtime than in
   the core.
 
+To look at the response before a player exists, `render --environment` (§8.4)
+draws the rig under a schedule of those same four numbers, on the core and on
+spine-core alike.
+
 Moving the rig is the consumer's too: `physicsTranslate(x, y)` and
 `physicsRotate(x, y, degrees)` on a live track are the runtime's methods of
 those names — the whole rig moved or turned since the last pose, in the
@@ -7584,6 +7589,100 @@ worst frame framed to it:
 `inspect --show art,folds,mesh --animation <name> --at <worst time> --zoom folds`
 fills the folded triangles at that pose, frames the picture to their box, and lists
 them with the same box and area in its legend (§13).
+
+### 8.4 The world the physics answers — `render --environment`
+
+A physics constraint's `wind` and `gravity` are its **response** (§4.6); the world
+it responds to — the two directions spine-core keeps on its `Skeleton` — belongs to
+whoever plays the rig. A render has no player, so without this flag it draws every
+frame in the runtime's initial world, wind `[1, 0]` and gravity `[0, 1]`.
+`--environment` hands it one:
+
+```bash
+bun cli.ts render --candidate path/to/spine --environment gust.json [--animation …] [--geometry] [--poser core|spine]
+```
+
+```json
+{
+  "spec": "rigc-environment/1",
+  "steps": [
+    { "t": 0, "wind": [0, 0] },
+    { "t": 1, "wind": [1.5, -0.4] },
+    { "t": 2, "wind": [0, 0] }
+  ]
+}
+```
+
+**What a step means.** From its `t`, in seconds, until the next step, the world is
+changed by the halves it states — `wind`, `gravity`, or both — and a half it leaves
+out keeps the one standing, as a live track's `setEnvironment` keeps it. Both are
+the runtime's own fields in the runtime's convention: x to the right, **y down** (a
+positive y pulls toward the bottom of the frame, as gravity `[0, 1]` does). Before
+the first step the world is the runtime's initial one, so a calm start is stated —
+`"wind": [0, 0]` at `t` 0 — rather than assumed. Each set starts the schedule at its
+own frame 0.
+
+**When it lands.** A step's change is set before the step that poses the first
+frame `i` whose time `i / fps` is at or after its `t`, so the physics integrates the
+new world over that frame's whole interval and the frame before it is untouched.
+Frame 0 is the reset pose; a step at `t` 0 is set before it. A `t` that is a frame's
+own time — `k / fps` — lands on frame `k`.
+
+**Both posers, one world.** The core sets each change on its physics before the
+walk's step; spine-core's poser sets the same values on its `Skeleton` (`windX,
+windY, gravityX, gravityY`) before the same update. The repository's selftest
+renders three rigs — one answering wind and gravity on every branch of the physics
+step, gallery/look with its whip answering wind, and a fixture answering gravity
+alone — under a calm → gust → calm schedule through both, and holds every PNG,
+`geometry.json` and `frames.json` equal (`RE01`); holds that the gust moves the rig
+from its own frame and no earlier (`RE02`); and plants on the core the readings the
+mapping rejects — the schedule ignored, its y read up, each change a frame late or
+early — each red against spine-core (`RE03`).
+
+**The files.** `frames.json` and each `geometry.json` record the schedule as
+`environment`, its steps as read, `t`, `wind`, `gravity` in that order. The
+framing reads it too: a gust can carry a coat past the box a still rig fills, so
+the box is the box of what the frames under the schedule draw — and the grid can
+differ from the same render without the flag. Compare the two in world units, in
+`geometry.json`. Without the flag nothing is set and every file is the bytes it
+always was; the runtime's own world stated at `t` 0 draws the same pixels and
+geometry as no flag at all (`RE04`). `check` poses its candidate in no world but
+the runtime's, so a frame set drawn under a schedule is refused as a reference by
+name rather than scored.
+
+**Refused by name**, exit 2, nothing written — each is a render that would print a
+plausible frame set showing nothing the schedule asked for (`RE05`):
+
+- a path with nothing at it: `--environment <path>: nothing at <abs path>`;
+- a file that is not one: `not JSON — …`, `the file holds <what>, not an object …`,
+  `"spec" is <found>; render reads "rigc-environment/1"`, `the file names "<key>",
+  which is not one of [spec, steps]`, `"steps" is <found>, not a non-empty array …`;
+- an entry, by its index: `entry <i> of "steps" names "<key>", which is not one of
+  [t, wind, gravity]`; `…'s "t" is <found>, not a finite time in seconds at or above
+  0`; `…'s "t" is <found>, not after entry <i-1>'s <t> — steps are listed in
+  ascending time, each holding until the next`; `…'s "wind" is <found>, not a pair
+  of finite numbers [x, y] (x to the right, y down)` (`gravity` alike; a number the
+  JSON reader makes infinite, `1e999`, is shown as `Infinity`); `… states neither
+  "wind" nor "gravity", so it changes nothing`;
+- a schedule this rig would not draw: a skeleton with no animation (its one frame
+  is the setup pose, where no physics step runs) or no physics constraint; a half
+  the schedule changes that no physics constraint answers — `entry <i> changes
+  wind, and no physics constraint answers it — [<names>] each state wind 0 and no
+  animation keys it`; two steps on one frame of the render's grid —
+  `entries [<i>, <j>] (t …) land on one frame at <fps> fps — frame <k>, t=…s — so
+  entry <i> would never be posed`; and a step after the last frame of every set
+  drawn.
+
+**What it is, and what it is not.** It is an inspection of the response the rig
+states — what the Spine export carries, posed in a world you chose, on either
+poser. It is not a scene: when a gust blows, how strong, and what else moves is the
+consumer's to compose, and a schedule here is a probe of the object, not a
+direction of it. Moving the rig is left out on purpose: `physicsTranslate` and
+`physicsRotate` are a displacement since the last pose, which a step held over a
+span would have to restate as a velocity — a second meaning the live track does
+not have — and a render draws the rig where it stands, so the picture would show
+a coat trailing a rig that never moves. The live track holds both to spine-core
+(`CO56`), and a player forwards them as §4.6 says.
 
 ---
 

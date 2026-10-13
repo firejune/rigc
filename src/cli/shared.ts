@@ -1013,6 +1013,13 @@ const FLAG_MEANINGS: Record<string, string> = {
     'with where they are (the world box of their posed vertices) and how big (their setup-pose area, and its share of the mesh\'s). ' +
     'One line per mesh that folds; a triangle degenerate or inverted at the setup pose is said once and never counted. ' +
     'A reading, not a gate. Not with --slot/--hide: it reads every mesh the pose shows',
+  environment:
+    'the world the rig\'s physics answers, in time: a file { "spec": "rigc-environment/1", "steps": [{ "t": <seconds>, ' +
+    '"wind"?: [x, y], "gravity"?: [x, y] }, …] }, x right and y down, each step holding from its t until the next and set ' +
+    'before the step that poses the first frame at or after it, on either poser. Before the first step the world is the ' +
+    'runtime\'s, wind [1, 0] and gravity [0, 1]. frames.json and geometry.json record it, and the framing reads it. A ' +
+    'malformed file, a half no physics constraint answers, two steps on one frame and a step after every set\'s last frame ' +
+    'are refused by name. An inspection of what the rig offers, not a scene',
   poser:
     "`render`, `inspect` and `check`: which implementation poses the frames (on `check`, the candidate's) — `core` (rigc's own, reading the skeleton.model.json a " +
     'build writes beside the pair) or `spine` (spine-core). Default: `core` when that document and the atlas sit ' +
@@ -1194,6 +1201,7 @@ const FLAG_VALUES: Record<string, string> = {
   'pack-shape': 'rect|polygon',
   'texture-from': '<path>',
   poser: 'core|spine',
+  environment: '<schedule.json>',
   reference: '<dir|skeleton.json>',
   'reference-atlas': '<path>',
   bones: `<correspondence.json|${IDENTITY_CORRESPONDENCE}>`,
@@ -1599,8 +1607,9 @@ export const COMMANDS: CommandDoc[] = [
     usage: [
       'rigc render --candidate <dir | skeleton.json> [--animation <name>] [--skin <name>] [--fps 12] [--max 256] [--geometry] [--folds] [--poser core|spine] [--out render/]',
       'rigc render … --slot <name[,name…]> | --hide <name[,name…]>   (a subset of the slots, on the whole rig\'s grid)',
+      'rigc render … --environment <schedule.json>   (the wind and gravity the physics answers, in time)',
     ],
-    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'poser', 'out'],
+    flags: ['candidate', 'atlas', 'animation', 'skin', 'slot', 'hide', 'fps', 'max', 'geometry', 'folds', 'environment', 'poser', 'out'],
     overrides: {
       out: { value: '<dir>', meaning: 'directory to write the frame series into (default `render/`)' },
       fps: { meaning: `frames per second to sample the animation at (default ${PROTOCOL_FPS})` },
