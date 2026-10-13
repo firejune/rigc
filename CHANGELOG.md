@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.51.1](https://github.com/rig-c/core/compare/v2.51.0...v2.51.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **emit:** a weighted attachment is written in one bone order, because the Spine editor refuses one whose vertices list their bones in two ([#1407](https://github.com/rig-c/core/issues/1407)) ([#1410](https://github.com/rig-c/core/issues/1410)) ([2c753fa](https://github.com/rig-c/core/commit/2c753fae726532f1a2b362a31048c658e42db9f6))
+
 ## [2.51.0](https://github.com/rig-c/core/compare/v2.50.0...v2.51.0) (2026-10-13)
 
 
