@@ -740,6 +740,67 @@ export const PHYSICS_POSE_RULES: PhysicsPoseRule[] = [
   },
 ];
 
+/** What `physicsStepStability` reads off one pose of a physics constraint. */
+export interface PhysicsStepStability {
+  /** `strength · massInverse · step²`, as the step's own products form it: `strength * (step * massInverse) * step`. */
+  readonly k: number;
+  /** The per-step velocity decay, `damping ** (60 * step)` — the runtime's own expression. */
+  readonly d: number;
+  /** `2 · (1 + d)`: the step is stable exactly when `k` is below it. */
+  readonly bound: number;
+  /** The largest magnitude among the step map's two eigenvalues — what one step multiplies an undisturbed offset by, at most. */
+  readonly growth: number;
+  /** `k < bound`, strictly. */
+  readonly stable: boolean;
+}
+
+/**
+ * Whether one pose of a physics constraint integrates to rest or runs away
+ * (issue #1416, part B) — a joint condition on three of the four values
+ * `PHYSICS_POSE_RULES` bounds one at a time, and on the constraint's `step`.
+ *
+ * 🔑 Every substep of `stepPhysics` (`src/core/constraints_physics.ts`, held to
+ * spine-core's `PhysicsConstraint.update` at tolerance 0) is, on each driven
+ * component, `v += (force − offset·strength)·m; offset += v·step; v *= d` with
+ * `m = step · massInverse` and `d = damping ** (60·step)`. The force is
+ * additive — wind and gravity set how far the offset goes, never whether it
+ * comes back — so with `u = v·step` the step is the linear map
+ * `[offset; u] ← [[1 − k, 1], [−k·d, d]]·[offset; u]`, `k = strength·m·step`:
+ * trace `1 − k + d`, determinant `d`. For `d` in `[0, 1]` (the damping row's own
+ * bound) both eigenvalues lie inside the unit circle exactly when
+ * `0 < k < 2·(1 + d)`. The lower end is the strength row's; this is the upper.
+ *
+ * ⚠️ **Strict.** At `k = 2·(1 + d)` one eigenvalue is exactly −1: the offset
+ * flips sign every step and never settles, and at `d = 1` the two coincide and
+ * it grows linearly.
+ *
+ * 📏 [measured, issue #1416's comment of 2026-10-14] on 270 generated rigs —
+ * x, y, rotate, scaleX and shearX drives; strength 10/100/1000; mass 0.1/1; fps
+ * 5/15/60; damping 0/0.85/1 — 115 of 115 with `k > bound` ran past 10⁶ units
+ * under a unit gust along the drive (92 of them in the runtime's default world
+ * with nothing set), 145 of 145 with `k < bound` stayed bounded, core and
+ * spine-core identical bit for bit. The 10 exactly on it (damping 1, k = 4)
+ * stayed under 10⁶ in the 6 s walk, which is why the 6 s classifier cannot
+ * stand for this edge: the x, y and scaleX ones ended the walk at their peak,
+ * still growing, and rotate and shearX swung their tip the bone's full length.
+ * All 270 passed every gate before this, because each value was inside its
+ * own row.
+ *
+ * The products are formed in the runtime's own order (`m = t * massInverse`,
+ * `d = damping ** (60 * t)`), so the number printed is the runtime's `k`
+ * rather than a re-association of it.
+ */
+export function physicsStepStability(strength: number, massInverse: number, damping: number, step: number): PhysicsStepStability {
+  const m = step * massInverse;
+  const k = strength * m * step;
+  const d = damping ** (60 * step);
+  const bound = 2 * (1 + d);
+  const trace = 1 - k + d;
+  const disc = trace * trace - 4 * d;
+  const growth = disc >= 0 ? Math.max(Math.abs(trace + Math.sqrt(disc)), Math.abs(trace - Math.sqrt(disc))) / 2 : Math.sqrt(d);
+  return { k, d, bound, growth, stable: k < bound };
+}
+
 /**
  * What `A23`'s setup arm says about a pose value its rule refuses: the arm of
  * `outside` that holds for it, or the bound itself where the row has no arms or

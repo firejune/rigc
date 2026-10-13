@@ -634,6 +634,7 @@ import {
   physicsKeyRefusal,
   physicsOutsideSays,
   physicsRuleFor,
+  physicsStepStability,
   SEQUENCE_MODES,
   SLOT_COLOR_CHANNELS,
 } from './src/timelines.ts';
@@ -3752,6 +3753,58 @@ function oneA47Line(report: ReturnType<typeof validate>, head: string, tail: str
   };
 }
 
+/** A physics record's value as the parser reads it: the record's number, or the parser's default where it states none. */
+function physicsValue(record: Record<string, unknown>, field: 'fps' | 'mass' | 'damping' | 'strength'): number {
+  const v = record[field];
+  return typeof v === 'number' ? v : PHYSICS_DEFAULTS[field];
+}
+
+/**
+ * The strength that puts a physics record's step exactly on A23's stability
+ * bound (issue #1416, part B), at the record's own fps, mass and damping:
+ * `bound / (step · massInverse · step)`, the bound read off
+ * `physicsStepStability` rather than restated. The edge mutants stand a
+ * relative nudge either side of it, so the line they test is the formula's and
+ * no number in them was tuned.
+ */
+function strengthOnTheStabilityBound(record: Record<string, unknown>): number {
+  const step = 1 / physicsValue(record, 'fps');
+  const massInverse = 1 / physicsValue(record, 'mass');
+  return physicsStepStability(1, massInverse, physicsValue(record, 'damping'), step).bound / (step * massInverse * step);
+}
+
+/**
+ * The stability clause's line for the broken skeleton's first physics
+ * constraint, derived from the values the break left in the file: exactly one
+ * A23 line, naming the constraint, the fps, and `k` and the bound as
+ * `physicsStepStability` forms them — so the reading holds the sentence to the
+ * formula, not to a number copied from a run.
+ */
+function oneStabilityLine(report: ReturnType<typeof validate>, broken: Artifacts, opens: (name: string) => string, keyed?: { strength: number; time: string }): { held: boolean; read: string } {
+  const doc = JSON.parse(broken.skeletonText) as { constraints: Array<Record<string, unknown>> };
+  const c = doc.constraints.find((x) => x.type === 'physics');
+  if (c === undefined) return { held: false, read: 'the broken skeleton declares no physics constraint' };
+  const strength = keyed === undefined ? physicsValue(c, 'strength') : Math.fround(keyed.strength);
+  const at = physicsStepStability(strength, 1 / physicsValue(c, 'mass'), physicsValue(c, 'damping'), 1 / physicsValue(c, 'fps'));
+  const lines = report.failures.filter((f) => f.assertion === 'A23_PHYSICS_CONSTRAINT_EFFECTIVE').map((f) => f.detail);
+  const want = [opens(String(c.name)), `fps ${physicsValue(c, 'fps')}`, ...(keyed === undefined ? [] : [`(the key at t=${keyed.time}s)`])];
+  // The two printed numbers are read back: each must be `k` and the bound at the
+  // places printed, and they must print apart exactly when they differ — so a
+  // value a part in 10⁹ past the bound cannot read as equal to it.
+  const printed = lines.length === 1 ? /strength·massInverse·step² = ([0-9.]+) must be < 2·\(1 \+ damping\^\(60·step\)\) = ([0-9.]+)/.exec(lines[0]) : null;
+  const places = printed === null ? 0 : (printed[1].split('.')[1] ?? '').length;
+  const numbersHold =
+    printed !== null &&
+    printed[1] === at.k.toFixed(places) &&
+    printed[2] === at.bound.toFixed(places) &&
+    places >= 4 &&
+    (printed[1] === printed[2]) === (at.k === at.bound);
+  return {
+    held: !at.stable && numbersHold && lines.length === 1 && lines[0].startsWith(want[0]) && want.every((w) => lines[0].includes(w)),
+    read: `k ${at.k} against bound ${at.bound}, printed ${printed === null ? 'unread' : `${printed[1]} against ${printed[2]}`}; ${lines.length} A23 line(s)${lines.length ? `: ${lines.join(' | ')}` : ''}`,
+  };
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const MUTANTS: Mutant[] = [
   {
@@ -4833,6 +4886,165 @@ const MUTANTS: Mutant[] = [
       skeletonText: editJson(a.skeletonText, (j) => {
         const name = (j as any).constraints.find((x: any) => x.type === 'physics').name;
         (j as any).animations.shut_once.physics = { [name]: { mix: [{ time: 0, value: 0 }] } };
+      }),
+    }),
+  },
+  // ─── the step itself has to settle (issue #1416, part B) ──────────────────
+  //
+  // Every value below is inside its own `PHYSICS_POSE_RULES` row, which is why
+  // each of these built green before: the fault is the joint condition
+  // `strength·massInverse·step² < 2·(1 + damping^(60·step))`. [measured] on the
+  // issue's grid, a rig past it runs past 10⁶ units under a unit gust — most of
+  // them with no gust at all — identically on spine-core.
+  {
+    name: 'M100_physics_at_5_fps_runs_away_on_the_runtimes_own_defaults',
+    origin:
+      'strength 100, mass 1 and damping 0.85 are the parser\'s defaults and each is inside its own bound; at fps 5 the ' +
+      'step is 0.2 s and k is 4 against a bound of 2.28, so one push grows without bound — and A23 and A10 passed it (#1416)',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        Object.assign(c, { fps: 5, strength: PHYSICS_DEFAULTS.strength, mass: PHYSICS_DEFAULTS.mass, damping: PHYSICS_DEFAULTS.damping });
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        c.fps = 5;
+        delete c.strength;
+        delete c.mass;
+        delete c.damping;
+      }),
+    }),
+    holds: (report, broken) => oneStabilityLine(report, broken, (name) => `physics "${name}" has strength `),
+  },
+  {
+    name: 'M101_physics_light_mass_and_stiff_spring_run_away_at_60_fps',
+    origin:
+      'the light-mass route needs no low fps: mass 0.01 is massInverse 100, and strength 400 makes k 11.1 against 3.70 ' +
+      'at 60 fps — 4.9e231 units in 6 s under a gust of [0, 1], every gate green (#1416)',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: { forge: (doc) => void Object.assign(docConstraint(doc, 'physics'), { mass: 0.01, strength: 400 }) },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        Object.assign((j as any).constraints.find((x: any) => x.type === 'physics'), { mass: 0.01, strength: 400 });
+      }),
+    }),
+    holds: (report, broken) => oneStabilityLine(report, broken, (name) => `physics "${name}" has strength `),
+  },
+  {
+    name: 'M102_physics_strength_just_past_the_stability_bound',
+    origin:
+      'the near miss from above: the fixture\'s own fps, mass and damping, and the strength that puts k on the bound ' +
+      'nudged up by one part in 10⁹ — a margin tuned into the clause would let this through',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        c.strength = strengthOnTheStabilityBound(c) * (1 + 1e-9);
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        c.strength = strengthOnTheStabilityBound(c) * (1 + 1e-9);
+      }),
+    }),
+    holds: (report, broken) => oneStabilityLine(report, broken, (name) => `physics "${name}" has strength `),
+  },
+  {
+    name: 'M102b_physics_strength_just_inside_the_stability_bound_is_accepted',
+    origin:
+      'the near miss from below, the same edge nudged down by one part in 10⁹: a stable step, if barely, and a clause ' +
+      'that refused it would be refusing a number that settles',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        c.strength = strengthOnTheStabilityBound(c) * (1 - 1e-9);
+      }),
+    }),
+  },
+  {
+    name: 'M102c_physics_exactly_on_the_bound_at_damping_1_is_refused',
+    origin:
+      'the bound is strict: at damping 1 and k exactly 4 the step has a repeated eigenvalue of −1 and the offset grows ' +
+      'linearly — [measured] the issue\'s grid has 10 rigs on it: its x, y and scaleX ones ended a 6 s walk at their peak, ' +
+      'x at strength 100 at 400 units where its 15 fps neighbour (k < 4) peaked at 41, and its rotate and shearX ones ' +
+      'swung their tip the bone\'s full length. fps 4 makes the step 0.25 and every product exact, so k is 4 to the bit',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        Object.assign(c, { fps: 4, damping: 1, mass: 1 });
+        c.strength = strengthOnTheStabilityBound(c);
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        Object.assign(c, { fps: 4, damping: 1, mass: 1 });
+        c.strength = strengthOnTheStabilityBound(c);
+      }),
+    }),
+    holds: (report, broken) => {
+      const said = oneStabilityLine(report, broken, (name) => `physics "${name}" has strength `);
+      const c = (JSON.parse(broken.skeletonText) as { constraints: Array<Record<string, unknown>> }).constraints.find((x) => x.type === 'physics');
+      const at =
+        c === undefined
+          ? undefined
+          : physicsStepStability(physicsValue(c, 'strength'), 1 / physicsValue(c, 'mass'), physicsValue(c, 'damping'), 1 / physicsValue(c, 'fps'));
+      const onIt = at !== undefined && at.k === at.bound;
+      return { held: said.held && onIt, read: `${said.read}; k ${onIt ? 'equals' : 'does NOT equal'} the bound` };
+    },
+  },
+  {
+    name: 'M103_physics_strength_key_past_the_stability_bound',
+    origin:
+      'the setup pose settles and an animation keys strength past the bound: each key is inside the strength row ' +
+      '(>= 0), so only the joint reading of the key against the setup mass, damping and fps can name it (#1416)',
+    expect: 'A23_PHYSICS_CONSTRAINT_EFFECTIVE',
+    twin: {
+      forge: (doc) => {
+        const c = docConstraint(doc, 'physics');
+        docAnimationConstraints(doc, 'shut_once').physics = [
+          { name: c.name, timelines: [{ name: 'strength', keys: [{ time: 0.25, value: strengthOnTheStabilityBound(c) * (1 + 1e-6) }] }] },
+        ];
+      },
+    },
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        (j as any).animations.shut_once.physics = { [c.name]: { strength: [{ time: 0.25, value: strengthOnTheStabilityBound(c) * (1 + 1e-6) }] } };
+      }),
+    }),
+    holds: (report, broken) => {
+      const c = (JSON.parse(broken.skeletonText) as { constraints: Array<Record<string, unknown>> }).constraints.find((x) => x.type === 'physics');
+      if (c === undefined) return { held: false, read: 'the broken skeleton declares no physics constraint' };
+      return oneStabilityLine(report, broken, (name) => `animation "shut_once" can pose physics "${name}" at strength `, {
+        strength: strengthOnTheStabilityBound(c) * (1 + 1e-6),
+        time: '0.250000',
+      });
+    },
+  },
+  {
+    name: 'M103b_physics_strength_key_just_inside_the_stability_bound_is_accepted',
+    origin:
+      'the keyed near miss from below — one part in 10⁶, wider than the edge mutants\' because a key is stored as a ' +
+      'float32 — so the keyed arm is shown to read the bound and not "any key above setup"',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const c = (j as any).constraints.find((x: any) => x.type === 'physics');
+        (j as any).animations.shut_once.physics = { [c.name]: { strength: [{ time: 0.25, value: strengthOnTheStabilityBound(c) * (1 - 1e-6) }] } };
       }),
     }),
   },
@@ -24796,6 +25008,86 @@ function runConstraintAndDeformSuite(): number {
       'at; "it is muted" of a constraint moving its bone against the jiggle sends the author to switch on something ' +
       'that is already on',
   );
+
+  // --- A23's stability clause on the rigs the wind is walked over (issue #1416, part B)
+  //
+  // The positive control the clause's mutants need beside them, on real
+  // physics rather than the overlay probe's one constraint: gallery/look as it
+  // ships (`whip`) and CO56's wind probe (six constraints, every branch of the
+  // step). Each must gate green with A23 PASSING — the clause read every
+  // constraint and found `k` under the bound, which the case prints per
+  // constraint — and the same build with its first constraint's strength
+  // moved one part in 10⁹ past that constraint's own bound must be refused by
+  // A23 exactly once, naming it. The second half is what makes the first a
+  // reading rather than a silence: a clause that skipped these rigs would pass
+  // them too.
+  {
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-step-stability-'));
+    const probes: string[] = [];
+    const seen: string[] = [];
+    try {
+      // Each compiled here rather than read off a `build`'s directory, so the gate is handed the
+      // rig info and declared durations a build hands it; the wind probe is written by its own builder.
+      const subjects: Array<{ label: string; opts: Options }> = [];
+      mkdirSync(join(work, 'probe'));
+      const probe = buildWindProbe(join(work, 'probe'));
+      if ('why' in probe) probes.push(probe.why);
+      else subjects.push({ label: 'the wind probe', opts: { rigPath: join(work, 'probe', 'rig.json'), motionPath: join(work, 'probe', 'motion.json'), outDir: join(work, 'probe', 'gate') } });
+      const look = resolve(import.meta.dir, 'gallery', 'look');
+      subjects.push({ label: 'gallery/look', opts: { rigPath: join(look, 'rig.json'), motionPath: join(look, 'motion.json'), outDir: join(work, 'look') } });
+      for (const { label, opts } of subjects) {
+        const result = compile(opts);
+        const { skeletonText, atlasText } = result;
+        const out = opts.outDir;
+        const modelText = threadedModel(result, atlasText);
+        const records = (JSON.parse(skeletonText) as { constraints: Array<Record<string, unknown>> }).constraints.filter((c) => c.type === 'physics');
+        if (records.length === 0) {
+          probes.push(`${label} declares no physics constraint, so nothing here reads the clause`);
+          continue;
+        }
+        const gateInput = { atlasDir: out, modelText, rig: result.rig, declaredDurations: result.declaredDurations, profile: 'spine' as const };
+        const report = validate({ skeletonText, atlasText, ...gateInput });
+        if (!report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') || report.failures.length > 0) {
+          probes.push(`${label}: A23 ${report.passed.includes('A23_PHYSICS_CONSTRAINT_EFFECTIVE') ? 'passed' : 'did NOT pass'}, ${report.failures.length} failure(s): ${report.failures.map((f) => `${f.assertion}: ${f.detail}`).join('; ')}`);
+        }
+        const rows = records.map((c) => {
+          const at = physicsStepStability(physicsValue(c, 'strength'), 1 / physicsValue(c, 'mass'), physicsValue(c, 'damping'), 1 / physicsValue(c, 'fps'));
+          if (!at.stable) probes.push(`${label}: physics "${String(c.name)}" is past its own bound (k ${at.k} against ${at.bound}) and A23 did not say so`);
+          return `${String(c.name)} k ${at.k.toFixed(4)} < ${at.bound.toFixed(4)} (k/bound ${(at.k / at.bound).toFixed(4)})`;
+        });
+        // The same build, its first constraint moved just past its own bound.
+        const name = String(records[0].name);
+        const past = strengthOnTheStabilityBound(records[0]) * (1 + 1e-9);
+        const brokenText = editJson(skeletonText, (j) => {
+          const c = (j as { constraints: Array<Record<string, unknown>> }).constraints.find((x) => x.type === 'physics' && x.name === name);
+          if (c !== undefined) c.strength = past;
+        });
+        const broken: Artifacts = { skeletonText: brokenText, atlasText };
+        const refused = validate(
+          { ...broken, ...gateInput },
+          {
+            forge: (doc) => {
+              const c = (doc.constraints as DocRecord[]).find((x) => x.kind === 'physics' && x.name === name);
+              if (c !== undefined) c.strength = past;
+            },
+          },
+        );
+        const said = oneStabilityLine(refused, broken, (n) => `physics "${n}" has strength `);
+        if (!said.held) probes.push(`${label}: "${name}" moved one part in 10⁹ past its bound was not refused once by name — ${said.read}`);
+        seen.push(`${label}: A23 PASS over ${records.length} constraint(s) — ${rows.join(', ')}; "${name}" one part in 10⁹ past its bound refused once by name`);
+      }
+      if (seen.length < 2 && probes.length === 0) probes.push(`${seen.length} of the 2 subjects were read`);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+    say(
+      'T116_A23_PASSES_GALLERY_LOOK_AND_THE_WIND_PROBE_UNDER_THE_STEP_STABILITY_BOUND_AND_REFUSES_EACH_MOVED_JUST_PAST_IT',
+      probes.length === 0,
+      probeDetail(probes.length === 0, probes, seen.join('; '), (count) => `${count} clause(s) of the stability control did not hold:`),
+      'issue #1416: the clause has mutants on the overlay probe; this is its positive control on the physics rigs CO56 ' +
+        'walks under wind, read per constraint, with the planted twin that shows the PASS was a reading and not a skip',
+    );
+  }
 
   return bad;
 }
@@ -89302,7 +89594,7 @@ import { RUNTIME_TIMELINE, type RuntimeTimelineRow } from './src/assertions/mode
 import { additiveViews, modelAnimationTimelines } from './src/assertions/model/slider_composition.ts';
 import { modelConstraintTargets } from './src/assertions/model/constraint_targets.ts';
 import { unnamedReach } from './src/assertions/model/constraints.ts';
-import { PHYSICS_PARAMETERS, PHYSICS_TIMELINE_KINDS } from './src/core/constraints_physics.ts';
+import { PHYSICS_DEFAULTS, PHYSICS_PARAMETERS, PHYSICS_TIMELINE_KINDS } from './src/core/constraints_physics.ts';
 import { encodePng } from './tools/plate.ts';
 
 /** The seeded skeleton's one atlas page: a region per attachment, a frame per step of the series. */
