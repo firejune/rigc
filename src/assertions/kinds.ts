@@ -128,6 +128,7 @@ export const ASSERTION_KIND: Readonly<Record<string, AssertionKind>> = {
   A49_PACKED_FOOTPRINTS_DO_NOT_OVERLAP: 'renderer',
   A50_STAGE_BOX_IS_THE_STAGE: 'validity',
   A51_BONES_LIE_ALONG_THEIR_DECLARED_AXIS: 'validity',
+  A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER: 'validity',
 };
 
 /** Whether `profile` runs a rule of `kind`: `spine` runs validity alone, `rig-play` every kind. */

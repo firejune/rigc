@@ -6,7 +6,7 @@ yardstick rigc is measured against, the three instruments that do the measuring
 (`rigc diff`, `rigc bonedist` and `rigc check`) and what none of them can see, the eight-rung
 benchmark ladder and the spineboy graduation exam, the commands that let you look at a
 rig with no reference at all, the run viewer, the input and output surface as it stands
-today, the 49 named assertions and their profiles, the selftest that has watched every
+today, the 50 named assertions and their profiles, the selftest that has watched every
 one of them fire, and the layout of the repository all of that lives in.
 
 It is **repository material rather than package material** — most of what it names
@@ -1063,7 +1063,7 @@ model (what is pinned, what may move, how authority falls off), and the
 ### The validator
 
 [`src/validate.ts`](../src/validate.ts) parses the emitted artifacts with `spine-core`
-and then runs 49 named assertions over the loaded skeleton. Each one exists because
+and then runs 50 named assertions over the loaded skeleton. Each one exists because
 the failure it catches is **silent**: the file loads, animates, and lies.
 
 Assertions whose data is absent are reported as **SKIP**, never folded into the pass
@@ -1071,7 +1071,7 @@ count — an assertion with nothing to check has not checked anything.
 
 #### Profiles — "wrong" versus "not how we do it here"
 
-Not all 49 rules are about Spine. Some are about **spine-html**, the renderer this
+Not all 50 rules are about Spine. Some are about **spine-html**, the renderer this
 compiler was built to feed, and about one project's frame budget; they fire on real,
 correct, editor-produced Spine data, because the official example projects carry
 unweighted meshes, 116-triangle meshes and packed atlases —
@@ -1084,17 +1084,17 @@ So `validate` and `build` take a `--profile`:
 
 | Profile | Runs | For |
 | --- | --- | --- |
-| `spine` | the 35 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
-| `rig-play` | all 49 — those 35 plus 6 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
+| `spine` | the 36 validity rules | **the default.** Is this valid Spine 4.3 that any runtime plays correctly? |
+| `rig-play` | all 50 — those 36 plus 6 renderer and 8 archetype | Opt-in. Is this a rig *this* project can ship? |
 
 Those are the two numbers `src/validate.ts` exports rather than states in prose:
-`ASSERTION_NAMES.length` is 49 and `assertionCountForProfile('spine')` is 35, so a
+`ASSERTION_NAMES.length` is 50 and `assertionCountForProfile('spine')` is 36, so a
 control can count them instead of quoting a figure that goes stale the next time one
 is added.
 
 `spine` is the default because it is the question this package's output answers:
 the artifact imports into the Spine editor and plays in any 4.3 runtime, and
-that is what the 35 validity rules are about. The other 14 are somebody's policy
+that is what the 36 validity rules are about. The other 14 are somebody's policy
 — one renderer's, one canvas budget's, one compiler's own formations' — and a
 rig arriving from anywhere else has no stake in them. Ask for them with
 `--profile rig-play` when you want them.
@@ -1233,7 +1233,7 @@ bun cli.ts pose    --images path/to/parts --frame poseA.png # read a pose OUT of
 `validate` on a bare directory checks what it can see. Adding `--cut`/`--cuts` lets
 it re-derive the declared durations and the structural expectations too, and the
 report says which it had. `build` and `validate` both default to `--profile spine`,
-the 35 validity rules; `--profile rig-play` adds this project's renderer and
+the 36 validity rules; `--profile rig-play` adds this project's renderer and
 archetype policy on top.
 
 `render` and `preview` are the two that need no reference at all — see

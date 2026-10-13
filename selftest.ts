@@ -4394,6 +4394,72 @@ const MUTANTS: Mutant[] = [
     },
   },
   {
+    // Issue #1407: the order the Spine editor refuses and spine-core reads.
+    name: 'M17c_one_vertex_lists_its_two_bones_in_the_other_order',
+    origin:
+      'issue #1407 — rig-parts writes a vertex\'s weights heaviest-first, so two vertices of one mesh list the same two bones in ' +
+      'opposite orders; spine-core and the whole gate read that green, and the Spine editor refuses the import ("Index -2 out of bounds")',
+    expect: 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        // The first vertex that blends two bones, its two (bone, x, y, weight) tuples swapped: the same vertex, listed backwards.
+        const at = firstBlendedRun(mesh.vertices);
+        const tuples = [mesh.vertices.slice(at + 1, at + 5), mesh.vertices.slice(at + 5, at + 9)];
+        mesh.vertices.splice(at + 1, 8, ...tuples[1], ...tuples[0]);
+      }),
+    }),
+    holds: (report, broken) => {
+      const mesh = (JSON.parse(broken.skeletonText) as any).skins[0].attachments.iris.iris_wide;
+      const at = firstBlendedRun(mesh.vertices);
+      const vertex = weightRuns(mesh.vertices).indexOf(at);
+      const [b0, b1] = [mesh.vertices[at + 1], mesh.vertices[at + 5]];
+      const lines = report.failures.filter((f) => f.assertion === 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER');
+      const named = lines.length === 1 && lines[0].detail.startsWith('mesh "default/iris/iris_wide": ') && lines[0].detail.includes(`vertex ${vertex} lists bone ${b0} before ${b1} (its bones: ${b0}, ${b1})`);
+      return { held: named, read: `${lines.length} A52 line(s); the swapped vertex is ${vertex}, bones ${b0}, ${b1}${named ? ', named in the line' : `: ${lines.map((l) => l.detail).join(' | ')}`}` };
+    },
+  },
+  {
+    name: 'M17d_one_vertex_lists_one_bone_twice',
+    origin: 'issue #1407 — measured: the editor refuses a vertex that binds one bone twice, as it refuses two vertices in opposite orders; spine-core sums the two',
+    expect: 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER',
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        const at = firstBlendedRun(mesh.vertices);
+        mesh.vertices[at + 5] = mesh.vertices[at + 1];
+      }),
+    }),
+  },
+  {
+    name: 'M17e_every_vertex_in_one_descending_order_is_accepted',
+    origin:
+      'issue #1407 — measured: the editor imports a rig whose every vertex lists its bones in DESCENDING order, and four of the twelve ' +
+      'editor exports in the example corpus list bones out of ascending order, one order per attachment; "ascending" would refuse Esoteric\'s own files',
+    expect: null,
+    mutate: (a) => ({
+      ...a,
+      skeletonText: editJson(a.skeletonText, (j) => {
+        const mesh = (j as any).skins[0].attachments.iris.iris_wide;
+        for (const at of weightRuns(mesh.vertices)) {
+          const n = mesh.vertices[at];
+          const tuples: number[][] = [];
+          for (let k = 0; k < n; k++) tuples.push(mesh.vertices.slice(at + 1 + k * 4, at + 5 + k * 4));
+          tuples.sort((p, q) => q[0] - p[0]);
+          mesh.vertices.splice(at + 1, n * 4, ...tuples.flat());
+        }
+      }),
+    }),
+    holds: (report, broken) => {
+      const mesh = (JSON.parse(broken.skeletonText) as any).skins[0].attachments.iris.iris_wide;
+      const descending = weightRuns(mesh.vertices).filter((at) => mesh.vertices[at] > 1 && mesh.vertices[at + 1] > mesh.vertices[at + 5]).length;
+      const ran = report.passed.includes('A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER');
+      return { held: descending > 0 && ran, read: `${descending} multi-bone vertex(es) listed in descending order; A52 ${ran ? 'ran and passed' : 'did not pass'}` };
+    },
+  },
+  {
     name: 'M18_uv_outside_the_region',
     origin: 'uvs decide worldVerticesLength, not their own sanity',
     expect: 'A22_MESH_UVS_IN_UNIT_RANGE',
@@ -42539,6 +42605,208 @@ function blendDisplacement(x: number, y: number): [number, number] {
   const [sx, sy] = BLEND_TRANSFORM.scale;
   const [ax, ay] = BLEND_TRANSFORM.about;
   return [(sx - 1) * (x - ax), (sy - 1) * (y - ay)];
+}
+
+/** The order a weight-order probe lists each blended vertex's two bones in (issue #1407). */
+type WeightOrder = 'ascending' | 'heaviest-first' | 'descending';
+
+/**
+ * The blended quad of `blendRig`, its two blended vertices' bones listed in
+ * `order`. Corner 1 carries armA 0.75 and corner 2 armB 0.75, so heaviest-first
+ * lists `armA, armB` on one and `armB, armA` on the other — the shape rig-parts
+ * writes and the Spine editor refuses — while ascending and descending each give
+ * the whole mesh one order.
+ */
+function weightOrderRig(order: WeightOrder): Record<string, unknown> {
+  const rig = blendRig();
+  const skins = rig.skins as Record<string, Record<string, Record<string, { weights: Array<Array<{ bone: string; weight: number }>> }>>>;
+  const band = skins.default.band.band;
+  band.weights = band.weights.map((vertex) =>
+    [...vertex].sort((p, q) =>
+      order === 'ascending' ? (p.bone < q.bone ? -1 : 1) : order === 'descending' ? (p.bone < q.bone ? 1 : -1) : q.weight - p.weight,
+    ),
+  );
+  return rig;
+}
+
+/**
+ * Two authored deform runs over the blended quad's six influences, each written
+ * against the order `order` lists them in — the same two deformations whichever
+ * order it is (issue #1407). Influence by influence, heaviest-first is `v0 armA,
+ * v1 armA, v1 armB, v2 armB, v2 armA, v3 armB`; ascending swaps the two of
+ * corner 2. Key 1 covers influences 2–4 whole; key 2 starts on the y of
+ * influence 3 and ends on the x of influence 4, so in ascending order the same
+ * two numbers sit at 9 and 6 and the run between them is the zeros the runtime
+ * reads outside a run.
+ */
+function weightOrderMotion(order: WeightOrder): Record<string, unknown> {
+  const keys =
+    order === 'ascending'
+      ? [{ t: 0.5, offset: 4, vertices: [1, 2, 5, 6, 3, 4] }, { t: 1, offset: 6, vertices: [8, 0, 0, 9] }]
+      : [{ t: 0.5, offset: 4, vertices: [1, 2, 3, 4, 5, 6] }, { t: 1, offset: 7, vertices: [9, 8] }];
+  return timelineMotion({ duration: 1, loop: false, tracks: [], deform: [{ slot: 'band', attachment: 'band', keys: [{ t: 0 }, ...keys] }] });
+}
+
+/**
+ * One bone order per weighted attachment (issue #1407): what `compile` writes
+ * for a mesh whose vertices list their bones in no single order, and A52 on the
+ * two suppliers that read the emitted text.
+ *
+ * ⭐ WO02 is the control the reorder rests on: a spec that lists the same
+ * weights heaviest-first has to build **the same bytes** as the spec that lists
+ * them ascending — skeleton and model document — deform runs included, so the
+ * deformation moved with its influences rather than staying where the indices
+ * were. WO03 is the other half: a mesh already in one order, even a descending
+ * one, is written as stated, because that is what the editor imports.
+ */
+function runWeightOrderSuite(): number {
+  let bad = 0;
+  console.log('\n── one bone order per weighted attachment (#1407) ──');
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const A52 = 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER';
+  const build = (order: WeightOrder): { built: CompileResult; modelText: string; dirs: ProbeDirs } => {
+    const dirs = writeProbeRig(weightOrderRig(order));
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, `${JSON.stringify(weightOrderMotion(order), null, 2)}\n`);
+    const built = compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir });
+    return { built, modelText: modelDocument(built.model, built.skeletonText, built.atlasText), dirs };
+  };
+  const gateBoth = (skeletonText: string, atlasText: string, modelText: string, outDir: string): { spine: ValidateReport; text: ReturnType<typeof validateEmittedText> } => ({
+    spine: validateOverSpine({ skeletonText, atlasText, atlasDir: outDir, modelText, profile: 'spine' }),
+    text: validateEmittedText({ skeletonText, atlasText, modelText, profile: 'spine' }),
+  });
+  const a52Lines = (report: { passed: string[]; failures: Array<{ assertion: string; detail: string }>; skipped: Array<{ assertion: string; reason: string }> }): string[] => [
+    ...(report.passed.includes(A52) ? ['PASS'] : []),
+    ...report.failures.filter((f) => f.assertion === A52).map((f) => `FAIL ${f.detail}`),
+    ...report.skipped.filter((s) => s.assertion === A52).map((s) => `SKIP ${s.reason}`),
+  ];
+  /** The band's emitted vertices, each as its list of bone indices. */
+  const bandBones = (skeletonText: string): number[][] => {
+    const skeleton = JSON.parse(skeletonText) as { skins: Array<{ attachments: { band: { band: { vertices: number[] } } } }> };
+    const run = skeleton.skins[0].attachments.band.band.vertices;
+    return weightRuns(run).map((at) => Array.from({ length: run[at] }, (_, k) => run[at + 1 + k * 4]));
+  };
+  /** The band's deform keys as emitted: `offset` and `vertices` of each key that has a run. */
+  const bandKeys = (skeletonText: string): string => {
+    const skeleton = JSON.parse(skeletonText) as { animations: { move: { attachments: { default: { band: { band: { deform: Array<{ offset?: number; vertices?: number[] }> } } } } } } };
+    return JSON.stringify(skeleton.animations.move.attachments.default.band.band.deform.filter((k) => k.vertices !== undefined).map((k) => [k.offset ?? 0, k.vertices]));
+  };
+  /** The band's bindings as the model document states them, each vertex as its list of bone names. */
+  const docBones = (modelText: string): string[][] => docBindings(docRecord(JSON.parse(modelText) as Record<string, unknown>, 'band', 'band')).map((vertex) => vertex.map((b) => b.bone));
+
+  const heaviest = build('heaviest-first');
+  const ascending = build('ascending');
+  const descending = build('descending');
+
+  // --- WO01: a heaviest-first spec builds green, in one order --------------
+  const heavyBones = bandBones(heaviest.built.skeletonText);
+  const heavyGate = gateBoth(heaviest.built.skeletonText, heaviest.built.atlasText, heaviest.modelText, heaviest.dirs.outDir);
+  const allAscending = heavyBones.every((v) => v.every((b, k) => k === 0 || b > v[k - 1]));
+  const docAgrees = JSON.stringify(docBones(heaviest.modelText).map((v) => v.map((name) => ['root', 'armA', 'armB'].indexOf(name)))) === JSON.stringify(heavyBones);
+  say(
+    'WO01_A_SPEC_LISTING_ITS_BONES_HEAVIEST_FIRST_BUILDS_EVERY_VERTEX_IN_ONE_ORDER',
+    allAscending && docAgrees && heavyGate.spine.failures.length === 0 && heavyGate.text.failures.length === 0 && a52Lines(heavyGate.spine)[0] === 'PASS' && a52Lines(heavyGate.text)[0] === 'PASS',
+    `the band's emitted vertices list bones ${JSON.stringify(heavyBones)}; the model document's bindings ${docAgrees ? 'list the same order' : `list ${JSON.stringify(docBones(heaviest.modelText))}`}; ` +
+      `A52 ${a52Lines(heavyGate.spine).join(' ')} through spine-core and ${a52Lines(heavyGate.text).join(' ')} over the emitted text; ` +
+      `${heavyGate.spine.failures.length} + ${heavyGate.text.failures.length} failure(s)`,
+    'rig-parts writes weights heaviest-first, and the Spine editor refuses a mesh whose vertices list two bones in two orders; ' +
+      'the document and the file have to say one order, or the two posers sum one vertex two ways',
+  );
+
+  // --- WO02: the control — heaviest-first builds what ascending builds -----
+  const sameSkeleton = heaviest.built.skeletonText === ascending.built.skeletonText;
+  const sameDocument = heaviest.modelText === ascending.modelText;
+  say(
+    'WO02_CONTROL_HEAVIEST_FIRST_BUILDS_THE_BYTES_ASCENDING_BUILDS_DEFORM_RUNS_INCLUDED',
+    sameSkeleton && sameDocument && bandKeys(ascending.built.skeletonText) === '[[4,[1,2,5,6,3,4]],[6,[8,0,0,9]]]',
+    `skeleton.json ${sameSkeleton ? 'identical' : 'DIFFERENT'}, skeleton.model.json ${sameDocument ? 'identical' : 'DIFFERENT'}; ` +
+      `deform runs heaviest-first ${bandKeys(heaviest.built.skeletonText)}, ascending ${bandKeys(ascending.built.skeletonText)}`,
+    'a deform run on a weighted mesh is one pair per INFLUENCE, in the influences\' order, so a reorder that left the runs ' +
+      'where the indices were would move the deformation onto the other bone in silence — and a run that starts or ends ' +
+      'mid-pair has to come back with the zeros the runtime reads between',
+  );
+
+  // --- WO03: a mesh already in one order keeps the spec's ------------------
+  const downBones = bandBones(descending.built.skeletonText);
+  const downGate = gateBoth(descending.built.skeletonText, descending.built.atlasText, descending.modelText, descending.dirs.outDir);
+  const keptDescending = downBones.filter((v) => v.length > 1).every((v) => v[0] > v[1]);
+  say(
+    'WO03_A_MESH_ALREADY_IN_ONE_DESCENDING_ORDER_IS_WRITTEN_AS_STATED',
+    keptDescending && bandKeys(descending.built.skeletonText) === '[[4,[1,2,3,4,5,6]],[7,[9,8]]]' && a52Lines(downGate.spine)[0] === 'PASS' && a52Lines(downGate.text)[0] === 'PASS',
+    `the band's emitted vertices list bones ${JSON.stringify(downBones)}, deform runs ${bandKeys(descending.built.skeletonText)}; ` +
+      `A52 ${a52Lines(downGate.spine).join(' ')} / ${a52Lines(downGate.text).join(' ')}`,
+    'measured: the editor imports a rig whose every vertex lists its bones in descending order, and four of the twelve ' +
+      'editor exports in the example corpus are out of ascending order in one order per attachment — rewriting them would ' +
+      'move the bytes of every rig ingested from the editor for nothing',
+  );
+
+  // --- WO04: the spec's order written back fires A52 on both suppliers ------
+  const reverted = (() => {
+    const skeleton = JSON.parse(heaviest.built.skeletonText) as { skins: Array<{ attachments: { band: { band: { vertices: number[] } } } }> };
+    const run = skeleton.skins[0].attachments.band.band.vertices;
+    const at = weightRuns(run)[2];
+    run.splice(at + 1, 8, ...run.slice(at + 5, at + 9), ...run.slice(at + 1, at + 5));
+    return `${JSON.stringify(skeleton, null, 2)}\n`;
+  })();
+  const revertedGate = gateBoth(reverted, heaviest.built.atlasText, heaviest.modelText, heaviest.dirs.outDir);
+  const spineLines = a52Lines(revertedGate.spine);
+  const textLines = a52Lines(revertedGate.text);
+  const want = 'FAIL mesh "default/band/band": no one bone order fits its vertices — vertex 1 lists bone 1 before 2 (its bones: 1, 2), vertex 2 lists bone 2 before 1 (its bones: 2, 1).';
+  say(
+    'WO04_THE_SPECS_ORDER_WRITTEN_BACK_FIRES_A52_BY_NAME_ON_BOTH_SUPPLIERS',
+    spineLines.length === 1 && spineLines[0].startsWith(want) && JSON.stringify(spineLines) === JSON.stringify(textLines),
+    `through spine-core ${JSON.stringify(spineLines)}; over the emitted text ${JSON.stringify(textLines)}`,
+    'spine-core loads this file without a word and every other rule passes it; the editor does not, so the gate has to say ' +
+      'which mesh, which vertices and which bones, in the same words on the entry that links no runtime',
+  );
+
+  // --- WO05: three vertices in a cycle, no pair of them reversed ------------
+  //
+  // Measured on the editor (issue #1407): `a, b` · `b, c` · `c, a` is refused like
+  // a reversed pair, so a rule that compared vertices two at a time would pass
+  // a file the editor refuses. The band's first three vertices rebound to
+  // root/armA, armA/armB and armB/root, half and half.
+  const cycled = (() => {
+    const skeleton = JSON.parse(heaviest.built.skeletonText) as { skins: Array<{ attachments: { band: { band: { vertices: number[] } } } }> };
+    const band = skeleton.skins[0].attachments.band.band;
+    const pairs = [[0, 1], [1, 2], [2, 0]];
+    const out: number[] = [];
+    weightRuns(band.vertices).forEach((at, v) => {
+      const n = band.vertices[at];
+      const tuples = Array.from({ length: n }, (_, k) => band.vertices.slice(at + 1 + k * 4, at + 5 + k * 4));
+      if (v >= pairs.length) return void out.push(n, ...tuples.flat());
+      const [x, y] = [tuples[0][1], tuples[0][2]];
+      out.push(2, pairs[v][0], x, y, 0.5, pairs[v][1], x, y, 0.5);
+    });
+    band.vertices = out;
+    return `${JSON.stringify(skeleton, null, 2)}\n`;
+  })();
+  const cycledGate = gateBoth(cycled, heaviest.built.atlasText, heaviest.modelText, heaviest.dirs.outDir);
+  const cycleWant = 'FAIL mesh "default/band/band": no one bone order fits its vertices — vertex 0 lists bone 0 before 1 (its bones: 0, 1), vertex 1 lists bone 1 before 2 (its bones: 1, 2), vertex 2 lists bone 2 before 0 (its bones: 2, 0).';
+  say(
+    'WO05_THREE_VERTICES_IN_A_CYCLE_WITH_NO_PAIR_REVERSED_FIRE_A52',
+    a52Lines(cycledGate.spine).length === 1 && a52Lines(cycledGate.spine)[0].startsWith(cycleWant) && JSON.stringify(a52Lines(cycledGate.spine)) === JSON.stringify(a52Lines(cycledGate.text)),
+    `through spine-core ${JSON.stringify(a52Lines(cycledGate.spine))}; over the emitted text ${JSON.stringify(a52Lines(cycledGate.text))}`,
+    'measured on the editor: three vertices listing a, b · b, c · c, a are refused although no two of them list one pair two ways; ' +
+      'the rule is that one order exists, which a pairwise comparison cannot see',
+  );
+
+  // --- WO06: nothing weighted is a SKIP, never a pass ----------------------
+  const plainDirs = writeProbeRig();
+  const plainMotion = join(plainDirs.dir, 'probe.motion.json');
+  writeFileSync(plainMotion, `${JSON.stringify(timelineMotion({ duration: 1, loop: false, tracks: [{ bone: 'block', property: 'rotate', keys: [{ t: 0, v: [0] }, { t: 1, v: [10] }] }] }), null, 2)}\n`);
+  const plain = compile({ rigPath: plainDirs.rigPath, motionPath: plainMotion, outDir: plainDirs.outDir, imagesDir: plainDirs.dir });
+  const plainGate = gateBoth(plain.skeletonText, plain.atlasText, modelDocument(plain.model, plain.skeletonText, plain.atlasText), plainDirs.outDir);
+  const skipWant = 'SKIP no weighted vertex attachment to measure';
+  say(
+    'WO06_A_SKELETON_WITH_NOTHING_WEIGHTED_SKIPS_A52',
+    JSON.stringify(a52Lines(plainGate.spine)) === JSON.stringify([skipWant]) && JSON.stringify(a52Lines(plainGate.text)) === JSON.stringify([skipWant]),
+    `through spine-core ${JSON.stringify(a52Lines(plainGate.spine))}; over the emitted text ${JSON.stringify(a52Lines(plainGate.text))}`,
+    'an assertion whose data is absent reports SKIP, never a pass — folding vacuous checks into the pass count is how a gate comes to look kept while checking nothing',
+  );
+  return bad;
 }
 
 /**
@@ -107759,6 +108027,25 @@ function runRenderHashesSuite(): number | null {
                 { code: 'A05_CURVE_ARRAY_LENGTH', label: 'a rotate curve one number short', texts: { skeletonText: edited((r) => void ((r.animations as Record<string, Record<string, unknown>>)[firstAnimation].bones = { [String((r.bones as Array<{ name: string }>)[0].name)]: { rotate: [{ time: 0, curve: [0, 0, 1] }, { time: 1 }] } })), atlasText } },
                 { code: 'A35_DEFORM_KEYS_FIT_THE_ATTACHMENT', label: 'a deform key on an attachment the skin does not have', texts: { skeletonText: edited((r) => void ((r.animations as Record<string, Record<string, unknown>>)[firstAnimation].attachments = { default: { [firstSlot]: { rc28_absent: { deform: [{ time: 0, vertices: [1, 2] }] } } } })), atlasText } },
               ]),
+          // A weighted mesh whose two blended vertices list bones 0 and 1 in opposite orders (issue #1407).
+          ...(firstSlot === undefined
+            ? []
+            : [
+                {
+                  code: 'A52_WEIGHTED_VERTICES_SHARE_ONE_BONE_ORDER',
+                  label: 'a weighted mesh whose two vertices list two bones in opposite orders',
+                  texts: {
+                    skeletonText: edited((r) => {
+                      const skin = (r.skins as Array<{ attachments: Record<string, Record<string, unknown>> }>)[0];
+                      skin.attachments[firstSlot] = {
+                        ...skin.attachments[firstSlot],
+                        rc28_order: { type: 'mesh', uvs: [0, 0, 1, 0, 0, 1], triangles: [0, 1, 2], hull: 3, vertices: [2, 0, 0, 0, 0.5, 1, 0, 0, 0.5, 2, 1, 1, 0, 0.5, 0, 1, 0, 0.5, 1, 0, 0, 1, 1] },
+                      };
+                    }),
+                    atlasText,
+                  },
+                },
+              ]),
           { code: 'A18_DETERMINISTIC_EMIT', label: 'a second compile whose skeleton.json differs', texts: { skeletonText, atlasText, second: { ...same, skeletonText: `${skeletonText}\n` } } },
           { code: 'A18_DETERMINISTIC_EMIT', label: 'a second compile whose document differs', texts: { skeletonText, atlasText, second: { ...same, modelText: modelText.replace('"spec"', '"spec" ') } } },
         ];
@@ -109187,8 +109474,10 @@ function runModelVerticesSuite(): { failures: number; gateHole: boolean } {
   {
     const probes: string[] = [];
     const quad = { uvs: [0, 0, 1, 0, 1, 1, 0, 1], triangles: [0, 1, 2, 0, 2, 3] };
-    // Two bones per vertex, indexes into the probe's [root, block].
-    const raw = [2, 0, -6, -4, 0.25, 1, -6, -4, 0.75, 2, 1, 6, -4, 0.5, 0, 6, -4, 0.5, 1, 1, 6, 4, 1, 2, 0, -6, 4, 0.125, 1, -6, 4, 0.875];
+    // Two bones per vertex, indexes into the probe's [root, block], every vertex listing them in one order: a run
+    // whose vertices list them in two is the one run `build` rewrites (issue #1407, `WO01`), and this one listed
+    // vertex 1's backwards until then.
+    const raw = [2, 0, -6, -4, 0.25, 1, -6, -4, 0.75, 2, 0, 6, -4, 0.5, 1, 6, -4, 0.5, 1, 1, 6, 4, 1, 2, 0, -6, 4, 0.125, 1, -6, 4, 0.875];
     const boxRaw = [1, 1, 0, 0, 1, 1, 0, 5, 0, 1, 2, 0, 0, 5, 0.5, 1, 0, 5, 0.5];
     const rigWith = (mesh: Record<string, unknown>, box?: Record<string, unknown>): ProbeDirs =>
       writeProbeRig({ skins: { default: { block: { block: mesh }, marker: { marker: { image: 'marker.png' }, ...(box ? { box } : {}) } } } });
@@ -133299,6 +133588,7 @@ function main(): void {
   tally.of('segments-mesh', runSegmentsMeshSuite);
   tally.of('deform-winding', runDeformWindingSuite);
   tally.of('deform-transform', runDeformTransformSuite);
+  tally.of('weight-order', runWeightOrderSuite);
   tally.of('deform-report', runDeformReportSuite);
   tally.of('group-member', runGroupMemberSuite);
   tally.of('mesh-rasteriser', runMeshSuite);
@@ -134085,6 +134375,12 @@ function main(): void {
       'own generosity shown red-first on the two mistakes the expansion invites, the displacement written into one ' +
       'influence instead of all and the displacement written with no bone inverse at all, neither of which any ' +
       'validator assertion can see because both are well-formed runs of the right length), ' +
+      "+ " + n('weight-order') + " weight-order controls (issue #1407: a mesh whose vertices list two bones heaviest-first, the shape the " +
+      'Spine editor refuses and spine-core reads, building every vertex in one ascending order in the file and the model ' +
+      'document alike and the same bytes as the spec written ascending, its authored deform runs moved with their influences; ' +
+      'a mesh already in one descending order written as stated; the spec\'s order written back into the artifact firing ' +
+      'A52 by mesh, vertices and bones in the same words on both suppliers, and so do three vertices in a cycle with no pair ' +
+      'reversed, which the editor refuses too; and a skeleton with nothing weighted a SKIP), ' +
       "+ " + n('deform-report') + " deform-report controls (`explain`'s DEFORM block read as a subprocess prints the area and stretch " +
       'extremes the closed form predicts — the column-spacing ratios of docs/FACE.md §4.2 for a yaw and `sx·sy` with ' +
       'its two scale factors for an affine, whose product is the area ratio — while its reversal and collapse counts ' +

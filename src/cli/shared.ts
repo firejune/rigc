@@ -1337,7 +1337,7 @@ export const COMMANDS: CommandDoc[] = [
           'trip through spine-core, which this entry links none of. What runs instead: the model',
           'side over the document (every assertion moved off the round trip), and the round',
           'trip\'s own rules restated over the text the emitter wrote — A01, A02, A05, A07, A16,',
-          'A31, A35, and A18 over a second, independent compile\'s skeleton, atlas and document.',
+          'A31, A35, A52, and A18 over a second, independent compile\'s skeleton, atlas and document.',
           'What does not run is A00_ROUNDTRIP_PARSE, spine-core\'s parse: it reports SKIP naming',
           'spine-core. The report\'s last line says which ran here and which did not. A00 runs',
           'in build and validate on the entry that links spine-core: installed, the same `rigc`',
