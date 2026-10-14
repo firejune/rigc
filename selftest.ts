@@ -83550,14 +83550,17 @@ function runCurrencySuite(): number {
       const candidate = join(work, 'candidate');
       const dependant = join(work, 'rig-parts');
       const marker = join(candidate, 'comparison.args');
-      const inputs = ['examples/scarf/config.json', 'examples/scarf/animations.json', 'examples/scarf/inputs/painting.png', 'examples/scarf/inputs/layers/full', 'examples/scarf/inputs/layers/head'];
+      const inputs = ['examples/scarf/config.json', 'examples/scarf/animations.json', 'examples/scarf/inputs/painting.png', 'examples/scarf/inputs/layers/full', 'examples/scarf/inputs/layers/head', 'examples/scarf/inputs/layers/full/layers.json', 'examples/scarf/inputs/layers/head/layers.json'];
       const expected = ['scripts/dependant_check.ts', '--dependant', '../rig-parts', '--', 'bun', 'cli.ts', 'build', '--config', inputs[0], '--source', inputs[2], '--full', inputs[3], '--head', inputs[4], '--out', '{out}'];
       const source = blocks[0][1].replace(/^ {3}/gm, '');
       // Execute the documented command unchanged; only the executable is a shell function recording its arguments.
       const script = `bun() { printf '%s\\n' "$@" > comparison.args; }\n${source}`;
       const supply = (input: string): void => {
         const path = join(dependant, input);
-        if (input.endsWith('/full') || input.endsWith('/head')) mkdirSync(path, { recursive: true });
+        if (input.endsWith('/full') || input.endsWith('/head')) {
+          mkdirSync(path, { recursive: true });
+          writeFileSync(join(path, 'layers.json'), '{}\n');
+        }
         else { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, '{}\n'); }
       };
       try {
@@ -83567,10 +83570,11 @@ function runCurrencySuite(): number {
         const args = existsSync(marker) ? readFileSync(marker, 'utf8').trimEnd().split('\n') : [];
         if (complete.error !== undefined || complete.status !== 0 || args.join('\n') !== expected.join('\n')) {
           probes.push(`complete scarf example: exit ${String(complete.status)}, comparison arguments ${JSON.stringify(args)}, required ${JSON.stringify(expected)}; ${complete.error?.message ?? complete.stderr}`);
-        } else cases.push('all five paths present: the exact scarf comparison command was reached');
+        } else cases.push('all seven paths present: the exact scarf comparison command was reached');
         for (const input of inputs) {
           rmSync(marker, { force: true });
           rmSync(join(dependant, input), { recursive: true, force: true });
+          if (input.endsWith('/layers.json') && !existsSync(dirname(join(dependant, input)))) probes.push(`${input} plant removed its parent directory, so it did not test a missing manifest inside an existing wrapper directory`);
           const missing = spawnSync('sh', ['-c', script], { cwd: candidate, encoding: 'utf8' });
           const named = `FAIL  RELEASE_DEPENDANT_INPUT: ../rig-parts/${input} is missing;`;
           if (missing.error !== undefined || missing.status !== 1 || !missing.stderr.startsWith(named) || existsSync(marker)) {
@@ -83582,7 +83586,7 @@ function runCurrencySuite(): number {
     }
     say('CUR129_THE_DOCUMENTED_RELEASE_SAMPLE_REFUSES_EACH_MISSING_INPUT_BEFORE_PACK_OR_INSTALL', probes.length === 0,
       probeDetail(probes.length === 0, probes, `${cases.length} readings of the exact RELEASING block: ${cases.join('; ')}`),
-      'issue #1447: an obsolete example command cannot measure a dependant; the public scarf config also names animations.json, and the documented step must name any missing sample asset before running the comparison');
+      'issue #1447: an obsolete example command cannot measure a dependant; the public scarf config names animations.json and each wrapper directory requires layers.json, so the documented step must name any missing sample asset before running the comparison');
   }
 
   return bad;

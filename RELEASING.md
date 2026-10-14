@@ -157,12 +157,13 @@ the commit that introduces these files, and is not maintained afterwards.
    from a checkout of the release pull request's head, with the dependant's
    checkout beside it and its examples fetched (`bun run fetch-examples`
    there). This step checks the public scarf example's config, animation file
-   and fetched inputs by name before packing or installing anything:
+   and fetched inputs, including each wrapper's `layers.json`, by name before
+   packing or installing anything:
 
    <!-- release-dependant-example: the selftest runs this exact block with a stub comparison command -->
    ```sh
    dependant='../rig-parts'
-   for input in examples/scarf/config.json examples/scarf/animations.json examples/scarf/inputs/painting.png examples/scarf/inputs/layers/full examples/scarf/inputs/layers/head; do
+   for input in examples/scarf/config.json examples/scarf/animations.json examples/scarf/inputs/painting.png examples/scarf/inputs/layers/full examples/scarf/inputs/layers/head examples/scarf/inputs/layers/full/layers.json examples/scarf/inputs/layers/head/layers.json; do
      if [ ! -e "$dependant/$input" ]; then
        echo "FAIL  RELEASE_DEPENDANT_INPUT: $dependant/$input is missing; check the checkout and run bun run fetch-examples in $dependant" >&2
        exit 1
