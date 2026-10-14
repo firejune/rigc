@@ -99,6 +99,7 @@ import {
   type MeshGeometry,
   type MeshVertexWeight,
 } from './mesh.ts';
+import { meshPieces } from './meshsplit.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
   extractRegion,
@@ -5499,6 +5500,7 @@ function authoredHullAndEdges(
   vertexCount: number,
   triangles: number[],
   where: string,
+  named: { skin: string; slot: string; placeholder: string },
 ): { hull: number; edges: number[] } {
   try {
     const outline = traceOutline(vertexCount, triangles);
@@ -5511,9 +5513,28 @@ function authoredHullAndEdges(
     checkHullOrder(outline, vertexCount);
     return { hull: outline.hull, edges: att.edges ?? meshEdges(vertexCount, triangles, outline.hull) };
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}${splitPointer(vertexCount, triangles, named)}`);
     throw err;
   }
+}
+
+/**
+ * The command that answers an outline refusal whose cause is pieces that share
+ * no vertex (issue #1414): one mesh is one outline, so the fix is one mesh per
+ * piece, and `rigc split` writes that proposal. Empty for every other cause —
+ * a pinch, a hole, a doubled triangle — whose fix is the triangles, and for a
+ * list the refusal is about because its indices are not vertices at all.
+ */
+function splitPointer(vertexCount: number, triangles: readonly number[], named: { skin: string; slot: string; placeholder: string }): string {
+  if (triangles.length % 3 !== 0 || triangles.some((v) => !Number.isInteger(v) || v < 0 || v >= vertexCount)) return '';
+  const count = meshPieces(vertexCount, triangles).pieces.length;
+  if (count < 2) return '';
+  const skin = named.skin === 'default' ? '' : ` --skin ${named.skin}`;
+  return (
+    ` — the triangles are ${count} pieces that share no vertex, and one mesh is one outline: ` +
+    `\`rigc split --rig <rig> --motion <motion> --slot ${named.slot} --attachment ${named.placeholder}${skin} --out <dir>\` ` +
+    'writes one mesh per piece, its deform keys renumbered (AUTHORING §3.4.11)'
+  );
 }
 
 /**
@@ -5599,7 +5620,7 @@ function buildRigMesh(
       vertices = { weighted: false, xy: raw.map(f32) };
     }
   }
-  const { hull, edges } = authoredHullAndEdges(att, uvCount / 2, att.triangles, where);
+  const { hull, edges } = authoredHullAndEdges(att, uvCount / 2, att.triangles, where, { skin: ctx.skinName, slot: ctx.slotName, placeholder });
   // `width`/`height` are the size of the image the mesh is drawn on. Stated
   // wins; otherwise the PNG the attachment names, already measured for the
   // atlas — the same `CompiledImage.width` a region reads, so a page with a

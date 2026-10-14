@@ -453,6 +453,9 @@ import {
   type InfluencePlant,
   type SegmentsInfluence,
 } from './src/mesh.ts';
+import { meshPieces, pieceSlotName, SPLIT_SPEC, SplitError, splitMesh, type SplitPlant, type SplitRecord } from './src/meshsplit.ts';
+import type { RigAttachment } from './src/rig.ts';
+import type { MotionSpec } from './src/types.ts';
 import { areaBand, triangleAreas } from './src/areaband.ts';
 import { artRastersOf, stepRastersOf, type ArtRasters, type StepRasterPlant, type StepRasterTally } from './src/meshrasters.ts';
 import { boundaryNecessity, type AllocationPlant } from './src/meshallocation.ts';
@@ -134163,6 +134166,680 @@ function runLeverSuite(): number {
   return bad;
 }
 
+// ---------------------------------------------------------------------------
+// mesh-split — one authored mesh's pieces, proposed as one mesh each (issue #1414)
+// ---------------------------------------------------------------------------
+
+/**
+ * The split probe (issue #1414): two legs on one 96x64 plate, each a 3x3 grid of
+ * vertices (2x2 cells), and the gap between them bridged by one more column of
+ * cells — the transparent bridge a polisher deleted.
+ *
+ * - **bridged** is the mesh before the deletion: one outline, so it builds, and
+ *   its vertex list is that outline walked from the top-left (14 vertices), then
+ *   the 4 interior ones — the order the hull rule needs. It is the ORIGINAL a
+ *   split is posed against: deleting triangles moves no vertex, so its posed
+ *   vertices are the ones the two-island mesh would pose if it could build.
+ * - **islands** is the same list with the bridge's 4 triangles deleted: two
+ *   pieces of 9 vertices and 8 triangles, which compile refuses.
+ *
+ * The numbering is the bridged outline's, so the right leg's vertices are already
+ * its own outline in ascending order and the left leg's are not — its vertex 15
+ * was interior to the bridged mesh and is on its own outline — so one piece is
+ * kept and one renumbered. The triangle list carries the right leg first, so
+ * piece 1, the one kept in slot "legs", is the leg that does not hold vertex 0.
+ *
+ * Weighted, the top row binds `hip` and its leg half and half and every other
+ * vertex its leg alone, so a deform run counts influences that differ by vertex;
+ * unweighted, the vertices are in `hip`'s space. `walk` turns both legs, moves
+ * the slot's colour and keys four deform runs — one across both pieces, one by
+ * `fromVertex` over single-bone vertices, one starting on an odd index with an
+ * odd count, and the setup pose at each end — and `blink` hides the attachment
+ * for a quarter second.
+ */
+const SPLIT_PLATE = { width: 96, height: 64 } as const;
+const SPLIT_COLS = [8, 24, 40, 56, 72, 88] as const;
+const SPLIT_ROWS = [8, 32, 56] as const;
+const SPLIT_GRID: ReadonlyArray<readonly number[]> = [
+  [0, 1, 2, 3, 4, 5],
+  [13, 14, 15, 16, 17, 6],
+  [12, 11, 10, 9, 8, 7],
+];
+const SPLIT_BONES: Readonly<Record<string, readonly [number, number]>> = { hip: [48, 40], leg_l: [24, 40], leg_r: [72, 40] };
+
+/** The probe's two specs as plain JSON, before any file is written. */
+function splitProbeSpecs(opts: { bridged: boolean; weighted: boolean }): { rig: unknown; motion: unknown } {
+  const pos: Array<[number, number]> = [];
+  SPLIT_GRID.forEach((row, r) => row.forEach((v, c) => (pos[v] = [SPLIT_COLS[c], SPLIT_ROWS[r]])));
+  const cell = (c: number, r: number): number[] => [
+    SPLIT_GRID[r][c], SPLIT_GRID[r][c + 1], SPLIT_GRID[r + 1][c + 1],
+    SPLIT_GRID[r][c], SPLIT_GRID[r + 1][c + 1], SPLIT_GRID[r + 1][c],
+  ];
+  const cells = (columns: number[]): number[] => columns.flatMap((c) => [0, 1].flatMap((r) => cell(c, r)));
+  const triangles = [...cells([3, 4]), ...(opts.bridged ? cells([2]) : []), ...cells([0, 1])];
+  const uvs = pos.flatMap(([x, y]) => [x / SPLIT_PLATE.width, y / SPLIT_PLATE.height]);
+  const world = (v: number): [number, number] => [pos[v][0], SPLIT_PLATE.height - pos[v][1]];
+  const bind = (v: number, bone: string, weight: number): { bone: string; x: number; y: number; weight: number } => ({ bone, x: world(v)[0] - SPLIT_BONES[bone][0], y: world(v)[1] - SPLIT_BONES[bone][1], weight });
+  const leg = (v: number): string => (pos[v][0] < SPLIT_BONES.hip[0] ? 'leg_l' : 'leg_r');
+  const geometry = opts.weighted
+    ? { weights: pos.map((p, v) => (p[1] === SPLIT_ROWS[0] ? [bind(v, 'hip', 0.5), bind(v, leg(v), 0.5)] : [bind(v, leg(v), 1)])) }
+    : { vertices: pos.flatMap((_p, v) => [world(v)[0] - SPLIT_BONES.hip[0], world(v)[1] - SPLIT_BONES.hip[1]]) };
+  // The deform array: 6 two-bone vertices and 12 one-bone ones weighted (48), one pair per vertex unweighted (36).
+  const length = opts.weighted ? 48 : 36;
+  const run = (n: number, seed: number): number[] => Array.from({ length: n }, (_v, k) => ((k * 7 + seed) % 11) - 5);
+  const rig = {
+    spec: 'rigc-rig/1',
+    name: 'split_probe',
+    skeleton: { width: SPLIT_PLATE.width, height: SPLIT_PLATE.height },
+    bones: [
+      { name: 'root' },
+      { name: 'hip', parent: 'root', x: SPLIT_BONES.hip[0], y: SPLIT_BONES.hip[1] },
+      { name: 'leg_l', parent: 'hip', x: SPLIT_BONES.leg_l[0] - SPLIT_BONES.hip[0], y: 0, length: 30 },
+      { name: 'leg_r', parent: 'hip', x: SPLIT_BONES.leg_r[0] - SPLIT_BONES.hip[0], y: 0, length: 30 },
+    ],
+    slots: [
+      { name: 'body', bone: 'hip' },
+      { name: 'legs', bone: 'hip' },
+    ],
+    skins: { default: { body: { body: { image: 'body.png' } }, legs: { legs: { type: 'mesh', image: 'legs.png', uvs, triangles, ...geometry } } } },
+  };
+  const motion = {
+    spec: 'rigc-motion/1',
+    archetype: 'split_probe',
+    cut: 'split_probe',
+    easings: { soft: [0.25, 0, 0.75, 1] },
+    setup: { body: { attachment: 'body' }, legs: { attachment: 'legs' } },
+    animations: {
+      walk: {
+        duration: 2,
+        tracks: [
+          { bone: 'leg_l', property: 'rotate', keys: [{ t: 0, v: [0], ease: 'soft' }, { t: 1, v: [20], ease: 'soft' }, { t: 2, v: [0] }] },
+          { bone: 'leg_r', property: 'rotate', keys: [{ t: 0, v: [0], ease: 'soft' }, { t: 1, v: [-15], ease: 'soft' }, { t: 2, v: [0] }] },
+          { slot: 'legs', property: 'rgba', keys: [{ t: 0, v: [1, 1, 1, 1] }, { t: 1, v: [1, 0.5, 0.5, 0.8] }, { t: 2, v: [1, 1, 1, 1] }] },
+        ],
+        deform: [
+          {
+            slot: 'legs',
+            attachment: 'legs',
+            keys: [
+              { t: 0 },
+              { t: 0.5, offset: 4, vertices: run(length - 8, 1), ease: 'soft' },
+              { t: 1, fromVertex: 6, vertices: run(6, 3) },
+              { t: 1.5, offset: opts.weighted ? 25 : 13, vertices: run(opts.weighted ? 9 : 7, 5), ease: 'soft' },
+              { t: 2 },
+            ],
+          },
+        ],
+      },
+      blink: {
+        duration: 1,
+        tracks: [{ slot: 'legs', property: 'attachment', keys: [{ t: 0, v: 'legs' }, { t: 0.5, v: null }, { t: 0.75, v: 'legs' }, { t: 1, v: 'legs' }] }],
+      },
+    },
+  };
+  return { rig, motion };
+}
+
+/** The probe's two specs written into `dir` beside its two plates. */
+function writeSplitProbe(dir: string, opts: { bridged: boolean; weighted: boolean }, edit?: (specs: { rig: unknown; motion: unknown }) => void): { rig: string; motion: string } {
+  mkdirSync(dir, { recursive: true });
+  writePlate(join(dir, 'legs.png'), SPLIT_PLATE.width, SPLIT_PLATE.height, 'legs');
+  writePlate(join(dir, 'body.png'), 32, 32, 'body');
+  const specs = splitProbeSpecs(opts);
+  edit?.(specs);
+  const rig = join(dir, 'rig.json');
+  const motion = join(dir, 'motion.json');
+  writeFileSync(rig, `${JSON.stringify(specs.rig, null, 2)}\n`);
+  writeFileSync(motion, `${JSON.stringify(specs.motion, null, 2)}\n`);
+  return { rig, motion };
+}
+
+/** The probe's two specs parsed — what `splitMesh` takes. */
+function parsedSplitProbe(opts: { bridged: boolean; weighted: boolean }): { rig: RigSpec; motion: MotionSpec } {
+  const specs = splitProbeSpecs(opts);
+  return { rig: parseRigSpec(specs.rig, 'the split probe rig'), motion: parseMotionSpec(specs.motion, 'the split probe motion') };
+}
+
+/** A proposal `splitMesh` handed back, written into `dir` the way `rigc split` writes it — what a plant is built from. */
+function writeSplitProposal(dir: string, rig: RigSpec, motion: MotionSpec, record: SplitRecord): { rig: string; motion: string } {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'rig.json'), `${JSON.stringify(rig, null, 2)}\n`);
+  writeFileSync(join(dir, 'motion.json'), `${JSON.stringify(motion, null, 2)}\n`);
+  writeFileSync(join(dir, 'split.json'), `${JSON.stringify(record, null, 2)}\n`);
+  return { rig: join(dir, 'rig.json'), motion: join(dir, 'motion.json') };
+}
+
+/** What posing a split build against the original's build reads: every difference, and how much was compared. */
+interface SplitPoseReading {
+  faults: string[];
+  frames: number;
+  vertices: number;
+  /** Frames on which the original's split slot showed its mesh — the floor under `vertices`. */
+  shown: number;
+}
+
+/**
+ * Pose the original build and the split build on one poser — the setup pose and
+ * every animation at the protocol rate and at 60 fps — and hold the split to the
+ * original at tolerance 0: every slot the split did not touch draws the same
+ * attachment at the same vertices and colour, and each piece's slot shows its
+ * piece exactly when the original showed the mesh, with piece vertex `j` at
+ * original vertex `record.pieces[p].vertices[j]`, to the bit.
+ */
+function splitPoseReading(original: Poser, split: Poser, record: SplitRecord, label: string): SplitPoseReading {
+  // Every number to its shortest round-trip spelling, −0 apart from 0: two readings agree here exactly when they agree to the bit.
+  const bits = (x: unknown): string => JSON.stringify(x, (_k, v: unknown) => (typeof v === 'number' ? (Object.is(v, -0) ? '-0' : String(v)) : v));
+  const reading: SplitPoseReading = { faults: [], frames: 0, vertices: 0, shown: 0 };
+  const fault = (line: string): void => {
+    if (reading.faults.length < 8) reading.faults.push(`${label}: ${line}`);
+  };
+  const names = (p: Poser): string => p.animations.map((a) => a.name).join(', ');
+  if (names(original) !== names(split)) fault(`the split's animations are [${names(split)}], the original's [${names(original)}]`);
+  const pieceSlots = new Set(record.pieces.map((p) => p.slot));
+  const compare = (a: Frame, b: Frame, at: string): void => {
+    reading.frames++;
+    const left = new Map((a.attachments ?? []).map((x) => [x.slot, x]));
+    const right = new Map((b.attachments ?? []).map((x) => [x.slot, x]));
+    for (const [slot, pose] of left) {
+      if (slot === record.slot) continue;
+      const other = right.get(slot);
+      if (other === undefined || other.attachment !== pose.attachment || bits(other.vertices) !== bits(pose.vertices) || bits(other.color) !== bits(pose.color)) {
+        fault(`${at}: slot "${slot}" poses differently in the split`);
+      }
+    }
+    for (const slot of right.keys()) if (!left.has(slot) && !pieceSlots.has(slot)) fault(`${at}: the split draws slot "${slot}", which the original does not`);
+    const mesh = left.get(record.slot);
+    if (mesh !== undefined) reading.shown++;
+    for (const piece of record.pieces) {
+      const pose = right.get(piece.slot);
+      if ((mesh === undefined) !== (pose === undefined)) {
+        fault(`${at}: the original ${mesh === undefined ? 'shows nothing' : 'shows the mesh'} in "${record.slot}" and piece slot "${piece.slot}" ${pose === undefined ? 'shows nothing' : 'shows its piece'}`);
+        continue;
+      }
+      if (mesh === undefined || pose === undefined) continue;
+      if (pose.attachment !== mesh.attachment || bits(pose.color) !== bits(mesh.color)) fault(`${at}: piece slot "${piece.slot}" shows "${pose.attachment}" coloured ${bits(pose.color)}, the original "${mesh.attachment}" ${bits(mesh.color)}`);
+      if (pose.vertices.length !== 2 * piece.vertices.length) fault(`${at}: piece slot "${piece.slot}" poses ${pose.vertices.length / 2} vertices, the record lists ${piece.vertices.length}`);
+      piece.vertices.forEach((v, j) => {
+        reading.vertices++;
+        if (!Object.is(pose.vertices[2 * j], mesh.vertices[2 * v]) || !Object.is(pose.vertices[2 * j + 1], mesh.vertices[2 * v + 1])) {
+          fault(`${at}: piece "${piece.slot}" vertex ${j} is at (${pose.vertices[2 * j]}, ${pose.vertices[2 * j + 1]}), original vertex ${v} at (${mesh.vertices[2 * v]}, ${mesh.vertices[2 * v + 1]})`);
+        }
+      });
+    }
+  };
+  compare(sampleSetupPose(original, { geometry: true })[0], sampleSetupPose(split, { geometry: true })[0], 'the setup pose');
+  for (const animation of original.animations) {
+    if (!split.animations.some((a) => a.name === animation.name)) continue;
+    for (const fps of [PROTOCOL_FPS, 60]) {
+      const a = sampleAnimation(original, animation.name, fps, { geometry: true });
+      const b = sampleAnimation(split, animation.name, fps, { geometry: true });
+      if (a.length !== b.length) fault(`"${animation.name}" at ${fps} fps: ${b.length} frame(s), the original ${a.length}`);
+      a.forEach((frame, i) => {
+        if (b[i] !== undefined) compare(frame, b[i], `"${animation.name}" frame ${i} at ${fps} fps`);
+      });
+    }
+  }
+  return reading;
+}
+
+/** Both posers of the build in `out` — the core over the model document, spine-core over the Spine pair. */
+function splitPosers(out: string, label: string): { core: Poser; spine: Poser } {
+  const modelPath = join(out, MODEL_DOCUMENT_FILE);
+  const skeletonPath = join(out, 'skeleton.json');
+  const atlasText = readFileSync(join(out, 'skeleton.atlas'), 'utf8');
+  return {
+    core: corePoser(readFileSync(modelPath, 'utf8'), atlasText, modelPath, { path: skeletonPath, bytes: readFileSync(skeletonPath) }),
+    spine: spinePoser(loadOracleData(readFileSync(skeletonPath, 'utf8'), atlasText, label)),
+  };
+}
+
+/**
+ * Bar 1's reading of one proposal: it builds green, and it poses as the original
+ * on both posers. Empty when both hold; otherwise what fell, the build's own
+ * refusal first. `figures` carries the counts a clean reading is stated over.
+ */
+function splitBarFaults(originalOut: string, proposal: { rig: string; motion: string }, out: string, record: SplitRecord, label: string): { faults: string[]; figures: string } {
+  const build = runCli(['build', '--rig', proposal.rig, '--motion', proposal.motion, '--out', out]);
+  if (build.status !== 0) {
+    const said = (build.stdout + build.stderr).split('\n').filter((l) => /FAIL|error/.test(l)).slice(0, 2).join(' | ');
+    return { faults: [`${label}: the proposal does not build (exit ${String(build.status)}): ${said.slice(0, 400)}`], figures: '' };
+  }
+  const original = splitPosers(originalOut, `${label} original`);
+  const split = splitPosers(out, `${label} split`);
+  const core = splitPoseReading(original.core, split.core, record, `${label}, core`);
+  const spine = splitPoseReading(original.spine, split.spine, record, `${label}, spine-core`);
+  const faults = [...core.faults, ...spine.faults];
+  for (const [name, r] of [['core', core], ['spine-core', spine]] as const) {
+    if (r.shown === 0 || r.vertices === 0) faults.push(`${label}, ${name}: the original showed the mesh on ${r.shown} frame(s) and ${r.vertices} vertices were compared — nothing was measured`);
+  }
+  return { faults, figures: `${core.frames} frame(s) and ${core.vertices} piece vertices per poser` };
+}
+
+/** The partition `record` states, read against the original mesh: every fault, or none. */
+function splitPartitionFaults(record: SplitRecord, original: { uvs: number[]; triangles: number[] }, proposal: RigSpec, label: string): string[] {
+  const faults: string[] = [];
+  const seen = new Map<number, string>();
+  for (const v of record.dropped) seen.set(v, 'dropped');
+  const tris = new Set<number>();
+  const skin = proposal.skins?.[record.skin];
+  for (const piece of record.pieces) {
+    for (const v of piece.vertices) {
+      if (seen.has(v)) faults.push(`${label}: original vertex ${v} is in "${piece.slot}" and in ${seen.get(v)}`);
+      seen.set(v, `"${piece.slot}"`);
+    }
+    for (const t of piece.triangles) {
+      if (tris.has(t)) faults.push(`${label}: original triangle ${t} is in two pieces`);
+      tris.add(t);
+    }
+    const fields: unknown = skin === undefined ? undefined : (skin as Record<string, Record<string, RigAttachment>>)[piece.slot]?.[piece.attachment];
+    const att = typeof fields === 'object' && fields !== null ? (fields as { uvs?: number[]; triangles?: number[] }) : null;
+    if (att?.uvs === undefined || att.triangles === undefined) {
+      faults.push(`${label}: the proposal files no mesh "${piece.attachment}" in slot "${piece.slot}"`);
+      continue;
+    }
+    piece.vertices.forEach((v, j) => {
+      if (att.uvs?.[2 * j] !== original.uvs[2 * v] || att.uvs?.[2 * j + 1] !== original.uvs[2 * v + 1]) faults.push(`${label}: "${piece.slot}" vertex ${j}'s uv is not original vertex ${v}'s`);
+    });
+    piece.triangles.forEach((t, k) => {
+      const mapped = [0, 1, 2].map((c) => piece.vertices[att.triangles?.[3 * k + c] ?? -1]);
+      const want = [0, 1, 2].map((c) => original.triangles[3 * t + c]);
+      if (mapped.join() !== want.join()) faults.push(`${label}: "${piece.slot}" triangle ${k} maps back to [${mapped.join(', ')}], original triangle ${t} is [${want.join(', ')}]`);
+    });
+  }
+  const vertexCount = original.uvs.length / 2;
+  for (let v = 0; v < vertexCount; v++) if (!seen.has(v)) faults.push(`${label}: original vertex ${v} is in no piece and not dropped`);
+  for (let t = 0; t < original.triangles.length / 3; t++) if (!tris.has(t)) faults.push(`${label}: original triangle ${t} is in no piece`);
+  if (seen.size !== vertexCount) faults.push(`${label}: the record names ${seen.size} vertices, the mesh has ${vertexCount}`);
+  return faults;
+}
+
+function runMeshSplitSuite(): number {
+  console.log('\n── mesh-split: one authored mesh\'s pieces, proposed as one mesh each (issue #1414) ──');
+  let bad = 0;
+  const say = (name: string, ok: boolean, detail: string, why: string): void => {
+    bad += reportCase(name, ok, detail, why);
+  };
+  const work = mkdtempSync(join(harnessTemp(), 'rigc-split-'));
+  const ENCODINGS = [
+    { label: 'weighted', weighted: true },
+    { label: 'unweighted', weighted: false },
+  ] as const;
+  /** Per encoding: the original's build, the two-island specs, and the CLI's proposal of them. */
+  type Subject = { label: string; weighted: boolean; originalOut: string; islands: { rig: string; motion: string }; proposalDir: string; split: ReturnType<typeof runCli>; pre: string[] };
+  const subjects: Subject[] = ENCODINGS.map(({ label, weighted }) => {
+    const pre: string[] = [];
+    const bridged = writeSplitProbe(join(work, label, 'bridged'), { bridged: true, weighted });
+    const originalOut = join(work, label, 'bridged-out');
+    const built = runCli(['build', '--rig', bridged.rig, '--motion', bridged.motion, '--out', originalOut]);
+    if (built.status !== 0) pre.push(`${label}: the bridged original did not build (exit ${String(built.status)}): ${(built.stdout + built.stderr).trim().slice(-300)}`);
+    const islands = writeSplitProbe(join(work, label, 'islands'), { bridged: false, weighted });
+    const proposalDir = join(work, label, 'proposal');
+    const split = runCli(['split', '--rig', islands.rig, '--motion', islands.motion, '--slot', 'legs', '--out', proposalDir]);
+    if (split.status !== 0) pre.push(`${label}: rigc split exited ${String(split.status)}: ${(split.stdout + split.stderr).trim().slice(-300)}`);
+    return { label, weighted, originalOut, islands, proposalDir, split, pre };
+  });
+  const recordOf = (s: Subject): SplitRecord | null => (s.pre.length > 0 ? null : (JSON.parse(readFileSync(join(s.proposalDir, 'split.json'), 'utf8')) as SplitRecord));
+
+  // --- SPL01: Bar 1 — the pieces partition the original's vertices and triangles one to one ---
+  {
+    const probes: string[] = [];
+    const said: string[] = [];
+    for (const s of subjects) {
+      probes.push(...s.pre);
+      const record = recordOf(s);
+      if (record === null) continue;
+      const specs = splitProbeSpecs({ bridged: false, weighted: s.weighted });
+      const mesh = (specs.rig as { skins: { default: { legs: { legs: { uvs: number[]; triangles: number[] } } } } }).skins.default.legs.legs;
+      const proposal = parseRigSpec(JSON.parse(readFileSync(join(s.proposalDir, 'rig.json'), 'utf8')), `${s.label} proposal`);
+      if (record.spec !== SPLIT_SPEC) probes.push(`${s.label}: split.json declares ${JSON.stringify(record.spec)}`);
+      probes.push(...splitPartitionFaults(record, mesh, proposal, s.label));
+      const want = [pieceSlotName('legs', 1), pieceSlotName('legs', 2)];
+      if (JSON.stringify(record.pieces.map((p) => p.slot)) !== JSON.stringify(want)) probes.push(`${s.label}: pieces in slots [${record.pieces.map((p) => p.slot).join(', ')}], required [${want.join(', ')}]`);
+      // Piece 1 is the right leg (its triangles are listed first) and keeps its order; piece 2 is renumbered outline first.
+      if (JSON.stringify(record.pieces.map((p) => p.renumbered)) !== '[false,true]') probes.push(`${s.label}: renumbered ${JSON.stringify(record.pieces.map((p) => p.renumbered))}, required [false, true] — the right leg's ascending order is its outline, the left leg's is not`);
+      const slots = proposal.slots.map((x) => x.name).join(', ');
+      if (slots !== 'body, legs, legs_2') probes.push(`${s.label}: the proposal's slots are [${slots}], required [body, legs, legs_2] — the new slot directly after the original`);
+      said.push(`${s.label}: ${record.pieces.map((p) => `"${p.slot}" ${p.vertices.length} vertices / ${p.triangles.length} triangles (hull ${p.hull}${p.renumbered ? ', renumbered' : ''})`).join(' + ')} of ${record.vertices} / ${record.triangles}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'SPL01_THE_PIECES_PARTITION_THE_MESH_ONE_TO_ONE',
+      ok,
+      probeDetail(ok, probes.slice(0, 12), `${said.join('; ')} — every original vertex and triangle in exactly one piece, each piece's uvs the original's at the vertices its record names, each triangle mapping back to the original's vertex for vertex in its winding; the new slot directly after "legs"`),
+      'issue #1414 bar 1: a split is a renumbering, so the record of where each vertex and triangle went has to account for every one of them once',
+    );
+  }
+
+  // --- SPL02: Bar 1 — every proposal builds green and poses as the original, on both posers, to the bit ---
+  const clean = new Map<string, string[]>();
+  {
+    const probes: string[] = [];
+    const said: string[] = [];
+    for (const s of subjects) {
+      const record = recordOf(s);
+      if (record === null) {
+        probes.push(...s.pre);
+        continue;
+      }
+      const reading = splitBarFaults(s.originalOut, { rig: join(s.proposalDir, 'rig.json'), motion: join(s.proposalDir, 'motion.json') }, join(work, s.label, 'proposal-out'), record, s.label);
+      clean.set(s.label, reading.faults);
+      probes.push(...reading.faults);
+      said.push(`${s.label}: ${reading.figures}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'SPL02_THE_SPLIT_BUILDS_GREEN_AND_POSES_AS_THE_ORIGINAL_ON_BOTH_POSERS',
+      ok,
+      probeDetail(ok, probes.slice(0, 12), `both proposals build green, and posed against the bridged original — the setup pose and "walk" and "blink" at ${PROTOCOL_FPS} and 60 fps, deform keys, colour and the hidden quarter second included — every piece vertex sits where its original vertex sits and every other slot is unchanged, at tolerance 0 on the core and on spine-core (${said.join('; ')})`),
+      'issue #1414 bar 1: the split may change which slot draws a vertex and nothing about where it is — deleting the bridge moved no vertex, so the bridged mesh is the original every frame is held to',
+    );
+  }
+
+  // --- SPL03: the compile refusal of a mesh in pieces names the command; one in one piece does not ---
+  {
+    const probes: string[] = [];
+    const s = subjects[0];
+    const islands = runCli(['build', '--rig', s.islands.rig, '--motion', s.islands.motion, '--out', join(work, 'islands-out')]);
+    const text = islands.stdout + islands.stderr;
+    if (islands.status !== 1) probes.push(`the two-island probe built with exit ${String(islands.status)}, required 1`);
+    if (!text.includes("the triangles' outline is not one closed loop")) probes.push('the two-island refusal does not say the outline is not one closed loop');
+    if (!text.includes('the triangles are 2 pieces that share no vertex') || !text.includes('`rigc split --rig <rig> --motion <motion> --slot legs --attachment legs --out <dir>`')) {
+      probes.push(`the two-island refusal does not name the pieces and the command: ${JSON.stringify(text.split('\n').find((l) => l.includes('compile error')) ?? '')}`);
+    }
+    // A pinch: one piece, refused for its outline, and the pointer is not printed — splitting would not fix it.
+    const pinched = writeSplitProbe(join(work, 'pinched'), { bridged: true, weighted: false }, (specs) => {
+      const mesh = (specs.rig as { skins: { default: { legs: { legs: { uvs: number[]; vertices: number[]; triangles: number[] } } } } }).skins.default.legs.legs;
+      // Two new vertices beyond the right edge and one triangle meeting the mesh at vertex 6 alone.
+      mesh.uvs.push(94 / SPLIT_PLATE.width, 26 / SPLIT_PLATE.height, 94 / SPLIT_PLATE.width, 38 / SPLIT_PLATE.height);
+      mesh.vertices.push(46, -2, 46, -14);
+      mesh.triangles.push(6, 18, 19);
+    });
+    const pinch = runCli(['build', '--rig', pinched.rig, '--motion', pinched.motion, '--out', join(work, 'pinched-out')]);
+    const pinchText = pinch.stdout + pinch.stderr;
+    if (pinch.status !== 1 || !pinchText.includes('not one closed loop')) probes.push(`the pinched probe exited ${String(pinch.status)} without the outline refusal: ${pinchText.trim().slice(-300)}`);
+    if (pinchText.includes('rigc split')) probes.push('the pinched probe (one piece) is pointed at rigc split, which would not fix it');
+    const ok = probes.length === 0;
+    say(
+      'SPL03_A_MESH_IN_PIECES_IS_REFUSED_NAMING_THE_SPLIT_AND_A_PINCH_IS_NOT',
+      ok,
+      probeDetail(ok, probes, 'the two-island probe is refused at compile, exit 1, with the outline sentence, "the triangles are 2 pieces that share no vertex" and the split command for its slot and placeholder; a pinched one-piece mesh is refused with the outline sentence and no pointer'),
+      'issue #1414: the polisher met the refusal and scripted the split by hand — the refusal is where the next author learns the command exists, and only where it would fix the mesh',
+    );
+  }
+
+  // --- SPL04: Bar 2 — a mesh of one piece gets a named line and no output ---
+  {
+    const probes: string[] = [];
+    const bridged = join(work, subjects[0].label, 'bridged');
+    const out = join(work, 'one-piece');
+    const run = runCli(['split', '--rig', join(bridged, 'rig.json'), '--motion', join(bridged, 'motion.json'), '--slot', 'legs', '--out', out]);
+    const line = run.stdout.split('\n').find((l) => l.startsWith('rigc split: ')) ?? '';
+    if (run.status !== 0) probes.push(`exited ${String(run.status)}, required 0: ${(run.stdout + run.stderr).trim().slice(-300)}`);
+    if (!line.includes('skin "default" slot "legs" attachment "legs" is one piece') || !line.includes('nothing to split, and nothing written')) probes.push(`the line is ${JSON.stringify(line)}`);
+    if (existsSync(out)) probes.push(`${out} exists after a run with nothing to split`);
+    if (run.stdout.includes('rigc: wrote')) probes.push('the run printed a wrote line');
+    const ok = probes.length === 0;
+    say(
+      'SPL04_ONE_PIECE_IS_NAMED_AND_NOTHING_IS_WRITTEN',
+      ok,
+      probeDetail(ok, probes, `the bridged probe exits 0 with ${JSON.stringify(line)}, and --out is never created`),
+      'issue #1414 bar 2: one piece is a correct mesh, not a failure — and a proposal identical to its input would be a file to diff for nothing',
+    );
+  }
+
+  // --- SPL05: Bar 2 — an unknown slot, attachment or skin is refused by name, and nothing is written ---
+  {
+    const probes: string[] = [];
+    const s = subjects[0];
+    const missing = join(work, 'no-such.motion.json');
+    const cases: Array<[string[], string, string?]> = [
+      [['--slot', 'leggs'], 'the rig spec declares no slot "leggs"; it declares "body", "legs"'],
+      [['--slot', 'legs', '--attachment', 'leg'], 'slot "legs" in skin "default" has no attachment "leg"; it has "legs"'],
+      [['--slot', 'legs', '--skin', 'alt'], 'the rig spec declares no skin "alt"; it declares "default"'],
+      [['--slot', 'body'], 'slot "body" in skin "default" holds 0 mesh(es) (none) among "body"; name the one to split with --attachment'],
+      [['--slot', 'legs'], `--motion ${missing}: no file there`, missing],
+    ];
+    const read: string[] = [];
+    cases.forEach(([args, want, motion], i) => {
+      const out = join(work, `unknown-${i}`);
+      const run = runCli(['split', '--rig', s.islands.rig, '--motion', motion ?? s.islands.motion, ...args, '--out', out]);
+      if (run.status !== 2 || !run.stderr.includes(`rigc split: ${want}`)) probes.push(`${args.join(' ')}: exit ${String(run.status)}, ${JSON.stringify(run.stderr.trim().slice(0, 300))}, required exit 2 and ${JSON.stringify(want)}`);
+      if (existsSync(out)) probes.push(`${args.join(' ')}: ${out} was created`);
+      read.push(motion === undefined ? args.join(' ') : '--motion <a path with no file>');
+    });
+    const ok = probes.length === 0;
+    say(
+      'SPL05_AN_UNKNOWN_SLOT_ATTACHMENT_SKIN_OR_FILE_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${read.map((r) => JSON.stringify(r)).join(', ')}: each exit 2, the name it asked for and the names the specs hold, nothing written`),
+      'issue #1414 bar 2: the slot and the placeholder are the whole of the invocation, and a miss that guessed the nearest name would split a mesh nobody asked about',
+    );
+  }
+
+  // --- SPL06 / SPL07: Bar 3 — each plausible wrong renumbering is red by Bar 1's own reading ---
+  for (const [code, plant, what] of [
+    ['SPL06_A_RENUMBERING_OFF_BY_ONE_IS_RED', { offByOne: true }, 'the vertex data placed one position along from where the record says'],
+    ['SPL07_A_DEFORM_KEY_LEFT_UNRENUMBERED_IS_RED', { deformUnrenumbered: true }, 'every deform key copied to every piece as it stood'],
+  ] as const satisfies ReadonlyArray<readonly [string, SplitPlant, string]>) {
+    const probes: string[] = [];
+    const red: string[] = [];
+    for (const s of subjects) {
+      const before = clean.get(s.label);
+      if (before === undefined || before.length > 0) {
+        probes.push(`${s.label}: the unplanted reading is not green (${before?.[0] ?? 'not run'}), so a red plant would prove nothing`);
+        continue;
+      }
+      const parsed = parsedSplitProbe({ bridged: false, weighted: s.weighted });
+      const dir = join(work, s.label, `plant-${code.slice(0, 5)}`);
+      const result = splitMesh({ ...parsed, slot: 'legs', images: `${relative(dir, join(work, s.label, 'islands'))}/` }, plant);
+      if (result.kind !== 'split') {
+        probes.push(`${s.label}: the planted split answered "${result.kind}"`);
+        continue;
+      }
+      const proposal = writeSplitProposal(dir, result.rig, result.motion, result.record);
+      if (plant.offByOne === true) {
+        // SPL01's reader, too: the record and the data it describes no longer agree, so the partition is red before anything is posed.
+        const mesh = (splitProbeSpecs({ bridged: false, weighted: s.weighted }).rig as { skins: { default: { legs: { legs: { uvs: number[]; triangles: number[] } } } } }).skins.default.legs.legs;
+        const partition = splitPartitionFaults(result.record, mesh, result.rig, `${s.label} planted`);
+        if (partition.length === 0) probes.push(`${s.label}: SPL01's partition reader finds nothing wrong with the planted proposal`);
+        else red.push(`${s.label}, SPL01's reader: ${partition[0]}`);
+      }
+      const reading = splitBarFaults(s.originalOut, proposal, join(dir, 'out'), result.record, `${s.label} planted`);
+      if (reading.faults.length === 0) probes.push(`${s.label}: ${JSON.stringify(plant)} planted and the proposal still builds green and poses as the original`);
+      else {
+        // Both plants build, so the pose reading is what sees them — and it has to, on each poser.
+        const blind = ['core', 'spine-core'].filter((poser) => !reading.faults.some((f) => f.startsWith(`${s.label} planted, ${poser}: `)));
+        if (blind.length > 0) probes.push(`${s.label}: the plant is red (${reading.faults[0]}) but not by the pose reading on ${blind.join(' and ')}`);
+        red.push(`${s.label}: ${reading.faults[0]}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      code,
+      ok,
+      probeDetail(ok, probes, `${what}, planted into splitMesh, builds and goes red by the pose reading on both posers and both encodings — ${red.join('; ')}`),
+      'issue #1414 bar 3: the two ways a hand split goes wrong are a renumbering one off and a deform key that was not renumbered, and the bar 1 reading has to see both',
+    );
+  }
+
+  // --- SPL08: what the split cannot carry is refused by name, before anything is written ---
+  {
+    const probes: string[] = [];
+    type Edit = (spec: { rig: RigSpec; motion: MotionSpec }) => void;
+    const legsOf = (rig: RigSpec): Record<string, RigAttachment> => (rig.skins?.default as Record<string, Record<string, RigAttachment>>).legs;
+    const cases: Array<{ label: string; edit: Edit; attachment?: string; slot?: string; status: 1 | 2; want: string }> = [
+      { label: 'a derived name already taken', edit: ({ rig }) => rig.slots.push({ name: 'legs_2', bone: 'hip' }), status: 1, want: 'piece 2\'s slot would be "legs_2", which the rig spec already declares' },
+      { label: 'the slot filled in another skin', edit: ({ rig }) => Object.assign(rig.skins ?? {}, { alt: { legs: { legs: { image: 'legs.png' } } } }), status: 1, want: 'skin "alt" also fills slot "legs"' },
+      { label: 'a draw-order key naming the slot', edit: ({ motion }) => (motion.animations.walk.drawOrder = [{ t: 0.5, offsets: [{ slot: 'legs', offset: -1 }] }]), status: 1, want: 'animation "walk" moves slot "legs" in its draw order at t=0.5' },
+      { label: 'a transform deform key', edit: ({ motion }) => motion.animations.walk.deform?.[0].keys.push({ t: 2, transform: { kind: 'affine', scale: [1, 1] } }), status: 1, want: 'states a "affine" transform, which is evaluated over the whole attachment\'s geometry' },
+      {
+        label: 'a slot-property track on a group holding the slot',
+        edit: ({ motion }) => {
+          motion.groups = { lower: ['legs'] };
+          motion.animations.walk.tracks.push({ group: 'lower', property: 'alpha', keys: [{ t: 0, v: [1] }, { t: 2, v: [1] }] });
+        },
+        status: 1,
+        want: 'animation "walk" keys "alpha" on group "lower", which holds slot "legs"',
+      },
+      { label: 'a sequence timeline on the attachment', edit: ({ motion }) => (motion.animations.walk.sequence = [{ slot: 'legs', attachment: 'legs', keys: [{ t: 0 }] }]), status: 1, want: 'animation "walk" keys a sequence on skin "default" slot "legs" attachment "legs"' },
+      {
+        label: 'a linked mesh borrowing the mesh',
+        edit: ({ rig }) => {
+          rig.slots.push({ name: 'shadow', bone: 'hip' });
+          Object.assign(rig.skins?.default ?? {}, { shadow: { shade: { type: 'linkedmesh', source: 'legs', slot: 'legs', image: 'legs.png' } } });
+        },
+        status: 1,
+        want: 'skin "default" slot "shadow" attachment "shade" is a linked mesh borrowing this mesh\'s geometry',
+      },
+      {
+        label: 'a clip ending at the slot',
+        edit: ({ rig }) => {
+          rig.slots.unshift({ name: 'mask', bone: 'hip' });
+          Object.assign(rig.skins?.default ?? {}, { mask: { clip: { type: 'clipping', vertexCount: 3, vertices: [0, 0, 10, 0, 0, 10], end: 'legs' } } });
+        },
+        status: 1,
+        want: 'skin "default" slot "mask" attachment "clip" is a clip whose range ends at slot "legs"',
+      },
+      { label: 'a generated mesh', edit: ({ rig }) => (legsOf(rig).legs = { type: 'mesh', image: 'legs.png', generator: { kind: 'contour' } } as unknown as RigAttachment), status: 1, want: 'is built by a "contour" generator' },
+      { label: 'a region', edit: () => undefined, slot: 'body', attachment: 'body', status: 1, want: 'skin "default" slot "body" attachment "body" is a "region" attachment; only a mesh has triangles to split' },
+      { label: 'fromVertex over a two-bone vertex', edit: ({ motion }) => motion.animations.walk.deform?.[0].keys.push({ t: 2, fromVertex: 0, vertices: [1, 1] }), status: 1, want: '"fromVertex" counts VERTICES, and this attachment is weighted — vertex 0 has 2 of them' },
+      { label: 'a run past the array', edit: ({ motion }) => motion.animations.walk.deform?.[0].keys.push({ t: 2, offset: 46, vertices: [1, 1, 1, 1] }), status: 1, want: 'the run starts at deform index 46 and is 4 long, which ends at 50; skin "default" slot "legs" attachment "legs"\'s deform array is 48 long' },
+      {
+        label: 'stated edges joining two pieces',
+        edit: ({ rig }) => Object.assign(legsOf(rig).legs, { edges: [0, 6] }),
+        status: 1,
+        want: 'stated edge 0 joins vertex 0 (piece 2) to vertex 3 (piece 1)',
+      },
+      {
+        label: 'a piece with a pinch',
+        edit: ({ rig }) => {
+          const mesh = legsOf(rig).legs as unknown as { uvs: number[]; weights: Array<Array<{ bone: string; x: number; y: number; weight: number }>>; triangles: number[] };
+          mesh.uvs.push(94 / SPLIT_PLATE.width, 26 / SPLIT_PLATE.height, 94 / SPLIT_PLATE.width, 38 / SPLIT_PLATE.height);
+          mesh.weights.push([{ bone: 'leg_r', x: 22, y: -2, weight: 1 }], [{ bone: 'leg_r', x: 22, y: -14, weight: 1 }]);
+          mesh.triangles.push(6, 18, 19);
+        },
+        status: 1,
+        want: 'piece 1 (vertices [3, 4, 5, 6, 7, 8, 9, 16, 17, 18, 19]) is not one mesh either: the triangles\' outline is not one closed loop',
+      },
+    ];
+    for (const c of cases) {
+      const parsed = parsedSplitProbe({ bridged: false, weighted: true });
+      c.edit(parsed);
+      let thrown: unknown = null;
+      try {
+        splitMesh({ ...parsed, slot: c.slot ?? 'legs', ...(c.attachment === undefined ? {} : { attachment: c.attachment }) });
+      } catch (err) {
+        thrown = err;
+      }
+      if (!(thrown instanceof SplitError)) probes.push(`${c.label}: ${thrown === null ? 'split, unrefused' : `threw ${String(thrown)}`}`);
+      else if (thrown.status !== c.status || !thrown.message.includes(c.want)) probes.push(`${c.label}: status ${thrown.status}, ${JSON.stringify(thrown.message.slice(0, 400))}; required status ${c.status} and ${JSON.stringify(c.want)}`);
+    }
+    // And through the CLI: an --out that holds anything — the specs' own directory first among them.
+    const s = subjects[0];
+    const own = runCli(['split', '--rig', s.islands.rig, '--motion', s.islands.motion, '--slot', 'legs', '--out', dirname(s.islands.rig)]);
+    if (own.status !== 2 || !own.stderr.includes('the proposal is written into an absent or empty directory only')) probes.push(`--out at the specs' own directory: exit ${String(own.status)}, ${JSON.stringify(own.stderr.trim().slice(0, 300))}`);
+    const ok = probes.length === 0;
+    say(
+      'SPL08_WHAT_THE_SPLIT_CANNOT_CARRY_IS_REFUSED_BY_NAME',
+      ok,
+      probeDetail(ok, probes.slice(0, 12), `${cases.length} refusals, each a SplitError with its status and its sentence: ${cases.map((c) => c.label).join(', ')}; and an --out that holds the specs themselves is refused, exit 2`),
+      'issue #1414: each of these needs a decision the spec does not state — which skin, where the new slots go in time, how a model evaluated over the whole attachment divides — so it is named rather than guessed',
+    );
+  }
+
+  // --- SPL09: the specs read are byte-identical after every run, and a second split writes the same bytes ---
+  {
+    const probes: string[] = [];
+    const s = subjects[0];
+    const sha = (path: string): string => createHash('sha256').update(readFileSync(path)).digest('hex');
+    const fresh = splitProbeSpecs({ bridged: false, weighted: true });
+    if (readFileSync(s.islands.rig, 'utf8') !== `${JSON.stringify(fresh.rig, null, 2)}\n`) probes.push('the two-island rig spec changed on disk');
+    if (readFileSync(s.islands.motion, 'utf8') !== `${JSON.stringify(fresh.motion, null, 2)}\n`) probes.push('the two-island motion spec changed on disk');
+    // Beside the first proposal, at its depth: `images` is restated from --out, so a proposal written elsewhere differs there by design.
+    const again = join(work, s.label, 'again');
+    const run = runCli(['split', '--rig', s.islands.rig, '--motion', s.islands.motion, '--slot', 'legs', '--out', again]);
+    if (run.status !== 0) probes.push(`the second split exited ${String(run.status)}`);
+    else for (const file of ['rig.json', 'motion.json', 'split.json']) if (sha(join(again, file)) !== sha(join(s.proposalDir, file))) probes.push(`${file} differs between two splits of the same specs`);
+    // The in-process answer is the file: what splitMesh hands back is what the CLI wrote, but for `images`.
+    const parsed = parsedSplitProbe({ bridged: false, weighted: true });
+    const result = splitMesh({ ...parsed, slot: 'legs', images: './' });
+    if (result.kind === 'split' && JSON.stringify(result.record) !== JSON.stringify(JSON.parse(readFileSync(join(again, 'split.json'), 'utf8')))) probes.push('splitMesh\'s record is not the split.json the CLI wrote');
+    if (meshPieces(18, [0, 1, 2, 3, 4, 5]).pieces.length !== 2 || meshPieces(4, [0, 1, 2, 2, 3, 0]).pieces.length !== 1) probes.push('meshPieces counts two disjoint triangles or two sharing an edge wrongly');
+    const ok = probes.length === 0;
+    say(
+      'SPL09_THE_SPECS_ARE_UNTOUCHED_AND_A_SECOND_SPLIT_IS_THE_SAME_BYTES',
+      ok,
+      probeDetail(ok, probes, 'after every run above the two-island specs are the bytes the probe wrote; a second split of them writes rig.json, motion.json and split.json byte-identical to the first; and the record splitMesh returns is the one the CLI wrote'),
+      'issue #1414: nothing is applied to the author\'s files — and a proposal that changed between two runs of the same input could not be reviewed against itself',
+    );
+  }
+
+  // --- SPL10: a vertex no triangle names is dropped, by name, and the rest still poses as the original ---
+  {
+    const probes: string[] = [];
+    const s = subjects[0];
+    const dir = join(work, 'orphan');
+    const orphan = writeSplitProbe(dir, { bridged: false, weighted: true }, (specs) => {
+      const mesh = (specs.rig as { skins: { default: { legs: { legs: { uvs: number[]; weights: unknown[] } } } } }).skins.default.legs.legs;
+      mesh.uvs.push(48 / SPLIT_PLATE.width, 32 / SPLIT_PLATE.height);
+      mesh.weights.push([{ bone: 'hip', x: 0, y: -8, weight: 1 }]);
+    });
+    const out = join(dir, 'proposal');
+    const run = runCli(['split', '--rig', orphan.rig, '--motion', orphan.motion, '--slot', 'legs', '--out', out]);
+    let figures = '';
+    if (run.status !== 0) probes.push(`split exited ${String(run.status)}: ${(run.stdout + run.stderr).trim().slice(-300)}`);
+    else {
+      const record = JSON.parse(readFileSync(join(out, 'split.json'), 'utf8')) as SplitRecord;
+      if (JSON.stringify(record.dropped) !== '[18]') probes.push(`the record drops ${JSON.stringify(record.dropped)}, required [18]`);
+      if (!run.stdout.includes('dropped  1 vertex(es) no triangle names, [18]: no piece holds them and neither rig draws them')) probes.push('no dropped line names vertex 18');
+      const specs = splitProbeSpecs({ bridged: false, weighted: true });
+      const mesh = (specs.rig as { skins: { default: { legs: { legs: { uvs: number[]; triangles: number[] } } } } }).skins.default.legs.legs;
+      const proposal = parseRigSpec(JSON.parse(readFileSync(join(out, 'rig.json'), 'utf8')), 'the orphan proposal');
+      probes.push(...splitPartitionFaults(record, { uvs: [...mesh.uvs, 48 / SPLIT_PLATE.width, 32 / SPLIT_PLATE.height], triangles: mesh.triangles }, proposal, 'orphan'));
+      const reading = splitBarFaults(s.originalOut, { rig: join(out, 'rig.json'), motion: join(out, 'motion.json') }, join(dir, 'out'), record, 'orphan');
+      probes.push(...reading.faults);
+      figures = reading.figures;
+    }
+    const ok = probes.length === 0;
+    say(
+      'SPL10_A_VERTEX_NO_TRIANGLE_NAMES_IS_DROPPED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `vertex 18, in no triangle, is in no piece and named on a dropped line and in the record; the 18 others partition as before, and the proposal builds green and poses as the bridged original (${figures})`),
+      'issue #1414: deleting the bridge can leave a vertex only the bridge used; it draws nothing in either rig, and no piece can hold it and still build',
+    );
+  }
+
+  // --- SPL11: pieces whose triangles interleave in the list are named, because the split draws each whole ---
+  {
+    const probes: string[] = [];
+    const ORDER = 'order    piece 2\'s triangle';
+    const lines = (edit: (mesh: { triangles: number[] }) => void): string[] => {
+      const parsed = parsedSplitProbe({ bridged: false, weighted: true });
+      edit((parsed.rig.skins?.default as Record<string, Record<string, RigAttachment>>).legs.legs as unknown as { triangles: number[] });
+      const result = splitMesh({ ...parsed, slot: 'legs' });
+      return result.kind === 'split' ? result.lines : [`answered ${result.kind}`];
+    };
+    const blocks = lines(() => undefined);
+    // Move the left leg's first triangle (index 8, after the right leg's 8) to the front of the list: piece order
+    // flips (the left leg is now triangles 0 and 9-15), and the right leg — piece 2 — has its first, 1, before 15.
+    const interleaved = lines((mesh) => {
+      const t = mesh.triangles.splice(24, 3);
+      mesh.triangles.splice(0, 0, ...t);
+    });
+    if (blocks.some((l) => l.startsWith(ORDER))) probes.push(`the probe lists each piece's triangles together and still prints ${JSON.stringify(blocks.find((l) => l.startsWith(ORDER)))}`);
+    const line = interleaved.find((l) => l.startsWith(ORDER));
+    if (line === undefined || !line.includes('piece 2\'s triangle 1 is listed before triangle 15 of an earlier piece')) probes.push(`the interleaved list prints ${JSON.stringify(line ?? null)}`);
+    const ok = probes.length === 0;
+    say(
+      'SPL11_PIECES_WHOSE_TRIANGLES_INTERLEAVE_ARE_NAMED',
+      ok,
+      probeDetail(ok, probes, `with each leg's triangles together no order line; with one left-leg triangle moved to the front, ${JSON.stringify(line)}`),
+      'issue #1414: Spine draws a mesh\'s triangles in list order and the split draws each piece whole, so where the original interleaved them the stacking can change — said, rather than left for a picture to find',
+    );
+  }
+  return bad;
+}
+
 function runFoldsSuite(): number {
   console.log('\n── folds: which mesh triangles turn over against the setup pose (issue #1383) ──');
   let bad = 0;
@@ -137977,6 +138654,7 @@ function main(): void {
   tally.of('render-naming', runRenderNamingSuite);
   tally.of('leg-stop', runLegStopSuite);
   tally.of('lever', runLeverSuite);
+  tally.of('mesh-split', runMeshSplitSuite);
   tally.of('pose', runPoseSuite);
   tally.of('pose-oracle', runPoseOracleSuite);
   tally.of('core', runCoreSuite);
