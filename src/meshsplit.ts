@@ -84,6 +84,37 @@ export function pieceSlotName(slot: string, k: number): string {
   return k === 1 ? slot : `${slot}_${k}`;
 }
 
+/**
+ * A name as one POSIX shell word (issue #1442): unchanged when every character
+ * is one no shell treats specially, otherwise single-quoted with each `'`
+ * written `'\''`. A command line a refusal prints is copied into a shell, and
+ * a slot named `left legs` printed bare is two arguments there — the second
+ * refusal would then be about a slot nobody named.
+ */
+export function shellWord(name: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(name) ? name : `'${name.replaceAll("'", "'\\''")}'`;
+}
+
+/**
+ * The mesh attachments a build of `rig` (with no manifest beside it) counts
+ * against `invariants.meshSlots`: every `type: "mesh"` in every skin that does
+ * not borrow its geometry through `source` — a linked mesh is not counted — the
+ * authored ones included, because a stated budget counts them. The selftest
+ * holds this to the compile refusal's own count (SPL14).
+ */
+function budgetedMeshCount(rig: RigSpec): number {
+  let count = 0;
+  for (const [name, skin] of Object.entries(rig.skins ?? {})) {
+    for (const map of Object.values(splitRigSkin(skin, `skin "${name}"`).attachments)) {
+      for (const entry of Object.values(map)) {
+        const att: unknown = entry;
+        if (isRecord(att) && att.type === 'mesh' && att.source === undefined) count++;
+      }
+    }
+  }
+  return count;
+}
+
 /** The properties a track keys on a slot, as opposed to a bone or a constraint. */
 const SLOT_PROPERTIES = new Set<string>(['rgba', 'rgb', 'alpha', 'rgba2', 'rgb2', 'attachment']);
 
@@ -432,6 +463,17 @@ export function splitMesh(request: SplitRequest, plant: SplitPlant = {}): SplitR
   const ownerOf: number[] = [];
   for (let v = 0; v < vertexCount; v++) for (let k = 0; k < 2 * influences(v); k++) ownerOf.push(v);
 
+  // --- stated edges between two dropped vertices: no piece holds them, so they are dropped too, by name -----------
+  const droppedEdges: string[] = [];
+  if (Array.isArray(mesh.edges)) {
+    for (let i = 0; i + 1 < mesh.edges.length; i += 2) {
+      const [a, b] = [mesh.edges[i] / 2, mesh.edges[i + 1] / 2];
+      if (pieceOf[a] < 0 && pieceOf[b] < 0) droppedEdges.push(`edge ${i / 2} (vertex ${a} to vertex ${b})`);
+    }
+  }
+  /** Where a stated edge's vertex went, as a refusal names it. */
+  const pieceLabel = (v: number): string => (pieceOf[v] < 0 ? 'in no piece: no triangle names it' : `piece ${pieceOf[v] + 1}`);
+
   // --- the pieces' attachments ---------------------------------------------------------------------------------
   const pieceAttachments: RigMeshAttachment[] = orders.map((order, p) => {
     // The plant: the data one position along from where the record says it is.
@@ -448,7 +490,7 @@ export function splitMesh(request: SplitRequest, plant: SplitPlant = {}): SplitR
         const edges: number[] = [];
         for (let i = 0; i + 1 < value.length; i += 2) {
           const [a, b] = [value[i] / 2, value[i + 1] / 2];
-          if (pieceOf[a] !== pieceOf[b]) throw new SplitError(`${at}: stated edge ${i / 2} joins vertex ${a} (piece ${pieceOf[a] + 1}) to vertex ${b} (piece ${pieceOf[b] + 1}); delete it, or delete "edges" and rigc derives them`, 1);
+          if (pieceOf[a] !== pieceOf[b]) throw new SplitError(`${at}: stated edge ${i / 2} joins vertex ${a} (${pieceLabel(a)}) to vertex ${b} (${pieceLabel(b)}); delete it, or delete "edges" and rigc derives them`, 1);
           if (pieceOf[a] === p) edges.push(2 * (local.get(a) as number), 2 * (local.get(b) as number));
         }
         out.edges = edges;
@@ -620,10 +662,22 @@ export function splitMesh(request: SplitRequest, plant: SplitPlant = {}): SplitR
     }
   }
   if (orphans.length > 0) lines.push(`dropped  ${orphans.length} vertex(es) no triangle names, ${shortList(orphans)}: no piece holds them and neither rig draws them`);
+  if (droppedEdges.length > 0) {
+    const shown = droppedEdges.length <= 12 ? droppedEdges.join(', ') : `${droppedEdges.slice(0, 12).join(', ')}, … ${droppedEdges.length - 12} more`;
+    lines.push(`dropped  ${droppedEdges.length} stated edge(s) between vertices no triangle names, ${shown}: no piece holds them, so no piece's "edges" states them`);
+  }
   lines.push(...deformLines, ...trackLines);
   if (folds?.some((entry) => entry.slot === slotName)) lines.push(`invariant invariants.deformMayFold names slot "${slotName}"; its entry is copied to ${quoteList(names.slice(1))}`);
-  if (rig.invariants?.meshSlots !== undefined) {
-    lines.push(`invariant invariants.meshSlots states ${rig.invariants.meshSlots}; the split adds ${names.length - 1} mesh slot(s) and leaves the budget as the spec states it`);
+  const budget = rig.invariants?.meshSlots;
+  if (budget !== undefined) {
+    // Counted over the proposal itself, the new slots' meshes included: the arithmetic the build's own refusal does.
+    const total = budgetedMeshCount(rig);
+    const head = `invariant invariants.meshSlots states ${budget}, and the split adds ${names.length - 1} mesh slot(s): the proposal's skins hold ${total} mesh attachment(s)`;
+    lines.push(
+      total > budget
+        ? `${head}, ${total - budget} over the budget, so its build is refused at compile ("${total} mesh slot(s) emitted") unless the rig spec raises invariants.meshSlots by ${total - budget}, to ${total}; the split leaves the budget as the spec states it`
+        : `${head}, within the budget; the split leaves it as the spec states it`,
+    );
   }
   return { kind: 'split', rig, motion, record, lines };
 }

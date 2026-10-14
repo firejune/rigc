@@ -3568,6 +3568,12 @@ rigc compile error: skin "default" slot "legs" attachment "legs": the triangles'
   --out <dir>` writes one mesh per piece, its deform keys renumbered (AUTHORING §3.4.11) (see rigc guide §5.1)
 ```
 
+Each name in that command is one shell word: a slot, placeholder or skin whose name
+holds a space or a character a shell reads (`'`, `$`, `;`, …) is printed
+single-quoted, a `'` inside it as `'\''` — `--slot 'left legs'` — and a plain name
+is printed as it is. So the command copies into a shell as printed, with only
+`<rig>`, `<motion>` and `<dir>` to fill in.
+
 The fix is one mesh per piece, and every number in it is a renumbering: each piece's
 `uvs`, its `weights` (or `vertices`), its `triangles`, and every `deform` key that
 moved it (§4.11). `rigc split` writes that proposal from the two spec files — not from
@@ -3597,10 +3603,11 @@ What it decides, and the one reason for each:
 | which piece is 1 | the one whose first triangle is listed first. Spine draws a mesh's triangles in list order, so that is the piece the original drew first; when the pieces' triangles interleave in the list, an `order` line says the split draws each piece whole and where they overlap the stacking can differ |
 | where the pieces go | piece 1 stays in the slot under its placeholder, so everything naming the slot keeps its meaning; piece k gets a new slot **`<slot>_<k>`** on the same bone with the same colour, dark colour and blend, directly after the original in `slots` — the draw order — filled under the **same placeholder**, so `name`, `path` and `image` resolve as before. A derived name the rig already declares is refused by name |
 | a piece's vertex order | the original's relative order when it already lists the piece's outline first and in order; otherwise the outline walk, then the interior in original order — the order the `hull` refusals ask for, so the piece builds without a second edit |
-| `hull`, `edges` | `hull` is left out (rigc derives it); stated `edges` are split with their vertices, and an edge joining two pieces is refused |
+| `hull`, `edges` | `hull` is left out (rigc derives it); stated `edges` are split with their vertices, and an edge joining two pieces is refused — so is one from a piece to a vertex no triangle names, the refusal saying `(in no piece: no triangle names it)` for that end. An edge whose **two** vertices no triangle names has no piece to go in: it is dropped, and named on a `dropped` line — `dropped  1 stated edge(s) between vertices no triangle names, edge 2 (vertex 18 to vertex 19): …` — so the pieces' `edges` are the original's minus exactly the ones that line names |
 | a deform key | its run re-sliced: each number goes to its vertex's piece at the vertex's new index, written as `offset` + `vertices`, and an index inside a piece's new run that the original run did not cover is written **`0`** — what the parser held there, because a key is a sparse edit and both encodings are offsets from setup. A piece the run did not reach gets the key with no `vertices`, the setup pose, which is what the original did to it. Every piece keeps the key's time and curve |
 | colour and attachment tracks on the slot | copied to every new slot; an `attachment` key showing the split placeholder shows each piece, any other shows nothing in the new slots. `setup` (or the slot's `attachment`) the same way |
-| `invariants.deformMayFold` naming the slot | its entry copied to the new slots. `invariants.meshSlots` is named and left as stated |
+| `invariants.deformMayFold` naming the slot | its entry copied to the new slots |
+| `invariants.meshSlots` | left as stated, and the line does the arithmetic: the mesh slots the split adds, the mesh attachments the proposal's skins then hold (every `type: "mesh"` without a `source`, as the compile counts them), and — when that is over the budget — the figure to raise it by: `invariant invariants.meshSlots states 1, and the split adds 1 mesh slot(s): the proposal's skins hold 2 mesh attachment(s), 1 over the budget, so its build is refused at compile ("2 mesh slot(s) emitted") unless the rig spec raises invariants.meshSlots by 1, to 2; …`. Within the budget it says so. The refusal it predicts is the compile's (§3.7), which stops before `A13_MESH_BUDGET` runs |
 | a vertex no triangle names | no piece can hold it and still build, and it draws nothing in either rig: dropped, and named on a `dropped` line and in `split.json` |
 | `images` | restated from `--out`, so every `image` resolves to the file it resolved to before |
 
@@ -3638,7 +3645,13 @@ every frame of every animation, deform keys, colour and attachment keys included
 the core and on spine-core — on a public probe of two legs, against the same mesh with
 its bridge still in (deleting triangles moves no vertex, so that mesh is the original
 every frame is held to), and plants a renumbering off by one and a deform key left
-un-renumbered to see each go red (`SPL01`–`SPL11`).
+un-renumbered to see each go red (`SPL01`–`SPL11`). The three lines above are held
+the same way: the printed command on a slot, placeholder and skin named with spaces
+and shell characters runs in `/bin/sh` and splits that mesh, and printed bare it does
+not (`SPL12`); the proposal's edges map back to the original's minus the named one
+(`SPL13`); and at an exact `meshSlots` budget the raise the line states is the build
+refusal's own count minus its budget, raised by it the proposal builds green, and one
+more slot of budget prints no raise (`SPL14`).
 
 ### 3.5 `constraints` — 4.3's single typed array
 

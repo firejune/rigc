@@ -134987,6 +134987,196 @@ function runMeshSplitSuite(): number {
       'issue #1414: Spine draws a mesh\'s triangles in list order and the split draws each piece whole, so where the original interleaved them the stacking can change — said, rather than left for a picture to find',
     );
   }
+
+  // --- SPL12: the refusal's split command, copied into a shell, runs — names with a space and shell characters too ---
+  {
+    const probes: string[] = [];
+    const SLOT = 'left legs';
+    const PLACEHOLDER = "it's $legs; ok";
+    const SKIN = 'the alt skin';
+    // The control's own quoting, independent of the one under test: every word single-quoted, always.
+    const sq = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+    const shell = (command: string): { status: number | null; out: string } => {
+      const run = spawnSync('/bin/sh', ['-c', `rigc() { "$RIGC_SELFTEST_BUN" cli.ts "$@"; }\n${command}`], {
+        cwd: import.meta.dir,
+        encoding: 'utf8',
+        env: { ...process.env, RIGC_SELFTEST_BUN: process.execPath },
+      });
+      return { status: run.status, out: `${run.stdout}${run.stderr}` };
+    };
+    const said: string[] = [];
+    for (const variant of [
+      { label: 'default skin', skin: 'default' },
+      { label: `skin "${SKIN}"`, skin: SKIN },
+    ]) {
+      const dir = join(work, `quoted-${variant.skin === 'default' ? 'default' : 'skin'}`);
+      const islands = writeSplitProbe(dir, { bridged: false, weighted: true }, (specs) => {
+        const rig = specs.rig as { slots: Array<{ name: string }>; skins: Record<string, Record<string, Record<string, unknown>>> };
+        const motion = specs.motion as {
+          setup: Record<string, { attachment: string | null }>;
+          animations: Record<string, { tracks: Array<{ slot?: string; property: string; keys: Array<{ v: unknown }> }>; deform?: Array<{ slot: string; attachment: string; skin?: string }> }>;
+        };
+        const mesh = rig.skins.default.legs.legs;
+        rig.slots[1].name = SLOT;
+        delete rig.skins.default.legs;
+        if (variant.skin === 'default') rig.skins.default[SLOT] = { [PLACEHOLDER]: mesh };
+        else rig.skins[variant.skin] = { [SLOT]: { [PLACEHOLDER]: mesh } };
+        // Under a named skin the slot shows nothing in the setup pose: no skin is set there, so its placeholder resolves through the default skin alone.
+        motion.setup = { body: motion.setup.body, [SLOT]: { attachment: variant.skin === 'default' ? PLACEHOLDER : null } };
+        for (const anim of Object.values(motion.animations)) {
+          for (const track of anim.tracks) {
+            if (track.slot !== 'legs') continue;
+            track.slot = SLOT;
+            if (track.property === 'attachment') track.keys = track.keys.map((k) => ({ ...k, v: k.v === 'legs' ? PLACEHOLDER : k.v }));
+          }
+          for (const track of anim.deform ?? []) {
+            track.slot = SLOT;
+            track.attachment = PLACEHOLDER;
+            if (variant.skin !== 'default') track.skin = variant.skin;
+          }
+        }
+      });
+      const build = runCli(['build', '--rig', islands.rig, '--motion', islands.motion, '--out', join(dir, 'build-out')]);
+      const text = build.stdout + build.stderr;
+      const command = /`(rigc split [^`]*)`/.exec(text)?.[1];
+      if (build.status !== 1 || command === undefined) {
+        probes.push(`${variant.label}: the two-island build exited ${String(build.status)} with no split command: ${JSON.stringify(text.trim().slice(-400))}`);
+        continue;
+      }
+      const filled = (cmd: string, out: string): string => cmd.replace('<rig>', sq(islands.rig)).replace('<motion>', sq(islands.motion)).replace('<dir>', sq(out));
+      const out = join(dir, 'proposal');
+      const ran = shell(filled(command, out));
+      if (ran.status !== 0) probes.push(`${variant.label}: the printed command ${JSON.stringify(command)} exited ${String(ran.status)} in a shell: ${JSON.stringify(ran.out.trim().slice(-300))}`);
+      else {
+        const record = JSON.parse(readFileSync(join(out, 'split.json'), 'utf8')) as SplitRecord;
+        if (record.slot !== SLOT || record.attachment !== PLACEHOLDER || record.skin !== variant.skin) {
+          probes.push(`${variant.label}: the command split skin ${JSON.stringify(record.skin)} slot ${JSON.stringify(record.slot)} attachment ${JSON.stringify(record.attachment)}, required ${JSON.stringify(variant.skin)} / ${JSON.stringify(SLOT)} / ${JSON.stringify(PLACEHOLDER)}`);
+        }
+      }
+      // The near miss: the same command with the names printed bare, as the pointer printed them before #1442, is not one the CLI accepts.
+      const bare = `rigc split --rig <rig> --motion <motion> --slot ${SLOT} --attachment ${PLACEHOLDER}${variant.skin === 'default' ? '' : ` --skin ${variant.skin}`} --out <dir>`;
+      const bareOut = join(dir, 'bare');
+      const unquoted = shell(filled(bare, bareOut));
+      if (unquoted.status === 0 && existsSync(join(bareOut, 'split.json'))) probes.push(`${variant.label}: the bare command also ran, so this control cannot tell quoted from unquoted`);
+      said.push(`${variant.label}: ${JSON.stringify(command)} exits 0 in /bin/sh, the bare spelling exits ${String(unquoted.status)}`);
+    }
+    const ok = probes.length === 0;
+    say(
+      'SPL12_THE_SPLIT_COMMAND_A_REFUSAL_PRINTS_RUNS_IN_A_SHELL',
+      ok,
+      probeDetail(ok, probes, `${said.join('; ')} — each split the named mesh, with its slot, placeholder and skin as the record states them (a plain name is still printed bare: SPL03)`),
+      'issue #1442: the pointer is copied into a shell, and a slot named with a space printed bare is two arguments there — a command that answers one refusal with another',
+    );
+  }
+
+  // --- SPL13: a stated edge between two dropped vertices is dropped by name, and only it ---
+  {
+    const probes: string[] = [];
+    type Mesh = { uvs: number[]; weights: Array<Array<{ bone: string; x: number; y: number; weight: number }>>; triangles: number[]; edges?: number[] };
+    const withEdges = (edges: number[]): { rig: RigSpec; motion: MotionSpec } => {
+      const parsed = parsedSplitProbe({ bridged: false, weighted: true });
+      const mesh = (parsed.rig.skins?.default as Record<string, Record<string, RigAttachment>>).legs.legs as unknown as Mesh;
+      // Two vertices no triangle names, 18 and 19, which the bridge alone used.
+      mesh.uvs.push(46 / SPLIT_PLATE.width, 30 / SPLIT_PLATE.height, 50 / SPLIT_PLATE.width, 34 / SPLIT_PLATE.height);
+      mesh.weights.push([{ bone: 'hip', x: -2, y: -6, weight: 1 }], [{ bone: 'hip', x: 2, y: -10, weight: 1 }]);
+      mesh.edges = edges.map((v) => 2 * v);
+      return parsed;
+    };
+    // Edge 0 in piece 1 (3-4), edge 1 in piece 2 (0-1), edge 2 between the two dropped vertices (18-19), edge 3 in piece 1 (4-5).
+    const pairs: Array<[number, number]> = [[3, 4], [0, 1], [18, 19], [4, 5]];
+    const result = splitMesh({ ...withEdges(pairs.flat()), slot: 'legs' });
+    let line = '';
+    if (result.kind !== 'split') probes.push(`the split answered "${result.kind}"`);
+    else {
+      line = result.lines.find((l) => l.startsWith('dropped  ') && l.includes('stated edge')) ?? '';
+      if (!line.includes('dropped  1 stated edge(s) between vertices no triangle names, edge 2 (vertex 18 to vertex 19)')) probes.push(`the edge line is ${JSON.stringify(line || null)}`);
+      // The proposal's edges, mapped back through the record, against the original's minus the ones the line names.
+      const key = ([a, b]: readonly [number, number]): string => `${Math.min(a, b)}-${Math.max(a, b)}`;
+      const named = [...line.matchAll(/vertex (\d+) to vertex (\d+)/g)].map((m): [number, number] => [Number(m[1]), Number(m[2])]);
+      const want = pairs.filter((p) => !named.some((n) => key(n) === key(p))).map(key).sort();
+      const got: string[] = [];
+      const skin = result.rig.skins?.default as Record<string, Record<string, RigAttachment>>;
+      for (const piece of result.record.pieces) {
+        const edges = (skin[piece.slot][piece.attachment] as unknown as Mesh).edges ?? [];
+        for (let i = 0; i + 1 < edges.length; i += 2) got.push(key([piece.vertices[edges[i] / 2], piece.vertices[edges[i + 1] / 2]]));
+      }
+      got.sort();
+      if (JSON.stringify(got) !== JSON.stringify(want)) probes.push(`the proposal's edges map back to [${got.join(', ')}], required the original's minus the named: [${want.join(', ')}]`);
+      // The near miss: the same reading with nothing named would have to fail, or it reads nothing.
+      if (JSON.stringify(got) === JSON.stringify(pairs.map(key).sort())) probes.push('the proposal states every original edge, so the reading cannot see a drop');
+    }
+    // No edge between dropped vertices, no line.
+    const plain = splitMesh({ ...withEdges([3, 4, 0, 1]), slot: 'legs' });
+    if (plain.kind === 'split' && plain.lines.some((l) => l.includes('stated edge'))) probes.push('a mesh whose stated edges are all inside pieces prints an edge line');
+    // An edge from a dropped vertex into a piece is still refused, and says where each vertex went rather than "piece 0".
+    let thrown: unknown = null;
+    try {
+      splitMesh({ ...withEdges([3, 18]), slot: 'legs' });
+    } catch (err) {
+      thrown = err;
+    }
+    const wantRefusal = 'stated edge 0 joins vertex 3 (piece 1) to vertex 18 (in no piece: no triangle names it)';
+    if (!(thrown instanceof SplitError) || !thrown.message.includes(wantRefusal)) probes.push(`an edge from piece 1 to a dropped vertex: ${thrown instanceof Error ? JSON.stringify(thrown.message.slice(0, 300)) : 'not refused'}, required ${JSON.stringify(wantRefusal)}`);
+    const ok = probes.length === 0;
+    say(
+      'SPL13_AN_EDGE_BETWEEN_DROPPED_VERTICES_IS_DROPPED_BY_NAME',
+      ok,
+      probeDetail(ok, probes, `${JSON.stringify(line)}; the proposal's edges, mapped back through split.json, are the original's 4 minus that one; no line when every edge is inside a piece; an edge into a piece from a dropped vertex is refused naming both ends`),
+      'issue #1442: an edge whose two vertices are both dropped has no piece to go in — leaving it out is right, and leaving it out in silence is the parser\'s habit this tool exists to name',
+    );
+  }
+
+  // --- SPL14: at an exact meshSlots budget the line states the raise, and it is the build refusal's own figure ---
+  {
+    const probes: string[] = [];
+    const dir = join(work, 'budget');
+    const said: string[] = [];
+    for (const budget of [1, 2]) {
+      const islands = writeSplitProbe(join(dir, `at-${budget}`), { bridged: false, weighted: true }, (specs) => {
+        (specs.rig as { invariants?: unknown }).invariants = { meshSlots: budget };
+      });
+      const out = join(dir, `at-${budget}`, 'proposal');
+      const split = runCli(['split', '--rig', islands.rig, '--motion', islands.motion, '--slot', 'legs', '--out', out]);
+      const line = split.stdout.split('\n').find((l) => l.includes('invariant invariants.meshSlots')) ?? '';
+      if (split.status !== 0 || line === '') {
+        probes.push(`meshSlots ${budget}: split exited ${String(split.status)} with no meshSlots line: ${(split.stdout + split.stderr).trim().slice(-300)}`);
+        continue;
+      }
+      const raise = /raises invariants\.meshSlots by (\d+), to (\d+)/.exec(line);
+      const rig = join(out, 'rig.json');
+      const build = runCli(['build', '--rig', rig, '--motion', join(out, 'motion.json'), '--out', join(dir, `at-${budget}`, 'out')]);
+      const text = build.stdout + build.stderr;
+      const refusal = /(\d+) mesh slot\(s\) emitted but the rig "split_probe" allows (\d+)/.exec(text);
+      if (budget === 1) {
+        if (raise === null) probes.push(`meshSlots 1 (the original's one mesh): the line states no raise: ${JSON.stringify(line)}`);
+        if (build.status !== 1 || refusal === null) probes.push(`meshSlots 1: the proposal built with exit ${String(build.status)} and no budget refusal: ${JSON.stringify(text.trim().slice(-300))}`);
+        if (raise === null || refusal === null) continue;
+        const k = Number(raise[1]);
+        const theirs = Number(refusal[1]) - Number(refusal[2]);
+        if (k !== theirs || Number(raise[2]) !== Number(refusal[1]) || Number(refusal[2]) !== budget) probes.push(`meshSlots 1: the line raises by ${k} to ${raise[2]}; the build refuses ${refusal[1]} against ${refusal[2]}, a raise of ${theirs}`);
+        if (!line.includes(`("${refusal[1]} mesh slot(s) emitted")`)) probes.push(`the line does not quote the refusal it predicts: ${JSON.stringify(line)}`);
+        // The raise is enough and is the least that is: raised by K the proposal builds green, and K − 1 is the stated budget, refused above.
+        const raised = join(out, 'rig.raised.json');
+        const spec = JSON.parse(readFileSync(rig, 'utf8')) as { invariants: { meshSlots: number } };
+        spec.invariants.meshSlots += k;
+        writeFileSync(raised, `${JSON.stringify(spec, null, 2)}\n`);
+        const green = runCli(['build', '--rig', raised, '--motion', join(out, 'motion.json'), '--out', join(dir, 'raised-out')]);
+        if (green.status !== 0) probes.push(`meshSlots raised by ${k}: the proposal still does not build (exit ${String(green.status)}): ${JSON.stringify((green.stdout + green.stderr).trim().slice(-300))}`);
+        said.push(`meshSlots 1: the line raises by ${k} to ${raise[2]}, the build refuses "${refusal[0]}" (${refusal[1]} − ${refusal[2]} = ${theirs}), and raised by ${k} it builds ${green.status === 0 ? 'green' : 'red'}`);
+      } else {
+        if (raise !== null || !line.includes('within the budget')) probes.push(`meshSlots 2: the line is ${JSON.stringify(line)}, required "within the budget" and no raise`);
+        if (build.status !== 0) probes.push(`meshSlots 2: the proposal does not build (exit ${String(build.status)}): ${JSON.stringify(text.trim().slice(-300))}`);
+        said.push(`meshSlots 2: "within the budget", no raise, and the proposal builds ${build.status === 0 ? 'green' : 'red'}`);
+      }
+    }
+    const ok = probes.length === 0;
+    say(
+      'SPL14_AT_AN_EXACT_MESH_SLOT_BUDGET_THE_RAISE_IS_THE_REFUSAL_S_OWN',
+      ok,
+      probeDetail(ok, probes, said.join('; ')),
+      'issue #1442: the split knows how many mesh slots it adds and the budget it leaves, so the figure the build will refuse on is stated beside the cause, not left for the reader to derive after a second refusal',
+    );
+  }
   return bad;
 }
 

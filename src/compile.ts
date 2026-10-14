@@ -99,7 +99,7 @@ import {
   type MeshGeometry,
   type MeshVertexWeight,
 } from './mesh.ts';
-import { meshPieces } from './meshsplit.ts';
+import { meshPieces, shellWord } from './meshsplit.ts';
 import { Plate, readPlate } from '../tools/plate.ts';
 import {
   extractRegion,
@@ -5529,10 +5529,11 @@ function splitPointer(vertexCount: number, triangles: readonly number[], named: 
   if (triangles.length % 3 !== 0 || triangles.some((v) => !Number.isInteger(v) || v < 0 || v >= vertexCount)) return '';
   const count = meshPieces(vertexCount, triangles).pieces.length;
   if (count < 2) return '';
-  const skin = named.skin === 'default' ? '' : ` --skin ${named.skin}`;
+  // Each name one shell word (issue #1442): the command is copied into a shell, and a bare `left legs` is two arguments.
+  const skin = named.skin === 'default' ? '' : ` --skin ${shellWord(named.skin)}`;
   return (
     ` — the triangles are ${count} pieces that share no vertex, and one mesh is one outline: ` +
-    `\`rigc split --rig <rig> --motion <motion> --slot ${named.slot} --attachment ${named.placeholder}${skin} --out <dir>\` ` +
+    `\`rigc split --rig <rig> --motion <motion> --slot ${shellWord(named.slot)} --attachment ${shellWord(named.placeholder)}${skin} --out <dir>\` ` +
     'writes one mesh per piece, its deform keys renumbered (AUTHORING §3.4.11)'
   );
 }
