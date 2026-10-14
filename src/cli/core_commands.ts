@@ -2017,27 +2017,28 @@ export function cmdSkills(flags: Record<string, string>, positional: string[]): 
 // ---------------------------------------------------------------------------
 
 /**
- * `rigc guide <RULE>` / `rigc guide §<n>[.<m>]`: a slice of the `docs/AUTHORING.md`
+ * `rigc guide <RULE>` / `rigc guide §<n>[.<m>[.<k>]] [--all]`: a slice of the `docs/AUTHORING.md`
  * this package ships, read now — never a copy (`src/guide.ts` says why). A
  * finding code's table is read from the shipped document it lives in, and the
  * answer names that file.
  */
 export function cmdGuide(flags: Record<string, string>, positional: string[]): void {
-  const flagged = Object.keys(flags);
-  if (flagged.length > 0) throw new UsageError(`guide takes no flags, and ${flagged.map((f) => `--${f}`).join(', ')} was given — name one rule or one §section`);
+  const flagged = Object.keys(flags).filter((flag) => flag !== 'all');
+  if (flagged.length > 0) throw new UsageError(`guide takes only --all, and ${flagged.map((f) => `--${f}`).join(', ')} was given — name one rule or one §section`);
   if (positional.length !== 1) {
     throw new UsageError(
       positional.length === 0
-        ? 'guide takes one rule name — the one a failure line names before its colon — or one §<n> / §<n>.<m>'
+        ? 'guide takes one rule name — the one a failure line names before its colon — or one §<n> / §<n>.<m> / §<n>.<m>.<k>'
         : `guide takes one rule name or one §section, and ${positional.length} were given: ${positional.map((p) => JSON.stringify(p)).join(', ')}`,
     );
   }
+  if (flags.all !== undefined && !positional[0].startsWith('§')) throw new UsageError(`guide --all takes a §section, and ${JSON.stringify(positional[0])} is a rule name — omit --all to read its row`);
   const elsewhere: Record<string, string> = {};
   for (const table of GUIDE_RULE_TABLES_ELSEWHERE) {
     const path = join(PACKAGE_ROOT, table.file);
     if (existsSync(path)) elsewhere[table.file] = readFileSync(path, 'utf8');
   }
-  const answer = guideAnswer(positional[0], { guide: readFileSync(join(PACKAGE_ROOT, GUIDE_FILE), 'utf8'), elsewhere });
+  const answer = guideAnswer(positional[0], { guide: readFileSync(join(PACKAGE_ROOT, GUIDE_FILE), 'utf8'), elsewhere }, { all: flags.all !== undefined });
   if (!answer.ok) throw new GuideError(refusalLine(answer.rule, answer.detail));
   for (const line of answer.lines) console.log(line);
 }

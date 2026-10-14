@@ -14,11 +14,14 @@ will not do for you.
 
 📖 **A failure line ends with the command that prints its row of the guide** —
 ` (see rigc guide <RULE>)`. Run that command first, before reading anything else:
-it prints that rule's row of the shipped guide and nothing else, and `rigc guide §<n>`
-(and `§<n>.<m>`, `§<n>.<m>.<k>`)
-prints one section of `docs/AUTHORING.md` — a compile error points at its stable `CE_` code row. `rigc guide §5.1.<k>`
-prints a numbered compile-error group of at most 30,000 UTF-8 bytes; only legacy
-uncoded library errors point at `§5.1`.
+it prints that rule's row of the shipped guide and nothing else. `rigc guide §<n>`
+(and `§<n>.<m>`, `§<n>.<m>.<k>`) prints the section's heading, own prose and
+subsection index from `docs/AUTHORING.md`; add `--all` to include subsection
+bodies. A leaf prints its full text either way. Sizes describe full ledger spans;
+`--all` with a rule name is refused, exit 2. A compile error points at its stable
+`CE_` code row. `rigc guide §5.1.<k>` prints a numbered compile-error group of
+at most 30,000 UTF-8 bytes, and `rigc guide §5.1` prints the introduction and
+index within that same limit; only legacy uncoded library errors point at `§5.1`.
 
 ## Non-negotiables
 
