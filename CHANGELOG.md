@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.58.0](https://github.com/rig-c/core/compare/v2.57.0...v2.58.0) (2026-10-14)
+
+
+### Features
+
+* **guide:** resolve compile errors to one documented row ([#1445](https://github.com/rig-c/core/issues/1445)) ([91a1342](https://github.com/rig-c/core/commit/91a134237f317638e2def70066c69a86dea26506)), closes [#1399](https://github.com/rig-c/core/issues/1399)
+
 ## [2.57.0](https://github.com/rig-c/core/compare/v2.56.0...v2.57.0) (2026-10-14)
 
 
