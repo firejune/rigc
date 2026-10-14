@@ -380,10 +380,12 @@ function childrenOf(sections: readonly GuideSection[], address: string | null): 
  *
  * - a rule: per row, `docs/AUTHORING.md §<addr>, line <N> — under "<heading>"`, then the row verbatim;
  * - a section: `docs/AUTHORING.md §<addr> "<title>", lines <a>–<b>, <X.X> KB`, then — when it has children — one
- *   `§<addr>  <X.X KB>  <title>` line per child, then the section verbatim;
+ *   `§<addr>  <X.X KB>  <title>` line per child, then its heading and own prose;
+ *   `all` includes its children's bodies too. A leaf is always printed verbatim.
+ *   The header and index sizes describe the full ledger spans, not the shortened answer;
  * - an unknown rule or section: a refusal by `GUIDE_RULE_KNOWN` / `GUIDE_SECTION_KNOWN`.
  */
-export function guideAnswer(asked: string, texts: GuideTexts): GuideAnswer {
+export function guideAnswer(asked: string, texts: GuideTexts, options: { all?: boolean } = {}): GuideAnswer {
   const sections = guideSections(texts.guide);
   if (asked.startsWith('§')) {
     const address = asked.slice(1);
@@ -401,10 +403,11 @@ export function guideAnswer(asked: string, texts: GuideTexts): GuideAnswer {
         detail: `"${asked}" — no such section; the deepest that exists is ${where}, whose sections are: ${kids.length === 0 ? 'none' : kids.join(', ')}`,
       };
     }
-    const body = texts.guide.split('\n').slice(section.firstLine - 1, section.lastLine).join('\n').replace(/\n+$/, '');
     const lines = [`${GUIDE_FILE} §${section.address} "${section.heading.title}", lines ${section.firstLine}–${section.lastLine}, ${kb(section.end - section.start)}`];
     // A chapter lists its ###, a ### its #### — each with the address that prints it, its size and its title.
     const subs = childrenOf(sections, section.address);
+    const lastLine = !options.all && subs.length > 0 ? subs[0].firstLine - 1 : section.lastLine;
+    const body = texts.guide.split('\n').slice(section.firstLine - 1, lastLine).join('\n').replace(/\n+$/, '');
     const wide = Math.max(0, ...subs.map((sub) => sub.address.length + 1));
     const wideKb = Math.max(0, ...subs.map((sub) => kb(sub.end - sub.start).length));
     for (const sub of subs) lines.push(`${`§${sub.address}`.padEnd(wide)}  ${kb(sub.end - sub.start).padStart(wideKb)}  ${sub.heading.title}`);

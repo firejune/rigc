@@ -156,10 +156,20 @@ the commit that introduces these files, and is not maintained afterwards.
    ([#1212](https://github.com/rig-c/core/issues/1212)). Manual for now;
    from a checkout of the release pull request's head, with the dependant's
    checkout beside it and its examples fetched (`bun run fetch-examples`
-   there):
+   there). This step checks the public scarf example's config, animation file
+   and fetched inputs, including each wrapper's `layers.json`, by name before
+   packing or installing anything:
 
+   <!-- release-dependant-example: the selftest runs this exact block with a stub comparison command -->
    ```sh
-   bun scripts/dependant_check.ts --dependant ../rig-parts -- bun cli.ts build --config examples/sample/config.json --source examples/sample/inputs/painting.png --full examples/sample/inputs/layers/full --head examples/sample/inputs/layers/head --out '{out}'
+   dependant='../rig-parts'
+   for input in examples/scarf/config.json examples/scarf/animations.json examples/scarf/inputs/painting.png examples/scarf/inputs/layers/full examples/scarf/inputs/layers/head examples/scarf/inputs/layers/full/layers.json examples/scarf/inputs/layers/head/layers.json; do
+     if [ ! -e "$dependant/$input" ]; then
+       echo "FAIL  RELEASE_DEPENDANT_INPUT: $dependant/$input is missing; check the checkout and run bun run fetch-examples in $dependant" >&2
+       exit 1
+     fi
+   done
+   bun scripts/dependant_check.ts --dependant "$dependant" -- bun cli.ts build --config examples/scarf/config.json --source examples/scarf/inputs/painting.png --full examples/scarf/inputs/layers/full --head examples/scarf/inputs/layers/head --out '{out}'
    ```
 
    It writes nothing into the dependant: it packs this tree as the smoke

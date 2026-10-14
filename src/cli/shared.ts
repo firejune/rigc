@@ -132,7 +132,7 @@ export { PACKAGE_ROOT, readPackageMeta, readVersion };
  * needs a value` (issue #328). `CLI10`/`CLI11` in `selftest.ts` now hold the two
  * halves together by reading `--help` rather than by naming a flag.
  */
-const BOOLEAN_FLAGS = new Set(['all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'folds', 'accept-skeleton-differences', 'keep-pages', 'dim']);
+const BOOLEAN_FLAGS = new Set(['all', 'all-frames', 'all-bones', 'help', 'copy-images', 'again', 'pack', 'copy', 'geometry', 'folds', 'accept-skeleton-differences', 'keep-pages', 'dim']);
 
 /**
  * The flags a command is allowed to spell more than once.
@@ -1164,6 +1164,7 @@ const FLAG_MEANINGS: Record<string, string> = {
   ballot: `the ballot the --record'd vote answers (default \`${DEFAULT_BALLOT}\`); its embedded manifest is what the vote is checked against`,
   ledger: `the append-only JSONL the vote lands in (default \`${DEFAULT_LEDGER}\`)`,
   again: 'record a second vote on a ballot the ledger already has; without it, a repeat is refused rather than doubled',
+  all: 'guide §section only: include its subsection bodies; without it, a section with subsections prints its heading, own prose and subsection index; a leaf prints its full text either way',
   dir:
     `the directory to install into, resolved against your working directory (default \`${DEFAULT_SKILLS_DIR}\`, the ` +
     'workspace directory Codex, Gemini CLI and Antigravity read skills from)',
@@ -1858,13 +1859,17 @@ export const COMMANDS: CommandDoc[] = [
     spineFormat: false,
     usage: [
       'rigc guide <RULE>             (the guide\'s row for the rule a failure line names — the line ends with this command)',
-      'rigc guide §<n> | §<n>.<m> | §<n>.<m>.<k>    (one section of docs/AUTHORING.md: "## <n>.", the m-th ### under it, the k-th #### under that)',
+      'rigc guide §<n> | §<n>.<m> | §<n>.<m>.<k> [--all]    (a section\'s own prose and subsection index; --all includes their bodies)',
     ],
-    flags: [],
+    flags: ['all'],
     notes: [
       'guide reads the docs/AUTHORING.md this command ships with, at the moment it runs, and',
       'prints a slice of it — the row(s) whose first cell names the rule, each under the',
-      'file, section and heading it sits in, or one section as it stands. An ingest finding',
+      'file, section and heading it sits in, or a section\'s heading, own prose and child index.',
+      '§<n> is ## <n>., §<n>.<m> the m-th ### under it, §<n>.<m>.<k> the k-th #### under that.',
+      '--all includes the subsection bodies; a leaf prints its full text either way. The',
+      'header and index sizes describe full ledger spans. --all with a rule is refused.',
+      'An ingest finding',
       'code\'s row lives in docs/INGEST.md\'s finding-code table, and its answer names that',
       'file. A name the guide does not have is refused with the nearest real names, exit 1.',
     ],

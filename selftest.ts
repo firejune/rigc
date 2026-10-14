@@ -73033,13 +73033,46 @@ function compileSliceBytes(text: string, address: string): number | null {
   return answer.ok ? new TextEncoder().encode(answer.lines.map((line) => `${line}\n`).join('')).length : null;
 }
 function compileSliceFaults(text: string): string[] {
-  const slices = guideSections(text).filter((s) => s.address.startsWith('5.1.') && s.heading.level === 4);
-  const faults = slices.length === 0 ? ['§5.1 has no addressable #### slices'] : [];
+  const sections = guideSections(text);
+  const slices = sections.filter((s) => s.address === '5.1' || (s.address.startsWith('5.1.') && s.heading.level === 4));
+  const faults = slices.some((s) => s.heading.level === 4) ? [] : ['§5.1 has no addressable #### slices'];
+  if (!slices.some((s) => s.address === '5.1')) faults.push('§5.1: guide has no compile-error parent section');
   for (const slice of slices) {
     const bytes = compileSliceBytes(text, slice.address);
     if (bytes === null) faults.push(`§${slice.address}: guide refuses its counted slice`);
     else if (bytes > 30000) faults.push(`§${slice.address}: ${bytes} printed UTF-8 bytes exceeds 30000`);
   }
+  return faults;
+}
+
+/** Read the answer against the ledger's byte spans, independently of the answer's line slicing (issue #1447). */
+function guideSectionOutputFaults(text: string, address: string, output: string, all = false): string[] {
+  const sections = guideSections(text);
+  const section = sections.find((s) => s.address === address);
+  if (section === undefined) return [`§${address}: no section to measure`];
+  const children = sections.filter((s) => s.address.startsWith(`${address}.`) && s.heading.level === section.heading.level + 1);
+  const bytes = new TextEncoder().encode(text);
+  const end = !all && children.length > 0 ? children[0].start : section.end;
+  const body = new TextDecoder().decode(bytes.slice(section.start, end)).replace(/\n+$/, '');
+  const lines = output.replace(/\n+$/, '').split('\n');
+  const faults: string[] = [];
+  const header = `${GUIDE_FILE} §${address} "${section.heading.title}", lines ${section.firstLine}–${section.lastLine}, ${((section.end - section.start) / 1024).toFixed(1)} KB`;
+  if (lines[0] !== header) faults.push(`§${address}: header must name its full ledger span and size`);
+  const index: string[] = [];
+  for (const line of lines.slice(1)) {
+    if (!line.startsWith('§')) break;
+    index.push(line);
+  }
+  for (const child of children) {
+    const found = index.filter((line) => line.startsWith(`§${child.address} `));
+    const size = `${((child.end - child.start) / 1024).toFixed(1)} KB`;
+    if (found.length !== 1 || !found[0].trimEnd().endsWith(`  ${child.heading.title}`) || !found[0].includes(` ${size} `)) {
+      faults.push(`§${address}: index must carry §${child.address} once with ${size} and its title`);
+    }
+  }
+  if (index.length !== children.length) faults.push(`§${address}: index carries ${index.length} entries, required ${children.length}`);
+  const actual = lines.slice(1 + index.length).join('\n');
+  if (actual !== body) faults.push(`§${address}: ${children.length === 0 ? 'leaf text' : all ? 'full section text' : 'heading and own prose without child bodies'} differs from its ledger span`);
   return faults;
 }
 
@@ -73397,6 +73430,10 @@ function runGuideSuite(): number {
     };
     const rowText = (rule: string): string => rows.find((row) => row.rule === rule)?.text ?? `(no row for ${rule})`;
     const ingestRule = [...rules.keys()].find((rule) => rows.some((row) => row.rule === rule && row.file !== GUIDE_FILE)) ?? '';
+    const sectionOutput = (address: string, all = false) => (out: string): string | null => {
+      const faults = guideSectionOutputFaults(texts.guide, address, out, all);
+      return faults.length === 0 ? null : faults.join('; ');
+    };
     const expectations: Array<{ what: string; args: string[]; status: number; out: (stdout: string, stderr: string) => string | null }> = [
       { what: 'a compile code', args: ['CE_RIG_NAME_REQUIRED'], status: 0, out: (o) => (o.startsWith(`${GUIDE_FILE} §5.1.`) && o.includes(rowText('CE_RIG_NAME_REQUIRED')) ? null : 'not its one compile row under its positional slice') },
       { what: 'an unknown compile code', args: ['CE_RIG_NAME_REQUIRE'], status: 1, out: (o, e) => (o === '' && e.startsWith('FAIL  GUIDE_RULE_KNOWN:') && e.includes('the nearest: CE_RIG_NAME_REQUIRED, ') && e.endsWith(' (see rigc guide GUIDE_RULE_KNOWN)\n') ? null : 'not the unknown-code refusal with real nearest names') },
@@ -73404,8 +73441,17 @@ function runGuideSuite(): number {
       { what: 'a vote refusal', args: [VOTE_RULES[0]], status: 0, out: (o) => (o.includes(rowText(VOTE_RULES[0])) ? null : 'not its row') },
       { what: 'an ingest finding code', args: [ingestRule], status: 0, out: (o) => (o.startsWith('docs/INGEST.md, line ') && o.includes(rowText(ingestRule)) ? null : 'not its row from docs/INGEST.md, naming that file') },
       { what: 'a family member', args: ['ATTACHMENT_POINT'], status: 0, out: (o) => (o.includes('the row for the family ATTACHMENT_<TYPE>') ? null : 'not the family row, said as one') },
-      { what: 'a section', args: ['§5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §5 "5\. Reading a failure", lines \d+–\d+, [\d.]+ KB\n§5\.1 {2,}[\d.]+ KB {2}5\.1 /.test(o) && o.includes('\n## 5. Reading a failure\n') ? null : 'not §5 with its subsections listed and its text') },
-      { what: 'a ### listing its ####', args: ['§4.5'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5 "4\.5 `keys` — times, values, curves", lines \d+–\d+, [\d.]+ KB\n§4\.5\.1 {2} *[\d.]+ KB {2}4\.5\.1 /.test(o) ? null : 'not §4.5 with its #### listed by address, size and title') },
+      { what: 'a section', args: ['§5'], status: 0, out: sectionOutput('5') },
+      { what: 'a ### listing its ####', args: ['§4.5'], status: 0, out: sectionOutput('4.5') },
+      { what: 'the compile parent index within the byte cap', args: ['§5.1'], status: 0, out: (o) => new TextEncoder().encode(o).length > 30000 ? '§5.1 printed more than 30000 UTF-8 bytes' : sectionOutput('5.1')(o) },
+      { what: 'all compile groups', args: ['§5.1', '--all'], status: 0, out: sectionOutput('5.1', true) },
+      { what: '--all before the section', args: ['--all', '§5.1'], status: 0, out: sectionOutput('5.1', true) },
+      { what: 'all chapter subsections', args: ['§5', '--all'], status: 0, out: sectionOutput('5', true) },
+      { what: 'all #### bodies', args: ['§4.5', '--all'], status: 0, out: sectionOutput('4.5', true) },
+      { what: 'a compile leaf', args: ['§5.1.1'], status: 0, out: sectionOutput('5.1.1') },
+      { what: 'a compile leaf with --all', args: ['§5.1.1', '--all'], status: 0, out: sectionOutput('5.1.1', true) },
+      { what: '--all with a rule', args: ['CE_RIG_NAME_REQUIRED', '--all'], status: 2, out: (o, e) => o === '' && e.startsWith('rigc: guide --all takes a §section,') && e.includes('omit --all to read its row') ? null : 'not the section-only --all usage refusal' },
+      { what: 'an unknown guide flag', args: ['§5.1', '--al'], status: 2, out: (o, e) => o === '' && e.includes('--al') ? null : 'not a usage refusal naming --al' },
       { what: 'a ####', args: ['§4.5.1'], status: 0, out: (o) => (/^docs\/AUTHORING\.md §4\.5\.1 "4\.5\.1 [^"]*", lines /.test(o) && o.includes('\n#### 4.5.1 ') && !o.includes('\n#### 4.5.2 ') ? null : 'not §4.5.1 alone') },
       { what: 'a subsection', args: ['§5.2'], status: 0, out: (o) => (o.includes('\n### 5.2 Assertions') && !o.includes('\n### 5.3 ') ? null : 'not §5.2 alone') },
       {
@@ -73457,7 +73503,7 @@ function runGuideSuite(): number {
       .sort();
     const missing = (text: string): boolean => {
       const body = text.split('\n## ')[0];
-      return !body.includes('(see rigc guide <RULE>)') || !body.includes('Run that command first') || !body.includes('CE_') || !body.includes('§5.1.<k>') || !body.includes('30,000');
+      return !body.includes('(see rigc guide <RULE>)') || !body.includes('Run that command first') || !body.includes('CE_') || !body.includes('§5.1.<k>') || !body.includes('30,000') || !body.includes('subsection index') || !body.includes('--all') || !body.includes('A leaf prints its full text either way');
     };
     const probes = [
       ...skills.filter((path) => missing(readFileSync(join(root, path), 'utf8'))).map((path) => `${path} does not say, before its first ## section, that a failure line ends with \`(see rigc guide <RULE>)\` and to run that command first`),
@@ -73468,6 +73514,8 @@ function runGuideSuite(): number {
       const text = readFileSync(join(root, skills[0]), 'utf8');
       if (missing(text.replace('Run that command first', 'Run it'))) cases.push(`${skills[0]} with the instruction reworded -> faulted`);
       else probes.push(`${skills[0]} with the instruction reworded was ` + 'not ' + 'caught');
+      if (missing(text.replaceAll('--all', '--everything'))) cases.push(`${skills[0]} with --all reworded -> faulted`);
+      else probes.push(`${skills[0]} with --all reworded was ` + 'not ' + 'caught');
     }
     const held = probes.length === 0;
     say(
@@ -73592,11 +73640,19 @@ function runGuideSuite(): number {
     const live = compileSliceFaults(texts.guide);
     const probes = [...live];
     const slices = guideSections(texts.guide).filter((s) => s.address.startsWith('5.1.') && s.heading.level === 4);
+    console.log(`COMPILE_GUIDE_SLICE §5.1 ${compileSliceBytes(texts.guide, '5.1')} printed bytes (limit 30000)`);
     for (const slice of slices) console.log(`COMPILE_GUIDE_SLICE §${slice.address} ${compileSliceBytes(texts.guide, slice.address)} printed bytes (limit 30000)`);
     const cases: string[] = [];
     const first = slices[0];
     if (first === undefined) probes.push('no compile #### slice for the oversize plant');
     else {
+      const parent = guideSections(texts.guide).find((s) => s.address === '5.1');
+      if (parent === undefined) probes.push('no compile parent for the oversized-introduction plant');
+      else {
+        const parentLines = texts.guide.split('\n');
+        parentLines.splice(parent.firstLine, 0, '한'.repeat(10001));
+        caught('oversized parent introduction', compileSliceFaults(parentLines.join('\n')), '§5.1:', cases, probes);
+      }
       const lines = texts.guide.split('\n');
       lines.splice(first.firstLine, 0, 'x'.repeat(30001));
       caught('oversized compile slice', compileSliceFaults(lines.join('\n')), `§${first.address}:`, cases, probes);
@@ -73608,8 +73664,8 @@ function runGuideSuite(): number {
       caught('raw slice within cap but printed header exceeds it', compileSliceFaults(near), `§${first.address}:`, cases, probes);
     }
     say('GD10_EVERY_COMPILE_SLICE_IS_AT_MOST_30000_UTF8_BYTES', probes.length === 0,
-      probeDetail(probes.length === 0, probes, `${slices.length} positional slices, every byte size printed; ${cases.join('; ')}`),
-      'issue #1399: the command prints slices from the sole AUTHORING ledger; a group that cannot fit the reader is refused by address');
+      probeDetail(probes.length === 0, probes, `the §5.1 parent index and ${slices.length} positional slices, every byte size printed; ${cases.join('; ')}`),
+      'issues #1399 and #1447: the default compile-parent index and each group from the sole AUTHORING ledger fit the actual printed UTF-8 cap, including headers');
   }
 
   // GD11 — a coded error remains the same error family, and motion prefixing retains its code and message.
@@ -73675,6 +73731,43 @@ function runGuideSuite(): number {
     say('GD11_COMPILE_CODES_ARE_ADDITIVE_AND_SURVIVE_THE_MOTION_SOURCE_RELAY', probes.length === 0,
       probeDetail(probes.length === 0, probes, `legacy own fields absent, class identity and messages retained; motion refusal ${refusal?.code} retains its source prefix and resolves`),
       'issue #1399: code metadata may change the pointer only; messages, legacy library errors and inherited CompileError semantics stay compatible');
+  }
+
+  // GD12 — default parents retain their own prose and every child index; leaves never lose their text.
+  {
+    const synthetic = [
+      '## 1. Synthetic', 'CHAPTER_PROSE 🌱', '~~~markdown', '### fenced fake child', '~~~',
+      '### 1.1 Parent', 'PARENT_PROSE 한글', '#### 1.1.1 Leaf', 'LEAF_PAYLOAD 🎈',
+      '##### An unaddressed descendant', 'LEAF_OWN_TEXT', '#### 1.1.2 Sibling', 'SIBLING_PAYLOAD',
+      '### 1.2 Leaf', 'CHAPTER_LEAF_PAYLOAD', '## 2. Leaf chapter', 'LAST_CHAPTER_PAYLOAD', '',
+    ].join('\n');
+    const probes: string[] = [];
+    const cases: string[] = [];
+    const output = (address: string, all = false): string | null => {
+      const answer = guideAnswer(`§${address}`, { guide: synthetic, elsewhere: {} }, { all });
+      if (!answer.ok) { probes.push(`§${address}: refused the synthetic section`); return null; }
+      return answer.lines.map((line) => `${line}\n`).join('');
+    };
+    for (const section of guideSections(synthetic)) {
+      for (const all of [false, true]) {
+        const out = output(section.address, all);
+        if (out === null) continue;
+        const faults = guideSectionOutputFaults(synthetic, section.address, out, all);
+        probes.push(...faults);
+        if (faults.length === 0) cases.push(`§${section.address}${all ? ' --all' : ''}`);
+      }
+    }
+    const parent = output('1.1');
+    const leaf = output('1.1.1');
+    if (parent !== null && leaf !== null) {
+      caught('leaf reduced to its heading', guideSectionOutputFaults(synthetic, '1.1.1', leaf.split('\n').slice(0, 2).join('\n')), '§1.1.1: leaf text', cases, probes);
+      caught('child body leaked into parent', guideSectionOutputFaults(synthetic, '1.1', `${parent}LEAF_PAYLOAD 🎈\n`), '§1.1: heading and own prose', cases, probes);
+      caught('one child index removed', guideSectionOutputFaults(synthetic, '1.1', parent.split('\n').filter((line) => !line.startsWith('§1.1.2 ')).join('\n')), '§1.1.2 once', cases, probes);
+      caught('child size changed', guideSectionOutputFaults(synthetic, '1.1', parent.replace(/§1\.1\.1 +[\d.]+ KB/, (line) => line.replace(/[\d.]+ KB$/, '999.0 KB'))), '§1.1.1 once', cases, probes);
+    }
+    say('GD12_PARENTS_PRINT_THEIR_OWN_PROSE_AND_INDEX_UNLESS_ALL_AND_LEAVES_KEEP_THEIR_TEXT', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `${cases.length} readings and plants: ${cases.join('; ')}`),
+      'issue #1447: a byte cap alone cannot detect a short child leak, missing index, or lost leaf body; byte-span readings include Unicode, fenced fake headings and unaddressed leaf descendants');
   }
 
   return bad;
@@ -83446,6 +83539,56 @@ function runCurrencySuite(): number {
     );
   }
 
+  // CUR129 — the actual release-example block refuses missing sample assets before the comparison can pack/install.
+  {
+    const text = readFileSync(join(root, 'RELEASING.md'), 'utf8');
+    const blocks = [...text.matchAll(/<!-- release-dependant-example:[^\n]*-->\n *```sh\n([\s\S]*?)\n *```/g)];
+    const probes: string[] = blocks.length === 1 ? [] : [`RELEASING.md carries ${blocks.length} release-dependant-example blocks, required one`];
+    const cases: string[] = [];
+    if (blocks.length === 1) {
+      const work = mkdtempSync(join(harnessTemp(), 'rigc-release-example-'));
+      const candidate = join(work, 'candidate');
+      const dependant = join(work, 'rig-parts');
+      const marker = join(candidate, 'comparison.args');
+      const inputs = ['examples/scarf/config.json', 'examples/scarf/animations.json', 'examples/scarf/inputs/painting.png', 'examples/scarf/inputs/layers/full', 'examples/scarf/inputs/layers/head', 'examples/scarf/inputs/layers/full/layers.json', 'examples/scarf/inputs/layers/head/layers.json'];
+      const expected = ['scripts/dependant_check.ts', '--dependant', '../rig-parts', '--', 'bun', 'cli.ts', 'build', '--config', inputs[0], '--source', inputs[2], '--full', inputs[3], '--head', inputs[4], '--out', '{out}'];
+      const source = blocks[0][1].replace(/^ {3}/gm, '');
+      // Execute the documented command unchanged; only the executable is a shell function recording its arguments.
+      const script = `bun() { printf '%s\\n' "$@" > comparison.args; }\n${source}`;
+      const supply = (input: string): void => {
+        const path = join(dependant, input);
+        if (input.endsWith('/full') || input.endsWith('/head')) {
+          mkdirSync(path, { recursive: true });
+          writeFileSync(join(path, 'layers.json'), '{}\n');
+        }
+        else { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, '{}\n'); }
+      };
+      try {
+        mkdirSync(candidate, { recursive: true });
+        for (const input of inputs) supply(input);
+        const complete = spawnSync('sh', ['-c', script], { cwd: candidate, encoding: 'utf8' });
+        const args = existsSync(marker) ? readFileSync(marker, 'utf8').trimEnd().split('\n') : [];
+        if (complete.error !== undefined || complete.status !== 0 || args.join('\n') !== expected.join('\n')) {
+          probes.push(`complete scarf example: exit ${String(complete.status)}, comparison arguments ${JSON.stringify(args)}, required ${JSON.stringify(expected)}; ${complete.error?.message ?? complete.stderr}`);
+        } else cases.push('all seven paths present: the exact scarf comparison command was reached');
+        for (const input of inputs) {
+          rmSync(marker, { force: true });
+          rmSync(join(dependant, input), { recursive: true, force: true });
+          if (input.endsWith('/layers.json') && !existsSync(dirname(join(dependant, input)))) probes.push(`${input} plant removed its parent directory, so it did not test a missing manifest inside an existing wrapper directory`);
+          const missing = spawnSync('sh', ['-c', script], { cwd: candidate, encoding: 'utf8' });
+          const named = `FAIL  RELEASE_DEPENDANT_INPUT: ../rig-parts/${input} is missing;`;
+          if (missing.error !== undefined || missing.status !== 1 || !missing.stderr.startsWith(named) || existsSync(marker)) {
+            probes.push(`${input} missing: exit ${String(missing.status)}, comparison reached ${existsSync(marker)}, stderr ${JSON.stringify(missing.stderr)}; required exit 1 naming that path before the comparison`);
+          } else cases.push(`${input} missing: named refusal before comparison`);
+          supply(input);
+        }
+      } finally { rmSync(work, { recursive: true, force: true }); }
+    }
+    say('CUR129_THE_DOCUMENTED_RELEASE_SAMPLE_REFUSES_EACH_MISSING_INPUT_BEFORE_PACK_OR_INSTALL', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `${cases.length} readings of the exact RELEASING block: ${cases.join('; ')}`),
+      'issue #1447: an obsolete example command cannot measure a dependant; the public scarf config names animations.json and each wrapper directory requires layers.json, so the documented step must name any missing sample asset before running the comparison');
+  }
+
   return bad;
 }
 
@@ -84845,6 +84988,20 @@ function plantIntoReadme(readme: string, block: GalleryBlock, edited: string[]):
   return [...raw.slice(0, block.line), ...edited, ...raw.slice(block.line + block.lines.length)].join('\n');
 }
 
+/** The bounds GT05 formerly kept outside its failure list; each falling term now names its reading (issue #1447). */
+function refusalRecipeBoundFaults(read: { recipeBlocks: number; notDragged: number; elisionProbes: number; namedHeads: number; namedTags: number }): string[] {
+  return [
+    ...floorProbes([
+      [read.recipeBlocks, 4, `${read.recipeBlocks} verified refusal recipe block(s)`],
+      [read.notDragged, 14, `${read.notDragged} stated-command block(s) kept outside the refusal path`],
+      [read.elisionProbes, 4, `${read.elisionProbes} path-elision probe(s)`],
+      [read.namedHeads, 1, `${read.namedHeads} error head(s) named in gallery/README.md`],
+      [read.namedTags, 1, `${read.namedTags} refusal verdict(s) named in gallery/README.md`],
+    ], 'so the refusal recipe control did not measure its required population'),
+    ...(read.elisionProbes === read.recipeBlocks ? [] : [`${read.elisionProbes} path-elision probe(s) for ${read.recipeBlocks} verified refusal recipe block(s); required one per block`]),
+  ];
+}
+
 function runGalleryTranscriptSuite(): number {
   console.log('\n── what a gallery README QUOTES the tool as printing (issue #415) ──');
   let bad = 0;
@@ -85584,21 +85741,15 @@ function runGalleryTranscriptSuite(): number {
         : ['the locator still found its paragraph after the phrase it keys on was reworded away']),
     ];
 
-    const trouble = [...dragged, ...grammar, ...runs, ...foreign, ...prose];
+    const trouble = [...dragged, ...grammar, ...runs, ...foreign, ...prose,
+      ...refusalRecipeBoundFaults({ recipeBlocks: recipeBlocks.length, notDragged, elisionProbes, namedHeads: namedHeads.size, namedTags: namedTags.size }),
+    ];
+    const held = trouble.length === 0;
     say(
       'GT05_THE_REFUSAL_RECIPE_REACHES_REFUSALS_AND_NOTHING_ELSE',
-      trouble.length === 0 &&
-        recipeBlocks.length >= 4 &&
-        notDragged >= 14 &&
-        grammar.length === 0 &&
-        elisionProbes === recipeBlocks.length &&
-        elisionProbes >= 4 &&
-        namedHeads.size >= 1 &&
-        namedTags.size >= 1 &&
-        documented.length === 1 &&
-        shownDeclarations.length === 1,
-      trouble.length === 0
-        ? `${notDragged} block(s) a stated command already reproduces: none reads as a refusal to the trap and ` +
+      held,
+      probeDetail(held, trouble,
+          `${notDragged} block(s) a stated command already reproduces: none reads as a refusal to the trap and ` +
           `none carries a recipe; ${malformed.length} way(s) of stepping outside the recipe grammar each refused ` +
           'by name with a well-formed one parsing beside them; a recipe whose `from` is absent and one whose edit ' +
           `leaves the build green each faulted; on all ${elisionProbes} refusal block(s) the path elision ` +
@@ -85606,8 +85757,7 @@ function runGalleryTranscriptSuite(): number {
           'gallery/README.md that says what announces a refusal names ' +
           `{${[...namedHeads].sort().join(' ')}} and {${[...namedTags].sort().join(' ')}}, which is exactly what ` +
           `the recipe runs print, with the ${documented.length} recipe and the ${shownDeclarations.length} ` +
-          'declaration it shows as examples each being one a README really carries'
-        : trouble.join('\n          '),
+          'declaration it shows as examples each being one a README really carries'),
       'the recipe widens what may be RUN, so the thing to prove is that it did not widen what COUNTS. Every ' +
         'clause here is two-sided on purpose: a parser that refused every recipe would satisfy the grammar half, ' +
         'a matcher that equalled nothing would satisfy the elision half, and both would leave the gate reading ' +
@@ -85615,6 +85765,40 @@ function runGalleryTranscriptSuite(): number {
         'to what this change makes stale next — documenting the recipe means writing down what announces a ' +
         'refusal, so the paragraph that does is derived from the same runs the code reads',
     );
+  }
+
+  // GT07 — the actual FAIL line names only missing bounds, even when the former trouble list was empty.
+  {
+    const base = { recipeBlocks: 4, notDragged: 14, elisionProbes: 4, namedHeads: 1, namedTags: 1 };
+    const probes = refusalRecipeBoundFaults(base);
+    const plants = [
+      { read: { ...base, recipeBlocks: 3 }, names: ['3 verified refusal recipe block(s)', 'floor is 4'] },
+      { read: { ...base, notDragged: 13 }, names: ['13 stated-command block(s)', 'floor is 14'] },
+      { read: { ...base, elisionProbes: 3 }, names: ['3 path-elision probe(s)', 'floor is 4'] },
+      { read: { ...base, namedHeads: 0 }, names: ['0 error head(s)', 'floor is 1'] },
+      { read: { ...base, namedTags: 0 }, names: ['0 refusal verdict(s)', 'floor is 1'] },
+      { read: { ...base, recipeBlocks: 5 }, names: ['4 path-elision probe(s) for 5 verified refusal recipe block(s)', 'required one per block'] },
+    ];
+    const cases: string[] = [];
+    for (const plant of plants) {
+      const faults = refusalRecipeBoundFaults(plant.read);
+      if (!plant.names.every((name) => faults.some((fault) => fault.includes(name)))) probes.push(`bound plant ${JSON.stringify(plant.read)} did not name ${plant.names.join(' and ')}: ${faults.join('; ')}`);
+      else cases.push(faults.join('; '));
+      const held = faults.length === 0;
+      const lines: string[] = [];
+      const print = console.log;
+      let result = 0;
+      console.log = (...args: unknown[]): void => { lines.push(args.map(String).join(' ')); };
+      try { result = reportCase('GT05_PLANTED_BOUND', held, probeDetail(held, faults, 'POSITIVE_FORM_PLANTED_BY_GT07'), 'ORIGIN_PLANTED_BY_GT07'); }
+      finally { console.log = print; }
+      const out = lines.join('\n');
+      if (result !== 1 || !out.startsWith('  FAIL  GT05_PLANTED_BOUND: ') || !plant.names.every((name) => out.includes(name)) || out.includes('POSITIVE_FORM_PLANTED_BY_GT07') || out.includes('ORIGIN_PLANTED_BY_GT07')) {
+        probes.push(`bound plant printed ${JSON.stringify(out)}, required FAIL naming only its missing bounds`);
+      }
+    }
+    say('GT07_A_REFUSAL_RECIPE_BOUND_FAILURE_PRINTS_ONLY_THE_BOUND_THAT_FAILED', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `positive bounds clean; ${cases.length} bound plants captured the actual FAIL line: ${cases.join('; ')}`),
+      'issue #1447: the verdict and explanation formerly read different predicates; each unchanged floor and the coverage equality must enter the same fault list');
   }
 
   // --- GT06: the edit a recipe states is spelled once (issue #443) ----------

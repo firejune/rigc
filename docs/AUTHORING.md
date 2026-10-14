@@ -296,7 +296,8 @@ for `vote` (default `ballot.html`).
 
 `guide` reads this page rather than a rig: `rigc guide <RULE>` prints the row of §5
 (or of `docs/INGEST.md`'s finding-code table) for the rule a failure line names, and
-`rigc guide §<n>` one section — §5 says when to reach for it.
+`rigc guide §<n>` its heading, own prose and subsection index; `--all` also prints
+the subsections' bodies. A leaf prints its full text either way — §5 says when to reach for it.
 
 `skills install` is the other command that is not about a rig: it puts the agent
 skills the package ships where an agent host looks for them. Run it through the
@@ -6787,14 +6788,18 @@ Failures arrive in two layers, and they read differently.
 ` (see rigc guide <RULE>)` — a gate's `FAIL` line, a `vote --record` refusal and an
 `ingest` finding. `rigc guide <RULE>` prints that rule's row(s), each under the file,
 the section and the heading it sits in, read from the shipped guide when it runs;
-`rigc guide §<n>` prints one section of this page and lists its subsections with their
-sizes, `rigc guide §<n>.<m>` the m-th `###` under it and `rigc guide §<n>.<m>.<k>` the
-k-th `####` under that — so a citation such as §4.5.1 here is a command. A name the
+`rigc guide §<n>` prints the section's heading, its own prose and an index of its
+subsections with their sizes. `rigc guide §<n> --all` also prints those subsections'
+bodies; a section without subsections prints its full text either way. The header
+and index sizes describe the full spans in this ledger, including subsection bodies.
+`rigc guide §<n>.<m>` addresses the m-th `###` under it and `rigc guide §<n>.<m>.<k>` the
+k-th `####` under that; both take `--all` too — so a citation such as §4.5.1 here is a command. A name the
 guide does not have is refused by a rule of its own — `GUIDE_RULE_KNOWN` with the
 three nearest real names, `GUIDE_SECTION_KNOWN` with the sections that do exist —
-on stderr, exit 1 (§5.5). A compile error
-names no rule — §5.1's tables are keyed on the message — so it ends with
-` (see rigc guide §5.1)`, the section its row is in.
+on stderr, exit 1 (§5.5). A compile error carries a stable `CE_` code and points
+at that code's one row in §5.1. Only a legacy uncoded library error ends with
+` (see rigc guide §5.1)`. `--all` takes a section address; with a rule name it is
+a usage refusal, exit 2 — omit it to read the row.
 
 📥 **A third surface is `ingest`'s, and it is not a failure at all.** What a skeleton
 holds and the spec format cannot say is **recorded** rather than refused — one coded
@@ -6830,7 +6835,9 @@ Library callers may still construct an uncoded `CompileError`; only that legacy
 case points at `§5.1`. `NotImplementedError` keeps its class and the same pointer.
 
 Use `rigc guide §5.1.<k>` for a whole numbered `####` group; every group is at most
-30,000 UTF-8 bytes including the command's heading. The guide remains one ledger:
+30,000 UTF-8 bytes including the command's heading. `rigc guide §5.1` prints this
+introduction and the group index, also at most 30,000 printed UTF-8 bytes;
+`rigc guide §5.1 --all` explicitly asks for every group's body. The guide remains one ledger:
 the command reads these rows at call time, without a generated copy. Unknown
 codes are refused with the three nearest real names and exit 1. `<value>` and
 other angle-bracket placeholders below stand for values supplied by the input;
