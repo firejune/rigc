@@ -156,6 +156,9 @@ name the commands that need the runtime (its `--help` lists the ones it runs).
 gate before it wrote, and which rules that gate is on this entry, before the install
 route; on a Spine export it says what it always said (`RC36`).
 `rigc --version` names the entry that ran.
+`rigc help <command>` prints what `rigc <command> --help` prints and exits the same
+way, on either entry, and `rigc help` alone is `rigc --help`; a name that is no
+command is refused naming the nearest one, exit 2, as an unknown command is.
 
 That entry's `build` takes the same flags and writes the same files, byte for byte:
 `skeleton.json`, `skeleton.atlas`, `skeleton.model.json`, and the pages `--pack` or

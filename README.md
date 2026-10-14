@@ -587,7 +587,8 @@ material, like the gallery: a clone runs them.
 
 ## Commands
 
-Every command takes its paths explicitly. `rigc <command> --help` prints its flags, and
+Every command takes its paths explicitly. `rigc <command> --help` prints its flags —
+`rigc help <command>` prints the same page — and
 [AUTHORING.md §0](docs/AUTHORING.md) is the same list with what each flag means, which
 commands take it and what its default is.
 

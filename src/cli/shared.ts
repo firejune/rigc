@@ -43,7 +43,7 @@ import { readViewportBox, ViewportError } from '../viewportpin.ts';
 import { parseJsonWithPosition } from '../json-position.ts';
 import { RUNG_IDS } from '../ladder.ts';
 import { MODEL_DOCUMENT_FILE, MODEL_DOCUMENT_SPEC, modelDocument, spineFileSha256 } from '../model.ts';
-import { compileErrorLine } from '../guide.ts';
+import { compileErrorLine, nearestNames } from '../guide.ts';
 import { PACKAGE_ROOT, readPackageMeta, readVersion } from '../package_meta.ts';
 import { DEFAULT_MAX_RESIDUAL, DEFAULT_SCALE_MAX, DEFAULT_SCALE_MIN } from '../pose.ts';
 import {
@@ -2085,6 +2085,7 @@ export function usageText(docs: readonly CommandDoc[], checkout: string, rules: 
     ...docs.flatMap((c) => c.usage.map((u) => `  ${u}`)),
     '',
     '  rigc <command> --help    that command\'s own flag table',
+    ...HELP_DOC.usage.map((u) => `  ${u}`),
     '  rigc --version           print the installed version (-v works too)',
   ];
   // Read only by the --profile paragraph, which only an entry running a command that takes --profile prints.
@@ -2839,6 +2840,46 @@ function commandNeedsRuntime(doc: CommandDoc, runs: readonly string[], args: rea
 }
 
 /**
+ * `rigc help` documented as a command is (issue #1440): on the usage of both
+ * entries, and its own page for `rigc help --help` and `rigc help help`, as
+ * every listed command answers `--help`. Not a row of `COMMANDS`, because it
+ * has no body of its own: it is the dispatch reading another spelling of
+ * `--help` (`helpArgv`), on every entry alike.
+ */
+const HELP_DOC: CommandDoc = {
+  name: 'help',
+  usage: ['rigc help [<command>]    the same page as rigc [<command>] --help, and the same exit'],
+  flags: [],
+  runtime: false,
+  spineFormat: false,
+};
+
+/**
+ * `rigc help [<command>]` (issue #1440): the command line it stands for, which
+ * the dispatch then runs in its place — `rigc --help` for `help` alone,
+ * `rigc <command> --help` for a command the table documents — or `null` for
+ * `help`'s own page (`help --help`, `help help`). Rewritten rather than
+ * printed here, so the page and the exit code are the ones that spelling gets
+ * on this entry and cannot come apart from them: a command this entry does not
+ * run is refused as `<command> --help` is.
+ *
+ * ⚠️ A name the table does not document is refused by name with the nearest
+ * one, as a `UsageError` — printed and exited as an unknown command is, exit 2
+ * — and so is more than one name, rather than a guess at which was meant.
+ */
+export function helpArgv(rest: readonly string[]): string[] | null {
+  if (rest.length === 0) return ['--help'];
+  if (rest.length > 1) {
+    throw new UsageError(`help takes one command name and was given ${rest.length}: ${rest.join(' ')} — \`rigc help <command>\` is \`rigc <command> --help\``);
+  }
+  const [name] = rest;
+  if (name === HELP_DOC.name || name === '--help' || name === '-h') return null;
+  if (KNOWN_COMMANDS.includes(name)) return [name, '--help'];
+  const [nearest] = nearestNames(name, [...KNOWN_COMMANDS, HELP_DOC.name], 1);
+  throw new UsageError(`unknown command: ${name} — the nearest command is ${nearest} (\`rigc help ${nearest}\`)`);
+}
+
+/**
  * Run `argv` (`process.argv` without the runtime and the script) through
  * `entry`: the usage, `--version`, a command's `--help`, the command, and
  * every refusal printed and mapped to its exit code — the dispatch `cli.ts`
@@ -2852,6 +2893,20 @@ export function runCli(entry: CliEntry, argv: readonly string[]): void {
     throw new Error(`internal: this entry runs [${known.join(', ')}] by the command table and registers [${registered.join(', ')}]`);
   }
   const USAGE = usageText(docs, entry.checkout, entry.profileRules);
+  if (argv[0] === 'help') {
+    let target: string[] | null;
+    try {
+      target = helpArgv(argv.slice(1));
+    } catch (err) {
+      refuse(err, 'help', USAGE, entry);
+    }
+    if (target === null) {
+      console.log(commandHelp(HELP_DOC.name, [HELP_DOC]));
+      process.exit(0);
+    }
+    runCli(entry, target);
+    return;
+  }
   const [command, ...rest] = argv;
   try {
     if (command === undefined) {

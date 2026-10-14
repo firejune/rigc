@@ -69089,6 +69089,156 @@ function runCliSuite(): number {
     );
     rmSync(work, { recursive: true, force: true });
   }
+  // --- CLI114-CLI117: `rigc help <command>` is `rigc <command> --help` (issue #1440) ---
+  //
+  // 🚨 Read off the two printed runs rather than off `commandHelp`, for CLI71's reason: what an agent typing the
+  // familiar spelling meets is the process's stdout, stderr and exit code, and the claim is that those are the
+  // ones the other spelling gets. The command list is the table's (`COMMANDS`, every name on both entries — the
+  // ones cli_core.ts refuses are refused through `help` too), never a list written here.
+  {
+    const work = mkdtempSync(join(harnessTemp(), 'rigc-help-'));
+    type Run = { status: number | null; stdout: string; stderr: string };
+    const sameRun = (a: Run, b: Run): string | null =>
+      a.status !== b.status
+        ? `exit ${String(a.status)} vs ${String(b.status)}`
+        : a.stdout !== b.stdout
+          ? `stdout ${firstLineApartOf(a.stdout, b.stdout)}`
+          : a.stderr !== b.stderr
+            ? `stderr ${firstLineApartOf(a.stderr, b.stderr)}`
+            : null;
+    /** Every way `help` and `--help` part on `entry` in `root`, over `names` and the bare page. */
+    const helpFaults = (root: string, entry: string, names: readonly string[], runs: ReadonlySet<string>): { faults: string[]; pairs: number } => {
+      const faults: string[] = [];
+      let pairs = 0;
+      const cases: Array<{ viaHelp: string[]; viaFlag: string[]; page: string | null }> = [
+        { viaHelp: ['help'], viaFlag: ['--help'], page: 'usage:' },
+        ...names.map((name) => ({ viaHelp: ['help', name], viaFlag: [name, '--help'], page: runs.has(name) ? 'flags:' : null })),
+      ];
+      for (const { viaHelp, viaFlag, page } of cases) {
+        const a = runEntryIn(root, entry, viaHelp, work);
+        const b = runEntryIn(root, entry, viaFlag, work);
+        pairs++;
+        const apart = sameRun(a, b);
+        if (apart !== null) faults.push(`${entry} \`${viaHelp.join(' ')}\` and \`${viaFlag.join(' ')}\` differ: ${apart}`);
+        // Not vacuous: a page this entry runs is a page with a flag table (or the usage), exit 0.
+        if (page !== null && !(b.status === 0 && b.stdout.includes(page))) {
+          faults.push(`${entry} \`${viaFlag.join(' ')}\` printed no ${JSON.stringify(page)} page at exit 0 (exit ${String(b.status)}), so the comparison read nothing`);
+        }
+      }
+      return { faults, pairs };
+    };
+    // `help` itself is listed beside the table's commands on both usages, and answers `help --help` with its own
+    // page as they do, so `help help` is one more pair rather than an exception.
+    const names = [...COMMANDS.map((doc) => doc.name), 'help'];
+    const entries = [
+      { entry: 'cli.ts', runs: new Set([...entryCommands(true).map((doc) => doc.name), 'help']) },
+      { entry: 'cli_core.ts', runs: new Set([...entryCommands(false).map((doc) => doc.name), 'help']) },
+    ];
+    const live = entries.map(({ entry, runs }) => ({ entry, runs, ...helpFaults(import.meta.dir, entry, names, runs) }));
+    const faults114 = live.flatMap((l) => l.faults);
+    say(
+      'CLI114_HELP_COMMAND_PRINTS_WHAT_COMMAND_HELP_PRINTS_ON_BOTH_ENTRIES',
+      faults114.length === 0,
+      probeDetail(
+        faults114.length === 0,
+        faults114,
+        live
+          .map((l) => `${l.entry}: ${l.pairs} pair(s) — \`help\` alone and each of the ${names.length} listed name(s) (the table's ${COMMANDS.length} and help), ${l.runs.size} of them run here — byte-identical stdout and stderr, same exit`)
+          .join('; '),
+        (count) => `${count} way(s) the two spellings part:`,
+      ),
+      "issue #1440: an agent's first move was `rigc help render`, the spelling git and npm accept, and it was answered \"unknown command\"",
+    );
+
+    // Bar 2: a name the table lacks, refused by name with the nearest command, exiting as the unknown command does.
+    const faults115: string[] = [];
+    const subject = names[0];
+    const typo = `${subject.slice(0, -1)}x`;
+    for (const { entry } of entries) {
+      const viaHelp = runEntryIn(import.meta.dir, entry, ['help', typo], work);
+      const bare = runEntryIn(import.meta.dir, entry, [typo], work);
+      const first = viaHelp.stderr.split('\n')[0];
+      if (viaHelp.status !== bare.status || viaHelp.status !== 2) faults115.push(`${entry} \`help ${typo}\` exits ${String(viaHelp.status)} and \`${typo}\` exits ${String(bare.status)}; both 2 required`);
+      if (!first.startsWith(`rigc: unknown command: ${typo} `)) faults115.push(`${entry} \`help ${typo}\` does not refuse the name: ${JSON.stringify(first)}`);
+      if (!first.includes(`the nearest command is ${subject} `)) faults115.push(`${entry} \`help ${typo}\` does not name ${subject} as the nearest command: ${JSON.stringify(first)}`);
+      if (viaHelp.stdout !== '') faults115.push(`${entry} \`help ${typo}\` printed on stdout`);
+    }
+    say(
+      'CLI115_HELP_ON_AN_UNKNOWN_NAME_IS_REFUSED_BY_NAME_WITH_THE_NEAREST_COMMAND',
+      faults115.length === 0,
+      probeDetail(
+        faults115.length === 0,
+        faults115,
+        `\`help ${typo}\` on both entries: exit 2, as \`${typo}\` alone exits, naming ${typo} and the nearest command, ${subject}`,
+        (count) => `${count} fault(s):`,
+      ),
+      'a refusal that names no nearest command costs the reader a second round trip to find the name it meant',
+    );
+
+    // Bar 3: `help` is on the usage both entries print, and in the guide's CLI section and the README's commands.
+    const faults116: string[] = [];
+    for (const { entry } of entries) {
+      const usage = runEntryIn(import.meta.dir, entry, ['--help'], work).stdout.split('\n');
+      if (!usage.some((line) => line.startsWith('  rigc help [<command>] '))) faults116.push(`${entry} --help lists no \`rigc help [<command>]\` line`);
+    }
+    for (const doc of ['docs/AUTHORING.md', 'README.md']) {
+      if (!readFileSync(join(import.meta.dir, doc), 'utf8').includes('`rigc help <command>`')) faults116.push(`${doc} does not name \`rigc help <command>\``);
+    }
+    say(
+      'CLI116_HELP_IS_ON_THE_USAGE_AND_IN_THE_GUIDE',
+      faults116.length === 0,
+      probeDetail(
+        faults116.length === 0,
+        faults116,
+        "both entries' --help list `rigc help [<command>]`, and AUTHORING.md and README.md name `rigc help <command>`",
+        (count) => `${count} place(s) it is missing:`,
+      ),
+      'a spelling the usage does not list is found only by guessing, which is what the command exists to make unnecessary',
+    );
+
+    // Bar 4: two plants in a copy of the tree, run through cli_core.ts (the dispatch is one, in src/cli/shared.ts) —
+    // a `help` that drops the command's flag table, and one that prints the top-level usage instead. CLI114's own
+    // judge has to name each on every command that entry runs.
+    const faults117: string[] = [];
+    const genuine = "  if (KNOWN_COMMANDS.includes(name)) return [name, '--help'];";
+    const plants = [
+      {
+        label: 'drops the flags',
+        to: "  if (KNOWN_COMMANDS.includes(name)) { console.log(commandHelp(name, entryCommands(false)).split('\\n\\nflags:')[0]); process.exit(0); }",
+      },
+      { label: 'prints the usage', to: "  if (KNOWN_COMMANDS.includes(name)) return ['--help'];" },
+    ];
+    const coreRuns = new Set(entryCommands(false).map((doc) => doc.name));
+    const fired: string[] = [];
+    for (const plant of plants) {
+      const root = absentTree(join(work, `plant-${plant.label.replace(/ /g, '-')}`));
+      const file = join(root, 'src', 'cli', 'shared.ts');
+      const text = readFileSync(file, 'utf8');
+      const n = text.split(genuine).length - 1;
+      if (n !== 1) {
+        faults117.push(`the "${plant.label}" plant found its text ${n} time(s) in src/cli/shared.ts, not once`);
+        continue;
+      }
+      writeFileSync(file, text.split(genuine).join(plant.to));
+      const read = helpFaults(root, 'cli_core.ts', [...coreRuns], coreRuns);
+      const named = read.faults.filter((f) => f.includes(' differ: stdout '));
+      if (named.length !== coreRuns.size) {
+        faults117.push(`the "${plant.label}" plant was named on ${named.length} of ${coreRuns.size} command(s): ${read.faults.slice(0, 2).join('; ') || 'nothing named'}`);
+      } else fired.push(`${plant.label}: ${named.length}/${coreRuns.size}`);
+    }
+    say(
+      'CLI117_A_PLANTED_HELP_THAT_DROPS_THE_FLAGS_OR_PRINTS_THE_USAGE_IS_RED',
+      faults117.length === 0,
+      probeDetail(
+        faults117.length === 0,
+        faults117,
+        `CLI114's judge over a planted tree names every command cli_core.ts runs, for each plant (${fired.join('; ')})`,
+        (count) => `${count} plant(s) not seen:`,
+      ),
+      'a comparison nobody has seen fail is not a comparison: both plants print a plausible page with exit 0',
+    );
+    rmSync(work, { recursive: true, force: true });
+  }
   // The build report document (issue #1213): `build --report` and `repack --report`, through both entries.
   buildReportControls(say);
   return bad;
@@ -139491,7 +139641,7 @@ function main(): void {
       `with no \`loop\` hint still accepted, every one of the ${motion.specs} motion specs in this repository parsing ` +
       'clean, and the walk that finds them skipping the local-only `scratch/` area, dot-directories and a dangling ' +
       'symlink rather than dying on one), ' +
-      '+ ' + n('cli') + ' cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, ' +
+      '+ ' + n('cli') + ' cli ergonomics controls (a scale key reporting its own x·y area factor beside the caveat that it is a reading and never a rule — the volume an animator asks about, which `explain` printed for the DEFORM spelling of squash and stretch and not for the scale spelling the guide recommends first — plus unknown command, bare invocation, `build --help`, `help <command>` as `<command> --help` on both entries, ' +
       '`--version`, `-v`, and the profile default in both directions — art only renderer policy objects to ' +
       'builds green with no flag and is refused by every rule under `--profile rig-play`, and the MESH report line ' +
       "quoting the rig's own triangle budget with the hole its outline encloses, or saying no budget is declared " +
