@@ -137,7 +137,7 @@ export function boneIndexOf(bones: readonly ModelBone[]): (bone: string) => numb
   const index = new Map(bones.map((bone, i) => [bone.name, i] as const));
   return (bone) => {
     const at = index.get(bone);
-    if (at === undefined) throw new CompileError(`internal: a weighted vertex binds bone "${bone}", which is not in the model's bone list`);
+    if (at === undefined) throw new CompileError(`internal: a weighted vertex binds bone "${bone}", which is not in the model's bone list`, 'CE_EMIT_INTERNAL_WEIGHT_BONE_UNKNOWN');
     return at;
   };
 }
@@ -492,7 +492,7 @@ export function emitConstraint(model: ModelConstraint): SpineConstraint {
   const out: SpineConstraint = { name: model.name, type: model.kind };
   const stray = Object.keys(model).filter((key) => key !== 'kind' && key !== 'name' && key !== 'declaredIn' && !order.includes(key));
   if (stray.length > 0) {
-    throw new CompileError(`internal: ${model.kind} constraint "${model.name}" carries ${stray.join(', ')}, which the emitter has no place for`);
+    throw new CompileError(`internal: ${model.kind} constraint "${model.name}" carries ${stray.join(', ')}, which the emitter has no place for`, 'CE_EMIT_INTERNAL_CONSTRAINT_FIELDS');
   }
   for (const field of order) {
     const value = model[field];
@@ -641,11 +641,11 @@ function emitDrawOrderKey(key: ModelKey, slotIndex: ReadonlyMap<string, number>)
   const out = emitKey(key);
   if (key.offsets === undefined) return out;
   if (!isDrawOrderMoves(key.offsets)) {
-    throw new CompileError(`internal: a draw-order key at t=${key.time} carries offsets that are not slot/offset moves`);
+    throw new CompileError(`internal: a draw-order key at t=${key.time} carries offsets that are not slot/offset moves`, 'CE_EMIT_INTERNAL_DRAW_ORDER_SHAPE');
   }
   const indexOf = (slot: string): number => {
     const at = slotIndex.get(slot);
-    if (at === undefined) throw new CompileError(`internal: a draw-order key at t=${key.time} moves slot "${slot}", which is not in the model's slot list`);
+    if (at === undefined) throw new CompileError(`internal: a draw-order key at t=${key.time} moves slot "${slot}", which is not in the model's slot list`, 'CE_EMIT_INTERNAL_DRAW_ORDER_SLOT_UNKNOWN');
     return at;
   };
   out.offsets = key.offsets
@@ -734,7 +734,7 @@ export function emitAnimations(
   const out: Record<string, SpineAnimation> = {};
   for (const name of names) {
     const animation = animations.get(name);
-    if (animation === undefined) throw new CompileError(`internal: the animation order named "${name}", which is not in the model`);
+    if (animation === undefined) throw new CompileError(`internal: the animation order named "${name}", which is not in the model`, 'CE_EMIT_INTERNAL_ANIMATION_UNKNOWN');
     out[name] = emitAnimation(animation, slotIndex);
   }
   return out;

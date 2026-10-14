@@ -289,7 +289,7 @@ function describe(v: unknown): string {
  * has seen one has seen the format.
  */
 function refuse(where: string, key: string, is: unknown, hint: string): never {
-  throw new CompileError(`${where}: \`${key}\` is ${describe(is)}; ${hint}`);
+  throw new CompileError(`${where}: \`${key}\` is ${describe(is)}; ${hint}`, 'CE_MOTION_FIELD_SHAPE');
 }
 
 /**
@@ -436,7 +436,7 @@ function parsePhysics(raw: unknown, where: string): void {
         `${where}: \`${key}\` names a physics constraint "${EVERY_GLOBAL_PHYSICS}", and that name is reserved: a ` +
           `track's \`"physics": "${EVERY_GLOBAL_PHYSICS}"\` is the timeline that names no constraint and drives ` +
           'every one declaring the keyed property global, so a constraint called ' +
-          `"${EVERY_GLOBAL_PHYSICS}" could not be keyed by name. Give it another name`,
+          `"${EVERY_GLOBAL_PHYSICS}" could not be keyed by name. Give it another name`, 'CE_MOTION_PHYSICS_NAME_RESERVED',
       );
     }
     const spec = needObj(entry, where, key,'a physics constraint is an object naming the bone it drives and the components it drives it in');
@@ -674,7 +674,7 @@ function parseSequence(raw: unknown, where: string, at: string): void {
               : '') +
             '. The runtime advances the frame by `(time - keyTime) / delay`, which is Infinity at 0, and ' +
             '`Infinity | 0` is 0 — so the key shows its first frame for as long as it lasts, which is "hold" spelt ' +
-            `as "${mode}". State the seconds per frame, or write "hold"`,
+            `as "${mode}". State the seconds per frame, or write "hold"`, 'CE_MOTION_SEQUENCE_ADVANCE_ZERO_DELAY',
         );
       }
     }
@@ -766,10 +766,10 @@ export function parseMotionSpec(raw: unknown, where: string): MotionSpec {
 
 function parseMotionSpecInto(raw: unknown, where: string, visits: readonly ShapeVisit[]): MotionSpec {
   if (!isObj(raw)) {
-    throw new CompileError(`${where}: a motion spec must be a JSON object, and this file holds ${describe(raw)}`);
+    throw new CompileError(`${where}: a motion spec must be a JSON object, and this file holds ${describe(raw)}`, 'CE_MOTION_SPEC_OBJECT');
   }
   if (raw.spec !== MOTION_SPEC_VERSION) {
-    throw new CompileError(`${where}: unknown motion spec version: ${String(raw.spec)}, expected "${MOTION_SPEC_VERSION}"`);
+    throw new CompileError(`${where}: unknown motion spec version: ${String(raw.spec)}, expected "${MOTION_SPEC_VERSION}"`, 'CE_MOTION_SPEC_VERSION');
   }
   // Before the field checks, for the reason `parseRigSpec` puts its own first: a
   // key nothing reads is often the CAUSE of the field that is missing, and
@@ -793,7 +793,7 @@ function parseMotionSpecInto(raw: unknown, where: string, visits: readonly Shape
 
   const animations = needObj(raw.animations, where, 'animations', 'it is a table keyed by animation name, `{ "<name>": { "duration": …, "tracks": [...] } }` (write `{}` for a static rig)');
   for (const [name, anim] of Object.entries(animations)) {
-    if (name.length === 0) throw new CompileError(`${where}: an animation has an empty name`);
+    if (name.length === 0) throw new CompileError(`${where}: an animation has an empty name`, 'CE_MOTION_ANIMATION_NAME_EMPTY');
     parseAnimation(anim, where, name);
   }
 

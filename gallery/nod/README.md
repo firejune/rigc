@@ -475,7 +475,7 @@ apart, and a sinusoid has to be sampled to exist: a wavelength of at least 4x th
 read as a wave at all and 8x (320) to read as a curve, where this key states 2x. At 2x every
 sample lands on the same pair of phases, and at the zero crossings that pair is (0, 0).
 `gallery/nod`'s README carries that rule and the measured table behind it. A key that MEANS the
-identity states it in its own parameters (amplitude 0) or carries no run at all. (see rigc guide §5.1)
+identity states it in its own parameters (amplitude 0) or carries no run at all. (see rigc guide CE_DEFORM_TRANSFORM_QUANTISED_IDENTITY)
 ```
 
 📌 **The 160 row is still green and that is deliberate.** A zigzag is a *bad*
@@ -887,7 +887,7 @@ it is whatever path you chose:
 rigc compile error: animation "turn" deform default/head/head (t=0.62): transform pitch has
 radius 170, and vertex 0 sits at y=180, which is 10 past it (about=0). The cylinder has no
 surface there, so its depth would be 0 and the projection would be a different model at that
-vertex. Raise the radius to where the part actually sits, or move the vertex. (see rigc guide §5.1)
+vertex. Raise the radius to where the part actually sits, or move the vertex. (see rigc guide CE_DEFORM_VERTEX_OUTSIDE_CYLINDER)
 ```
 
 ⇒ **A grid that is correct for a yaw is not a grid; it is a grid *for a yaw*.**

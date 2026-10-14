@@ -1998,7 +1998,7 @@ function packOnePageByFootprint(
       if (shapesMeet(shape, put.x, put.y, other.shape, other.x, other.y)) {
         throw new CompileError(
           `internal: the footprint pass placed a ${shape.width}x${shape.height} cell at ${put.x},${put.y} over ` +
-            `the footprint of the ${other.shape.width}x${other.shape.height} cell at ${other.x},${other.y}`,
+            `the footprint of the ${other.shape.width}x${other.shape.height} cell at ${other.x},${other.y}`, 'CE_ATLAS_INTERNAL_FOOTPRINT_OVERLAP',
         );
       }
     }
@@ -2313,7 +2313,7 @@ function layoutPack(
         // Unreachable: every cell was proven to fit an empty page above. Kept as
         // a named stop rather than an infinite loop if that ever stops holding.
         throw new CompileError(
-          `packing stalled with ${remaining.length} region(s) left and an empty ${maxEdge}x${maxEdge} page`,
+          `packing stalled with ${remaining.length} region(s) left and an empty ${maxEdge}x${maxEdge} page`, 'CE_ATLAS_PACKING_STALLED',
         );
       }
       // ⭐ Then the page is written at the smallest power-of-two pair that holds
@@ -2337,7 +2337,7 @@ function layoutPack(
       if (shrunk === null) {
         // Unreachable for the same reason as the stall above: these cells were
         // just placed on a maxEdge page.
-        throw new CompileError(`page ${pageIndex + 1} of the spill holds ${onPage.length} region(s) that no page fits`);
+        throw new CompileError(`page ${pageIndex + 1} of the spill holds ${onPage.length} region(s) that no page fits`, 'CE_ATLAS_SPILL_UNPACKABLE');
       }
       const onThisPage: Placement[] = [];
       shrunk.rects.forEach((rect, i) => {
@@ -2460,19 +2460,19 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
   const stem = opts.pageStem ?? 'skeleton';
   const pageEdges = opts.pageEdges ?? DEFAULT_PAGE_EDGES;
   if (!PAGE_EDGES.includes(pageEdges)) {
-    throw new CompileError(`--page-edges ${JSON.stringify(String(opts.pageEdges))}; known values: ${PAGE_EDGES.join(', ')}`);
+    throw new CompileError(`--page-edges ${JSON.stringify(String(opts.pageEdges))}; known values: ${PAGE_EDGES.join(', ')}`, 'CE_ATLAS_PAGE_EDGES_VALUE');
   }
   const shape = opts.shape ?? DEFAULT_PACK_SHAPE;
   if (!PACK_SHAPES.includes(shape)) {
-    throw new CompileError(`--pack-shape ${JSON.stringify(String(opts.shape))}; known values: ${PACK_SHAPES.join(', ')}`);
+    throw new CompileError(`--pack-shape ${JSON.stringify(String(opts.shape))}; known values: ${PACK_SHAPES.join(', ')}`, 'CE_ATLAS_PACK_SHAPE_VALUE');
   }
   if (!Number.isInteger(pageSize) || pageSize < 1) {
-    throw new CompileError(`--page-size must be a positive integer, got ${String(opts.pageSize)}`);
+    throw new CompileError(`--page-size must be a positive integer, got ${String(opts.pageSize)}`, 'CE_ATLAS_PAGE_SIZE_POSITIVE_INTEGER');
   }
   if (!Number.isInteger(padding) || padding < 0) {
-    throw new CompileError(`--padding must be a non-negative integer, got ${String(opts.padding)}`);
+    throw new CompileError(`--padding must be a non-negative integer, got ${String(opts.padding)}`, 'CE_ATLAS_PADDING_NONNEGATIVE_INTEGER');
   }
-  if (inputs.length === 0) throw new CompileError('nothing to pack: this compile emitted no images');
+  if (inputs.length === 0) throw new CompileError('nothing to pack: this compile emitted no images', 'CE_ATLAS_IMAGES_REQUIRED');
 
   const maxEdge = floorPowerOfTwo(pageSize);
 
@@ -2485,7 +2485,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
       `"${sorted[i].region}" is ${sorted[i].width}x${sorted[i].height} and with --padding ${padding} needs a ` +
         `${cells[i].w}x${cells[i].h} cell, which does not fit a ${maxEdge}x${maxEdge} page ` +
         `(${sorted[i].absPath}). Raise --page-size, lower --padding, or leave this build unpacked — a packer ` +
-        'cannot split one drawing across two pages.',
+        'cannot split one drawing across two pages.', 'CE_ATLAS_REGION_EXCEEDS_PAGE',
     );
   }
 
@@ -2542,7 +2542,7 @@ export function packAtlas(inputs: PackInput[], opts: PackOptions = {}): PackResu
         // two reads, or one of the two readers is wrong about it.
         throw new CompileError(
           `"${place.region}" measured ${input.width}x${input.height} from its PNG header and decodes to ` +
-            `${source.width}x${source.height} (${input.absPath})`,
+            `${source.width}x${source.height} (${input.absPath})`, 'CE_ATLAS_IMAGE_DIMENSIONS_CHANGED',
         );
       }
       extrudeCell(plate, source, place.x - padding, place.y - padding, padding);

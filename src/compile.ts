@@ -889,7 +889,7 @@ function refuseNamesTheEditorCouldKeyDifferently(
   throw new CompileError(
     `${found.length} pair(s) of ${what.noun} have no one order: ${what.why}` +
       `${spelled.join('. ')}` +
-      (found.length > spelled.length ? `. …and ${found.length - spelled.length} more pair(s)` : ''),
+      (found.length > spelled.length ? `. …and ${found.length - spelled.length} more pair(s)` : ''), 'CE_COMPILE_EDITOR_NAME_ORDER_AMBIGUOUS',
   );
 }
 
@@ -969,7 +969,7 @@ export function f32(n: number): number {
   }
   // Unreachable — nine significant digits name every float32. Stated rather than
   // assumed, because a fallback here would be a number nobody chose.
-  throw new CompileError(`no decimal of at most 9 significant digits names the float32 of ${n}`);
+  throw new CompileError(`no decimal of at most 9 significant digits names the float32 of ${n}`, 'CE_COMPILE_FLOAT32_DECIMAL_UNREPRESENTABLE');
 }
 
 /**
@@ -1144,7 +1144,7 @@ function checkKeyTime(where: string, time: number, authored: number, duration: n
   throw new CompileError(
     `${where}: key at ${at} is ${f32(past)}s past the declared duration ${duration}s — nothing that plays this ` +
       `animation for the duration it declares ever reaches it. Move the key to ${duration}, or declare the ` +
-      `duration you meant.`,
+      `duration you meant.`, 'CE_COMPILE_KEY_AFTER_DURATION',
   );
 }
 
@@ -1156,7 +1156,7 @@ function channelHex(v: number): string {
 }
 
 function rgbaHex(v: number[]): string {
-  if (v.length !== 4) throw new CompileError(`rgba value needs 4 channels, got ${v.length}`);
+  if (v.length !== 4) throw new CompileError(`rgba value needs 4 channels, got ${v.length}`, 'CE_COMPILE_RGBA_CHANNEL_COUNT');
   return v.map(channelHex).join('');
 }
 
@@ -1176,7 +1176,7 @@ function rgbaHex(v: number[]): string {
  * by: `readCurve(…, 0..3, light r/g/b/a)` then `readCurve(…, 4..6, dark r/g/b)`.
  */
 function rgba2Hex(v: number[]): { light: string; dark: string } {
-  if (v.length !== 7) throw new CompileError(`rgba2 value needs 7 channels, got ${v.length}`);
+  if (v.length !== 7) throw new CompileError(`rgba2 value needs 7 channels, got ${v.length}`, 'CE_COMPILE_RGBA2_CHANNEL_COUNT');
   return { light: v.slice(0, 4).map(channelHex).join(''), dark: v.slice(4, 7).map(channelHex).join('') };
 }
 
@@ -1226,7 +1226,7 @@ const COLOUR_KEYS: Record<SlotColourShape, { channels: number; spelling: string;
 function colourKey(shape: SlotColourShape, v: number[]): Record<string, string | number> {
   const { channels, write } = COLOUR_KEYS[shape];
   if (v.length !== channels) {
-    throw new CompileError(`${shape} value needs ${channels} channel${channels === 1 ? '' : 's'}, got ${v.length}`);
+    throw new CompileError(`${shape} value needs ${channels} channel${channels === 1 ? '' : 's'}, got ${v.length}`, 'CE_COMPILE_COLOUR_CHANNEL_COUNT');
   }
   return write(v);
 }
@@ -1654,7 +1654,7 @@ function readJson<T>(path: string): T {
   try {
     text = readFileSync(path, 'utf8');
   } catch (err) {
-    throw new CompileError(`cannot read ${path}: ${(err as Error).message}`);
+    throw new CompileError(`cannot read ${path}: ${(err as Error).message}`, 'CE_COMPILE_JSON_READ_FAILED');
   }
   try {
     // A parse failure gets a line/column appended to the runtime's own
@@ -1662,7 +1662,7 @@ function readJson<T>(path: string): T {
     // cannot say where.
     return parseJsonWithPosition(text) as T;
   } catch (err) {
-    throw new CompileError(`cannot read ${path}: ${(err as Error).message}`);
+    throw new CompileError(`cannot read ${path}: ${(err as Error).message}`, 'CE_COMPILE_JSON_READ_FAILED');
   }
 }
 
@@ -1882,13 +1882,13 @@ function fromLoosePng(
     // Left to `readFileSync` this arrives as a raw ENOENT with a stack, which
     // is the tool telling an agent about its own internals instead of about
     // the rig. The validator's messages are the UI, and so are these.
-    throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`);
+    throw new CompileError(`image "${relPath}" is not on disk at ${absPath}`, 'CE_COMPILE_IMAGE_MISSING');
   }
   // A loose part IS a page of the atlas this route emits, so it is refused the
   // way a pack's page is (issue #732): by the one reader's sentence, as a
   // CompileError, rather than as that reader's throw with a stack under it.
   const header = readPngHeader(absPath);
-  if (header.problem !== null) throw new CompileError(`image "${relPath}": ${header.problem}`);
+  if (header.problem !== null) throw new CompileError(`image "${relPath}": ${header.problem}`, 'CE_COMPILE_IMAGE_PNG_INVALID');
   const info = header.info;
   // Page name is the PNG path *relative to the atlas file*, so the viewer
   // resolves it the way every Spine consumer does: against the atlas URL.
@@ -1913,7 +1913,7 @@ interface AtlasSource {
 }
 
 function readAtlasIn(path: string): AtlasSource {
-  if (!existsSync(path)) throw new CompileError(`--atlas-in names ${path}, which is not on disk`);
+  if (!existsSync(path)) throw new CompileError(`--atlas-in names ${path}, which is not on disk`, 'CE_COMPILE_ATLAS_INPUT_MISSING');
   const parsed = parseAtlasText(readFileSync(path, 'utf8'));
   const byName = new Map<string, { region: AtlasRegion; page: ParsedAtlas['pages'][number] }>();
   for (const page of parsed.pages) {
@@ -1925,7 +1925,7 @@ function readAtlasIn(path: string): AtlasSource {
       if (!byName.has(key)) byName.set(key, { region, page });
     }
   }
-  if (byName.size === 0) throw new CompileError(`--atlas-in ${path} declares no regions`);
+  if (byName.size === 0) throw new CompileError(`--atlas-in ${path} declares no regions`, 'CE_COMPILE_ATLAS_INPUT_EMPTY');
   // 🔒 **What each page IS, where the pack is opened** (issue #732). Every page
   // the pack names reaches the gate — the atlas this build emits is the pack's
   // own text — so a page no reader can open is refused here, all of them in
@@ -1958,7 +1958,7 @@ function readAtlasIn(path: string): AtlasSource {
   if (unread.length > 0) {
     throw new CompileError(
       `--atlas-in ${path}: ${unread.length} of its ${parsed.pages.length} page(s) cannot be read as PNG, and ` +
-        `nothing was compiled against the pack — ${unread.join('; ')}`,
+        `nothing was compiled against the pack — ${unread.join('; ')}`, 'CE_COMPILE_ATLAS_PAGES_UNREADABLE',
     );
   }
   return { path, dir: dirname(path), parsed, byName, grids };
@@ -2028,13 +2028,13 @@ function resolveFromAtlas(
     throw new CompileError(
       `image "${relPath}" resolves to region "${region}", which the atlas at ${atlas.path} does not have. ` +
         (near.length ? `Did you mean ${near.map((n) => JSON.stringify(n)).join(', ')}? ` : '') +
-        `The atlas declares ${known.length} region(s): ${known.join(', ')}`,
+        `The atlas declares ${known.length} region(s): ${known.join(', ')}`, 'CE_COMPILE_ATLAS_REGION_UNKNOWN',
     );
   }
   const absPath = resolve(atlas.dir, found.page.name);
   if (!existsSync(absPath)) {
     throw new CompileError(
-      `region "${region}" sits on page "${found.page.name}" of ${atlas.path}, which is not on disk at ${absPath}`,
+      `region "${region}" sits on page "${found.page.name}" of ${atlas.path}, which is not on disk at ${absPath}`, 'CE_COMPILE_ATLAS_REGION_PAGE_MISSING',
     );
   }
   // The rectangle ON THE PAGE, which at a quarter turn is not the one `bounds:`
@@ -2049,7 +2049,7 @@ function resolveFromAtlas(
     throw new CompileError(
       `region "${region}" is at ${found.region.x},${found.region.y} sized ${rectW}x${rectH} on a ` +
         `${found.page.width}x${found.page.height} page in ${atlas.path}; the rectangle runs off the page, so its ` +
-        'UVs would leave the texture',
+        'UVs would leave the texture', 'CE_COMPILE_ATLAS_REGION_OUTSIDE_PAGE',
     );
   }
   const info = readPngInfo(absPath);
@@ -2342,7 +2342,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       return fn();
     } catch (err) {
       if (err instanceof CompileError && !err.message.includes(motionPath)) {
-        throw new CompileError(`${motionPath}: ${err.message}`);
+        throw new CompileError(`${motionPath}: ${err.message}`, err.code);
       }
       throw err;
     }
@@ -2357,7 +2357,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     // does not — the class of wrongness that loads, plays and lies.
     if (motion.archetype !== rig.name) {
       throw new CompileError(
-        `motion spec names archetype "${motion.archetype}" but the rig spec at ${rigPath} is called "${rig.name}"`,
+        `motion spec names archetype "${motion.archetype}" but the rig spec at ${rigPath} is called "${rig.name}"`, 'CE_COMPILE_MOTION_ARCHETYPE_MISMATCH',
       );
     }
   });
@@ -2378,7 +2378,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   if (!noStage && (stageWidth === undefined || stageHeight === undefined)) {
     throw new CompileError(
       'no stage size: give the rig spec a `skeleton.width`/`skeleton.height`, or compile against a cut manifest whose `crop` states them, ' +
-        'or state `"width": null, "height": null` for a skeleton that declares no stage',
+        'or state `"width": null, "height": null` for a skeleton that declares no stage', 'CE_COMPILE_STAGE_SIZE_MISSING',
     );
   }
   /**
@@ -2434,7 +2434,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     partDir: string | null = dirname(resolve(baseDir, relPath)),
   ): CompiledImage => {
     if (seenRegions.has(region)) {
-      throw new CompileError(`duplicate region name "${region}" (${relPath})`);
+      throw new CompileError(`duplicate region name "${region}" (${relPath})`, 'CE_COMPILE_REGION_NAME_DUPLICATE');
     }
     const loosePath = resolve(baseDir, relPath);
     const img =
@@ -2485,7 +2485,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     throw new CompileError(
       `${where}: "${relPath}" and the art already atlased as region "${region}" are two different files — ` +
         `${wanted} and ${already}. An atlas region is named by its PNG's basename, so only one of the two can ` +
-        'hold that name and this attachment would draw the other file\'s pixels. Rename one of the PNGs.',
+        'hold that name and this attachment would draw the other file\'s pixels. Rename one of the PNGs.', 'CE_COMPILE_REGION_FILE_CONFLICT',
     );
   };
 
@@ -2516,7 +2516,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           `${where}: sequence ${frame} is the region "${region}", and there is no PNG for it at ${wanted}. A ` +
             `sequence's frames are the regions "<stem><start + i>", zero-padded to "digits" — here stem ` +
             `${JSON.stringify(stem)}, start ${seq.start ?? 1}, digits ${seq.digits ?? 0} — and the compiler draws ` +
-            'no frame in place of another. Add the file, or state the "count" the series really has.',
+            'no frame in place of another. Add the file, or state the "count" the series really has.', 'CE_COMPILE_SEQUENCE_FRAME_PNG_MISSING',
         );
       }
       if (atlasIn !== null && !atlasIn.byName.has(region)) {
@@ -2526,7 +2526,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             (near.length ? `Did you mean ${near.map((n) => JSON.stringify(n)).join(', ')}? ` : '') +
             `A sequence's frames are the regions "<stem><start + i>", zero-padded to "digits" — here stem ` +
             `${JSON.stringify(stem)}, start ${seq.start ?? 1}, digits ${seq.digits ?? 0} — and the compiler draws ` +
-            'no frame in place of another.',
+            'no frame in place of another.', 'CE_COMPILE_SEQUENCE_FRAME_REGION_MISSING',
         );
       }
       const already = regionSource.get(region);
@@ -2535,7 +2535,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         throw new CompileError(
           `${where}: sequence ${frame} is the region "${region}", and the art already atlased under that name is ` +
             `${already}, not ${wanted}. One region name is one set of pixels, so this frame would draw the other ` +
-            "file's. Rename one of them.",
+            "file's. Rename one of them.", 'CE_COMPILE_SEQUENCE_FRAME_FILE_CONFLICT',
         );
       }
       // The directory the frame NAMES are relative to — the images root, not
@@ -2575,7 +2575,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   for (const part of parts) {
     if (!rigSlotIndex.has(part.slot)) {
       throw new CompileError(
-        `the manifest binds a part to slot "${part.slot}" (via rig_slot), which the rig "${rig.name}" does not declare — add the slot to the rig rather than inventing one here`,
+        `the manifest binds a part to slot "${part.slot}" (via rig_slot), which the rig "${rig.name}" does not declare — add the slot to the rig rather than inventing one here`, 'CE_COMPILE_MANIFEST_SLOT_UNKNOWN',
       );
     }
   }
@@ -2589,7 +2589,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     const at = rigSlotIndex.get(part.slot)!;
     if (at < orderCursor) {
       throw new CompileError(
-        `the manifest draws "${part.slot}" (draw_order ${part.draw_order}) out of the rig's slot order; the rig's slots array IS the draw order`,
+        `the manifest draws "${part.slot}" (draw_order ${part.draw_order}) out of the rig's slot order; the rig's slots array IS the draw order`, 'CE_COMPILE_MANIFEST_DRAW_ORDER_MISMATCH',
       );
     }
     orderCursor = at;
@@ -2604,33 +2604,33 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   if (meshParts.length > meshBudget) {
     throw new CompileError(
       `${meshParts.length} mesh slot(s) declared but the rig "${rig.name}" allows ${meshBudget}` +
-        ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed',
+        ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed', 'CE_COMPILE_MANIFEST_MESH_SLOT_BUDGET',
     );
   }
   for (const part of meshParts) {
     if (isBasePlate(part, manifest!)) {
       // A base plate mesh is a full-frame canvas every frame.
-      throw new CompileError(`slot "${part.slot}" is the base plate; it must never be a mesh`);
+      throw new CompileError(`slot "${part.slot}" is the base plate; it must never be a mesh`, 'CE_COMPILE_BASE_PLATE_MESH');
     }
     const spec = part.mesh!;
     const kind = spec.kind ?? 'ring';
     if (kind === 'ring') {
       if (!part.polygon?.length) {
-        throw new CompileError(`slot "${part.slot}" declares a ring mesh but has no polygon to use as its rim`);
+        throw new CompileError(`slot "${part.slot}" declares a ring mesh but has no polygon to use as its rim`, 'CE_COMPILE_RING_POLYGON_MISSING');
       }
       if (spec.hull !== 'polygon') {
-        throw new CompileError(`slot "${part.slot}": mesh.hull must be "polygon", got ${JSON.stringify(spec.hull)}`);
+        throw new CompileError(`slot "${part.slot}": mesh.hull must be "polygon", got ${JSON.stringify(spec.hull)}`, 'CE_COMPILE_RING_HULL_INVALID');
       }
       if (!spec.center || spec.inner === undefined) {
-        throw new CompileError(`slot "${part.slot}": a ring mesh needs mesh.center and mesh.inner`);
+        throw new CompileError(`slot "${part.slot}": a ring mesh needs mesh.center and mesh.inner`, 'CE_COMPILE_RING_PARAMETERS_MISSING');
       }
     } else {
       if (!spec.rows || !spec.chain?.length) {
-        throw new CompileError(`slot "${part.slot}": a ribbon mesh needs mesh.rows and a mesh.chain`);
+        throw new CompileError(`slot "${part.slot}": a ribbon mesh needs mesh.rows and a mesh.chain`, 'CE_COMPILE_RIBBON_PARAMETERS_MISSING');
       }
     }
     if (!meshControlBones(part).length) {
-      throw new CompileError(`slot "${part.slot}": a mesh with no control bone deforms nothing`);
+      throw new CompileError(`slot "${part.slot}": a mesh with no control bone deforms nothing`, 'CE_COMPILE_MESH_CONTROL_BONE_MISSING');
     }
   }
 
@@ -2656,7 +2656,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       const img = addImage(part.image, manifestDir!, isBasePlate(part, manifest!));
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
-          `${measuredFrom(img, part.image)} is ${img.width}x${img.height} but the manifest window for "${part.slot}" is ${win.w}x${win.h}`,
+          `${measuredFrom(img, part.image)} is ${img.width}x${img.height} but the manifest window for "${part.slot}" is ${win.w}x${win.h}`, 'CE_COMPILE_MANIFEST_WINDOW_SIZE_MISMATCH',
         );
       }
       slotAttachments.set(part.slot, [img.region]);
@@ -2691,7 +2691,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       const img = addImage(relPath, manifestDir!, false);
       if (img.width !== win.w || img.height !== win.h) {
         throw new CompileError(
-          `${measuredFrom(img, relPath)} is ${img.width}x${img.height} but slot "${part.slot}" declares ${win.w}x${win.h}`,
+          `${measuredFrom(img, relPath)} is ${img.width}x${img.height} but slot "${part.slot}" declares ${win.w}x${win.h}`, 'CE_COMPILE_SLOT_IMAGE_SIZE_MISMATCH',
         );
       }
       names.push(img.region);
@@ -2714,11 +2714,11 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   for (const skinName of skinNames) {
     for (const [slotName, placeholders] of Object.entries(skinParts.get(skinName)!.attachments)) {
       if (!rigSlotIndex.has(slotName)) {
-        throw new CompileError(`rig skin "${skinName}" gives attachments to slot "${slotName}", which the rig does not declare`);
+        throw new CompileError(`rig skin "${skinName}" gives attachments to slot "${slotName}", which the rig does not declare`, 'CE_COMPILE_SKIN_SLOT_UNKNOWN');
       }
       if (slotAttachments.has(slotName)) {
         throw new CompileError(
-          `slot "${slotName}" is filled by a manifest part AND by rig skin "${skinName}"; one slot, one source of attachments`,
+          `slot "${slotName}" is filled by a manifest part AND by rig skin "${skinName}"; one slot, one source of attachments`, 'CE_COMPILE_SLOT_ATTACHMENT_SOURCES_CONFLICT',
         );
       }
       const names = rigAttachmentNames.get(slotName) ?? [];
@@ -2809,7 +2809,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     transforms = computeWorldTransforms(bones);
     exactFrames = computeExactFrameTransforms(bones);
   } catch (err) {
-    if (err instanceof TransformError) throw new CompileError(err.message);
+    if (err instanceof TransformError) throw new CompileError(err.message, 'CE_COMPILE_SETUP_TRANSFORM_INVALID');
     throw err;
   }
 
@@ -2817,7 +2817,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     for (const name of meshControlBones(part)) {
       if (!boneNames.has(name)) {
         throw new CompileError(
-          `slot "${part.slot}" drives control bone "${name}", which the rig "${rig.name}" does not declare`,
+          `slot "${part.slot}" drives control bone "${name}", which the rig "${rig.name}" does not declare`, 'CE_COMPILE_CONTROL_BONE_UNKNOWN',
         );
       }
     }
@@ -2909,7 +2909,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     // here down is the half that needs the rig in front of it.
     if (setup !== undefined && rigSlot.attachment !== undefined) {
       throw new CompileError(
-        `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`,
+        `slot "${rigSlot.name}" has a setup attachment in the rig spec AND in the motion spec; the setup pose has one author`, 'CE_COMPILE_SETUP_ATTACHMENT_AUTHORS_CONFLICT',
       );
     }
     let setupAttachment: string | null;
@@ -2922,7 +2922,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
     else if (empty) setupAttachment = null;
     else {
       throw new CompileError(
-        `no setup pose for slot "${rigSlot.name}": give the motion spec a \`setup\` entry or the rig slot an \`attachment\` — the compiler will not guess one`,
+        `no setup pose for slot "${rigSlot.name}": give the motion spec a \`setup\` entry or the rig slot an \`attachment\` — the compiler will not guess one`, 'CE_COMPILE_SETUP_ATTACHMENT_MISSING',
       );
     }
     if (setupAttachment !== null && !names.includes(setupAttachment)) {
@@ -2971,10 +2971,10 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           `no art: ${found} — ${supply}, ${many ? 'fix the paths' : 'fix the path'} in the manifest, or state the ` +
           'setup pose as null';
       }
-      throw new CompileError(message);
+      throw new CompileError(message, 'CE_COMPILE_SETUP_ATTACHMENT_UNAVAILABLE');
     }
     if (setup?.color && rigSlot.color !== undefined) {
-      throw new CompileError(`slot "${rigSlot.name}" has a setup colour in the rig spec AND in the motion spec`);
+      throw new CompileError(`slot "${rigSlot.name}" has a setup colour in the rig spec AND in the motion spec`, 'CE_COMPILE_SETUP_COLOUR_AUTHORS_CONFLICT');
     }
     // The setup attachment is held as the value it is, `null` included; leaving
     // the key out for `null` is the emitter's (`emitSlots`).
@@ -3001,7 +3001,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       const mesh = part.mesh ? buildMesh(part, manifest!, bones, transforms, exactFrames, rigSlot.bone) : null;
       for (const name of names) {
         const img = images.find((im) => im.region === name);
-        if (!img) throw new CompileError(`internal: no image for attachment ${name}`);
+        if (!img) throw new CompileError(`internal: no image for attachment ${name}`, 'CE_COMPILE_INTERNAL_ATTACHMENT_IMAGE_MISSING');
         if (mesh) {
           // Every state of a mesh slot gets the SAME geometry. That is what makes
           // an attachment swap mid-deform safe: the control bone's pose means the
@@ -3089,7 +3089,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             `${budgeted.length}, "meshTriangles": <triangles one mesh may carry> }\` to the rig spec: geometry rigc ` +
             'built is geometry it will not ship unmeasured, and `A13_MESH_BUDGET` has nothing to measure against ' +
             'until that budget is stated. (Authored geometry is exempt — rigc did not draw it.)'
-          : ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed'),
+          : ' — raise `invariants.meshSlots` in the rig spec if that budget is the thing being changed'), 'CE_COMPILE_GENERATED_MESH_SLOT_BUDGET',
     );
   }
 
@@ -3126,7 +3126,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       throw new CompileError(
         `physics constraint "${EVERY_GLOBAL_PHYSICS}": the name is reserved — a motion spec's \`"physics": ` +
           `"${EVERY_GLOBAL_PHYSICS}"\` is the timeline that names no constraint and drives every physics constraint ` +
-          'declaring the keyed property global, so a constraint called that could not be keyed by name. Rename it',
+          'declaring the keyed property global, so a constraint called that could not be keyed by name. Rename it', 'CE_COMPILE_PHYSICS_NAME_RESERVED',
       );
     }
     constraintDeclared.add(constraintAt(type, name));
@@ -3199,12 +3199,12 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       // apart.
       if (constraintDeclared.has(constraintAt('physics', name))) {
         throw new CompileError(
-          `physics constraint "${name}" is declared in both the rig spec and the motion spec's physics table`,
+          `physics constraint "${name}" is declared in both the rig spec and the motion spec's physics table`, 'CE_COMPILE_PHYSICS_DECLARATION_DUPLICATE',
         );
       }
       declareConstraint(name, 'physics');
       if (!boneNames.has(spec.bone)) {
-        throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`);
+        throw new CompileError(`physics constraint "${name}" targets unknown bone "${spec.bone}"`, 'CE_COMPILE_PHYSICS_BONE_UNKNOWN');
       }
       // A stop's copy and clamps sit right after the rig constraint that swings
       // each link (`src/stop.ts`); this table is emitted after every rig
@@ -3214,7 +3214,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         throw new CompileError(
           `physics constraint "${name}" drives "${spec.bone}", a link stop "${stop.chain}" holds, from the physics table — ` +
             "the table is emitted after every rig constraint, past the stop's copy and clamp, which would read the link " +
-            'before this swings it; declare the constraint in the rig spec\'s "constraints"',
+            'before this swings it; declare the constraint in the rig spec\'s "constraints"', 'CE_COMPILE_PHYSICS_STOP_ORDER_INVALID',
         );
       }
       // Every component and parameter the table states is held, 0 and the
@@ -3233,7 +3233,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         // The parser is happy with this and the constraint does nothing at all.
         // A23 catches it too; refusing here means it never reaches the gate.
         throw new CompileError(
-          `physics constraint "${name}" drives no component — set at least one of ${PHYSICS_COMPONENTS.join('/')}`,
+          `physics constraint "${name}" drives no component — set at least one of ${PHYSICS_COMPONENTS.join('/')}`, 'CE_COMPILE_PHYSICS_COMPONENTS_EMPTY',
         );
       }
       for (const [param] of PHYSICS_PARAMS) {
@@ -3342,7 +3342,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           if (everyGlobal && track.physics === undefined) {
             throw new CompileError(
               `animation "${animName}": group "${String(track.group)}" lists "${EVERY_GLOBAL_PHYSICS}", which is not a ` +
-                `constraint but the target that names none — write it as the track's \`"physics": "${EVERY_GLOBAL_PHYSICS}"\``,
+                `constraint but the target that names none — write it as the track's \`"physics": "${EVERY_GLOBAL_PHYSICS}"\``, 'CE_COMPILE_PHYSICS_GLOBAL_GROUP_MEMBER',
             );
           }
           if (everyGlobal) {
@@ -3364,7 +3364,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                   ' — it would parse and move nothing. ' +
                   (track.property === 'reset'
                     ? 'Declare a physics constraint, or remove the track'
-                    : `Set "${flag}": true on the constraints it is for, or key one by name`),
+                    : `Set "${flag}": true on the constraints it is for, or key one by name`), 'CE_COMPILE_PHYSICS_GLOBAL_TRACK_INERT',
               );
             }
           } else if (family !== null) {
@@ -3380,21 +3380,21 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               if (kinds.length > 0) {
                 throw new CompileError(
                   `animation "${animName}" keys "${target}" as a ${label}, but the rig declares it as a "${kinds.join('"/"')}" ` +
-                    'constraint — a timeline group resolves its target by name AND type, misses, and the loader throws',
+                    'constraint — a timeline group resolves its target by name AND type, misses, and the loader throws', 'CE_COMPILE_CONSTRAINT_TRACK_TYPE_MISMATCH',
                 );
               }
               const known = constraintNamesOfKind.get(family) ?? [];
               throw new CompileError(
                 `animation "${animName}" keys unknown ${label} "${target}"` +
-                  (known.length ? ` (the rig declares: ${known.join(', ')})` : `, and the rig declares no ${family} constraint at all`),
+                  (known.length ? ` (the rig declares: ${known.join(', ')})` : `, and the rig declares no ${family} constraint at all`), 'CE_COMPILE_CONSTRAINT_TRACK_TARGET_UNKNOWN',
               );
             }
           } else if (isBoneTrack) {
             if (!boneNames.has(target)) {
-              throw new CompileError(`animation "${animName}" keys unknown bone "${target}"`);
+              throw new CompileError(`animation "${animName}" keys unknown bone "${target}"`, 'CE_COMPILE_ANIMATION_BONE_UNKNOWN');
             }
           } else if (!slotNames.has(target)) {
-            throw new CompileError(`animation "${animName}" targets unknown slot "${target}"`);
+            throw new CompileError(`animation "${animName}" targets unknown slot "${target}"`, 'CE_COMPILE_ANIMATION_SLOT_UNKNOWN');
           }
           // A timeline is a kind, a name and a property — `physics.leg.mix` and
           // `path.leg.mix` are two timelines on two constraints, so the claim
@@ -3403,7 +3403,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
           const claim = `${family ?? (isBoneTrack ? 'bone' : 'slot')} ${target}.${track.property}`;
           if (claimed.has(claim)) {
             throw new CompileError(
-              `animation "${animName}" has two tracks on ${target}.${track.property}; merge them into one track`,
+              `animation "${animName}" has two tracks on ${target}.${track.property}; merge them into one track`, 'CE_COMPILE_ANIMATION_TRACK_DUPLICATE',
             );
           }
           claimed.add(claim);
@@ -3427,7 +3427,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
                   'channels at every time, its setup value before its first key included, so the one the file states ' +
                   'later overwrites the other everywhere and the first one\'s keys there are read by nothing. Key each ' +
                   'channel once: "rgb" and "alpha" move the light colour\'s two halves on their own key times, "rgba" ' +
-                  'moves them together, and "rgb2" / "rgba2" add the dark colour',
+                  'moves them together, and "rgb2" / "rgba2" add the dark colour', 'CE_COMPILE_COLOUR_TRACK_CHANNEL_OVERLAP',
               );
             }
           }
@@ -3480,7 +3480,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
             if (kinds.length > 0) {
               throw new CompileError(
                 `animation "${animName}" keys "${name}" as ${group === 'ik' ? 'an' : 'a'} ${group} constraint, but the rig declares it as a ` +
-                  `"${kinds.join('"/"')}" constraint — the parser looks a timeline's target up by name AND type, misses, and throws`,
+                  `"${kinds.join('"/"')}" constraint — the parser looks a timeline's target up by name AND type, misses, and throws`, 'CE_COMPILE_CONSTRAINT_TIMELINE_TYPE_MISMATCH',
               );
             }
             const known = constraintNamesOfKind.get(group) ?? [];
@@ -3488,13 +3488,13 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
               `animation "${animName}" keys unknown ${group} constraint "${name}"; ` +
                 (known.length
                   ? `the rig declares ${group} constraint(s): ${known.join(', ')}`
-                  : `the rig declares no ${group} constraint at all`),
+                  : `the rig declares no ${group} constraint at all`), 'CE_COMPILE_CONSTRAINT_TIMELINE_TARGET_UNKNOWN',
             );
           }
           if (constraintTimelines[group].has(name)) {
             throw new CompileError(
               `animation "${animName}" has two ${group} timelines on constraint "${name}"; ` +
-                'the group holds one timeline per constraint, so merge them into one',
+                'the group holds one timeline per constraint, so merge them into one', 'CE_COMPILE_CONSTRAINT_TIMELINE_DUPLICATE',
             );
           }
           const keys = compileConstraintTrack(
@@ -3532,25 +3532,25 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         const table = skinTables.get(skinName);
         if (!table) {
           throw new CompileError(
-            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`,
+            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`, 'CE_COMPILE_ATTACHMENT_TIMELINE_SKIN_UNKNOWN',
           );
         }
         const perSlot = table[track.slot];
         if (!perSlot) {
           throw new CompileError(
             `${at}: skin "${skinName}" gives slot "${String(track.slot)}" no attachments` +
-              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'),
+              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'), 'CE_COMPILE_ATTACHMENT_TIMELINE_SLOT_EMPTY',
           );
         }
         const attachment = perSlot[track.attachment];
         if (!attachment) {
           throw new CompileError(
             `${at}: slot "${track.slot}" in skin "${skinName}" has no attachment "${String(track.attachment)}" ` +
-              `(it has: ${Object.keys(perSlot).join(', ')})`,
+              `(it has: ${Object.keys(perSlot).join(', ')})`, 'CE_COMPILE_ATTACHMENT_TIMELINE_ATTACHMENT_UNKNOWN',
           );
         }
         if (deformTimelines.get(skinName)?.get(track.slot)?.has(track.attachment)) {
-          throw new CompileError(`${at}: two deform timelines on one attachment; merge them into one`);
+          throw new CompileError(`${at}: two deform timelines on one attachment; merge them into one`, 'CE_COMPILE_DEFORM_TIMELINE_DUPLICATE');
         }
         const keys = compileDeformTrack(
           track,
@@ -3579,28 +3579,28 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
         const table = skinTables.get(skinName);
         if (!table) {
           throw new CompileError(
-            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`,
+            `${at}: this rig emits no skin called "${skinName}" (it emits: ${[...skinTables.keys()].join(', ')})`, 'CE_COMPILE_ATTACHMENT_TIMELINE_SKIN_UNKNOWN',
           );
         }
         const perSlot = table[track.slot];
         if (!perSlot) {
           throw new CompileError(
             `${at}: skin "${skinName}" gives slot "${String(track.slot)}" no attachments` +
-              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'),
+              (slotNames.has(track.slot) ? '' : ', and this rig does not declare that slot at all'), 'CE_COMPILE_ATTACHMENT_TIMELINE_SLOT_EMPTY',
           );
         }
         const attachment = perSlot[track.attachment];
         if (!attachment) {
           throw new CompileError(
             `${at}: slot "${track.slot}" in skin "${skinName}" has no attachment "${String(track.attachment)}" ` +
-              `(it has: ${Object.keys(perSlot).join(', ')})`,
+              `(it has: ${Object.keys(perSlot).join(', ')})`, 'CE_COMPILE_ATTACHMENT_TIMELINE_ATTACHMENT_UNKNOWN',
           );
         }
         const keys = compileSequenceTrack(track, anim.duration, attachment, at);
         for (const key of keys) compiledDuration = Math.max(compiledDuration, key.time);
         const slot = attachmentTimelinesOf(skinName, track.slot);
         if (slot.get(track.attachment)?.sequence) {
-          throw new CompileError(`${at}: two sequence timelines on one attachment; merge them into one`);
+          throw new CompileError(`${at}: two sequence timelines on one attachment; merge them into one`, 'CE_COMPILE_SEQUENCE_TIMELINE_DUPLICATE');
         }
         slot.set(track.attachment, { ...(slot.get(track.attachment) ?? {}), sequence: keys });
       }
@@ -3625,7 +3625,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
       // a key on a track whose neighbour already sits on the declared duration.
       if (Math.abs(compiledDuration - anim.duration) > FRAME) {
         throw new CompileError(
-          `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`,
+          `animation "${animName}" declares duration ${anim.duration}s but its last key is at ${compiledDuration}s`, 'CE_COMPILE_ANIMATION_DURATION_MISMATCH',
         );
       }
       // The model's record of the animation. Which groups the file carries, in
@@ -3715,7 +3715,7 @@ function compileInto(opts: CompileOptions, droppedStates: DroppedState[]): Compi
   const editorOrder: ModelEditorOrder = editorOrderOver(skins, [...animations.keys()]);
 
   for (const slot of slots) {
-    if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`);
+    if (!boneNames.has(slot.bone)) throw new CompileError(`slot "${slot.name}" has no bone`, 'CE_COMPILE_SLOT_BONE_MISSING');
   }
 
   // One bone order per weighted attachment (issue #1407), on the finished
@@ -3904,7 +3904,7 @@ function buildBone(spec: RigBone, soFar: ModelBone[], ctx: BoneContext): ModelBo
       bone.y = f32(world[1]);
     } else {
       const parent = computeWorldTransforms(soFar).get(spec.parent);
-      if (!parent) throw new CompileError(`bone "${spec.name}" names parent "${spec.parent}", which is declared after it`);
+      if (!parent) throw new CompileError(`bone "${spec.name}" names parent "${spec.parent}", which is declared after it`, 'CE_COMPILE_BONE_PARENT_ORDER');
       const [lx, ly] = toBoneLocal(parent, world[0], world[1]);
       bone.x = f32(lx);
       bone.y = f32(ly);
@@ -3936,7 +3936,7 @@ function cropPointOf(spec: RigBone, ctx: BoneContext): [number, number] | null {
   if (!from) return null;
   const needManifest = (what: string): FaceManifest => {
     if (!ctx.manifest) {
-      throw new CompileError(`bone "${spec.name}" takes its position from ${what}, which needs a cut manifest`);
+      throw new CompileError(`bone "${spec.name}" takes its position from ${what}, which needs a cut manifest`, 'CE_COMPILE_BONE_POSITION_MANIFEST_REQUIRED');
     }
     return ctx.manifest;
   };
@@ -3945,7 +3945,7 @@ function cropPointOf(spec: RigBone, ctx: BoneContext): [number, number] | null {
     const anchor = manifest.anchors?.[from.anchor];
     if (!anchor || anchor.length < 2) {
       throw new CompileError(
-        `manifest anchors has no [x, y] for "${from.anchor}" (bone "${spec.name}" of rig "${ctx.rig.name}")`,
+        `manifest anchors has no [x, y] for "${from.anchor}" (bone "${spec.name}" of rig "${ctx.rig.name}")`, 'CE_COMPILE_BONE_ANCHOR_MISSING',
       );
     }
     return [anchor[0], anchor[1]];
@@ -3955,7 +3955,7 @@ function cropPointOf(spec: RigBone, ctx: BoneContext): [number, number] | null {
     const part = ctx.partBySlot.get(from.slotWindow);
     if (!part) {
       throw new CompileError(
-        `bone "${spec.name}" sits at the centre of slot "${from.slotWindow}", which this cut's manifest carries no part for`,
+        `bone "${spec.name}" sits at the centre of slot "${from.slotWindow}", which this cut's manifest carries no part for`, 'CE_COMPILE_BONE_SLOT_WINDOW_MISSING',
       );
     }
     const win = partWindow(part, manifest);
@@ -3966,7 +3966,7 @@ function cropPointOf(spec: RigBone, ctx: BoneContext): [number, number] | null {
     const centre = ctx.partBySlot.get(from.meshCenter)?.mesh?.center;
     if (!centre) {
       throw new CompileError(
-        `bone "${spec.name}" sits on the mesh centre of slot "${from.meshCenter}", which declares no mesh.center`,
+        `bone "${spec.name}" sits on the mesh centre of slot "${from.meshCenter}", which declares no mesh.center`, 'CE_COMPILE_BONE_MESH_CENTER_MISSING',
       );
     }
     return [centre[0], centre[1]];
@@ -3979,7 +3979,7 @@ function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
   const source = spec.from?.rotation;
   if (source === 'axis') {
     if (ctx.axisSpineDeg === null) {
-      throw new CompileError(`bone "${spec.name}" takes its rotation from the cut axis, which the manifest does not declare`);
+      throw new CompileError(`bone "${spec.name}" takes its rotation from the cut axis, which the manifest does not declare`, 'CE_COMPILE_BONE_ROTATION_AXIS_MISSING');
     }
     return ctx.axisSpineDeg;
   }
@@ -3988,7 +3988,7 @@ function rotationOf(spec: RigBone, ctx: BoneContext): number | null {
     const anchor = ctx.manifest?.anchors?.[key];
     if (!anchor || anchor.length < 3) {
       throw new CompileError(
-        `bone "${spec.name}" takes its rotation from anchor "${key}", which has no third element (a screen-space facing angle)`,
+        `bone "${spec.name}" takes its rotation from anchor "${key}", which has no third element (a screen-space facing angle)`, 'CE_COMPILE_BONE_ANCHOR_ROTATION_MISSING',
       );
     }
     return screenToSpineDegrees(anchor[2]);
@@ -4124,7 +4124,7 @@ function refuseDefaultSkinContest(slotName: string, placeholder: string, skins: 
       `"Multiple attachments have the same name: ${placeholder} ${placeholder}", because a default-skin attachment ` +
       "hangs on the slot beside the named skins' placeholder of that name. Move the default skin's entry for this " +
       `slot into a named skin — call it "base" — so every skin filling "${placeholder}" is a named one. Two or more ` +
-      'named skins sharing a placeholder is the shape the editor exports itself, and it needs no `name` (#796).',
+      'named skins sharing a placeholder is the shape the editor exports itself, and it needs no `name` (#796).', 'CE_COMPILE_DEFAULT_SKIN_PLACEHOLDER_CONFLICT',
   );
 }
 
@@ -4304,7 +4304,7 @@ function buildRigAttachment(
         `is one of ${SPINE_ATTACHMENT_TYPES.join(', ')}, or the key is absent and reads as "region". ` +
         'PRESENT-and-null is not absent: `getValue(map, "type", "region")` takes the default only when the key is ' +
         'missing (`SkeletonJson.ts:527`), so this map matches no case, `readAttachment` returns null (`:653`), and ' +
-        'the attachment is dropped from the skeleton without a word. Remove the key, or name a type.',
+        'the attachment is dropped from the skeleton without a word. Remove the key, or name a type.', 'CE_COMPILE_ATTACHMENT_TYPE_NOT_NAME',
     );
   }
   const type = stated ?? 'region';
@@ -4319,7 +4319,7 @@ function buildRigAttachment(
       `${where}: "name" is ${JSON.stringify(statedName) ?? String(statedName)}, which is not a string. An ` +
         "attachment's name is the runtime's `Attachment.name` — `getValue(map, \"name\", placeholder)`, " +
         '`SkeletonJson.js:526` — and on a region, mesh or linked mesh it is also what `path` defaults to. Write it ' +
-        'as a string, or leave the key out and the attachment is named by its placeholder.',
+        'as a string, or leave the key out and the attachment is named by its placeholder.', 'CE_COMPILE_ATTACHMENT_NAME_NOT_STRING',
     );
   }
   // A linked mesh in the format's OTHER spelling. `type: "mesh"` and `type:
@@ -4337,7 +4337,7 @@ function buildRigAttachment(
   if (type === 'boundingbox') return buildRigBoundingBox(att as RigBoundingBoxAttachment, where, ctx);
   if (type === 'clipping') return buildRigClipping(att as RigClippingAttachment, where, ctx);
   if (type === 'path') return buildRigPath(att as RigPathAttachment, where, ctx);
-  if (DEFERRED_ATTACHMENTS[type] !== undefined) throw new NotImplementedError(deferredAttachmentRefusal(type, where, ''));
+  if (DEFERRED_ATTACHMENTS[type] !== undefined) throw new NotImplementedError(deferredAttachmentRefusal(type, where, ''), 'CE_COMPILE_ATTACHMENT_TYPE_DEFERRED');
   const near = nearMisses(type, SPINE_ATTACHMENT_TYPES);
   throw new CompileError(
     `${where}: attachment type "${type}" is not one of the ${SPINE_ATTACHMENT_TYPES.length} the Spine 4.3 format ` +
@@ -4349,7 +4349,7 @@ function buildRigAttachment(
       // this format standing one level up from where it was written.
       (type === 'sequence'
         ? ' "sequence" is a KEY on a region or a mesh rather than a type of its own (docs/SPEC_COVERAGE.md part 1-6).'
-        : ''),
+        : ''), 'CE_COMPILE_ATTACHMENT_TYPE_UNKNOWN',
   );
 }
 
@@ -4386,26 +4386,26 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
   if (typeof count !== 'number' || !Number.isInteger(count) || count < 3) {
     throw new CompileError(
       `${where}: vertexCount is ${JSON.stringify(count)}; a polygon needs at least 3 vertices, stated outright — ` +
-        'the field has no parser default, and an absent one reads as 0 and takes the polygon with it',
+        'the field has no parser default, and an absent one reads as 0 and takes the polygon with it', 'CE_COMPILE_POLYGON_VERTEX_COUNT_INVALID',
     );
   }
   if (att.vertices && att.weights) {
     throw new CompileError(
-      `${where}: geometry comes as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`,
+      `${where}: geometry comes as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`, 'CE_COMPILE_VERTEX_GEOMETRY_SOURCES_CONFLICT',
     );
   }
   if (att.weights) {
     if (att.boneIndexing === 'raw') {
-      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`);
+      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`, 'CE_COMPILE_NAMED_WEIGHTS_RAW_INDEXING');
     }
     if (att.weights.length !== count) {
-      throw new CompileError(`${where}: weights cover ${att.weights.length} vertices but vertexCount is ${count}`);
+      throw new CompileError(`${where}: weights cover ${att.weights.length} vertices but vertexCount is ${count}`, 'CE_COMPILE_POLYGON_WEIGHT_VERTEX_COUNT');
     }
     return { weighted: true, bindings: bindNamedWeights(att.weights, where, ctx) };
   }
   const raw = att.vertices;
   if (!raw || raw.length === 0) {
-    throw new CompileError(`${where}: needs geometry — "vertices" (x, y per vertex) or "weights" (bound by name)`);
+    throw new CompileError(`${where}: needs geometry — "vertices" (x, y per vertex) or "weights" (bound by name)`, 'CE_COMPILE_POLYGON_GEOMETRY_MISSING');
   }
   const unweighted = raw.length === count * 2;
   if (!unweighted) {
@@ -4415,7 +4415,7 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
           'The parser reads that as a WEIGHTED run, whose bone INDEXES point into the emitted bone array — a list ' +
           'the spec never writes, so inserting a bone rebinds every vertex in silence. ' +
           'Give the bindings by name as "weights": [[{ "bone": …, "x": …, "y": …, "weight": … }, …], …], ' +
-          'fix vertexCount, or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
+          'fix vertexCount, or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.', 'CE_COMPILE_POLYGON_WEIGHTED_RUN_IMPLICIT',
       );
     }
     // A raw run still has to decode to exactly `vertexCount` vertices, or the
@@ -4423,7 +4423,7 @@ function buildVertexGeometry(att: RigVertexGeometry, where: string, ctx: Attachm
     checkRawRunShape(raw, count, `vertexCount is ${count}`, where);
   }
   for (const n of raw) {
-    if (!Number.isFinite(n)) throw new CompileError(`${where}: the vertex array holds a non-finite value ${String(n)}`);
+    if (!Number.isFinite(n)) throw new CompileError(`${where}: the vertex array holds a non-finite value ${String(n)}`, 'CE_COMPILE_VERTEX_VALUE_NONFINITE');
   }
   if (unweighted) return { weighted: false, xy: raw.map(f32) };
   const bindings = bindRawRun(raw.map(f32), ctx.bones, where);
@@ -4442,17 +4442,17 @@ function checkRawRunShape(raw: readonly number[], vertices: number, countSays: s
   for (let i = 0; i < raw.length; decoded++) {
     const bones = raw[i++];
     if (!Number.isInteger(bones) || bones < 1) {
-      throw new CompileError(`${where}: the raw weighted run has a bone count of ${String(bones)} at index ${i - 1}`);
+      throw new CompileError(`${where}: the raw weighted run has a bone count of ${String(bones)} at index ${i - 1}`, 'CE_COMPILE_RAW_WEIGHT_BONE_COUNT_INVALID');
     }
     i += bones * 4;
     if (i > raw.length) {
       throw new CompileError(
-        `${where}: the raw weighted run is truncated — vertex ${decoded} claims ${bones} bone(s) and the array ends first`,
+        `${where}: the raw weighted run is truncated — vertex ${decoded} claims ${bones} bone(s) and the array ends first`, 'CE_COMPILE_RAW_WEIGHT_RUN_TRUNCATED',
       );
     }
   }
   if (decoded !== vertices) {
-    throw new CompileError(`${where}: the raw weighted run decodes to ${decoded} vertices but ${countSays}`);
+    throw new CompileError(`${where}: the raw weighted run decodes to ${decoded} vertices but ${countSays}`, 'CE_COMPILE_RAW_WEIGHT_VERTEX_COUNT_MISMATCH');
   }
 }
 
@@ -4475,7 +4475,7 @@ function bindRawRun(run: readonly number[], bones: readonly ModelBone[], where: 
     for (let k = 0; k < count; k++, i += 4) {
       const bone = bones[run[i]];
       if (bone === undefined) {
-        throw new CompileError(`${where}: vertex ${out.length} binds bone index ${run[i]}, which is not in the bone list`);
+        throw new CompileError(`${where}: vertex ${out.length} binds bone index ${run[i]}, which is not in the bone list`, 'CE_COMPILE_RAW_WEIGHT_BONE_INDEX_UNKNOWN');
       }
       vertex.push({ bone: bone.name, x: run[i + 1], y: run[i + 2], weight: run[i + 3] });
     }
@@ -4676,13 +4676,13 @@ function resolveStageBox(
   if (asked === undefined) return null;
   const field = `skeleton.stageBox (slot "${asked.slot}", attachment "${asked.attachment}")`;
   if (ctx.stageWidth === undefined || ctx.stageHeight === undefined) {
-    throw new CompileError(`${field}: the rig declares no stage, so there is no box to write — state skeleton.width and skeleton.height`);
+    throw new CompileError(`${field}: the rig declares no stage, so there is no box to write — state skeleton.width and skeleton.height`, 'CE_COMPILE_STAGE_BOX_STAGE_MISSING');
   }
   const rigSlot = rig.slots.find((s) => s.name === asked.slot);
   if (rigSlot === undefined) {
     throw new CompileError(
       `${field}: slot "${asked.slot}" is not one the rig declares. Declare it in "slots" — where it stands in the ` +
-        `array is its place in the draw order, and its "bone" is the box's bone — e.g. { "name": "${asked.slot}", "bone": "root", "attachment": "${asked.attachment}" }`,
+        `array is its place in the draw order, and its "bone" is the box's bone — e.g. { "name": "${asked.slot}", "bone": "root", "attachment": "${asked.attachment}" }`, 'CE_COMPILE_STAGE_BOX_SLOT_UNKNOWN',
     );
   }
   const filledBy = [
@@ -4694,13 +4694,13 @@ function resolveStageBox(
   if (filledBy.length > 0) {
     throw new CompileError(
       `${field}: slot "${asked.slot}" is also filled by ${filledBy.join(' and ')}. The stage box is its slot's one ` +
-        'attachment, so a reader of that slot finds the stage and nothing else: give the box a slot of its own',
+        'attachment, so a reader of that slot finds the stage and nothing else: give the box a slot of its own', 'CE_COMPILE_STAGE_BOX_SLOT_CONFLICT',
     );
   }
   // The box's bone: the root, stating no setup transform — as built, so a root placed `from` the manifest is read as placed.
   const bone = ctx.bones.find((b) => b.name === rigSlot.bone);
   if (bone === undefined) {
-    throw new CompileError(`${field}: slot "${asked.slot}" names bone "${rigSlot.bone}", which the rig does not declare`);
+    throw new CompileError(`${field}: slot "${asked.slot}" names bone "${rigSlot.bone}", which the rig does not declare`, 'CE_COMPILE_STAGE_BOX_BONE_UNKNOWN');
   }
   if (bone.parent !== undefined) {
     throw new CompileError(
@@ -4708,7 +4708,7 @@ function resolveStageBox(
         "the stage's corners in world space, written as they are, and the gate holds them on the header's grid " +
         "through the runtime's own frame of an unrotated root; every bone below it adds that frame's residue once " +
         "more (the runtime spells an unrotated b as cos 90° at its pi, -2.3e-8 per level). Put the slot on the root " +
-        `("${ctx.bones[0]?.name ?? 'root'}")`,
+        `("${ctx.bones[0]?.name ?? 'root'}")`, 'CE_COMPILE_STAGE_BOX_BONE_NOT_ROOT',
     );
   }
   const stated = [
@@ -4719,7 +4719,7 @@ function resolveStageBox(
     throw new CompileError(
       `${field}: slot "${asked.slot}" hangs on the root "${bone.name}", which states a setup transform (${stated.join(', ')}). ` +
         "The box's vertices are the stage's corners in world space, written as they are, so the root must not move, " +
-        'turn, scale or shear at setup — move what the root carries onto a bone below it, or drop stageBox',
+        'turn, scale or shear at setup — move what the root carries onto a bone below it, or drop stageBox', 'CE_COMPILE_STAGE_BOX_ROOT_TRANSFORMED',
     );
   }
   const x = rig.skeleton?.x ?? 0;
@@ -4760,7 +4760,7 @@ function buildRigClipping(
     if (typeof att.end !== 'string' || !ctx.slotNames.has(att.end)) {
       throw new CompileError(
         `${where}: end names slot ${JSON.stringify(att.end)}, which this rig does not declare; ` +
-          'a miss loads as null and the clip then runs to the bottom of the draw order',
+          'a miss loads as null and the clip then runs to the bottom of the draw order', 'CE_COMPILE_CLIPPING_END_SLOT_UNKNOWN',
       );
     }
   }
@@ -4804,7 +4804,7 @@ function setupWorldVertices(
     let y = 0;
     for (const binding of vertex) {
       const m = transforms.get(binding.bone);
-      if (!m) throw new CompileError(`${where}: vertex ${out.length} binds bone "${binding.bone}", which has no setup transform`);
+      if (!m) throw new CompileError(`${where}: vertex ${out.length} binds bone "${binding.bone}", which has no setup transform`, 'CE_COMPILE_VERTEX_BIND_TRANSFORM_MISSING');
       const [wx, wy] = toWorld(m, binding.x, binding.y);
       x += wx * binding.weight;
       y += wy * binding.weight;
@@ -4947,14 +4947,14 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
     throw new CompileError(
       `${where}: vertexCount is ${count}, which is not a multiple of 3. A path's vertices are knots AND their ` +
         'Bezier handles, read in groups of three; the parser sizes its lengths array with `vertexCount / 3` and ' +
-        'accepts a fractional size without a word, so the curves would straddle the knots.',
+        'accepts a fractional size without a word, so the curves would straddle the knots.', 'CE_COMPILE_PATH_VERTEX_COUNT_MULTIPLE',
     );
   }
   const minimum = closed ? 3 : 6;
   if (count < minimum) {
     throw new CompileError(
       `${where}: vertexCount is ${count} and ${closed ? 'a closed' : 'an open'} path needs at least ${minimum} — ` +
-        `${closed ? 'a closed path of K curves carries 3K points' : 'an open one carries 3(K + 1), the first and last being the end knots\' outer handles'}`,
+        `${closed ? 'a closed path of K curves carries 3K points' : 'an open one carries 3(K + 1), the first and last being the end knots\' outer handles'}`, 'CE_COMPILE_PATH_VERTEX_COUNT_MINIMUM',
     );
   }
   const entries = count / 3;
@@ -4963,7 +4963,7 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
     lengths = statedPathLengths(att.lengths, entries, closed, where);
   } else {
     const anchor = ctx.transforms.get(ctx.anchorBone);
-    if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+    if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`, 'CE_COMPILE_SLOT_SETUP_TRANSFORM_MISSING');
     const points = setupWorldVertices(vertices, anchor, ctx.transforms, where);
     lengths = pathCurveLengths(pathChain(points, true));
     // The total the runtime reads is the last CURVE's entry, `lengths[vertexCount
@@ -4973,7 +4973,7 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
     if (lengths.length !== entries || !lengths.every((n) => Number.isFinite(n)) || !(total > 0)) {
       throw new CompileError(
         `${where}: the geometry measures ${lengths.length} entry(ies) where the parser sizes ${entries}, of total ` +
-          `length ${String(total)}; a path of zero length divides by zero the first time a bone is placed on it`,
+          `length ${String(total)}; a path of zero length divides by zero the first time a bone is placed on it`, 'CE_COMPILE_PATH_GEOMETRY_LENGTH_INVALID',
       );
     }
   }
@@ -5009,25 +5009,25 @@ function buildRigPath(att: RigPathAttachment, where: string, ctx: AttachmentCont
  */
 function statedPathLengths(stated: unknown, entries: number, closed: boolean, where: string): number[] {
   if (!Array.isArray(stated)) {
-    throw new CompileError(`${where}: "lengths" is ${JSON.stringify(stated)}; it is an array of ${entries} number(s)`);
+    throw new CompileError(`${where}: "lengths" is ${JSON.stringify(stated)}; it is an array of ${entries} number(s)`, 'CE_COMPILE_PATH_LENGTHS_NOT_ARRAY');
   }
   if (stated.length !== entries) {
     throw new CompileError(
       `${where}: "lengths" has ${stated.length} entry(ies) where the parser sizes ${entries} — vertexCount / 3 on ` +
         `${closed ? 'a closed' : 'an open'} path${closed ? '' : ', one more than its curves: the editor writes the wrap-around curve\'s cumulative last and nothing reads it'}. ` +
-        'Give the array the source states, or leave the field out and rigc measures it',
+        'Give the array the source states, or leave the field out and rigc measures it', 'CE_COMPILE_PATH_LENGTHS_COUNT',
     );
   }
   let previous = 0;
   for (let i = 0; i < stated.length; i++) {
     const value: unknown = stated[i];
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new CompileError(`${where}: "lengths"[${i}] is ${JSON.stringify(value)}; every entry is a finite cumulative length`);
+      throw new CompileError(`${where}: "lengths"[${i}] is ${JSON.stringify(value)}; every entry is a finite cumulative length`, 'CE_COMPILE_PATH_LENGTH_NONFINITE');
     }
     if (value < previous) {
       throw new CompileError(
         `${where}: "lengths"[${i}] is ${value}, below ${i === 0 ? '0' : `the ${previous} before it`}. The array is CUMULATIVE — the length at ` +
-          'the end of each curve — so no entry is below its predecessor',
+          'the end of each curve — so no entry is below its predecessor', 'CE_COMPILE_PATH_LENGTHS_DESCENDING',
       );
     }
     previous = value;
@@ -5068,7 +5068,7 @@ function atlasedImage(image: string, where: string, ctx: AttachmentContext): Com
       'measured and atlased — one per file, whichever skin names it (issue #555) — so reaching this means rigc ' +
       'skipped one, not that the spec left anything out. ' +
       (near.length ? `The nearest region(s) built are ${near.map((n) => JSON.stringify(n)).join(', ')}. ` : '') +
-      `The atlas holds ${built.length} region(s): ${built.join(', ')}`,
+      `The atlas holds ${built.length} region(s): ${built.join(', ')}`, 'CE_COMPILE_INTERNAL_IMAGE_NOT_ATLASED',
   );
 }
 
@@ -5215,7 +5215,7 @@ function sequenceFrameSize(
       throw new CompileError(
         `${where}: the ${frames.length} frames of this sequence measure ${sizes.join(', ')} in ${field} ` +
           `(${frames.map((img) => `"${img.region}" ${img[field]}`).join(', ')}), and an attachment has one ` +
-          `${field} every frame is drawn into. State "${field}" — the frames do not agree on one`,
+          `${field} every frame is drawn into. State "${field}" — the frames do not agree on one`, 'CE_COMPILE_SEQUENCE_FRAME_SIZE_AMBIGUOUS',
       );
     }
   }
@@ -5240,7 +5240,7 @@ function sequenceFrames(att: { path?: string; sequence?: RigSequence }, placehol
       throw new CompileError(
         `${where}: sequence frame ${i} is the region "${region}", which was never added to the atlas — every frame ` +
           'of a sequence is atlased or refused by name before any attachment is built, so reaching this means rigc ' +
-          'skipped one',
+          'skipped one', 'CE_COMPILE_INTERNAL_SEQUENCE_FRAME_NOT_ATLASED',
       );
     }
     frames.push(img);
@@ -5295,7 +5295,7 @@ function buildRigRegion(
               ? ''
               : ` in the page's texels, which its scale: ${img.atlasScale} makes a ` +
                 `${img.width}x${img.height} drawing (+/- ${f32(0.5 / img.atlasScale)}px, the pack's rounding)`) +
-            ')',
+            ')', 'CE_COMPILE_REGION_ATLAS_SIZE_MISMATCH',
         );
       }
     }
@@ -5306,7 +5306,7 @@ function buildRigRegion(
     // No parser default: an omission loads as NaN and every UV collapses, with
     // no error at all. So it is this or nothing.
     throw new CompileError(
-      `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+      `${where}: a region needs width and height — give them, or give an "image" and rigc will measure the PNG`, 'CE_COMPILE_REGION_SIZE_MISSING',
     );
   }
   const out: ModelRegionAttachment = { kind: 'region', width: f32(width), height: f32(height) };
@@ -5390,12 +5390,12 @@ function regionAtlasRect(
 function bindNamedWeights(weights: RigMeshBinding[][], where: string, ctx: AttachmentContext): ModelBinding[][] {
   return weights.map((vertex, i) => {
     if (!Array.isArray(vertex) || vertex.length === 0) {
-      throw new CompileError(`${where}: vertex ${i} has no bone bindings; a weighted vertex names at least one bone`);
+      throw new CompileError(`${where}: vertex ${i} has no bone bindings; a weighted vertex names at least one bone`, 'CE_COMPILE_VERTEX_BINDINGS_EMPTY');
     }
     return vertex.map((binding) => {
       if (!ctx.bones.some((b) => b.name === binding.bone)) {
         throw new CompileError(
-          `${where}: vertex ${i} binds bone ${JSON.stringify(binding.bone)}, which the rig does not declare as a bone`,
+          `${where}: vertex ${i} binds bone ${JSON.stringify(binding.bone)}, which the rig does not declare as a bone`, 'CE_COMPILE_VERTEX_BIND_BONE_UNKNOWN',
         );
       }
       return { bone: binding.bone, x: f32(binding.x), y: f32(binding.y), weight: f32(binding.weight) };
@@ -5513,7 +5513,7 @@ function authoredHullAndEdges(
     checkHullOrder(outline, vertexCount);
     return { hull: outline.hull, edges: att.edges ?? meshEdges(vertexCount, triangles, outline.hull) };
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}${splitPointer(vertexCount, triangles, named)}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}${splitPointer(vertexCount, triangles, named)}`, 'CE_COMPILE_AUTHORED_MESH_OUTLINE_INVALID');
     throw err;
   }
 }
@@ -5554,7 +5554,7 @@ function generatedHullAndEdges(geometry: MeshGeometry, where: string): { hull: n
     checkHullOrder(outline, vertexCount);
   } catch (err) {
     if (err instanceof MeshError) {
-      throw new CompileError(`${where}: internal: the ${geometry.kind} generator built an inconsistent mesh — ${err.message}`);
+      throw new CompileError(`${where}: internal: the ${geometry.kind} generator built an inconsistent mesh — ${err.message}`, 'CE_COMPILE_INTERNAL_GENERATED_MESH_OUTLINE_INVALID');
     }
     throw err;
   }
@@ -5570,27 +5570,27 @@ function buildRigMesh(
   const authored =
     att.uvs !== undefined || att.triangles !== undefined || att.vertices !== undefined || att.weights !== undefined;
   if (authored && att.generator) {
-    throw new CompileError(`${where}: a mesh is either authored geometry or a generator, never both`);
+    throw new CompileError(`${where}: a mesh is either authored geometry or a generator, never both`, 'CE_COMPILE_MESH_AUTHORED_AND_GENERATED');
   }
   if (att.generator) return buildGeneratedMesh(att, att.generator, placeholder, where, ctx);
   if (att.vertices && att.weights) {
     throw new CompileError(
-      `${where}: a mesh gives geometry as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`,
+      `${where}: a mesh gives geometry as "vertices" or as "weights", never both — "weights" is the by-name form of the same data`, 'CE_COMPILE_MESH_GEOMETRY_SOURCES_CONFLICT',
     );
   }
   if (!att.uvs || !att.triangles || !(att.vertices || att.weights)) {
-    throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices or weights (or a "generator")`);
+    throw new CompileError(`${where}: an authored mesh needs uvs, triangles and vertices or weights (or a "generator")`, 'CE_COMPILE_MESH_GEOMETRY_MISSING');
   }
   const uvCount = att.uvs.length;
   let vertices: ModelVertices;
   let boundBones: string[] = [];
   if (att.weights) {
     if (att.boneIndexing === 'raw') {
-      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`);
+      throw new CompileError(`${where}: "boneIndexing": "raw" describes a "vertices" run; "weights" always binds by name`, 'CE_COMPILE_NAMED_WEIGHTS_RAW_INDEXING');
     }
     if (att.weights.length !== uvCount / 2) {
       throw new CompileError(
-        `${where}: weights cover ${att.weights.length} vertices but there are ${uvCount / 2} uv pairs`,
+        `${where}: weights cover ${att.weights.length} vertices but there are ${uvCount / 2} uv pairs`, 'CE_COMPILE_MESH_WEIGHT_UV_COUNT',
       );
     }
     vertices = { weighted: true, bindings: bindNamedWeights(att.weights, where, ctx) };
@@ -5605,7 +5605,7 @@ function buildRigMesh(
         `${where}: this mesh's "vertices" is a weighted run, whose bone INDEXES point into the emitted bone array — ` +
           'a list the spec never writes, so inserting a bone rebinds every vertex in silence. ' +
           'Give the bindings by name as "weights": [[{ "bone": …, "x": …, "y": …, "weight": … }, …], …], ' +
-          'or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.',
+          'or say "boneIndexing": "raw" on this attachment to keep the index form deliberately.', 'CE_COMPILE_MESH_WEIGHTED_RUN_IMPLICIT',
       );
     }
     if (weighted) {
@@ -5635,7 +5635,7 @@ function buildRigMesh(
   const height = seqSize !== null ? seqSize.height : (att.height ?? img?.height);
   if (width === undefined || height === undefined) {
     throw new CompileError(
-      `${where}: a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+      `${where}: a mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`, 'CE_COMPILE_MESH_SIZE_MISSING',
     );
   }
   const out: ModelMeshAttachment = {
@@ -5714,7 +5714,7 @@ function buildRigLinkedMesh(
         'no geometry of its own — it draws the geometry of the attachment "source" names. The parser returns from ' +
         'the `source` branch before `readVertices` (`SkeletonJson.ts:582-586`), so these keys are read by nothing ' +
         "at all: a link declaring 5 uvs beside a 4-vertex source loads the SOURCE's 4 vertices and says nothing. " +
-        `Remove ${geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a mesh of its own.`,
+        `Remove ${geometry.length === 1 ? 'it' : 'them'}, or remove "source" and author this as a mesh of its own.`, 'CE_COMPILE_LINKED_MESH_GEOMETRY_IGNORED',
     );
   }
   const source = att.source;
@@ -5724,7 +5724,7 @@ function buildRigLinkedMesh(
         `attachment is filed under in its skin, not its "name"), and this one states ${JSON.stringify(source) ?? String(source)}. ` +
         '"source" is what MAKES a mesh linked: `getValue(map, "source", null)` is falsy-tested ' +
         '(`SkeletonJson.ts:582`), so an absent or empty one is read as an ordinary mesh, whose `uvs` this ' +
-        'attachment does not have — the parser dereferences `map.uvs.length` and throws.',
+        'attachment does not have — the parser dereferences `map.uvs.length` and throws.', 'CE_COMPILE_LINKED_MESH_SOURCE_MISSING',
     );
   }
   if (att.slot !== undefined && !ctx.slotNames.has(att.slot)) {
@@ -5732,7 +5732,7 @@ function buildRigLinkedMesh(
       `${where}: "slot" is ${JSON.stringify(att.slot)}, which the rig does not declare as a slot. It names where ` +
         'the source lives and is resolved through `skeletonData.findSlot` (`SkeletonJson.ts:575`), which throws ' +
         `\`Source mesh slot not found\` on a miss. The rig's slots are ${[...ctx.slotNames].sort().map((s) => JSON.stringify(s)).join(', ')}. ` +
-        "Leave it out and the source is looked for in this attachment's own slot, which is the parser's default.",
+        "Leave it out and the source is looked for in this attachment's own slot, which is the parser's default.", 'CE_COMPILE_LINKED_MESH_SLOT_UNKNOWN',
     );
   }
   ctx.links.push({
@@ -5751,7 +5751,7 @@ function buildRigLinkedMesh(
   const height = seqSize !== null ? seqSize.height : (att.height ?? img?.height);
   if (width === undefined || height === undefined) {
     throw new CompileError(
-      `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`,
+      `${where}: a linked mesh needs width and height — give them, or give an "image" and rigc will measure the PNG`, 'CE_COMPILE_LINKED_MESH_SIZE_MISSING',
     );
   }
   // The link in full — skin, slot and `timelines` as the parser resolves them.
@@ -5813,7 +5813,7 @@ function resolveLinkedMeshes(
         `${link.where}: no "skin" is stated, so the parser looks for the source "${link.source}" in the default ` +
           `skin — and this rig declares no default skin. The rig's skins are ${skinNames.map((s) => JSON.stringify(s)).join(', ')}. ` +
           'State the skin the source is filed under. Left to the round trip this is a `TypeError` off the null ' +
-          '`SkeletonData.defaultSkin`, which names neither this attachment nor where it was looking.',
+          '`SkeletonData.defaultSkin`, which names neither this attachment nor where it was looking.', 'CE_COMPILE_LINKED_MESH_DEFAULT_SKIN_MISSING',
       );
     }
     if (table === undefined) {
@@ -5821,7 +5821,7 @@ function resolveLinkedMeshes(
         `${link.where}: "skin" is ${JSON.stringify(link.skin)}, and the rig declares no such skin. The rig's skins ` +
           `are ${skinNames.map((s) => JSON.stringify(s)).join(', ')}. ` +
           "Left to the round trip this is the runtime's `Skin not found`, which names neither this attachment nor " +
-          'where it was looking.',
+          'where it was looking.', 'CE_COMPILE_LINKED_MESH_SKIN_UNKNOWN',
       );
     }
     const slot = table[link.slot];
@@ -5835,7 +5835,7 @@ function resolveLinkedMeshes(
           `holds ${held.length === 0 ? 'no attachment at all' : `${held.length}: ${held.map((k) => JSON.stringify(k)).join(', ')}`}. ` +
           '"source" is the PLACEHOLDER the source is filed under — `skin.getAttachment(slotIndex, source)` ' +
           "(`SkeletonJson.ts:433`), whose table is keyed by the JSON key, not by the attachment's `name`. " +
-          "Left to the round trip this is the runtime's `Source mesh not found`.",
+          "Left to the round trip this is the runtime's `Source mesh not found`.", 'CE_COMPILE_LINKED_MESH_SOURCE_UNKNOWN',
       );
     }
     const type = found.kind;
@@ -5845,7 +5845,7 @@ function resolveLinkedMeshes(
           'them is refused. Measured through spine-core: the runtime resolves links in the order they were read, ' +
           "so a link whose source is a link loads the source's geometry when the source comes first in the file " +
           'and loads NOTHING — `worldVerticesLength` 0, 0 triangles, a 0x0 size — when the two are swapped, in ' +
-          'silence either way. Point "source" at the mesh itself.',
+          'silence either way. Point "source" at the mesh itself.', 'CE_COMPILE_LINKED_MESH_SOURCE_IS_LINK',
       );
     }
     if (type !== 'mesh') {
@@ -5853,7 +5853,7 @@ function resolveLinkedMeshes(
         `${link.where}: "source" is ${JSON.stringify(link.source)}, which is a ${JSON.stringify(type)} attachment ` +
           "and not a mesh. A linked mesh takes another MESH's `uvs`, `triangles`, `vertices`, `hull` and `edges` " +
           '(`MeshAttachment.setSourceMesh`); the runtime casts whatever it finds and reads those fields off it, ' +
-          'which on any other type is `undefined` and no error.',
+          'which on any other type is `undefined` and no error.', 'CE_COMPILE_LINKED_MESH_SOURCE_NOT_MESH',
       );
     }
   }
@@ -5885,9 +5885,9 @@ function buildGeneratedMesh(
   // Two readings of one bone (issue #1021): the runtime's matrices to bind
   // through, and the exact frame to measure the control angles in.
   const resolve = (name: string, frames: Map<string, BoneTransform> = ctx.transforms): BoneTransform => {
-    if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`);
+    if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: mesh bone "${name}" is not in the rig's bone list`, 'CE_COMPILE_MESH_BONE_UNKNOWN');
     const transform = frames.get(name);
-    if (!transform) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`);
+    if (!transform) throw new CompileError(`${where}: no setup transform for mesh bone "${name}"`, 'CE_COMPILE_MESH_BONE_TRANSFORM_MISSING');
     return transform;
   };
   const refFor = (name: string): MeshBoneRef => {
@@ -5901,7 +5901,7 @@ function buildGeneratedMesh(
   // angle about the aperture means anything (issue #684).
   const [w, h] = generator.size;
   const anchor = ctx.transforms.get(ctx.anchorBone);
-  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  if (!anchor) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`, 'CE_COMPILE_SLOT_SETUP_TRANSFORM_MISSING');
   const place = (px: number, py: number): [number, number] => [anchor.worldX + px - w / 2, anchor.worldY + h / 2 - py];
   // The inverse a control angle is measured through, in the exact frame: the
   // anchor's and the control's positions as the spec put them, not as the
@@ -5925,7 +5925,7 @@ function buildGeneratedMesh(
             }),
           });
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`, 'CE_COMPILE_RING_RIBBON_GENERATOR_INVALID');
     throw err;
   }
   const vertices = bindWeightedVertices(
@@ -6068,12 +6068,12 @@ function sampleMeshDepth(
   summary: NonNullable<CompileResult['meshes'][number]['depth']>;
 } {
   if (typeof spec.image !== 'string' || spec.image.length === 0) {
-    throw new CompileError(`${where}: the depth block has no "image"; it is the sheet to sample, relative to the rig's images directory`);
+    throw new CompileError(`${where}: the depth block has no "image"; it is the sheet to sample, relative to the rig's images directory`, 'CE_COMPILE_DEPTH_IMAGE_MISSING');
   }
   if (spec.near !== 'white' && spec.near !== 'black') {
     throw new CompileError(
       `${where}: the depth block says "near": ${JSON.stringify(spec.near)}; it is "white" or "black". Both ` +
-        'conventions are in use, and a sheet read with the wrong one turns the part inside out with every gate green.',
+        'conventions are in use, and a sheet read with the wrong one turns the part inside out with every gate green.', 'CE_COMPILE_DEPTH_NEAR_INVALID',
     );
   }
   const tone: DepthTone = {
@@ -6085,7 +6085,7 @@ function sampleMeshDepth(
     checkTone(tone, where);
     checkZScale(spec.zScale, where);
   } catch (err) {
-    if (err instanceof DepthError) throw new CompileError(err.message);
+    if (err instanceof DepthError) throw new CompileError(err.message, 'CE_COMPILE_DEPTH_TONE_SCALE_INVALID');
     throw err;
   }
 
@@ -6157,7 +6157,7 @@ function sampleMeshDepth(
           : ` in the page's texels, pixel (${f32(points[first][0] * toSheetX)}, ${f32(points[first][1] * toSheetY)}) of ` +
             'the drawing-sized sheet') +
         `. ${why} ` +
-        'Sampling anyway would give those vertices the sheet\'s background depth and fold them away from the turn.',
+        'Sampling anyway would give those vertices the sheet\'s background depth and fold them away from the turn.', 'CE_COMPILE_DEPTH_COVERAGE_INCOMPLETE',
     );
   }
 
@@ -6196,8 +6196,8 @@ function sampleMeshDepth(
 /** One bone of the rig as `bindWeightedVertices` wants it: by name, with its setup inverse. */
 function meshBoneRef(name: string, where: string, ctx: AttachmentContext): MeshBoneRef {
   const transform = ctx.transforms.get(name);
-  if (!transform) throw new CompileError(`${where}: bone "${name}" has no setup transform`);
-  if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: bone "${name}" is not in the rig's bone list`);
+  if (!transform) throw new CompileError(`${where}: bone "${name}" has no setup transform`, 'CE_COMPILE_MESH_BONE_SETUP_TRANSFORM_MISSING');
+  if (!ctx.bones.some((b) => b.name === name)) throw new CompileError(`${where}: bone "${name}" is not in the rig's bone list`, 'CE_COMPILE_MESH_BONE_NOT_DECLARED');
   return { name, toBind: (wx, wy) => toBoneLocal(transform, wx, wy) };
 }
 
@@ -6272,11 +6272,11 @@ function readGreySheet(
   const sheetHeight = scaled === undefined ? grid.partHeight : scaled.height;
   const noun = purpose === 'depth' ? 'depth map' : 'soft mask';
   if (typeof image !== 'string' || image.length === 0) {
-    throw new CompileError(`${where}: the "${purpose}" block has no image to read`);
+    throw new CompileError(`${where}: the "${purpose}" block has no image to read`, 'CE_COMPILE_GREY_SHEET_IMAGE_MISSING');
   }
   const path = join(ctx.imagesDir, image);
   if (!existsSync(path)) {
-    throw new CompileError(`${where}: the ${noun} "${image}" is not at ${relative(process.cwd(), path)}`);
+    throw new CompileError(`${where}: the ${noun} "${image}" is not at ${relative(process.cwd(), path)}`, 'CE_COMPILE_GREY_SHEET_IMAGE_NOT_FOUND');
   }
   const sheet = readPlate(path);
   if (sheet.width !== sheetWidth || sheet.height !== sheetHeight) {
@@ -6290,7 +6290,7 @@ function readGreySheet(
             `declares scale: ${scaled.scale}, which makes a texel ${f32(1 / scaled.scale)}px of the drawing. It is ` +
             "sampled in the part's own pixel grid, which is the drawing's, at each vertex's texel position over " +
             `that scale — so the sheet is ${scaled.width}x${scaled.height}, the size of the loose art, whatever the ` +
-            'page holds. Resample the sheet, or point at the one that was made for this part.',
+            'page holds. Resample the sheet, or point at the one that was made for this part.', 'CE_COMPILE_GREY_SHEET_SIZE_MISMATCH',
     );
   }
   // One channel, proved rather than assumed.
@@ -6305,7 +6305,7 @@ function readGreySheet(
       throw new CompileError(
         `${where}: the ${noun} "${image}" is not greyscale — pixel (${i % sheet.width}, ${Math.floor(i / sheet.width)}) ` +
           `is rgb(${r}, ${g}, ${b}). It is one channel; reading red out of a colour file would use whatever that ` +
-          'channel happened to hold.',
+          'channel happened to hold.', 'CE_COMPILE_GREY_SHEET_NOT_GREYSCALE',
       );
     }
     level[i] = r;
@@ -6339,20 +6339,20 @@ function softRegionWeights(
 ): { weights: MeshVertexWeight[][]; levels: number[]; bone: string; mask: string; digest: string; carried: number; ramped: number } {
   const { bone } = spec;
   if (typeof bone !== 'string' || bone.length === 0) {
-    throw new CompileError(`${where}: the "soft" block has no "bone"; it is the bone the soft region is carried by`);
+    throw new CompileError(`${where}: the "soft" block has no "bone"; it is the bone the soft region is carried by`, 'CE_COMPILE_SOFT_BONE_MISSING');
   }
   if (!ctx.bones.some((b) => b.name === bone)) {
     throw new CompileError(
       `${where}: "soft" names bone "${bone}", which this rig does not declare. rigc binds a region to a bone that ` +
         'already exists rather than creating one — a bone a physics constraint has to target is part of the ' +
-        'skeleton, not a side effect of a mesh.',
+        'skeleton, not a side effect of a mesh.', 'CE_COMPILE_SOFT_BONE_UNKNOWN',
     );
   }
   if (bone === ctx.anchorBone) {
     throw new CompileError(
       `${where}: "soft" names "${bone}", which is this slot's own bone. Carrying the region with the bone the rest ` +
         'of the mesh is already pinned to moves nothing — a soft region needs a bone that can move independently, ' +
-        'which is what a physics constraint is put on.',
+        'which is what a physics constraint is put on.', 'CE_COMPILE_SOFT_BONE_IS_ANCHOR',
     );
   }
   const { map: sheet } = readGreySheet(spec.mask, 'soft', grid, where, ctx);
@@ -6377,7 +6377,7 @@ function softRegionWeights(
     throw new CompileError(
       `${where}: the soft mask "${spec.mask}" carries no vertex of this mesh — every one of its ${points.length} ` +
         'vertices samples black. A region that moves nothing is a physics constraint with nothing on the end of it; ' +
-        'check that the mask is painted where the mesh actually is, and that it is white where the art is soft.',
+        'check that the mask is painted where the mesh actually is, and that it is white where the art is soft.', 'CE_COMPILE_SOFT_MASK_INERT',
     );
   }
   return { weights, levels, bone, mask: spec.mask, digest: depthDigest(sheet), carried, ramped };
@@ -6409,7 +6409,7 @@ function buildGridAttachment(
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "grid" generator lays its lattice over the part's own window, so the attachment needs an ` +
-        '"image" — there is nothing else here that says how big that window is',
+        '"image" — there is nothing else here that says how big that window is', 'CE_COMPILE_GRID_IMAGE_MISSING',
     );
   }
   const stated = generator.us !== undefined || generator.vs !== undefined;
@@ -6418,18 +6418,18 @@ function buildGridAttachment(
     throw new CompileError(
       `${where}: the "grid" generator states both positions ("us"/"vs") and a count ("cols"/"rows"). They are two ` +
         'answers to where the columns go, and a spec carrying both leaves a reader unable to say which one built ' +
-        'the mesh. Drop one — positions are the more precise of the two.',
+        'the mesh. Drop one — positions are the more precise of the two.', 'CE_COMPILE_GRID_POSITIONS_AND_COUNT',
     );
   }
   if (!stated && !even) {
     throw new CompileError(
       `${where}: the "grid" generator says neither where its columns go ("us"/"vs", fractions of the window) nor ` +
-        'how many there are ("cols"/"rows"). A lattice is not a default.',
+        'how many there are ("cols"/"rows"). A lattice is not a default.', 'CE_COMPILE_GRID_POSITION_AND_COUNT_MISSING',
     );
   }
   const spread = (n: unknown, name: string): number[] => {
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 2) {
-      throw new CompileError(`${where}: "${name}" is ${JSON.stringify(n)}; it is a whole number of at least 2`);
+      throw new CompileError(`${where}: "${name}" is ${JSON.stringify(n)}; it is a whole number of at least 2`, 'CE_COMPILE_GRID_COUNT_INVALID');
     }
     // An even division spans the whole window. A lattice that should sit inside
     // it states its own positions — which is what `us`/`vs` are for.
@@ -6440,7 +6440,7 @@ function buildGridAttachment(
   if (us === undefined || vs === undefined) {
     throw new CompileError(
       `${where}: the "grid" generator states ${us === undefined ? '"vs"' : '"us"'} and not ` +
-        `${us === undefined ? '"us"' : '"vs"'}; a lattice needs both axes`,
+        `${us === undefined ? '"us"' : '"vs"'}; a lattice needs both axes`, 'CE_COMPILE_GRID_AXIS_MISSING',
     );
   }
 
@@ -6451,7 +6451,7 @@ function buildGridAttachment(
   try {
     geometry = buildGridMesh({ size: [plate.width, plate.height], us, vs });
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`, 'CE_COMPILE_GRID_GENERATOR_INVALID');
     throw err;
   }
 
@@ -6459,16 +6459,16 @@ function buildGridAttachment(
   const h = img.height;
   const toArt = w / plate.width;
   if (att.width !== undefined && att.width !== w) {
-    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`, 'CE_COMPILE_GENERATED_IMAGE_WIDTH_MISMATCH');
   }
   if (att.height !== undefined && att.height !== h) {
-    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`, 'CE_COMPILE_GENERATED_IMAGE_HEIGHT_MISMATCH');
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
   const frame = ctx.exactFrames.get(ctx.anchorBone);
-  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`, 'CE_COMPILE_SLOT_SETUP_TRANSFORM_MISSING');
   if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
-    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`, 'CE_COMPILE_SLOT_BONE_NOT_DECLARED');
   }
   // Sampled BEFORE the encode, because `bind` rewrites the weights the encode
   // then writes out.
@@ -6559,21 +6559,21 @@ function segmentsFalloffOf(f: RigSegmentsFalloff, where: string): SegmentsFallof
   if (typeof f.radius !== 'number' || !Number.isFinite(f.radius) || !(f.radius > 0)) {
     throw new CompileError(
       `${where}: "falloff.radius" is ${JSON.stringify(f.radius)}; it is added to every distance before the power is ` +
-        "taken, a positive number of the part's pixels — at 0 a vertex on a segment would carry an infinite pull",
+        "taken, a positive number of the part's pixels — at 0 a vertex on a segment would carry an infinite pull", 'CE_COMPILE_SEGMENTS_FALLOFF_RADIUS_INVALID',
     );
   }
   const power = f.power ?? SEGMENTS_DEFAULTS.power;
   if (typeof power !== 'number' || !Number.isFinite(power) || !(power > 0)) {
     throw new CompileError(
       `${where}: "falloff.power" is ${JSON.stringify(power)}; it is the exponent a pull falls off with distance by, ` +
-        'a positive number — at 0 or below the far segment pulls as hard as the near one, or harder',
+        'a positive number — at 0 or below the far segment pulls as hard as the near one, or harder', 'CE_COMPILE_SEGMENTS_FALLOFF_POWER_INVALID',
     );
   }
   const maxBones = f.maxBones ?? SEGMENTS_DEFAULTS.maxBones;
   if (typeof maxBones !== 'number' || !Number.isInteger(maxBones) || maxBones < 1) {
     throw new CompileError(
       `${where}: "falloff.maxBones" is ${JSON.stringify(maxBones)}; it is how many bones may pull one vertex, a ` +
-        'whole number of at least 1',
+        'whole number of at least 1', 'CE_COMPILE_SEGMENTS_FALLOFF_MAX_BONES_INVALID',
     );
   }
   const minWeight = f.minWeight ?? SEGMENTS_DEFAULTS.minWeight;
@@ -6582,7 +6582,7 @@ function segmentsFalloffOf(f: RigSegmentsFalloff, where: string): SegmentsFallof
       `${where}: "falloff.minWeight" is ${JSON.stringify(minWeight)}; it is the share under which a bone's pull ` +
         `is dropped, so it lies in ${SEGMENTS_WEIGHT_STEP}..1 with 1 excluded — at 1 or above every share is dropped, ` +
         `and under ${SEGMENTS_WEIGHT_STEP}, one step of the 6-decimal grid weights are written on, a kept binding ` +
-        'could be written as 0',
+        'could be written as 0', 'CE_COMPILE_SEGMENTS_FALLOFF_MIN_WEIGHT_INVALID',
     );
   }
   return { power, radius: f.radius, maxBones, minWeight };
@@ -6603,12 +6603,12 @@ function segmentsInfluenceOf(
     throw new CompileError(
       `${where}: the "segments" generator states both "falloff" and "influence". Both turn a distance into a ` +
         'share — "falloff" as 1 / (d + radius)^power over every segment, "influence" as a pull that reaches zero at ' +
-        'its "radius" — and a mesh is weighted by one of them: remove the other',
+        'its "radius" — and a mesh is weighted by one of them: remove the other', 'CE_COMPILE_SEGMENTS_WEIGHT_MODE_CONFLICT',
     );
   }
   if (typeof spec !== 'object' || spec === null || Array.isArray(spec)) {
     throw new CompileError(
-      `${where}: "influence" is ${JSON.stringify(spec)}; it is { "radius", "across", "max", "shape" }, every one required`,
+      `${where}: "influence" is ${JSON.stringify(spec)}; it is { "radius", "across", "max", "shape" }, every one required`, 'CE_COMPILE_SEGMENTS_INFLUENCE_INVALID',
     );
   }
   const i = spec as Partial<Record<keyof SegmentsInfluence, unknown>>;
@@ -6616,20 +6616,20 @@ function segmentsInfluenceOf(
     throw new CompileError(
       `${where}: "influence.radius" is ${JSON.stringify(i.radius) ?? 'absent'}; it is how far a link reaches, in ` +
         "the part's pixels, a positive number with no default — a length on this art: a link whose segment is that " +
-        'far from a vertex or farther never pulls it',
+        'far from a vertex or farther never pulls it', 'CE_COMPILE_SEGMENTS_INFLUENCE_RADIUS_INVALID',
     );
   }
   if (typeof i.across !== 'boolean') {
     throw new CompileError(
       `${where}: "influence.across" is ${JSON.stringify(i.across) ?? 'absent'}; it is true (every link within ` +
         '"radius" pulls, across the entries of "bones") or false (only the links of the entry nearest the vertex), ' +
-        "with no default — whether a chain may pull its neighbour's cloth is the decision this field is",
+        "with no default — whether a chain may pull its neighbour's cloth is the decision this field is", 'CE_COMPILE_SEGMENTS_INFLUENCE_ACROSS_INVALID',
     );
   }
   if (typeof i.max !== 'number' || !Number.isInteger(i.max) || i.max < 1) {
     throw new CompileError(
       `${where}: "influence.max" is ${JSON.stringify(i.max) ?? 'absent'}; it is how many links may pull one vertex, ` +
-        'the strongest kept, a whole number of at least 1 with no default',
+        'the strongest kept, a whole number of at least 1 with no default', 'CE_COMPILE_SEGMENTS_INFLUENCE_MAX_INVALID',
     );
   }
   const shape = RIG_INFLUENCE_SHAPES.find((name) => name === i.shape);
@@ -6637,7 +6637,7 @@ function segmentsInfluenceOf(
     throw new CompileError(
       `${where}: "influence.shape" is ${JSON.stringify(i.shape) ?? 'absent'}; one of ` +
         `${RIG_INFLUENCE_SHAPES.map((name) => JSON.stringify(name)).join(', ')} — how a pull falls from 1 on a link ` +
-        'to 0 at "radius", with no default: "linear" is 1 - d/radius, "smooth" arrives at both ends with zero slope',
+        'to 0 at "radius", with no default: "linear" is 1 - d/radius, "smooth" arrives at both ends with zero slope', 'CE_COMPILE_SEGMENTS_INFLUENCE_SHAPE_INVALID',
     );
   }
   return { radius: i.radius, across: i.across, max: i.max, shape };
@@ -6671,7 +6671,7 @@ function buildSegmentsAttachment(
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "segments" generator lays its lattice over the part's own alpha, so the attachment needs an ` +
-        '"image" — there is nothing else here that says which pixels are art',
+        '"image" — there is nothing else here that says which pixels are art', 'CE_COMPILE_SEGMENTS_IMAGE_MISSING',
     );
   }
   const img = atlasedImage(att.image, where, ctx);
@@ -6679,7 +6679,7 @@ function buildSegmentsAttachment(
     throw new CompileError(
       `${where}: a "segments" generator lays its lattice over the part's own alpha, and "${att.image}" is lifted ` +
         'off a packed page at the coordinates the atlas states, which on this file are not where its texels are — ' +
-        `so there is no art here to cover, only another part of the page. ${img.pageGrid.sentence}`,
+        `so there is no art here to cover, only another part of the page. ${img.pageGrid.sentence}`, 'CE_COMPILE_SEGMENTS_ATLAS_GRID_UNSUPPORTED',
     );
   }
   if (img.atlasScale !== undefined) {
@@ -6687,7 +6687,7 @@ function buildSegmentsAttachment(
       `${where}: a "segments" generator measures its "cell" and its falloff "radius" in the part's pixels, and ` +
         `"${att.image}" sits on a page that declares scale: ${img.atlasScale}, where a pixel of the drawing is not a ` +
         'texel of the page. This generator does not convert between the two; build it from the loose part, or ' +
-        'from a pack at scale 1',
+        'from a pack at scale 1', 'CE_COMPILE_SEGMENTS_ATLAS_SCALE_UNSUPPORTED',
     );
   }
 
@@ -6699,7 +6699,7 @@ function buildSegmentsAttachment(
       `${where}: the "segments" generator states no "falloff" block. Its "radius" — added to every distance, in ` +
         "the part's pixels — has no default, because it is a length on this art: " +
         '"falloff": { "radius": <pixels> } is the least it takes (or an "influence" block, whose pull reaches zero ' +
-        'at its own "radius")',
+        'at its own "radius")', 'CE_COMPILE_SEGMENTS_WEIGHT_MODE_MISSING',
     );
   }
   const falloff = influence === null ? segmentsFalloffOf(generator.falloff!, where) : null;
@@ -6715,16 +6715,16 @@ function buildSegmentsAttachment(
       cell: generator.cell,
     });
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`, 'CE_COMPILE_SEGMENTS_LATTICE_INVALID');
     throw err;
   }
   const w = img.width;
   const h = img.height;
   if (att.width !== undefined && att.width !== w) {
-    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`, 'CE_COMPILE_GENERATED_IMAGE_WIDTH_MISMATCH');
   }
   if (att.height !== undefined && att.height !== h) {
-    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`, 'CE_COMPILE_GENERATED_IMAGE_HEIGHT_MISMATCH');
   }
 
   // -- the placement ---------------------------------------------------------
@@ -6733,14 +6733,14 @@ function buildSegmentsAttachment(
   // MEASURED in — distances, falloff, `minWeight`, the shared-origin refusal —
   // and the runtime's is what the vertices are BOUND through (`place`).
   const exactSlotBone = ctx.exactFrames.get(ctx.anchorBone);
-  if (!slotBone || !exactSlotBone) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  if (!slotBone || !exactSlotBone) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`, 'CE_COMPILE_SLOT_SETUP_TRANSFORM_MISSING');
   let anchorAt: [number, number] = [w / 2, h / 2];
   if (generator.anchor !== undefined) {
     const stated = finitePair(generator.anchor);
     if (stated === null) {
       throw new CompileError(
         `${where}: "anchor" is ${JSON.stringify(generator.anchor)}; it is where the slot bone sits in the part's ` +
-          'pixels, y down, as [x, y] — two finite numbers',
+          'pixels, y down, as [x, y] — two finite numbers', 'CE_COMPILE_SEGMENTS_ANCHOR_INVALID',
       );
     }
     anchorAt = stated;
@@ -6758,7 +6758,7 @@ function buildSegmentsAttachment(
     throw new CompileError(
       `${where}: the "segments" generator names no bones. "bones" is the one decision this generator takes — which ` +
         'segments may pull the part — so it lists at least one: a bone name, a chain as a list of bone names, or ' +
-        '{ "bone", "from", "to" }',
+        '{ "bone", "from", "to" }', 'CE_COMPILE_SEGMENTS_BONES_EMPTY',
     );
   }
   const parentOf = new Map(ctx.bones.map((b) => [b.name, b.parent ?? null]));
@@ -6767,7 +6767,7 @@ function buildSegmentsAttachment(
   const segments: EntrySegment[] = [];
   const boneOf = (name: unknown, at: string): { index: number; transform: BoneTransform } => {
     if (typeof name !== 'string' || !parentOf.has(name)) {
-      throw new CompileError(`${where}: ${at} names mesh bone ${JSON.stringify(name)}, which is not in the rig's bone list`);
+      throw new CompileError(`${where}: ${at} names mesh bone ${JSON.stringify(name)}, which is not in the rig's bone list`, 'CE_COMPILE_SEGMENTS_BONE_UNKNOWN');
     }
     let index = named.indexOf(name);
     if (index < 0) {
@@ -6785,7 +6785,7 @@ function buildSegmentsAttachment(
           'so it has an origin and no segment. Give the bone a "length" (its segment runs from its origin to that ' +
           'tip, along its setup rotation), ' +
           (chained ? 'end the chain on a bone that has one, ' : 'name it inside a chain whose next link says where it ends, ') +
-          'or state the segment outright as { "bone", "from", "to" }',
+          'or state the segment outright as { "bone", "from", "to" }', 'CE_COMPILE_SEGMENTS_BONE_LENGTH_MISSING',
       );
     }
     return toWorld(transform, length, 0);
@@ -6799,7 +6799,7 @@ function buildSegmentsAttachment(
     }
     if (Array.isArray(entry)) {
       if (entry.length === 0) {
-        throw new CompileError(`${where}: ${at} is an empty chain; a chain lists its bones root first, at least one`);
+        throw new CompileError(`${where}: ${at} is an empty chain; a chain lists its bones root first, at least one`, 'CE_COMPILE_SEGMENTS_CHAIN_EMPTY');
       }
       const links = entry.map((name: unknown, k: number) => ({ name, ...boneOf(name, `${at}[${k}]`) }));
       links.forEach((link, k) => {
@@ -6817,7 +6817,7 @@ function buildSegmentsAttachment(
           throw new CompileError(
             `${where}: ${at} chains "${name}" to "${nextName}", and "${nextName}" is not under "${name}" in the bone ` +
               `tree — a chain runs down the skeleton, each link a descendant of the one before it. List the chain ` +
-              'root first, or name the two bones as separate entries',
+              'root first, or name the two bones as separate entries', 'CE_COMPILE_SEGMENTS_CHAIN_ORDER_INVALID',
           );
         }
         const b: [number, number] = [next.transform.worldX, next.transform.worldY];
@@ -6825,7 +6825,7 @@ function buildSegmentsAttachment(
           throw new CompileError(
             `${where}: ${at} chains "${name}" to "${nextName}", and the two bones share their setup origin ` +
               `(${origin[0]}, ${origin[1]}), so the link has no length and no direction to weight along. Give ` +
-              `"${nextName}" its own position, or name "${name}" alone with a "length"`,
+              `"${nextName}" its own position, or name "${name}" alone with a "length"`, 'CE_COMPILE_SEGMENTS_CHAIN_ZERO_LENGTH',
           );
         }
         segments.push({ bone: link.index, entry: i, a: origin, b });
@@ -6840,7 +6840,7 @@ function buildSegmentsAttachment(
       if (from === null || to === null) {
         throw new CompileError(
           `${where}: ${at} states a segment whose ${from === null ? '"from"' : '"to"'} is ` +
-            `${JSON.stringify(from === null ? span.from : span.to)}; both ends are [x, y] in the part's pixels, y down`,
+            `${JSON.stringify(from === null ? span.from : span.to)}; both ends are [x, y] in the part's pixels, y down`, 'CE_COMPILE_SEGMENTS_ENDPOINT_INVALID',
         );
       }
       segments.push({ bone: index, entry: i, a: measuredAt(from[0], from[1]), b: measuredAt(to[0], to[1]) });
@@ -6848,7 +6848,7 @@ function buildSegmentsAttachment(
     }
     throw new CompileError(
       `${where}: ${at} is ${JSON.stringify(entry)}; an entry is a bone name, a chain as a list of bone names, or ` +
-        '{ "bone", "from", "to" }',
+        '{ "bone", "from", "to" }', 'CE_COMPILE_SEGMENTS_ENTRY_INVALID',
     );
   });
 
@@ -6868,7 +6868,7 @@ function buildSegmentsAttachment(
           `"${named[reached.nearest.bone]}" at ${reached.nearest.distance.toFixed(4)}, and "influence.radius" is ` +
           `${influence.radius}${influence.across ? '' : ' (with "across": false, the nearest entry\'s links only)'}. ` +
           'A vertex needs a link, and rigc will not hand it one the reach does not: raise "radius" over that distance, ' +
-          'or name a segment nearer this part of the art',
+          'or name a segment nearer this part of the art', 'CE_COMPILE_SEGMENTS_VERTEX_UNREACHED',
       );
     }
     const got = segmentShares(measuredAt(px, py), segments, falloff!);
@@ -6879,7 +6879,7 @@ function buildSegmentsAttachment(
         `strongest pull(s) share it as ${got.dropped.map((d) => `"${named[d.bone]}" ${d.share.toFixed(4)}`).join(', ')}, ` +
         `and every one is under "minWeight" ${minWeight}. A vertex needs a bone, and rigc will not pick one the ` +
         `falloff dropped: lower "minWeight" to ${(1 / maxBones).toFixed(4)} or under (1 / "maxBones", which the ` +
-        'strongest share can never fall below), or name a segment nearer this part of the art',
+        'strongest share can never fall below), or name a segment nearer this part of the art', 'CE_COMPILE_SEGMENTS_VERTEX_WEIGHTS_DROPPED',
     );
   });
   const geometry: MeshGeometry = {
@@ -6984,7 +6984,7 @@ function buildContourAttachment(
   if (att.image === undefined) {
     throw new CompileError(
       `${where}: a "contour" generator traces the part's own alpha, so the attachment needs an "image" — ` +
-        'there is nothing else here that says which pixels to measure',
+        'there is nothing else here that says which pixels to measure', 'CE_COMPILE_CONTOUR_IMAGE_MISSING',
     );
   }
   const img = atlasedImage(att.image, where, ctx);
@@ -7003,7 +7003,7 @@ function buildContourAttachment(
     throw new CompileError(
       `${where}: a "contour" generator traces the part's own alpha, and "${att.image}" is lifted off a packed ` +
         'page at the coordinates the atlas states, which on this file are not where its texels are — so there is ' +
-        `no silhouette here to trace, only another part of the page. ${img.pageGrid.sentence}`,
+        `no silhouette here to trace, only another part of the page. ${img.pageGrid.sentence}`, 'CE_COMPILE_CONTOUR_ATLAS_GRID_UNSUPPORTED',
     );
   }
   // ⚠️ Nothing here reads the PNG's colour type. `hasAlpha` answers "where does
@@ -7031,7 +7031,7 @@ function buildContourAttachment(
       ...(img.atlasScale === undefined ? {} : { pageScale: img.atlasScale }),
     });
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`${where}: ${err.message}`, 'CE_COMPILE_CONTOUR_GENERATOR_INVALID');
     throw err;
   }
 
@@ -7046,16 +7046,16 @@ function buildContourAttachment(
   const h = img.height;
   const toArt = w / plate.width;
   if (att.width !== undefined && att.width !== w) {
-    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`);
+    throw new CompileError(`${where}: the spec says width ${att.width} and "${att.image}" measures ${w}`, 'CE_COMPILE_GENERATED_IMAGE_WIDTH_MISMATCH');
   }
   if (att.height !== undefined && att.height !== h) {
-    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`);
+    throw new CompileError(`${where}: the spec says height ${att.height} and "${att.image}" measures ${h}`, 'CE_COMPILE_GENERATED_IMAGE_HEIGHT_MISMATCH');
   }
   const anchor = ctx.transforms.get(ctx.anchorBone);
   const frame = ctx.exactFrames.get(ctx.anchorBone);
-  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`);
+  if (!anchor || !frame) throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" has no setup transform`, 'CE_COMPILE_SLOT_SETUP_TRANSFORM_MISSING');
   if (!ctx.bones.some((b) => b.name === ctx.anchorBone)) {
-    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`);
+    throw new CompileError(`${where}: slot bone "${ctx.anchorBone}" is not in the rig's bone list`, 'CE_COMPILE_SLOT_BONE_NOT_DECLARED');
   }
   const vertices = bindWeightedVertices(
     geometry,
@@ -7169,7 +7169,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
   const boneNames = ctx.boneNames;
   const needBone = (name: unknown, field: string): string => {
     if (typeof name !== 'string' || !boneNames.has(name)) {
-      throw new CompileError(`${where}: ${field} names ${JSON.stringify(name)}, which the rig does not declare as a bone`);
+      throw new CompileError(`${where}: ${field} names ${JSON.stringify(name)}, which the rig does not declare as a bone`, 'CE_COMPILE_CONSTRAINT_BONE_UNKNOWN');
     }
     return name;
   };
@@ -7186,14 +7186,14 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
       throw new CompileError(
         `${where}: ${field} is ${JSON.stringify(value)}; known: ${allowed.join(', ')} (only the first letter's case is ` +
           "free — the parser's enumValue uppercases that one character and nothing else, and an unresolved name " +
-          'becomes undefined without an error)',
+          'becomes undefined without an error)', 'CE_COMPILE_CONSTRAINT_ENUM_UNKNOWN',
       );
     }
     return value;
   };
   const needNumber = (value: unknown, field: string): number => {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      throw new CompileError(`${where}: ${field} is ${JSON.stringify(value)}, which is not a finite number`);
+      throw new CompileError(`${where}: ${field} is ${JSON.stringify(value)}, which is not a finite number`, 'CE_COMPILE_CONSTRAINT_NUMBER_NONFINITE');
     }
     return value;
   };
@@ -7211,7 +7211,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
   const boneList = (): string[] => {
     const list = spec.bones;
     if (!Array.isArray(list) || list.length === 0) {
-      throw new CompileError(`${where}: a ${spec.type} constraint needs a non-empty "bones" array`);
+      throw new CompileError(`${where}: a ${spec.type} constraint needs a non-empty "bones" array`, 'CE_COMPILE_CONSTRAINT_BONES_EMPTY');
     }
     return list.map((name, i) => needBone(name, `bones[${i}]`));
   };
@@ -7236,11 +7236,11 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
       // places in this format that does not fail silently — but it throws at load
       // time, in the consumer's process, and that is late.
       if (!TRANSFORM_PROPERTIES.includes(from)) {
-        throw new CompileError(`${where}: properties has "${from}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`);
+        throw new CompileError(`${where}: properties has "${from}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`, 'CE_COMPILE_TRANSFORM_PROPERTY_UNKNOWN');
       }
       for (const to of Object.keys(entry?.to ?? {})) {
         if (!TRANSFORM_PROPERTIES.includes(to)) {
-          throw new CompileError(`${where}: properties.${from}.to has "${to}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`);
+          throw new CompileError(`${where}: properties.${from}.to has "${to}"; known: ${TRANSFORM_PROPERTIES.join(', ')}`, 'CE_COMPILE_TRANSFORM_TO_PROPERTY_UNKNOWN');
         }
       }
     }
@@ -7272,7 +7272,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
     // loud, but in the consumer's process. The silent half is the one below it.
     const slot = spec.slot;
     if (typeof slot !== 'string' || !ctx.slotNames.has(slot)) {
-      throw new CompileError(`${where}: slot names ${JSON.stringify(slot)}, which the rig does not declare as a slot`);
+      throw new CompileError(`${where}: slot names ${JSON.stringify(slot)}, which the rig does not declare as a slot`, 'CE_COMPILE_CONSTRAINT_SLOT_UNKNOWN');
     }
     if (!ctx.pathSlots.has(slot)) {
       // `PathConstraint.update` opens with
@@ -7283,7 +7283,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
         `${where}: slot "${slot}" has no path attachment in any skin, so the constraint has no curve to follow — ` +
           'PathConstraint.update returns immediately unless the slot\'s attachment is a path, which means this ' +
           'constraint would load, report every mix it was given, and move nothing. ' +
-          'Give that slot an attachment with "type": "path".',
+          'Give that slot an attachment with "type": "path".', 'CE_COMPILE_PATH_CONSTRAINT_SLOT_NO_PATH',
       );
     }
     out.slot = slot;
@@ -7309,14 +7309,14 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
     if (typeof animation !== 'string' || animation.length === 0) {
       throw new CompileError(
         `${where}: a slider needs an "animation" — the animation it applies. Without one the parser's second pass ` +
-          'over the constraints array throws `Slider animation not found`.',
+          'over the constraints array throws `Slider animation not found`.', 'CE_COMPILE_SLIDER_ANIMATION_MISSING',
       );
     }
     if (!ctx.animationNames.has(animation)) {
       const known = [...ctx.animationNames];
       throw new CompileError(
         `${where}: applies animation "${animation}", which the motion spec does not declare` +
-          (known.length ? ` (it declares: ${known.join(', ')})` : ' (it declares none at all)'),
+          (known.length ? ` (it declares: ${known.join(', ')})` : ' (it declares none at all)'), 'CE_COMPILE_SLIDER_ANIMATION_UNKNOWN',
       );
     }
     // 🔁 The editor keeps a slider's animation by index and re-sorts the object
@@ -7331,7 +7331,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
           `lists every array-index key (${spelled} here) before the rest, the editor re-sorts the animations into its ` +
           'own order on import, and a slider holds its animation by index (measured on Spine 4.3.26; AUTHORING R10). ' +
           `Rename ${spelled} so no animation name is a plain non-negative integer — a prefix or a leading zero ` +
-          `("a${repointed.indexNames[0]}", "0${repointed.indexNames[0]}") puts the file's order and the editor's in step.`,
+          `("a${repointed.indexNames[0]}", "0${repointed.indexNames[0]}") puts the file's order and the editor's in step.`, 'CE_COMPILE_SLIDER_ANIMATION_EDITOR_ORDER',
       );
     }
     out.animation = animation;
@@ -7351,7 +7351,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
       if (typeof property !== 'string' || !RIG_FROM_PROPERTIES.includes(property as (typeof RIG_FROM_PROPERTIES)[number])) {
         throw new CompileError(
           `${where}: drives off bone "${String(spec.bone)}" but its property is ${JSON.stringify(property)}; ` +
-            `known: ${RIG_FROM_PROPERTIES.join(', ')} (the parser throws on anything else)`,
+            `known: ${RIG_FROM_PROPERTIES.join(', ')} (the parser throws on anything else)`, 'CE_COMPILE_SLIDER_BONE_PROPERTY_UNKNOWN',
         );
       }
       out.property = property;
@@ -7361,7 +7361,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
       if (spec.local !== undefined) out.local = spec.local;
       if (spec.scale !== undefined && spec.scale === 0) {
         // time = to + (value - from) * 0, so the slider holds one frame forever.
-        throw new CompileError(`${where}: scale is 0, so the bone's property cannot move the slider's time at all`);
+        throw new CompileError(`${where}: scale is 0, so the bone's property cannot move the slider's time at all`, 'CE_COMPILE_SLIDER_SCALE_ZERO');
       }
       // The window of driving values that can reach a frame at all, and the two
       // functions every figure in the two reader clauses below comes off.
@@ -7608,7 +7608,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
               `at ${dead.end.toFixed(3)}° is read as ${readAs.toFixed(3)}° and maps to time ${lands.toFixed(3)}s. ` +
               `${consequence} The whole part of the range ${dead.side} is dead and ` +
               'nothing at runtime reports it. Add `"local": true` to read the bone\'s own rotation signed and unwrapped — ' +
-              `that is the form a face axis wants — or ${dead.repair}.`,
+              `that is the form a face axis wants — or ${dead.repair}.`, 'CE_COMPILE_SLIDER_WORLD_ROTATION_DEAD_RANGE',
           );
         }
       }
@@ -7681,14 +7681,14 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
             `${lowest.toFixed(3)} is read as ${readAs.toFixed(3)} and maps to time ${lands.toFixed(3)}s — the time the ` +
             `bone at ${readAs.toFixed(3)} maps to. Positions below 0 read as the mirror of positions above it: ` +
             `${consequence} Nothing at runtime reports it. Add \`"local": true\` to read the bone's own scale signed and ` +
-            'unfolded — that is the form a squash axis wants — or move the range so it does not dip below 0.',
+            'unfolded — that is the form a squash axis wants — or move the range so it does not dip below 0.', 'CE_COMPILE_SLIDER_WORLD_SCALE_FOLDED',
         );
       }
       for (const field of timeSide) {
         if (spec[field] !== undefined) {
           throw new CompileError(
             `${where}: declares both a "bone" and "${field}". A slider with a bone takes its time from that bone's ` +
-              `property; "${field}" is read only by the bone-less form (\`:361\`), so it would be dropped in silence.`,
+              `property; "${field}" is read only by the bone-less form (\`:361\`), so it would be dropped in silence.`, 'CE_COMPILE_SLIDER_BONELESS_FIELD_WITH_BONE',
           );
         }
       }
@@ -7699,7 +7699,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
           throw new CompileError(
             `${where}: declares "${field}" but no "bone". Every one of ${boneSide.join('/')} is read only inside the ` +
               "parser's `if (boneName)` branch (`:350-360`), so it would be dropped in silence. Name the driving bone, " +
-              'or key `slider.<name>.time` in the motion spec instead.',
+              'or key `slider.<name>.time` in the motion spec instead.', 'CE_COMPILE_SLIDER_BONE_FIELD_WITHOUT_BONE',
           );
         }
       }
@@ -7744,7 +7744,7 @@ function buildRigConstraint(spec: RigConstraintInput, ctx: ConstraintContext): M
   throw new NotImplementedError(
     `${where}: constraint type ${JSON.stringify(spec.type)} is not one Spine 4.3 knows. ` +
       'The five are: ik, transform, path, physics, slider. An unrecognised type matches no case in the parser and ' +
-      'the constraint is dropped without a word.',
+      'the constraint is dropped without a word.', 'CE_COMPILE_CONSTRAINT_TYPE_UNKNOWN',
   );
 }
 
@@ -7766,7 +7766,7 @@ function buildRigInfo(
 ): RigInfo {
   const axisBone = rig.invariants?.axisBone ?? null;
   if (axisBone !== null && !bones.some((b) => b.name === axisBone)) {
-    throw new CompileError(`rig "${rig.name}" names "${axisBone}" as its axis bone, which it does not declare`);
+    throw new CompileError(`rig "${rig.name}" names "${axisBone}" as its axis bone, which it does not declare`, 'CE_COMPILE_AXIS_BONE_UNKNOWN');
   }
   const axisSubtree: string[] = [];
   if (axisBone) {
@@ -7794,7 +7794,7 @@ function buildRigInfo(
     if (meshKinds[slot] === undefined) {
       throw new CompileError(
         `rig "${rig.name}" exempts slot "${slot}" from A39_DEFORM_KEEPS_TRIANGLE_WINDING, but that slot carries no ` +
-          'mesh — winding is a property of triangles, so there is nothing there to exempt',
+          'mesh — winding is a property of triangles, so there is nothing there to exempt', 'CE_COMPILE_WINDING_EXEMPTION_NOT_MESH',
       );
     }
   }
@@ -7807,12 +7807,12 @@ function buildRigInfo(
     spineDeg === null ? null : [Math.cos((spineDeg * Math.PI) / 180), Math.sin((spineDeg * Math.PI) / 180)];
   const contactDepth = manifest?.stroke?.contact_depth ?? null;
   if (contactDepth !== null && !(contactDepth > 0)) {
-    throw new CompileError(`manifest stroke.contact_depth is ${contactDepth}; it must be a positive number of axis pixels`);
+    throw new CompileError(`manifest stroke.contact_depth is ${contactDepth}; it must be a positive number of axis pixels`, 'CE_COMPILE_CONTACT_DEPTH_INVALID');
   }
   const capCeiling = manifest?.stroke?.cap_containment_ceiling ?? null;
   if (capCeiling !== null && !(capCeiling > 0)) {
     throw new CompileError(
-      `manifest stroke.cap_containment_ceiling is ${capCeiling}; it must be a positive number of axis pixels (use null for "not measurable on this cut")`,
+      `manifest stroke.cap_containment_ceiling is ${capCeiling}; it must be a positive number of axis pixels (use null for "not measurable on this cut")`, 'CE_COMPILE_CONTAINMENT_CEILING_INVALID',
     );
   }
   return {
@@ -7851,13 +7851,13 @@ function checkAxisSelfConsistency(manifest: FaceManifest): void {
   if (!manifest.axis) return;
   const { deg, unit } = manifest.axis;
   if (!Array.isArray(unit) || unit.length !== 2) {
-    throw new CompileError(`manifest axis.unit must be [x, y], got ${JSON.stringify(unit)}`);
+    throw new CompileError(`manifest axis.unit must be [x, y], got ${JSON.stringify(unit)}`, 'CE_COMPILE_AXIS_UNIT_INVALID');
   }
   const ex = Math.cos((deg * Math.PI) / 180);
   const ey = Math.sin((deg * Math.PI) / 180);
   if (hypot2(unit[0] - ex, unit[1] - ey) > 1e-3) {
     throw new CompileError(
-      `manifest axis.unit [${unit[0]}, ${unit[1]}] does not match axis.deg ${deg} (expected [${f32(ex)}, ${f32(ey)}])`,
+      `manifest axis.unit [${unit[0]}, ${unit[1]}] does not match axis.deg ${deg} (expected [${f32(ex)}, ${f32(ey)}])`, 'CE_COMPILE_AXIS_UNIT_DEG_MISMATCH',
     );
   }
 }
@@ -7916,9 +7916,9 @@ function buildMesh(
   const controls = meshControlBones(part);
 
   const refFor = (name: string): MeshBoneRef => {
-    if (!bones.some((b) => b.name === name)) throw new CompileError(`internal: mesh bone "${name}" is not in the bone list`);
+    if (!bones.some((b) => b.name === name)) throw new CompileError(`internal: mesh bone "${name}" is not in the bone list`, 'CE_COMPILE_INTERNAL_MESH_BONE_UNKNOWN');
     const m = transforms.get(name);
-    if (!m) throw new CompileError(`internal: no setup transform for mesh bone "${name}"`);
+    if (!m) throw new CompileError(`internal: no setup transform for mesh bone "${name}"`, 'CE_COMPILE_INTERNAL_MESH_BONE_TRANSFORM_MISSING');
     return { name, toBind: (wx, wy) => toBoneLocal(m, wx, wy) };
   };
 
@@ -7945,7 +7945,7 @@ function buildMesh(
       // bits turned an authored 90 into 89.99999734089101 in that refusal.
       const controlAngles = ringControlAngles(controls, spec.center!, (name) => {
         const m = exactFrames.get(name);
-        if (!m) throw new CompileError(`internal: no setup transform for control bone "${name}"`);
+        if (!m) throw new CompileError(`internal: no setup transform for control bone "${name}"`, 'CE_COMPILE_INTERNAL_CONTROL_BONE_TRANSFORM_MISSING');
         return [m.worldX, cropH - m.worldY];
       });
       geometry = buildRingMesh({
@@ -7958,7 +7958,7 @@ function buildMesh(
       });
     }
   } catch (err) {
-    if (err instanceof MeshError) throw new CompileError(`slot "${part.slot}" mesh: ${err.message}`);
+    if (err instanceof MeshError) throw new CompileError(`slot "${part.slot}" mesh: ${err.message}`, 'CE_COMPILE_MANIFEST_RING_RIBBON_INVALID');
     throw err;
   }
 
@@ -8009,17 +8009,17 @@ function buildMesh(
  */
 function rawCurve(curve: number[] | 'stepped', channels: number, where: string, at: string): number[] | 'stepped' {
   if (curve === 'stepped') return 'stepped';
-  if (!Array.isArray(curve)) throw new CompileError(`${where} (t=${at}): curve must be an array or "stepped"`);
+  if (!Array.isArray(curve)) throw new CompileError(`${where} (t=${at}): curve must be an array or "stepped"`, 'CE_COMPILE_CURVE_NOT_ARRAY');
   if (curve.length !== channels * 4) {
     // A short array multiplies `undefined` into the cubic and yields NaN with no
     // error at all — case 6g, and the reason A05 exists.
     throw new CompileError(
-      `${where} (t=${at}): raw curve has ${curve.length} numbers, this timeline needs ${channels} channel(s) x 4 = ${channels * 4}`,
+      `${where} (t=${at}): raw curve has ${curve.length} numbers, this timeline needs ${channels} channel(s) x 4 = ${channels * 4}`, 'CE_COMPILE_CURVE_CHANNEL_COUNT',
     );
   }
   for (const n of curve) {
     if (typeof n !== 'number' || !Number.isFinite(n)) {
-      throw new CompileError(`${where} (t=${at}): raw curve holds a non-finite value ${JSON.stringify(n)}`);
+      throw new CompileError(`${where} (t=${at}): raw curve holds a non-finite value ${JSON.stringify(n)}`, 'CE_COMPILE_CURVE_VALUE_NONFINITE');
     }
   }
   return curve.map(f32);
@@ -8043,9 +8043,9 @@ function compileValueTrack(
   kind: string,
 ): ModelKey[] {
   const shape = shapes[track.property];
-  if (!shape) throw new CompileError(`animation "${animName}": ${kind} "${target}" has no property "${track.property}"`);
+  if (!shape) throw new CompileError(`animation "${animName}": ${kind} "${target}" has no property "${track.property}"`, 'CE_COMPILE_VALUE_TIMELINE_PROPERTY_UNKNOWN');
   const where = `animation "${animName}" ${kind} "${target}" ${track.property}`;
-  if (!track.keys.length) throw new CompileError(`${where}: no keys`);
+  if (!track.keys.length) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
 
   const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
@@ -8053,7 +8053,7 @@ function compileValueTrack(
     const next = track.keys[i + 1];
     const time = keyTime(key.t + shift);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
     // A named-value timeline (`inherit`): the key's `v` is one name, stepped by
@@ -8066,12 +8066,12 @@ function compileValueTrack(
         throw new CompileError(
           `${where} key at t=${key.t} carries ${key.ease !== undefined ? `an easing ("${key.ease}")` : 'a curve'}, and ` +
             `this timeline is stepped by the format — its reader builds no curve, so the mode changes AT the key and ` +
-            'holds until the next one. Remove it',
+            'holds until the next one. Remove it', 'CE_COMPILE_STEPPED_TIMELINE_EASING',
         );
       }
       const mode = shape.named.resolve(key.v);
       if (mode === undefined) {
-        throw new CompileError(`${where} key at t=${key.t} names mode ${JSON.stringify(key.v)}; ${shape.named.known}`);
+        throw new CompileError(`${where} key at t=${key.t} names mode ${JSON.stringify(key.v)}; ${shape.named.known}`, 'CE_COMPILE_TIMELINE_MODE_UNKNOWN');
       }
       out.push({ time, [shape.named.field]: mode });
       continue;
@@ -8079,18 +8079,18 @@ function compileValueTrack(
     // A no-field timeline (`reset`) is an event: the key IS the value, so it
     // carries none. Anything else must match the field count exactly.
     if (shape.fields.length === 0) {
-      if (key.v !== null) throw new CompileError(`${where}: this timeline takes no value; use null`);
-      if (key.ease) throw new CompileError(`${where}: an event timeline cannot carry an easing`);
+      if (key.v !== null) throw new CompileError(`${where}: this timeline takes no value; use null`, 'CE_COMPILE_VALUELESS_TIMELINE_VALUE');
+      if (key.ease) throw new CompileError(`${where}: an event timeline cannot carry an easing`, 'CE_COMPILE_EVENT_TIMELINE_EASING');
       out.push({ time });
       continue;
     }
     if (!Array.isArray(key.v) || key.v.length !== shape.fields.length) {
-      throw new CompileError(`${where}: key value must be an array of ${shape.fields.length} number(s)`);
+      throw new CompileError(`${where}: key value must be an array of ${shape.fields.length} number(s)`, 'CE_COMPILE_TIMELINE_VALUE_CHANNEL_COUNT');
     }
     const entry: ModelKey = { time };
     shape.fields.forEach((field, c) => {
       const v = key.v as number[];
-      if (!Number.isFinite(v[c])) throw new CompileError(`${where}: non-finite value ${String(v[c])}`);
+      if (!Number.isFinite(v[c])) throw new CompileError(`${where}: non-finite value ${String(v[c])}`, 'CE_COMPILE_TIMELINE_VALUE_NONFINITE');
       // The bound, where the runtime has one. Refused here rather than left to
       // `A23` because this is a spec somebody wrote and the key is the thing to
       // change — the same division `compileConstraintTrack`'s `range` makes for
@@ -8106,28 +8106,28 @@ function compileValueTrack(
         // reads "… mass: value is 0", which says the property twice and the
         // second time under the wrong name.
         const at = shape.fields.length > 1 ? `${field} at t=${key.t}` : `key at t=${key.t}`;
-        if (refusal !== null) throw new CompileError(`${where} ${at} is ${refusal}`);
+        if (refusal !== null) throw new CompileError(`${where} ${at} is ${refusal}`, 'CE_COMPILE_PHYSICS_KEY_RANGE_INVALID');
       }
       entry[field] = f32(v[c]);
     });
     if (key.ease !== undefined && key.curve !== undefined) {
-      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`, 'CE_COMPILE_KEY_EASING_AND_CURVE');
     }
     if (key.curve !== undefined) {
-      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_CURVE');
       entry.curve = rawCurve(key.curve, shape.fields.length, where, String(key.t));
     } else if (key.ease && next) {
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';
       } else {
         const handles = motion.easings?.[key.ease];
-        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
-        if (!Array.isArray(next.v)) throw new CompileError(`${where}: next key value must be an array`);
+        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`, 'CE_COMPILE_KEY_EASING_UNKNOWN');
+        if (!Array.isArray(next.v)) throw new CompileError(`${where}: next key value must be an array`, 'CE_COMPILE_NEXT_KEY_VALUE_NOT_ARRAY');
         const t2 = keyTime(next.t + shift);
         entry.curve = easingCurve(handles, time, t2, key.v as number[], next.v as number[]);
       }
     } else if (key.ease && !next) {
-      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_EASING');
     }
     out.push(entry);
   }
@@ -8176,7 +8176,7 @@ function compileDrawOrder(
   slots: readonly ModelSlot[],
 ): ModelKey[] {
   const where = `animation "${animName}" drawOrder`;
-  if (!keys.length) throw new CompileError(`${where}: no keys`);
+  if (!keys.length) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
   const indexOf = new Map(slots.map((s, i) => [s.name, i]));
 
   const out: ModelKey[] = [];
@@ -8184,7 +8184,7 @@ function compileDrawOrder(
     const key = keys[i];
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
     // No offsets = "back to the setup draw order", which is the parser's own
@@ -8199,19 +8199,19 @@ function compileDrawOrder(
     for (const off of key.offsets) {
       const index = indexOf.get(off.slot);
       if (index === undefined) {
-        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is not one this rig emits`);
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is not one this rig emits`, 'CE_COMPILE_DRAW_ORDER_SLOT_UNKNOWN');
       }
       if (seen.has(off.slot)) {
-        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is offset twice in one key`);
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" is offset twice in one key`, 'CE_COMPILE_DRAW_ORDER_SLOT_DUPLICATE');
       }
       if (!Number.isInteger(off.offset)) {
-        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" offset ${off.offset} is not a whole number`);
+        throw new CompileError(`${where} at t=${key.t}: slot "${off.slot}" offset ${off.offset} is not a whole number`, 'CE_COMPILE_DRAW_ORDER_OFFSET_NONINTEGER');
       }
       const landing = index + off.offset;
       if (landing < 0 || landing >= slots.length) {
         throw new CompileError(
           `${where} at t=${key.t}: slot "${off.slot}" is at index ${index} and offset ${off.offset} puts it at ` +
-            `${landing}, outside the ${slots.length} emitted slots`,
+            `${landing}, outside the ${slots.length} emitted slots`, 'CE_COMPILE_DRAW_ORDER_OFFSET_OUTSIDE_SLOTS',
         );
       }
       seen.add(off.slot);
@@ -8256,27 +8256,27 @@ function compileEvents(
   events: Record<string, RigEvent>,
 ): ModelKey[] {
   const where = `animation "${animName}" events`;
-  if (!keys.length) throw new CompileError(`${where}: no keys`);
+  if (!keys.length) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
 
   const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (typeof key.name !== 'string' || key.name.length === 0) {
-      throw new CompileError(`${where}: key ${i} has no "name"; an event key fires an event by name`);
+      throw new CompileError(`${where}: key ${i} has no "name"; an event key fires an event by name`, 'CE_COMPILE_EVENT_KEY_NAME_MISSING');
     }
     const declared = events[key.name];
     if (declared === undefined) {
       const known = Object.keys(events);
       throw new CompileError(
         `${where} at t=${key.t}: event "${key.name}" is not declared in the rig spec's "events" block; ` +
-          (known.length ? `declared: ${known.join(', ')}` : 'that block is empty or absent'),
+          (known.length ? `declared: ${known.join(', ')}` : 'that block is empty or absent'), 'CE_COMPILE_EVENT_KEY_EVENT_UNKNOWN',
       );
     }
     const time = keyTime(key.t);
     if (i > 0 && time < (out[i - 1].time as number)) {
       throw new CompileError(
         `${where}: key times must not go backwards (at t=${key.t}, after t=${String(out[i - 1].time)}) — ` +
-          'the parser writes frames in array order and never sorts them',
+          'the parser writes frames in array order and never sorts them', 'CE_COMPILE_EVENT_KEY_TIMES_BACKWARDS',
       );
     }
     checkKeyTime(where, time, key.t, duration);
@@ -8284,19 +8284,19 @@ function compileEvents(
     const entry: ModelKey = { time, name: key.name };
     if (key.int !== undefined) {
       if (!Number.isInteger(key.int)) {
-        throw new CompileError(`${where} at t=${key.t}: int ${String(key.int)} is not an integer`);
+        throw new CompileError(`${where} at t=${key.t}: int ${String(key.int)} is not an integer`, 'CE_COMPILE_EVENT_KEY_INT_INVALID');
       }
       entry.int = key.int;
     }
     if (key.float !== undefined) {
       if (!Number.isFinite(key.float)) {
-        throw new CompileError(`${where} at t=${key.t}: float ${String(key.float)} is not finite`);
+        throw new CompileError(`${where} at t=${key.t}: float ${String(key.float)} is not finite`, 'CE_COMPILE_EVENT_KEY_FLOAT_NONFINITE');
       }
       entry.float = f32(key.float);
     }
     if (key.string !== undefined) {
       if (typeof key.string !== 'string') {
-        throw new CompileError(`${where} at t=${key.t}: string ${JSON.stringify(key.string)} is not a string`);
+        throw new CompileError(`${where} at t=${key.t}: string ${JSON.stringify(key.string)} is not a string`, 'CE_COMPILE_EVENT_KEY_STRING_INVALID');
       }
       entry.string = key.string;
     }
@@ -8306,10 +8306,10 @@ function compileEvents(
       if (declared.audio === undefined) {
         throw new CompileError(
           `${where} at t=${key.t}: ${field} is set but event "${key.name}" declares no "audio"; ` +
-            `the parser reads ${field} only for an event with an audio path, so it would be dropped in silence`,
+            `the parser reads ${field} only for an event with an audio path, so it would be dropped in silence`, 'CE_COMPILE_EVENT_AUDIO_OVERRIDE_NO_AUDIO',
         );
       }
-      if (!Number.isFinite(v)) throw new CompileError(`${where} at t=${key.t}: ${field} ${String(v)} is not finite`);
+      if (!Number.isFinite(v)) throw new CompileError(`${where} at t=${key.t}: ${field} ${String(v)} is not finite`, 'CE_COMPILE_EVENT_AUDIO_NUMBER_NONFINITE');
       entry[field] = f32(v);
     }
     out.push(entry);
@@ -8378,7 +8378,7 @@ function compileConstraintTrack(
   // An array by the time this runs (`parseMotionSpec`); an EMPTY one is a
   // format rule rather than a shape — the parser reads key 0, finds nothing and
   // skips the timeline, which is assertion A34's silent case.
-  if (keys.length === 0) throw new CompileError(`${where}: no keys`);
+  if (keys.length === 0) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
 
   const read = (key: MotionIkTrack['keys'][number] | MotionTransformTrack['keys'][number], field: string): unknown =>
     (key as unknown as Record<string, unknown>)[field];
@@ -8397,7 +8397,7 @@ function compileConstraintTrack(
       throw new CompileError(
         `${where}: key ${i} (t=${key.t}) names "${field}" and key 0 does not. Every key of ${article} ${group} timeline ` +
           'is read with its own default, so a field stated on some keys and not others snaps to the default on ' +
-          'the rest — state it on every key or on none.',
+          'the rest — state it on every key or on none.', 'CE_COMPILE_CONSTRAINT_KEY_FIELD_ADDED',
       );
     }
     for (const field of first) {
@@ -8405,7 +8405,7 @@ function compileConstraintTrack(
       throw new CompileError(
         `${where}: key 0 names "${field}" and key ${i} (t=${key.t}) does not. Every key of ${article} ${group} timeline ` +
           `is read with its own default, so "${field}" would snap to ` +
-          `${JSON.stringify(defaultOf(shape, field))} at t=${key.t} — state it on every key or on none.`,
+          `${JSON.stringify(defaultOf(shape, field))} at t=${key.t} — state it on every key or on none.`, 'CE_COMPILE_CONSTRAINT_KEY_FIELD_OMITTED',
       );
     }
   });
@@ -8425,7 +8425,7 @@ function compileConstraintTrack(
     const next = keys[i + 1];
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
 
@@ -8434,14 +8434,14 @@ function compileConstraintTrack(
       const v = read(key, channel.field);
       if (v === undefined) continue;
       if (typeof v !== 'number' || !Number.isFinite(v)) {
-        throw new CompileError(`${where} (t=${key.t}): ${channel.field} is ${JSON.stringify(v)}, not a finite number`);
+        throw new CompileError(`${where} (t=${key.t}): ${channel.field} is ${JSON.stringify(v)}, not a finite number`, 'CE_COMPILE_CONSTRAINT_KEY_NUMBER_NONFINITE');
       }
       const bounds = shape.range[channel.field];
       if (bounds && (v < bounds[0] || v > bounds[1])) {
         throw new CompileError(
           `${where} (t=${key.t}): ${channel.field} is ${v}, outside ${bounds[0]}..${
             bounds[1] === Infinity ? '∞' : bounds[1]
-          } — the runtime documents it as ${channel.field === 'mix' ? 'a percentage 0-1' : 'a distance'}`,
+          } — the runtime documents it as ${channel.field === 'mix' ? 'a percentage 0-1' : 'a distance'}`, 'CE_COMPILE_CONSTRAINT_KEY_RANGE_INVALID',
         );
       }
       entry[channel.field] = f32(v);
@@ -8458,23 +8458,23 @@ function compileConstraintTrack(
         continue;
       }
       if (typeof v !== 'boolean') {
-        throw new CompileError(`${where} (t=${key.t}): ${flag.field} is ${JSON.stringify(v)}, not true or false`);
+        throw new CompileError(`${where} (t=${key.t}): ${flag.field} is ${JSON.stringify(v)}, not true or false`, 'CE_COMPILE_CONSTRAINT_KEY_FLAG_NOT_BOOLEAN');
       }
       entry[flag.field] = v;
     }
 
     if (key.ease !== undefined && key.curve !== undefined) {
-      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`, 'CE_COMPILE_KEY_EASING_AND_CURVE');
     }
     if (key.curve !== undefined) {
-      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_CURVE');
       entry.curve = rawCurve(key.curve, shape.channels.length, where, String(key.t));
     } else if (key.ease !== undefined && next) {
       if (key.ease === 'stepped') {
         entry.curve = 'stepped';
       } else {
         const handles = motion.easings?.[key.ease];
-        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
+        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`, 'CE_COMPILE_KEY_EASING_UNKNOWN');
         const t2 = keyTime(next.t);
         entry.curve = easingCurve(
           handles,
@@ -8485,7 +8485,7 @@ function compileConstraintTrack(
         );
       }
     } else if (key.ease !== undefined && !next) {
-      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_EASING');
     }
     out.push(entry);
   }
@@ -8599,7 +8599,7 @@ export function deformGeometryOf(
   if (!isModelVertexAttachment(att)) {
     throw new CompileError(
       `${where}: a deform timeline keys the vertices of an attachment, and this one is a "${type}" — ` +
-        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping, path.',
+        'it has no vertex array to deform. Deformable types: mesh, boundingbox, clipping, path.', 'CE_COMPILE_DEFORM_ATTACHMENT_TYPE_INVALID',
     );
   }
   if (att.kind === 'mesh') {
@@ -8666,7 +8666,7 @@ export function deformGeometryOf(
     const vertex = vertices.bindings[v];
     const n = vertex.length;
     if (n < 1) {
-      throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${at}`);
+      throw new CompileError(`${where}: the attachment's weighted vertex run has a bone count of ${String(n)} at index ${at}`, 'CE_COMPILE_DEFORM_WEIGHT_BONE_COUNT_INVALID');
     }
     if (n === 1) {
       bones.add(vertex[0].bone);
@@ -8727,7 +8727,7 @@ export function deformGeometryOf(
     let sum = 0;
     for (const binding of vertices.bindings[v]) {
       const m = transforms.get(binding.bone);
-      if (!m) throw new CompileError(`${where}: vertex ${v} binds bone "${binding.bone}", which has no setup transform`);
+      if (!m) throw new CompileError(`${where}: vertex ${v} binds bone "${binding.bone}", which has no setup transform`, 'CE_COMPILE_VERTEX_BIND_TRANSFORM_MISSING');
       const weight = binding.weight;
       const [x, y] = toWorld(m, binding.x, binding.y);
       wx += x * weight;
@@ -8834,7 +8834,7 @@ function compileSequenceTrack(
       `${where}: attachment "${track.attachment}" carries no "sequence" block, so there is no series to step. The ` +
         'parser gives every region and mesh a series of ONE region (`readSequence(null)` is `new Sequence(1, ' +
         'false)`), so this timeline would load and show that region under every mode at every time. Give the ' +
-        'attachment a "sequence" in the rig spec, or remove the track.',
+        'attachment a "sequence" in the rig spec, or remove the track.', 'CE_COMPILE_SEQUENCE_ATTACHMENT_NO_SERIES',
     );
   }
   if (attachment.kind === 'linkedmesh' && attachment.timelines) {
@@ -8844,23 +8844,23 @@ function compileSequenceTrack(
         `is not false), so its \`timelineAttachment\` is "${source}" (\`SkeletonJson.js:437-448\`) and ` +
         '`SequenceTimeline` applies only where the slot\'s attachment\'s `timelineAttachment` is the one it was ' +
         `built for — a key aimed at the link is applied to nothing. Key "${source}" instead (the link steps its own ` +
-        'series by it), or set "timelines": false on the link.',
+        'series by it), or set "timelines": false on the link.', 'CE_COMPILE_SEQUENCE_LINK_TIMELINE_INERT',
     );
   }
-  if (track.keys.length === 0) throw new CompileError(`${where}: no keys`);
+  if (track.keys.length === 0) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
   const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
     const key = track.keys[i];
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
     if (key.index !== undefined && key.index >= series.count) {
       throw new CompileError(
         `${where} (t=${key.t}): index ${key.index} is past the end of a ${series.count}-frame series (frames 0 to ` +
           `${series.count - 1}). \`Sequence.resolveIndex\` clamps it to the last frame, so the key would start on a ` +
-          'frame it does not name. `index` is 0-based.',
+          'frame it does not name. `index` is 0-based.', 'CE_COMPILE_SEQUENCE_KEY_INDEX_OUTSIDE_SERIES',
       );
     }
     const entry: ModelKey = { time };
@@ -8886,14 +8886,14 @@ function compileDeformTrack(
   // An array by the time this runs (`parseMotionSpec`); an EMPTY one is a
   // format rule rather than a shape — the parser reads key 0, finds nothing and
   // skips the timeline, which is assertion A34's silent case.
-  if (keys.length === 0) throw new CompileError(`${where}: no keys`);
+  if (keys.length === 0) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
 
   const out: ModelKey[] = [];
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const time = keyTime(key.t);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
     // -- a key that states a MODEL rather than a run (issue #294) ------------
@@ -8910,7 +8910,7 @@ function compileDeformTrack(
         throw new CompileError(
           `${where} (t=${key.t}): the key carries both a "transform" and a "vertices" run, and they are two answers to ` +
             'one question. Authored offsets and a stated model do not combine, for the same reason a mesh cannot carry ' +
-            'both a "generator" and authored geometry — drop one.',
+            'both a "generator" and authored geometry — drop one.', 'CE_COMPILE_DEFORM_TRANSFORM_AND_VERTICES',
         );
       }
       if (key.offset !== undefined || key.fromVertex !== undefined) {
@@ -8918,14 +8918,14 @@ function compileDeformTrack(
           `${where} (t=${key.t}): the key states a "transform" and a start index. A transform is a model of the whole ` +
             `attachment and is evaluated over all ${geometry.vertexCount} of its vertices, so it always starts at deform ` +
             'index 0. A model applied to part of a run leaves a step at the run\'s edge — write the partial run by hand ' +
-            'if that is what you mean.',
+            'if that is what you mean.', 'CE_COMPILE_DEFORM_TRANSFORM_START_INDEX',
         );
       }
       if (geometry.setup === null) {
         throw new CompileError(
           `${where} (t=${key.t}): a "transform" states where every vertex of this attachment goes, and this one has a ` +
             `vertex the arithmetic cannot place — ${geometry.setupWhy}. Fix the weights, or write the bind-space pairs ` +
-            'yourself and start the run with "offset".',
+            'yourself and start the run with "offset".', 'CE_COMPILE_DEFORM_TRANSFORM_SETUP_UNRESOLVED',
         );
       }
       const report = evaluateDeformTransform(
@@ -8942,7 +8942,7 @@ function compileDeformTrack(
         // assumed: a silent mismatch here is the overrun A35 exists for.
         throw new CompileError(
           `${where} (t=${key.t}): the transform produced ${report.offsets.length} numbers for ` +
-            `${geometry.vertexCount} vertices`,
+            `${geometry.vertexCount} vertices`, 'CE_COMPILE_DEFORM_TRANSFORM_OFFSET_COUNT',
         );
       }
       // -- one displacement per vertex -> one pair per influence (issue #389) -
@@ -8958,7 +8958,7 @@ function compileDeformTrack(
       if (run.length !== geometry.deformLength) {
         throw new CompileError(
           `${where} (t=${key.t}): the transform expanded to ${run.length} numbers and this attachment's deform ` +
-            `array is ${geometry.deformLength} long`,
+            `array is ${geometry.deformLength} long`, 'CE_COMPILE_DEFORM_TRANSFORM_RUN_LENGTH',
         );
       }
       generated.push({
@@ -8992,7 +8992,7 @@ function compileDeformTrack(
     if (key.offset !== undefined && key.fromVertex !== undefined) {
       throw new CompileError(
         `${where} (t=${key.t}): a key gives its start as "offset" (an index into the deform array) or as ` +
-          '"fromVertex" (a vertex index rigc translates), never both',
+          '"fromVertex" (a vertex index rigc translates), never both', 'CE_COMPILE_DEFORM_START_SOURCES_CONFLICT',
       );
     }
     const run = key.vertices ?? null;
@@ -9003,7 +9003,7 @@ function compileDeformTrack(
       if (key.offset !== undefined || key.fromVertex !== undefined) {
         throw new CompileError(
           `${where} (t=${key.t}): the key has no "vertices", which is the format's way of saying "back to the ` +
-            'setup pose" — so there is nothing for a start index to point at. Drop the offset, or give it a run.',
+            'setup pose" — so there is nothing for a start index to point at. Drop the offset, or give it a run.', 'CE_COMPILE_DEFORM_SETUP_KEY_START_INDEX',
         );
       }
       out.push({ time });
@@ -9012,7 +9012,7 @@ function compileDeformTrack(
     if (!Array.isArray(run) || run.length === 0) {
       throw new CompileError(
         `${where} (t=${key.t}): "vertices" is ${JSON.stringify(key.vertices)}; give an array of x, y offsets, ` +
-          'or omit it entirely for "back to the setup pose"',
+          'or omit it entirely for "back to the setup pose"', 'CE_COMPILE_DEFORM_VERTICES_NOT_ARRAY',
       );
     }
     // ⛔ No parity clause here, and its absence is the rule (issue #576).
@@ -9042,7 +9042,7 @@ function compileDeformTrack(
     // format holds, and the half that refused was the authoring half.
     for (const n of run) {
       if (typeof n !== 'number' || !Number.isFinite(n)) {
-        throw new CompileError(`${where} (t=${key.t}): "vertices" holds a non-finite value ${JSON.stringify(n)}`);
+        throw new CompileError(`${where} (t=${key.t}): "vertices" holds a non-finite value ${JSON.stringify(n)}`, 'CE_COMPILE_DEFORM_VERTEX_VALUE_NONFINITE');
       }
     }
     const start = deformStart(key, run.length, geometry, where);
@@ -9051,7 +9051,7 @@ function compileDeformTrack(
         `${where} (t=${key.t}): the run starts at deform index ${start} and is ${run.length} long, which ends at ` +
           `${start + run.length}; this attachment's deform array is ${geometry.deformLength} long ` +
           `(${geometry.weighted ? `${geometry.deformLength / 2} bone influences` : `${geometry.vertexCount} vertices`}). ` +
-          'The parser copies into a Float32Array, so everything past the end is dropped without a word.',
+          'The parser copies into a Float32Array, so everything past the end is dropped without a word.', 'CE_COMPILE_DEFORM_RUN_OUTSIDE_ATTACHMENT',
       );
     }
     const entry: ModelKey = { time };
@@ -9122,7 +9122,7 @@ function deformStart(
   if (key.offset !== undefined) {
     if (!Number.isInteger(key.offset) || key.offset < 0) {
       throw new CompileError(
-        `${where} (t=${key.t}): offset is ${JSON.stringify(key.offset)}; it is an index into the deform array, so a whole number ≥ 0`,
+        `${where} (t=${key.t}): offset is ${JSON.stringify(key.offset)}; it is an index into the deform array, so a whole number ≥ 0`, 'CE_COMPILE_DEFORM_OFFSET_INVALID',
       );
     }
     // ⛔ An odd `offset` is not refused either, and it went the same way as the
@@ -9140,7 +9140,7 @@ function deformStart(
   if (key.fromVertex === undefined) return 0;
   const from = key.fromVertex;
   if (!Number.isInteger(from) || from < 0) {
-    throw new CompileError(`${where} (t=${key.t}): fromVertex is ${JSON.stringify(from)}; it is a vertex index, so a whole number ≥ 0`);
+    throw new CompileError(`${where} (t=${key.t}): fromVertex is ${JSON.stringify(from)}; it is a vertex index, so a whole number ≥ 0`, 'CE_COMPILE_DEFORM_FROM_VERTEX_INVALID');
   }
   // ⌈⌉ rather than ÷, because an odd run REACHES a last vertex without covering
   // it: its final number is that vertex's x and the y beside it stays at setup
@@ -9151,7 +9151,7 @@ function deformStart(
   if (from + covered > geometry.vertexCount) {
     throw new CompileError(
       `${where} (t=${key.t}): fromVertex ${from} plus ${covered} vertex offset(s) runs to vertex ${from + covered}, ` +
-        `and the attachment has ${geometry.vertexCount}`,
+        `and the attachment has ${geometry.vertexCount}`, 'CE_COMPILE_DEFORM_FROM_VERTEX_OUTSIDE_ATTACHMENT',
     );
   }
   if (!geometry.weighted) return from * 2;
@@ -9164,7 +9164,7 @@ function deformStart(
         'is not a thing that array can hold: the world offset of a multi-bone vertex is the weighted sum of a ' +
         'per-bone offset in each bone\'s own bind space, so rigc will not guess one for you. Either key the ' +
         'control bone instead, or write the bind-space pairs yourself and start the run with "offset" ' +
-        `(vertex ${from} starts at deform index ${2 * counts.slice(0, from).reduce((a, b) => a + b, 0)}).`,
+        `(vertex ${from} starts at deform index ${2 * counts.slice(0, from).reduce((a, b) => a + b, 0)}).`, 'CE_COMPILE_DEFORM_WEIGHTED_FROM_VERTEX_AMBIGUOUS',
     );
   }
   let start = 0;
@@ -9192,21 +9192,21 @@ function deformKeyCurve(
   next: ModelKey | undefined,
 ): ModelKey {
   if (key.ease !== undefined && key.curve !== undefined) {
-    throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+    throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`, 'CE_COMPILE_KEY_EASING_AND_CURVE');
   }
   if (key.curve !== undefined) {
-    if (next === undefined) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+    if (next === undefined) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_CURVE');
     entry.curve = rawCurve(key.curve, 1, where, String(key.t));
     return entry;
   }
   if (key.ease === undefined) return entry;
-  if (next === undefined) throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+  if (next === undefined) throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_EASING');
   if (key.ease === 'stepped') {
     entry.curve = 'stepped';
     return entry;
   }
   const handles = motion.easings?.[key.ease];
-  if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
+  if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`, 'CE_COMPILE_KEY_EASING_UNKNOWN');
   // The one channel runs 0 -> 1; the VALUE being held is the geometry, so the
   // hold test compares the two keys' runs rather than those two constants.
   entry.curve = easingCurve(handles, entry.time as number, keyTime(keys[index + 1].t), [0], [1], sameDeform(entry, next));
@@ -9242,7 +9242,7 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
   if (named.length > 1) {
     throw new CompileError(
       `animation "${animName}": a track names more than one target (${named.join(', ')}); the list is ` +
-        `${targetFields.join('/')} and a track names exactly one`,
+        `${targetFields.join('/')} and a track names exactly one`, 'CE_COMPILE_TRACK_TARGETS_MULTIPLE',
     );
   }
   const family = constraintFamilyOf(track);
@@ -9252,12 +9252,12 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
     const who = direct === undefined ? `group "${String(track.group)}"` : `${label} "${direct}"`;
     if (!(track.property in tracks)) {
       throw new CompileError(
-        `animation "${animName}": ${who} has no timeline "${track.property}" (it has: ${Object.keys(tracks).join(', ')})`,
+        `animation "${animName}": ${who} has no timeline "${track.property}" (it has: ${Object.keys(tracks).join(', ')})`, 'CE_COMPILE_CONSTRAINT_TRACK_PROPERTY_UNKNOWN',
       );
     }
     if (direct !== undefined) return [direct];
     const members = motion.groups?.[String(track.group)];
-    if (!members) throw new CompileError(`animation "${animName}": unknown group "${String(track.group)}"`);
+    if (!members) throw new CompileError(`animation "${animName}": unknown group "${String(track.group)}"`, 'CE_COMPILE_ANIMATION_GROUP_UNKNOWN');
     return members;
   }
   // A constraint timeline with no constraint named. Worth its own refusal: the
@@ -9268,12 +9268,12 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
   if (owning.length) {
     throw new CompileError(
       `animation "${animName}": "${track.property}" is a ${owning.map((f) => CONSTRAINT_TRACK_FAMILIES[f].label).join(' / ')} ` +
-        `timeline, and this track names no constraint — put the name in "${owning.join('" or "')}"`,
+        `timeline, and this track names no constraint — put the name in "${owning.join('" or "')}"`, 'CE_COMPILE_CONSTRAINT_TRACK_TARGET_MISSING',
     );
   }
   const isBoneTrack = track.property in BONE_TRACKS;
   if (isBoneTrack && !track.bone && !track.group) {
-    throw new CompileError(`animation "${animName}": "${track.property}" is a bone track but no bone is named`);
+    throw new CompileError(`animation "${animName}": "${track.property}" is a bone track but no bone is named`, 'CE_COMPILE_BONE_TRACK_TARGET_MISSING');
   }
   if (!isBoneTrack && track.bone) {
     // The bone family's sibling of `compileTrack`'s slot refusal, raised here for
@@ -9288,7 +9288,7 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
     throw new CompileError(
       `animation "${animName}" bone "${track.bone}" has no timeline "${track.property}" ` +
         `(it has: ${Object.keys(BONE_TRACKS).join(', ')})` +
-        (track.property in SLOT_TRACKS ? `. "${track.property}" is a slot timeline — put the name in "slot"` : ''),
+        (track.property in SLOT_TRACKS ? `. "${track.property}" is a slot timeline — put the name in "slot"` : ''), 'CE_COMPILE_BONE_TRACK_PROPERTY_UNKNOWN',
     );
   }
   if (track.bone) return [track.bone];
@@ -9300,7 +9300,7 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
     // following the part and two objects moving together, which reads as a
     // composite.
     const members = motion.groups?.[track.group];
-    if (!members) throw new CompileError(`animation "${animName}": unknown group "${track.group}"`);
+    if (!members) throw new CompileError(`animation "${animName}": unknown group "${track.group}"`, 'CE_COMPILE_ANIMATION_GROUP_UNKNOWN');
     // 🚨 The group is the one target shape whose FAMILY is decided by the
     // property, and three tables decide it: `constraintFamilyOf` asks
     // `property in PHYSICS_TRACKS`, this function asks `property in BONE_TRACKS`,
@@ -9326,12 +9326,12 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
         `animation "${animName}" group "${track.group}" has no timeline "${track.property}" ` +
           `(a bone group has: ${Object.keys(BONE_TRACKS).join(', ')}; ` +
           `a slot group has: ${Object.keys(SLOT_TRACKS).join(', ')}; ` +
-          `a ${CONSTRAINT_TRACK_FAMILIES.physics.label} group has: ${Object.keys(PHYSICS_TRACKS).join(', ')})`,
+          `a ${CONSTRAINT_TRACK_FAMILIES.physics.label} group has: ${Object.keys(PHYSICS_TRACKS).join(', ')})`, 'CE_COMPILE_GROUP_TRACK_PROPERTY_UNKNOWN',
       );
     }
     return members;
   }
-  throw new CompileError(`animation "${animName}": a track targets neither slot nor group`);
+  throw new CompileError(`animation "${animName}": a track targets neither slot nor group`, 'CE_COMPILE_TRACK_TARGET_MISSING');
 }
 
 /**
@@ -9352,23 +9352,23 @@ function resolveTargets(track: MotionTrack, motion: MotionSpec, animName: string
 function checkMotionGroups(motion: MotionSpec): void {
   for (const [name, members] of Object.entries(motion.groups ?? {})) {
     if (!Array.isArray(members)) {
-      throw new CompileError(`group "${name}" is ${JSON.stringify(members)}; it is an array of member names`);
+      throw new CompileError(`group "${name}" is ${JSON.stringify(members)}; it is an array of member names`, 'CE_COMPILE_GROUP_MEMBERS_NOT_ARRAY');
     }
     if (members.length === 0) {
       throw new CompileError(
-        `group "${name}" declares no members, so every track naming it would compile no timeline and gate green`,
+        `group "${name}" declares no members, so every track naming it would compile no timeline and gate green`, 'CE_COMPILE_GROUP_MEMBERS_EMPTY',
       );
     }
     const seen = new Set<string>();
     members.forEach((member, i) => {
       if (typeof member !== 'string' || member.length === 0) {
-        throw new CompileError(`group "${name}" member ${i} is ${JSON.stringify(member)}; it is a bone or slot name`);
+        throw new CompileError(`group "${name}" member ${i} is ${JSON.stringify(member)}; it is a bone or slot name`, 'CE_COMPILE_GROUP_MEMBER_NOT_NAME');
       }
       if (seen.has(member)) {
         throw new CompileError(
           `group "${name}" names member "${member}" twice (at index ${members.indexOf(member)} and ${i}). ` +
             'Member order is what `stagger` counts and what a per-member value map is read against, so a repeat is ' +
-            'two different delays and two different values for one bone.',
+            'two different delays and two different values for one bone.', 'CE_COMPILE_GROUP_MEMBER_DUPLICATE',
         );
       }
       seen.add(member);
@@ -9414,13 +9414,13 @@ function resolveMemberTrack(
   if ((carriesMap || carriesModel) && track.group === undefined && track.bone === undefined) {
     throw new CompileError(
       `${at}: per-member values need a target whose members are named — put them on a track that names a "group", or ` +
-        'a "bone" for the one-member case',
+        'a "bone" for the one-member case', 'CE_COMPILE_MEMBER_VALUES_TARGET_UNNAMED',
     );
   }
   if (carriesMap && targetKind === 'bone') {
     throw new CompileError(
       `${at}: a per-member "v" map names members, and a bone track has one target rather than members. Write the ` +
-        'value directly, or move the track onto a group.',
+        'value directly, or move the track onto a group.', 'CE_COMPILE_BONE_MEMBER_VALUE_MAP',
     );
   }
 
@@ -9437,7 +9437,7 @@ function resolveMemberTrack(
       throw new CompileError(
         `${where}: this key carries both a "derive" model and a per-member "v" map — two answers to one question. ` +
           'The model states the arithmetic and the depths that produced the numbers; the map states the numbers. ' +
-          'Pick one.',
+          'Pick one.', 'CE_COMPILE_MEMBER_DERIVE_AND_VALUE_MAP',
       );
     }
     if (key.derive === undefined) {
@@ -9452,7 +9452,7 @@ function resolveMemberTrack(
         if (!known.has(named)) {
           throw new CompileError(
             `${where}: the value map names "${named}", which group "${target}" does not declare ` +
-              `(its members are: ${targets.join(', ')})`,
+              `(its members are: ${targets.join(', ')})`, 'CE_COMPILE_MEMBER_VALUE_NAME_UNKNOWN',
           );
         }
       }
@@ -9464,7 +9464,7 @@ function resolveMemberTrack(
               `(it states: ${Object.keys(table).join(', ') || 'nothing'}). ` +
               'A member is refused rather than defaulted: an absent value is exactly the thing a map of six is ' +
               'written to make visible, and defaulting it to the identity would key that one bone with a different ' +
-              'motion in silence.',
+              'motion in silence.', 'CE_COMPILE_MEMBER_VALUE_MISSING',
           );
         }
         const value = table[name];
@@ -9500,7 +9500,7 @@ function resolveMemberTrack(
         throw new CompileError(
           `${where}: derive reads member "${name}"'s setup position, and this rig declares no such bone. ` +
             'A model over a group of slots or constraints has no coordinate to be evaluated at — state the values ' +
-            'as a "v" map.',
+            'as a "v" map.', 'CE_COMPILE_MEMBER_DERIVE_TARGET_NOT_BONE',
         );
       }
       parents.add(bone.parent ?? '(root)');
@@ -9511,7 +9511,7 @@ function resolveMemberTrack(
         `${where}: derive measures every member's "${coordinate}" from its parent's origin and "about" says where the ` +
           `axis crosses it, so one space is what makes the members comparable. These members sit under ` +
           `${parents.size} different parents (${[...parents].join(', ')}), and their coordinates are therefore ` +
-          'measured from different origins. Split the track by parent, or state the values as a "v" map.',
+          'measured from different origins. Split the track by parent, or state the values as a "v" map.', 'CE_COMPILE_MEMBER_DERIVE_PARENTS_DIFFER',
       );
     }
     const report = evaluateTrackDerive(key.derive, track.property, members, onModelGrid, where);
@@ -9571,7 +9571,7 @@ function compileTrack(
   if (shape === undefined) {
     throw new CompileError(
       `animation "${animName}" slot "${target}" has no timeline "${track.property}" ` +
-        `(it has: ${Object.keys(SLOT_TRACKS).join(', ')})`,
+        `(it has: ${Object.keys(SLOT_TRACKS).join(', ')})`, 'CE_COMPILE_SLOT_TRACK_PROPERTY_UNKNOWN',
     );
   }
   // 🚨 Raised here, with the target and before the keys, for the same reason as
@@ -9596,10 +9596,10 @@ function compileTrack(
       `${where}: slot "${target}" declares no setup "dark", and an "${shape}" timeline poses a slot's dark colour — ` +
         'the runtime allocates one only for a slot whose setup pose has it, so applying this animation throws ' +
         `instead of tinting. Give slot "${target}" a \`dark\` in the rig spec (the colour it holds at rest), or ` +
-        `key "${shape === 'rgba2' ? 'rgba' : 'rgb'}" if only the light colour moves`,
+        `key "${shape === 'rgba2' ? 'rgba' : 'rgb'}" if only the light colour moves`, 'CE_COMPILE_DARK_TIMELINE_SETUP_DARK_MISSING',
     );
   }
-  if (!track.keys.length) throw new CompileError(`${where}: no keys`);
+  if (!track.keys.length) throw new CompileError(`${where}: no keys`, 'CE_COMPILE_TIMELINE_KEYS_EMPTY');
 
   const out: ModelKey[] = [];
   for (let i = 0; i < track.keys.length; i++) {
@@ -9607,13 +9607,13 @@ function compileTrack(
     const next = track.keys[i + 1];
     const time = keyTime(key.t + shift);
     if (i > 0 && time <= (out[i - 1].time as number)) {
-      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`);
+      throw new CompileError(`${where}: key times must strictly increase (at t=${key.t})`, 'CE_COMPILE_KEY_TIMES_NOT_INCREASING');
     }
     checkKeyTime(where, time, key.t, duration);
 
     if (shape === 'attachment') {
       if (key.v !== null && typeof key.v !== 'string') {
-        throw new CompileError(`${where}: attachment key value must be a string or null`);
+        throw new CompileError(`${where}: attachment key value must be a string or null`, 'CE_COMPILE_ATTACHMENT_KEY_VALUE_INVALID');
       }
       // Resolved against every skin, not just `default` — see `SlotAttachmentIndex`.
       const known = attachments.bySlot.get(target);
@@ -9628,10 +9628,10 @@ function compileTrack(
             `(searched: ${attachments.searched.join(', ')}) — ` +
             (known === undefined || known.size === 0
               ? 'the slot has no attachments at all'
-              : `the slot has: ${[...known].join(', ')}`),
+              : `the slot has: ${[...known].join(', ')}`), 'CE_COMPILE_ATTACHMENT_KEY_UNKNOWN',
         );
       }
-      if (key.ease) throw new CompileError(`${where}: attachment keys cannot carry an easing`);
+      if (key.ease) throw new CompileError(`${where}: attachment keys cannot carry an easing`, 'CE_COMPILE_ATTACHMENT_KEY_EASING');
       // Attachment timelines are inherently stepped — exactly what lip-sync wants.
       out.push({ time, name: key.v });
       continue;
@@ -9650,7 +9650,7 @@ function compileTrack(
     // a second thing to keep in step.
     const { spelling, channels } = COLOUR_KEYS[shape];
     const colourOf = (v: number[]): Record<string, string | number> => colourKey(shape, v);
-    if (!Array.isArray(key.v)) throw new CompileError(`${where}: ${shape} key value must be ${spelling}`);
+    if (!Array.isArray(key.v)) throw new CompileError(`${where}: ${shape} key value must be ${spelling}`, 'CE_COMPILE_SLOT_KEY_VALUE_SHAPE');
     if (shape === 'alpha' && key.v.length === 1 && !(Number.isFinite(key.v[0]) && key.v[0] >= 0 && key.v[0] <= 1)) {
       // The one colour shape written as a number rather than a byte, so the one
       // that is not clamped onto 0..1 by `channelHex` on the way out. The
@@ -9661,15 +9661,15 @@ function compileTrack(
       // clamping is choosing the value.
       throw new CompileError(
         `${where}: key at t=${key.t} is ${String(key.v[0])}; an alpha is a number from 0 to 1 — the runtime clamps ` +
-          'the posed alpha to that range after interpolating, so a value outside it is one no pose ever holds',
+          'the posed alpha to that range after interpolating, so a value outside it is one no pose ever holds', 'CE_COMPILE_ALPHA_KEY_RANGE_INVALID',
       );
     }
     const entry: ModelKey = { time, ...colourOf(key.v) };
     if (key.ease !== undefined && key.curve !== undefined) {
-      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`);
+      throw new CompileError(`${where}: a key carries both a named easing and a raw curve; pick one`, 'CE_COMPILE_KEY_EASING_AND_CURVE');
     }
     if (key.curve !== undefined) {
-      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`);
+      if (!next) throw new CompileError(`${where}: last key carries a curve but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_CURVE');
       entry.curve = rawCurve(key.curve, channels, where, String(key.t));
       out.push(entry);
       continue;
@@ -9679,9 +9679,9 @@ function compileTrack(
         entry.curve = 'stepped';
       } else {
         const handles = motion.easings?.[key.ease];
-        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`);
+        if (!handles) throw new CompileError(`${where}: unknown easing "${key.ease}"`, 'CE_COMPILE_KEY_EASING_UNKNOWN');
         if (!Array.isArray(next.v)) {
-          throw new CompileError(`${where}: ${shape} key value must be ${spelling}`);
+          throw new CompileError(`${where}: ${shape} key value must be ${spelling}`, 'CE_COMPILE_SLOT_KEY_VALUE_SHAPE');
         }
         const t2 = keyTime(next.t + shift);
         // 4 numbers per channel, in the format's own channel order — 16 for
@@ -9696,7 +9696,7 @@ function compileTrack(
         entry.curve = easingCurve(handles, time, t2, key.v, next.v, held);
       }
     } else if (key.ease && !next) {
-      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`);
+      throw new CompileError(`${where}: last key carries an easing but has nothing to ease to`, 'CE_COMPILE_LAST_KEY_EASING');
     }
     out.push(entry);
   }

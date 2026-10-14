@@ -199,13 +199,13 @@ export function evaluateTrackDerive(
   where: string,
 ): TrackDeriveReport {
   if (derive === null || typeof derive !== 'object' || Array.isArray(derive)) {
-    throw new CompileError(`${where}: "derive" is ${JSON.stringify(derive)}; it is an object with a "kind"`);
+    throw new CompileError(`${where}: "derive" is ${JSON.stringify(derive)}; it is an object with a "kind"`, 'CE_TRACK_DERIVE_OBJECT');
   }
   const kind = (derive as { kind?: unknown }).kind;
   if (typeof kind !== 'string' || !(TRACK_DERIVE_KINDS as readonly string[]).includes(kind)) {
     throw new CompileError(
       `${where}: "derive" has kind ${JSON.stringify(kind)}; this spec evaluates ${TRACK_DERIVE_KINDS.join(', ')}. ` +
-        'A model that is none of those is still authorable as a per-member "v" map, or as one track per member.',
+        'A model that is none of those is still authorable as a per-member "v" map, or as one track per member.', 'CE_TRACK_DERIVE_KIND',
     );
   }
   const turn = derive as TrackDeriveTurn;
@@ -223,7 +223,7 @@ export function evaluateTrackDerive(
     throw new CompileError(
       `${where}: derive ${kind} states carried=${JSON.stringify(turn.carried)} on a "${property}" track, and the ` +
         'foreshortening reads no depth difference — it is cos(α − t)/cos α, where α is the member\'s own angle off the ' +
-        `axis. "carried" belongs on the "${projections.shift}" track, whose shared shift is the thing it names.`,
+        `axis. "carried" belongs on the "${projections.shift}" track, whose shared shift is the thing it names.`, 'CE_TRACK_CARRIED_PROJECTION',
     );
   }
   const carried = turn.carried === undefined ? 0 : num(turn.carried, 'carried', where);
@@ -249,7 +249,7 @@ export function evaluateTrackDerive(
         `${where}: derive ${kind} projects onto "${property}" and member "${member.name}" states depth ${depth}. ` +
           'Foreshortening is cos(α − t)/cos α with α = atan2(coordinate, depth), which needs the part to be IN FRONT ' +
           'of the axis; at or behind it there is no front surface to narrow. A part behind the axis still takes the ' +
-          `"${projections.shift}" projection, where a negative depth is exactly what swings it the other way.`,
+          `"${projections.shift}" projection, where a negative depth is exactly what swings it the other way.`, 'CE_TRACK_FORESHORTEN_DEPTH',
       );
     }
     const alpha = Math.atan2(u, depth);
@@ -260,7 +260,7 @@ export function evaluateTrackDerive(
           `its own edge: α = ${round(alpha)} rad and the turn is ${round(rad)} rad, so cos(α − t) is ` +
           `${round(Math.cos(alpha - rad))} and the scale would be ${round(scale)}. A scale at or below 0 mirrors the ` +
           'drawing rather than narrowing it. The part has turned edge-on — the turn is past what this construction ' +
-          'carries, and FACE §8 is the page that picks a construction from the angle.',
+          'carries, and FACE §8 is the page that picks a construction from the angle.', 'CE_TRACK_FORESHORTEN_EDGE_ON',
       );
     }
     values.push({ member: member.name, at: u, depth, value: round(scale) });
@@ -298,7 +298,7 @@ function refuseProperty(kind: string, property: string, where: string): never {
     `${where}: derive ${kind} has no projection onto "${property}". It projects onto "${p.shift}" (the displacement, ` +
       `FACE §3) and "${p.foreshorten}" (the narrowing, FACE §5), and onto nothing else — a turn about one axis moves ` +
       `nothing along it, so a paired "translate"/"scale" would need a second channel this model does not state. ` +
-      'State the axis, or write the values as a per-member "v" map.',
+      'State the axis, or write the values as a per-member "v" map.', 'CE_TRACK_PROPERTY_PROJECTION',
   );
 }
 
@@ -322,7 +322,7 @@ function depthOf(
       throw new CompileError(
         `${where}: derive ${kind} states one depth ${depth} for ${members.length} members ` +
           `(${members.map((m) => m.name).join(', ')}). One number for every member is the shared value a plain "v" ` +
-          'already keys — state a depth per member, as { "member": z, … }.',
+          'already keys — state a depth per member, as { "member": z, … }.', 'CE_TRACK_GROUP_SHARED_DEPTH',
       );
     }
     return num(depth, 'depth', where);
@@ -330,7 +330,7 @@ function depthOf(
   if (depth === null || typeof depth !== 'object' || Array.isArray(depth)) {
     throw new CompileError(
       `${where}: derive ${kind} has depth ${JSON.stringify(depth)}; it is a number on a bone track and ` +
-        '{ "member": z, … } on a group track',
+        '{ "member": z, … } on a group track', 'CE_TRACK_DEPTH_SHAPE',
     );
   }
   const table = depth as Record<string, unknown>;
@@ -340,7 +340,7 @@ function depthOf(
     if (!known.has(name)) {
       throw new CompileError(
         `${where}: derive ${kind} states a depth for "${name}", which this track does not key ` +
-          `(its members are: ${members.map((m) => m.name).join(', ')})`,
+          `(its members are: ${members.map((m) => m.name).join(', ')})`, 'CE_TRACK_DEPTH_MEMBER_UNKNOWN',
       );
     }
   }
@@ -349,7 +349,7 @@ function depthOf(
       `${where}: derive ${kind} states no depth for member "${member}" ` +
         `(it states: ${stated.length ? stated.join(', ') : 'nothing'}). ` +
         'A depth is refused rather than defaulted: a member silently at depth 0 would be keyed with a DIFFERENT ' +
-        'model from the ones beside it, and that is exactly the error a table of six is written to make visible.',
+        'model from the ones beside it, and that is exactly the error a table of six is written to make visible.', 'CE_TRACK_DEPTH_MEMBER_REQUIRED',
     );
   }
   return num(table[member], `depth.${member}`, where);
@@ -358,7 +358,7 @@ function depthOf(
 /** One required finite number, refused by field name rather than compiled as a NaN. */
 function num(value: unknown, field: string, where: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new CompileError(`${where}: derive field "${field}" is ${JSON.stringify(value)}; it is a finite number the spec has to state`);
+    throw new CompileError(`${where}: derive field "${field}" is ${JSON.stringify(value)}; it is a finite number the spec has to state`, 'CE_TRACK_FIELD_NUMBER_FINITE');
   }
   return value;
 }

@@ -147,7 +147,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
   const declared: unknown = spec.stops;
   if (declared === undefined) return spec;
   if (!Array.isArray(declared)) {
-    throw new CompileError(`${where}: "stops" is ${JSON.stringify(declared)}; it is an array of { "chain", "links", "against", "at", "inward", "outward", "lower"? }`);
+    throw new CompileError(`${where}: "stops" is ${JSON.stringify(declared)}; it is an array of { "chain", "links", "against", "at", "inward", "outward", "lower"? }`, 'CE_STOP_DECLARATIONS_ARRAY');
   }
   const authored = new Map<string, RigBone>();
   for (const bone of spec.bones) if (isObj(bone) && typeof bone.name === 'string') authored.set(bone.name, bone);
@@ -157,44 +157,44 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
   const stops: ReadStop[] = [];
   const stoppedBy = new Map<string, string>();
   for (const [i, entry] of declared.entries()) {
-    if (!isObj(entry)) throw new CompileError(`${where}: stops[${i}] is ${JSON.stringify(entry)}; a stop is an object`);
+    if (!isObj(entry)) throw new CompileError(`${where}: stops[${i}] is ${JSON.stringify(entry)}; a stop is an object`, 'CE_STOP_DECLARATION_OBJECT');
     const chain = entry.chain;
     if (typeof chain !== 'string' || chain.length === 0) {
-      throw new CompileError(`${where}: stops[${i}] needs a "chain" — the name its point, frame and aim are called after ("<chain>_touch", "<chain>_stop", "<chain>_stop_aim")`);
+      throw new CompileError(`${where}: stops[${i}] needs a "chain" — the name its point, frame and aim are called after ("<chain>_touch", "<chain>_stop", "<chain>_stop_aim")`, 'CE_STOP_CHAIN_NAME_REQUIRED');
     }
     const who = `${where}: stop "${chain}"`;
     const links: unknown = entry.links;
     if (!Array.isArray(links) || links.length === 0 || !links.every((l): l is string => typeof l === 'string')) {
-      throw new CompileError(`${who} states "links" ${JSON.stringify(links) ?? 'absent'}; it is the chain's swinging links, root first — a non-empty array of bone names`);
+      throw new CompileError(`${who} states "links" ${JSON.stringify(links) ?? 'absent'}; it is the chain's swinging links, root first — a non-empty array of bone names`, 'CE_STOP_LINKS_ARRAY');
     }
     for (const [k, link] of links.entries()) {
       const bone = authored.get(link);
-      if (bone === undefined) throw new CompileError(`${who}: links[${k}] names bone "${link}", which this rig does not declare`);
+      if (bone === undefined) throw new CompileError(`${who}: links[${k}] names bone "${link}", which this rig does not declare`, 'CE_STOP_LINK_UNKNOWN');
       const other = stoppedBy.get(link);
       if (other !== undefined) {
         throw new CompileError(
-          `${who}: links[${k}] "${link}" is already stopped by stop "${other}" — one drawn link "${link}_d" and one clamp "${link}_clamp" per link, so a link is stopped once`,
+          `${who}: links[${k}] "${link}" is already stopped by stop "${other}" — one drawn link "${link}_d" and one clamp "${link}_clamp" per link, so a link is stopped once`, 'CE_STOP_LINK_ALREADY_STOPPED',
         );
       }
       stoppedBy.set(link, chain);
       if (bone.from !== undefined) {
-        throw new CompileError(`${who}: links[${k}] "${link}" takes its place from the manifest ("from"), and a stop copies the link's stated x, y and rotation onto its drawn link — state them`);
+        throw new CompileError(`${who}: links[${k}] "${link}" takes its place from the manifest ("from"), and a stop copies the link's stated x, y and rotation onto its drawn link — state them`, 'CE_STOP_LINK_MANIFEST_POSITION');
       }
       if (bone.parent === undefined) {
-        throw new CompileError(`${who}: links[${k}] "${link}" is the skeleton's root, and a stop hangs its frame and its drawn link where the link hangs — a link has a parent`);
+        throw new CompileError(`${who}: links[${k}] "${link}" is the skeleton's root, and a stop hangs its frame and its drawn link where the link hangs — a link has a parent`, 'CE_STOP_LINK_ROOT');
       }
     }
     const against = entry.against;
     if (typeof against !== 'string' || against.length === 0) {
-      throw new CompileError(`${who} needs "against" — the bone the point rides on, the leg the chain is held off`);
+      throw new CompileError(`${who} needs "against" — the bone the point rides on, the leg the chain is held off`, 'CE_STOP_AGAINST_REQUIRED');
     }
-    if (!authored.has(against)) throw new CompileError(`${who}: "against" names bone "${against}", which this rig does not declare`);
+    if (!authored.has(against)) throw new CompileError(`${who}: "against" names bone "${against}", which this rig does not declare`, 'CE_STOP_AGAINST_UNKNOWN');
     const at: unknown = entry.at;
     if (at === undefined) {
-      throw new CompileError(`${who} states no "at" — the point on "${against}" the frame aims at, [x, y] in "${against}"'s local space; the compiler places no point of its own`);
+      throw new CompileError(`${who} states no "at" — the point on "${against}" the frame aims at, [x, y] in "${against}"'s local space; the compiler places no point of its own`, 'CE_STOP_AT_REQUIRED');
     }
     if (!Array.isArray(at) || at.length !== 2 || !at.every((v): v is number => typeof v === 'number')) {
-      throw new CompileError(`${who} states "at" ${JSON.stringify(at)}; it is [x, y], two numbers in "${against}"'s local space`);
+      throw new CompileError(`${who} states "at" ${JSON.stringify(at)}; it is [x, y], two numbers in "${against}"'s local space`, 'CE_STOP_AT_PAIR');
     }
     const range = (node: Record<string, unknown>, field: string): { inward: number; outward: number } => {
       const out: Record<'inward' | 'outward', number> = { inward: 0, outward: 0 };
@@ -202,14 +202,14 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
         const v = node[end];
         if (typeof v !== 'number') {
           throw new CompileError(
-            `${who} states no "${field}${end}" — degrees from the link's rest angle, counted positive away from "${against}"; the range is [inward, outward], and the compiler states neither end for you`,
+            `${who} states no "${field}${end}" — degrees from the link's rest angle, counted positive away from "${against}"; the range is [inward, outward], and the compiler states neither end for you`, 'CE_STOP_RANGE_END_REQUIRED',
           );
         }
         out[end] = v;
       }
       if (out.inward > out.outward) {
         throw new CompileError(
-          `${who}: "${field}inward" ${out.inward} is greater than "${field}outward" ${out.outward} — the range is [inward, outward] in degrees counted positive away from "${against}", and this one holds no angle`,
+          `${who}: "${field}inward" ${out.inward} is greater than "${field}outward" ${out.outward} — the range is [inward, outward] in degrees counted positive away from "${against}", and this one holds no angle`, 'CE_STOP_RANGE_REVERSED',
         );
       }
       return out;
@@ -219,11 +219,11 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     let lower: { inward: number; outward: number } | null = null;
     if (links.length > 1) {
       if (!isObj(lowerRaw)) {
-        throw new CompileError(`${who} states no "lower" — the range [inward, outward] each link below the first may turn through off its own rest bend; the chain has ${links.length - 1} of them`);
+        throw new CompileError(`${who} states no "lower" — the range [inward, outward] each link below the first may turn through off its own rest bend; the chain has ${links.length - 1} of them`, 'CE_STOP_LOWER_REQUIRED');
       }
       lower = range(lowerRaw, 'lower.');
     } else if (lowerRaw !== undefined) {
-      throw new CompileError(`${who} states "lower" and its chain has one link — there is no link below the first for it to hold`);
+      throw new CompileError(`${who} states "lower" and its chain has one link — there is no link below the first for it to hold`, 'CE_STOP_LOWER_WITH_ONE_LINK');
     }
     stops.push({ who, chain, links, against, at: [at[0], at[1]], inward: first.inward, outward: first.outward, lower, names: stopNames(chain, links) });
   }
@@ -236,16 +236,16 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     const { names } = stop;
     const lowerDrawn = names.drawn.slice(1);
     for (const name of [names.frame, names.rel, names.drawn[0], ...lowerDrawn, names.point]) {
-      if (authored.has(name)) throw new CompileError(`${stop.who} generates bone "${name}", which this rig already declares — rename the bone, or the stop's "chain"`);
+      if (authored.has(name)) throw new CompileError(`${stop.who} generates bone "${name}", which this rig already declares — rename the bone, or the stop's "chain"`, 'CE_STOP_GENERATED_BONE_DECLARED');
       const by = generatedBones.get(name);
-      if (by !== undefined) throw new CompileError(`${stop.who} generates bone "${name}", which stop "${by}" generates too — rename one "chain"`);
+      if (by !== undefined) throw new CompileError(`${stop.who} generates bone "${name}", which stop "${by}" generates too — rename one "chain"`, 'CE_STOP_GENERATED_BONE_COLLISION');
       generatedBones.set(name, stop.chain);
     }
     for (const [type, name] of [['ik', names.aim], ['transform', names.copy], ...names.clamp.map((c) => ['transform', c] as const)] as const) {
       const key = `${type} ${name}`;
-      if (authoredConstraints.has(key)) throw new CompileError(`${stop.who} generates ${type} constraint "${name}", which this rig already declares — rename the constraint, or the stop's "chain"`);
+      if (authoredConstraints.has(key)) throw new CompileError(`${stop.who} generates ${type} constraint "${name}", which this rig already declares — rename the constraint, or the stop's "chain"`, 'CE_STOP_GENERATED_CONSTRAINT_DECLARED');
       const by = generatedConstraints.get(key);
-      if (by !== undefined) throw new CompileError(`${stop.who} generates ${type} constraint "${name}", which stop "${by}" generates too — rename one "chain"`);
+      if (by !== undefined) throw new CompileError(`${stop.who} generates ${type} constraint "${name}", which stop "${by}" generates too — rename one "chain"`, 'CE_STOP_GENERATED_CONSTRAINT_COLLISION');
       generatedConstraints.set(key, stop.chain);
     }
   }
@@ -265,7 +265,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     });
     if (at < 0) {
       throw new CompileError(
-        `${stop.who}: links[${k}] "${link}" is written by no constraint of this rig spec — a stop holds a link something swings (a physics, ik, transform or path constraint in "constraints"), and its copy and clamp run right after that. A physics constraint in the motion spec's table is emitted after every rig constraint, past the clamp; declare it here`,
+        `${stop.who}: links[${k}] "${link}" is written by no constraint of this rig spec — a stop holds a link something swings (a physics, ik, transform or path constraint in "constraints"), and its copy and clamp run right after that. A physics constraint in the motion spec's table is emitted after every rig constraint, past the clamp; declare it here`, 'CE_STOP_LINK_UNDRIVEN',
       );
     }
     return at;
@@ -296,14 +296,14 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     for (let k = 1; k < links.length; k++) {
       if (!ancestry(links[k]).includes(names.drawn[k - 1])) {
         throw new CompileError(
-          `${stop.who}: links[${k}] "${links[k]}" does not hang below "${names.drawn[k - 1]}", the drawn link of links[${k - 1}] — a chain's next link hangs from the drawn link above it, so the clamp that holds that one carries this one; parent it there`,
+          `${stop.who}: links[${k}] "${links[k]}" does not hang below "${names.drawn[k - 1]}", the drawn link of links[${k - 1}] — a chain's next link hangs from the drawn link above it, so the clamp that holds that one carries this one; parent it there`, 'CE_STOP_LINK_PARENT_CHAIN',
         );
       }
     }
     const held = new Set([names.frame, names.rel, ...names.drawn, ...links]);
     const under = [stop.against, ...ancestry(stop.against)].find((b) => held.has(b));
     if (under !== undefined) {
-      throw new CompileError(`${stop.who}: "against" "${stop.against}" hangs below "${under}", which the stop moves — the point would swing with the chain it holds off; name the leg`);
+      throw new CompileError(`${stop.who}: "against" "${stop.against}" hangs below "${under}", which the stop moves — the point would swing with the chain it holds off; name the leg`, 'CE_STOP_AGAINST_MOVES_WITH_STOP');
     }
   }
 
@@ -338,7 +338,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     for (const [end, value] of [['outward', a], ['inward', b]] as const) {
       if (Math.abs(value) > BOUND) {
         throw new CompileError(
-          `${stop.who}: "${field}${end}" ${range[end]} puts ${what}'s bound at ${value}°, past ±${BOUND}° — the clamp reads a local rotation in (-180, 180], so a bound past it is never reached and the range it states is not the one that holds`,
+          `${stop.who}: "${field}${end}" ${range[end]} puts ${what}'s bound at ${value}°, past ±${BOUND}° — the clamp reads a local rotation in (-180, 180], so a bound past it is never reached and the range it states is not the one that holds`, 'CE_STOP_LOCAL_BOUND_RANGE',
         );
       }
     }
@@ -358,10 +358,10 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
         if (listed.has(name)) continue;
         const bone = known(name);
         if (bone === undefined) {
-          throw new CompileError(`${who}: "${tip}" hangs below "${name}", which a later stop generates — declare that stop first, so its angles are known when this one is read`);
+          throw new CompileError(`${who}: "${tip}" hangs below "${name}", which a later stop generates — declare that stop first, so its angles are known when this one is read`, 'CE_STOP_DEPENDENCY_ORDER');
         }
         if (bone.from !== undefined) {
-          throw new CompileError(`${who}: "${name}" takes its place from the manifest ("from"), and a stop's angles are read off the setup pose this rig spec states — state its x, y and rotation`);
+          throw new CompileError(`${who}: "${name}" takes its place from the manifest ("from"), and a stop's angles are read off the setup pose this rig spec states — state its x, y and rotation`, 'CE_STOP_ANCESTOR_MANIFEST_POSITION');
         }
         listed.add(name);
         chain.push(bone);
@@ -371,7 +371,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     const parentFrame = frames.get(parent) as BoneTransform;
     if (!conformal(parentFrame)) {
       throw new CompileError(
-        `${who}: "${parent}", where the frame hangs, is scaled unevenly, sheared or reflected at the setup pose — the frame's angles add to its parent's only through a rotation and an even scale, and inward is a turn's sense`,
+        `${who}: "${parent}", where the frame hangs, is scaled unevenly, sheared or reflected at the setup pose — the frame's angles add to its parent's only through a rotation and an even scale, and inward is a turn's sense`, 'CE_STOP_FRAME_PARENT_TRANSFORM',
       );
     }
     for (let k = 1; k < links.length; k++) {
@@ -381,7 +381,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
         const plain = (bone.scaleX ?? 1) === (bone.scaleY ?? 1) && (bone.scaleX ?? 1) > 0 && (bone.shearX ?? 0) === 0 && (bone.shearY ?? 0) === 0 && (bone.inherit ?? 'normal') === 'normal';
         if (!plain) {
           throw new CompileError(
-            `${who}: "${at}", between links[${k}] "${links[k]}" and the drawn link above it, is scaled unevenly, sheared, reflected or inherits other than normally — a lower clamp reads the link's turn in its parent, and inward is a turn's sense`,
+            `${who}: "${at}", between links[${k}] "${links[k]}" and the drawn link above it, is scaled unevenly, sheared, reflected or inherits other than normally — a lower clamp reads the link's turn in its parent, and inward is a turn's sense`, 'CE_STOP_LOWER_PARENT_TRANSFORM',
           );
         }
       }
@@ -392,7 +392,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     const dx = target[0] - linkFrame.worldX;
     const dy = target[1] - linkFrame.worldY;
     if (dx === 0 && dy === 0) {
-      throw new CompileError(`${who}: "at" [${stop.at.join(', ')}] on "${stop.against}" sits on the root of "${links[0]}" at the setup pose — the frame aims from the root at the point, and there is no direction to a point it stands on`);
+      throw new CompileError(`${who}: "at" [${stop.at.join(', ')}] on "${stop.against}" sits on the root of "${links[0]}" at the setup pose — the frame aims from the root at the point, and there is no direction to a point it stands on`, 'CE_STOP_POINT_AT_ROOT');
     }
     const aim = directionDegrees(dx, dy);
     // Each angle is brought into (-180, 180] by one whole turn at most, so a
@@ -401,7 +401,7 @@ export function expandStops(spec: RigSpec, where: string, plant: StopPlant = {})
     const rest = halfTurn(halfTurn(linkFrame.worldRotation) - aim);
     if (rest === 0) {
       throw new CompileError(
-        `${who}: "at" [${stop.at.join(', ')}] on "${stop.against}" lies on "${links[0]}"'s own line at the setup pose — inward is the turn from the link toward the point, and a point on the link's line has no side`,
+        `${who}: "at" [${stop.at.join(', ')}] on "${stop.against}" lies on "${links[0]}"'s own line at the setup pose — inward is the turn from the link toward the point, and a point on the link's line has no side`, 'CE_STOP_POINT_ON_LINK_LINE',
       );
     }
     // Inward turns the link toward the aim line: counter-clockwise when the link

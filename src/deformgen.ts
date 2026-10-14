@@ -377,13 +377,13 @@ export function evaluateDeformTransform(
   soft: DeformSoftMask | null = null,
 ): DeformTransformReport {
   if (transform === null || typeof transform !== 'object' || Array.isArray(transform)) {
-    throw new CompileError(`${where}: "transform" is ${JSON.stringify(transform)}; it is an object with a "kind"`);
+    throw new CompileError(`${where}: "transform" is ${JSON.stringify(transform)}; it is an object with a "kind"`, 'CE_DEFORM_TRANSFORM_OBJECT');
   }
   const kind = (transform as { kind?: unknown }).kind;
   if (typeof kind !== 'string' || !(DEFORM_TRANSFORM_KINDS as readonly string[]).includes(kind)) {
     throw new CompileError(
       `${where}: "transform" has kind ${JSON.stringify(kind)}; this spec evaluates ${DEFORM_TRANSFORM_KINDS.join(', ')}. ` +
-        'A model that is none of those is still authorable as a "vertices" run.',
+        'A model that is none of those is still authorable as a "vertices" run.', 'CE_DEFORM_TRANSFORM_KIND',
     );
   }
   const count = setup.length / 2;
@@ -432,14 +432,14 @@ export function evaluateDeformTransform(
         throw new CompileError(
           `${where}: transform ${kind} states both "depth": true and a radius ${JSON.stringify(t.radius)}. They are ` +
             'two answers to how far forward each vertex sits — a cylinder derives it, a map states it — and a key ' +
-            'carrying both leaves a reader unable to say which one the output came from. Drop one.',
+            'carrying both leaves a reader unable to say which one the output came from. Drop one.', 'CE_DEFORM_DEPTH_RADIUS_CONFLICT',
         );
       }
       if (fromDepth && depth === null) {
         throw new CompileError(
           `${where}: transform ${kind} says "depth": true and this attachment has no depth map. The map is named on ` +
             'the attachment\'s generator, as `"depth": { "image": …, "near": …, "zScale": … }`, because it describes ' +
-            'the art rather than this key. Name it there, or give this key a radius.',
+            'the art rather than this key. Name it there, or give this key a radius.', 'CE_DEFORM_DEPTH_MAP_REQUIRED',
         );
       }
       if (fromDepth && depth !== null && depth.length !== count) {
@@ -447,12 +447,12 @@ export function evaluateDeformTransform(
         // emitted; stated because a silent mismatch here would turn into a turn
         // evaluated against another vertex's depth.
         throw new CompileError(
-          `${where}: transform ${kind} has ${depth.length} sampled depths for ${count} vertices`,
+          `${where}: transform ${kind} has ${depth.length} sampled depths for ${count} vertices`, 'CE_DEFORM_DEPTH_SAMPLE_COUNT',
         );
       }
       const radius = fromDepth ? 0 : num(t.radius, 'radius', where);
       if (!fromDepth && radius <= 0) {
-        throw new CompileError(`${where}: transform ${kind} has radius ${radius}; it is the radius of the cylinder the part is painted on, so a positive number`);
+        throw new CompileError(`${where}: transform ${kind} has radius ${radius}; it is the radius of the cylinder the part is painted on, so a positive number`, 'CE_DEFORM_RADIUS_POSITIVE');
       }
       const rad = (degrees * Math.PI) / 180;
       const cosMinus1 = Math.cos(rad) - 1;
@@ -473,7 +473,7 @@ export function evaluateDeformTransform(
             `${where}: transform ${kind} has radius ${radius}, and vertex ${v} sits at ${kind === 'yaw' ? 'x' : 'y'}=` +
               `${setup[2 * v + along]}, which is ${round(Math.abs(u) - radius)} past it (about=${about}). The cylinder has no ` +
               'surface there, so its depth would be 0 and the projection would be a different model at that vertex. ' +
-              'Raise the radius to where the part actually sits, or move the vertex.',
+              'Raise the radius to where the part actually sits, or move the vertex.', 'CE_DEFORM_VERTEX_OUTSIDE_CYLINDER',
           );
         }
         // A depth map needs no such check: it states a surface everywhere it
@@ -533,7 +533,7 @@ export function evaluateDeformTransform(
           `${where}: transform affine has scale [${scale[0]}, ${scale[1]}], whose determinant is ${round(det)}. ` +
             'At or below zero the map mirrors or collapses the geometry and EVERY triangle reverses its winding, ' +
             'which is the fold A39_DEFORM_KEEPS_TRIANGLE_WINDING refuses. A positive determinant is what makes this ' +
-            'kind incapable of folding a mesh.',
+            'kind incapable of folding a mesh.', 'CE_DEFORM_AFFINE_DETERMINANT',
         );
       }
       for (let v = 0; v < count; v++) {
@@ -563,7 +563,7 @@ export function evaluateDeformTransform(
       const wavelength = num(w.wavelength, 'wavelength', where);
       const phase = w.phase === undefined ? 0 : num(w.phase, 'phase', where);
       if (wavelength === 0) {
-        throw new CompileError(`${where}: transform wave has wavelength 0; one period cannot be zero long`);
+        throw new CompileError(`${where}: transform wave has wavelength 0; one period cannot be zero long`, 'CE_DEFORM_WAVELENGTH_ZERO');
       }
       const [along, axis] = axes(w.along, w.axis, 'wave', where);
       const phaseRad = (phase * Math.PI) / 180;
@@ -609,11 +609,11 @@ export function evaluateDeformTransform(
         throw new CompileError(
           `${where}: transform bend has power ${power}; it is a whole number ≥ 1 (1 is an affine shear, 2 a cantilever ` +
             'that is flat at "from"). A fractional power is not evaluated because it has no value on the side of "from" ' +
-            'the part does not reach.',
+            'the part does not reach.', 'CE_DEFORM_BEND_POWER_WHOLE',
         );
       }
       if (to === from) {
-        throw new CompileError(`${where}: transform bend has from ${from} and to ${to}; they are the two ends of the bend, so they differ`);
+        throw new CompileError(`${where}: transform bend has from ${from} and to ${to}; they are the two ends of the bend, so they differ`, 'CE_DEFORM_BEND_ENDS_EQUAL');
       }
       const [along, axis] = axes(b.along, b.axis, 'bend', where);
       const span = to - from;
@@ -679,7 +679,7 @@ export function evaluateDeformTransform(
         'which quantises to 0 on the 1e-6 grid a model is evaluated on. So the key states a deformation and ' +
         `emits the identity, and nothing downstream can tell it apart from a key that meant the setup pose. ` +
         `${sampledTo}. A key that MEANS the identity states it in its own parameters (${identitySpelling}) or carries ` +
-        'no run at all.',
+        'no run at all.', 'CE_DEFORM_TRANSFORM_QUANTISED_IDENTITY',
     );
   }
 
@@ -712,7 +712,7 @@ export function evaluateDeformTransform(
       throw new CompileError(
         `${where}: transform ${kind} states ${stated} and moves ${plain.filter((d, i) => i % 2 === 0 && (d !== 0 || plain[i + 1] !== 0)).length} ` +
           `of ${count} vertices, and envelope ${weighed.stated} weighs every one of them 0 — so the key states a ` +
-          `deformation and emits the identity. ${weighed.reach}`,
+          `deformation and emits the identity. ${weighed.reach}`, 'CE_DEFORM_ENVELOPE_ZERO_WEIGHT',
       );
     }
     if (count > 0 && !identity && moving && offsets.every((d, i) => d === plain[i])) {
@@ -720,7 +720,7 @@ export function evaluateDeformTransform(
         `${where}: transform ${kind} states envelope ${weighed.stated}, and it changes no emitted number: every vertex ` +
           `the model moves takes weight 1 (${weighed.full} of ${count} vertices at 1, ${weighed.zero} at 0), so the run ` +
           `is the un-enveloped one and the envelope is a field a reader would credit for an output it did not shape. ` +
-          `${weighed.reach}`,
+          `${weighed.reach}`, 'CE_DEFORM_ENVELOPE_NO_EFFECT',
       );
     }
     stated = `${stated} envelope(${weighed.stated})`;
@@ -781,7 +781,7 @@ export function evaluateDeformEnvelope(
   if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) {
     throw new CompileError(
       `${where}: transform field "envelope" is ${JSON.stringify(envelope)}; it is an object — a ramp ` +
-        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`',
+        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`', 'CE_DEFORM_ENVELOPE_OBJECT',
     );
   }
   const e = envelope as DeformEnvelope;
@@ -791,13 +791,13 @@ export function evaluateDeformEnvelope(
     throw new CompileError(
       `${where}: transform field "envelope" states "mask" ${JSON.stringify(e.mask)} beside the ramp's ` +
         `${rampStated.map((f) => `"${f}"`).join(', ')}. They are two answers to one question — what weight each vertex ` +
-        'takes — and a key carrying both leaves a reader unable to say which one the output came from. Drop one.',
+        'takes — and a key carrying both leaves a reader unable to say which one the output came from. Drop one.', 'CE_DEFORM_ENVELOPE_MASK_RAMP_CONFLICT',
     );
   }
   if (e.mask === undefined && rampStated.length === 0) {
     throw new CompileError(
       `${where}: transform field "envelope" is ${JSON.stringify(envelope)}, which states no weight at all. It is a ramp ` +
-        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`; a key that weighs every vertex 1 carries no envelope.',
+        '`{ "axis", "from", "to", "shape" }` or a mask `{ "mask" }`; a key that weighs every vertex 1 carries no envelope.', 'CE_DEFORM_ENVELOPE_WEIGHT_UNSTATED',
     );
   }
 
@@ -812,21 +812,21 @@ export function evaluateDeformEnvelope(
         `${where}: transform field "envelope.mask" is ${JSON.stringify(mask)}, and this attachment has no "soft" block, ` +
           'so the mask names nothing. An envelope\'s mask is the attachment\'s own soft mask (AUTHORING §3.4.6), the ' +
           'one its generator sampled at every vertex when the mesh was built; give the generator a "soft" block, or ' +
-          'state a ramp instead.',
+          'state a ramp instead.', 'CE_DEFORM_ENVELOPE_SOFT_REQUIRED',
       );
     }
     if (soft.mask !== mask) {
       throw new CompileError(
         `${where}: transform field "envelope.mask" is ${JSON.stringify(mask)}, and this attachment's soft mask is ` +
           `${JSON.stringify(soft.mask)}, so the mask names nothing it was built with. An envelope reads the mask the ` +
-          'generator sampled at every vertex, and only that one.',
+          'generator sampled at every vertex, and only that one.', 'CE_DEFORM_ENVELOPE_MASK_MISMATCH',
       );
     }
     if (soft.levels.length !== count) {
       // Unreachable while the sampler walks the same vertex list the mesh
       // emitted, as for a depth map; stated because a silent mismatch would
       // weigh one vertex by another's level.
-      throw new CompileError(`${where}: the soft mask "${mask}" has ${soft.levels.length} sampled levels for ${count} vertices`);
+      throw new CompileError(`${where}: the soft mask "${mask}" has ${soft.levels.length} sampled levels for ${count} vertices`, 'CE_DEFORM_SOFT_SAMPLE_COUNT');
     }
     weights = soft.levels.map((level) => round(level));
     stated = `mask=${mask}`;
@@ -842,7 +842,7 @@ export function evaluateDeformEnvelope(
       throw new CompileError(
         `${where}: transform field "envelope.shape" is ${JSON.stringify(e.shape)}; it is one of ` +
           `${DEFORM_ENVELOPE_SHAPES.map((name) => JSON.stringify(name)).join(', ')} — how the weight rises from 0 at ` +
-          '"from" to 1 at "to": "linear" is u, "smooth" is u²(3 − 2u)',
+          '"from" to 1 at "to": "linear" is u, "smooth" is u²(3 − 2u)', 'CE_DEFORM_ENVELOPE_SHAPE',
       );
     }
     const length = hypot2(axis[0], axis[1]);
@@ -855,13 +855,13 @@ export function evaluateDeformEnvelope(
       throw new CompileError(
         `${where}: transform field "envelope.axis" is [${axis[0]}, ${axis[1]}], whose length is ${round(length)}; it is a ` +
           'unit direction, length 1 on the model\'s 1e-6 grid. A longer or shorter one would scale every position the ' +
-          'ramp compares with "from" and "to" — divide it by its length, and state "from" and "to" along the unit one.',
+          'ramp compares with "from" and "to" — divide it by its length, and state "from" and "to" along the unit one.', 'CE_DEFORM_ENVELOPE_AXIS_UNIT',
       );
     }
     if (from === to) {
       throw new CompileError(
         `${where}: transform fields "envelope.from" and "envelope.to" are both ${from}; they are where the weight is 0 ` +
-          'and where it is 1, so they differ — a ramp of no length is a step, and a step is the edge a model exists not to leave.',
+          'and where it is 1, so they differ — a ramp of no length is a step, and a step is the edge a model exists not to leave.', 'CE_DEFORM_ENVELOPE_ENDS_EQUAL',
       );
     }
     const span = to - from;
@@ -913,7 +913,7 @@ export function checkEnvelopeWeights(weights: readonly number[], field: string, 
     if (!(w >= 0 && w <= 1)) {
       throw new CompileError(
         `${where}: transform field "${field}" weighs vertex ${v} at ${w}; an envelope's weight is in [0, 1] — 0 leaves ` +
-          'the vertex where it is and 1 moves it the whole way the model says, and nothing past either end is a weight.',
+          'the vertex where it is and 1 moves it the whole way the model says, and nothing past either end is a weight.', 'CE_DEFORM_ENVELOPE_WEIGHT_RANGE',
       );
     }
   }
@@ -922,7 +922,7 @@ export function checkEnvelopeWeights(weights: readonly number[], field: string, 
 /** One required finite number, refused by field name rather than compiled as a NaN. */
 function num(value: unknown, field: string, where: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new CompileError(`${where}: transform field "${field}" is ${JSON.stringify(value)}; it is a finite number the spec has to state`);
+    throw new CompileError(`${where}: transform field "${field}" is ${JSON.stringify(value)}; it is a finite number the spec has to state`, 'CE_DEFORM_FIELD_NUMBER_FINITE');
   }
   return value;
 }
@@ -930,7 +930,7 @@ function num(value: unknown, field: string, where: string): number {
 /** One required `[a, b]`. */
 function pair(value: unknown, field: string, where: string): [number, number] {
   if (!Array.isArray(value) || value.length !== 2) {
-    throw new CompileError(`${where}: transform field "${field}" is ${JSON.stringify(value)}; it is a pair, [x, y]`);
+    throw new CompileError(`${where}: transform field "${field}" is ${JSON.stringify(value)}; it is a pair, [x, y]`, 'CE_DEFORM_FIELD_PAIR');
   }
   return [num(value[0], `${field}[0]`, where), num(value[1], `${field}[1]`, where)];
 }
@@ -948,14 +948,14 @@ function axes(along: unknown, axis: unknown, kind: string, where: string): [0 | 
     ['axis', axis],
   ] as const) {
     if (value !== 'x' && value !== 'y') {
-      throw new CompileError(`${where}: transform ${kind} has ${name}=${JSON.stringify(value)}; it is "x" or "y"`);
+      throw new CompileError(`${where}: transform ${kind} has ${name}=${JSON.stringify(value)}; it is "x" or "y"`, 'CE_DEFORM_COORDINATE_NAME');
     }
   }
   if (along === axis) {
     throw new CompileError(
       `${where}: transform ${kind} reads ${String(along)} and displaces ${String(axis)} — the same coordinate, which is a ` +
         'stretch rather than a bend or a wave. An affine scale states that, and states the determinant that proves it ' +
-        'keeps every triangle\'s winding.',
+        'keeps every triangle\'s winding.', 'CE_DEFORM_SAME_READ_DISPLACE_AXIS',
     );
   }
   return [along === 'x' ? 0 : 1, axis === 'x' ? 0 : 1];

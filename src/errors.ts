@@ -17,6 +17,14 @@
 import type { DroppedState } from './types.ts';
 
 export class CompileError extends Error {
+  /** Stable guide row identity; absent on legacy one-argument library errors. */
+  declare readonly code?: string;
+
+  constructor(message?: string, codeOrOptions?: string | ErrorOptions, options?: ErrorOptions) {
+    super(message, typeof codeOrOptions === 'string' ? options : codeOrOptions);
+    if (typeof codeOrOptions === 'string') this.code = codeOrOptions;
+  }
+
   /**
    * States the manifest listed whose art was not found, recorded before this
    * refusal was raised (issue #671).
