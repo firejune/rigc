@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.58.1](https://github.com/rig-c/core/compare/v2.58.0...v2.58.1) (2026-10-14)
+
+
+### Bug Fixes
+
+* **guide:** index parent sections before explicit full reads ([#1448](https://github.com/rig-c/core/issues/1448)) ([844d2a1](https://github.com/rig-c/core/commit/844d2a10413aed8151c618392ea380cb5f43c6c3)), closes [#1447](https://github.com/rig-c/core/issues/1447)
+
 ## [2.58.0](https://github.com/rig-c/core/compare/v2.57.0...v2.58.0) (2026-10-14)
 
 
