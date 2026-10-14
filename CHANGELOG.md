@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.57.0](https://github.com/rig-c/core/compare/v2.56.0...v2.57.0) (2026-10-14)
+
+
+### Features
+
+* **cli:** rigc help &lt;command&gt; prints what &lt;command&gt; --help prints, the spelling an agent reaches for first ([#1440](https://github.com/rig-c/core/issues/1440)) ([#1443](https://github.com/rig-c/core/issues/1443)) ([5ada1d2](https://github.com/rig-c/core/commit/5ada1d2b2ab3309a25797acddd1cfacf31d97ba2))
+* **cli:** rigc split writes a rig spec and motion spec with an authored mesh cut into its connected pieces, deform keys re-sliced, so a mesh the compiler refuses as several pieces does not have to be split by hand ([#1414](https://github.com/rig-c/core/issues/1414)) ([#1438](https://github.com/rig-c/core/issues/1438)) ([cef502f](https://github.com/rig-c/core/commit/cef502f8f347d8c32d28838012ac1b34373314c0))
+
+
+### Bug Fixes
+
+* **split:** the split pointer quotes the names it prints, an orphan-to-orphan edge is dropped by name, and the meshSlots line states how far to raise the budget ([#1442](https://github.com/rig-c/core/issues/1442)) ([#1444](https://github.com/rig-c/core/issues/1444)) ([932db07](https://github.com/rig-c/core/commit/932db07d9a5ff9cf97ef39881dbdffbfbcede4be))
+
 ## [2.56.0](https://github.com/rig-c/core/compare/v2.55.0...v2.56.0) (2026-10-13)
 
 
