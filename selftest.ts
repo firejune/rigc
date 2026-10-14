@@ -631,6 +631,9 @@ import {
   type GuideSection,
   type GuideTexts,
 } from './src/guide.ts';
+import { NotImplementedError } from './src/errors.ts';
+import { DepthError } from './src/depth.ts';
+import { TransformError } from './src/transform.ts';
 import { ATLAS_KEY, buildPreview, PLAYER_SCRIPT_URL, SKELETON_KEY, type PreviewGate } from './src/preview.ts';
 import {
   CHANNELS_BY_KIND,
@@ -72711,16 +72714,346 @@ function readSkillInstallShapes(source: string, skills: string[], shipped: Set<s
 // guide — the row a failure line names, one ledger, one pointer (issue #1397)
 // ---------------------------------------------------------------------------
 
+/** A source census, not a second ledger: constructor identity and every fixed message fragment are read anew. */
+interface CompileGuideSite {
+  file: string;
+  line: number;
+  start: number;
+  codeStart: number | null;
+  codeEnd: number | null;
+  code: string | null;
+  relay: boolean;
+  chunks: string[];
+  templates: string[];
+}
+interface CompileGuideCensus {
+  sites: CompileGuideSite[];
+  faults: string[];
+}
+
+function compileGuideCensus(files: ReadonlyArray<{ path: string; text: string }>): CompileGuideCensus {
+  const trees = files.map(({ path, text }) => ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true));
+  const sites: CompileGuideSite[] = [];
+  const faults: string[] = [];
+  const scopeOf = (node: ts.Node): ts.Node => {
+    let at = node.parent;
+    while (at.parent && !ts.isFunctionLike(at) && !ts.isSourceFile(at)) at = at.parent;
+    return at;
+  };
+  const walk = (node: ts.Node, visit: (node: ts.Node) => void): void => {
+    visit(node);
+    ts.forEachChild(node, (child) => walk(child, visit));
+  };
+  const functionName = (node: ts.Node): string | null => {
+    if (ts.isFunctionDeclaration(node)) return node.name?.text ?? null;
+    if ((ts.isArrowFunction(node) || ts.isFunctionExpression(node)) && ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) return node.parent.name.text;
+    return null;
+  };
+  const functions = new Map<string, ts.Node[]>();
+  const calls = new Map<string, ts.CallExpression[]>();
+  for (const tree of trees) walk(tree, (node) => {
+    const name = functionName(node);
+    if (name !== null) functions.set(name, [...(functions.get(name) ?? []), node]);
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) calls.set(node.expression.text, [...(calls.get(node.expression.text) ?? []), node]);
+  });
+  const targets = (name: string, at: ts.Node): ts.Node[] => {
+    const own = (functions.get(name) ?? []).filter((fn) => fn.getSourceFile() === at.getSourceFile());
+    let lexical = scopeOf(at);
+    while (true) {
+      const visible = own.filter((fn) => scopeOf(fn) === lexical);
+      if (visible.length) return visible;
+      if (ts.isSourceFile(lexical)) break;
+      lexical = scopeOf(lexical);
+    }
+    for (const statement of at.getSourceFile().statements) {
+      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.moduleSpecifier.text.startsWith('.')) continue;
+      const bindings = statement.importClause?.namedBindings;
+      if (!bindings || !ts.isNamedImports(bindings)) continue;
+      const imported = bindings.elements.find((e) => e.name.text === name);
+      if (imported) {
+        const path = join(dirname(at.getSourceFile().fileName), statement.moduleSpecifier.text);
+        return (functions.get(imported.propertyName?.text ?? imported.name.text) ?? []).filter((fn) => fn.getSourceFile().fileName === path);
+      }
+    }
+    return [];
+  };
+  const bindingCache = new Map<ts.Node, Map<string, Array<{ expression: ts.Expression; property?: string }>>>();
+  const declarationCache = new Map<ts.Node, Map<string, ts.VariableDeclaration[]>>();
+  const assignmentCache = new Map<ts.Node, Map<string, ts.Expression[]>>();
+  const declared = (name: string, at: ts.Node): ts.VariableDeclaration[] => {
+    let scope: ts.Node = at;
+    while (true) {
+      const cached = declarationCache.get(scope);
+      if (cached !== undefined) {
+        const found = cached.get(name) ?? [];
+        if (found.length) return found;
+        if (ts.isSourceFile(scope)) return [];
+        scope = scopeOf(scope);
+        continue;
+      }
+      const all = new Map<string, ts.VariableDeclaration[]>();
+      const scan = (node: ts.Node): void => {
+        if (node !== scope && ts.isFunctionLike(node)) return;
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) all.set(node.name.text, [...(all.get(node.name.text) ?? []), node]);
+        ts.forEachChild(node, scan);
+      };
+      scan(scope);
+      declarationCache.set(scope, all);
+      const found = all.get(name) ?? [];
+      if (found.length) return found;
+      if (ts.isSourceFile(scope)) return [];
+      scope = scopeOf(scope);
+    }
+  };
+  const assignments = (name: string, scope: ts.Node): ts.Expression[] => {
+    const cache = assignmentCache.get(scope);
+    if (cache !== undefined) return cache.get(name) ?? [];
+    const all = new Map<string, ts.Expression[]>();
+    const add = (key: string, value: ts.Expression): void => { all.set(key, [...(all.get(key) ?? []), value]); };
+    walk(scope, (node) => {
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken ) add(node.left.getText(), node.right);
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'push' ) for (const arg of node.arguments) add(node.expression.expression.getText(), arg);
+    });
+    assignmentCache.set(scope, all);
+    return all.get(name) ?? [];
+  };
+  // These are runtime values, not prose factories: their string representation is deliberately a hole.
+  const valuePrinters = new Set(['String', 'JSON.stringify', 'f32', 'round', 'r6', 'channelHex', 'dottedPath', 'nameDistance']);
+  const unwrap = (node: ts.Expression): ts.Expression => {
+    while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node)) node = node.expression;
+    return node;
+  };
+  const stringUnion = (type: ts.TypeNode | undefined, tree: ts.SourceFile, seen: Set<string> = new Set()): boolean => {
+    if (!type) return false;
+    if (ts.isLiteralTypeNode(type)) return ts.isStringLiteral(type.literal);
+    if (ts.isUnionTypeNode(type)) return type.types.every((part) => stringUnion(part, tree, new Set(seen)));
+    if (ts.isTypeReferenceNode(type) && ts.isIdentifier(type.typeName) && !seen.has(type.typeName.text)) {
+      const name = type.typeName.text;
+      seen.add(name);
+      const alias = tree.statements.find((statement) => ts.isTypeAliasDeclaration(statement) && statement.name.text === name);
+      return alias !== undefined && ts.isTypeAliasDeclaration(alias) && stringUnion(alias.type, tree, seen);
+    }
+    return false;
+  };
+  const enumLookup = (node: ts.Expression): boolean => {
+    const lookup = unwrap(node);
+    if (!ts.isElementAccessExpression(lookup) || !ts.isIdentifier(lookup.expression)) return false;
+    return declared(lookup.expression.text, scopeOf(lookup)).some((decl) => {
+      const type = decl.type;
+      return type !== undefined && ts.isTypeReferenceNode(type) && type.typeName.getText() === 'Record' && stringUnion(type.typeArguments?.[1], decl.getSourceFile());
+    });
+  };
+  let tracedTemplates = new Set<string>();
+  const templateOf = (expression: ts.Expression): string => {
+    const node = unwrap(expression);
+    if (ts.isStringLiteralLike(node)) return node.text;
+    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map((span) => `<value>${span.literal.text}`).join('');
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return templateOf(node.left) + templateOf(node.right);
+    if (ts.isConditionalExpression(node)) return `{${templateOf(node.whenTrue)} / ${templateOf(node.whenFalse)}}`;
+    return '<value>';
+  };
+  const traceTemplate = (expression: ts.Expression): void => {
+    let node: ts.Expression = expression;
+    while (ts.isExpression(node.parent) && (ts.isParenthesizedExpression(node.parent) || ts.isTemplateExpression(node.parent) || ts.isConditionalExpression(node.parent) || (ts.isBinaryExpression(node.parent) && node.parent.operatorToken.kind === ts.SyntaxKind.PlusToken))) node = node.parent;
+    tracedTemplates.add(templateOf(node));
+  };
+  const pieces = (expression: ts.Expression, active: Set<string> = new Set(), property?: string): string[] => {
+    const node = unwrap(expression);
+    const key = `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}:${property ?? ''}`;
+    if (active.has(key)) return [];
+    const next = active;
+    next.add(key);
+    const run = (e: ts.Expression, p?: string): string[] => pieces(e, next, p);
+    if (ts.isStringLiteralLike(node)) { if (property === undefined) traceTemplate(node); return property === undefined ? [node.text] : []; }
+    if (ts.isTemplateExpression(node)) { if (property === undefined) traceTemplate(node); return property === undefined ? [node.head.text, ...node.templateSpans.flatMap((span) => [...run(span.expression), span.literal.text])] : []; }
+    if (ts.isConditionalExpression(node)) return [...run(node.whenTrue, property), ...run(node.whenFalse, property)];
+    if (ts.isBinaryExpression(node)) {
+      if ([ts.SyntaxKind.PlusToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.BarBarToken].includes(node.operatorToken.kind)) return [...run(node.left, property), ...run(node.right, property)];
+      return [];
+    }
+    if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap((e) => ts.isSpreadElement(e) ? run(e.expression, property) : run(e, property));
+    if (ts.isObjectLiteralExpression(node)) return node.properties.flatMap((p) => {
+      if (ts.isPropertyAssignment(p)) return property === undefined || p.name.getText().replace(/^['"]|['"]$/g, '') === property ? run(p.initializer) : run(p.initializer, property);
+      if (ts.isShorthandPropertyAssignment(p) && (property === undefined || p.name.text === property)) return run(p.name);
+      if (ts.isSpreadAssignment(p)) return run(p.expression, property);
+      return [];
+    });
+    if (ts.isIdentifier(node)) {
+      const values = declared(node.text, scopeOf(node));
+      if (values.length) return values.flatMap((d) => [...(d.initializer && !(property === undefined && enumLookup(d.initializer)) ? run(d.initializer, property) : []), ...assignments(node.text, scopeOf(d)).flatMap((e) => run(e, property))]);
+      const scope = scopeOf(node);
+      let bound = bindingCache.get(scope);
+      if (bound === undefined) {
+        bound = new Map<string, Array<{ expression: ts.Expression; property?: string }>>();
+        const add = (name: string, expression: ts.Expression, p?: string): void => { bound!.set(name, [...(bound!.get(name) ?? []), { expression, property: p }]); };
+        walk(scope, (decl) => {
+          if (ts.isVariableDeclaration(decl) && ts.isObjectBindingPattern(decl.name) && decl.initializer) {
+            for (const element of decl.name.elements) if (ts.isIdentifier(element.name)) add(element.name.text, decl.initializer, element.propertyName?.getText() ?? element.name.text);
+          }
+          if (ts.isForOfStatement(decl) && ts.isVariableDeclarationList(decl.initializer)) for (const d of decl.initializer.declarations) {
+            if (ts.isArrayBindingPattern(d.name)) {
+              const collection = unwrap(decl.expression);
+              if (ts.isArrayLiteralExpression(collection)) d.name.elements.forEach((element, index) => {
+                if (!ts.isBindingElement(element) || !ts.isIdentifier(element.name)) return;
+                for (const tuple of collection.elements) { const array = unwrap(tuple); if (ts.isArrayLiteralExpression(array) && array.elements[index]) add(element.name.text, array.elements[index]); }
+              });
+            }
+          }
+        });
+        bindingCache.set(scope, bound);
+      }
+      const bindings = bound.get(node.text) ?? [];
+      if (bindings.length) return bindings.flatMap((binding) => run(binding.expression, binding.property ?? property));
+      if (ts.isFunctionDeclaration(scope) || ts.isFunctionExpression(scope) || ts.isArrowFunction(scope)) {
+        const index = scope.parameters.findIndex((p) => ts.isIdentifier(p.name) && p.name.text === node.text);
+        const name = functionName(scope);
+        if (index >= 0 && property === undefined && stringUnion(scope.parameters[index].type, scope.getSourceFile())) return [];
+        // File paths, key paths, names and discriminants supplied by callers are data holes.
+        // Their authored local declarations were resolved above, so prose cannot hide behind the binding name.
+        if (index >= 0 && property === undefined && ['where', 'key', 'path', 'file', 'name', 'kind', 'type'].includes(node.text) && name !== 'truncated') return [];
+        if (index >= 0 && name !== null) return [...assignments(node.text, scope).flatMap((e) => run(e, property)), ...(scope.parameters[index].initializer ? run(scope.parameters[index].initializer!, property) : []), ...(calls.get(name) ?? []).filter((call) => ts.isIdentifier(call.expression) && targets(call.expression.text, call).includes(scope)).flatMap((call) => call.arguments[index] ? run(call.arguments[index], property) : [])];
+      }
+      if (property !== undefined && (ts.isArrowFunction(scope) || ts.isFunctionExpression(scope)) && ts.isCallExpression(scope.parent) && ts.isPropertyAccessExpression(scope.parent.expression)) {
+        return run(scope.parent.expression.expression, property);
+      }
+      if (property !== undefined && targets(node.text, node).length) return targets(node.text, node).flatMap((fn) => outputs(fn, next, property));
+      // A variable imported by alias resolves only to that module's exported declaration.
+      // Same-named constants in unrelated modules are not evidence for this expression.
+      for (const statement of node.getSourceFile().statements) {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.moduleSpecifier.text.startsWith('.')) continue;
+        const bindings = statement.importClause?.namedBindings;
+        if (!bindings || !ts.isNamedImports(bindings)) continue;
+        const imported = bindings.elements.find((element) => element.name.text === node.text);
+        if (!imported) continue;
+        const path = join(dirname(node.getSourceFile().fileName), statement.moduleSpecifier.text);
+        const tree = trees.find((tree) => tree.fileName === path);
+        if (!tree) return [];
+        const sourceName = imported.propertyName?.text ?? imported.name.text;
+        return declared(sourceName, tree).flatMap((decl) => decl.initializer ? run(decl.initializer, property) : []);
+      }
+      return [];
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      const name = node.name.text;
+      if (['message', 'problem', 'why', 'hint', 'readAs', 'required', 'stated', 'reach', 'noun', 'statesKeyed', 'sentence', 'setupWhy', 'because', 'repair', 'side', 'known', 'spelling', 'expression', 'does', 'lines', 'says'].includes(name) || property !== undefined) {
+        if (name === 'message' && ts.isIdentifier(unwrap(node.expression))) {
+          let at: ts.Node | undefined = node.parent;
+          while (at && !ts.isCatchClause(at)) at = at.parent;
+          if (at && ts.isCatchClause(at) && ts.isTryStatement(at.parent)) return upstream(at.parent.tryBlock, next);
+        }
+        const producers: Record<string, string> = { sentence: 'pageGridSentence', setupWhy: 'deformGeometryOf', statesKeyed: 'physicsRuleFor', because: 'editorNameOrder', repair: 'editorNameOrder' };
+        const extra = producers[name] === undefined ? [] : (functions.get(producers[name]) ?? []).flatMap((fn) => outputs(fn, next, ['sentence'].includes(name) ? undefined : (property ?? name)));
+        return [...run(node.expression, property ?? name), ...extra];
+      }
+      return [];
+    }
+    if (ts.isElementAccessExpression(node)) return run(node.expression, property);
+    if (ts.isCallExpression(node)) {
+      const callName = node.expression.getText();
+      if (valuePrinters.has(callName) || /\.(?:toFixed|toExponential|toString)$/.test(callName)) return [];
+      if (ts.isPropertyAccessExpression(node.expression) && ['join', 'map', 'filter', 'sort', 'slice', 'find', 'flatMap'].includes(node.expression.name.text)) {
+        return [...run(node.expression.expression, property), ...node.arguments.flatMap((arg) => {
+          if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) return outputs(arg, next, property);
+          return run(arg, property);
+        })];
+      }
+      if (ts.isIdentifier(node.expression)) return targets(node.expression.text, node).flatMap((fn) => outputs(fn, next, property));
+      return [];
+    }
+    return [];
+  };
+  const outputs = (fn: ts.Node, active: Set<string>, property?: string): string[] => {
+    const result: string[] = [];
+    if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) result.push(...pieces(fn.body, active, property));
+    const scan = (node: ts.Node): void => {
+      if (node !== fn && ts.isFunctionLike(node)) return;
+      if (ts.isReturnStatement(node) && node.expression) result.push(...pieces(node.expression, active, property));
+      ts.forEachChild(node, scan);
+    };
+    scan(fn);
+    return result;
+  };
+  const upstream = (block: ts.Node, active: Set<string>): string[] => {
+    const result: string[] = [];
+    const visited = new Set<ts.Node>();
+    const scan = (root: ts.Node): void => {
+      if (visited.has(root)) return;
+      visited.add(root);
+      walk(root, (node) => {
+        if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && /Error$/.test(node.expression.text) && node.arguments?.[0]) result.push(...pieces(node.arguments[0], active));
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) for (const fn of targets(node.expression.text, node)) scan(fn);
+      });
+    };
+    scan(block);
+    return result;
+  };
+  for (const tree of trees) walk(tree, (node) => {
+    if (!ts.isNewExpression(node) || !ts.isIdentifier(node.expression) || !['CompileError', 'NotImplementedError'].includes(node.expression.text)) return;
+    const line = tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1;
+    const second = node.arguments?.[1];
+    const literal = second && ts.isStringLiteral(second) && /^CE_[A-Z0-9_]+$/.test(second.text) ? second.text : null;
+    const fn = scopeOf(node);
+    const relay = second?.getText() === 'err.code' && functionName(fn) === 'withMotionSource' &&
+      fn.getText().includes('err instanceof CompileError') && node.arguments?.[0]?.getText() === '`${motionPath}: ${err.message}`' &&
+      ts.isThrowStatement(node.parent);
+    if (literal === null && !relay) faults.push(`${tree.fileName}:${line} ${node.expression.text} has no literal CE_ code (or verified withMotionSource relay)`);
+    tracedTemplates = new Set<string>();
+    const chunks = node.arguments?.[0] ? [...new Set(pieces(node.arguments[0]).filter((s) => s !== ''))] : [];
+    if (!relay && chunks.length === 0) faults.push(`${tree.fileName}:${line} ${literal ?? '(uncoded)'} has no traceable fixed message text`);
+    sites.push({ file: tree.fileName, line, start: node.getStart(tree), codeStart: second?.getStart(tree) ?? null, codeEnd: second?.end ?? null, code: literal, relay, chunks, templates: [...tracedTemplates] });
+  });
+  return { sites, faults };
+}
+
+/** Pipe cells, preserving escaped pipe characters inside message text. */
+function compileGuideCells(line: string): string[] {
+  return line.split(/(?<!\\)\|/).slice(1, -1).map((cell) => cell.trim());
+}
+function compileGuideReadable(text: string): string {
+  return text.replace(/\\([|`\\])/g, '$1')
+    .replace(/&#(x[0-9a-f]+|[0-9]+);/gi, (_, value: string) => String.fromCodePoint(value[0].toLowerCase() === 'x' ? parseInt(value.slice(1), 16) : parseInt(value, 10)))
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+    .replace(/<br\s*\/?\s*>/g, '\n');
+}
+function compileMessageFaults(census: CompileGuideCensus, rows: readonly GuideRow[]): string[] {
+  const faults = [...census.faults];
+  for (const site of census.sites) {
+    if (site.code === null) continue;
+    const row = rows.find((row) => row.rule === site.code);
+    if (row === undefined) continue; // The equality gate owns a missing row, by code.
+    const cells = compileGuideCells(row.text);
+    const text = compileGuideReadable(cells[1] ?? '');
+    for (const chunk of site.chunks) if (!text.includes(chunk)) faults.push(`${site.file}:${site.line} ${site.code}: guide message cell ${row.file}:${row.line} omits fixed message text ${JSON.stringify(chunk)}`);
+  }
+  return faults;
+}
+
+function compileSliceBytes(text: string, address: string): number | null {
+  const answer = guideAnswer(`§${address}`, { guide: text, elsewhere: {} });
+  return answer.ok ? new TextEncoder().encode(answer.lines.map((line) => `${line}\n`).join('')).length : null;
+}
+function compileSliceFaults(text: string): string[] {
+  const slices = guideSections(text).filter((s) => s.address.startsWith('5.1.') && s.heading.level === 4);
+  const faults = slices.length === 0 ? ['§5.1 has no addressable #### slices'] : [];
+  for (const slice of slices) {
+    const bytes = compileSliceBytes(text, slice.address);
+    if (bytes === null) faults.push(`§${slice.address}: guide refuses its counted slice`);
+    else if (bytes > 30000) faults.push(`§${slice.address}: ${bytes} printed UTF-8 bytes exceeds 30000`);
+  }
+  return faults;
+}
+
 /**
  * Every rule a rigc line can name, with what names it: the registry's
  * assertions and the model side's two parse rules (a gate's `FAIL` line),
  * `vote --record`'s refusals, and every finding code `src/ingest.ts` can print
  * — read the way `IG25` reads them, composed codes expanded and a family kept
- * as its family (`ATTACHMENT_<TYPE>`). A compile error names no rule (§5.1's
- * tables are keyed on the message), so it adds nothing here.
+ * as its family (`ATTACHMENT_<TYPE>`). Compile refusals add the literal codes read from their constructor sites;
+ * the withMotionSource relay adds no new rule.
  */
-function emittableRules(ingestSource: string): Map<string, string> {
+function emittableRules(ingestSource: string, compileSites: readonly CompileGuideSite[] = []): Map<string, string> {
   const rules = new Map<string, string>();
+  for (const site of compileSites) if (site.code !== null) rules.set(site.code, `a compile refusal (${site.file}:${site.line})`);
   for (const code of ASSERTION_NAMES) rules.set(code, 'a gate FAIL line (the registry)');
   for (const code of Object.keys(MODEL_PARSE_KIND)) rules.set(code, 'a gate FAIL line (the model side\'s parse)');
   for (const code of VOTE_RULES) rules.set(code, 'a vote --record FAIL line');
@@ -72789,7 +73122,7 @@ function pointerBypasses(files: ReadonlyArray<{ path: string; text: string }>): 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/`\s*FAIL {2}\$\{/.test(line)) faults.push(`${path}:${i + 1} writes a FAIL line by hand — \`failLine\` writes it, with the pointer to the rule's row`);
-      if (/`rigc compile error: \$\{/.test(line)) faults.push(`${path}:${i + 1} writes a compile error line by hand — \`compileErrorLine\` writes it, with the pointer to §5.1`);
+      if (/`rigc compile error: \$\{/.test(line)) faults.push(`${path}:${i + 1} writes a compile error line by hand — \`compileErrorLine\` writes it, with the pointer to its code row (or legacy §5.1)`);
       if (/INGEST_GUTTERS\[[^\]]*\]\.padEnd/.test(line) && !(path === 'src/ingest.ts' && /findingLine/.test(lines.slice(Math.max(0, i - 3), i + 1).join('\n')))) {
         faults.push(`${path}:${i + 1} writes an ingest finding line by hand — \`findingLine\` writes it, with the pointer to the code's row`);
       }
@@ -72821,7 +73154,12 @@ function runGuideSuite(): number {
   const root = import.meta.dir;
   const texts = guideTextsAt(root);
   const rows = allRuleRows(texts);
-  const rules = emittableRules(readFileSync(join(root, 'src/ingest.ts'), 'utf8'));
+  const compileSources = tsFilesUnder(root, 'src').map((path) => ({ path, text: readFileSync(join(root, path), 'utf8') }));
+  const compileCensus = compileGuideCensus(compileSources);
+  const rules = emittableRules(readFileSync(join(root, 'src/ingest.ts'), 'utf8'), compileCensus.sites);
+  console.log(`COMPILE_SOURCE_CODES ${JSON.stringify([...new Set(compileCensus.sites.flatMap((site) => site.code === null ? [] : [site.code]))].sort())}`);
+  console.log(`COMPILE_GUIDE_ROWS ${JSON.stringify(rows.filter((row) => row.rule.startsWith('CE_')).map((row) => row.rule).sort())}`);
+  console.log(`COMPILE_SOURCE_SITES ${compileCensus.sites.length}, coded ${compileCensus.sites.filter((site) => site.code !== null).length}, relayed ${compileCensus.sites.filter((site) => site.relay).length}`);
   const caught = (what: string, raised: readonly string[], name: string, cases: string[], probes: string[]): void => {
     const hit = raised.find((fault) => fault.includes(name));
     if (hit === undefined) probes.push(`"${what}" (${name}) was planted and ` + 'not ' + `caught: it raised [${raised.join('; ')}]`);
@@ -72865,7 +73203,7 @@ function runGuideSuite(): number {
         probes,
         `${rules.size} rule(s) a line can name — ${ASSERTION_NAMES.length} assertion(s), ${Object.keys(MODEL_PARSE_KIND).length} model-side parse rule(s), ` +
           `${VOTE_RULES.length} vote refusal(s), ${GUIDE_RULES.length} guide refusal(s), ` +
-          `${rules.size - ASSERTION_NAMES.length - Object.keys(MODEL_PARSE_KIND).length - VOTE_RULES.length - GUIDE_RULES.length} ingest finding code(s) — ` +
+          `${ingestFindingCodes(readFileSync(join(root, 'src/ingest.ts'), 'utf8')).codes.size} ingest finding code(s), ${new Set(compileCensus.sites.flatMap((site) => site.code === null ? [] : [site.code])).size} compile refusal code(s) — ` +
           `each with exactly one of the ${rows.length} rule row(s) (${where}); over ${cases.length} plant(s): ${cases.join('; ')}`,
         (count) => `${count} way(s) the rule rows and the rules disagree:`,
       ),
@@ -72926,6 +73264,8 @@ function runGuideSuite(): number {
     if (finding !== '  JUDGE DURATION: animation "idle" — planted (see rigc guide DURATION)') probes.push(`a finding line reads ${JSON.stringify(finding)}`);
     const compiled = compileErrorLine('rig.json: a rig spec needs a "name"');
     if (compiled !== 'rigc compile error: rig.json: a rig spec needs a "name" (see rigc guide §5.1)') probes.push(`a compile error line reads ${JSON.stringify(compiled)}`);
+    const codedCompile = compileErrorLine('rig.json: a rig spec needs a "name"', 'CE_RIG_NAME_REQUIRED');
+    if (codedCompile !== 'rigc compile error: rig.json: a rig spec needs a "name" (see rigc guide CE_RIG_NAME_REQUIRED)') probes.push(`coded compile error line reads ${JSON.stringify(codedCompile)}`);
     const section = guideAnswer(COMPILE_ERROR_SECTION, texts);
     if (!section.ok) probes.push(`the section a compile error points at, ${COMPILE_ERROR_SECTION}, is refused: ${section.rule}: ${section.detail}`);
     // Every rule, and one member of each family, through the command's own reader.
@@ -73058,6 +73398,8 @@ function runGuideSuite(): number {
     const rowText = (rule: string): string => rows.find((row) => row.rule === rule)?.text ?? `(no row for ${rule})`;
     const ingestRule = [...rules.keys()].find((rule) => rows.some((row) => row.rule === rule && row.file !== GUIDE_FILE)) ?? '';
     const expectations: Array<{ what: string; args: string[]; status: number; out: (stdout: string, stderr: string) => string | null }> = [
+      { what: 'a compile code', args: ['CE_RIG_NAME_REQUIRED'], status: 0, out: (o) => (o.startsWith(`${GUIDE_FILE} §5.1.`) && o.includes(rowText('CE_RIG_NAME_REQUIRED')) ? null : 'not its one compile row under its positional slice') },
+      { what: 'an unknown compile code', args: ['CE_RIG_NAME_REQUIRE'], status: 1, out: (o, e) => (o === '' && e.startsWith('FAIL  GUIDE_RULE_KNOWN:') && e.includes('the nearest: CE_RIG_NAME_REQUIRED, ') && e.endsWith(' (see rigc guide GUIDE_RULE_KNOWN)\n') ? null : 'not the unknown-code refusal with real nearest names') },
       { what: 'an assertion', args: ['A20_MESH_WEIGHTS_COHERENT'], status: 0, out: (o) => (o.startsWith(`${GUIDE_FILE} §5.2, line `) && o.includes(rowText('A20_MESH_WEIGHTS_COHERENT')) ? null : 'not its §5.2 row under the file and section') },
       { what: 'a vote refusal', args: [VOTE_RULES[0]], status: 0, out: (o) => (o.includes(rowText(VOTE_RULES[0])) ? null : 'not its row') },
       { what: 'an ingest finding code', args: [ingestRule], status: 0, out: (o) => (o.startsWith('docs/INGEST.md, line ') && o.includes(rowText(ingestRule)) ? null : 'not its row from docs/INGEST.md, naming that file') },
@@ -73115,7 +73457,7 @@ function runGuideSuite(): number {
       .sort();
     const missing = (text: string): boolean => {
       const body = text.split('\n## ')[0];
-      return !body.includes('(see rigc guide <RULE>)') || !body.includes('Run that command first');
+      return !body.includes('(see rigc guide <RULE>)') || !body.includes('Run that command first') || !body.includes('CE_') || !body.includes('§5.1.<k>') || !body.includes('30,000');
     };
     const probes = [
       ...skills.filter((path) => missing(readFileSync(join(root, path), 'utf8'))).map((path) => `${path} does not say, before its first ## section, that a failure line ends with \`(see rigc guide <RULE>)\` and to run that command first`),
@@ -73134,6 +73476,205 @@ function runGuideSuite(): number {
       probeDetail(held, probes, `${skills.length} skill(s) (${skills.join(', ')}) each say it before their first section; ${cases.join('; ')}`, (count) => `${count} skill(s) that do not:`),
       'issue #1397 change 6: an agent loads a skill before it meets its first failure, and the skill is where it learns that the line carries the command',
     );
+  }
+
+  // GD08 — every site carries a literal code; only the source-checked motion relay may inherit one.
+  {
+    const probes = [...compileCensus.faults];
+    const cases: string[] = [];
+    const first = compileCensus.sites.find((site) => site.code !== null && site.codeStart !== null && site.codeEnd !== null);
+    if (first === undefined) probes.push('no coded constructor to plant on');
+    else {
+      const source = compileSources.find((s) => s.path === first.file)!;
+      const bare = source.text.slice(0, first.codeStart!) + 'undefined' + source.text.slice(first.codeEnd!);
+      const planted = compileGuideCensus(compileSources.map((s) => s.path === source.path ? { ...s, text: bare } : s));
+      caught('constructor code removed', planted.faults, `${first.file}:${first.line}`, cases, probes);
+      const row = rows.find((row) => row.rule === first.code);
+      if (row === undefined) probes.push(`${first.code} has no row to plant on`);
+      else {
+        caught('compile row removed', guideRowFaults(rules, rows.filter((r) => r !== row)), first.code!, cases, probes);
+        const phantom = { ...row, rule: 'CE_PHANTOM_PLANTED_BY_GD08' };
+        caught('unemittable compile row added', guideRowFaults(rules, [...rows, phantom]), phantom.rule, cases, probes);
+        caught('compile row duplicated', guideRowFaults(rules, [...rows, row]), first.code!, cases, probes);
+      }
+    }
+    say('GD08_EVERY_COMPILE_CONSTRUCTOR_NAMES_ITS_ONE_EMITTABLE_CODE', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `${compileCensus.sites.length} source sites, ${compileCensus.sites.filter((site) => site.relay).length} verified relay; ${cases.join('; ')}`),
+      'issue #1399: constructor coverage is source-derived; a missing code names file:line, missing/phantom/double rows name the code');
+  }
+
+  // GD09 — literal chunks are read from expressions and their prose-producing helpers, never from a mirror table.
+  {
+    const live = compileMessageFaults(compileCensus, rows);
+    const probes = [...live];
+    const cases: string[] = [];
+    const first = compileCensus.sites.find((site) => site.code !== null && site.chunks.some((chunk) => /[A-Za-z]/.test(chunk)));
+    if (first === undefined) probes.push('no fixed-message source site to plant on');
+    else {
+      const source = compileSources.find((s) => s.path === first.file)!;
+      const tree = ts.createSourceFile(source.path, source.text, ts.ScriptTarget.Latest, true);
+      let ctor: ts.NewExpression | undefined;
+      const find = (node: ts.Node): void => { if (ts.isNewExpression(node) && node.getStart(tree) === first.start) ctor = node; ts.forEachChild(node, find); };
+      find(tree);
+      const expression = ctor?.arguments?.[0];
+      if (expression === undefined) probes.push(`${first.code}: constructor expression disappeared`);
+      else {
+        const changed = source.text.slice(0, expression.getStart(tree)) + `('GD09_PLANTED_SOURCE_TEXT ' + (${expression.getText(tree)}))` + source.text.slice(expression.end);
+        const census = compileGuideCensus(compileSources.map((s) => s.path === source.path ? { ...s, text: changed } : s));
+        caught('fixed source text changed', compileMessageFaults(census, rows), `${first.code}:`, cases, probes);
+      }
+      const chunk = first.chunks.find((chunk) => /[A-Za-z]/.test(chunk))!;
+      const altered = rows.map((row) => row.rule === first.code ? { ...row, text: row.text.replaceAll(chunk, 'GD09_PLANTED_ROW_TEXT') } : row);
+      caught('fixed row text changed', compileMessageFaults(compileCensus, altered), `${first.code}:`, cases, probes);
+    }
+    // A new phrase in the shared motion hint is visible only after traversing its callers.
+    const motion = compileSources.find((s) => s.path === 'src/motion.ts');
+    if (motion === undefined) probes.push('src/motion.ts absent for helper plant');
+    else {
+      const changed = motion.text.replace('a named easing is FOUR finite numbers', 'GD09_PLANTED_HELPER_TEXT a named easing is FOUR finite numbers');
+      if (changed === motion.text) probes.push('the motion hint to plant on was not found');
+      else caught('helper hint changed upstream of refuse', compileMessageFaults(compileGuideCensus(compileSources.map((s) => s === motion ? { ...s, text: changed } : s)), rows), 'CE_MOTION_FIELD_SHAPE:', cases, probes);
+    }
+    if (first?.code !== null && first !== undefined) {
+      const code = first.code;
+      const local = { path: 'src/gd-local-prose.ts', text: `import { CompileError } from './errors.ts'; function refusal() { const name = 'GD09_LOCAL_PROSE'; throw new CompileError('prefix ' + name, '${code}'); }` };
+      caught('authored local prose behind a data-shaped binding name', compileMessageFaults(compileGuideCensus([...compileSources, local]), rows), 'GD09_LOCAL_PROSE', cases, probes);
+      const provider = { path: 'src/gd-imported-prose.ts', text: "export const OWN_PROSE = 'GD09_IMPORTED_ALIAS_PROSE';" };
+      const alias = { path: 'src/gd-alias-prose.ts', text: `import { CompileError } from './errors.ts'; import { OWN_PROSE as hint } from './gd-imported-prose.ts'; throw new CompileError('prefix ' + hint, '${code}');` };
+      caught('prose imported by alias from its actual module', compileMessageFaults(compileGuideCensus([...compileSources, provider, alias]), rows), 'GD09_IMPORTED_ALIAS_PROSE', cases, probes);
+      const row = rows.find((row) => row.rule === code);
+      if (row) {
+        const cells = compileGuideCells(row.text);
+        const moved = { ...row, text: `| ${cells[0]} | unrelated replacement | ${cells[2]}<br>${cells[1]} |` };
+        caught('message text moved entirely into the remedy', compileMessageFaults(compileCensus, rows.map((candidate) => candidate === row ? moved : candidate)), `${code}:`, cases, probes);
+      }
+    }
+    if (first?.code !== null && first !== undefined) {
+      const code = first.code;
+      const provider = { path: 'src/gd-provenance-a.ts', text: 'export function helper(hint: string): string { return hint; }' };
+      const otherProvider = { path: 'src/gd-provenance-b.ts', text: 'export function helper(hint: string): string { return hint; }' };
+      const consumer = { path: 'src/gd-provenance-consumer.ts', text: `import { CompileError } from './errors.ts'; import { helper } from './gd-provenance-a.ts'; throw new CompileError(helper('GD09_REAL_MODULE_PROSE'), '${code}');` };
+      const otherConsumer = { path: 'src/gd-provenance-other.ts', text: "import { helper } from './gd-provenance-b.ts'; const text = helper('GD09_UNRELATED_MODULE_PROSE');" };
+      const nested = { path: 'src/gd-provenance-nested.ts', text: `import { CompileError } from './errors.ts'; function prose() { function ignored() { const hint = 'GD09_UNCALLED_NESTED_PROSE'; return hint; } return 'GD09_REAL_LEXICAL_PROSE'; } throw new CompileError(prose(), '${code}');` };
+      const domains = { path: 'src/gd-provenance-domain.ts', text: `import { CompileError } from './errors.ts'; type Value = 'rgba' | 'attachment'; const DOMAIN: Record<string, Value> = { colour: 'rgba', other: 'attachment' }; function consume(input: {value: string}) { const shape = DOMAIN[input.value]; throw new CompileError('prefix ' + shape, '${code}'); }` };
+      const census = compileGuideCensus([...compileSources, provider, otherProvider, consumer, otherConsumer, nested, domains]);
+      const moduleSite = census.sites.find((site) => site.file === consumer.path);
+      const nestedSite = census.sites.find((site) => site.file === nested.path);
+      const valueSite = census.sites.find((site) => site.file === domains.path);
+      if (!moduleSite?.chunks.includes('GD09_REAL_MODULE_PROSE') || moduleSite.chunks.includes('GD09_UNRELATED_MODULE_PROSE')) probes.push('same-name helper parameters leaked callsites from an unrelated imported module');
+      if (!nestedSite?.chunks.includes('GD09_REAL_LEXICAL_PROSE') || nestedSite.chunks.includes('GD09_UNCALLED_NESTED_PROSE')) probes.push('uncalled nested local return leaked into the outer helper output');
+      if (valueSite === undefined || valueSite.chunks.includes('attachment') || valueSite.chunks.includes('rgba')) probes.push('typed finite lookup values were expanded as fixed prose');
+      caught('actual imported prose still needs its row text', compileMessageFaults(census, rows), 'GD09_REAL_MODULE_PROSE', cases, probes);
+      caught('actual lexical helper prose still needs its row text', compileMessageFaults(census, rows), 'GD09_REAL_LEXICAL_PROSE', cases, probes);
+      cases.push('unrelated module callsites and uncalled nested bindings omitted; finite typed lookup values remain data holes');
+    }
+    const enumCode = compileCensus.sites.find((site) => site.code === 'CE_COMPILE_COLOUR_CHANNEL_COUNT');
+    if (enumCode === undefined || enumCode.chunks.includes('attachment') || compileCensus.sites.some((site) => site.code === 'CE_COMPILE_SLOT_KEY_VALUE_SHAPE' && site.chunks.includes('attachment'))) probes.push('typed colour value domain was expanded into unreachable attachment prose');
+    else cases.push('SlotColourShape parameter remains a data value hole; attachment is absent from its fixed prose');
+    const tickSite = compileCensus.sites.find((site) => site.code !== null && site.chunks.some((chunk) => chunk.includes('`')));
+    if (tickSite) {
+      const row = rows.find((row) => row.rule === tickSite.code)!;
+      const encoded = { ...row, text: row.text.replaceAll('`', '&#96;') };
+      const encodedFaults = compileMessageFaults({ sites: [tickSite], faults: [] }, [encoded]);
+      if (encodedFaults.length) probes.push(`numeric backtick entity changes correct fixed text: ${encodedFaults.join('; ')}`);
+      else cases.push(`${tickSite.code}: numeric backtick entities preserve the quoted message`);
+      const wrong = { ...encoded, text: encoded.text.replaceAll('&#96;', '&#39;') };
+      caught('numeric entity changed to another literal character', compileMessageFaults({ sites: [tickSite], faults: [] }, [wrong]), `${tickSite.code}:`, cases, probes);
+    } else probes.push('no backtick-bearing message for numeric-entity control');
+    if (compileGuideReadable('&#96;setup&#x60;') !== '`setup`') probes.push('numeric HTML entities do not decode to literal backticks');
+    say('GD09_EVERY_FIXED_COMPILE_MESSAGE_CHUNK_IS_IN_ITS_CODE_ROW', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `${compileCensus.sites.length} sites traced, ${compileCensus.sites.reduce((n, site) => n + site.chunks.length, 0)} fixed chunks; ${cases.join('; ')}`),
+      'issue #1399: a prose factory, conditional alternative or caught upstream error is part of the displayed message; runtime names and numbers remain value holes');
+  }
+
+  // GD10 — every positional compile-error slice fits the agreed decimal byte cap.
+  {
+    const live = compileSliceFaults(texts.guide);
+    const probes = [...live];
+    const slices = guideSections(texts.guide).filter((s) => s.address.startsWith('5.1.') && s.heading.level === 4);
+    for (const slice of slices) console.log(`COMPILE_GUIDE_SLICE §${slice.address} ${compileSliceBytes(texts.guide, slice.address)} printed bytes (limit 30000)`);
+    const cases: string[] = [];
+    const first = slices[0];
+    if (first === undefined) probes.push('no compile #### slice for the oversize plant');
+    else {
+      const lines = texts.guide.split('\n');
+      lines.splice(first.firstLine, 0, 'x'.repeat(30001));
+      caught('oversized compile slice', compileSliceFaults(lines.join('\n')), `§${first.address}:`, cases, probes);
+      const boundary = texts.guide.split('\n');
+      boundary.splice(first.firstLine, 0, 'x'.repeat(29990 - (first.end - first.start) - 1));
+      const near = boundary.join('\n');
+      const raw = guideSections(near).find((section) => section.address === first.address)!;
+      if (raw.end - raw.start !== 29990) probes.push(`near-boundary raw slice was ${raw.end - raw.start}, expected 29990`);
+      caught('raw slice within cap but printed header exceeds it', compileSliceFaults(near), `§${first.address}:`, cases, probes);
+    }
+    say('GD10_EVERY_COMPILE_SLICE_IS_AT_MOST_30000_UTF8_BYTES', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `${slices.length} positional slices, every byte size printed; ${cases.join('; ')}`),
+      'issue #1399: the command prints slices from the sole AUTHORING ledger; a group that cannot fit the reader is refused by address');
+  }
+
+  // GD11 — a coded error remains the same error family, and motion prefixing retains its code and message.
+  {
+    const probes: string[] = [];
+    const empty = new CompileError();
+    const cause = new Error('cause');
+    const caused = new CompileError('legacy cause', { cause });
+    const codedCause = new CompileError('coded cause', 'CE_RIG_NAME_REQUIRED', { cause });
+    if (empty.message !== '' || Object.hasOwn(empty, 'code')) probes.push('no-argument native Error behavior changed');
+    if (caused.cause !== cause || Object.hasOwn(caused, 'code') || caused.message !== 'legacy cause') probes.push('legacy ErrorOptions/cause behavior changed');
+    if (codedCause.cause !== cause || codedCause.code !== 'CE_RIG_NAME_REQUIRED') probes.push('coded error lost native ErrorOptions/cause');
+    const legacy = new CompileError('legacy message');
+    const coded = new CompileError('coded message', 'CE_RIG_NAME_REQUIRED');
+    const deferred = new NotImplementedError('deferred message', 'CE_COMPILE_ATTACHMENT_TYPE_DEFERRED');
+    if (!(deferred instanceof NotImplementedError) || !(deferred instanceof CompileError) || deferred.message !== 'deferred message' || deferred.code !== 'CE_COMPILE_ATTACHMENT_TYPE_DEFERRED') probes.push('NotImplementedError changed identity, code or message');
+    if (Object.hasOwn(legacy, 'code') || Object.hasOwn(legacy, 'droppedStates')) probes.push('legacy CompileError acquired an own undefined field');
+    if (!(coded instanceof Error) || !(coded instanceof CompileError) || coded.message !== 'coded message' || coded.code !== 'CE_RIG_NAME_REQUIRED') probes.push('coded CompileError changed identity or message');
+    const dirs = writeProbeRig();
+    const motionPath = join(dirs.dir, 'probe.motion.json');
+    writeFileSync(motionPath, JSON.stringify({ ...STATIC_MOTION, archetype: 'other' }));
+    let refusal: CompileError | null = null;
+    try { compile({ rigPath: dirs.rigPath, motionPath, outDir: dirs.outDir, imagesDir: dirs.dir }); }
+    catch (err) { if (err instanceof CompileError) refusal = err; else probes.push(`motion mismatch threw ${String(err)}`); }
+    const expectedCode = 'CE_COMPILE_MOTION_ARCHETYPE_MISMATCH';
+    const originalMessage = `motion spec names archetype "other" but the rig spec at ${dirs.rigPath} is called "static_probe"`;
+    if (refusal === null || refusal.code !== expectedCode || refusal.message !== `${motionPath}: ${originalMessage}`) probes.push(`motion relay did not retain original code/message/prefix: ${refusal?.code}: ${refusal?.message}`);
+    else {
+      const line = compileErrorLine(refusal.message, refusal.code);
+      if (line !== `rigc compile error: ${refusal.message}${guidePointer(refusal.code!)}`) probes.push('compile pointer changed the original message');
+      if (!guideAnswer(refusal.code!, texts).ok) probes.push(`${refusal.code} pointer does not resolve`);
+    }
+    // Execute the exact caught-error blocks on the real upstream error classes.
+    // These private wrappers cannot be imported; compiling their source is the instrument,
+    // rather than a duplicate hand-written implementation of their catch/rethrow behavior.
+    const compileSource = compileSources.find((s) => s.path === 'src/compile.ts')!;
+    const compileTree = ts.createSourceFile(compileSource.path, compileSource.text, ts.ScriptTarget.Latest, true);
+    for (const want of [
+      { code: 'CE_COMPILE_RING_RIBBON_GENERATOR_INVALID', error: new MeshError('ribbon needs at least 3 rows, got 2'), prefix: 'probe: ' },
+      { code: 'CE_COMPILE_DEPTH_TONE_SCALE_INVALID', error: new DepthError('probe: depth tone "gamma" is 0; a gamma at or below 0 maps every level to the same nearness'), prefix: '' },
+      { code: 'CE_COMPILE_SETUP_TRANSFORM_INVALID', error: new TransformError('bone "child" names parent "absent", which is not declared before it'), prefix: '' },
+    ]) {
+      let block: ts.Block | undefined;
+      const scan = (node: ts.Node): void => {
+        if (ts.isNewExpression(node) && node.arguments?.[1] && ts.isStringLiteral(node.arguments[1]) && node.arguments[1].text === want.code) {
+          let at: ts.Node | undefined = node;
+          while (at && !ts.isCatchClause(at)) at = at.parent;
+          if (at && ts.isCatchClause(at)) block = at.block;
+        }
+        ts.forEachChild(node, scan);
+      };
+      scan(compileTree);
+      if (block === undefined) { probes.push(`${want.code}: caught-error block absent`); continue; }
+      const harness = ts.transpileModule(`const run = (err: unknown, where: string) => { try { throw err; } catch (err) ${block.getText(compileTree)} };`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+      const factory = new Function('CompileError', 'MeshError', 'DepthError', 'TransformError', `${harness}\nreturn run;`) as (a: typeof CompileError, b: typeof MeshError, c: typeof DepthError, d: typeof TransformError) => (err: Error, where: string) => never;
+      let wrapped: CompileError | null = null;
+      try { factory(CompileError, MeshError, DepthError, TransformError)(want.error, 'probe'); }
+      catch (err) { if (err instanceof CompileError) wrapped = err; else probes.push(`${want.code}: wrapper threw ${String(err)}`); }
+      if (wrapped === null || wrapped.code !== want.code || wrapped.message !== want.prefix + want.error.message) probes.push(`${want.code}: wrapper lost code or original message: ${wrapped?.code}: ${wrapped?.message}`);
+      else if (!guideAnswer(wrapped.code!, texts).ok || compileErrorLine(wrapped.message, wrapped.code) !== `rigc compile error: ${wrapped.message}${guidePointer(want.code)}`) probes.push(`${want.code}: wrapper pointer failed`);
+    }
+    rmSync(dirs.dir, { recursive: true, force: true });
+    say('GD11_COMPILE_CODES_ARE_ADDITIVE_AND_SURVIVE_THE_MOTION_SOURCE_RELAY', probes.length === 0,
+      probeDetail(probes.length === 0, probes, `legacy own fields absent, class identity and messages retained; motion refusal ${refusal?.code} retains its source prefix and resolves`),
+      'issue #1399: code metadata may change the pointer only; messages, legacy library errors and inherited CompileError semantics stay compatible');
   }
 
   return bad;

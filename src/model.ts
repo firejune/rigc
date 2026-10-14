@@ -733,7 +733,7 @@ function ordered(record: object, keys: readonly string[], where: string, value: 
   const own = record as Record<string, unknown>;
   for (const key of Object.keys(own)) {
     if (!keys.includes(key)) {
-      throw new CompileError(`internal: the model document has no place for field "${key}" of ${where}; it writes [${keys.join(', ')}]`);
+      throw new CompileError(`internal: the model document has no place for field "${key}" of ${where}; it writes [${keys.join(', ')}]`, 'CE_MODEL_INTERNAL_FIELD_UNREPRESENTABLE');
     }
   }
   const out: { [key: string]: DocValue } = {};
@@ -752,13 +752,13 @@ function ordered(record: object, keys: readonly string[], where: string, value: 
 function plain(value: unknown, where: string): DocValue {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
   if (typeof value === 'number') {
-    if (!Number.isFinite(value)) throw new CompileError(`internal: the model document cannot carry ${value} at ${where}; JSON writes it as null`);
-    if (Object.is(value, -0)) throw new CompileError(`internal: the model document cannot carry -0 at ${where}; JSON writes it as 0`);
+    if (!Number.isFinite(value)) throw new CompileError(`internal: the model document cannot carry ${value} at ${where}; JSON writes it as null`, 'CE_MODEL_INTERNAL_NONFINITE_NUMBER');
+    if (Object.is(value, -0)) throw new CompileError(`internal: the model document cannot carry -0 at ${where}; JSON writes it as 0`, 'CE_MODEL_INTERNAL_NEGATIVE_ZERO');
     return value;
   }
   if (Array.isArray(value)) {
     return value.map((item, i) => {
-      if (item === undefined) throw new CompileError(`internal: the model document cannot carry undefined at ${where}[${i}]; JSON writes it as null`);
+      if (item === undefined) throw new CompileError(`internal: the model document cannot carry undefined at ${where}[${i}]; JSON writes it as null`, 'CE_MODEL_INTERNAL_UNDEFINED_ELEMENT');
       return plain(item, `${where}[${i}]`);
     });
   }
@@ -767,7 +767,7 @@ function plain(value: unknown, where: string): DocValue {
     for (const [key, item] of Object.entries(value)) if (item !== undefined) out[key] = plain(item, `${where}.${key}`);
     return out;
   }
-  throw new CompileError(`internal: the model document cannot carry ${Object.prototype.toString.call(value)} at ${where}; it writes plain data only`);
+  throw new CompileError(`internal: the model document cannot carry ${Object.prototype.toString.call(value)} at ${where}; it writes plain data only`, 'CE_MODEL_INTERNAL_NONPLAIN_VALUE');
 }
 
 /** A `Map` as the array of its entries in the map's order, each `{ name, … }`. */
@@ -818,11 +818,11 @@ function verticesOf(vertices: ModelVertices, where: string): DocValue {
 
 function attachmentOf(entry: SkinTableEntry, where: string): DocValue {
   const fields = ATTACHMENT_FIELDS[entry.kind];
-  if (fields === undefined) throw new CompileError(`internal: the model document knows no attachment kind "${String(entry.kind)}" at ${where}`);
+  if (fields === undefined) throw new CompileError(`internal: the model document knows no attachment kind "${String(entry.kind)}" at ${where}`, 'CE_MODEL_INTERNAL_ATTACHMENT_KIND');
   if (entry.kind === 'region' && (entry.atlas === undefined) === (entry.sequence === undefined)) {
     throw new CompileError(
       `internal: the region at ${where} carries ${entry.atlas === undefined ? 'neither an atlas rectangle nor a sequence' : 'both an atlas rectangle and a sequence'}; ` +
-        'a region states exactly one of the two, and a sequence holds a rectangle per frame (issue #935)',
+        'a region states exactly one of the two, and a sequence holds a rectangle per frame (issue #935)', 'CE_MODEL_INTERNAL_REGION_SOURCE',
     );
   }
   return ordered(entry, fields, where, (key, v) => {
@@ -840,7 +840,7 @@ function attachmentOf(entry: SkinTableEntry, where: string): DocValue {
 /** One rectangle, in `ModelAtlasRect`'s order, every field required. */
 function atlasRectOf(rect: ModelAtlasRect, where: string): DocValue {
   for (const key of ATLAS_RECT_FIELDS) {
-    if (rect[key] === undefined) throw new CompileError(`internal: the atlas rectangle at ${where} has no ${key}; it states all of [${ATLAS_RECT_FIELDS.join(', ')}]`);
+    if (rect[key] === undefined) throw new CompileError(`internal: the atlas rectangle at ${where} has no ${key}; it states all of [${ATLAS_RECT_FIELDS.join(', ')}]`, 'CE_MODEL_INTERNAL_ATLAS_FIELD_REQUIRED');
   }
   return ordered(rect, ATLAS_RECT_FIELDS, where);
 }
@@ -922,7 +922,7 @@ function editorOrderOf(model: CompiledModel): DocValue {
     if (skin !== undefined) same(`editorOrder.skins[${i}] "${entry.name}".slots`, entry.slots, Object.keys(skin.attachments));
   }
   same('editorOrder.animations', order.animations, [...model.animations.keys()]);
-  if (problems.length > 0) throw new CompileError(`internal: the model's editor order is not its own: ${problems.join('; ')}`);
+  if (problems.length > 0) throw new CompileError(`internal: the model's editor order is not its own: ${problems.join('; ')}`, 'CE_MODEL_INTERNAL_EDITOR_ORDER');
   return {
     skins: order.skins.map((entry, i) => ordered(entry, ['name', 'slots'], `editorOrder.skins[${i}]`)),
     animations: plain(order.animations, 'editorOrder.animations'),
@@ -1040,7 +1040,7 @@ const MODEL_DOCUMENT_LEFT_OUT: readonly string[] = ['setupWorld'];
 export function modelDocument(model: CompiledModel, skeletonText: string, atlasText: string): string {
   for (const key of Object.keys(model)) {
     if (!MODEL_DOCUMENT_FIELDS.includes(key) && !MODEL_DOCUMENT_LEFT_OUT.includes(key)) {
-      throw new CompileError(`internal: the model document has no place for the model's field "${key}"; it writes [${MODEL_DOCUMENT_FIELDS.join(', ')}] and leaves out [${MODEL_DOCUMENT_LEFT_OUT.join(', ')}]`);
+      throw new CompileError(`internal: the model document has no place for the model's field "${key}"; it writes [${MODEL_DOCUMENT_FIELDS.join(', ')}] and leaves out [${MODEL_DOCUMENT_LEFT_OUT.join(', ')}]`, 'CE_MODEL_INTERNAL_DOCUMENT_FIELD');
     }
   }
   const doc: { [key: string]: DocValue } = {

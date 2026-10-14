@@ -2956,8 +2956,8 @@ function refuse(err: unknown, command: string | undefined, USAGE: string, entry:
     process.exit(2);
   }
   if (err instanceof CompileError) {
-    // Ends with ` (see rigc guide §5.1)` (issue #1397): a compile error names no rule, so it points at the section.
-    console.error(compileErrorLine(err.message));
+    // The site's code points at its one AUTHORING row; uncoded library errors keep the legacy section.
+    console.error(compileErrorLine(err.message, err.code));
     // The drops the compile recorded before it stopped, in the same line the
     // green build prints (issue #671). They were reported from the compile
     // RESULT alone, so the run that failed BECAUSE a file was missing was the

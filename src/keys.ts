@@ -112,7 +112,7 @@ export function refuseUnknownKeys(
     `${where}: ${what} has ${strays.length === 1 ? 'a key' : `${strays.length} keys`} this compiler does not read: ` +
       `${named.join(', ')}. Nothing reads such a key, so it would be dropped from the emitted skeleton in silence — ` +
       'fix the spelling or remove it. ' +
-      (known.length === 0 ? 'This shape has no fields at all.' : `Known here: ${[...known].sort().join(', ')}.`),
+      (known.length === 0 ? 'This shape has no fields at all.' : `Known here: ${[...known].sort().join(', ')}.`), 'CE_KEYS_UNKNOWN_FIELD',
   );
 }
 
@@ -182,7 +182,7 @@ export function refuseNumbersTheFileCannotCarry(
       throw new CompileError(
         `${where}: ${place(path)} is ${String(node)}; a number in this file is finite at float32 precision, at most ` +
           `±${String(FLOAT32_MAX)}, because the skeleton is written as float32 — past that it would be emitted as ` +
-          `Infinity, which JSON writes as null, a value the file never stated.${why}`,
+          `Infinity, which JSON writes as null, a value the file never stated.${why}`, 'CE_KEYS_NUMBER_FLOAT32_FINITE',
       );
     }
     if (Array.isArray(node)) {
@@ -409,7 +409,7 @@ export function refuseValuesOfTheWrongType(
       const wrong = wrongTypeAt(visit.node[key], type);
       if (wrong === null) continue;
       throw new CompileError(
-        `${where}: ${visit.name([key, ...wrong.tail])} is ${typeFound(wrong.value)}; ${wrong.required} is required`,
+        `${where}: ${visit.name([key, ...wrong.tail])} is ${typeFound(wrong.value)}; ${wrong.required} is required`, 'CE_KEYS_FIELD_VALUE_TYPE',
       );
     }
   }
@@ -479,7 +479,7 @@ export function refuseValuesOutsideTheirSet(
       if (typeof value === 'string' && rule.set.includes(value)) continue;
       throw new CompileError(
         `${where}: ${visit.name([key])} is ${JSON.stringify(value) ?? String(value)}; one of ` +
-          `${rule.set.map((name) => JSON.stringify(name)).join(', ')} — ${rule.readAs}`,
+          `${rule.set.map((name) => JSON.stringify(name)).join(', ')} — ${rule.readAs}`, 'CE_KEYS_ENUM_VALUE',
       );
     }
   }

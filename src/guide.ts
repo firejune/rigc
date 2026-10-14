@@ -54,17 +54,12 @@ export function guidePointer(rule: string): string {
   return ` (see ${GUIDE_BIN} guide ${rule})`;
 }
 
-/**
- * The section a compile error points at (HQ's ruling on rig-c/parts#343): no compile error names a rule — 0 of
- * the 463 throw sites carry a code, and §5.1's tables are keyed on the message — and §5.1 has no #### a thrower
- * could name, so every one points at the section its row is in. When §5.1 grows #### families a thrower can
- * name, this is where `§5.1.<k>` goes.
- */
+/** Legacy library callers may construct an uncoded error; their pointer remains the compile section. */
 export const COMPILE_ERROR_SECTION = '§5.1';
 
-/** A compile error as the CLI prints it: the prefix, the message, and the pointer to §5.1. */
-export function compileErrorLine(message: string): string {
-  return `rigc compile error: ${message}${guidePointer(COMPILE_ERROR_SECTION)}`;
+/** The original prefix and message, followed by this site's stable code (or the legacy section). */
+export function compileErrorLine(message: string, code?: string): string {
+  return `rigc compile error: ${message}${guidePointer(code ?? COMPILE_ERROR_SECTION)}`;
 }
 
 /** A refusal naming its rule, unindented, as `guide` prints its own: `FAIL  <RULE>: <detail> (see rigc guide <RULE>)`. */

@@ -1315,7 +1315,7 @@ export function splitRigSkin(skin: RigSkin, where: string): RigSkinParts {
     physics: [],
     slider: [],
   });
-  if (!isObj(skin)) throw new CompileError(`${where}: a skin must be an object`);
+  if (!isObj(skin)) throw new CompileError(`${where}: a skin must be an object`, 'CE_RIG_SKIN_OBJECT');
   const known = new Set<string>(RIG_SKIN_KEYS);
   const keys = Object.keys(skin);
   if (!keys.some((key) => known.has(key))) {
@@ -1323,7 +1323,7 @@ export function splitRigSkin(skin: RigSkin, where: string): RigSkinParts {
   }
   const entry = skin as RigSkinEntry;
   if (entry.attachments !== undefined && !isObj(entry.attachments)) {
-    throw new CompileError(`${where}: "attachments" is \`slotName -> placeholderName -> attachment\`, not ${JSON.stringify(entry.attachments)}`);
+    throw new CompileError(`${where}: "attachments" is \`slotName -> placeholderName -> attachment\`, not ${JSON.stringify(entry.attachments)}`, 'CE_RIG_SKIN_ATTACHMENTS_SHAPE');
   }
   for (const key of keys) {
     if (known.has(key)) continue;
@@ -1331,15 +1331,15 @@ export function splitRigSkin(skin: RigSkin, where: string): RigSkinParts {
       `${where}: uses the long form (it declares ${keys.filter((k) => known.has(k)).map((k) => `"${k}"`).join(', ')}) ` +
         `and also has a key "${key}". In that form every key is one of ${RIG_SKIN_KEYS.join(', ')} — so "${key}" reads ` +
         'as neither a member list nor a slot, and a slot left outside the block is an attachment that vanishes. ' +
-        'Move it inside "attachments".',
+        'Move it inside "attachments".', 'CE_RIG_SKIN_LONG_FORM_STRAY_SLOT',
     );
   }
   const nameList = (value: unknown, field: string): string[] => {
     if (value === undefined) return [];
-    if (!Array.isArray(value)) throw new CompileError(`${where}: "${field}" must be an array of names, not ${JSON.stringify(value)}`);
+    if (!Array.isArray(value)) throw new CompileError(`${where}: "${field}" must be an array of names, not ${JSON.stringify(value)}`, 'CE_RIG_SKIN_MEMBERS_ARRAY');
     return value.map((name, i) => {
       if (typeof name !== 'string' || name.length === 0) {
-        throw new CompileError(`${where}: ${field}[${i}] is ${JSON.stringify(name)}; a skin lists bones and constraints BY NAME`);
+        throw new CompileError(`${where}: ${field}[${i}] is ${JSON.stringify(name)}; a skin lists bones and constraints BY NAME`, 'CE_RIG_SKIN_MEMBER_NAME');
       }
       return name;
     });
@@ -2373,7 +2373,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
   if (!isObj(seq)) {
     throw new CompileError(
       `${where}: ${at} is ${JSON.stringify(seq) ?? String(seq)}, and a sequence is an object: ` +
-        '`{ "count": <frames>, "start"?: <first number>, "digits"?: <zero padding>, "setup"?: <setup frame> }`',
+        '`{ "count": <frames>, "start"?: <first number>, "digits"?: <zero padding>, "setup"?: <setup frame> }`', 'CE_RIG_SEQUENCE_OBJECT',
     );
   }
   const whole = (field: string, min: number): void => {
@@ -2388,7 +2388,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
         `${where}: ${at}.${field} is ${JSON.stringify(value) ?? String(value)}; it is a whole number` +
           (min > 0 ? ` of at least ${min}` : min === 0 ? ' of at least 0' : '') +
           ' — `Sequence.getPath` writes `start + i` into the region name digit for digit, so a fraction names a ' +
-          'region like `stem1.5` and a non-number names none',
+          'region like `stem1.5` and a non-number names none', 'CE_RIG_SEQUENCE_INTEGER_FIELD',
       );
     }
   };
@@ -2396,7 +2396,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
     throw new CompileError(
       `${where}: ${at} states no "count". The parser reads \`getValue(map, "count", 0)\` ` +
         '(`SkeletonJson.js:644`), so an omitted count is a series of NO frames: the attachment loads holding no ' +
-        'region and draws nothing, without an error. State how many frames the series has.',
+        'region and draws nothing, without an error. State how many frames the series has.', 'CE_RIG_SEQUENCE_COUNT_REQUIRED',
     );
   }
   whole('count', 1);
@@ -2408,7 +2408,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
     throw new CompileError(
       `${where}: ${at}.setup is ${seq.setup}, and a ${count}-frame series has frames 0 to ${count - 1}. ` +
         '`Sequence.resolveIndex` clamps an index at or past the end to the LAST frame (measured: `setup: 7` on ' +
-        'four frames showed frame 4), so this would show a frame the spec does not name. `setup` is 0-based.',
+        'four frames showed frame 4), so this would show a frame the spec does not name. `setup` is 0-based.', 'CE_RIG_SEQUENCE_SETUP_RANGE',
     );
   }
   for (const [field, why] of [
@@ -2418,7 +2418,7 @@ function checkRigSequence(att: Record<string, unknown>, who: string, where: stri
       'the spec says — author the geometry, which every frame shares'],
   ] as const) {
     if (att[field] !== undefined) {
-      throw new CompileError(`${where}: ${who} states "${field}" beside "sequence"; ${why}. Remove "${field}".`);
+      throw new CompileError(`${where}: ${who} states "${field}" beside "sequence"; ${why}. Remove "${field}".`, 'CE_RIG_SEQUENCE_CONFLICTING_FIELD');
     }
   }
 }
@@ -2543,7 +2543,7 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
               `regions, and only the ${SEQUENCE_ATTACHMENT_TYPES.length} kinds that draw a region carry one — ` +
               `${SEQUENCE_ATTACHMENT_TYPES.join(', ')} (\`readAttachment\` calls \`readSequence\` in exactly those ` +
               `branches, \`SkeletonJson.js:530\` and \`:561\`); on a ${type} the parser never reads the key, so the ` +
-              'series would be dropped in silence. Remove it, or put it on a region or a mesh.',
+              'series would be dropped in silence. Remove it, or put it on a region or a mesh.', 'CE_RIG_SEQUENCE_ATTACHMENT_KIND',
           );
         }
         const here = [...base, slot, placeholder];
@@ -2571,7 +2571,7 @@ function checkRigSpecKeys(raw: Record<string, unknown>, where: string): Array<{ 
           const stated = gen.kind === undefined ? 'absent' : (JSON.stringify(gen.kind) ?? String(gen.kind));
           throw new CompileError(
             `${where}: ${who} generator.kind is ${stated}; one of ${RIG_GENERATOR_KINDS.map((k) => JSON.stringify(k)).join(', ')} — ` +
-              'the kind names the builder, and each builder reads its own keys, so nothing about the mesh can be checked or built without one',
+              'the kind names the builder, and each builder reads its own keys, so nothing about the mesh can be checked or built without one', 'CE_RIG_GENERATOR_KIND',
           );
         }
         at(gen, genShape, `${who} generator (${String(gen.kind)})`, [...here, 'generator']);
@@ -2641,9 +2641,9 @@ function rigPlace(raw: Record<string, unknown>): (path: ReadonlyArray<string | n
  * consumer.
  */
 export function parseRigSpec(raw: unknown, where: string): RigSpec {
-  if (!isObj(raw)) throw new CompileError(`${where}: a rig spec must be a JSON object`);
+  if (!isObj(raw)) throw new CompileError(`${where}: a rig spec must be a JSON object`, 'CE_RIG_SPEC_OBJECT');
   if (raw.spec !== RIG_SPEC_VERSION) {
-    throw new CompileError(`${where}: unknown rig spec version ${JSON.stringify(raw.spec)}, expected "${RIG_SPEC_VERSION}"`);
+    throw new CompileError(`${where}: unknown rig spec version ${JSON.stringify(raw.spec)}, expected "${RIG_SPEC_VERSION}"`, 'CE_RIG_SPEC_VERSION');
   }
   // Before anything resolves by name AND before the required keys are asked
   // for, because a key nothing reads is very often the CAUSE of the name — or
@@ -2688,13 +2688,13 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   refuseNumbersTheFileCannotCarry(raw, where, place);
 
   if (typeof raw.name !== 'string' || raw.name.length === 0) {
-    throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`);
+    throw new CompileError(`${where}: a rig spec needs a "name" — a motion spec names it to pick this rig`, 'CE_RIG_NAME_REQUIRED');
   }
   if (!Array.isArray(raw.bones) || raw.bones.length === 0) {
-    throw new CompileError(`${where}: a rig spec needs a non-empty "bones" array`);
+    throw new CompileError(`${where}: a rig spec needs a non-empty "bones" array`, 'CE_RIG_BONES_ARRAY_REQUIRED');
   }
   if (!Array.isArray(raw.slots)) {
-    throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`);
+    throw new CompileError(`${where}: a rig spec needs a "slots" array (it may be empty; its ORDER is the draw order)`, 'CE_RIG_SLOTS_ARRAY_REQUIRED');
   }
 
   // `stops` first, ahead of every name this function resolves: a chain's next
@@ -2711,7 +2711,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     if (header.audio !== undefined && header.audio !== null && typeof header.audio !== 'string') {
       throw new CompileError(
         `${where}: "skeleton" states audio ${JSON.stringify(header.audio)}; it is a path from the skeleton file to ` +
-          'its audio folder, or null for none — a string or null',
+          'its audio folder, or null for none — a string or null', 'CE_RIG_SKELETON_AUDIO_TYPE',
       );
     }
     const noWidth = header.width === null;
@@ -2722,7 +2722,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       throw new CompileError(
         `${where}: "skeleton" states ${absent}: null and a ${stated} of ` +
           `${JSON.stringify(noWidth ? header.height : header.width)}. A stage has both extents or neither: ` +
-          'write both as null for "this skeleton declares no stage", or give both a number',
+          'write both as null for "this skeleton declares no stage", or give both a number', 'CE_RIG_STAGE_EXTENTS_PAIR',
       );
     }
     if (noWidth && noHeight && (header.x !== undefined || header.y !== undefined)) {
@@ -2730,7 +2730,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       throw new CompileError(
         `${where}: "skeleton" declares no stage (width: null, height: null) and still states ${origin.join(' and ')}. ` +
           `${origin.length === 1 ? 'That is an origin' : 'Those are an origin'} for a box that is not there: ` +
-          'drop them, or state a width and a height',
+          'drop them, or state a width and a height', 'CE_RIG_ABSENT_STAGE_ORIGIN',
       );
     }
     // The stage's box (issue #1168): both names stated, and a stage to draw it from.
@@ -2741,14 +2741,14 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         throw new CompileError(
           `${where}: skeleton.stageBox states no ${missing.map((key) => `"${key}"`).join(' and ')}. It names the slot the ` +
             'stage box goes in and the attachment name it carries — `{ "slot": "stage", "attachment": "stage" }` — ' +
-            'and both are required: rigc writes the box\'s numbers from the stage and names nothing on its own',
+            'and both are required: rigc writes the box\'s numbers from the stage and names nothing on its own', 'CE_RIG_STAGE_BOX_NAMES_REQUIRED',
         );
       }
       if (noWidth && noHeight) {
         throw new CompileError(
           `${where}: skeleton.stageBox asks for the stage as a bounding box in slot "${box.slot}", and "skeleton" ` +
             'declares no stage (width: null, height: null) — a box around nothing. State a width and a height, or ' +
-            'drop stageBox',
+            'drop stageBox', 'CE_RIG_STAGE_BOX_WITHOUT_STAGE',
         );
       }
     }
@@ -2757,10 +2757,10 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   const seen = new Set<string>();
   for (const bone of spec.bones) {
     if (!isObj(bone) || typeof bone.name !== 'string' || bone.name.length === 0) {
-      throw new CompileError(`${where}: every bone needs a "name"`);
+      throw new CompileError(`${where}: every bone needs a "name"`, 'CE_RIG_BONE_NAME_REQUIRED');
     }
     if (seen.has(bone.name)) {
-      throw new CompileError(`${where}: two bones are called "${bone.name}"; bone names are the join key for slots, meshes and timelines`);
+      throw new CompileError(`${where}: two bones are called "${bone.name}"; bone names are the join key for slots, meshes and timelines`, 'CE_RIG_BONE_NAME_DUPLICATE');
     }
     seen.add(bone.name);
     if (bone.parent === undefined) continue;
@@ -2769,12 +2769,12 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       // forward reference is not a rigc restriction — it is a bone with no parent
       // in the loaded skeleton, which loads as a second root.
       throw new CompileError(
-        `${where}: bone "${bone.name}" names parent ${JSON.stringify(bone.parent)}, which is not declared before it`,
+        `${where}: bone "${bone.name}" names parent ${JSON.stringify(bone.parent)}, which is not declared before it`, 'CE_RIG_BONE_PARENT_ORDER',
       );
     }
     if (bone.inherit !== undefined && resolveBoneInherit(bone.inherit) === undefined) {
       throw new CompileError(
-        `${where}: bone "${bone.name}" has inherit ${JSON.stringify(bone.inherit)}; ${BONE_INHERIT_KNOWN}`,
+        `${where}: bone "${bone.name}" has inherit ${JSON.stringify(bone.inherit)}; ${BONE_INHERIT_KNOWN}`, 'CE_RIG_BONE_INHERIT_MODE',
       );
     }
     const from = bone.from;
@@ -2782,19 +2782,19 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       const sources = ['anchor', 'slotWindow', 'meshCenter'].filter((k) => from[k as keyof RigBoneFrom] !== undefined);
       if (sources.length > 1) {
         throw new CompileError(
-          `${where}: bone "${bone.name}" takes its position from more than one source (${sources.join(', ')}); name exactly one`,
+          `${where}: bone "${bone.name}" takes its position from more than one source (${sources.join(', ')}); name exactly one`, 'CE_RIG_BONE_POSITION_SOURCES',
         );
       }
       if ((bone.x !== undefined || bone.y !== undefined) && sources.length === 1) {
         throw new CompileError(
-          `${where}: bone "${bone.name}" declares both a literal x/y and from.${sources[0]}; the two would disagree the first time the art moved`,
+          `${where}: bone "${bone.name}" declares both a literal x/y and from.${sources[0]}; the two would disagree the first time the art moved`, 'CE_RIG_BONE_POSITION_CONFLICT',
         );
       }
       if (from.rotation !== undefined && bone.rotation !== undefined) {
-        throw new CompileError(`${where}: bone "${bone.name}" declares both a literal rotation and from.rotation`);
+        throw new CompileError(`${where}: bone "${bone.name}" declares both a literal rotation and from.rotation`, 'CE_RIG_BONE_ROTATION_CONFLICT');
       }
       if (from.rotation === 'anchor' && from.anchor === undefined) {
-        throw new CompileError(`${where}: bone "${bone.name}" wants its rotation from an anchor but names no from.anchor`);
+        throw new CompileError(`${where}: bone "${bone.name}" wants its rotation from an anchor but names no from.anchor`, 'CE_RIG_BONE_ROTATION_ANCHOR_REQUIRED');
       }
     }
   }
@@ -2802,13 +2802,13 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   const slotNames = new Set<string>();
   for (const slot of spec.slots) {
     if (!isObj(slot) || typeof slot.name !== 'string' || slot.name.length === 0) {
-      throw new CompileError(`${where}: every slot needs a "name"`);
+      throw new CompileError(`${where}: every slot needs a "name"`, 'CE_RIG_SLOT_NAME_REQUIRED');
     }
-    if (slotNames.has(slot.name)) throw new CompileError(`${where}: two slots are called "${slot.name}"`);
+    if (slotNames.has(slot.name)) throw new CompileError(`${where}: two slots are called "${slot.name}"`, 'CE_RIG_SLOT_NAME_DUPLICATE');
     slotNames.add(slot.name);
     if (typeof slot.bone !== 'string' || !seen.has(slot.bone)) {
       throw new CompileError(
-        `${where}: slot "${slot.name}" names bone ${JSON.stringify(slot.bone)}, which this rig does not declare`,
+        `${where}: slot "${slot.name}" names bone ${JSON.stringify(slot.bone)}, which this rig does not declare`, 'CE_RIG_SLOT_BONE_UNKNOWN',
       );
     }
     // Issue #946: this used to compare case-insensitively, so `ADDITIVE` built
@@ -2818,7 +2818,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       throw new CompileError(
         `${where}: slot "${slot.name}" has blend ${JSON.stringify(slot.blend)}; known: ${RIG_SLOT_BLEND.join(', ')} ` +
           "(only the first letter's case is free — the parser's enumValue uppercases that one character and nothing " +
-          'else, and an unresolved name becomes undefined without an error)',
+          'else, and an unresolved name becomes undefined without an error)', 'CE_RIG_SLOT_BLEND_MODE',
       );
     }
   }
@@ -2833,29 +2833,29 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (mayFold !== undefined) {
     if (!Array.isArray(mayFold)) {
       throw new CompileError(
-        `${where}: invariants.deformMayFold is ${JSON.stringify(mayFold)}, expected an array of { "slot": …, "why": … }`,
+        `${where}: invariants.deformMayFold is ${JSON.stringify(mayFold)}, expected an array of { "slot": …, "why": … }`, 'CE_RIG_DEFORM_FOLD_EXEMPTIONS_SHAPE',
       );
     }
     const declared = new Set<string>();
     for (const entry of mayFold) {
       if (!isObj(entry) || typeof entry.slot !== 'string' || entry.slot.length === 0) {
-        throw new CompileError(`${where}: every invariants.deformMayFold entry needs a "slot"`);
+        throw new CompileError(`${where}: every invariants.deformMayFold entry needs a "slot"`, 'CE_RIG_DEFORM_FOLD_SLOT_REQUIRED');
       }
       if (!slotNames.has(entry.slot)) {
         throw new CompileError(
           `${where}: invariants.deformMayFold exempts slot "${entry.slot}", which this rig does not declare — ` +
-            'a name that resolves to nothing exempts nothing, and reads like the exemption worked',
+            'a name that resolves to nothing exempts nothing, and reads like the exemption worked', 'CE_RIG_DEFORM_FOLD_SLOT_UNKNOWN',
         );
       }
       if (declared.has(entry.slot)) {
-        throw new CompileError(`${where}: invariants.deformMayFold names slot "${entry.slot}" twice`);
+        throw new CompileError(`${where}: invariants.deformMayFold names slot "${entry.slot}" twice`, 'CE_RIG_DEFORM_FOLD_SLOT_DUPLICATE');
       }
       declared.add(entry.slot);
       if (typeof entry.why !== 'string' || entry.why.trim().length === 0) {
         throw new CompileError(
           `${where}: invariants.deformMayFold entry for slot "${entry.slot}" needs a "why" — this field switches ` +
             'A39_DEFORM_KEEPS_TRIANGLE_WINDING off for that slot, and an exemption nobody can date or justify is ' +
-            'how a defect ships as a decision',
+            'how a defect ships as a decision', 'CE_RIG_DEFORM_FOLD_REASON_REQUIRED',
         );
       }
     }
@@ -2877,14 +2877,14 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   const constraintKinds = new Map<string, string[]>();
   for (const constraint of spec.constraints ?? []) {
     if (!isObj(constraint) || typeof constraint.name !== 'string' || constraint.name.length === 0) {
-      throw new CompileError(`${where}: every constraint needs a "name"`);
+      throw new CompileError(`${where}: every constraint needs a "name"`, 'CE_RIG_CONSTRAINT_NAME_REQUIRED');
     }
     const declared = { type: String(constraint.type), name: constraint.name, skinRequired: constraint.skin === true };
     if (constraintFacts.has(constraintAt(declared.type, declared.name))) {
       throw new CompileError(
         `${where}: two ${declared.type} constraints are called "${declared.name}" — a constraint resolves by name ` +
           'AND type (`SkeletonData.findConstraint`), so names are unique PER KIND: an ik and a transform constraint ' +
-          'may share one, two of a kind may not',
+          'may share one, two of a kind may not', 'CE_RIG_CONSTRAINT_NAME_DUPLICATE',
       );
     }
     constraintsDeclared.push(declared);
@@ -2902,7 +2902,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         for (let at = spec.bones.find((b) => b.name === ikBones[1])?.parent; at !== undefined; at = spec.bones.find((b) => b.name === at)?.parent) secondAncestors.push(at);
       }
       const fault = ikShapeFault(constraint.name, ikBones, secondAncestors);
-      if (fault !== null) throw new CompileError(`${where}: ${fault}`);
+      if (fault !== null) throw new CompileError(`${where}: ${fault}`, 'CE_RIG_IK_BONES_SHAPE');
     }
   }
 
@@ -2915,12 +2915,12 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (consumerDriven !== undefined) {
     const shape = 'an array of { "constraint": …, "type": "ik" | "transform", "why": … }';
     if (!Array.isArray(consumerDriven)) {
-      throw new CompileError(`${where}: invariants.consumerDrivenMix is ${JSON.stringify(consumerDriven)}, expected ${shape}`);
+      throw new CompileError(`${where}: invariants.consumerDrivenMix is ${JSON.stringify(consumerDriven)}, expected ${shape}`, 'CE_RIG_CONSUMER_MIX_EXEMPTIONS_SHAPE');
     }
     const named = new Set<string>();
     for (const entry of consumerDriven) {
       if (!isObj(entry) || typeof entry.constraint !== 'string' || entry.constraint.length === 0) {
-        throw new CompileError(`${where}: every invariants.consumerDrivenMix entry needs a "constraint" — ${shape}`);
+        throw new CompileError(`${where}: every invariants.consumerDrivenMix entry needs a "constraint" — ${shape}`, 'CE_RIG_CONSUMER_MIX_CONSTRAINT_REQUIRED');
       }
       if (entry.type !== 'ik' && entry.type !== 'transform') {
         const declaredAs = constraintKinds.get(entry.constraint) ?? [];
@@ -2929,7 +2929,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
             'only "ik" and "transform" read this declaration (A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT, ' +
             'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT). A path, physics or slider constraint resting muted is ' +
             'A36, A23 or A37, which read no declaration, so the entry would exempt nothing' +
-            (declaredAs.length ? ` — the rig declares "${entry.constraint}" as ${declaredAs.map((t) => `${t === 'ik' ? 'an' : 'a'} ${t}`).join(' and ')} constraint` : ''),
+            (declaredAs.length ? ` — the rig declares "${entry.constraint}" as ${declaredAs.map((t) => `${t === 'ik' ? 'an' : 'a'} ${t}`).join(' and ')} constraint` : ''), 'CE_RIG_CONSUMER_MIX_KIND',
         );
       }
       const key = constraintAt(entry.type, entry.constraint);
@@ -2940,16 +2940,16 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
             (declaredAs.length
               ? ` — "${entry.constraint}" is declared as ${declaredAs.map((t) => `${t === 'ik' ? 'an' : 'a'} ${t}`).join(' and ')} constraint, and a constraint resolves by name AND type`
               : '') +
-            '. A name that resolves to nothing exempts nothing, and reads like the exemption worked',
+            '. A name that resolves to nothing exempts nothing, and reads like the exemption worked', 'CE_RIG_CONSUMER_MIX_CONSTRAINT_UNKNOWN',
         );
       }
-      if (named.has(key)) throw new CompileError(`${where}: invariants.consumerDrivenMix names ${key} twice`);
+      if (named.has(key)) throw new CompileError(`${where}: invariants.consumerDrivenMix names ${key} twice`, 'CE_RIG_CONSUMER_MIX_CONSTRAINT_DUPLICATE');
       named.add(key);
       if (typeof entry.why !== 'string' || entry.why.trim().length === 0) {
         throw new CompileError(
           `${where}: invariants.consumerDrivenMix entry for ${key} needs a "why" — this field switches ` +
             `${entry.type === 'ik' ? 'A47_IK_CONSTRAINT_NOT_MUTED_THROUGHOUT' : 'A48_TRANSFORM_CONSTRAINT_NOT_MUTED_THROUGHOUT'} ` +
-            'off for that constraint, and an exemption nobody can date or justify is how a defect ships as a decision',
+            'off for that constraint, and an exemption nobody can date or justify is how a defect ships as a decision', 'CE_RIG_CONSUMER_MIX_REASON_REQUIRED',
         );
       }
     }
@@ -2967,13 +2967,13 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (idleDrives !== undefined) {
     const shape = '{ "why": "<why this idle deforms meshes on purpose>" }';
     if (!isObj(idleDrives)) {
-      throw new CompileError(`${where}: invariants.idleDrivesMeshes is ${JSON.stringify(idleDrives)}, expected ${shape}`);
+      throw new CompileError(`${where}: invariants.idleDrivesMeshes is ${JSON.stringify(idleDrives)}, expected ${shape}`, 'CE_RIG_IDLE_MESH_EXEMPTION_SHAPE');
     }
     if (typeof idleDrives.why !== 'string' || idleDrives.why.trim().length === 0) {
       throw new CompileError(
         `${where}: invariants.idleDrivesMeshes needs a "why" (a non-blank string), got ` +
           `${idleDrives.why === undefined ? 'none' : JSON.stringify(idleDrives.why)} — expected ${shape}. This field switches ` +
-          'A15_IDLE_NO_MESH_BONE_KEYS off, and an exemption nobody can date or justify is how a defect ships as a decision',
+          'A15_IDLE_NO_MESH_BONE_KEYS off, and an exemption nobody can date or justify is how a defect ships as a decision', 'CE_RIG_IDLE_MESH_REASON_REQUIRED',
       );
     }
   }
@@ -2989,34 +2989,34 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   const axes = spec.invariants?.axes;
   if (axes !== undefined) {
     const shape = 'an array of { "name": …, "through": [<bone>, <bone>], "bones": [<bone>, …], "tolerance": <degrees> }';
-    if (!Array.isArray(axes)) throw new CompileError(`${where}: invariants.axes is ${JSON.stringify(axes)}, expected ${shape}`);
+    if (!Array.isArray(axes)) throw new CompileError(`${where}: invariants.axes is ${JSON.stringify(axes)}, expected ${shape}`, 'CE_RIG_AXES_SHAPE');
     const named = new Set<string>();
     for (const [i, entry] of axes.entries()) {
       const field = `invariants.axes[${i}]`;
       if (!isObj(entry) || typeof entry.name !== 'string' || entry.name.length === 0) {
-        throw new CompileError(`${where}: ${field} needs a "name" — ${shape}`);
+        throw new CompileError(`${where}: ${field} needs a "name" — ${shape}`, 'CE_RIG_AXIS_NAME_REQUIRED');
       }
       const axis = `${field} "${entry.name}"`;
-      if (named.has(entry.name)) throw new CompileError(`${where}: ${field}: invariants.axes names "${entry.name}" twice — a failure names its entry, and two entries of one name could not be told apart`);
+      if (named.has(entry.name)) throw new CompileError(`${where}: ${field}: invariants.axes names "${entry.name}" twice — a failure names its entry, and two entries of one name could not be told apart`, 'CE_RIG_AXIS_NAME_DUPLICATE');
       named.add(entry.name);
       const through: unknown = entry.through;
       if (!Array.isArray(through) || through.length !== 2 || !through.every((b): b is string => typeof b === 'string')) {
-        throw new CompileError(`${where}: ${axis}: "through" is ${JSON.stringify(through)}, expected two bone names — the line is drawn through their setup-pose world origins`);
+        throw new CompileError(`${where}: ${axis}: "through" is ${JSON.stringify(through)}, expected two bone names — the line is drawn through their setup-pose world origins`, 'CE_RIG_AXIS_THROUGH_PAIR');
       }
       for (const [k, bone] of through.entries()) {
-        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: through[${k}] names bone "${bone}", which this rig does not declare — a line through nothing holds nothing`);
+        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: through[${k}] names bone "${bone}", which this rig does not declare — a line through nothing holds nothing`, 'CE_RIG_AXIS_THROUGH_BONE_UNKNOWN');
       }
       if (through[0] === through[1]) {
-        throw new CompileError(`${where}: ${axis}: "through" names bone "${through[0]}" twice — one bone's origin is a point, and a point draws no line`);
+        throw new CompileError(`${where}: ${axis}: "through" names bone "${through[0]}" twice — one bone's origin is a point, and a point draws no line`, 'CE_RIG_AXIS_THROUGH_BONE_DUPLICATE');
       }
       const bones: unknown = entry.bones;
       if (!Array.isArray(bones) || bones.length === 0 || !bones.every((b): b is string => typeof b === 'string')) {
-        throw new CompileError(`${where}: ${axis}: "bones" is ${JSON.stringify(bones)}, expected a non-empty array of bone names — the bones held to the line`);
+        throw new CompileError(`${where}: ${axis}: "bones" is ${JSON.stringify(bones)}, expected a non-empty array of bone names — the bones held to the line`, 'CE_RIG_AXIS_BONES_ARRAY');
       }
       const held = new Set<string>();
       for (const [k, bone] of bones.entries()) {
-        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: bones[${k}] names bone "${bone}", which this rig does not declare — a name that resolves to nothing is held to nothing, and reads like it was`);
-        if (held.has(bone)) throw new CompileError(`${where}: ${axis}: "bones" names bone "${bone}" twice`);
+        if (!seen.has(bone)) throw new CompileError(`${where}: ${axis}: bones[${k}] names bone "${bone}", which this rig does not declare — a name that resolves to nothing is held to nothing, and reads like it was`, 'CE_RIG_AXIS_HELD_BONE_UNKNOWN');
+        if (held.has(bone)) throw new CompileError(`${where}: ${axis}: "bones" names bone "${bone}" twice`, 'CE_RIG_AXIS_HELD_BONE_DUPLICATE');
         held.add(bone);
       }
       const tolerance: unknown = entry.tolerance;
@@ -3024,7 +3024,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
         throw new CompileError(
           `${where}: ${axis}: "tolerance" is ${tolerance === undefined ? 'absent' : JSON.stringify(tolerance)}; it must be a number of degrees above 0 and below 90, ` +
             'and there is no default — two lines meet at 0° to 90°, so 90 or more admits every orientation and can never fail, ' +
-            'and 0 refuses a bone rotated exactly onto the line whenever the posed arithmetic rounds',
+            'and 0 refuses a bone rotated exactly onto the line whenever the posed arithmetic rounds', 'CE_RIG_AXIS_TOLERANCE_RANGE',
         );
       }
     }
@@ -3067,7 +3067,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   const skinBoneUse = new Set<string>();
   const skinConstraintUse = new Set<string>();
   if (spec.skins !== undefined) {
-    if (!isObj(spec.skins)) throw new CompileError(`${where}: "skins" is an object keyed by skin name`);
+    if (!isObj(spec.skins)) throw new CompileError(`${where}: "skins" is an object keyed by skin name`, 'CE_RIG_SKINS_TABLE');
     const collision = RIG_SKIN_KEYS.find((key) => slotNames.has(key));
     if (collision !== undefined) {
       // The long form is recognised by these keys, so a slot of one of those
@@ -3076,7 +3076,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       throw new CompileError(
         `${where}: a slot is called "${collision}", which is one of the keys that tell a skin's long form ` +
           '(`{ "attachments": {…}, "bones": [...] }`) from its short one (`slotName -> placeholder -> attachment`): ' +
-          `${RIG_SKIN_KEYS.join(', ')}. Rename the slot.`,
+          `${RIG_SKIN_KEYS.join(', ')}. Rename the slot.`, 'CE_RIG_SLOT_SKIN_KEY_COLLISION',
       );
     }
     for (const [skinName, skin] of Object.entries(spec.skins)) {
@@ -3084,7 +3084,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       const parts = splitRigSkin(skin, at);
       for (const bone of parts.bones) {
         if (!seen.has(bone)) {
-          throw new CompileError(`${at} activates bone "${bone}", which this rig does not declare`);
+          throw new CompileError(`${at} activates bone "${bone}", which this rig does not declare`, 'CE_RIG_SKIN_BONE_UNKNOWN');
         }
         skinBoneUse.add(bone);
         const declared = spec.bones.find((b) => b.name === bone);
@@ -3092,7 +3092,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
           throw new CompileError(
             `${at} activates bone "${bone}", but that bone does not declare \`"skin": true\`. ` +
               'Skeleton.updateCache starts a bone active unless it is skinRequired, so this list changes nothing — ' +
-              'the bone poses under every skin.',
+              'the bone poses under every skin.', 'CE_RIG_SKIN_BONE_NOT_REQUIRED',
           );
         }
       }
@@ -3105,20 +3105,20 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
             // two different misses and say so.
             const kinds = constraintKinds.get(name) ?? [];
             if (kinds.length === 0) {
-              throw new CompileError(`${at} activates ${type} constraint "${name}", which this rig does not declare`);
+              throw new CompileError(`${at} activates ${type} constraint "${name}", which this rig does not declare`, 'CE_RIG_SKIN_CONSTRAINT_UNKNOWN');
             }
             // `findConstraint(name, IkConstraintData)` resolves by name AND type,
             // and the parser throws on the miss.
             throw new CompileError(
               `${at} lists "${name}" under "${type}", but the rig declares it as a "${kinds.join('", "')}" constraint — ` +
-                'a skin looks its constraints up by name AND type, so this one is a miss and the loader throws',
+                'a skin looks its constraints up by name AND type, so this one is a miss and the loader throws', 'CE_RIG_SKIN_CONSTRAINT_KIND',
             );
           }
           skinConstraintUse.add(constraintAt(type, name));
           if (!facts.skinRequired) {
             throw new CompileError(
               `${at} activates ${type} constraint "${name}", but that constraint does not declare \`"skin": true\`. ` +
-                'A constraint is active unless it is skinRequired, so this list changes nothing.',
+                'A constraint is active unless it is skinRequired, so this list changes nothing.', 'CE_RIG_SKIN_CONSTRAINT_NOT_REQUIRED',
             );
           }
         }
@@ -3139,7 +3139,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     if (bone.skin === true && !activated.has(bone.name)) {
       throw new CompileError(
         `${where}: bone "${bone.name}" declares \`"skin": true\` but no skin activates it, so it is never active — ` +
-          'list it in the skin it belongs to, or drop the flag',
+          'list it in the skin it belongs to, or drop the flag', 'CE_RIG_BONE_SKIN_NEVER_ACTIVE',
       );
     }
   }
@@ -3147,7 +3147,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
     if (skinRequired && !skinConstraintUse.has(constraintAt(type, name))) {
       throw new CompileError(
         `${where}: ${type} constraint "${name}" declares \`"skin": true\` but no skin activates it, so it never runs — ` +
-          `list it in that skin's "${type}" array, or drop the flag`,
+          `list it in that skin's "${type}" array, or drop the flag`, 'CE_RIG_CONSTRAINT_SKIN_NEVER_ACTIVE',
       );
     }
   }
@@ -3155,26 +3155,26 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
   if (raw.events !== undefined) {
     if (!isObj(raw.events)) {
       throw new CompileError(
-        `${where}: "events" is an object keyed by event name (\`{ "footstep": {} }\`), not an array — the format's own shape`,
+        `${where}: "events" is an object keyed by event name (\`{ "footstep": {} }\`), not an array — the format's own shape`, 'CE_RIG_EVENTS_TABLE',
       );
     }
     for (const [name, def] of Object.entries(raw.events)) {
-      if (name.length === 0) throw new CompileError(`${where}: an event has an empty name`);
+      if (name.length === 0) throw new CompileError(`${where}: an event has an empty name`, 'CE_RIG_EVENT_NAME_EMPTY');
       if (!isObj(def)) {
-        throw new CompileError(`${where}: event "${name}" must be an object of payload defaults (use {} for none)`);
+        throw new CompileError(`${where}: event "${name}" must be an object of payload defaults (use {} for none)`, 'CE_RIG_EVENT_DEFAULTS_OBJECT');
       }
       for (const field of ['int', 'float', 'volume', 'balance'] as const) {
         const v = def[field];
         if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v))) {
-          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(v)}, which is not a finite number`);
+          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(v)}, which is not a finite number`, 'CE_RIG_EVENT_NUMBER_FINITE');
         }
       }
       if (def.int !== undefined && !Number.isInteger(def.int)) {
-        throw new CompileError(`${where}: event "${name}" has int ${JSON.stringify(def.int)}; the payload is an integer`);
+        throw new CompileError(`${where}: event "${name}" has int ${JSON.stringify(def.int)}; the payload is an integer`, 'CE_RIG_EVENT_INT_WHOLE');
       }
       for (const field of ['string', 'audio'] as const) {
         if (def[field] !== undefined && typeof def[field] !== 'string') {
-          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(def[field])}, which is not a string`);
+          throw new CompileError(`${where}: event "${name}" has ${field} ${JSON.stringify(def[field])}, which is not a string`, 'CE_RIG_EVENT_STRING_TYPE');
         }
       }
       // SkeletonJson.ts:478-481 reads these two ONLY inside `if (data.audioPath)`.
@@ -3183,7 +3183,7 @@ export function parseRigSpec(raw: unknown, where: string): RigSpec {
       for (const field of ['volume', 'balance'] as const) {
         if (def[field] !== undefined && def.audio === undefined) {
           throw new CompileError(
-            `${where}: event "${name}" declares ${field} but no "audio"; the parser reads ${field} only when an audio path is set, so it would be dropped in silence`,
+            `${where}: event "${name}" declares ${field} but no "audio"; the parser reads ${field} only when an audio path is set, so it would be dropped in silence`, 'CE_RIG_EVENT_AUDIO_REQUIRED',
           );
         }
       }
