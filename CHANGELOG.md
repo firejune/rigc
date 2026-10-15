@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.59.0](https://github.com/rig-c/core/compare/v2.58.1...v2.59.0) (2026-10-15)
+
+
+### Features
+
+* **mesh:** promise segments preflight helpers ([#1451](https://github.com/rig-c/core/issues/1451)) ([7134fe0](https://github.com/rig-c/core/commit/7134fe07a182a0c241844de6f1a5300a600a9a15)), closes [#1450](https://github.com/rig-c/core/issues/1450)
+
 ## [2.58.1](https://github.com/rig-c/core/compare/v2.58.0...v2.58.1) (2026-10-14)
 
 
