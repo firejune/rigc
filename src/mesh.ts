@@ -2168,6 +2168,11 @@ function cellIslands(cells: Uint8Array, nx: number, ny: number): Array<Array<[nu
 
 /**
  * The lattice over one part's alpha: cells, one loop, triangles, outline first.
+ * Promised through `rig-c/mesh` (issue #1450). `mask.alpha` is one byte per
+ * source pixel, `threshold` is an alpha byte in 1..255, and `cell` is a whole
+ * number of part-local pixels. Returns `SegmentsLattice`: points in part-local
+ * pixels (y down), dimensionless UVs rounded to six decimals, triangle indices,
+ * the outline vertex count and cell/pass/island counts. No weights are built.
  *
  * Refuses a part that keeps no cell and a cell that is not a whole number of
  * pixels of at least 1; everything else about the geometry follows from the art.
@@ -2377,6 +2382,10 @@ export interface SegmentsFalloff {
 
 /**
  * Distance from `p` to the segment `a -> b`, a zero-length segment being its point.
+ * Promised through `rig-c/mesh` (issue #1450). All three points must use the
+ * same coordinate frame and length unit; the returned non-negative distance
+ * uses that unit. The segments compiler supplies setup-world points in part
+ * pixels, measured through its exact setup frame.
  *
  * `sqrt(dx*dx + dy*dy)` rather than `Math.hypot`, whose last bit can differ:
  * a weight is written on a 6-decimal grid, and that is where one ulp becomes a
@@ -2507,6 +2516,14 @@ export type InfluenceShares =
 
 /**
  * The shares on one vertex under an `influence` block — see the section header.
+ * The three-argument call is promised through `rig-c/mesh` (issue #1450). `p`
+ * and every segment endpoint share one frame; `radius` uses that frame's length
+ * unit. `bone` indexes the caller's distinct mesh-bone list and `entry` indexes
+ * its authored segment entries. Returned mesh weights use `bone: 'control'`
+ * and `control` for that same distinct-bone index. Returns weights closing at one
+ * on the six-decimal grid, with the pre-cap in-reach bone count; or the nearest
+ * bone and its distance in the input unit when no link reaches the vertex.
+ * The compiler uses exact setup-world positions measured in part pixels.
  * `plant` exists for the selftest's negative controls: each key switches one
  * step off, so a control can show its own check going red on weights that
  * break exactly that step. A build never passes it.

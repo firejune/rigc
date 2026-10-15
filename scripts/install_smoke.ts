@@ -451,8 +451,15 @@ const REQUESTED_IN_1416 = 'the environment the physics answers, requested on iss
  * (`CA12` holds the identity); this row holds the two symbols.
  */
 const REQUESTED_IN_1417 = 'rig-c/pose curve fitting, requested on issue #1417';
+/** The compiler's own lattice/reach preflight, agreed for parts#378 on core#1450. */
+const AGREED_IN_1450 = 'parts#378 segments preflight, agreed on issue #1450';
 
 const OBSERVED_SYMBOLS: ObservedEntry[] = [
+  {
+    entry: './mesh', observed: AGREED_IN_1450, needsRuntime: false,
+    values: { buildSegmentsLattice: 'function', segmentDistance: 'function', influenceShares: 'function' },
+    types: ['SegmentsLattice', 'SegmentsLatticeReport', 'EntrySegment', 'SegmentsInfluence', 'InfluenceShares'],
+  },
   {
     entry: './plate',
     observed: OBSERVED_IN_1167,
@@ -722,7 +729,7 @@ const OBSERVED_DEEP_PATHS: Record<string, string> = {
  * `import.meta.resolve` does not look at the disk for a path with no pattern
  * match, so a Node answer here would pass a specifier nothing can load.
  */
-const EXPORTS_PROBE_SOURCE = `import { existsSync, readFileSync, realpathSync } from 'node:fs';
+const EXPORTS_PROBE_SOURCE = `import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -980,6 +987,72 @@ if (meshM !== null) {
     }
     if (!(refusal instanceof meshM.MeshError)) said('${NAME}/mesh', 'earClip on three collinear points ' + (refusal === null ? 'returned triangles' : 'threw ' + why(refusal)) + ', and a MeshError as ${NAME}/mesh exports it was required');
   }
+}
+
+// #1450: use this install's public functions and a real gated CLI build of
+// an authored 12px plate. Only its central 4x4 cell holds art, so there are
+// four lattice vertices. Two vertical spans at x=0 and x=12 give the first
+// vertex (4,4) distances 4 and 8. The smooth pulls at radius16 are 27/32 and
+// 1/2, so the six-decimal shares are 0.627907 and 0.372093.
+if (meshM !== null && Plate !== null && ['buildSegmentsLattice', 'segmentDistance', 'influenceShares'].every((n) => callable(meshM, n))) {
+  call('${NAME}/mesh', 'segments preflight against an actual compiler build', () => {
+    const dir = join(HERE, 'segments-preflight');
+    mkdirSync(join(dir, 'parts'), { recursive: true });
+    const plate = new Plate(12, 12);
+    plate.rect(4, 4, 4, 4, [200, 100, 50, 255]);
+    plate.writePng(join(dir, 'parts', 'probe.png'));
+    const decoded = plates[0].decodePng(readFileSync(join(dir, 'parts', 'probe.png')));
+    const alpha = new Uint8Array(12 * 12);
+    for (let i = 0; i < alpha.length; i++) alpha[i] = decoded.data[4 * i + 3];
+    const lattice = meshM.buildSegmentsLattice({ mask: { width: 12, height: 12, alpha }, threshold: 128, cell: 4 });
+    const influence = { radius: 16, across: true, max: 2, shape: 'smooth' };
+    const spans = [{ bone: 0, entry: 0, a: [0, 0], b: [0, -12] }, { bone: 1, entry: 1, a: [12, 0], b: [12, -12] }];
+    const rig = {
+      spec: 'rigc-rig/1', name: 'segments_preflight', images: 'parts',
+      skeleton: { x: 0, y: -12, width: 12, height: 12 },
+      invariants: { meshSlots: 1, meshTriangles: 2 }, // One kept square, two triangles.
+      bones: [{ name: 'root' }, { name: 'left', parent: 'root', length: 12 }, { name: 'right', parent: 'root', x: 12, length: 12 }],
+      slots: [{ name: 'probe', bone: 'root', attachment: 'probe' }],
+      skins: { default: { probe: { probe: { type: 'mesh', image: 'probe.png', generator: {
+        kind: 'segments', cell: 4, alpha: 128, anchor: [0, 0], influence,
+        bones: [{ bone: 'left', from: [0, 0], to: [0, 12] }, { bone: 'right', from: [12, 0], to: [12, 12] }],
+      } } } } },
+    };
+    const motion = { spec: 'rigc-motion/1', archetype: 'segments_preflight', cut: 'segments-preflight', easings: {}, animations: { probe: { duration: 0, tracks: [] } } };
+    writeFileSync(join(dir, 'rig.json'), JSON.stringify(rig));
+    writeFileSync(join(dir, 'motion.json'), JSON.stringify(motion));
+    const launcher = join(ROOT, 'bin', 'rigc.cjs');
+    // Official installed launcher, whose native Node interpreter is on PATH.
+    const built = spawnSync('node', [launcher, 'build', '--rig', 'rig.json', '--motion', 'motion.json', '--out', 'build'], { cwd: dir, encoding: 'utf8' });
+    if (built.status !== 0) throw Error('installed rigc build exited ' + built.status + ': ' + JSON.stringify({ stdout: built.stdout, stderr: built.stderr }));
+    const model = JSON.parse(readFileSync(join(dir, 'build', 'skeleton.model.json'), 'utf8'));
+    const mesh = model.skins.find((s) => s.name === 'default').attachments.probe.probe;
+    const bindings = mesh.vertices.bindings;
+    if (lattice.points.length !== 4 || bindings.length !== lattice.points.length) said('${NAME}/mesh', 'buildSegmentsLattice returned ' + lattice.points.length + ' vertices, compiler wrote ' + bindings.length + ', and the one authored art cell requires four');
+    let maxShareError = 0;
+    lattice.points.forEach(([x, y], i) => {
+      const shares = meshM.influenceShares([x, -y], spans, influence);
+      if (!('weights' in shares) || shares.weights.length !== 2 || !bindings[i] || bindings[i].length !== 2) throw Error('influenceShares/compiler must both bind the two reachable spans at vertex ' + i);
+      for (const w of shares.weights) {
+        const emitted = bindings[i].find((b) => b.bone === ['left', 'right'][w.control]);
+        if (!emitted) throw Error('influenceShares control ' + w.control + ' is absent from compiler vertex ' + i);
+        maxShareError = Math.max(maxShareError, Math.abs(w.weight - emitted.weight));
+      }
+    });
+    if (!(maxShareError <= 1e-12)) said('${NAME}/mesh', 'influenceShares differs from actual compiler bindings by ' + maxShareError + ', at most 1e-12 required');
+    const first = meshM.influenceShares([4, -4], spans, influence);
+    if (!('weights' in first) || first.weights.length !== 2 || Math.abs(first.weights[0].weight - 0.627907) > 1e-12 || Math.abs(first.weights[1].weight - 0.372093) > 1e-12) said('${NAME}/mesh', 'influenceShares does not give the authored 4px/8px smooth-pull shares 0.627907/0.372093');
+    const distance = meshM.segmentDistance([4, -4], spans[0].a, spans[0].b);
+    const unreached = JSON.parse(JSON.stringify(rig));
+    unreached.skins.default.probe.probe.generator.influence.radius = distance;
+    writeFileSync(join(dir, 'unreached.json'), JSON.stringify(unreached));
+    const refused = spawnSync('node', [launcher, 'build', '--rig', 'unreached.json', '--motion', 'motion.json', '--out', 'unreached-build'], { cwd: dir, encoding: 'utf8' });
+    const detail = (refused.stdout || '') + (refused.stderr || '');
+    const nearest = /nearest is "left" at ([0-9.]+)/.exec(detail);
+    if (distance !== 4 || refused.status === 0 || !detail.includes('CE_COMPILE_SEGMENTS_VERTEX_UNREACHED') || nearest === null || Math.abs(Number(nearest[1]) - distance) > 1e-12) said('${NAME}/mesh', 'segmentDistance=' + distance + '; expected the actual compiler refusal at the authored 4px distance: ' + detail);
+    if (existsSync(join(dir, 'unreached-build', 'skeleton.model.json'))) said('${NAME}/mesh', 'unreached segments build emitted a model after refusing');
+    console.log('SEGMENTS_PREFLIGHT vertices ' + lattice.points.length + ', max compiler share difference ' + maxShareError + ', nearest compiler distance ' + (nearest ? nearest[1] : 'MISSING') + ', public distance ' + distance);
+  });
 }
 
 // 3. Every path the tarball carries, spelled in full — and, for a module, with
@@ -1679,7 +1752,7 @@ function droppedEntryPlant(plant: Exclude<DropPlant, 'drop-named-entry'>, issue 
   // taking the entry away reddens both of them too, by the entry's name (issue #1275).
   const poses = entry === './core';
   return {
-    names: [`${NAME}${entry.slice(1)}`],
+    names: [`${NAME}${entry.slice(1)}`, ...(entry === './mesh' ? ['buildSegmentsLattice', 'segmentDistance', 'influenceShares'] : [])],
     steps: ['exports', 'exports-without-runtime', ...(compares ? [MESHCOMPARE_STEP] : []), ...(poses ? [CORE_POSE_STEP, CORE_BROWSER_STEP] : [])],
     alone: true,
     what: `the named entry \`${entry}\` removed from \`exports\` (issue ${issue}), which the patterns do not rescue — \`./*\` maps it to a file at the package root that does not exist — so a dependant importing \`${NAME}${entry.slice(1)}\` is the one who finds out: both import probes${compares ? ' and the comparison from the install' : ''}${poses ? ', the pose from the install and the browser bundle' : ''} have to go red naming the entry, and nothing else`,
@@ -2362,6 +2435,9 @@ function runCase(spec: CaseSpec, work: string, keep: boolean): CaseResult {
     );
   } else if (exportsBad.length === 0) {
     notes.push(`exports: ${exportsCounts}`);
+    const preflight = /^SEGMENTS_PREFLIGHT (.+)$/m.exec(exportsRan.out)?.[1];
+    if (preflight === undefined) fault('exports', 'SMOKE_EXPORTS_RESOLVE_FROM_THE_INSTALL: the segments preflight produced no compiler comparison');
+    else notes.push(`segments preflight: ${preflight}`);
   }
 
   // 🔒 Phase three: the runtime taken away again, and the build rendered and

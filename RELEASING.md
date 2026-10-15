@@ -655,7 +655,7 @@ D1 over the installed package, recorded by #1241. Every other import that
 package makes goes through the `./*.ts` courtesy keys, which the surface
 paragraph above already says are not promised.
 
-🤝 **One row is promised by agreement rather than observation**
+🤝 **Agreed rows are promised before observation**
 ([#1224](https://github.com/rig-c/core/issues/1224)). Through
 `rig-c/mesh`, `measureMeshQuality`, `writeMeshQualityReport`,
 `MeshReductionError`, `MESH_QUALITY_REPORT_SPEC` and `reduceMesh` are held, and
@@ -663,8 +663,32 @@ the report's and the reduction's types recorded, because the dependant agreed in
 that entry before either side had written them (docs/MESH_REDUCTION.md, P1;
 rig-parts#126) — a contract nobody can be observed using yet, which renaming
 would still break. The row says so in place of an observation
-(`AGREED_IN_1224`), and it is the only exception: a symbol that is merely
-exported is not promised.
+(`AGREED_IN_1224`). The later agreed rows follow the same rule: a written
+dependant contract can precede use; a symbol that is merely exported is not
+promised.
+
+The segments preflight is also promised by agreement
+([#1450](https://github.com/rig-c/core/issues/1450), parts#378), through
+`rig-c/mesh`. A dependant preflights with the functions the compiler calls,
+rather than maintaining a second lattice, distance or reach rule:
+
+| promised signature | return and units |
+| --- | --- |
+| `buildSegmentsLattice(input: {mask: AlphaMask; threshold: number; cell: number}): SegmentsLattice` | Part-local pixel points, y down; dimensionless six-decimal UVs; triangle indices, hull vertex count and cell/pass/island counts. `alpha` and `threshold` are alpha bytes; `cell` is whole pixels, at least one |
+| `segmentDistance(p: readonly [number, number], a: readonly [number, number], b: readonly [number, number]): number` | Non-negative distance to the finite segment, including a zero-length segment as its point. All points share a coordinate frame and length unit; the result uses that unit |
+| `influenceShares(p: readonly [number, number], segments: readonly EntrySegment[], influence: SegmentsInfluence): InfluenceShares` | Dimensionless weights on the six-decimal grid closing at one, in first-named bone order, and pre-cap in-reach count; or nearest bone/distance when no link reaches. Points/endpoints share a frame and `radius` its length unit. A segment's `bone` indexes the distinct mesh-bone list, `entry` the authored segment entries; returned weights use `bone: 'control'` and `control` for that index |
+
+The compiler measures these points and distances through its exact setup frame
+in part pixels. The module's doc blocks state the same contract; the optional
+fourth `influenceShares` argument is a selftest plant, outside the promised
+three-argument preflight call. The row records `SegmentsLattice`,
+`SegmentsLatticeReport`, `EntrySegment`, `SegmentsInfluence` and `InfluenceShares`
+as the signatures' types. The installed-package smoke calls all three against
+an actual `segments` build: lattice vertex count, an authored integer distance
+in the compiler's nearest-link refusal, and emitted vertex shares within
+`1e-12`. Its `drop-mesh-entry` plant removes this named surface while leaving
+compiler-relative imports working, and must name each of the three missing
+functions as well as the entry.
 
 `ArtFitBounds.maxOvershoot` and `maxUndercut` widened from `number` to
 `number | null` ([#1254](https://github.com/rig-c/core/issues/1254)) is
